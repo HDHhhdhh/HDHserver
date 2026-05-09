@@ -51,6 +51,10 @@ function compareSchoolGradeRows(a, b) {
   return a.grade.localeCompare(b.grade, 'ko', { numeric: true });
 }
 
+function searchText(v) {
+  return normText(v).toLocaleLowerCase('ko');
+}
+
 export function renderYoilStats() {
   // ── 요일/슬롯 집계 ─────────────────────────────────
   const YOILS = ['월', '화', '수', '목', '금', '토', '일'];
@@ -233,7 +237,7 @@ export function renderYoilStats() {
       const schoolRecords = schoolMap.get(row.school) || [];
       const gradeRecords = row.students || [];
       return `
-        <tr>
+        <tr class="school-grade-row" data-school-search="${escapeHtml(searchText(row.school))}">
           <td class="school-grade-cell"
               data-title="${escapeHtml(row.school)}"
               data-names="${listPayload(schoolRecords)}"
@@ -260,7 +264,14 @@ export function renderYoilStats() {
         <table class="school-grade-table" style="border-collapse:collapse;width:100%;min-width:420px">
           <thead>
             <tr>
-              <th style="position:sticky;top:0;z-index:1;text-align:left;border:1px solid #e5e7eb;padding:7px;background:#f8fafc">학교</th>
+              <th style="position:sticky;top:0;z-index:1;text-align:left;border:1px solid #e5e7eb;padding:7px;background:#f8fafc">
+                <div style="font-weight:800;margin-bottom:6px">학교</div>
+                <input class="school-grade-search"
+                       type="search"
+                       placeholder="학교 검색"
+                       aria-label="학교 검색"
+                       style="width:100%;height:28px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:0 8px;background:#fff;color:#0f172a">
+              </th>
               <th style="position:sticky;top:0;z-index:1;text-align:left;border:1px solid #e5e7eb;padding:7px;background:#f8fafc">학년</th>
               <th style="position:sticky;top:0;z-index:1;text-align:right;border:1px solid #e5e7eb;padding:7px;background:#f8fafc">학생 수</th>
             </tr>
@@ -343,12 +354,14 @@ function ensureYoilModal() {
   }
 }
 
-function openYoilModal(title, names) {
+function openYoilModal(title, names, opts = {}) {
   ensureYoilModal();
   if (!_yoilModal || !_yoilTitle || !_yoilList) return;
 
   _yoilTitle.textContent = `${title} – ${names.length}명`;
   _yoilList.textContent  = names.join('\n');
+  _yoilList.style.fontSize = opts.largeList ? '18.2px' : '14px';
+  _yoilList.style.lineHeight = opts.largeList ? '1.55' : '1.45';
   _yoilModal.style.display = 'flex';
 }
 
@@ -393,7 +406,18 @@ function bindYoilClick(container) {
       } catch {
         names = [];
       }
-      openYoilModal(schoolGradeCell.dataset.title || '학생 명단', names);
+      openYoilModal(schoolGradeCell.dataset.title || '학생 명단', names, { largeList: true });
     }
+  });
+
+  container.addEventListener('input', (e) => {
+    const search = e.target.closest('.school-grade-search');
+    if (!search) return;
+
+    const q = searchText(search.value);
+    container.querySelectorAll('.school-grade-row').forEach(row => {
+      const school = row.dataset.schoolSearch || '';
+      row.style.display = !q || school.includes(q) ? '' : 'none';
+    });
   });
 }
