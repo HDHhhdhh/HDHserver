@@ -51,6 +51,78 @@ async function ensureLogsForDate(dateKey) {
   } catch {}
 }
 
+function ensureStaleDoneWarningStyle() {
+  if (document.getElementById('staleDoneWarningStyle')) return;
+  const s = document.createElement('style');
+  s.id = 'staleDoneWarningStyle';
+  s.textContent = `
+    #staleDoneWarning{
+      display:block;margin:8px 0 0;padding:7px 9px;border-radius:8px;
+      border:1px solid rgba(245,158,11,.45);
+      background:rgba(245,158,11,.12);
+      color:#92400e;font-weight:700;line-height:1.35;
+    }
+    body.dark #staleDoneWarning{
+      border-color:rgba(251,191,36,.5);
+      background:rgba(251,191,36,.13);
+      color:#fde68a;
+    }
+    #staleDoneWarning[hidden]{display:none}
+  `;
+  document.head.appendChild(s);
+}
+
+function renderStaleDoneWarning(summary) {
+  const anchor = document.getElementById('todaySlotCounts');
+  if (!anchor) return;
+
+  ensureStaleDoneWarningStyle();
+
+  let el = document.getElementById('staleDoneWarning');
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'staleDoneWarning';
+    el.className = 'hero-sub';
+    el.setAttribute('aria-live', 'polite');
+    anchor.insertAdjacentElement('afterend', el);
+  }
+
+  const byDateRows = Array.isArray(summary?.byDate) ? summary.byDate : [];
+  const total = Number(summary?.total || 0);
+  if (!total || !byDateRows.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+
+  const preview = byDateRows
+    .slice(0, 3)
+    .map((row) => `${row.date} ${row.count}건`)
+    .join(', ');
+  const more = byDateRows.length > 3 ? ` 외 ${byDateRows.length - 3}일` : '';
+  const students = Number(summary?.students || 0);
+  const studentText = students && students !== total ? `/${students}명` : '';
+
+  el.hidden = false;
+  el.textContent = `정리 필요: 선택 날짜 외 완료/자유석 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+}
+
+let staleSummaryRequestSeq = 0;
+async function refreshStaleDoneWarning(dateKey) {
+  const seq = ++staleSummaryRequestSeq;
+  try {
+    const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
+    const res = await fetch(`/api/logs/unarchived-summary?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (seq !== staleSummaryRequestSeq) return;
+    if (String(getAdminDate() || '') !== String(dateKey || '')) return;
+    renderStaleDoneWarning(data);
+  } catch (err) {
+    console.warn('[today] stale done summary failed:', err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // 가나다 정렬 토글 (localStorage 유지)
 // ─────────────────────────────────────────────
@@ -272,19 +344,22 @@ export async function loadTodayAndRender() {
 
   const dateKey = getAdminDate();
 
-  await ensureLogsForDate(dateKey);
-  await loadWeekendSlots();
-  await ensureAttendLoaded(dateKey);
-  await ensureContactLoaded(dateKey);
-  await ensureArriveLoaded(dateKey);
+  await Promise.all([
+    ensureLogsForDate(dateKey),
+    loadWeekendSlots(),
+    ensureAttendLoaded(dateKey),
+    ensureContactLoaded(dateKey),
+    ensureArriveLoaded(dateKey),
+  ]);
 
   const doneEntries = sortDoneEntries(
     collectUnarchivedLogsByDate(dateKey),
   );
 
-  const { list: raw } = await computeTodayList(dateKey);
-
-  await loadOrderMap();
+  const [{ list: raw }] = await Promise.all([
+    computeTodayList(dateKey),
+    loadOrderMap(),
+  ]);
   const list = _alphaSortOnly ? raw : applySavedOrder(raw, dateKey);
 
   const wrap = document.getElementById('todayWrap');
@@ -292,6 +367,8 @@ export async function loadTodayAndRender() {
 
   renderToday(list, dateKey, _alphaSortOnly);
   renderDone(doneEntries);
+  renderStaleDoneWarning({ total: 0, byDate: [] });
+  void refreshStaleDoneWarning(dateKey);
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));

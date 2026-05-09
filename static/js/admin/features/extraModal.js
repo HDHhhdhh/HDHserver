@@ -22,11 +22,24 @@ function ensure() {
   document.body.insertAdjacentHTML('beforeend', `
     <div id="extraModal" class="extra-backdrop" style="display:none" aria-modal="true" role="dialog">
       <div class="extra-panel">
-        <h3 class="extra-title">오늘 보강 학생</h3>
+        <div class="extra-topbar">
+          <div class="extra-head">
+            <h3 class="extra-title">오늘 보강 학생</h3>
+            <div class="extra-actions extra-actions-top">
+              <button type="button" class="ex-btn primary ex-save">저장</button>
+              <button type="button" class="ex-btn ex-close">닫기</button>
+            </div>
+          </div>
+          <div class="extra-search-row">
+            <input type="search" id="exSearch" class="extra-search" placeholder="학생 이름 검색" autocomplete="off">
+            <button type="button" id="exSearchPick" class="ex-btn">선택</button>
+          </div>
+          <div id="exSearchHint" class="extra-search-hint" aria-live="polite"></div>
+        </div>
         <div id="exZone"></div>
-        <div class="extra-actions">
-          <button type="button" id="exSave"  class="ex-btn primary">저장</button>
-          <button type="button" id="exClose" class="ex-btn">닫기</button>
+        <div class="extra-actions extra-actions-bottom">
+          <button type="button" class="ex-btn primary ex-save">저장</button>
+          <button type="button" class="ex-btn ex-close">닫기</button>
         </div>
       </div>
     </div>
@@ -41,7 +54,8 @@ function ensure() {
     background:rgba(0,0,0,.45); z-index:9999;
   }
   #extraModal .extra-panel{
-    width:360px; max-width:92vw; max-height:80vh; overflow:auto;
+    width:420px; max-width:92vw; height:min(720px, 88vh); max-height:88vh;
+    display:flex; flex-direction:column; overflow:hidden;
     border-radius:12px; padding:14px; box-sizing:border-box;
     border:1px solid var(--line, #334155);
     background:var(--card-dark, #0f172a);
@@ -53,8 +67,44 @@ function ensure() {
     color:var(--text, #0f172a);
     border-color:var(--line, #e5e7eb);
   }
-  #extraModal .extra-title{ margin:0 0 8px 0; font-size:16px; font-weight:800 }
+  #extraModal .extra-topbar{
+    flex:0 0 auto;
+    position:sticky; top:-14px; z-index:2;
+    margin:-14px -14px 10px; padding:14px 14px 10px;
+    background:var(--card-dark, #0f172a);
+    border-bottom:1px solid color-mix(in oklab, var(--line, #334155) 80%, transparent);
+  }
+  body:not(.dark) #extraModal .extra-topbar{
+    background:var(--card-light, #ffffff);
+    border-bottom-color:color-mix(in oklab, var(--line, #e5e7eb) 80%, transparent);
+  }
+  #extraModal .extra-head{ display:flex; align-items:center; justify-content:space-between; gap:10px }
+  #extraModal .extra-title{ margin:0; font-size:16px; font-weight:800 }
   #extraModal .extra-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px }
+  #extraModal .extra-actions-top{ margin-top:0; flex-shrink:0 }
+  #extraModal .extra-search-row{ display:flex; gap:8px; margin-top:10px }
+  #extraModal .extra-search{
+    min-width:0; flex:1; height:36px; box-sizing:border-box;
+    border:1px solid var(--line, #334155);
+    border-radius:10px; padding:0 10px;
+    background:color-mix(in oklab, var(--card-dark, #0f172a) 90%, var(--accent,#60a5fa));
+    color:var(--text-dark, #e5e7eb);
+    outline:none;
+  }
+  body:not(.dark) #extraModal .extra-search{
+    background:color-mix(in oklab, #ffffff 92%, var(--accent,#2563eb));
+    color:var(--text, #0f172a);
+    border-color:var(--line, #e5e7eb);
+  }
+  #extraModal .extra-search:focus{
+    border-color:var(--accent,#2563eb);
+    box-shadow:0 0 0 2px color-mix(in oklab, var(--accent,#2563eb) 22%, transparent);
+  }
+  #extraModal .extra-search::placeholder{ color:currentColor; opacity:.55 }
+  #extraModal .extra-search-row .ex-btn{ height:36px; white-space:nowrap }
+  #extraModal .extra-search-hint{
+    min-height:16px; margin-top:5px; font-size:12px; line-height:16px; opacity:.7;
+  }
 
   /* ── 공통 버튼 ──────────────────────────────────────── */
   #extraModal .ex-btn{
@@ -70,15 +120,19 @@ function ensure() {
   #extraModal .ex-btn.primary{
     background:var(--accent,#2563eb); color:#fff; border-color:transparent;
   }
+  #extraModal .ex-btn:disabled{
+    opacity:.45; cursor:not-allowed;
+  }
 
   /* ── 리스트 ────────────────────────────────────────── */
-  #exZone{ display:flex; flex-direction:column; gap:6px; }
+  #exZone{ flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:6px; }
   #exZone .row{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
     padding:8px 10px; border-radius:12px; border:1px solid var(--line,#334155);
     background:color-mix(in oklab, var(--card-dark,#0f172a) 92%, #0000);
     transition:background .15s ease, border-color .15s ease;
   }
+  #exZone .row.is-filtered-out{ display:none !important; }
   body:not(.dark) #exZone .row{
     background:color-mix(in oklab, var(--card-light,#fff) 96%, #0000);
     border-color:var(--line,#e5e7eb);
@@ -117,6 +171,7 @@ function ensure() {
     box-shadow:inset 0 1px 0 rgba(255,255,255,.15);
   }
   #exZone .slot-btn:focus-visible{ outline:2px solid var(--accent,#2563eb); outline-offset:2px; }
+  #extraModal .extra-actions-bottom{ flex:0 0 auto; }
   `;
   document.head.appendChild(s);
 }
@@ -126,6 +181,9 @@ export function initExtraModal() {
 
   const exModal = $('extraModal');
   const exZone = $('exZone');
+  const exSearch = $('exSearch');
+  const exSearchPick = $('exSearchPick');
+  const exSearchHint = $('exSearchHint');
   const btn = $('extraBtn');
   if (!btn) return;
 
@@ -143,6 +201,95 @@ export function initExtraModal() {
     try { return await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); }
     catch { return {}; }
   }
+
+  const normalizeSearch = (value) => String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, '');
+
+  const getRows = () => Array.from(document.querySelectorAll('#exZone .row'));
+
+  function studentSearchKey(stu) {
+    return normalizeSearch([
+      stu?.name,
+      stu?.school,
+      stu?.schoolName,
+      stu?.highSchool,
+      stu?.middleSchool,
+      stu?.curriculum,
+      stu?.subCurriculum,
+      stu?.id,
+    ].filter(Boolean).join(' '));
+  }
+
+  function escapeAttr(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function setStudentSelected(row, selected, ensureDefaultSlot = false) {
+    const chk = row?.querySelector('.chk-sid');
+    if (!chk) return;
+    chk.checked = selected;
+    row.classList.toggle('on', selected);
+
+    if (selected && ensureDefaultSlot && !row.querySelector('.slot-btn.on')) {
+      const firstSlot = row.querySelector('.slot-btn[data-n="1"]') || row.querySelector('.slot-btn');
+      if (firstSlot) firstSlot.classList.add('on');
+    }
+  }
+
+  function applySearchFilter() {
+    const needle = normalizeSearch(exSearch?.value);
+    let visible = 0;
+
+    for (const row of getRows()) {
+      const key = row.dataset.searchKey || normalizeSearch(row.textContent || '');
+      const matches = !needle || key.includes(needle);
+      row.hidden = !matches;
+      row.classList.toggle('is-filtered-out', !matches);
+      row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+      if (matches) visible += 1;
+    }
+
+    if (exSearchPick) exSearchPick.disabled = !needle || visible === 0;
+    if (exSearchHint) {
+      exSearchHint.textContent = needle ? (visible ? `${visible}명` : '검색 결과 없음') : '';
+    }
+  }
+
+  function pickSearchStudent() {
+    const needle = normalizeSearch(exSearch?.value);
+    if (!needle) return;
+
+    const matches = getRows().filter(row => !row.hidden);
+    const exact = matches.find(row => normalizeSearch(row.querySelector('.student-name')?.textContent) === needle);
+    const row = exact || matches[0];
+    if (!row) return;
+
+    setStudentSelected(row, true, true);
+    row.scrollIntoView({ block: 'nearest' });
+
+    const name = row.querySelector('.student-name')?.textContent || '';
+    if (exSearchHint) exSearchHint.textContent = name ? `${name} 선택됨` : '선택됨';
+  }
+
+  exSearch?.addEventListener('input', applySearchFilter);
+  exSearch?.addEventListener('search', applySearchFilter);
+  exSearch?.addEventListener('compositionend', applySearchFilter);
+  exSearch?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      pickSearchStudent();
+    } else if (e.key === 'Escape') {
+      exSearch.value = '';
+      applySearchFilter();
+    }
+  });
+  exSearchPick?.addEventListener('click', pickSearchStudent);
 
   // 열기
   btn.addEventListener('click', async () => {
@@ -176,29 +323,33 @@ export function initExtraModal() {
         </div>`;
 
       return `
-        <div class="row ${isOn ? 'on' : ''}" data-sid="${sid}">
+        <div class="row ${isOn ? 'on' : ''}" data-sid="${sid}" data-search-key="${escapeAttr(studentSearchKey(s))}">
           <label>
             <input type="checkbox" class="chk-sid" ${isOn ? 'checked' : ''}>
-            <span>${s.name}</span>
+            <span class="student-name">${s.name}</span>
             <small>${s.curriculum || ''}${s.subCurriculum ? ' · ' + s.subCurriculum : ''}</small>
           </label>
           ${slotBox}
         </div>`;
     }).join('');
 
+    if (exSearch) exSearch.value = '';
+    applySearchFilter();
     exModal.style.display = 'flex';
+    requestAnimationFrame(() => exSearch?.focus());
   });
 
   // 닫기
   document.body.addEventListener('click', (e) => {
-    if (e.target.id === 'exClose' || e.target.id === 'extraModal') exModal.style.display = 'none';
+    const closeBtn = e.target.closest?.('#extraModal .ex-close');
+    if (closeBtn || e.target.id === 'extraModal') exModal.style.display = 'none';
   });
 
   // 체크박스 변화 → 행 하이라이트 토글
   document.body.addEventListener('change', (e) => {
     const chk = e.target.closest('#exZone .chk-sid'); if (!chk) return;
     const row = chk.closest('.row'); if (!row) return;
-    row.classList.toggle('on', chk.checked);
+    setStudentSelected(row, chk.checked);
   });
 
   // 슬롯 버튼 토글(이벤트 위임) — 누르면 체크/행 활성화 자동 ON
@@ -216,7 +367,10 @@ export function initExtraModal() {
   });
 
   // 저장
-  $('exSave').addEventListener('click', async () => {
+  document.body.addEventListener('click', async (e) => {
+    const saveBtn = e.target.closest?.('#extraModal .ex-save');
+    if (!saveBtn) return;
+
     const today = todayLocalKey();
 
     // 선택 학생

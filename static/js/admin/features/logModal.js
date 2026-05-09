@@ -1,12 +1,14 @@
 // /js/admin/features/logModal.js
 /* global fetch */
 
-import { $, toast, postJSON, todayLocalKey } from '../core/utils.js';
+import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
 let editingLogSid = null;
+let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
@@ -165,6 +167,61 @@ async function fetchLogEntryFromServer(date, sid) {
       ? all[t][s]
       : {};
     return entry;
+  }
+}
+
+function mergeDateSidMap(target, incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  Object.entries(incoming).forEach(([date, bySid]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return;
+    if (!bySid || typeof bySid !== 'object') return;
+
+    target[date] = target[date] || {};
+    Object.entries(bySid).forEach(([sid, entry]) => {
+      if (entry && typeof entry === 'object') {
+        target[date][String(sid)] = entry;
+      }
+    });
+  });
+}
+
+async function hydrateLogHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const res = await fetch(`/api/logs?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+
+    const data = await res.json().catch(() => ({}));
+    state.logs = state.logs || {};
+    mergeDateSidMap(state.logs, data);
+    window.logs = state.logs;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateLogHistoryForSid failed:', e);
+    return false;
+  }
+}
+
+async function hydrateProgressHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+
+    const data = await res.json().catch(() => ({}));
+    state.progress = state.progress || {};
+    mergeDateSidMap(state.progress, data);
+    window.progressData = state.progress;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateProgressHistoryForSid failed:', e);
+    return false;
   }
 }
 
@@ -494,14 +551,30 @@ function escapeAttr(s) {
     .replace(/>/g, '&gt;');
 }
 
+function isQuestionPlaceholder(s) {
+  const text = String(s ?? '').replace(/\s+/g, '');
+  return text.length >= 2 && /^[?]+$/.test(text);
+}
+
+function looksCorruptedPlaceholderText(s) {
+  const text = String(s ?? '').trim();
+  if ((text.match(/\?/g) || []).length < 2) return false;
+  return !/[A-Za-z가-힣一-龥]/.test(text);
+}
+
+function cleanHwText(s) {
+  const text = String(s ?? '').trim();
+  return (isQuestionPlaceholder(text) || looksCorruptedPlaceholderText(text)) ? '' : text;
+}
+
 function normHwRows(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.book ?? '').trim(),
-    this: String(r?.this ?? '').trim(),
+    book: cleanHwText(r?.book),
+    this: cleanHwText(r?.this),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.comment ?? '').trim(),
-    next: String(r?.next ?? '').trim(),
+    comment: cleanHwText(r?.comment),
+    next: cleanHwText(r?.next),
     _deleted: !!(r?._deleted || r?._del || r?.deleted),
   }));
 }
@@ -531,10 +604,10 @@ function entryHwRows(entry) {
 function normOldHwRows4(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.name ?? '').trim(),
-    this: String(r?.unit ?? '').trim(),
+    book: cleanHwText(r?.name),
+    this: cleanHwText(r?.unit),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.rem ?? '').trim(),
+    comment: cleanHwText(r?.rem),
     next: '',
     _deleted: false,
   }));
@@ -739,10 +812,10 @@ function collectHwTable() {
   host.querySelectorAll('.hwItem').forEach(item => {
     if (item.dataset.deleted === '1' || item.style.display === 'none') return;
 
-    const book = (item.querySelector('.hwBook')?.value || '').trim();
-    const thisHw = (item.querySelector('.hwThis')?.value || '').trim();
-    const comment = (item.querySelector('.hwComment')?.value || '').trim();
-    const next = (item.querySelector('.hwNext')?.value || '').trim();
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
+    const comment = cleanHwText(item.querySelector('.hwComment')?.value);
+    const next = cleanHwText(item.querySelector('.hwNext')?.value);
 
     const wrap = item.querySelector('.pctWrap');
     const range = item.querySelector('.hwPctRange');
@@ -761,11 +834,11 @@ function collectHwTable() {
 
 function normalizeHwRowsForCompare(rows) {
   return activeHwRows(rows).map(r => ({
-    book: String(r.book || '').trim(),
-    this: String(r.this || '').trim(),
+    book: cleanHwText(r.book),
+    this: cleanHwText(r.this),
     pct: r.pct === '' ? '' : String(r.pct || '').trim(),
-    comment: String(r.comment || '').trim(),
-    next: String(r.next || '').trim(),
+    comment: cleanHwText(r.comment),
+    next: cleanHwText(r.next),
     _deleted: !!r._deleted,
   }));
 }
@@ -815,7 +888,7 @@ function buildHwSummary(rows) {
 
 /* hw flags PATCH */
 async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
-  const date = dateKey || todayLocalKey();
+  const date = dateKey || getAdminDate();
   const ksid = String(sid);
   const t = nowHHMM();
 
@@ -919,6 +992,7 @@ export function initLogModal() {
   const updateCellState = (cell, next) => {
     if (!cell) return;
     cell.dataset.state = next;
+    cell.dataset.explicitNone = next === 'none' ? '1' : '';
     cell.dataset.cleared = (next === 'none' && cell.dataset.initial !== 'none') ? '1' : '';
   };
 
@@ -1004,15 +1078,20 @@ export function initLogModal() {
     if (!btn) return;
 
     editingLogSid = btn.closest('tr')?.dataset.sid;
+    editingLogDate = btn.closest('tr')?.dataset.date || getAdminDate();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
     logTitle.textContent = `${stu.name} – ${stu.curriculum}`;
-    const today = todayLocalKey();
+    const today = editingLogDate;
     const sid = String(editingLogSid);
 
-    await hydrateTodayLogFromServer(today, sid);
+    await Promise.allSettled([
+      hydrateTodayLogFromServer(today, sid),
+      hydrateLogHistoryForSid(sid),
+      hydrateProgressHistoryForSid(sid),
+    ]);
 
     const dates = Array.from(new Set([
       ...Object.keys(state.progress || {}),
@@ -1022,13 +1101,20 @@ export function initLogModal() {
       .sort();
 
     const progEntry = {};
+    const explicitNoneMids = new Set();
     dates.forEach(d => {
       const day = (state.progress?.[d] || {})[sid] || {};
-      Object.entries(day).forEach(([mid, st]) => { progEntry[String(mid)] = st; });
+      Object.entries(day).forEach(([mid, st]) => {
+        const key = String(mid);
+        const value = String(st || 'none');
+        progEntry[key] = value;
+        if (value === 'none') explicitNoneMids.add(key);
+        else explicitNoneMids.delete(key);
+      });
     });
 
     const logEntry = (state.logs[today] || {})[sid] || {};
-    const todayNotes = String(logEntry.notes || '');
+    const todayNotes = cleanHwText(logEntry.notes);
     let seededNotes = todayNotes;
 
     // 오늘 특이사항이 비어 있으면, 가장 최근 특이사항을 실제 텍스트로 미리 채운다.
@@ -1037,7 +1123,7 @@ export function initLogModal() {
         const d = dates[i];
         if (d >= today) continue;
         const prev = (state.logs[d] || {})[sid];
-        const prevNotes = String(prev?.notes || '');
+        const prevNotes = cleanHwText(prev?.notes);
         if (prevNotes.trim()) {
           seededNotes = prevNotes;
           break;
@@ -1045,7 +1131,7 @@ export function initLogModal() {
       }
     }
 
-    logNotes.value = seededNotes;
+    logNotes.value = cleanHwText(seededNotes);
     logNotes.placeholder = '';
 
     const todayRows = entryHwRows(logEntry);
@@ -1107,9 +1193,12 @@ export function initLogModal() {
         cell.dataset.mid = String(v.mid);
 
         const autoSkip = shouldSkipForLow(stu, v);
-        const initial = progEntry[String(v.mid)] || (autoSkip ? 'skip' : 'none');
+        const midKey = String(v.mid);
+        const hasExplicitNone = explicitNoneMids.has(midKey);
+        const initial = hasExplicitNone ? 'none' : (progEntry[midKey] || (autoSkip ? 'skip' : 'none'));
         cell.dataset.initial = initial;
         cell.dataset.state = initial;
+        cell.dataset.explicitNone = hasExplicitNone ? '1' : '';
         cell.dataset.cleared = '';
 
         cell.addEventListener('click', () => {
@@ -1142,6 +1231,7 @@ export function initLogModal() {
   const close = () => {
     logModal.style.display = 'none';
     editingLogSid = null;
+    editingLogDate = null;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
@@ -1150,7 +1240,7 @@ export function initLogModal() {
   logModal.addEventListener('click', (e) => { if (e.target === logModal) close(); });
 
   async function saveBase(doneFlag) {
-    const today = todayLocalKey();
+    const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
 
     const prevLog = (state.logs?.[today] || {})[sid] || {};
@@ -1196,7 +1286,7 @@ export function initLogModal() {
       .join(', ');
 
     const hwRows = collectHwTable();
-    const notesNow = (logNotes.value || '').trim();
+    const notesNow = cleanHwText(logNotes.value);
     const clearKeys = [];
     const entry = {};
     const base = {};
@@ -1274,7 +1364,7 @@ export function initLogModal() {
   logAssign?.addEventListener('click', async () => {
     try {
       await saveBase(false);
-      const today = todayLocalKey();
+      const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: false });
       toast(`숙제 배정 완료 (${nowHHMM()})`);
       close();
@@ -1292,7 +1382,7 @@ export function initLogModal() {
   logComplete.addEventListener('click', async () => {
     try {
       await saveBase(false);
-      const today = todayLocalKey();
+      const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
       toast(`숙제 검사 완료 (${nowHHMM()})`);
       close();
@@ -1336,6 +1426,7 @@ export function initLogModal() {
         if (!st) return;
 
         // 이미 사람이 지정한 상태(done/interrupted/skip)가 있으면 자동값으로 덮지 않는다.
+        if (cell.dataset.explicitNone === '1') return;
         const current = String(cell.dataset.state || 'none');
         if (current !== 'none') return;
 

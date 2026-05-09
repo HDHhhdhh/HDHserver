@@ -8,11 +8,12 @@
 //
 // ✅ 숙제 출력: 괄호 없이 "교재 / 이번숙제 / 진행률 / 코멘트 / 다음숙제"  (빈칸은 공백으로 유지)
 // ✅ 숙제 블록에 컬럼명(헤더) 라인을 항상 출력
-// ✅ (추가) 다운로드 파일명에 오늘 날짜(YYYY-MM-DD) 포함
+// ✅ (추가) 다운로드 파일명에 관리자 선택 날짜(YYYY-MM-DD) 포함
 // ✅ (추가) 특이사항(notes/memo/special 등) 내용 있으면 출력
 
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
 
 /* ─────────────────────────────────────────────
  * ✅ 숙제 출력(헤더 포함, 괄호 제거 버전)
@@ -23,7 +24,7 @@ const HW_HEADER_LINE = '교재 / 이번 숙제 / 진행률 / 코멘트 / 다음�
 
 function normStr(v) { return String(v ?? '').trim(); }
 
-function hwRowToLine(r) {
+function hwRowToFields(r) {
   const book = normStr(r?.book ?? r?.textbook ?? r?.name ?? r?.교재 ?? '');
 
   const thisHw = normStr(
@@ -37,11 +38,22 @@ function hwRowToLine(r) {
   const comment = normStr(r?.comment ?? r?.memo ?? r?.note ?? r?.코멘트 ?? r?.비고 ?? '');
   const nextHw  = normStr(r?.nextHw ?? r?.next ?? r?.nextHomework ?? r?.다음숙제 ?? r?.다음 ?? '');
 
+  return { book, thisHw, pct, comment, nextHw };
+}
+
+function hwFieldsHaveContent(fields) {
+  if (!fields || typeof fields !== 'object') return false;
+  return !!(fields.book || fields.thisHw || fields.pct || fields.comment || fields.nextHw);
+}
+
+function hwRowToLine(r) {
+  const fields = hwRowToFields(r);
+
   // 전부 비면 출력 X
-  if (!book && !thisHw && !pct && !comment && !nextHw) return '';
+  if (!hwFieldsHaveContent(fields)) return '';
 
   // ✅ 5칸 고정 (빈칸도 자리 유지)
-  return `${book} / ${thisHw} / ${pct} / ${comment} / ${nextHw}`;
+  return `${fields.book} / ${fields.thisHw} / ${fields.pct} / ${fields.comment} / ${fields.nextHw}`;
 }
 
 function buildHwBlockFromTable(rows) {
@@ -67,6 +79,25 @@ function buildHwBlockFromLegacyString(str) {
     return `숙제 :\n${HW_HEADER_LINE}\n`;
   }
   return `숙제 :\n${HW_HEADER_LINE}\n${line}`;
+}
+
+function homeworkRowsForCsv(entry) {
+  if (Array.isArray(entry?.homeworkTable) && entry.homeworkTable.length) {
+    return entry.homeworkTable
+      .map(hwRowToFields)
+      .filter(hwFieldsHaveContent);
+  }
+
+  const legacy = String(entry?.homework || '').replace(/\r?\n/g, ' ').trim();
+  if (!legacy) return [];
+
+  return [{
+    book: '',
+    thisHw: legacy,
+    pct: '',
+    comment: '',
+    nextHw: '',
+  }];
 }
 
 /* ─────────────────────────────────────────────
@@ -98,6 +129,19 @@ function pickSpecialText(entry) {
     }
   }
   return '';
+}
+
+function schoolForStudent(stu) {
+  if (!stu || typeof stu !== 'object') return '';
+  return normStr(
+    stu.school ?? stu.schoolName ?? stu.highSchool ?? stu.middleSchool ??
+    stu.high ?? stu.middle ?? stu.schoolHigh ?? stu.schoolMiddle ?? ''
+  );
+}
+
+function curriculumForStudent(stu) {
+  if (!stu || typeof stu !== 'object') return '';
+  return normStr(`${stu.curriculum || ''}${stu.subCurriculum ? ` ${stu.subCurriculum}` : ''}`);
 }
 
 /* ─────────────────────────────────────────────
@@ -142,13 +186,71 @@ function buildPriorBefore(dateStr, sid) {
   return prior;
 }
 
-/* 오늘 날짜 YYYY-MM-DD (로컬) */
-function todayYYYYMMDD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function exportDateStamp() {
+  return String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
+}
+
+function csvCell(value) {
+  const s = String(value ?? '');
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function recordsToCsv(records) {
+  const columns = [
+    'date',
+    'sid',
+    'name',
+    'school',
+    'curriculum',
+    'notes',
+    'tests',
+    'progress',
+    'homework_row',
+    'homework_book',
+    'homework_current',
+    'homework_progress',
+    'homework_comment',
+    'homework_next',
+  ];
+
+  const lines = [columns.map(csvCell).join(',')];
+
+  for (const record of records) {
+    const hwRows = record.homeworkRows.length ? record.homeworkRows : [null];
+    hwRows.forEach((hw, idx) => {
+      lines.push([
+        record.date,
+        record.sid,
+        record.name,
+        record.school,
+        record.curriculum,
+        record.notes,
+        record.testLines.join(' / '),
+        record.diffs.join(', '),
+        hw ? String(idx + 1) : '',
+        hw?.book || '',
+        hw?.thisHw || '',
+        hw?.pct || '',
+        hw?.comment || '',
+        hw?.nextHw || '',
+      ].map(csvCell).join(','));
+    });
+  }
+
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
+function downloadTextFile(filename, contents, type) {
+  const blob = new Blob([contents], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function initExport() {
@@ -171,7 +273,7 @@ export function initExport() {
       }
     } catch (err) {
       console.warn('[exportLogs] full history load failed:', err);
-      toast('?대낫?닿린 ?곗씠??濡쒕뱶 ?ㅽ뙣');
+      toast('내보내기 데이터 로드 실패');
       return;
     }
 
@@ -214,7 +316,7 @@ export function initExport() {
       return String(a.date).localeCompare(String(b.date));
     });
 
-    let out = '';
+    const records = [];
 
     targets.forEach(({ sid, date, entry: logEntry }) => {
       const stu = (state.students || []).find(s => String(s.id) === String(sid));
@@ -258,6 +360,7 @@ export function initExport() {
       }).filter(Boolean);
 
       const hasTests = testLines.length > 0;
+      const homeworkRows = homeworkRowsForCsv(logEntry);
 
       // 숙제 실제 내용 여부(헤더 제외)
       const hwHasContent = (() => {
@@ -272,22 +375,42 @@ export function initExport() {
       // 정책: 진도/숙제내용/테스트/특이사항 다 비면 출력 제외
       if (diffs.length === 0 && !hwHasContent && !hasTests && !hasSpecial) return;
 
-      const curLabel = stu.curriculum + (stu.subCurriculum ? ` ${stu.subCurriculum}` : '');
+      const curLabel = curriculumForStudent(stu);
 
       // 헤더 날짜는 "그 기록 날짜" 기준
       const d = new Date(date);
       const headerDate = `${d.getMonth() + 1}/${d.getDate()}`;
 
-      out += `(${headerDate}) ${stu.name}\n`;
+      records.push({
+        date,
+        sid: String(sid),
+        name: normStr(stu.name),
+        school: schoolForStudent(stu),
+        curriculum: curLabel,
+        notes: special,
+        testLines,
+        diffs,
+        homeworkRows,
+        hwBlock,
+        hwHasContent,
+        hasSpecial,
+        hasTests,
+        headerDate,
+      });
+    });
 
-      if (hasSpecial) out += `특이사항 : ${special}\n\n`;
-      if (hasTests) out += `테스트 : ${testLines.join(' / ')}\n\n`;
+    let out = '';
+    records.forEach((record) => {
+      out += `(${record.headerDate}) ${record.name}\n`;
 
-      out += `진도 (${curLabel}) : ${diffs.join(', ')}\n\n`;
+      if (record.hasSpecial) out += `특이사항 : ${record.notes}\n\n`;
+      if (record.hasTests) out += `테스트 : ${record.testLines.join(' / ')}\n\n`;
+
+      out += `진도 (${record.curriculum}) : ${record.diffs.join(', ')}\n\n`;
 
       // ✅ 숙제 출력
-      if (hwHasContent) {
-        out += `${hwBlock}\n\n\n`;
+      if (record.hwHasContent) {
+        out += `${record.hwBlock}\n\n\n`;
       } else {
         out += `숙제 :\n${HW_HEADER_LINE}\n\n\n`;
       }
@@ -298,19 +421,11 @@ export function initExport() {
       return;
     }
 
-    // 다운로드
-    const blob = new Blob([out], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-
     // ✅ 파일명 날짜 포함
-    const stamp = todayYYYYMMDD();
-    a.download = `수업기록_완료미정리_${stamp}.txt`;
+    const stamp = exportDateStamp();
+    downloadTextFile(`수업기록_완료미정리_${stamp}.txt`, out, 'text/plain;charset=utf-8');
+    downloadTextFile(`수업기록_완료미정리_${stamp}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
 
-    a.click();
-    URL.revokeObjectURL(url);
-
-    toast('수업 기록 내보내기 완료');
+    toast('수업 기록 TXT/CSV 내보내기 완료');
   });
 }

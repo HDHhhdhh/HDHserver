@@ -162,24 +162,29 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         prev = str(cur_sid.get(mid) or "").strip()
 
         # watch-status는 "자동 반영" 경로이므로 수동으로 지정된 상태를 우선한다.
+        # "none"은 관리자가 수동으로 흰색 처리한 명시 상태이므로 자동값으로 덮지 않는다.
         # - interrupted 자동값은 기존 상태가 없을 때만 세팅
         # - done 자동값은 interrupted를 done으로 올리는 것만 허용
         # - skip/done은 자동값으로 덮어쓰지 않음
         if status in ("", "none"):
-            if prev not in ("done", "interrupted", "skip"):
+            if prev not in ("done", "interrupted", "skip", "none"):
                 merged.pop(mid, None)
         elif status == "interrupted":
-            if prev in ("done", "interrupted", "skip"):
+            if prev in ("done", "interrupted", "skip", "none"):
                 pass
             else:
                 merged[mid] = "interrupted"
         elif status == "done":
-            if prev == "skip":
+            if prev == "none":
+                merged[mid] = "none"
+            elif prev == "skip":
                 merged[mid] = "skip"
             else:
                 merged[mid] = "done"
         elif status == "skip":
-            if prev != "done":
+            if prev in ("done", "none"):
+                pass
+            else:
                 merged[mid] = "skip"
         else:
             merged[mid] = status

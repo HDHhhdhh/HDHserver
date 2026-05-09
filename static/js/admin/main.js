@@ -44,7 +44,6 @@ initAdminUiEnhance();
 
 // 4) 최초 렌더 + 이벤트로 재렌더
 loadTodayAndRender();
-document.addEventListener('admin:refresh', loadTodayAndRender);
 
 // 기존 전역 의존 로직을 위해 최소 노출(필요 시)
 window.state = state;

@@ -541,6 +541,156 @@ def _truthy(v) -> bool:
     return v is True or v == 1 or v == "1" or v == "true"
 
 
+def _is_question_placeholder(value) -> bool:
+    text = re.sub(r"\s+", "", str(value or ""))
+    return len(text) >= 2 and set(text) == {"?"}
+
+
+def _looks_corrupted_placeholder_text(value) -> bool:
+    text = str(value or "").strip()
+    if text.count("?") < 2:
+        return False
+    # If any real Korean/CJK/Latin text remains, keep it. This avoids
+    # stripping legitimate notes such as "확인??" while hiding mojibake.
+    return re.search(r"[A-Za-z가-힣一-龥]", text) is None
+
+
+def _clean_placeholder_text(value) -> str:
+    text = str(value or "").strip()
+    return "" if _is_question_placeholder(text) or _looks_corrupted_placeholder_text(text) else text
+
+
+def _student_homework_books(sid: str) -> List[str]:
+    try:
+        students = load(STU_PATH) or []
+    except Exception:
+        students = []
+    if not isinstance(students, list):
+        return []
+
+    sid_s = str(sid or "").strip()
+    stu = next(
+        (s for s in students if isinstance(s, dict) and str(s.get("id") or "").strip() == sid_s),
+        None,
+    )
+    if not stu:
+        return []
+
+    books: List[str] = []
+    for key in sorted(stu.keys(), key=lambda k: int(k[7:]) if re.match(r"^subBook\d+$", str(k)) else 999):
+        if not re.match(r"^subBook\d+$", str(key)):
+            continue
+        val = str(stu.get(key) or "").strip()
+        if val and val not in books:
+            books.append(val)
+    return books
+
+
+def _book_key(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip()).lower()
+
+
+def _hw_row_summary(row: dict) -> str:
+    if not isinstance(row, dict) or row.get("_deleted"):
+        return ""
+
+    book = str(row.get("book") or "").strip()
+    this_hw = str(row.get("this") or "").strip()
+    pct = row.get("pct")
+    pct_s = "" if pct in ("", None) else f"{str(pct).strip()}%"
+    comment = str(row.get("comment") or "").strip()
+    next_hw = str(row.get("next") or "").strip()
+
+    parts: List[str] = []
+    if book:
+        parts.append(f"[{book}]")
+    if this_hw:
+        parts.append(this_hw)
+    if pct_s:
+        parts.append(pct_s)
+    if comment:
+        parts.append(f"({comment})")
+    if next_hw:
+        parts.append(f"→ {next_hw}")
+    return " ".join(parts).strip()
+
+
+def _repair_homework_rows(rows, sid: str) -> tuple[list, bool]:
+    if not isinstance(rows, list):
+        return [], False
+
+    books = _student_homework_books(sid)
+    used = {
+        _book_key(row.get("book"))
+        for row in rows
+        if isinstance(row, dict) and not _is_question_placeholder(row.get("book"))
+    }
+    used.discard("")
+
+    out: List[dict] = []
+    changed = False
+
+    for row in rows:
+        if not isinstance(row, dict):
+            changed = True
+            continue
+
+        next_row = dict(row)
+
+        raw_book = str(next_row.get("book") or "").strip()
+        if _is_question_placeholder(raw_book):
+            replacement = next((b for b in books if _book_key(b) not in used), "")
+            next_row["book"] = replacement
+            if replacement:
+                used.add(_book_key(replacement))
+            changed = True
+        elif raw_book:
+            used.add(_book_key(raw_book))
+
+        for field in ("this", "comment", "next"):
+            if field in next_row:
+                cleaned = _clean_placeholder_text(next_row.get(field))
+                if cleaned != str(next_row.get(field) or "").strip():
+                    next_row[field] = cleaned
+                    changed = True
+
+        out.append(next_row)
+
+    return out, changed
+
+
+def _repair_log_entry_placeholders(entry: dict, sid: str) -> dict:
+    if not isinstance(entry, dict):
+        return {}
+
+    out = dict(entry)
+
+    if "notes" in out:
+        cleaned_notes = _clean_placeholder_text(out.get("notes"))
+        if cleaned_notes:
+            out["notes"] = cleaned_notes
+        else:
+            out.pop("notes", None)
+
+    rows = out.get("homeworkTable")
+    repaired_rows, changed = _repair_homework_rows(rows, sid)
+
+    if isinstance(rows, list):
+        out["homeworkTable"] = repaired_rows
+        if changed:
+            summary = " / ".join(
+                s for s in (_hw_row_summary(row) for row in repaired_rows) if s
+            )
+            if summary:
+                out["homework"] = summary
+            else:
+                out.pop("homework", None)
+    elif _is_question_placeholder(out.get("homework")):
+        out.pop("homework", None)
+
+    return out
+
+
 def _merge_entry_safe(cur: dict, inc: dict) -> dict:
     if not isinstance(cur, dict):
         cur = {}
@@ -675,7 +825,8 @@ def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
 # ─────────────────────────────────────────────
 # ✅ progress 1건(date/sid) 안전 merge
 # - inc[mid] = "done" | "interrupted" | "skip" | "none"
-# - "none" 은 명시 삭제 의미
+# - "none" is an explicit manual clear marker. It must override older
+#   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
 def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
     if not isinstance(cur, dict):
@@ -691,7 +842,9 @@ def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
             continue
 
         st_s = str(st).strip()
-        if st_s == "none" or st_s == "":
+        if st_s == "none":
+            out[mid_s] = "none"
+        elif st_s == "":
             out.pop(mid_s, None)
         else:
             out[mid_s] = st_s
@@ -761,7 +914,8 @@ def _db_get_entry(con: sqlite3.Connection, date: str, sid: str) -> dict:
 
 
 def _db_upsert_entry(con: sqlite3.Connection, date: str, sid: str, entry: dict):
-    ej = json.dumps(entry or {}, ensure_ascii=False)
+    safe_entry = _repair_log_entry_placeholders(entry or {}, sid)
+    ej = json.dumps(safe_entry, ensure_ascii=False)
     ua = _now_kst_iso()
     con.execute(
         """
@@ -785,7 +939,7 @@ def _db_dump_all(con: sqlite3.Connection) -> dict:
             e = json.loads(r["entry_json"]) if r["entry_json"] else {}
         except Exception:
             e = {}
-        out.setdefault(d, {})[s] = e
+        out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
     return out
 
 
@@ -798,7 +952,61 @@ def _db_dump_date(con: sqlite3.Connection, date: str) -> dict:
             e = json.loads(r["entry_json"]) if r["entry_json"] else {}
         except Exception:
             e = {}
-        out[date][s] = e
+        out[date][s] = _repair_log_entry_placeholders(e, s)
+    return out
+
+
+def _db_dump_sid(con: sqlite3.Connection, sid: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {}
+    rows = con.execute("SELECT date, sid, entry_json FROM logs WHERE sid=?;", (sid,)).fetchall()
+    for r in rows:
+        d = str(r["date"])
+        s = str(r["sid"])
+        try:
+            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
+        except Exception:
+            e = {}
+        if isinstance(e, dict) and e:
+            out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
+    return out
+
+
+def _db_dump_date_sid(con: sqlite3.Connection, date: str, sid: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {date: {}}
+    entry = _db_get_entry(con, date, sid)
+    if isinstance(entry, dict) and entry:
+        out[date][sid] = _repair_log_entry_placeholders(entry, sid)
+    return out
+
+
+def _filter_logs_map(data: dict, date_filter: str = "", sid_filter: str = "") -> dict:
+    if not isinstance(data, dict):
+        return {}
+
+    dates = [date_filter] if date_filter else sorted(data.keys())
+    out: Dict[str, Dict[str, dict]] = {}
+
+    for d in dates:
+        by_sid = data.get(d) if isinstance(data, dict) else None
+        if not isinstance(by_sid, dict):
+            if date_filter:
+                out.setdefault(str(d), {})
+            continue
+
+        if sid_filter:
+            entry = _sid_lookup(by_sid, sid_filter)
+            if isinstance(entry, dict) and entry:
+                out.setdefault(str(d), {})[str(sid_filter)] = _repair_log_entry_placeholders(entry, sid_filter)
+            elif date_filter:
+                out.setdefault(str(d), {})
+            continue
+
+        out[str(d)] = {
+            str(sid): _repair_log_entry_placeholders(entry, str(sid))
+            for sid, entry in by_sid.items()
+            if isinstance(entry, dict)
+        }
+
     return out
 
 
@@ -1301,7 +1509,7 @@ def api_logs_entry():
             pass
 
         if isinstance(entry, dict) and entry:
-            return jsonify({"ok": True, "source": "sqlite", "entry": entry})
+            return jsonify({"ok": True, "source": "sqlite", "entry": _repair_log_entry_placeholders(entry, sid)})
     except Exception as e:
         print("[logs.entry] sqlite failed:", e, flush=True)
         try:
@@ -1317,7 +1525,104 @@ def api_logs_entry():
     except Exception:
         entry = {}
 
-    return jsonify({"ok": True, "source": "json", "entry": entry})
+    return jsonify({"ok": True, "source": "json", "entry": _repair_log_entry_placeholders(entry, sid)})
+
+
+def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
+    entries: Dict[str, Dict[str, dict]] = {}
+    sqlite_keys = set()
+
+    con = None
+    try:
+        con = _db_connect()
+        _db_ensure_schema(con)
+        for row in con.execute("SELECT date, sid FROM logs;").fetchall():
+            sqlite_keys.add((str(row["date"]), str(row["sid"])))
+
+        rows = con.execute(
+            """
+            SELECT date, sid, entry_json
+            FROM logs
+            WHERE json_extract(entry_json, ?) IN (1, 'true')
+              AND COALESCE(json_extract(entry_json, ?), 0) NOT IN (1, 'true');
+            """,
+            ("$.done", "$.archived"),
+        ).fetchall()
+        for row in rows:
+            d = str(row["date"])
+            sid = str(row["sid"])
+            try:
+                entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
+            except Exception:
+                entry = {}
+            if isinstance(entry, dict):
+                entries.setdefault(d, {})[sid] = _repair_log_entry_placeholders(entry, sid)
+    except Exception as e:
+        print("[logs.unarchived-summary] sqlite failed:", e, flush=True)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    try:
+        json_map = load(LOGS_PATH) or {}
+        if isinstance(json_map, dict):
+            for d, by_sid in json_map.items():
+                if not isinstance(by_sid, dict):
+                    continue
+                d_s = str(d)
+                day = entries.setdefault(str(d), {})
+                for sid, entry in by_sid.items():
+                    sid_s = str(sid)
+                    if (d_s, sid_s) in sqlite_keys or sid_s in day or not isinstance(entry, dict):
+                        continue
+                    if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
+                        continue
+                    day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
+    except Exception:
+        pass
+
+    by_date: Dict[str, int] = {}
+    students = set()
+    total = 0
+    for d, by_sid in entries.items():
+        d_s = str(d)
+        if exclude_date and d_s == exclude_date:
+            continue
+        if not isinstance(by_sid, dict):
+            continue
+        for sid, entry in by_sid.items():
+            if not isinstance(entry, dict):
+                continue
+            if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
+                continue
+            by_date[d_s] = by_date.get(d_s, 0) + 1
+            students.add(str(sid))
+            total += 1
+
+    return {
+        "ok": True,
+        "excludeDate": exclude_date,
+        "total": total,
+        "students": len(students),
+        "byDate": [
+            {"date": d, "count": by_date[d]}
+            for d in sorted(by_date.keys(), reverse=True)
+        ],
+    }
+
+
+@bp_api_basic.get("/api/logs/unarchived-summary")
+def api_logs_unarchived_summary():
+    exclude_date = str(
+        request.args.get("exclude_date")
+        or request.args.get("excludeDate")
+        or ""
+    ).strip()
+    if exclude_date and not DATE_RE.match(exclude_date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+    return jsonify(_summarize_unarchived_done_logs(exclude_date))
 
 
 # ─────────────────────────────────────────────
@@ -1330,6 +1635,7 @@ def api_logs_entry():
 def api_logs():
     if request.method == "GET":
         date_filter = str(request.args.get("date") or "").strip()
+        sid_filter = str(request.args.get("sid") or "").strip()
         if date_filter and not DATE_RE.match(date_filter):
             return jsonify({"ok": False, "error": "bad date"}), 400
 
@@ -1338,7 +1644,14 @@ def api_logs():
         try:
             con = _db_connect()
             _db_ensure_schema(con)
-            sqlite_map = _db_dump_date(con, date_filter) if date_filter else _db_dump_all(con)
+            if date_filter and sid_filter:
+                sqlite_map = _db_dump_date_sid(con, date_filter, sid_filter)
+            elif date_filter:
+                sqlite_map = _db_dump_date(con, date_filter)
+            elif sid_filter:
+                sqlite_map = _db_dump_sid(con, sid_filter)
+            else:
+                sqlite_map = _db_dump_all(con)
             sqlite_ok = True
         except Exception as e:
             print("[logs] sqlite GET failed:", e, flush=True)
@@ -1354,8 +1667,8 @@ def api_logs():
             json_map = load(LOGS_PATH) or {}
             if not isinstance(json_map, dict):
                 json_map = {}
-            if date_filter:
-                json_map = {date_filter: json_map.get(date_filter, {})}
+            if date_filter or sid_filter:
+                json_map = _filter_logs_map(json_map, date_filter, sid_filter)
         except Exception:
             json_map = {}
 
@@ -1374,7 +1687,7 @@ def api_logs():
                 sid_s = str(sid)
                 if sid_s not in day:
                     if isinstance(entry, dict):
-                        day[sid_s] = entry
+                        day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
         return nocache_resp(out)
 
     incoming = request.get_json(force=True) or {}
@@ -1398,9 +1711,10 @@ def api_logs():
                     continue
                 date_s = str(date)
                 sid_s = str(sid)
+                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
 
                 cur = _db_get_entry(con, date_s, sid_s)
-                merged = _merge_entry_safe(cur, entry)
+                merged = _merge_entry_safe(cur, safe_entry)
                 _db_upsert_entry(con, date_s, sid_s, merged)
         con.execute("COMMIT;")
         sqlite_ok = True
@@ -1435,8 +1749,9 @@ def api_logs():
                 if not isinstance(entry, dict):
                     continue
                 sid_s = str(sid)
+                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
                 cur_entry = cur_day.get(sid_s, {})
-                cur_day[sid_s] = _merge_entry_safe(cur_entry, entry)
+                cur_day[sid_s] = _merge_entry_safe(cur_entry, safe_entry)
 
         save_atomic(LOGS_PATH, current)
 
@@ -1474,6 +1789,9 @@ def api_logs_patch():
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
 
+    entry = _repair_log_entry_placeholders(entry, sid)
+    base = _repair_log_entry_placeholders(base, sid)
+
     merged: dict = {}
 
     sqlite_ok = False
@@ -1483,7 +1801,7 @@ def api_logs_patch():
         con = _db_connect()
         _db_ensure_schema(con)
         con.execute("BEGIN IMMEDIATE;")
-        cur = _db_get_entry(con, date, sid)
+        cur = _repair_log_entry_placeholders(_db_get_entry(con, date, sid), sid)
         if _entry_conflicts_with_base(cur, base):
             con.execute("ROLLBACK;")
             # SQLite? JSON? ?? ??? ??? ?? ?? ?? ??? JSON ???? ??.
@@ -1521,6 +1839,7 @@ def api_logs_patch():
             cur_json = day.get(sid, {})
             if not isinstance(cur_json, dict):
                 cur_json = {}
+            cur_json = _repair_log_entry_placeholders(cur_json, sid)
 
             if _entry_conflicts_with_base(cur_json, base):
                 return jsonify({
@@ -1532,6 +1851,7 @@ def api_logs_patch():
 
             if not merged:
                 merged = _merge_entry_safe(cur_json, entry)
+            merged = _repair_log_entry_placeholders(merged, sid)
             day[sid] = merged
 
             save_atomic(LOGS_PATH, current)

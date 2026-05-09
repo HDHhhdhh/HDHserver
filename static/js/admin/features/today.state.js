@@ -617,6 +617,36 @@ export function collectUnarchivedLogsByDate(dateKey) {
   return out;
 }
 
+export function collectUnarchivedLogsExceptDate(dateKey) {
+  const logs = state.logs || {};
+  const selectedDate = String(dateKey || '').trim();
+  if (!selectedDate) return [];
+
+  const out = [];
+  for (const date of Object.keys(logs).sort()) {
+    if (date === selectedDate) continue;
+
+    const dayMap = logs[date] || {};
+    if (!dayMap || typeof dayMap !== 'object') continue;
+
+    for (const sid of Object.keys(dayMap)) {
+      const e = dayMap[sid] || {};
+      const done = truthy(e.done);
+      const archived = truthy(e.archived);
+      if (!done || archived) continue;
+      out.push([String(sid), e, date]);
+    }
+  }
+
+  out.sort((a, b) => {
+    const dateCmp = String(b[2]).localeCompare(String(a[2]));
+    if (dateCmp !== 0) return dateCmp;
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+
+  return out;
+}
+
 // Backward compatibility: 기존 호출부 이름 유지
 export function collectUnarchivedDoneLogsAllDates() {
   return collectUnarchivedLogsByDate(getAdminDate());
