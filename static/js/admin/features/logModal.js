@@ -1130,6 +1130,7 @@ export function initLogModal() {
       const day = (state.progress?.[d] || {})[sid] || {};
       Object.entries(day).forEach(([mid, st]) => {
         const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
         const value = String(st || 'none');
         progEntry[key] = value;
         if (value === 'none') explicitNoneMids.add(key);
@@ -1329,7 +1330,11 @@ export function initLogModal() {
     const oldDates = Object.keys(state.progress).filter(d => d < today);
     const oldTotal = {};
     oldDates.forEach(d => {
-      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => { oldTotal[String(mid)] = st; });
+      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        oldTotal[key] = st;
+      });
     });
     const label = (mid, st) => {
       if (st === 'none') return null;

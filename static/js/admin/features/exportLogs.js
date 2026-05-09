@@ -15,6 +15,8 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 
+const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
+
 /* ─────────────────────────────────────────────
  * ✅ 숙제 출력(헤더 포함, 괄호 제거 버전)
  *  - 5칸: 교재 / 이번숙제 / 진행률 / 코멘트 / 다음숙제
@@ -181,9 +183,22 @@ function buildPriorBefore(dateStr, sid) {
     .forEach(d => {
       const day = state.progress[d] || {};
       const prog = day?.[sid] || {};
-      Object.entries(prog || {}).forEach(([mid, st]) => { prior[mid] = st; });
+      Object.entries(prog || {}).forEach(([mid, st]) => {
+        if (String(mid).startsWith('__') || mid === 'tests') return;
+        prior[mid] = st;
+      });
     });
   return prior;
+}
+
+function allStudentsProgressMids(entry) {
+  const raw = entry?.[ALL_STUDENTS_PROGRESS_META];
+  if (!raw || typeof raw !== 'object') return new Set();
+  return new Set(
+    Object.entries(raw)
+      .filter(([, on]) => on === true || on === 'true' || on === 1 || on === '1')
+      .map(([mid]) => String(mid))
+  );
 }
 
 function exportDateStamp() {
@@ -325,10 +340,18 @@ export function initExport() {
       // 해당 날짜의 진도/이전 누적
       const progThatDay = state.progress?.[date]?.[sid] || {};
       const before = buildPriorBefore(date, String(sid));
+      const exportSkipMids = allStudentsProgressMids(progThatDay);
 
       // 변화만 + skip 제외 + 챕터순
       const diffObjs = Object.entries(progThatDay)
-        .filter(([mid, st]) => before[mid] !== st && st !== 'none' && st !== 'skip')
+        .filter(([mid, st]) =>
+          !String(mid).startsWith('__') &&
+          mid !== 'tests' &&
+          !exportSkipMids.has(String(mid)) &&
+          before[mid] !== st &&
+          st !== 'none' &&
+          st !== 'skip'
+        )
         .map(([mid, st]) => {
           const v = videoMap.get(String(mid)) || {};
           return { mid, st, chap: chapterNum(v) };

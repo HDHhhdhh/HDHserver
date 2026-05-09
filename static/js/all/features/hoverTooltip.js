@@ -133,7 +133,7 @@ export function initHoverTooltip() {
     allDates.forEach(d => {
       const per = state.progress[d]?.[stu.id] || {};
       Object.entries(per).forEach(([k, v]) => {
-        if (k === 'tests') return;
+        if (String(k).startsWith('__') || k === 'tests') return;
         mergedProg[k] = v;
       });
       if (per.tests && typeof per.tests === 'object') {

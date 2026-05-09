@@ -828,17 +828,28 @@ def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
 # - "none" is an explicit manual clear marker. It must override older
 #   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
-def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
+PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
+
+
+def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
     if not isinstance(cur, dict):
         cur = {}
     if not isinstance(inc, dict):
         return dict(cur)
 
     out = dict(cur)
+    source_s = str(source or "").strip()
+    all_page_meta = out.get(PROGRESS_ALL_STUDENTS_META_KEY)
+    if not isinstance(all_page_meta, dict):
+        all_page_meta = {}
+    else:
+        all_page_meta = dict(all_page_meta)
 
     for mid, st in inc.items():
         mid_s = str(mid).strip()
         if not mid_s:
+            continue
+        if mid_s.startswith("__"):
             continue
 
         st_s = str(st).strip()
@@ -848,6 +859,19 @@ def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
             out.pop(mid_s, None)
         else:
             out[mid_s] = st_s
+
+        if source_s == "allStudents":
+            if st_s == "":
+                all_page_meta.pop(mid_s, None)
+            else:
+                all_page_meta[mid_s] = True
+        else:
+            all_page_meta.pop(mid_s, None)
+
+    if all_page_meta:
+        out[PROGRESS_ALL_STUDENTS_META_KEY] = all_page_meta
+    else:
+        out.pop(PROGRESS_ALL_STUDENTS_META_KEY, None)
 
     return out
 
@@ -1065,7 +1089,10 @@ def _build_latest_status_by_sid(progress: dict) -> dict:
                 continue
             sm = out.setdefault(str(sid), {})
             for mid, st in mids.items():
-                sm[str(mid)] = st
+                mid_s = str(mid)
+                if mid_s.startswith("__") or mid_s == "tests":
+                    continue
+                sm[mid_s] = st
     return out
 
 
@@ -1253,6 +1280,7 @@ def api_progress_patch():
     date = str(body.get("date") or "").strip()
     sid = str(body.get("sid") or "").strip()
     prog = body.get("progress") or {}
+    source = str(body.get("source") or "").strip()
 
     if not date or not sid or not isinstance(prog, dict):
         return jsonify({"ok": False, "error": "bad payload"}), 400
@@ -1272,7 +1300,7 @@ def api_progress_patch():
             if not isinstance(cur_sid, dict):
                 cur_sid = {}
 
-            merged = _merge_progress_day_sid(cur_sid, prog)
+            merged = _merge_progress_day_sid(cur_sid, prog, source=source)
 
             if merged:
                 day[sid] = merged

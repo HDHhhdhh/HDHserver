@@ -4,7 +4,7 @@
 // - "커리큘럼/세부커리큘럼" 수정 가능 (고정 옵션 셀렉트)
 // - "요일" 밑 "등원시간" 행 추가 (월1~일1=13:00 / 월2~일2=18:00 기본, 수정 가능)
 // - "독스(docUrl)" 인라인 입력/저장 + 새 탭 열기 버튼
-// - ✅ (추가) 테이블에서 "영상 진도 보기" (읽기 전용 팝업)
+// - 테이블에서 "영상 진도 보기/수정" 팝업
 // - 커리별 학생 수(이름+학교 기준으로 중복 제거)
 
 import { $, toast } from '../core/utils.js';
@@ -249,14 +249,14 @@ export function renderTable() {
         </div>
       </td>
 
-      <!-- 독스 URL: 인라인 편집 + 열기 + ✅ 영상진도(보기) -->
+      <!-- 독스 URL: 인라인 편집 + 열기 + 영상진도(보기/수정) -->
       <td>
         <div class="docBox">
           <input type="url" class="docUrlInput" data-id="${s.id}"
                  placeholder="https://docs.google.com/..."
                  value="${escapeHtml(doc)}">
           <button type="button" class="docOpen" title="새 탭에서 열기" data-id="${s.id}">🔗</button>
-          <button type="button" class="miniProgBtn" title="영상 진도 보기" data-id="${s.id}">🎬</button>
+          <button type="button" class="miniProgBtn" title="영상 진도 보기/수정" data-id="${s.id}">🎬</button>
         </div>
       </td>
     </tr>`;
@@ -788,10 +788,25 @@ function initGradeInlineEdit() {
 }
 
 /* ─────────────────────────────────────────
-   ✅ 테이블용 "미니 영상 진도 보기" (읽기 전용)
-   - 테이블에서는 수정/저장 안 함
-   - state.progress 최신 누적 상태를 계산해서 보여주기만 함
+   테이블용 "미니 영상 진도 보기/수정"
+   - 전체학생 페이지 저장분은 로그 내보내기 진도 변경분에서 제외되도록 source를 분리
+   - state.progress 최신 누적 상태를 펼쳐 보여주고, 오늘 날짜에 변경분만 PATCH
 ────────────────────────────────────────── */
+function todayLocalKey() {
+  if (typeof window.todayLocalKey === 'function') return window.todayLocalKey();
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function nextProgressState(st) {
+  if (st === 'none') return 'done';
+  if (st === 'done') return 'interrupted';
+  return 'none';
+}
+
 function ensureMiniProgModal() {
   if (document.getElementById('miniProgModal')) return;
 
@@ -823,8 +838,14 @@ function ensureMiniProgModal() {
       height:34px; padding:0 12px; border-radius:10px;
       border:1px solid #e5e7eb; background:#f8fafc; cursor:pointer; font-weight:900;
     }
+    #miniProgModal button.primary{
+      background:#3b82f6; border-color:#3b82f6; color:#fff;
+    }
     body.dark #miniProgModal button{
       border-color:#334155; background:#1f2937; color:#e5e7eb;
+    }
+    body.dark #miniProgModal button.primary{
+      background:#2563eb; border-color:#2563eb; color:#fff;
     }
 
     #miniProgGrid{
@@ -835,8 +856,9 @@ function ensureMiniProgModal() {
       display:flex; align-items:center; justify-content:center;
       min-height:44px; padding:8px; border-radius:10px; box-sizing:border-box;
       border:1px solid #e5e7eb; background:#ffffff; color:#0f172a;
-      font-size:14px; user-select:none; cursor:default; position:relative;
+      font-size:14px; user-select:none; cursor:pointer; position:relative;
     }
+    #miniProgGrid .progress-cell:hover{ box-shadow:0 0 0 2px rgba(59,130,246,.18); }
     body.dark #miniProgGrid .progress-cell{ border-color:#334155; background:#0b1220; color:#e5e7eb; }
 
     #miniProgGrid .progress-cell[data-state="done"]{ background:#10b98122; border-color:#10b98155; }
@@ -854,6 +876,9 @@ function ensureMiniProgModal() {
     #miniProgModal .hint{
       margin-top:8px; opacity:.75; font-size:12px;
     }
+    #miniProgModal .miniProgActions{
+      display:flex; justify-content:flex-end; gap:8px; margin-top:10px;
+    }
   `;
   document.head.appendChild(s);
 
@@ -862,10 +887,13 @@ function ensureMiniProgModal() {
       <div class="card">
         <div class="top">
           <div class="title" id="miniProgTitle">영상 진도</div>
-          <button type="button" id="miniProgClose">닫기</button>
+          <div class="miniProgActions" style="margin-top:0">
+            <button type="button" id="miniProgSave" class="primary">저장</button>
+            <button type="button" id="miniProgClose">닫기</button>
+          </div>
         </div>
         <div id="miniProgGrid"></div>
-        <div class="hint">읽기 전용(테이블에서는 수정/저장 안 함)</div>
+        <div class="hint">좌클릭: 흰색 → 초록 → 노랑 → 흰색, 우클릭: 빨강. 저장 시 관리자 운영판 진도와 공유됩니다.</div>
       </div>
     </div>
   `);
@@ -873,7 +901,7 @@ function ensureMiniProgModal() {
   const modal = document.getElementById('miniProgModal');
   const close = () => { modal.style.display = 'none'; modal.dataset.sid = ''; };
   document.getElementById('miniProgClose')?.addEventListener('click', close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  document.getElementById('miniProgSave')?.addEventListener('click', saveMiniProgress);
 }
 
 function shouldSkipForLow(stu, v) {
@@ -885,9 +913,7 @@ function shouldSkipForLow(stu, v) {
 
 // sid의 누적 progress 최신 상태(오늘까지)를 한 번에 펼쳐서 계산
 function buildLatestProgEntryForSid(sid) {
-  const today = (typeof window.todayLocalKey === 'function')
-    ? window.todayLocalKey()
-    : new Date().toISOString().slice(0, 10);
+  const today = todayLocalKey();
 
   const dates = Object.keys(state.progress || {})
     .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today)
@@ -896,7 +922,10 @@ function buildLatestProgEntryForSid(sid) {
   const out = {};
   dates.forEach(d => {
     const day = (state.progress?.[d] || {})[sid] || {};
-    Object.entries(day).forEach(([mid, st]) => { out[String(mid)] = st; });
+    Object.entries(day).forEach(([mid, st]) => {
+      if (String(mid).startsWith('__') || mid === 'tests') return;
+      out[String(mid)] = st;
+    });
   });
   return out;
 }
@@ -929,6 +958,16 @@ function openMiniProgressForSid(sid) {
       const autoSkip = shouldSkipForLow(stu, v);
       const st = latest[String(v.mid)] || (autoSkip ? 'skip' : 'none');
       cell.dataset.state = st;
+      cell.dataset.initial = st;
+
+      cell.addEventListener('click', () => {
+        const cur = cell.dataset.state || 'none';
+        cell.dataset.state = nextProgressState(cur);
+      });
+      cell.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        cell.dataset.state = 'skip';
+      });
 
       grid.appendChild(cell);
     });
@@ -936,7 +975,60 @@ function openMiniProgressForSid(sid) {
   modal.style.display = 'flex';
 }
 
-// 🎬 버튼 핸들러(읽기 전용)
+async function saveMiniProgress() {
+  const modal = document.getElementById('miniProgModal');
+  const grid = document.getElementById('miniProgGrid');
+  const sid = modal?.dataset.sid;
+  if (!sid || !grid) return;
+
+  const changed = {};
+  grid.querySelectorAll('.progress-cell[data-mid]').forEach(cell => {
+    const mid = String(cell.dataset.mid || '');
+    const st = cell.dataset.state || 'none';
+    const initial = cell.dataset.initial || 'none';
+    if (mid && st !== initial) changed[mid] = st;
+  });
+
+  if (!Object.keys(changed).length) {
+    toast('변경된 진도가 없습니다.');
+    return;
+  }
+
+  const date = todayLocalKey();
+  try {
+    const res = await fetch('/api/progress/patch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date,
+        sid: String(sid),
+        progress: changed,
+        source: 'allStudents',
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body?.ok) throw new Error(body?.error || res.status);
+
+    state.progress = state.progress || {};
+    state.progress[date] = state.progress[date] || {};
+    state.progress[date][sid] = body.progress || {
+      ...(state.progress[date][sid] || {}),
+      ...changed,
+    };
+    window.progressData = state.progress;
+
+    grid.querySelectorAll('.progress-cell[data-mid]').forEach(cell => {
+      cell.dataset.initial = cell.dataset.state || 'none';
+    });
+    toast('영상 진도 저장됨');
+    modal.style.display = 'none';
+  } catch (err) {
+    console.error('[all students progress save failed]', err);
+    alert('영상 진도 저장 실패');
+  }
+}
+
+// 🎬 버튼 핸들러
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.miniProgBtn');
   if (!btn) return;

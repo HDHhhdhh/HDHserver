@@ -580,7 +580,7 @@ export function initVideoModal() {
         const perSid = state.progress[d]?.[editingSid];
         if (!perSid) continue;
         for (const [mid, st] of Object.entries(perSid)) {
-          if (mid === 'tests') continue;
+          if (String(mid).startsWith('__') || mid === 'tests') continue;
           lastStatus[mid] = st;
         }
       }
