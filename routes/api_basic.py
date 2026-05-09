@@ -845,8 +845,8 @@ def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
 
 
-def _ensure_today_auto_assign(updates, students, videos, progress):
-    today = _today_kst_iso()
+def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str | None = None):
+    today = date_key or _today_kst_iso()
 
     if not isinstance(updates, dict):
         updates = {}
@@ -944,6 +944,27 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
             changed = True
 
     return updates
+
+
+def _json_stable(obj) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def _load_updates_with_auto_assign(students=None, videos=None, date_key: str | None = None):
+    students = students if students is not None else load(STU_PATH)
+    videos = videos if videos is not None else load(VID_PATH)
+    progress = load(PRG_PATH)
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        before = _json_stable(updates)
+        fixed = _ensure_today_auto_assign(updates, students, videos, progress, date_key=date_key)
+        if _json_stable(fixed) != before:
+            save_atomic(UPD_PATH, fixed)
+        return fixed
 
 
 # ─────────────────────────────────────────────
@@ -1053,16 +1074,7 @@ def api_progress_patch():
 @bp_api_basic.route("/api/updates", methods=["GET", "POST"])
 def api_updates():
     if request.method == "GET":
-        updates = load(UPD_PATH)
-        fixed = _ensure_today_auto_assign(
-            updates,
-            load(STU_PATH),
-            load(VID_PATH),
-            load(PRG_PATH)
-        )
-        if fixed != updates:
-            save_atomic(UPD_PATH, fixed)
-        return nocache_resp(fixed)
+        return nocache_resp(_load_updates_with_auto_assign())
 
     incoming = request.get_json(force=True) or {}
     with _updates_lock():
@@ -1129,14 +1141,18 @@ def api_student_bootstrap():
     if not student:
         return jsonify({"ok": False, "error": "student not found"}), 404
 
-    updates = load(UPD_PATH) or {}
+    videos_all = load(VID_PATH) or []
+    if date == _today_kst_iso():
+        updates = _load_updates_with_auto_assign(students=students, videos=videos_all, date_key=date)
+    else:
+        updates = load(UPD_PATH) or {}
     day_updates = updates.get(date) if isinstance(updates, dict) else {}
     assignment = _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
     assigned_videos = _normalize_video_assign_list(assignment)
     assigned_set = set(assigned_videos)
 
     videos = [
-        v for v in (load(VID_PATH) or [])
+        v for v in videos_all
         if isinstance(v, dict) and str(v.get("mid") or "").strip() in assigned_set
     ]
 
