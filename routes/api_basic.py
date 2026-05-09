@@ -375,6 +375,149 @@ def _progress_lock():
     return _InterProcessFileLock(pp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
 
 
+def _updates_lock():
+    up = str(getattr(UPD_PATH, "__fspath__", lambda: str(UPD_PATH))())
+    return _InterProcessFileLock(up + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+
+
+def _sid_lookup(mapping: dict, sid: str):
+    if not isinstance(mapping, dict):
+        return None
+    keys = [str(sid or "").strip()]
+    if keys[0].isdigit():
+        alt = str(int(keys[0]))
+        if alt not in keys:
+            keys.append(alt)
+    for key in keys:
+        if key and key in mapping:
+            return mapping.get(key)
+    return None
+
+
+def _write_sid_mapping(mapping: dict, sid: str, value) -> None:
+    key = str(sid or "").strip()
+    if not key:
+        return
+    num_key = str(int(key)) if key.isdigit() else None
+    if num_key and num_key != key:
+        mapping.pop(num_key, None)
+    if value is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = value
+
+
+def _normalize_video_assign_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("videos")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+def _merge_update_assignment(current, incoming):
+    if incoming is None:
+        return current
+
+    videos = _normalize_video_assign_list(incoming)
+    if isinstance(incoming, list):
+        return videos
+
+    if isinstance(incoming, dict):
+        if incoming.get("remove") is True:
+            return None
+        out = dict(current) if isinstance(current, dict) else {}
+        for key, value in incoming.items():
+            if key in ("remove",):
+                continue
+            if key == "videos":
+                out["videos"] = videos
+            elif value is not None:
+                out[str(key)] = value
+        if "videos" not in incoming and videos:
+            out["videos"] = videos
+        return out if out else (videos if videos else current)
+
+    return current
+
+
+def _merge_updates_payload(current, incoming):
+    if not isinstance(current, dict):
+        current = {}
+    if not isinstance(incoming, dict):
+        return current
+
+    out = dict(current)
+    for date, by_sid in incoming.items():
+        date_s = str(date or "").strip()
+        if not DATE_RE.match(date_s) or not isinstance(by_sid, dict):
+            continue
+
+        day = out.setdefault(date_s, {})
+        if not isinstance(day, dict):
+            out[date_s] = {}
+            day = out[date_s]
+
+        for sid, value in by_sid.items():
+            sid_s = str(sid or "").strip()
+            if not sid_s:
+                continue
+            merged = _merge_update_assignment(_sid_lookup(day, sid_s), value)
+            _write_sid_mapping(day, sid_s, merged)
+
+        if not day:
+            out.pop(date_s, None)
+    return out
+
+
+def _assigned_material_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("materials")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("id") or item.get("url") or item.get("path")
+        key = str(item or "").strip()
+        if not key or key in seen:
+            continue
+        out.append(key)
+        seen.add(key)
+    return out
+
+
+def _filter_materials_for_assignment(materials, assigned):
+    if not isinstance(materials, dict):
+        return {}
+    wanted = {str(x) for x in (assigned or []) if str(x or "").strip()}
+    if not wanted:
+        return {}
+
+    out = {}
+    for key, value in materials.items():
+        item = value if isinstance(value, dict) else {}
+        candidates = {
+            str(key),
+            str(item.get("id") or ""),
+            str(item.get("mid") or ""),
+            str(item.get("url") or ""),
+            str(item.get("path") or ""),
+        }
+        if candidates & wanted:
+            out[key] = value
+    return out
+
+
 # ─────────────────────────────────────────────
 # ✅ logs 안전 merge (날아감 방지)
 # - PATCH가 기본
@@ -646,6 +789,19 @@ def _db_dump_all(con: sqlite3.Connection) -> dict:
     return out
 
 
+def _db_dump_date(con: sqlite3.Connection, date: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {date: {}}
+    rows = con.execute("SELECT sid, entry_json FROM logs WHERE date=?;", (date,)).fetchall()
+    for r in rows:
+        s = str(r["sid"])
+        try:
+            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
+        except Exception:
+            e = {}
+        out[date][s] = e
+    return out
+
+
 # ─────────────────────────────────────────────
 # updates 자동배정 보정 (원본 유지)
 # ─────────────────────────────────────────────
@@ -812,7 +968,30 @@ def api_videos():
 
 @bp_api_basic.route("/api/progress", methods=["GET"])
 def api_progress():
-    return jsonify(_load_progress_strict())
+    data = _load_progress_strict()
+    date = str(request.args.get("date") or "").strip()
+    sid = str(request.args.get("sid") or "").strip()
+
+    if date:
+        if not DATE_RE.match(date):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+        day = data.get(date) if isinstance(data, dict) else {}
+        if sid:
+            entry = _sid_lookup(day if isinstance(day, dict) else {}, sid) or {}
+            return jsonify({date: {str(sid): entry}})
+        return jsonify({date: day if isinstance(day, dict) else {}})
+
+    if sid:
+        out = {}
+        for d, day in (data.items() if isinstance(data, dict) else []):
+            if not isinstance(day, dict):
+                continue
+            entry = _sid_lookup(day, sid)
+            if isinstance(entry, dict) and entry:
+                out[d] = {str(sid): entry}
+        return jsonify(out)
+
+    return jsonify(data)
 
 
 @bp_api_basic.post("/api/progress/patch")
@@ -885,8 +1064,129 @@ def api_updates():
             save_atomic(UPD_PATH, fixed)
         return nocache_resp(fixed)
 
-    save_atomic(UPD_PATH, request.get_json(force=True))
+    incoming = request.get_json(force=True) or {}
+    with _updates_lock():
+        current = load(UPD_PATH) or {}
+        merged = _merge_updates_payload(current, incoming)
+        save_atomic(UPD_PATH, merged)
     return "", 204
+
+
+@bp_api_basic.post("/api/updates/patch")
+def api_updates_patch():
+    body = request.get_json(force=True) or {}
+    date = str(body.get("date") or "").strip()
+    sid = str(body.get("sid") or "").strip()
+    remove = bool(body.get("remove"))
+
+    if not date or not sid or not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+
+    if remove:
+        incoming = {"remove": True}
+    else:
+        incoming = dict(body.get("entry") or {}) if isinstance(body.get("entry"), dict) else {}
+        if "videos" in body:
+            incoming["videos"] = body.get("videos")
+        if not incoming:
+            incoming["videos"] = []
+
+    try:
+        with _updates_lock():
+            current = load(UPD_PATH) or {}
+            day = current.setdefault(date, {})
+            if not isinstance(day, dict):
+                current[date] = {}
+                day = current[date]
+
+            if remove:
+                _write_sid_mapping(day, sid, None)
+                assignment = []
+            else:
+                assignment = _merge_update_assignment(_sid_lookup(day, sid), incoming)
+                _write_sid_mapping(day, sid, assignment)
+
+            if not day:
+                current.pop(date, None)
+
+            save_atomic(UPD_PATH, current)
+        return jsonify({"ok": True, "assignment": assignment})
+    except TimeoutError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+
+
+@bp_api_basic.get("/api/student/bootstrap")
+def api_student_bootstrap():
+    sid = str(request.args.get("sid") or "").strip()
+    date = str(request.args.get("date") or _today_kst_iso()).strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "missing sid"}), 400
+    if not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+
+    students = load(STU_PATH) or []
+    student = next((s for s in students if isinstance(s, dict) and str(s.get("id")) == sid), None)
+    if not student:
+        return jsonify({"ok": False, "error": "student not found"}), 404
+
+    updates = load(UPD_PATH) or {}
+    day_updates = updates.get(date) if isinstance(updates, dict) else {}
+    assignment = _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
+    assigned_videos = _normalize_video_assign_list(assignment)
+    assigned_set = set(assigned_videos)
+
+    videos = [
+        v for v in (load(VID_PATH) or [])
+        if isinstance(v, dict) and str(v.get("mid") or "").strip() in assigned_set
+    ]
+
+    assigns = load(ASN_PATH) or {}
+    material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
+    assigned_materials = _assigned_material_list(material_assignment)
+    materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
+
+    absences = load_absent()
+    absent_for_date = {
+        "by_date": {date: (absences.get("by_date") or {}).get(date, [])},
+        "by_student": {sid: (absences.get("by_student") or {}).get(sid)}
+            if (absences.get("by_student") or {}).get(sid) else {},
+    }
+
+    logs = {}
+    try:
+        con = _db_connect()
+        _db_ensure_schema(con)
+        entry = _db_get_entry(con, date, sid)
+        if isinstance(entry, dict) and entry:
+            logs = {date: {sid: entry}}
+    except Exception:
+        logs = {}
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if not logs:
+        try:
+            json_logs = load(LOGS_PATH) or {}
+            entry = _sid_lookup((json_logs.get(date) or {}) if isinstance(json_logs, dict) else {}, sid)
+            logs = {date: {sid: entry}} if isinstance(entry, dict) and entry else {date: {}}
+        except Exception:
+            logs = {date: {}}
+
+    return nocache_resp({
+        "ok": True,
+        "date": date,
+        "students": [student],
+        "student": student,
+        "videos": videos,
+        "updates": {date: {sid: assignment or []}},
+        "materials": materials,
+        "assigns": {sid: material_assignment or []},
+        "absent": absent_for_date,
+        "logs": logs,
+    })
 
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
@@ -1013,12 +1313,16 @@ def api_logs_entry():
 @bp_api_basic.route("/api/logs", methods=["GET", "POST"])
 def api_logs():
     if request.method == "GET":
+        date_filter = str(request.args.get("date") or "").strip()
+        if date_filter and not DATE_RE.match(date_filter):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+
         sqlite_map = {}
         sqlite_ok = False
         try:
             con = _db_connect()
             _db_ensure_schema(con)
-            sqlite_map = _db_dump_all(con)
+            sqlite_map = _db_dump_date(con, date_filter) if date_filter else _db_dump_all(con)
             sqlite_ok = True
         except Exception as e:
             print("[logs] sqlite GET failed:", e, flush=True)
@@ -1034,6 +1338,8 @@ def api_logs():
             json_map = load(LOGS_PATH) or {}
             if not isinstance(json_map, dict):
                 json_map = {}
+            if date_filter:
+                json_map = {date_filter: json_map.get(date_filter, {})}
         except Exception:
             json_map = {}
 

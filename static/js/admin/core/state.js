@@ -7,7 +7,14 @@ export const state = {
   schoolCal: {},
 };
 
+function todayLocalKey() {
+  const now = new Date();
+  const tz = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - tz).toISOString().slice(0, 10);
+}
+
 export async function bootstrap() {
+  const today = todayLocalKey();
   const [
     students, videos, materials, updates, assigns, extra, logs, abs, progress, schoolCal
   ] = await Promise.all([
@@ -17,9 +24,9 @@ export async function bootstrap() {
     api.get('/api/updates').catch(()=> ({})),
     api.get('/api/mat-assign').catch(()=> ({})),
     api.get('/api/extra-attend').catch(()=> ({})),
-    api.get('/api/logs').catch(()=> ({})),
+    api.get(`/api/logs?date=${encodeURIComponent(today)}`).catch(()=> ({})),
     api.get('/api/absent').catch(()=> ({})),
-    api.get('/api/progress').catch(()=> ({})),
+    api.get(`/api/progress?date=${encodeURIComponent(today)}`).catch(()=> ({})),
     api.get('/api/school-calendar').catch(()=> ({})),
   ]);
 

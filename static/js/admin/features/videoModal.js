@@ -290,10 +290,10 @@ export function initVideoModal() {
       // ✅ 배열 포맷으로 저장
       state.updates = state.updates || {};
       writeAssignFor(state.updates, today, editingSid, assigned);
-      fetch('/api/updates', {
+      fetch('/api/updates/patch', {
         method: 'POST',
         headers: CT,
-        body: JSON.stringify(state.updates)
+        body: JSON.stringify({ date: today, sid: String(editingSid), videos: assigned })
       }).catch(() => {});
     }
 
@@ -417,10 +417,12 @@ export function initVideoModal() {
       delete state.updates[today][String(editingSid)];
     }
 
-    fetch('/api/updates', {
+    fetch('/api/updates/patch', {
       method: 'POST',
       headers: CT,
-      body: JSON.stringify(state.updates)
+      body: JSON.stringify(selected.length
+        ? { date: today, sid: String(editingSid), videos: selected }
+        : { date: today, sid: String(editingSid), remove: true })
     })
       .then(() => fetch('/api/updates', { cache: 'no-store' }))
       .then(r => r.json())

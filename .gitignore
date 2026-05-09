@@ -9,6 +9,7 @@ progress.json.*.tmp
 
 # Mirrored backups and generated/local data
 /_data_mirror/
+/_runtime_backups/
 /data/
 /files/
 /instance/

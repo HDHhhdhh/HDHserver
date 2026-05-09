@@ -209,7 +209,7 @@ export function initAnnouncements() {
     }
 
     return `
-      <div class="ann-card" data-id="${s.id}">
+      <div class="ann-card" data-id="${escapeAttr(s.id)}">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
           <h4 style="margin:0">${escapeHtml(s.title || '제목 없음')}</h4>
           <div class="actions" style="display:flex;gap:.35rem">
@@ -242,6 +242,9 @@ export function initAnnouncements() {
     return String(s ?? '').replace(/[&<>"']/g, m => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[m]));
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/`/g, '&#96;');
   }
   function formatDate(iso) {
     if (!iso) return '';

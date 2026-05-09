@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from urllib.parse import urlparse
 
 from flask import Flask, request, abort, render_template_string
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -23,6 +24,23 @@ from routes.api_todaymeta import bp_api_todaymeta
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+    @app.before_request
+    def block_cross_origin_writes():
+        if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return
+
+        host = (request.host or "").lower()
+        for header in ("Origin", "Referer"):
+            raw = (request.headers.get(header) or "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = urlparse(raw)
+            except Exception:
+                abort(403)
+            if parsed.netloc and parsed.netloc.lower() != host:
+                abort(403)
 
     # ─────────────────────────────────────────────
     # ✅ 학생 사이트(/student) — 학원 네트워크만 허용 (IPv4 + IPv6)

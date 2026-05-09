@@ -155,7 +155,26 @@ export function initExport() {
   const btn = $('exportLogs');
   if (!btn) return;
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    try {
+      const [logs, progress] = await Promise.all([
+        fetch('/api/logs', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch('/api/progress', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      ]);
+      if (logs && typeof logs === 'object') {
+        state.logs = logs;
+        window.logs = state.logs;
+      }
+      if (progress && typeof progress === 'object') {
+        state.progress = progress;
+        window.progressData = state.progress;
+      }
+    } catch (err) {
+      console.warn('[exportLogs] full history load failed:', err);
+      toast('?대낫?닿린 ?곗씠??濡쒕뱶 ?ㅽ뙣');
+      return;
+    }
+
     // 비디오 인덱스 (mid -> video)
     const videoMap = new Map((state.videos || []).map(v => [String(v.mid), v || {}]));
     const chapterNum = (v) => {

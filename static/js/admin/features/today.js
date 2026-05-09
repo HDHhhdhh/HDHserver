@@ -36,6 +36,21 @@ import {
   bindTodayTableEvents,
 } from './today.render.js';
 
+async function ensureLogsForDate(dateKey) {
+  const key = String(dateKey || '').trim();
+  if (!key || state.logs?.[key]) return;
+  try {
+    const res = await fetch(`/api/logs?date=${encodeURIComponent(key)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.logs = state.logs || {};
+      state.logs[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      window.logs = state.logs;
+    }
+  } catch {}
+}
+
 // ─────────────────────────────────────────────
 // 가나다 정렬 토글 (localStorage 유지)
 // ─────────────────────────────────────────────
@@ -257,6 +272,7 @@ export async function loadTodayAndRender() {
 
   const dateKey = getAdminDate();
 
+  await ensureLogsForDate(dateKey);
   await loadWeekendSlots();
   await ensureAttendLoaded(dateKey);
   await ensureContactLoaded(dateKey);
