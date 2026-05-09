@@ -104,7 +104,7 @@ function renderStaleDoneWarning(summary) {
   const studentText = students && students !== total ? `/${students}명` : '';
 
   el.hidden = false;
-  el.textContent = `정리 필요: 선택 날짜 외 완료/자유석 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+  el.textContent = `정리 필요: 어제까지 완료/자유석 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
 }
 
 let staleSummaryRequestSeq = 0;
@@ -147,10 +147,11 @@ function ensureAlphaSortBtn() {
       .today-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
       .today-tools .btn-sort{
         display:inline-flex;align-items:center;justify-content:center;
-        height:32px;padding:0 12px;border-radius:10px;
+        height:48px;padding:0 18px;border-radius:15px;
         border:1px solid rgba(148,163,184,.55);
         background:rgba(248,250,252,.95);
-        cursor:pointer;user-select:none;font-size:13px;line-height:1;
+        cursor:pointer;user-select:none;font-size:19.5px;line-height:1;
+        font-weight:800;
         transition:transform .08s ease, filter .12s ease, background .12s ease, border-color .12s ease;
       }
       body.dark .today-tools .btn-sort{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}

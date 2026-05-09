@@ -171,6 +171,23 @@ export function isHwChecked(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];
   return !!(e && truthy(e.hwChecked));
 }
+export async function setHomeworkCheckedRemote(dateKey, sid, checked) {
+  const on = !!checked;
+  if (on) {
+    const t = nowHHMM();
+    await patchLog(dateKey, sid, {
+      hwChecked: true,
+      hwCheckedAt: t,
+      hwAssigned: true,
+      hwAssignedAt: t,
+    });
+    return;
+  }
+  await patchLog(dateKey, sid, {
+    hwChecked: false,
+    hwAssigned: false,
+  }, ['hwCheckedAt', 'hwAssignedAt']);
+}
 export async function setLogFlagRemote(dateKey, sid, field, checked) {
   await patchLog(dateKey, sid, { [field]: checked ? true : false });
 }

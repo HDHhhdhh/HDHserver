@@ -256,7 +256,24 @@ function injectStyles() {
     }
     body.dark #logModal .log-card{ background:#0f172a; color:#e5e7eb; border-color:#334155; }
 
-    #logModal h3{ margin:6px 0 10px; font-size:18px; font-weight:800; }
+    #logModal .log-header-row{
+      position:sticky;
+      top:0;
+      z-index:6;
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin:-2px 0 10px;
+      padding:2px 0 10px;
+      background:#ffffff;
+      border-bottom:1px solid rgba(226,232,240,.9);
+    }
+    body.dark #logModal .log-header-row{
+      background:#0f172a;
+      border-bottom-color:#334155;
+    }
+    #logModal h3{ margin:6px 0 0; font-size:36px; font-weight:900; line-height:1.12; }
     #logModal label{ display:block; margin:10px 0 8px; font-size:14px; }
 
     #logModal textarea,
@@ -275,6 +292,14 @@ function injectStyles() {
       border-color:#475569;
       background:#0b1220;
       color:#e5e7eb;
+    }
+    #logModal #logNotes{
+      height:min(48vh, var(--student-log-notes-h, 416px));
+      min-height:260px;
+      resize:vertical;
+      font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','맑은 고딕',sans-serif;
+      font-size:28px;
+      line-height:1.35;
     }
 
     #logProgress{
@@ -464,11 +489,12 @@ function injectStyles() {
     }
     body.dark .hw-del-btn{ border-color:#334155; background:#0b1220; color:#e5e7eb; }
 
-    #logModal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
+    #logModal .actions{ display:flex; gap:12px; justify-content:flex-end; margin:0; flex-wrap:wrap; }
     #logModal .actions button{
-      height:36px; padding:0 12px; border-radius:10px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
-      font-weight:900; white-space:nowrap;
+      height:54px; min-width:96px; padding:0 18px; border-radius:14px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
+      font-size:20px; font-weight:900; white-space:nowrap;
     }
+    #logModal .actions #logCompleteBtn{ min-width:180px; }
     body.dark #logModal .actions button{ border-color:#334155; background:#1f2937; color:#e5e7eb; }
   `;
   document.head.appendChild(s);
@@ -476,11 +502,18 @@ function injectStyles() {
 
 function modalTemplateHTML() {
   return `
-      <div id="logModal">
+      <div id="logModal" aria-label="기록 팝업">
         <div class="log-card">
-          <h3 id="logTitle">수업 기록</h3>
+          <div class="log-header-row">
+            <h3 id="logTitle">수업 기록</h3>
+            <div class="actions" aria-label="기록 작업">
+              <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
+              <button type="button" id="logSave">저장</button>
+              <button type="button" id="logClose">닫기</button>
+            </div>
+          </div>
 
-          <label>특이사항<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
+          <label class="notes-label">상담 기록<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
 
           <label>진도</label>
           <div id="logProgress"></div>
@@ -508,12 +541,6 @@ function modalTemplateHTML() {
             </div>
           </div>
 
-          <div class="actions">
-            <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
-            <button type="button" id="logAssignBtn">숙제 배정 완료</button>
-            <button type="button" id="logSave">저장</button>
-            <button type="button" id="logClose">닫기</button>
-          </div>
         </div>
       </div>`;
 }
@@ -920,7 +947,6 @@ export function initLogModal() {
   const logTitle = $('logTitle');
   const logNotes = $('logNotes');
   const logSave = $('logSave');
-  const logAssign = $('logAssignBtn');
   const logClose = $('logClose');
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
@@ -1073,12 +1099,10 @@ export function initLogModal() {
     startState = cell.dataset.state || 'none';
   });
 
-  document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
-    if (!btn) return;
-
-    editingLogSid = btn.closest('tr')?.dataset.sid;
-    editingLogDate = btn.closest('tr')?.dataset.date || getAdminDate();
+  async function openLogModalForRow(rowOrButton, opts = {}) {
+    const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
+    editingLogSid = tr?.dataset?.sid;
+    editingLogDate = tr?.dataset?.date || getAdminDate();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
@@ -1215,29 +1239,64 @@ export function initLogModal() {
         progEl.append(cell);
       });
 
+    logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     logModal.style.display = 'flex';
     resetLogModalScroll();
     requestAnimationFrame(resetLogModalScroll);
 
     try {
       if (window.showStudentTooltipForSid) {
-        window.showStudentTooltipForSid(editingLogSid, { variant: 'log', fixed: true });
+        window.showStudentTooltipForSid(editingLogSid, {
+          variant: 'log',
+          fixed: true,
+          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
+        });
       }
     } catch (err) {
       console.warn('[logModal] show tooltip failed:', err);
     }
+  }
+
+  window.openRecordPopupForRow = openLogModalForRow;
+
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.editLog,.openStudentPopups');
+    if (!btn) return;
+
+    const tr = btn.closest('tr[data-sid]');
+    if (!tr) return;
+
+    const unified = btn.classList.contains('openStudentPopups');
+    if (unified && window.showStudentPopupBackdrop) {
+      try { window.showStudentPopupBackdrop(); } catch {}
+    }
+    let videoOpen = Promise.resolve();
+    if (unified && window.openVideoAssignmentPopupForRow) {
+      videoOpen = window.openVideoAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open video popup failed:', err);
+      });
+    }
+
+    await openLogModalForRow(tr, { layout: unified ? 'student-work' : undefined });
+    await videoOpen;
   });
 
   const close = () => {
+    const wasUnified = logModal.classList.contains('student-work-layout');
     logModal.style.display = 'none';
+    logModal.classList.remove('student-work-layout');
     editingLogSid = null;
     editingLogDate = null;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
+    if (wasUnified) {
+      try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
+    }
+    try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
+  window.closeStudentWorkPopups = close;
   logClose.addEventListener('click', close);
-  logModal.addEventListener('click', (e) => { if (e.target === logModal) close(); });
 
   async function saveBase(doneFlag) {
     const today = editingLogDate || getAdminDate();
@@ -1361,24 +1420,6 @@ export function initLogModal() {
     }
   });
 
-  logAssign?.addEventListener('click', async () => {
-    try {
-      await saveBase(false);
-      const today = editingLogDate || getAdminDate();
-      await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: false });
-      toast(`숙제 배정 완료 (${nowHHMM()})`);
-      close();
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
-    } catch (err) {
-      if (err?.message) {
-        alert(err.message);
-        return;
-      }
-      console.error(err);
-      alert('숙제 배정 완료 저장 실패');
-    }
-  });
-
   logComplete.addEventListener('click', async () => {
     try {
       await saveBase(false);
@@ -1439,7 +1480,7 @@ export function initLogModal() {
   }
 
   document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
+    const btn = e.target.closest('.editLog,.openStudentPopups');
     if (!btn) return;
 
     const tr = btn.closest('tr[data-sid]');

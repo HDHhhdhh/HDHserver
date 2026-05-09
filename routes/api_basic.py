@@ -1031,6 +1031,26 @@ def _has_assigned(val) -> bool:
     return False
 
 
+AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
+DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
+MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
+MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
+
+
+def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
+    try:
+        n = int(round(float(value)))
+    except Exception:
+        n = default
+    return max(MIN_AUTO_VIDEO_ASSIGN_COUNT, min(MAX_AUTO_VIDEO_ASSIGN_COUNT, n))
+
+
+def _student_auto_video_assign_count(stu: dict) -> int:
+    if not isinstance(stu, dict):
+        return DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
+    return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD))
+
+
 def _build_latest_status_by_sid(progress: dict) -> dict:
     out = {}
     if not isinstance(progress, dict):
@@ -1123,15 +1143,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
             if st in ("done", "skip")
         }
 
-        sub_norm = sub_key.strip()
-        lvl = (stu.get("level") or "").strip()
-
-        if sub_norm == "A:Ble":
-            max_assign = 1
-        elif sub_norm == "APEX":
-            max_assign = 2 if lvl in ("중", "하") else 3
-        else:
-            max_assign = 3
+        max_assign = _student_auto_video_assign_count(stu)
 
         picked = []
         for v in cur_vids:
@@ -1586,9 +1598,12 @@ def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
     by_date: Dict[str, int] = {}
     students = set()
     total = 0
+    today = _today_kst_iso()
     for d, by_sid in entries.items():
         d_s = str(d)
         if exclude_date and d_s == exclude_date:
+            continue
+        if d_s >= today:
             continue
         if not isinstance(by_sid, dict):
             continue
@@ -1912,6 +1927,8 @@ def api_update_student_field():
     students: List[dict] = load(STU_PATH)
     for s in students:
         if str(s.get("id")) == str(sid):
+            if field == AUTO_VIDEO_ASSIGN_FIELD:
+                value = _coerce_auto_video_assign_count(value)
             s[field] = value
             save_atomic(STU_PATH, students)
             return "OK"

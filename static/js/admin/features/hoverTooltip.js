@@ -31,6 +31,7 @@ export function initHoverTooltip() {
     if (tipEl) return tipEl;
     tipEl = document.createElement('div');
     tipEl.id = 'adminSchoolTip';
+    tipEl.setAttribute('aria-label', '툴팁 팝업');
     tipEl.style.cssText = `
       position: fixed;
       top: 0; left: 0;
@@ -51,6 +52,7 @@ export function initHoverTooltip() {
     tipEl.addEventListener('pointerdown', (ev) => {
       // 고정 모드에서만 드래그 허용 (로그 모달 고정 툴팁)
       if (tipMode !== 'fixed') return;
+      if (tipEl.classList.contains('student-work-layout')) return;
       if (ev.button !== 0) return; // 좌클릭만
 
       const rect = tipEl.getBoundingClientRect();
@@ -512,6 +514,26 @@ export function initHoverTooltip() {
     tipEl.style.top = `${top}px`;
   }
 
+  function resetStudentWorkTooltipPlacement() {
+    if (!tipEl) return;
+    tipEl.classList.remove('student-work-layout');
+    tipEl.style.right = 'auto';
+    tipEl.style.width = '';
+    tipEl.style.maxWidth = 'min(1100px, 92vw)';
+    tipEl.style.transform = 'translate(10px, 10px)';
+  }
+
+  function placeForStudentWorkLayout() {
+    if (!tipEl) return;
+    tipEl.classList.add('student-work-layout');
+    tipEl.style.transform = 'none';
+    tipEl.style.right = '';
+    tipEl.style.left = '';
+    tipEl.style.top = '';
+    tipEl.style.width = '';
+    tipEl.style.maxWidth = '';
+  }
+
   // ───────────────────────────────────────────
   // HTML 구성
   // ───────────────────────────────────────────
@@ -624,6 +646,8 @@ export function initHoverTooltip() {
     }
 
     const el = ensureTip();
+    const useStudentWorkLayout = opts.layout === 'student-work';
+    if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = buildTipHtml(stu, { includeVideo, includeTests });
     el.style.display = 'block';
 
@@ -637,7 +661,9 @@ export function initHoverTooltip() {
     }
 
     requestAnimationFrame(() => {
-      if (tipMode === 'fixed') {
+      if (useStudentWorkLayout) {
+        placeForStudentWorkLayout();
+      } else if (tipMode === 'fixed') {
         placeForLogModal();
       } else {
         if (ev) placeTooltip(ev);
@@ -656,7 +682,8 @@ export function initHoverTooltip() {
     try {
       showTooltipForElement(anchorEl, null, {
         fixed: !!(opts && opts.fixed),
-        variant: opts?.variant || 'default'
+        variant: opts?.variant || 'default',
+        layout: opts?.layout
       });
     } catch (e) { console.warn(e); }
   };
@@ -667,7 +694,8 @@ export function initHoverTooltip() {
       try {
         showTooltipForElement(el, null, {
           fixed: !!(opts && opts.fixed),
-          variant: opts?.variant || 'default'
+          variant: opts?.variant || 'default',
+          layout: opts?.layout
         });
       } catch (e) { console.warn(e); }
     }
@@ -680,6 +708,7 @@ export function initHoverTooltip() {
     tipVariant = 'default';
     tipEl.style.pointerEvents = 'none';
     tipEl.style.cursor = 'default';
+    resetStudentWorkTooltipPlacement();
     dragState = null;
   };
 
