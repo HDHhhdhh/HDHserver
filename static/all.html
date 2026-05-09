@@ -1,0 +1,130 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>전체 학생 페이지</title>
+  <link rel="stylesheet" href="/css/style.css?v=20260417a">
+
+  <style id="topbarTheme">
+    :root {
+      --topbar-bg: #ffffff;
+      --topbar-fg: #0f172a;
+      --topbar-border: #e5e7eb;
+      --pill-bg: #eef2ff;
+      --pill-fg: #3730a3;
+      --pill-border: #c7d2fe;
+      --btn-bg: #f8fafc;
+      --btn-fg: #0f172a;
+      --btn-border: #e5e7eb;
+      --btn-bg-hover: rgba(0, 0, 0, .04);
+    }
+
+    body.dark {
+      --topbar-bg: rgba(15, 23, 42, .85);
+      --topbar-fg: #e5e7eb;
+      --topbar-border: #1e293b;
+      --pill-bg: #122034;
+      --pill-fg: #c7d2fe;
+      --pill-border: #22304a;
+      --btn-bg: #1f2937;
+      --btn-fg: #e5e7eb;
+      --btn-border: #22304a;
+      --btn-bg-hover: rgba(255, 255, 255, .08);
+    }
+
+    .topbar a:hover { background: var(--btn-bg-hover); }
+  </style>
+</head>
+
+<body>
+  <header
+    class="topbar"
+    style="position:sticky;top:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;margin:0 0 1.6rem 0;background:var(--topbar-bg);color:var(--topbar-fg);border-bottom:1px solid var(--topbar-border);backdrop-filter:saturate(120%) blur(6px);"
+  >
+    <div style="display:flex;align-items:center;gap:12px;">
+      <h1 style="margin:0;font-size:18px;display:flex;align-items:center;gap:8px;">
+        전체 학생
+        <span
+          id="allCount"
+          style="display:inline-flex;align-items:center;line-height:1;height:28px;padding:.35rem .8rem;border-radius:999px;background:var(--pill-bg);color:var(--pill-fg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;"
+        >0명</span>
+      </h1>
+    </div>
+
+    <nav aria-label="주요 링크" style="display:flex;align-items:center;gap:8px;">
+      <a href="/admin" style="text-decoration:none;color:var(--btn-fg);opacity:.95;padding:.35rem .6rem;border-radius:10px;background:var(--btn-bg);border:1px solid var(--btn-border);">관리자</a>
+      <a href="/video-manage" style="text-decoration:none;color:var(--btn-fg);opacity:.95;padding:.35rem .6rem;border-radius:10px;background:var(--btn-bg);border:1px solid var(--btn-border);">영상관리</a>
+      <a href="/school-cal" style="text-decoration:none;color:var(--btn-fg);opacity:.95;padding:.35rem .6rem;border-radius:10px;">학사일정</a>
+      <a href="/tests" style="text-decoration:none;color:var(--btn-fg);opacity:.95;padding:.35rem .6rem;border-radius:10px;">테스트관리</a>
+      <a href="/file-manage" style="text-decoration:none;color:var(--btn-fg);opacity:.95;padding:.35rem .6rem;border-radius:10px;">파일관리</a>
+    </nav>
+
+    <label class="switch" style="position:relative;width:50px;height:26px;margin:0;">
+      <input type="checkbox" id="darkToggle" style="opacity:0;width:0;height:0;">
+      <span class="slider" style="position:absolute;inset:0;border-radius:9999px;background:#475569;transition:.25s;"></span>
+      <span style="position:absolute;left:4px;top:4px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.25s;"></span>
+    </label>
+  </header>
+
+  <p><a href="/admin">← 관리자 페이지로 돌아가기</a></p>
+
+  <div id="yoilStats" style="margin-bottom:1.5rem;"></div>
+
+  <div id="yoilModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);justify-content:center;align-items:center;z-index:9999;">
+    <div style="background:white;padding:1rem;border-radius:8px;max-height:80%;overflow:auto;width:300px;">
+      <h3 id="yoilTitle" style="margin-top:0;"></h3>
+      <div id="yoilList" style="white-space:pre-line;font-size:14px;"></div>
+      <div style="text-align:right;margin-top:1rem;">
+        <button onclick="document.getElementById('yoilModal').style.display='none'">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="allWrap">Loading...</div>
+
+  <div id="progModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);justify-content:center;align-items:center;z-index:9999;">
+    <div style="background:#fff;padding:1rem;border-radius:8px;max-height:80%;overflow:auto;width:360px;">
+      <h3 id="progTitle" style="margin-top:0">진도</h3>
+      <div id="progZone" class="progress-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:.5rem;margin:.5rem 0;"></div>
+      <div style="text-align:right;margin-top:.6rem;">
+        <button id="progSave" class="btn">저장</button>
+        <button id="progClose" class="btn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const toggle = document.getElementById('darkToggle');
+      const slider = toggle?.parentElement?.querySelector('.slider');
+      const knob = toggle?.parentElement?.lastElementChild;
+
+      function syncKnob() {
+        if (!toggle || !slider || !knob) return;
+        if (toggle.checked) {
+          slider.style.background = '#3b82f6';
+          knob.style.transform = 'translateX(24px)';
+        } else {
+          slider.style.background = '#475569';
+          knob.style.transform = 'translateX(0)';
+        }
+      }
+
+      if (localStorage.theme === 'dark') {
+        document.body.classList.add('dark');
+        if (toggle) toggle.checked = true;
+      }
+
+      syncKnob();
+      toggle?.addEventListener('change', () => {
+        document.body.classList.toggle('dark', toggle.checked);
+        localStorage.theme = toggle.checked ? 'dark' : 'light';
+        syncKnob();
+      });
+    })();
+  </script>
+
+  <script type="module" src="/js/all/main.js"></script>
+</body>
+</html>

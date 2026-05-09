@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>학교 일정 관리</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    :root {
+      --sc-bg: #eef4fb;
+      --sc-surface: #ffffff;
+      --sc-line: #d6e1ef;
+      --sc-line-strong: #bdcfe5;
+      --sc-text: #1c2a3b;
+      --sc-muted: #59708c;
+      --sc-accent: #2e78ec;
+      --sc-shadow: 0 14px 28px rgba(17, 40, 70, 0.12);
+    }
+
+    body {
+      margin: 0 auto;
+      max-width: min(1680px, calc(100vw - 24px));
+      padding: 14px 0 24px;
+      background: var(--sc-bg);
+      color: var(--sc-text);
+      font-family: "IBM Plex Sans KR", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    }
+
+    body.dark {
+      --sc-bg: #0f1727;
+      --sc-surface: #16253b;
+      --sc-line: #2f4665;
+      --sc-line-strong: #3f5e87;
+      --sc-text: #e7f0fe;
+      --sc-muted: #9fb5d2;
+      --sc-accent: #6ea8ff;
+      --sc-shadow: 0 18px 36px rgba(0, 0, 0, 0.3);
+    }
+
+    .cal-shell {
+      background: var(--sc-surface);
+      border: 1px solid var(--sc-line);
+      border-radius: 18px;
+      box-shadow: var(--sc-shadow);
+      padding: 14px;
+    }
+
+    .topbar-cal {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .title-wrap h1 {
+      margin: 0;
+      font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+      letter-spacing: -0.02em;
+    }
+
+    .title-sub {
+      margin: 6px 0 0;
+      color: var(--sc-muted);
+      font-size: 13px;
+    }
+
+    .link-back {
+      display: inline-flex;
+      margin-top: 8px;
+      color: var(--sc-accent);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .link-back:hover { text-decoration: underline; }
+
+    .tool-row {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .tool-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 10px;
+      border: 1px solid var(--sc-line-strong);
+      background: var(--sc-surface);
+      color: var(--sc-text);
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .btn.primary {
+      background: color-mix(in srgb, var(--sc-accent) 86%, #ffffff 14%);
+      border-color: color-mix(in srgb, var(--sc-accent) 78%, #000000 22%);
+      color: #f8fbff;
+    }
+
+    .status-chip {
+      min-height: 24px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: 1px solid var(--sc-line);
+      color: var(--sc-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--sc-line-strong);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--sc-surface);
+    }
+
+    .seg button {
+      height: 36px;
+      padding: 0 12px;
+      border: 0;
+      background: transparent;
+      color: var(--sc-text);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .seg button.active {
+      background: color-mix(in srgb, var(--sc-accent) 85%, #ffffff 15%);
+      color: #f6fbff;
+    }
+
+    .table-card {
+      margin-top: 12px;
+      border: 1px solid var(--sc-line);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--sc-surface) 90%, #ffffff 10%);
+      padding: 10px;
+    }
+
+    .table-note {
+      margin: 0 0 8px;
+      color: var(--sc-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    #wrap {
+      overflow: auto;
+      border-radius: 10px;
+    }
+
+    .tbl {
+      width: 100%;
+      min-width: 1500px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    .tbl th, .tbl td {
+      border-bottom: 1px solid var(--sc-line);
+      padding: 10px 8px;
+      vertical-align: middle;
+      text-align: left;
+    }
+
+    .tbl th {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: color-mix(in srgb, var(--sc-surface) 82%, #ffffff 18%);
+      color: var(--sc-text);
+      font-size: 12.5px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 980px) {
+      body {
+        max-width: calc(100vw - 10px);
+        padding-top: 8px;
+      }
+
+      .cal-shell {
+        padding: 10px;
+        border-radius: 14px;
+      }
+
+      .tool-row {
+        align-items: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="cal-shell">
+    <header class="topbar-cal">
+      <div class="title-wrap">
+        <h1>학교 일정 관리</h1>
+        <p class="title-sub">학교/학년/과목(트랙)별 시험 일정과 범위를 관리합니다.</p>
+      </div>
+      <label class="switch" style="margin:0">
+        <input type="checkbox" id="darkToggle"><span class="slider"></span>
+      </label>
+    </header>
+
+    <a href="/admin" class="link-back">관리자 화면으로 돌아가기</a>
+
+    <div class="tool-row">
+      <div class="tool-group">
+        <button id="addRow" class="btn primary" type="button">+ 학교 추가</button>
+        <button id="saveBtn" class="btn" type="button">저장</button>
+        <span id="status" class="status-chip" aria-live="polite"></span>
+      </div>
+      <div class="tool-group">
+        <div class="seg" id="viewSeg">
+          <button type="button" data-mode="mid" class="active">중간</button>
+          <button type="button" data-mode="final">기말</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="table-card">
+      <p class="table-note">같은 학년도 과목/트랙이 다르면 별도 행으로 입력하세요. (예: 2학년 · 수학1 / 2학년 · 미적분)</p>
+      <div id="wrap">
+        <table class="tbl" id="calTable">
+          <thead><tr id="theadRow"></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const t = document.getElementById('darkToggle');
+      if (localStorage.theme === 'dark') {
+        document.body.classList.add('dark');
+        t.checked = true;
+      }
+      t.addEventListener('change', () => {
+        document.body.classList.toggle('dark', t.checked);
+        localStorage.theme = t.checked ? 'dark' : 'light';
+      });
+    })();
+  </script>
+  <script type="module" src="/js/school-cal.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+

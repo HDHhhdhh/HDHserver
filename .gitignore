@@ -1,0 +1,29 @@
+# Local runtime data and private records
+/*.json
+/*.sqlite
+/*.db
+/*.csv
+/*.tmp
+*.bak*
+progress.json.*.tmp
+
+# Mirrored backups and generated/local data
+/_data_mirror/
+/data/
+/files/
+/instance/
+
+# Python/runtime artifacts
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/venv/
+
+# Local editor and OS files
+/.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary output
+*.log
+*.out

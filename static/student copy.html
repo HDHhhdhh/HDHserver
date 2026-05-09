@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="utf-8">
+  <title>�н� ������</title>
+
+  <!-- �⺻ ���� ��Ÿ�� -->
+  <link rel="stylesheet" href="/css/style.css">
+
+  <style>
+    /* ������ 1. �÷��̾� + ������ ���̾ƿ� ������ */
+    #playerBox {
+      display: flex;
+      gap: 1.2rem;
+      align-items: flex-start;
+      flex-wrap: nowrap;
+    }
+
+    /* �÷��̾� ī�� */
+    .player-card {
+      flex: 0 0 900px;
+      border-radius: 20px;
+      overflow: hidden;
+    }
+
+    #player {
+      display: block;
+      width: 100%;
+      height: 506px;
+      border: 0;
+      background: #000;
+    }
+
+    /* ��� ��� */
+    #vidList {
+      flex: 0 0 300px;
+      /* ������ 200px  */
+      width: 300px;
+      max-height: 506px;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      overflow-y: auto;
+      font-size: 15px;
+    }
+
+    #vidList li {
+      width: 100%;
+      padding: .5rem .7rem;
+      border-radius: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      transition: background .2s;
+    }
+
+    #vidList li:hover {
+      background: rgba(0, 0, 0, .05);
+    }
+
+    #vidList li.active {
+      background: var(--accent);
+      color: #fff !important;
+      font-weight: 600;
+    }
+
+    body.dark #vidList li {
+      color: var(--text-dark);
+    }
+
+    body.dark #vidList li:hover {
+      background: #334155;
+    }
+
+    body.dark #vidList li.active {
+      background: var(--accent-dark);
+      color: #fff !important;
+    }
+
+    /* �� 700px �̸������� ���� ��ġ */
+    @media(max-width:700px) {
+      #playerBox {
+        flex-direction: column;
+      }
+
+      #vidList {
+        width: 100%;
+        flex: auto;
+        max-height: none;
+      }
+    }
+
+    /* ������ 2. ����(??) �г� ������ */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center
+    }
+
+    .icon-btn {
+      font-size: 24px;
+      background: none;
+      border: 0;
+      cursor: pointer;
+      line-height: 1;
+      color: var(--text);
+      transition: transform .2s;
+    }
+
+    #setPanel {
+      position: absolute;
+      top: 62px;
+      right: 32px;
+      width: 220px;
+      padding: 14px 16px;
+      z-index: 2000;
+      background: var(--card-light);
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    body.dark #setPanel {
+      background: var(--card-dark);
+    }
+
+    #setPanel.open {
+      display: flex;
+      animation: slide .25s ease-out;
+    }
+
+    @keyframes slide {
+      from {
+        opacity: 0;
+        transform: translateY(-8px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    #setPanel .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center
+    }
+
+    #suggestBtn {
+      background: #eef1ff;
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer
+    }
+
+    body.dark #suggestBtn {
+      background: #334155;
+      color: #e2e8f0
+    }
+
+    #suggestBtn:hover {
+      background: #dfe3ff
+    }
+
+    body.dark #suggestBtn:hover {
+      background: #475569
+    }
+
+    /* ������ 3. �ڷ� �ٿ�ε� ��� ������ */
+    #matList {
+      margin-top: .4rem;
+      padding-left: 0
+    }
+
+    #matList li {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+      margin: .25rem 0
+    }
+
+    #matList li::before {
+      content: "?";
+      font-size: .9rem;
+      opacity: .65
+    }
+
+    #matList a {
+      color: var(--accent);
+      text-decoration: none
+    }
+
+    #matList a:hover {
+      text-decoration: underline
+    }
+
+    body.dark #matList a {
+      color: #93c5fd
+    }
+  </style>
+
+  <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js"
+    crossorigin="anonymous"></script>
+
+  <!-- ���� -->
+  <script defer src="/js/student copy.js"></script></head>
+
+<body>
+  <!-- ������ ��� : �ð� + ���� ��ư ������ -->
+  <header class="topbar">
+    <div id="clock" class="clock-header"></div>
+
+    <!-- ����(??) ��ư: �����ܸ� ���δ� span �߰� -->
+    <button id="setBtn" style="position: relative;">
+      ??
+      <span id="badge" style="
+    display: none;
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: red;
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 999px;
+    line-height: 1;
+  ">1</span>
+    </button>
+  </header>
+
+  <!-- ���� �г� -->
+  <div id="setPanel">
+    <label class="row">
+      ?? ��ũ���
+      <input type="checkbox" id="darkToggle">
+    </label>
+    <div style="margin-top: 1rem">
+      <textarea id="feedbackBox" placeholder="?? ���� ���� ��Ź�帳�ϴ�."
+        style="width:100%; height:100px; resize: none; padding:5px; font-size: 0.9rem;"></textarea>
+      <button id="submitFeedback" style="margin-top:5px; width:100%">���ǻ��� ����</button>
+    </div>
+  </div>
+
+  <!-- �л� �̸� -->
+  <div class="namebar">
+    <h2 id="stuName" class="namebar-title" style="margin:.8rem 0 1rem;font-size:2.5rem;font-weight:600"></h2>
+    <button id="openTestSubmit" class="ts-btn">?? �׽�Ʈ ���� ����</button>
+  </div>
+
+  <!-- ���������� ���� ���� ���������� -->
+  <section>
+    <h2>���� ����</h2>
+
+    <div id="playerBox">
+      <article class="player-card">
+        <iframe id="player" allow="autoplay; local-network-access" allowfullscreen webkitallowfullscreen
+          mozallowfullscreen></iframe>
+      </article>
+
+      <ul id="vidList"></ul>
+    </div>
+  </section>
+
+  <!-- ���������� �ڷ� �ٿ�ε� ���������� -->
+  <h3 style="margin:1.4rem 0 .6rem">�ڷ� �ٿ�ε�</h3>
+  <ul id="matList">
+    <li>Loading��</li>
+  </ul>
+  <div id="announceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
+     align-items:center;justify-content:center;z-index:9999">
+    <div style="background:#fff;padding:1rem;border-radius:10px;width:460px;max-height:85%;overflow:auto">
+      <h3 id="annTitle" style="margin-top:0"></h3>
+      <div id="annContent" style="white-space:pre-wrap;margin-bottom:.5rem"></div>
+
+      <div id="annPoll" style="display:none;border:1px solid #e5e7eb;padding:.5rem;border-radius:8px;margin:.5rem 0">
+        <div id="annPollQ" style="font-weight:600;margin-bottom:.25rem"></div>
+        <div id="annPollOpts"></div>
+      </div>
+
+      <div id="annSurvey" style="display:none;border:1px solid #e5e7eb;padding:.5rem;border-radius:8px;margin:.5rem 0">
+      </div>
+
+      <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
+        <button id="annSubmit">����</button>
+        <button id="annConfirm">Ȯ��</button>
+      </div>
+    </div>
+
+    <script>
+      (() => {
+        if (document.getElementById('announce-dark-style')) return;
+        const css = `
+  :root{
+    --modal-bg:#ffffff;        /* ����Ʈ �⺻ */
+    --modal-fg:#111827;
+    --modal-border:#e5e7eb;
+    --input-bg:#ffffff;
+    --input-fg:#111827;
+    --input-border:#d1d5db;
+    --muted:#6b7280;
+  }
+  body.dark{
+    --modal-bg:#0b1220;        /* ��ũ �⺻ */
+    --modal-fg:#e5e7eb;
+    --modal-border:#374151;
+    --input-bg:#0f172a;
+    --input-fg:#e5e7eb;
+    --input-border:#3b4455;
+    --muted:#9ca3af;
+  }
+
+  /* ���� �ۼ� ��� (admin) */
+  #annModal > div{
+    background:var(--modal-bg) !important;
+    color:var(--modal-fg) !important;
+    border:1px solid var(--modal-border);
+  }
+  #annModal input, #annModal textarea, #annModal select{
+    background:var(--input-bg);
+    color:var(--input-fg);
+    border:1px solid var(--input-border);
+  }
+  #annModal fieldset{
+    border-color:var(--modal-border) !important;
+  }
+  #annModal small{ color:var(--muted); }
+
+  /* �л� �˾� ��� (student) */
+  #announceModal > div{
+    background:var(--modal-bg) !important;
+    color:var(--modal-fg) !important;
+    border:1px solid var(--modal-border);
+  }
+  #announceModal input, #announceModal textarea, #announceModal select{
+    background:var(--input-bg);
+    color:var(--input-fg);
+    border:1px solid var(--input-border);
+  }
+  /* ��ǥ/���� �ڽ� �׵θ� */
+  #announceModal #annPoll,
+  #announceModal #annSurvey{
+    border-color:var(--modal-border) !important;
+  }
+
+  /* üũ�ڽ�/���� ������ */
+  body.dark #annModal input[type="checkbox"],
+  body.dark #announceModal input[type="checkbox"],
+  body.dark #announceModal input[type="radio"]{
+    accent-color:#60a5fa;
+  }
+
+  /* ��ư ������(����Ʈ/��ũ ����) */
+  #annModal button, #announceModal button{
+    background:#3b82f6;color:#fff;border:none;border-radius:8px;
+    padding:6px 12px;cursor:pointer;
+  }
+  #annModal button:hover, #announceModal button:hover{
+    filter:brightness(0.95);
+  }
+  `;
+        const style = document.createElement('style');
+        style.id = 'announce-dark-style';
+        style.textContent = css;
+        document.head.appendChild(style);
+      })();
+    </script>`r`n</body>
+
+</html>
+
+
+
+
+
+
+

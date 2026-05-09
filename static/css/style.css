@@ -1,0 +1,1698 @@
+/* ========== 색 · 폰트 ========== */
+:root {
+  --bg-light: #f8f9fc;
+  --bg-dark: #0d1117;
+  --card-light: #ffffff;
+  --card-dark: #1e293b;
+  --accent: #3b82f6;
+  --accent-dark: #60a5fa;
+  --text: #111827;
+  --text-dark: #e5e7eb;
+  --radius: 18px;
+  --shadow: 0 6px 14px rgba(0, 0, 0, .08);
+  --line: #334155;
+  /* 표/경계 라인 */
+  --muted: #94a3b8; 
+  /* 흐린 텍스트 */
+  --accent-opaque: rgba(59, 130, 246, .12);
+  /* 선택 배경 */
+
+  /* Design.md token aliases (non-breaking) */
+  --ds-bg: var(--bg-light);
+  --ds-surface: var(--card-light);
+  --ds-surface-2: #f3f6fb;
+  --ds-border: #d7e2f0;
+  --ds-border-strong: #c2d3e8;
+  --ds-text: var(--text);
+  --ds-text-muted: var(--muted);
+  --ds-primary: var(--accent);
+  --ds-primary-soft: var(--accent-opaque);
+  --ds-success: #1cad73;
+  --ds-warning: #d49a1f;
+  --ds-danger: #d84d52;
+  --ds-radius-sm: 8px;
+  --ds-radius-md: 12px;
+  --ds-radius-lg: 16px;
+  --ds-radius-xl: var(--radius);
+}
+
+/* ========== body & 헤더 ========== */
+body {
+  font-family: 'Noto Sans KR', system-ui, sans-serif;
+  margin: 2rem auto;
+  max-width: 1280px;
+  background: var(--bg-light);
+  color: var(--text);
+  transition: .25s;
+}
+
+body.dark {
+  --ds-bg: var(--bg-dark);
+  --ds-surface: var(--card-dark);
+  --ds-surface-2: #233349;
+  --ds-border: #2c4a6d;
+  --ds-border-strong: #39608c;
+  --ds-text: var(--text-dark);
+  --ds-text-muted: #9ebbe0;
+  --ds-primary: var(--accent-dark);
+  --ds-primary-soft: rgba(96, 165, 250, .22);
+  --ds-success: #44d19c;
+  --ds-warning: #f1c05d;
+  --ds-danger: #ff8d95;
+
+  background: var(--bg-dark);
+  color: var(--text-dark)
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.6rem
+}
+
+#clock {
+  font-weight: 500;
+  font-size: 1.4rem;
+  opacity: .85
+}
+
+/* ─── 입력·셀렉터·버튼 공통 ─── */
+input[type="text"],
+input[type="number"],
+select,
+button {
+  font: 15px/1.4 'Noto Sans KR', system-ui, sans-serif;
+  padding: 6px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  transition: border-color .2s, box-shadow .2s;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .25);
+}
+
+body.dark input[type="text"],
+body.dark input[type="number"],
+body.dark select {
+  background: #1e293b;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+
+body.dark input:focus,
+body.dark select:focus {
+  border-color: var(--accent-dark);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .35);
+}
+
+/* ─── 토글 스위치 ─── */
+.switch {
+  position: relative;
+  width: 50px;
+  height: 26px
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #cbd5e1;
+  transition: .25s
+}
+
+.slider:before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: .25s
+}
+
+input:checked+.slider {
+  background: var(--accent)
+}
+
+input:checked+.slider:before {
+  transform: translateX(24px)
+}
+
+body.dark .slider {
+  background: #475569
+}
+
+/* ─── 플레이어 & 재생목록 ─── */
+#playerBox {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  flex-wrap: nowrap
+}
+
+.player-card {
+  flex: 0 0 720px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #000
+}
+
+#player {
+  display: block;
+  width: 100%;
+  height: 405px;
+  border: 0
+}
+
+#vidList {
+  flex: 0 0 200px;
+  min-width: 0;
+  max-height: 405px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 15px;
+}
+
+#vidList li {
+  padding: .55rem .8rem;
+  margin: .15rem 0;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: normal;
+  word-break: break-all;
+  transition: background .2s;
+}
+
+#vidList li .video-main {
+  display: inline;
+}
+
+#vidList li .essay-badge {
+  display: inline-block;
+  margin-left: .5rem;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+
+
+#vidList li:hover {
+  background: rgba(0, 0, 0, .05)
+}
+
+#vidList li.active {
+  background: var(--accent);
+  font-weight: 600
+}
+
+body.dark #vidList li {
+  color: var(--text-dark)
+}
+
+body.dark #vidList li:hover {
+  background: #334155
+}
+
+body.dark #vidList li.active {
+  background: var(--accent-dark);
+  color: #fff !important
+}
+
+@media(max-width:700px) {
+  #playerBox {
+    flex-direction: column
+  }
+
+  #vidList {
+    width: 100%;
+    flex: auto;
+    max-height: 220px
+  }
+}
+
+/* ─── 자료 다운로드 ─── */
+h3 {
+  margin: 1.7rem 0 .7rem
+}
+
+#matList {
+  margin: 0;
+  padding-left: 0
+}
+
+#matList li {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  margin: .3rem 0
+}
+
+#matList li::before {
+  content: "⇩";
+  font-size: .9rem;
+  opacity: .65
+}
+
+#matList a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color .2s
+}
+
+#matList a:hover {
+  text-decoration: underline;
+  color: #004c9e
+}
+
+body.dark #matList a {
+  color: #a5d8ff
+}
+
+body.dark #matList a:hover {
+  color: #cfe6ff
+}
+
+/* ─── 자료 삭제 버튼 ─── */
+.delMat {
+  /* 배경 · 글자색 */
+  background: var(--accent);
+  color: #fff;
+
+  /* 테두리 없음 */
+  border: none;
+
+  /* 약간 둥근 모서리 */
+  border-radius: 8px;
+
+  /* 여유 있는 패딩 */
+  padding: 6px 10px;
+
+  /* 텍스트 크기(쓰레기통 이모지 크기) */
+  font-size: 18px;
+
+  /* 버튼처럼 포인터 모양 */
+  cursor: pointer;
+
+  /* flex로 가운데 정렬 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  /* transition 제거 */
+  transition: none;
+}
+
+/* hover 효과도 없애기 (똑같이 보이도록) */
+.delMat:hover {
+  background: var(--accent);
+}
+
+/* 버튼 박스엔 transform 절대 걸리지 않도록 */
+.icon-btn {
+  transform: none;
+}
+
+/* 아이콘만 회전 */
+.icon-rotate {
+  display: inline-block;
+  transition: transform .2s ease;
+}
+
+.icon-btn:hover .icon-rotate {
+  transform: rotate(90deg);
+}
+
+#setPanel {
+  position: absolute;
+  top: 62px;
+  right: 32px;
+  z-index: 2000;
+  width: 220px;
+  padding: 14px 16px;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--card-light);
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
+}
+
+#setPanel.open {
+  display: flex;
+  animation: panelIn .25s ease-out
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px)
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0)
+  }
+}
+
+body.dark #setPanel {
+  background: var(--card-dark)
+}
+
+a.btn-link {
+  background: #eef1ff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: inline-block;
+  text-align: center
+}
+
+a.btn-link:hover {
+  background: #dfe3ff
+}
+
+body.dark a.btn-link {
+  background: #334155;
+  color: #e2e8f0
+}
+
+body.dark a.btn-link:hover {
+  background: #475569
+}
+
+/* ─── 관리자 전용 표 & 버튼 ─── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: .88rem
+}
+
+th,
+td {
+  border: 1px solid #e2e8f0;
+  padding: .45rem .5rem;
+  text-align: center
+}
+
+th {
+  background: #f1f5f9;
+  font-weight: 600
+}
+
+tbody tr:nth-child(odd) {
+  background: #f9fafb
+}
+
+body.dark th {
+  background: #1e293b;
+  border-color: #334155
+}
+
+body.dark td {
+  border-color: #334155
+}
+
+body.dark tbody tr:nth-child(odd) {
+  background: #1b2230
+}
+
+/* ── 라이트 모드 텍스트·숫자 입력 스타일 통일 ───────────── */
+input[type="text"],
+input[type="number"] {
+  background: #f1f5f9;
+  /* 드롭다운(공수1)과 같은 색계열 */
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #111827;
+}
+
+/* ── 다크 모드 동일하게 맞추기 ──────────────────────────── */
+body.dark input[type="text"],
+body.dark input[type="number"] {
+  background: #1e293b;
+  /* = 드롭다운 배경 */
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark input::placeholder {
+  color: #64748b;
+}
+
+/* placeholder 연하게 */
+
+/* ── 다크모드 입력상자 색 수정 ─────────────────────────── */
+body.dark input[type="text"],
+body.dark input[type="number"] {
+  background: #1e293b;
+  /* 드롭다운과 동일 */
+  border-color: #334155;
+  /* 살짝 밝은 테두리 */
+  color: #e2e8f0;
+}
+
+body.dark input::placeholder {
+  color: #64748b;
+}
+
+/* placeholder도 연하게 */
+
+input[type="text"],
+input[type="number"],
+select,
+button {
+  height: 36px;
+  /* 동일 높이 */
+  padding: 0 14px;
+  /* 좌·우 동일 */
+  border-radius: 14px;
+  /* 둥근 모서리 통일 */
+  font: 15px/1 'Noto Sans KR', system-ui, sans-serif;
+  border: 1px solid #cbd5e1;
+  background: #f1f5f9;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+
+/* ⓶ 버튼만 색상 강조 */
+button {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+}
+
+button:hover {
+  background: #2563eb
+}
+
+/* ⓷ focus style(입력·셀렉터 공통) */
+input:focus,
+select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .25);
+}
+
+/* ⓸ 다크 모드 색상 보정 */
+body.dark input[type="text"],
+body.dark input[type="number"],
+body.dark select {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark button {
+  background: #60a5fa;
+}
+
+body.dark button:hover {
+  background: #3b82f6;
+}
+
+body.dark input:focus,
+body.dark select:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .35);
+}
+
+/* ─── 링크 색상 (다크모드에서도 잘 보이도록) ─── */
+/* 기본 링크 */
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  transition: color .2s;
+}
+
+a:hover {
+  color: var(--accent-dark);
+}
+
+/* 다크 모드용 링크 */
+body.dark a {
+  /* 더 밝은 파랑 계열 */
+  color: var(--accent-dark);
+}
+
+body.dark a:hover {
+  /* 호버 땐 기본 accent 색 */
+  color: var(--accent);
+}
+
+/* 영상 관리 폼 – 서술형 번호 입력란 폭 조정 */
+#exNumHigh,
+#exNumMid,
+#exNumLow {
+  width: 6rem;
+  /* 필요에 따라 4rem, 6rem 등으로 조절하세요 */
+}
+
+/* ── 숫자 입력 스피너 제거 ── */
+/* Chrome, Safari, Edge, Opera */
+#vChap::-webkit-outer-spin-button,
+#vChap::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+#vChap {
+  -moz-appearance90: textfield;
+}
+
+/* Spinner 제거: Chrome, Safari, Edge */
+#vChap::-webkit-outer-spin-button,
+#vChap::-webkit-inner-spin-button,
+#exNumHigh::-webkit-outer-spin-button,
+#exNumHigh::-webkit-inner-spin-button,
+#exNumMid::-webkit-outer-spin-button,
+#exNumMid::-webkit-inner-spin-button,
+#exNumLow::-webkit-outer-spin-button,
+#exNumLow::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox 에도 적용 */
+#vChap,
+#exNumHigh,
+#exNumMid,
+#exNumLow {
+  -moz-appearance: textfield;
+}
+
+
+.form-row select,
+.form-row input[type="number"],
+.form-row input[type="text"] {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 14px;
+  font: 15px/1 'Noto Sans KR', system-ui, sans-serif;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #f1f5f9;
+  color: #111827;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+
+/* 다크 모드 */
+body.dark .form-row select,
+body.dark .form-row input[type="number"],
+body.dark .form-row input[type="text"] {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+/* ─── 폭(width)만 조절 ─── */
+#vChap {
+  width: 4rem;
+}
+
+#exNumHigh,
+#exNumMid,
+#exNumLow {
+  width: 5rem;
+}
+
+#vTitle {
+  width: 12rem;
+}
+
+#vUrl {
+  width: 16rem;
+}
+
+/* ─── 숫자 입력 스피너 제거 ─── */
+/* Chrome, Safari, Edge */
+#vChap::-webkit-outer-spin-button,
+#vChap::-webkit-inner-spin-button,
+ㄴ #exNumHigh::-webkit-outer-spin-button,
+#exNumHigh::-webkit-inner-spin-button,
+#exNumMid::-webkit-outer-spin-button,
+#exNumMid::-webkit-inner-spin-button,
+#exNumLow::-webkit-outer-spin-button,
+#exNumLow::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+
+#stuName {
+  width: 8rem;
+}
+
+/* 이름 */
+#curSel {
+  width: 6rem;
+}
+
+/* 커리큘럼 */
+#levelSel {
+  width: 7rem;
+}
+
+/* 레벨 */
+#d1,
+#d2,
+#d3 {
+  width: 5rem;
+}
+
+/* 요일1/2/3 */
+
+#stuName {
+  white-space: nowrap;
+}
+
+#logModal {
+  color: var(--text);
+  /* 제목·라벨 글자색을 본문 색으로 */
+  background: var(--card-light);
+  /* 모달 배경이 흰색이라면 기본 카드 배경 */
+}
+
+/* 제목(h3) / 라벨 / 버튼 텍스트 */
+#logModal h3,
+#logModal label,
+#logModal button {
+  color: var(--text) !important;
+}
+
+/* 입력창, textarea 텍스트 및 배경 */
+#logModal input,
+#logModal textarea {
+  color: var(--text) !important;
+  background: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+/* 다크 모드일 때도 동일하게 검정 텍스트 유지 */
+body.dark #logModal,
+body.dark #logModal h3,
+body.dark #logModal label,
+body.dark #logModal input,
+body.dark #logModal textarea,
+body.dark #logModal button {
+  color: var(--text) !important;
+}
+
+/* 1) 모달 오버레이(반투명 검정)는 그대로 */
+#vidModal {
+  background: rgba(0, 0, 0, .45) !important;
+}
+
+/* 2) 콘텐츠 박스와 내부 요소들 강제 스타일 */
+#vidModal>div,
+#vidModal>div * {
+  background: var(--card-light) !important;
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+
+/* 3) 다크 모드 전환 시 */
+body.dark #vidModal>div,
+body.dark #vidModal>div * {
+  background: var(--card-dark) !important;
+  color: var(--text-dark) !important;
+  opacity: 1 !important;
+}
+
+/* 제목(h3)과 버튼 텍스트도 별도 지정 */
+#vidModal h3,
+#vidModal button {
+  color: var(--text) !important;
+}
+
+body.dark #vidModal h3,
+body.dark #vidModal button {
+  color: var(--text-dark) !important;
+}
+
+/* 진도 체크박스 그리드 레이아웃 */
+#logProgress.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 6px;
+  margin: .5rem 0;
+}
+
+.progress-cell {
+  padding: 6px;
+  text-align: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--card-light);
+  color: var(--text);
+}
+
+/* 마우스 우클릭 방지 */
+.progress-cell {
+  -webkit-touch-callout: none;
+}
+
+/* 상태별 색상 */
+.progress-cell[data-state="done"] {
+  background: #4ade80;
+  /* 완료 → 초록 */
+  color: #fff;
+}
+
+.progress-cell[data-state="interrupted"] {
+  background: #facc15;
+  /* 중단 → 노랑 */
+  color: #111;
+}
+
+.progress-cell[data-state="skip"] {
+  background: #f87171;
+  /* 듣지 않음 → 빨강 */
+  color: #fff;
+}
+
+/* 다크 모드 조정 */
+body.dark .progress-cell {
+  background: var(--card-dark);
+  border-color: #475569;
+  color: var(--text-dark);
+}
+
+body.dark .progress-cell[data-state="done"] {
+  background: #22c55e;
+}
+
+body.dark .progress-cell[data-state="interrupted"] {
+  background: #eab308;
+}
+
+body.dark .progress-cell[data-state="skip"] {
+  background: #dc2626;
+}
+
+#toggleVid {
+  font-size: .88rem;
+  padding: 4px 8px;
+}
+
+#extraModal,
+#extraModal * {
+  color: var(--text) !important;
+  background: var(--card-light) !important;
+}
+
+body.dark #extraModal,
+body.dark #extraModal * {
+  color: var(--text-dark) !important;
+}
+
+#extraModal {
+  /* inline style (display/position/inset) 그대로 먹히도록 아무것도 안 건드립니다 */
+  background: rgba(0, 0, 0, .45) !important;
+}
+
+/* 카드 컨테이너와 내부 텍스트만 컬러·배경 강제 지정 */
+#extraModal>div,
+#extraModal>div * {
+  color: var(--text) !important;
+  background: var(--card-light) !important;
+  opacity: 1 !important;
+}
+
+/* 다크 모드일 때 카드만 어둡게 */
+body.dark #extraModal>div,
+body.dark #extraModal>div * {
+  color: var(--text-dark) !important;
+  background: var(--card-dark) !important;
+}
+
+#vidList li.active span {
+  color: #fff !important;
+  text-decoration: underline;
+  /* 필요 없으면 빼셔도 됩니다 */
+}
+
+.progress-cell a {
+  color: #fff !important;
+}
+
+.sortable-ghost {
+  opacity: 0.5;
+  background: #f0f8ff;
+}
+
+#allWrap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+
+#allWrap .dayInput {
+  width: 3.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  text-align: center;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--card-light);
+  color: var(--text);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#allWrap .dayInput:focus {
+  outline: none;
+  border-color: var(--accent-dark);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
+}
+
+/* 다크 모드 대응 */
+body.dark #allWrap .dayInput {
+  background: var(--card-dark);
+  border-color: #475569;
+  color: var(--text-dark);
+}
+
+#allWrap .day-container {
+  display: flex;
+  /* 플렉스박스로 */
+  flex-direction: row;
+  /* → 수평 정렬 */
+  flex-wrap: nowrap;
+  /* 한 줄에 모여 있도록 */
+  gap: 0.5rem;
+  /* 칸 사이 간격 */
+  justify-content: center;
+  /* 가운데 정렬 (원하시면 flex-start 로 바꿔도 됩니다) */
+  align-items: center;
+}
+
+/* 요일 입력창 자체도 크기 조절 */
+#allWrap .dayInput {
+  width: 3rem;
+  /* 너비는 3rem 정도로 */
+  padding: 0.3rem 0.5rem;
+  box-sizing: border-box;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#logNotes {
+  height: 32em;
+  /* 기존보다 더 넓은 높이 */
+}
+
+textarea::placeholder {
+  color: #bbb;
+}
+
+#yoilModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  justify-content: center;
+  align-items: center;
+}
+
+#yoilModal>div {
+  background: #fff;
+  padding: 1rem;
+  border-radius: 8px;
+  width: 260px;
+  max-height: 80%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  color: #222;
+  /* ✅ 글자 진하게 */
+}
+
+#yoilTitle {
+  font-weight: bold;
+  font-size: 16px;
+  margin-bottom: 0.5rem;
+  color: #111;
+  /* ✅ 제목 더 진하게 */
+}
+
+#yoilList {
+  flex: 1;
+  min-height: 200px;
+  padding: 8px;
+  font-size: 14px;
+  color: #222;
+  /* ✅ 리스트 더 진하게 */
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  white-space: pre-line;
+  /* 줄바꿈 유지 */
+}
+
+#yoilModal button {
+  margin-top: 0.8rem;
+  align-self: flex-end;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* 0) 오버레이(반투명 배경)는 공통 유지 */
+#logModal,
+#vidModal,
+#extraModal,
+#attendModal,
+#selectionModal {
+  background: rgba(0, 0, 0, .45) !important;
+  /* inline 배경보다 우선 */
+}
+
+/* 1) 패널(모달 안의 흰 박스) – 라이트 모드 */
+#logModal>div,
+#vidModal>div,
+#extraModal>div,
+#attendModal>div,
+#selectionModal>div {
+  background: var(--card-light) !important;
+  color: var(--text) !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* 2) 패널 – 다크 모드 */
+body.dark #logModal>div,
+body.dark #vidModal>div,
+body.dark #extraModal>div,
+body.dark #attendModal>div,
+body.dark #selectionModal>div {
+  background: var(--card-dark) !important;
+  color: var(--text-dark) !important;
+  border-color: #334155 !important;
+}
+
+/* 3) 모달 제목/날짜 텍스트 또렷하게 */
+#logModal h3,
+#vidModal h3,
+#extraModal h3,
+#selectionModal h3,
+#attendDateTitle {
+  margin: 0 0 .5rem;
+  font-weight: 700;
+  color: var(--text) !important;
+}
+
+body.dark #logModal h3,
+body.dark #vidModal h3,
+body.dark #extraModal h3,
+body.dark #selectionModal h3,
+body.dark #attendDateTitle {
+  color: var(--text-dark) !important;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .35);
+}
+
+/* 4) 모달 내부 입력/선택/텍스트영역 공통 – 라이트 */
+#logModal input,
+#logModal textarea,
+#logModal select,
+#vidModal input,
+#vidModal textarea,
+#vidModal select,
+#extraModal input,
+#extraModal textarea,
+#extraModal select,
+#attendModal input,
+#attendModal textarea,
+#attendModal select,
+#selectionModal input,
+#selectionModal textarea,
+#selectionModal select {
+  background: #f1f5f9 !important;
+  color: var(--text) !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+body.dark #logModal input,
+body.dark #logModal textarea,
+body.dark #logModal select,
+body.dark #vidModal input,
+body.dark #vidModal textarea,
+body.dark #vidModal select,
+body.dark #extraModal input,
+body.dark #extraModal textarea,
+body.dark #extraModal select,
+body.dark #attendModal input,
+body.dark #attendModal textarea,
+body.dark #attendModal select,
+body.dark #selectionModal input,
+body.dark #selectionModal textarea,
+body.dark #selectionModal select {
+  background: #1e293b !important;
+  color: var(--text-dark) !important;
+  border-color: #475569 !important;
+}
+
+/* 5) 선택 리스트(보강/결석 모달) 가독성 */
+#selectionList li,
+#attendList li {
+  color: var(--text) !important;
+}
+
+body.dark #selectionList li,
+body.dark #attendList li {
+  color: var(--text-dark) !important;
+}
+
+#selectionList li.selected {
+  background: rgba(59, 130, 246, .20) !important;
+  color: inherit !important;
+}
+
+/* 6) 달력 칸의 인원수 뱃지(있다면) 대비 보정 */
+.att-count-badge {
+  font-size: 11px;
+  pointer-events: none;
+  color: #475569;
+}
+
+body.dark .att-count-badge {
+  color: #cbd5e1;
+}
+
+/* === 학생 Hover 툴팁 === */
+.stu-tip {
+  position: absolute;
+  z-index: 3000;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  border: 1px solid rgba(0, 0, 0, .08);
+
+  background: var(--card-light);
+  color: var(--text);
+}
+
+body.dark .stu-tip {
+  background: var(--card-dark);
+  color: var(--text-dark);
+  border-color: #374151;
+}
+
+.stu-tip .tt-name {
+  font-weight: 700;
+  margin-bottom: 6px;
+  font-size: .98rem;
+}
+
+.stu-tip .tt-row {
+  font-size: .9rem;
+  opacity: .9;
+  margin-bottom: 6px;
+}
+
+.stu-tip .tt-cal {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  font-size: .85rem;
+}
+
+.stu-tip .tt-cal>div {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, .08);
+}
+
+body.dark .stu-tip .tt-cal>div {
+  background: rgba(96, 165, 250, .12);
+}
+
+.stu-tip .tt-cal span {
+  opacity: .75;
+}
+
+.stu-tip .tt-cal b {
+  letter-spacing: .2px;
+}
+
+td .name-cell {
+  position: relative;
+  overflow: visible;
+}
+
+/* 툴팁 박스 */
+.stu-tip,
+.student-tip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  padding: 12px 14px;
+  min-width: 280px;
+  /* 박스 살짝 키움 */
+  max-width: 420px;
+  /* 가로 여유 */
+  border-radius: 12px;
+  background: var(--card-light);
+  color: var(--text);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .25);
+  z-index: 3000;
+  display: none;
+  /* hover 시 노출 */
+  white-space: normal;
+  /* 줄바꿈 허용 */
+}
+
+.name-cell:hover .stu-tip,
+.name-cell:hover .student-tip {
+  display: block;
+}
+
+body.dark .stu-tip,
+body.dark .student-tip {
+  background: var(--card-dark);
+  color: var(--text-dark);
+}
+
+/* 제목(이름) */
+.stu-tip .tip-title,
+.student-tip .tip-title {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+/* 부제(학년·학교) */
+.stu-tip .tip-sub,
+.student-tip .tip-sub {
+  opacity: .9;
+  margin-bottom: 8px;
+}
+
+/* 날짜 라인을 '가로로' 나열 */
+.stu-tip .inline-dates,
+.student-tip .inline-dates {
+  display: flex;
+  flex-wrap: wrap;
+  /* 길면 자동 줄바꿈 */
+  gap: 12px 16px;
+  align-items: center;
+}
+
+/* 라벨 + 날짜 한 덩어리 */
+.stu-tip .date-item,
+.student-tip .date-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.25;
+}
+
+/* 작은 라벨(개학/중간/기말) */
+.stu-tip .lbl,
+.student-tip .lbl {
+  font-size: .82rem;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: #e5e7eb;
+  color: #111827;
+}
+
+body.dark .stu-tip .lbl,
+body.dark .student-tip .lbl {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+/* 표가 overflow:hidden이면 툴팁이 잘릴 수 있으니 방지 */
+#allWrap table,
+#allWrap td {
+  overflow: visible;
+}
+
+.stu-tip .date-row {
+  display: flex !important;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stu-tip .date-item {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, .18);
+  /* ▼ 폭 고정/최소폭 다 해제 */
+  width: auto !important;
+  min-width: unset !important;
+  max-width: none !important;
+  flex: 0 0 auto !important;
+  box-sizing: border-box;
+}
+
+.stu-tip .date-item .lbl {
+  font-weight: 700;
+  opacity: .85;
+}
+
+.stu-tip .date-item span:last-child {
+  white-space: nowrap;
+  /* 줄바꿈/공백 늘어남 방지 */
+}
+
+/* 요일 컨테이너/자식 분리 오버라이드 */
+#allWrap td>.dayInput {
+  /* ← 컨테이너(div) */
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  width: auto !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+#allWrap td>.dayInput>.dayInput {
+  /* ← 자식 input들 */
+  width: 3.2rem !important;
+  min-width: 3.2rem !important;
+  margin: 0 !important;
+  text-align: center;
+}
+
+/* 부교재 칸: 레이아웃 */
+#allWrap .sbBox {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+/* 부교재 입력: 다른 인풋과 동일한 ‘필’ 스타일 */
+#allWrap .subBookInput {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #f1f5f9;
+  color: #111827;
+  font: 15px/1 'Noto Sans KR', system-ui, sans-serif;
+  width: 9rem;
+  /* 필요하면 7~10rem 사이로 조절 */
+  text-align: center;
+  box-sizing: border-box;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+
+#allWrap .subBookInput::placeholder {
+  color: #94a3b8;
+}
+
+#allWrap .subBookInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .25);
+}
+
+/* 다크 모드 일치 */
+body.dark #allWrap .subBookInput {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark #allWrap .subBookInput::placeholder {
+  color: #9fb0c2;
+}
+
+body.dark #allWrap .subBookInput:focus {
+  border-color: var(--accent-dark);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .35);
+}
+
+/* 부교재 열 너비(원하면 조절) */
+#allWrap th:nth-child(5),
+#allWrap td:nth-child(5) {
+  width: 320px;
+  /* 2칸이 깔끔히 들어가게 */
+}
+
+/* 헤더 시계 */
+/* 헤더 시계 */
+.clock-header {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px 18px;
+  border-radius: 9999px;
+  background: var(--card-light, #ffffffcc);
+  border: 1px solid rgba(0, 0, 0, .06);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", sans-serif;
+  line-height: 1;
+  user-select: none;
+}
+
+.clock-header .date {
+  font-size: 26px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.clock-header .day {
+  font-size: 26px;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.clock-header .time {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 깜빡이는 콜론 */
+.clock-header .colon {
+  animation: blink 1s steps(1, end) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: .35;
+  }
+}
+
+/* 다크 모드 */
+body.dark .clock-header {
+  background: var(--card-dark, #1e293bcc);
+  border-color: rgba(255, 255, 255, .06);
+  color: var(--text-dark, #e5e7eb);
+}
+
+body.dark .clock-header .date {
+  color: #d1d5db;
+}
+
+body.dark .clock-header .day {
+  color: #60a5fa;
+}
+
+body.dark .clock-header .time {
+  color: #fff;
+}
+
+/* 리스트 표 안의 모든 입력칸 공통 스타일 */
+/* 리스트 표의 첫 번째 컬럼에 있는 텍스트 입력 전체를 다크 스타일로 */
+#listWrap table tbody tr td:first-child input[type="text"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: #0b1324;
+  color: var(--text-dark);
+  border: 1px solid var(--line);
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+body.dark #listWrap table tbody tr td:first-child input[type="text"] {
+  background-color: #0f172a;
+  border-color: #334155;
+  color: #e5e7eb;
+}
+
+#listWrap table tbody tr td:first-child input[type="text"]::placeholder {
+  color: #94a3b8;
+}
+
+/* 드래그 다중선택 박스 */
+#selBox {
+  border: 1px dashed var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  border-radius: 6px;
+}
+
+/* 드롭 타깃 하이라이트(트리/행 공통) */
+.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+/* 선택/드래그 박스 가독성 */
+#ctx button:hover {
+  background: rgba(255, 255, 255, .05)
+}
+
+#list tr.sel {
+  background: var(--accent-opaque);
+}
+
+.tree-row [data-path].sel {
+  background: var(--accent-opaque);
+  border-radius: 6px;
+}
+
+/* 1) 가로 스크롤 방지(뷰포트 초과 봉인) — 파일관리 페이지에만 */
+.fm-page {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* 2) 그리드 래퍼는 패딩 포함 폭 계산 */
+.fm-page .full-bleed-grid,
+.fm-page .fm-shell,
+.fm-page main.three-col {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+  gap: 10px;
+  /* 간격은 살짝 */
+  padding: 10px;
+}
+
+/* 3) 컬럼 비율: 왼 1.2 / 가운데 가변 / 오른쪽 1.5 */
+.fm-page .full-bleed-grid,
+.fm-page .fm-shell,
+.fm-page main.three-col {
+  grid-template-columns: 1.2fr minmax(0, 1fr) 1.5fr;
+}
+
+/* 4) 각 칸은 내부 콘텐츠가 커도 줄어들 수 있게(min-width:0 필수) */
+.fm-page .card,
+.fm-page .side-card,
+.fm-page .assign-card,
+.fm-page .fm-center,
+.fm-page .fm-tree,
+.fm-page .fm-assign {
+  min-width: 0;
+}
+
+/* 5) 표/아이프레임 류가 칸을 밀고 나가지 않도록 */
+.fm-page table,
+.fm-page iframe,
+.fm-page img,
+.fm-page video {
+  max-width: 100%;
+}
+
+.fm-page table {
+  table-layout: fixed;
+  word-break: break-word;
+}
+
+/* 6) 가운데 영역(파일 리스트) 스크롤은 안에서만 */
+.fm-page #list,
+.fm-page .fm-center {
+  overflow: auto;
+}
+
+/* (옵션) 파일관리 전용 카드/섹션 스타일도 스코프 */
+.fm-page .card {
+  background: var(--card-dark, #0f172a);
+  border: 1px solid var(--line, #243244);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fm-page .fm-tree {
+  max-height: calc(100vh - 140px);
+  overflow: auto
+}
+
+.fm-page #tree button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer
+}
+
+.fm-page .fm-center {
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px
+}
+
+.fm-page .dropzone {
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center
+}
+
+.fm-page .dropzone.drag {
+  border-color: var(--accent)
+}
+
+.fm-page #list {
+  max-height: calc(100vh - 280px);
+  overflow: auto
+}
+
+.fm-page th,
+.fm-page td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line)
+}
+
+.fm-page .right {
+  text-align: right
+}
+
+.fm-page .fm-assign {
+  width: 100%;
+  max-width: 380px
+}
+
+/* === 컨텍스트 메뉴 (우클릭) === */
+#ctxMenu {
+  position: fixed;
+  /* JS에서도 잡지만 안전망 */
+  z-index: 10000;
+  min-width: 220px;
+  background: var(--card-light);
+  color: var(--text);
+  border: 1px solid color-mix(in oklab, var(--text) 12%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .25);
+  overflow: hidden;
+  display: none;
+}
+
+body.dark #ctxMenu {
+  background: var(--card-dark);
+  color: var(--text-dark);
+  border-color: color-mix(in oklab, var(--text-dark) 18%, transparent);
+}
+
+#ctxMenu .ctx-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font: 14px/1.2 'Noto Sans KR', system-ui, sans-serif;
+  color: inherit !important;
+  /* 전역 button 색 덮어쓰기 */
+}
+
+#ctxMenu .ctx-item[aria-disabled="true"] {
+  opacity: .45;
+  pointer-events: none;
+}
+
+#ctxMenu .ctx-item:hover {
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
+
+/* 분리선 */
+#ctxMenu [data-sep] {
+  height: 1px;
+  background: color-mix(in oklab, currentColor 18%, transparent);
+}
+
+/* (오타 수정) 기존에 #ctx button:hover 로 되어 있던 규칙 교체 */
+#ctx button:hover {
+  background: none;
+}
+
+/* 무력화 */
+#ctxMenu .ctx-item:hover {
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
+
+/* 라이트 모드일 때 시험명 입력·숫자 입력 등 입력계열 톤 교정 */
+body:not(.dark) .tests-table input[type="text"],
+body:not(.dark) .tests-table input[type="number"],
+body:not(.dark) .tests-table input,
+body:not(.dark) .tests-table select,
+body:not(.dark) .tests-table textarea {
+  background: var(--card-light) !important;   /* 밝은 카드색 */
+  color: var(--text) !important;              /* 본문색 */
+  border: 1px solid var(--line) !important;
+  box-shadow: none !important;
+}
+
+/* hover / focus에서 남색으로 바뀌지 않도록 */
+body:not(.dark) .tests-table input:focus,
+body:not(.dark) .tests-table select:focus,
+body:not(.dark) .tests-table textarea:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+
+/* 셀 안 배경이 어둡게 깔려있는 경우도 무력화 */
+body:not(.dark) .tests-table td {
+  background: var(--card-light) !important;
+}
+
+/* 카테고리 배지/칩도 라이트 톤으로 */
+body:not(.dark) .cat-badge,
+body:not(.dark) .pill {
+  background: #f8fafc;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}

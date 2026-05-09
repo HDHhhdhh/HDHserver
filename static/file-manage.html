@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>학생 로그인</title>
+
+  <style>
+    :root{
+      --bg:#f9fafb;
+      --card:#ffffff;
+      --line:#e5e7eb;
+      --text:#111827;
+      --muted:#6b7280;
+      --accent:#2563eb;
+      --accent-soft:#e0e7ff;
+      --danger:#dc2626;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      background:var(--bg); color:var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Apple SD Gothic Neo, Noto Sans KR, sans-serif;
+      padding:24px;
+    }
+    .layout{ width:min(1120px, 96vw); display:flex; gap:40px; align-items:center; justify-content:center; }
+    .hero{
+      flex: 1 1 640px; height: 560px; border-radius: 18px; border: 1px solid rgba(0,0,0,.06);
+      background-image: url("/files/landing.png");
+      background-repeat: no-repeat; background-position: center; background-size: contain;
+      background-color: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.10);
+    }
+    .card{
+      flex: 0 0 420px; width:420px; background:var(--card); border:1px solid var(--line);
+      border-radius:12px; padding:24px 20px; box-shadow: 0 10px 28px rgba(0,0,0,.06);
+    }
+    h1{ margin:0 0 6px; font-size:20px; font-weight:700; }
+    .sub{ margin:0 0 18px; font-size:13px; color:var(--muted); }
+
+    label{ display:block; margin:12px 0 6px; font-size:13px; color:var(--muted); }
+    input{
+      width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line); font-size:14px;
+    }
+    input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+
+    .row{ display:flex; gap:10px; margin-top:16px; }
+    button{
+      flex:1; padding:11px; border-radius:8px; border:1px solid transparent;
+      cursor:pointer; font-weight:600; font-size:14px;
+    }
+    .btn{ background:var(--accent); color:#fff; }
+    .btn:hover{ background:#1d4ed8; }
+    .btn2{ background:#fff; color:var(--text); border:1px solid var(--line); }
+    .btn2:hover{ background:#f9fafb; }
+
+    .spinner{ display:none; margin-top:12px; font-size:13px; color:var(--muted); }
+    .msg{ margin-top:12px; font-size:13px; }
+    .msg.ok{ color:#059669; }
+    .msg.err{ color:var(--danger); }
+
+    .mini{ margin-top:14px; font-size:12px; color:var(--muted); line-height:1.6; }
+
+    /* ===== 모달 ===== */
+    #modalBack{
+      display:none;
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.45);
+      align-items:center; justify-content:center;
+      z-index:9999;
+      padding:18px;
+    }
+    .modal{
+      width:min(420px, 92vw);
+      background:#fff;
+      border-radius:12px;
+      border:1px solid rgba(0,0,0,.08);
+      box-shadow: 0 12px 36px rgba(0,0,0,.20);
+      padding:18px 16px;
+    }
+    .modal h2{
+      margin:0 0 6px;
+      font-size:16px;
+    }
+    .modal .hint{
+      margin:0 0 12px;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .modal .row{ margin-top:12px; }
+    .modal .btn3{
+      background:#111827;
+      color:#fff;
+    }
+    .modal .btn3:hover{ background:#0b1220; }
+
+    @media (max-width: 980px){
+      .layout{ flex-direction:column; gap:18px; }
+      .hero{ width:100%; height:240px; flex: 0 0 auto; }
+      .card{ width:min(420px, 92vw); flex: 0 0 auto; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="layout">
+    <div class="hero" aria-label="landing"></div>
+
+    <div class="card">
+      <h1>학생 로그인</h1>
+
+      <!-- 로그인 UI -->
+      <div id="loginBox">
+        <label for="sid">아이디</label>
+        <input id="sid" autocomplete="username">
+
+        <label for="pw">비밀번호</label>
+        <input id="pw" type="password" autocomplete="current-password">
+
+        <div class="row">
+          <button class="btn" id="loginBtn" type="button">로그인</button>
+        </div>
+      </div>
+
+      <!-- 로그인 후 UI -->
+      <div id="loggedBox" style="display:none;">
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;">
+          <span id="loggedWho">로그인됨</span>
+        </div>
+
+        <div class="row" style="margin-top:12px;">
+          <button class="btn" id="goBtn" type="button">선택한 커리로 이동</button>
+          <button class="btn2" id="changeBtn" type="button">아이디/비번 변경</button>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button class="btn2" id="logoutBtn" type="button">로그아웃</button>
+        </div>
+
+        <!-- 커리 선택 UI(auth.js가 loggedBox 밑에 자동으로 붙임) -->
+      </div>
+
+      <div class="spinner" id="spin">처리 중...</div>
+      <div class="msg" id="msg"></div>
+
+      <div class="mini">
+        · 로그인 상태는 이 기기에 저장됩니다.<br>
+        · 로그인 후 커리를 선택해서 학습 페이지로 이동하세요.<br>
+      </div>
+    </div>
+  </div>
+
+  <!-- 아이디/비번 변경 모달 -->
+  <div id="modalBack" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="아이디 비밀번호 변경">
+      <h2>아이디 / 비밀번호 변경</h2>
+      <p class="hint">
+        현재 비밀번호는 반드시 입력해야 합니다.<br>
+      </p>
+
+      <label for="curPw">현재 비밀번호</label>
+      <input id="curPw" type="password" autocomplete="current-password" placeholder="현재 비밀번호">
+
+      <label for="newId">새 아이디(선택)</label>
+      <input id="newId" autocomplete="username" placeholder="예: DONGHUN">
+
+      <label for="newPw">새 비밀번호 (선택)</label>
+      <input id="newPw" type="password" autocomplete="new-password" placeholder="새 비밀번호">
+
+      <div class="row">
+        <button class="btn3" id="saveChangeBtn" type="button">저장</button>
+        <button class="btn2" id="closeModalBtn" type="button">닫기</button>
+      </div>
+
+      <div class="msg" id="modalMsg"></div>
+    </div>
+  </div>
+
+  <script src="/js/auth.js"></script>
+</body>
+</html>

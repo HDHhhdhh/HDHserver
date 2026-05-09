@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>학생 페이지</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/student.css?v=20260415b">
+
+  <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
+  <script defer src="/js/student.js"></script>
+</head>
+<body class="student-page">
+  <div class="student-shell">
+    <header class="topbar student-topbar">
+      <div id="clock" class="clock-header"></div>
+
+      <button id="setBtn" class="settings-btn" type="button" aria-label="설정 열기">
+        설정
+        <span id="badge" class="notice-badge">1</span>
+      </button>
+    </header>
+
+    <div id="setPanel">
+      <label class="row">
+        다크 모드
+        <input type="checkbox" id="darkToggle">
+      </label>
+
+      <div class="settings-feedback">
+        <textarea id="feedbackBox" placeholder="건의사항을 편하게 남겨주세요."></textarea>
+        <button id="submitFeedback" type="button">건의사항 보내기</button>
+      </div>
+
+      <div>
+        <button id="goLogin" type="button">학원 로그인 페이지로 이동</button>
+      </div>
+    </div>
+
+    <section class="hero-bar">
+      <div class="namebar">
+        <h2 id="stuName" class="namebar-title"></h2>
+        <p class="namebar-desc">오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.</p>
+      </div>
+      <button id="openTestSubmit" class="ts-btn" type="button">테스트 제출</button>
+    </section>
+
+    <main class="student-main">
+      <section class="panel video-panel">
+        <h2 class="section-title">오늘 영상</h2>
+
+        <div id="playerBox">
+          <article class="player-card">
+            <iframe id="player" allow="autoplay; local-network-access" allowfullscreen webkitallowfullscreen
+              mozallowfullscreen></iframe>
+          </article>
+
+          <aside class="playlist-wrap">
+            <h3>재생목록</h3>
+            <ul id="vidList">
+              <li class="muted">영상을 불러오는 중...</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section class="panel materials-panel">
+        <h3 class="section-title">자료 다운로드</h3>
+        <ul id="matList">
+          <li class="muted">자료를 불러오는 중...</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <div id="announceModal" class="announce-modal">
+    <div class="announce-card">
+      <h3 id="annTitle"></h3>
+      <div id="annContent"></div>
+
+      <div id="annPoll">
+        <div id="annPollQ"></div>
+        <div id="annPollOpts"></div>
+      </div>
+
+      <div id="annSurvey"></div>
+
+      <div class="announce-actions">
+        <button id="annSubmit" type="button">제출</button>
+        <button id="annConfirm" type="button">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('#goLogin');
+      if (!btn) return;
+      window.location.href = 'https://5a-math.com/';
+    });
+  </script>
+</body>
+</html>

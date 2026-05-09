@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>영상 관리</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header>
+    <h1>영상 관리</h1>
+    <label style="float:right; margin-top:0.5rem;">
+      <input type="checkbox" id="darkToggle"> 다크 모드
+    </label>
+    <p><a href="/admin">관리자 화면으로 돌아가기</a></p>
+  </header>
+
+  <section id="videoSection">
+    <div class="form-row">
+      <select id="vCur" aria-label="커리큘럼"></select>
+      <select id="subVidSel" aria-label="세부과정">
+        <option value="">세부과정 선택</option>
+      </select>
+      <input type="number" id="exNumHigh" placeholder="상">
+      <input type="number" id="exNumMid" placeholder="중">
+      <input type="number" id="exNumLow" placeholder="하">
+      <input id="vChap" type="number" min="1" placeholder="챕터">
+      <input type="text" id="vTitle" placeholder="제목">
+      <input type="text" id="vUrl" placeholder="Kollus URL">
+      <button id="addVid" class="btn">추가</button>
+      <button id="saveVid" class="btn">저장</button>
+    </div>
+
+    <table id="vidTable">
+      <thead>
+        <tr>
+          <th style="width:40px">ID</th>
+          <th style="width:70px">커리큘럼</th>
+          <th style="width:100px">세부과정</th>
+          <th style="width:40px">챕</th>
+          <th style="width:50px">상</th>
+          <th style="width:50px">중</th>
+          <th style="width:50px">하</th>
+          <th>제목</th>
+          <th style="min-width:260px">URL</th>
+          <th style="width:40px">Del</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <script defer src="/js/video-manage.js"></script>
+</body>
+</html>

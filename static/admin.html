@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>관리자 운영판</title>
+
+  <link rel="stylesheet" href="/css/main.css?v=20260417a">
+  <link rel="stylesheet" href="/css/admin.css?v=20260417a">
+
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+</head>
+<body class="admin">
+  <div class="admin-shell">
+    <aside class="control-rail" aria-label="운영 내비게이션">
+      <div class="rail-brand">
+        <p class="rail-kicker">ADMIN OPERATION</p>
+        <h1>관리자 운영판</h1>
+        <p class="rail-desc">오늘 학생 운영 흐름을 빠르게 확인하고 처리합니다.</p>
+      </div>
+
+      <div class="rail-focus-wrap">
+        <div class="focus-gauge" id="opsFocusRing" aria-label="운영 진행률">
+          <div class="focus-inner">
+            <span class="focus-label">운영 진행률</span>
+            <strong id="opsFocusValue">0%</strong>
+          </div>
+        </div>
+      </div>
+
+      <nav class="rail-nav">
+        <button class="rail-btn" type="button" data-ui-action="scroll-today">오늘 학생</button>
+        <button class="rail-btn" type="button" data-ui-action="scroll-done">완료 / 자유석</button>
+        <button class="rail-btn" type="button" data-ui-action="scroll-calendar">캘린더</button>
+      </nav>
+
+      <div class="rail-shortcuts">
+        <button class="rail-cta" type="button" data-ui-action="open-extra">+ 보강 등록</button>
+        <button class="rail-cta muted" type="button" id="exportTodayCsv">오늘 명단 CSV</button>
+      </div>
+    </aside>
+
+    <div class="admin-workspace">
+      <header class="topbar">
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span>운영 콘솔 온라인</span>
+          <span id="opsNow" class="ops-now"></span>
+        </div>
+
+        <div class="topbar-right">
+          <button id="densityToggle" class="btn secondary" type="button">컴팩트 보기</button>
+          <label class="switch" title="다크모드">
+            <input type="checkbox" id="darkToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </header>
+
+      <div class="global-links" aria-label="관리 링크">
+        <a href="/video-manage" class="btn secondary" target="_blank" rel="noopener noreferrer">영상관리</a>
+        <a href="/students" class="btn secondary" target="_blank" rel="noopener noreferrer">전체학생</a>
+        <a href="/school-cal" class="btn secondary" target="_blank" rel="noopener noreferrer">학교일정</a>
+        <a href="/tests" class="btn secondary" target="_blank" rel="noopener noreferrer">테스트관리</a>
+        <a href="/file-manage" class="btn secondary" target="_blank" rel="noopener noreferrer">파일관리</a>
+      </div>
+
+      <section class="hero-panel">
+        <div class="hero-main">
+          <p class="hero-kicker">TODAY STATUS</p>
+          <h2>오늘 운영 지휘판</h2>
+          <div class="hero-count-line">
+            <strong id="todayCount">0</strong>
+            <span class="count-unit">명</span>
+          </div>
+          <p id="todaySlotCounts" class="hero-sub muted"></p>
+        </div>
+
+        <div class="hero-kpis">
+          <article class="kpi-card">
+            <span class="kpi-label">완료 학생</span>
+            <strong id="kpiDone">0명</strong>
+          </article>
+          <article class="kpi-card">
+            <span class="kpi-label">출석 체크</span>
+            <strong id="kpiAttendance">0명</strong>
+          </article>
+          <article class="kpi-card progress-card">
+            <span class="kpi-label">진행률</span>
+            <strong id="kpiProgress">0%</strong>
+            <div class="kpi-progress-track" aria-hidden="true">
+              <i id="kpiProgressBar"></i>
+            </div>
+          </article>
+        </div>
+
+        <div class="hero-actions" aria-label="빠른 작업">
+          <button id="extraBtn" class="btn" type="button">+ 보강 등록</button>
+          <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
+        </div>
+      </section>
+
+      <main class="page" role="main">
+        <section class="stack left-stack" aria-label="오늘 운영 보드">
+          <div id="adminDateMount"></div>
+
+          <article id="todaySection" class="card" aria-labelledby="today-title">
+            <div class="card-head between">
+              <h3 id="today-title">오늘 학생</h3>
+              <button id="absentRecoverBtn" class="btn secondary" type="button">결석 복구</button>
+            </div>
+            <div id="todayWrap" class="mt-10">Loading...</div>
+          </article>
+
+          <article id="doneSection" class="card">
+            <div class="card-head between">
+              <h3>완료 / 자유석 기록</h3>
+              <button id="clearAllBtn" class="btn" type="button">기록 정리</button>
+            </div>
+            <div id="doneWrap" class="mt-8">Loading...</div>
+          </article>
+        </section>
+
+        <section class="stack calendar-stack" aria-label="캘린더">
+          <article id="calendarSection" class="card">
+            <div class="card-head between">
+              <h3 class="row gap-8">
+                <span>캘린더</span>
+                <span class="badge" id="calTodayBadge" hidden></span>
+              </h3>
+            </div>
+            <div id="timeGraphWrap" class="mt-8">Loading...</div>
+            <div id="calendar" class="mt-8"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="attendModal" class="modal-backdrop">
+    <div class="modal-panel narrow">
+      <button id="attendClose" class="modal-close" type="button">×</button>
+      <h3 id="attendDateTitle" class="mt-0"></h3>
+      <ul id="attendList" class="list"></ul>
+      <div class="modal-actions">
+        <button id="addExtraBtn" class="btn" type="button">보강 추가</button>
+        <button id="markAbsentBtn" class="btn" type="button">결석 처리</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="selectionModal" class="modal-backdrop">
+    <div class="modal-panel narrow column">
+      <button id="selectionClose" class="modal-close" type="button">×</button>
+      <h3 id="selectionTitle" class="mt-0">학생 선택</h3>
+      <ul id="selectionList" class="list flex-1 scroll"></ul>
+      <div class="modal-footer">
+        <button id="selectionSave" class="btn" type="button">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="logModal" class="modal-backdrop">
+    <div class="modal-panel wide">
+      <h3 id="logTitle" class="mt-0"></h3>
+      <label>특이사항:
+        <textarea id="logNotes" rows="2" placeholder=""></textarea>
+      </label>
+      <div id="logProgress" class="progress-grid mt-8"></div>
+      <label>숙제:
+        <textarea id="logHw" rows="2"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="logSave" class="btn" type="button">저장</button>
+        <button id="logdoneBtn" class="btn" type="button">완료</button>
+        <button id="logClose" class="btn secondary" type="button">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="yoilModal" class="modal-backdrop">
+    <div class="modal-panel tiny column">
+      <div id="yoilTitle" class="modal-title">요일 - 0명</div>
+      <textarea id="yoilList" readonly class="yoil-list"></textarea>
+      <button class="btn secondary mt-8" type="button"
+        onclick="document.getElementById('yoilModal').style.display='none'">닫기</button>
+    </div>
+  </div>
+
+  <script type="module" src="/js/admin/main.js?v=20260411e"></script>
+</body>
+</html>

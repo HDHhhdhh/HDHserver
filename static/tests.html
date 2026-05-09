@@ -1,0 +1,901 @@
+﻿<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="utf-8">
+  <title>테스트 관리</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/admin.css">
+
+  <style>
+    body.admin.tests-page {
+      margin: 0;
+    }
+
+    body.admin.tests-page .topbar-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .topbar {
+      flex-wrap: wrap;
+    }
+
+    body.admin.tests-page .topbar-nav {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 2px;
+    }
+
+    body.admin.tests-page .topbar-sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      background: var(--chip);
+      border: 1px solid var(--line);
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .topbar-nav a.active {
+      background: var(--chip);
+      border: 1px solid var(--line);
+    }
+
+    body.admin.tests-page .switch {
+      position: relative;
+      width: 50px;
+      height: 26px;
+      flex: 0 0 auto;
+    }
+
+    body.admin.tests-page .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    body.admin.tests-page .slider {
+      position: absolute;
+      inset: 0;
+      border-radius: 9999px;
+      background: #cbd5e1;
+      transition: .25s;
+    }
+
+    body.admin.tests-page .slider::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 4px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      transition: .25s;
+    }
+
+    body.admin.tests-page .switch input:checked + .slider {
+      background: var(--accent);
+    }
+
+    body.admin.tests-page .switch input:checked + .slider::before {
+      transform: translateX(24px);
+    }
+
+    body.dark.admin.tests-page .slider {
+      background: #475569;
+    }
+
+    body.admin.tests-page .page {
+      width: 100%;
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 24px 32px 42px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .hero-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    body.admin.tests-page .hero-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    body.admin.tests-page .hero-eyebrow {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    body.admin.tests-page .hero-title {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.15;
+    }
+
+    body.admin.tests-page .hero-desc {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--muted);
+      max-width: 720px;
+    }
+
+    body.admin.tests-page .hero-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    body.admin.tests-page .hero-metric {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: color-mix(in oklab, var(--card) 94%, var(--accent) 6%);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 108px;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .hero-metric-label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .hero-metric-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .hero-metric-help {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    body.admin.tests-page .tests-shell {
+      display: grid;
+      grid-template-columns: 390px minmax(0, 1fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    body.admin.tests-page .card-head h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    body.admin.tests-page .card-sub {
+      margin-top: 6px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .tests-toolbar,
+    body.admin.tests-page .stats-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    body.admin.tests-page .toolbar-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+    }
+
+    body.admin.tests-page .toolbar-label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    body.admin.tests-page .toolbar-spacer {
+      flex: 1 1 auto;
+    }
+
+    body.admin.tests-page .scope-note {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .test-list {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
+      overflow: auto;
+      max-height: 620px;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .test-list button {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 11px 12px;
+      margin: 0 0 6px;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+
+    body.admin.tests-page .test-list button:last-child {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .test-list button:hover {
+      background: color-mix(in oklab, var(--chip) 62%, transparent);
+      border-color: color-mix(in oklab, var(--line) 60%, var(--accent) 40%);
+      transform: translateX(2px);
+    }
+
+    body.admin.tests-page .test-list button.active {
+      background: color-mix(in oklab, var(--chip) 78%, var(--accent) 22%);
+      border-color: color-mix(in oklab, var(--accent) 60%, var(--line) 40%);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    body.admin.tests-page .test-list button span.small {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 6px;
+    }
+
+    body.admin.tests-page .editor-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    body.admin.tests-page .editor-banner {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in oklab, var(--card) 94%, var(--accent) 6%);
+    }
+
+    body.admin.tests-page .editor-banner strong {
+      font-size: 16px;
+    }
+
+    body.admin.tests-page .editor-banner span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .field-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    body.admin.tests-page .field-row {
+      display: grid;
+      grid-template-columns: 90px minmax(0, 1fr) 1.05fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    body.admin.tests-page .field-row label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .field-row .helper {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    body.admin.tests-page .answer-block {
+      margin-top: 4px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .answer-label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page #cfgAnswers {
+      width: 100%;
+      min-height: 128px;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .answers-help {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .answers-help code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+    }
+
+    body.admin.tests-page .btn-row {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    body.admin.tests-page .stats-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    body.admin.tests-page .summary-card {
+      position: relative;
+      overflow: hidden;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 93%, var(--accent) 7%);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, .12);
+    }
+
+    body.admin.tests-page .summary-card[data-type="UNIT"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #3b82f6 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="FINAL"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #10b981 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="HELL"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #ef4444 42%);
+    }
+
+    body.admin.tests-page .summary-label {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    body.admin.tests-page .summary-value {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--fg);
+      line-height: 1;
+    }
+
+    body.admin.tests-page .summary-meta {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .summary-empty {
+      padding: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
+    }
+
+    body.admin.tests-page .stats-table-wrap,
+    body.admin.tests-page .panel-table-wrap {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: auto;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 860px;
+      margin: 0;
+    }
+
+    body.admin.tests-page .stats-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      font-size: 11px;
+    }
+
+    body.admin.tests-page .stats-table tbody td {
+      padding: 12px 12px;
+      border-top: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
+      text-align: right;
+      vertical-align: middle;
+    }
+
+    body.admin.tests-page .stats-table tbody td:first-child,
+    body.admin.tests-page .stats-table tbody td:nth-child(2),
+    body.admin.tests-page .stats-table tbody td:nth-child(3),
+    body.admin.tests-page .stats-table thead th:first-child,
+    body.admin.tests-page .stats-table thead th:nth-child(2),
+    body.admin.tests-page .stats-table thead th:nth-child(3) {
+      text-align: left;
+    }
+
+    body.admin.tests-page .stats-table tbody tr.group-row td {
+      padding: 12px 12px 8px;
+      background: color-mix(in oklab, var(--card) 90%, var(--accent) 10%);
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-top: 0;
+      text-align: left;
+    }
+
+    body.admin.tests-page .group-label {
+      font-weight: 800;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .group-meta {
+      margin-left: 8px;
+      color: var(--muted);
+      letter-spacing: normal;
+      text-transform: none;
+    }
+
+    body.admin.tests-page .stats-table tbody tr.data-row {
+      cursor: pointer;
+      transition: background .16s ease;
+    }
+
+    body.admin.tests-page .stats-table tbody tr.data-row:hover {
+      background: color-mix(in oklab, var(--card) 90%, var(--accent) 10%);
+    }
+
+    body.admin.tests-page .stats-table tbody tr.data-row.is-active {
+      background: color-mix(in oklab, var(--card) 84%, var(--accent) 16%);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    body.admin.tests-page .type-pill,
+    body.admin.tests-page .level-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .type-pill[data-type="UNIT"] {
+      background: rgba(59, 130, 246, .14);
+      color: #2563eb;
+      border-color: rgba(59, 130, 246, .28);
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="UNIT"] {
+      color: #93c5fd;
+    }
+
+    body.admin.tests-page .type-pill[data-type="FINAL"] {
+      background: rgba(16, 185, 129, .14);
+      color: #047857;
+      border-color: rgba(16, 185, 129, .28);
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="FINAL"] {
+      color: #6ee7b7;
+    }
+
+    body.admin.tests-page .type-pill[data-type="HELL"] {
+      background: rgba(239, 68, 68, .14);
+      color: #b91c1c;
+      border-color: rgba(239, 68, 68, .28);
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="HELL"] {
+      color: #fca5a5;
+    }
+
+    body.admin.tests-page .level-pill {
+      min-width: 54px;
+      background: color-mix(in oklab, var(--card) 92%, var(--fg) 8%);
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .stat-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      align-items: flex-start;
+    }
+
+    body.admin.tests-page .stat-main {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .stat-sub {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .metric-main {
+      font-weight: 800;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .metric-sub {
+      display: block;
+      margin-top: 2px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .personal-panel {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--card);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, .12);
+    }
+
+    body.admin.tests-page .panel-head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 94%, var(--accent) 6%);
+    }
+
+    body.admin.tests-page .panel-title {
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .panel-subtitle {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .panel-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    body.admin.tests-page .personal-panel .panel-table-wrap {
+      margin-top: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    body.admin.tests-page .panel-hint {
+      padding: 0 16px 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .empty-cell {
+      text-align: center !important;
+      color: var(--muted);
+      padding: 22px 12px !important;
+    }
+
+    @media (max-width: 1160px) {
+      body.admin.tests-page .hero-card,
+      body.admin.tests-page .tests-shell {
+        grid-template-columns: 1fr;
+      }
+
+      body.admin.tests-page .hero-metrics {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      body.admin.tests-page .topbar {
+        padding: 18px 16px;
+      }
+
+      body.admin.tests-page .topbar-nav {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      body.admin.tests-page .page {
+        padding: 18px 16px 28px;
+      }
+
+      body.admin.tests-page .hero-title {
+        font-size: 26px;
+      }
+
+      body.admin.tests-page .hero-metrics {
+        grid-template-columns: 1fr;
+      }
+
+      body.admin.tests-page .field-row {
+        grid-template-columns: 1fr;
+      }
+
+      body.admin.tests-page .field-row label {
+        margin-bottom: -4px;
+      }
+
+      body.admin.tests-page .stats-table {
+        min-width: 760px;
+      }
+    }
+  </style></head>
+
+<body class="admin tests-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="topbar-title">
+        테스트 관리 <span id="testsTotalPill" class="pill">0개</span>
+      </h1>
+      <div class="topbar-sub">단원평가와 APEX 테스트를 등록하고, 최근 제출 통계를 한 화면에서 관리합니다.</div>
+    </div>
+
+    <nav class="topbar-nav" aria-label="주요 링크">
+      <a href="/admin">대시보드</a>
+      <a href="/students">전체학생</a>
+      <a href="/school-cal">학교일정</a>
+      <a href="/tests" class="active" aria-current="page">테스트</a>
+      <a href="/video-manage">영상관리</a>
+      <a href="/file-manage">자료실</a>
+    </nav>
+
+    <label class="switch" title="다크모드">
+      <input type="checkbox" id="darkToggle">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <main class="page" id="testsRoot" role="main">
+    <section class="card hero-card">
+      <div class="hero-copy">
+        <div class="hero-eyebrow">Test Workspace</div>
+        <h2 class="hero-title">시험 등록부터 통계 확인까지 한 흐름으로 관리하세요</h2>
+        <p class="hero-desc">
+          왼쪽에서 유형과 커리를 선택해 시험 목록을 관리하고, 오른쪽에서 시험명/문항 수/정답을 편집할 수 있습니다.
+          아래 통계에서는 과목/단원/레벨 기준 집계를 확인하고, 행을 클릭하면 개인별 성적을 바로 볼 수 있습니다.
+        </p>
+      </div>
+
+      <div class="hero-metrics">
+        <div class="hero-metric">
+          <span class="hero-metric-label">현재 작업 범위</span>
+          <strong id="testsScopeLabel" class="hero-metric-value">단원평가 · 공수1</strong>
+          <span id="visibleTestsMeta" class="hero-metric-help">현재 목록 0개</span>
+        </div>
+        <div class="hero-metric">
+          <span class="hero-metric-label">통계 집계 범위</span>
+          <strong id="testsRangeLabel" class="hero-metric-value">최근 30일</strong>
+          <span class="hero-metric-help">기간을 바꾸면 요약 카드와 개인 성적 패널이 함께 갱신됩니다.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="tests-shell" aria-label="시험 관리">
+      <section class="card">
+        <div class="card-head">
+          <h2>시험 목록</h2>
+        </div>
+        <div class="card-sub">유형과 커리를 선택하면 해당 범위의 시험만 모아서 볼 수 있습니다.</div>
+
+        <div class="tests-toolbar">
+          <div class="toolbar-group">
+            <span class="toolbar-label">유형</span>
+            <select id="cfgType">
+  <option value="단원평가">단원평가</option>
+  <option value="FINAL">APEX FINAL</option>
+  <option value="HELL">APEX HELL</option>
+</select>
+          </div>
+
+          <div class="toolbar-group">
+            <span class="toolbar-label">커리</span>
+            <select id="cfgCur">
+  <option value="공수1">공수1</option>
+  <option value="공수2">공수2</option>
+  <option value="대수">대수</option>
+  <option value="미적1">미적1</option>
+  <option value="미적2">미적2</option>
+  <option value="확통">확통</option>
+  <option value="기하">기하</option>
+</select>
+          </div>
+
+          <div class="toolbar-spacer"></div>
+          <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
+        </div>
+
+        <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
+        <div id="testList" class="test-list"></div>
+      </section>
+
+      <section class="card editor-panel">
+        <div class="card-head">
+          <h2>시험 편집</h2>
+        </div>
+        <div class="card-sub">기존 시험을 선택하거나 새 시험을 추가한 뒤 이름/문항 수/정답을 저장하세요.</div>
+
+        <div class="editor-banner">
+          <div>
+            <strong id="editorSelectionLabel">선택된 시험 없음</strong>
+            <div><span>왼쪽에서 시험을 고르면 아래 항목에서 바로 수정할 수 있습니다.</span></div>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field-row">
+            <label for="cfgName">시험명</label>
+            <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
+            <div class="helper">단원평가는 단원명과 레벨을 포함해 적으면 통계 분리가 쉬워집니다.</div>
+          </div>
+
+          <div class="field-row">
+            <label for="cfgProblems">문항 수</label>
+            <input type="number" id="cfgProblems" min="1" max="100" step="1">
+            <div class="helper">정답 배열 길이는 문항 수에 맞춰 자동 정리됩니다.</div>
+          </div>
+        </div>
+
+        <div class="answer-block">
+          <label for="cfgAnswers" class="answer-label">정답 (회차 1~3)</label>
+          <textarea id="cfgAnswers" placeholder="1회차 정답&#10;2회차 정답&#10;3회차 정답"></textarea>
+          <div class="answers-help">
+            · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
+            · 3줄 입력 시 각 줄이 1회차/2회차/3회차로 저장됩니다.<br>
+            · 1줄만 입력하면 1~3회차에 동일 정답이 저장됩니다.
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
+          <button id="btnSaveTest" class="btn" type="button">저장</button>
+        </div>
+      </section>
+    </section>
+
+    <section class="card" aria-label="테스트 통계">
+      <div class="card-head">
+        <h2>테스트 통계</h2>
+      </div>
+      <div class="card-sub">최근 제출 기록을 기반으로 유형별 흐름을 보고, 행을 클릭하면 개인 성적까지 확인할 수 있습니다.</div>
+
+      <div class="stats-toolbar">
+        <div class="toolbar-group">
+          <span class="toolbar-label">기간</span>
+          <select id="statRecent">
+  <option value="30" selected>최근 30일</option>
+  <option value="90">최근 90일</option>
+  <option value="365">최근 1년</option>
+</select>
+        </div>
+        <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
+      </div>
+
+      <div id="statsSummary" class="stats-summary"></div>
+
+      <div class="stats-table-wrap">
+        <table class="stats-table" id="statsTable">
+          <thead>
+            <tr>
+              <th>구분</th>
+              <th>과목</th>
+              <th>단원 / 시험명</th>
+              <th>레벨</th>
+              <th>응시</th>
+              <th>평균</th>
+              <th>최소</th>
+              <th>최대</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const toggle = document.getElementById('darkToggle');
+      if (!toggle) return;
+      if (localStorage.theme === 'dark') {
+        document.body.classList.add('dark');
+        toggle.checked = true;
+      }
+      toggle.addEventListener('change', () => {
+        document.body.classList.toggle('dark', toggle.checked);
+        localStorage.theme = toggle.checked ? 'dark' : 'light';
+      });
+    })();
+  </script>
+  <script src="/js/tests.js" type="module"></script>
+</body>
+
+</html>
+
+
+
+
+
+
+
+
+
+
+

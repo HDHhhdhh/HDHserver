@@ -1,0 +1,79 @@
+/* =========================
+   main.css (global base)
+   - font, color tokens, light/dark base
+   ========================= */
+
+:root {
+    --bg-light: #f8f9fc;
+    --bg-dark: #0d1117;
+
+    --card-light: #ffffff;
+    --card-dark: #1e293b;
+
+    --text: #111827;
+    --text-dark: #e5e7eb;
+
+    --muted: #94a3b8;
+    --line: #334155;
+
+    --accent: #3b82f6;
+    --accent-dark: #60a5fa;
+    --accent-opaque: rgba(59, 130, 246, .12);
+
+    --radius: 18px;
+    --shadow: 0 6px 14px rgba(0, 0, 0, .08);
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    font-family: 'Noto Sans KR', system-ui, sans-serif;
+    margin: 0;
+    background: var(--bg-light);
+    color: var(--text);
+    transition: background .25s, color .25s;
+}
+
+body.dark {
+    background: var(--bg-dark);
+    color: var(--text-dark);
+}
+
+a {
+    color: var(--accent);
+    text-decoration: underline;
+    transition: color .2s;
+}
+
+a:hover {
+    color: var(--accent-dark);
+}
+
+body.dark a {
+    color: var(--accent-dark);
+}
+
+body.dark a:hover {
+    color: var(--accent);
+}
+
+:where(input, select, textarea):focus {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+    border-color: var(--accent);
+}
+
+:where(input[type="text"], input[type="number"], select, textarea) {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: var(--text);
+}
+
+body.dark :where(input[type="text"], input[type="number"], select, textarea) {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: var(--text-dark);
+}

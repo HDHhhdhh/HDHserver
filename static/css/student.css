@@ -1,0 +1,555 @@
+/* =========================================
+   Student Page UI
+   ========================================= */
+
+body.student-page {
+  --stu-bg-0: #f7fbff;
+  --stu-bg-1: #eaf3ff;
+  --stu-card: #ffffff;
+  --stu-card-soft: #f7fbff;
+  --stu-line: #d7e4f6;
+  --stu-line-strong: #b8cde8;
+  --stu-text: #16253b;
+  --stu-muted: #5f7697;
+  --stu-accent: #2e77ec;
+  --stu-accent-2: #16a2c3;
+  --stu-ok: #13a66f;
+  --stu-shadow: 0 14px 30px rgba(16, 38, 68, 0.12);
+  --stu-shadow-soft: 0 8px 18px rgba(16, 38, 68, 0.08);
+  --stu-radius-xl: 22px;
+  --stu-radius-lg: 16px;
+  --stu-radius-md: 12px;
+
+  margin: 10px auto 24px;
+  max-width: min(1440px, calc(100vw - 20px));
+  padding: 0 4px 24px;
+  font-family: "IBM Plex Sans KR", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: var(--stu-text);
+  background: var(--stu-bg-0);
+}
+
+body.student-page.dark {
+  --stu-bg-0: #0b1423;
+  --stu-bg-1: #12233d;
+  --stu-card: #132740;
+  --stu-card-soft: #173152;
+  --stu-line: #2b4c71;
+  --stu-line-strong: #3d6594;
+  --stu-text: #e6f0ff;
+  --stu-muted: #9db8dd;
+  --stu-accent: #76b5ff;
+  --stu-accent-2: #55d0eb;
+  --stu-ok: #40cd98;
+  --stu-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
+  --stu-shadow-soft: 0 8px 18px rgba(0, 0, 0, 0.24);
+
+  background: var(--stu-bg-0);
+}
+
+body.student-page * {
+  box-sizing: border-box;
+}
+
+body.student-page .student-shell {
+  display: grid;
+  gap: 14px;
+}
+
+/* =========================================
+   Topbar / Header
+   ========================================= */
+body.student-page .student-topbar {
+  position: sticky;
+  top: 10px;
+  z-index: 30;
+  margin-bottom: 0;
+  padding: 10px 12px;
+  border-radius: var(--stu-radius-lg);
+  border: 1px solid var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 86%, #ffffff 14%);
+  box-shadow: var(--stu-shadow-soft);
+  backdrop-filter: blur(8px);
+}
+
+body.student-page .clock-header {
+  background: color-mix(in srgb, var(--stu-card) 75%, #ffffff 25%);
+  border: 1px solid var(--stu-line);
+  color: var(--stu-text);
+}
+
+body.student-page.dark .clock-header .date,
+body.student-page.dark .clock-header .day,
+body.student-page.dark .clock-header .time {
+  color: var(--stu-text);
+}
+
+body.student-page .settings-btn {
+  position: relative;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 11px;
+  border: 1px solid var(--stu-line-strong);
+  background: var(--stu-accent);
+  color: #f6fbff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgba(46, 119, 236, 0.24);
+}
+
+body.student-page .notice-badge {
+  display: none;
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 18px;
+  padding: 0 4px;
+}
+
+/* =========================================
+   Settings panel
+   ========================================= */
+body.student-page #setPanel {
+  position: fixed;
+  top: 74px;
+  right: max(14px, calc((100vw - min(1440px, calc(100vw - 20px))) / 2 + 10px));
+  width: 280px;
+  padding: 14px;
+  z-index: 2000;
+  border-radius: 14px;
+  border: 1px solid var(--stu-line-strong);
+  background: var(--stu-card);
+  box-shadow: var(--stu-shadow);
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+body.student-page #setPanel.open {
+  display: flex;
+}
+
+body.student-page #setPanel .row {
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+body.student-page #setPanel textarea,
+body.student-page #setPanel input,
+body.student-page #setPanel button {
+  font: 13px/1.4 "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+}
+
+body.student-page #setPanel textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: none;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 84%, #ffffff 16%);
+  color: var(--stu-text);
+}
+
+body.student-page #setPanel button {
+  width: 100%;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 72%, var(--stu-accent) 28%);
+  color: var(--stu-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* =========================================
+   Hero
+   ========================================= */
+body.student-page .hero-bar {
+  border-radius: var(--stu-radius-xl);
+  border: 1px solid var(--stu-line-strong);
+  background: var(--stu-card);
+  box-shadow: var(--stu-shadow);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.student-page .namebar {
+  margin: 0;
+}
+
+body.student-page .namebar-title {
+  margin: 0;
+  font-family: "Sora", "IBM Plex Sans KR", sans-serif;
+  font-size: clamp(1.9rem, 3.6vw, 2.8rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+body.student-page .namebar-desc {
+  margin: 7px 0 0;
+  color: var(--stu-muted);
+  font-size: 14px;
+}
+
+body.student-page .ts-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 11px;
+  border: 1px solid var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 70%, var(--stu-accent) 30%);
+  color: var(--stu-text);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* =========================================
+   Main layout
+   ========================================= */
+body.student-page .student-main {
+  display: grid;
+  gap: 12px;
+}
+
+body.student-page .panel {
+  border-radius: var(--stu-radius-lg);
+  border: 1px solid var(--stu-line);
+  background: var(--stu-card);
+  box-shadow: var(--stu-shadow-soft);
+  padding: 14px;
+}
+
+body.student-page .section-title {
+  margin: 0 0 10px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+/* =========================================
+   Player / Playlist
+   ========================================= */
+body.student-page #playerBox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  align-items: start;
+}
+
+body.student-page .player-card {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 80%, #000 20%);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.14);
+  background: #000;
+}
+
+body.student-page #player {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 280px;
+  border: 0;
+  display: block;
+}
+
+body.student-page .playlist-wrap {
+  border-radius: 14px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 86%, #ffffff 14%);
+  padding: 10px;
+}
+
+body.student-page .playlist-wrap h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--stu-muted);
+}
+
+body.student-page #vidList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+body.student-page #vidList li {
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: keep-all;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
+}
+
+body.student-page #vidList li:hover {
+  border-color: var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 70%, var(--stu-accent) 30%);
+  transform: translateY(-1px);
+}
+
+body.student-page #vidList li.active {
+  background: var(--stu-accent);
+  color: #f8fcff !important;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+body.student-page #vidList li .video-main {
+  display: inline;
+}
+
+body.student-page #vidList li .essay-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--stu-accent) 78%, var(--stu-muted) 22%);
+}
+
+body.student-page #vidList li.active .essay-badge {
+  color: #e4f5ff;
+}
+
+body.student-page #vidList .badge-done {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* =========================================
+   Materials / File browser
+   ========================================= */
+body.student-page .materials-panel .section-title {
+  margin-bottom: 8px;
+}
+
+body.student-page .mbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 86%, #ffffff 14%);
+}
+
+body.student-page .mbox .crumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 13px;
+}
+
+body.student-page .mbox .crumb a {
+  color: var(--stu-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+body.student-page .mbox .crumb a:hover {
+  text-decoration: underline;
+}
+
+body.student-page .mbox .sep {
+  opacity: 0.55;
+}
+
+body.student-page .mbox .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.student-page .mbox input[type="search"] {
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 84%, #ffffff 16%);
+  color: var(--stu-text);
+  padding: 0 9px;
+}
+
+body.student-page .mbox .toggle {
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 70%, var(--stu-accent) 30%);
+  color: var(--stu-text);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+body.student-page #matList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.student-page #matList li {
+  margin: 0 0 6px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 88%, #ffffff 12%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body.student-page #matList li[data-type="dir"] {
+  cursor: pointer;
+}
+
+body.student-page #matList li[data-type="dir"]:hover {
+  border-color: var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 74%, var(--stu-accent) 26%);
+}
+
+body.student-page #matList a {
+  color: var(--stu-accent);
+  text-decoration: none;
+}
+
+body.student-page #matList a:hover {
+  text-decoration: underline;
+}
+
+/* =========================================
+   Announcement modal
+   ========================================= */
+body.student-page #announceModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(5, 12, 22, 0.52);
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+body.student-page #announceModal .announce-card {
+  width: min(520px, 96vw);
+  max-height: 86vh;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid var(--stu-line-strong);
+  background: var(--stu-card);
+  color: var(--stu-text);
+  box-shadow: var(--stu-shadow);
+  padding: 14px;
+}
+
+body.student-page #annTitle {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+body.student-page #annContent {
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+body.student-page #annPoll,
+body.student-page #annSurvey {
+  display: none;
+  border: 1px solid var(--stu-line);
+  border-radius: 10px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+body.student-page #annPollQ {
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+body.student-page .announce-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* =========================================
+   Shared controls
+   ========================================= */
+body.student-page button,
+body.student-page input[type="text"],
+body.student-page input[type="number"],
+body.student-page input[type="search"],
+body.student-page textarea,
+body.student-page select {
+  font-family: "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+}
+
+body.student-page .muted {
+  color: var(--stu-muted);
+}
+
+/* =========================================
+   Responsive
+   ========================================= */
+@media (max-width: 1080px) {
+  body.student-page #playerBox {
+    grid-template-columns: 1fr;
+  }
+
+  body.student-page #vidList {
+    max-height: 230px;
+  }
+}
+
+@media (max-width: 760px) {
+  body.student-page {
+    max-width: calc(100vw - 10px);
+    margin-top: 6px;
+  }
+
+  body.student-page .student-topbar {
+    top: 6px;
+    padding: 8px;
+  }
+
+  body.student-page .hero-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  body.student-page .ts-btn {
+    width: 100%;
+  }
+
+  body.student-page #setPanel {
+    right: 8px;
+    top: 64px;
+    width: min(320px, calc(100vw - 16px));
+  }
+
+  body.student-page .clock-header {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+}
