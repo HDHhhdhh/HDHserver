@@ -12,7 +12,12 @@ from flask import Blueprint, abort, jsonify, request
 
 from core.paths import STU_PATH, VID_PATH
 from core.storage import load
-from routes.api_watch import _save_progress_status, _save_watch_entry
+from routes.api_watch import (
+    WATCH_DONE_RATIO,
+    WATCH_INTERRUPTED_RATIO,
+    _save_progress_status,
+    _save_watch_entry,
+)
 
 bp_api_kollus = Blueprint("api_kollus", __name__)
 
@@ -180,8 +185,8 @@ def _extract_callback_fields() -> dict:
     play_time = max(0, _to_int(play_time, 0))
     real_playtime = max(0, _to_int(real_playtime, 0))
 
-    completed = pct >= 95
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    completed = (pct / 100) >= WATCH_DONE_RATIO
+    if dur > 0 and (last / dur) >= WATCH_DONE_RATIO:
         completed = True
 
     return {
@@ -257,7 +262,7 @@ def api_kollus_lms_callback():
     elif payload["dur"] <= 0:
         if payload["last"] > 0 or payload["play_time"] > 0 or payload["real_playtime"] > 0:
             status = "interrupted"
-    elif payload["pct"] >= 5:
+    elif (payload["pct"] / 100) >= WATCH_INTERRUPTED_RATIO:
         status = "interrupted"
 
     progress = _save_progress_status(payload["date"], sid, mid, status) if status else {}

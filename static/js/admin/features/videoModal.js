@@ -121,8 +121,13 @@ function injectStudentPopupLayoutStyles() {
       z-index:2;
     }
     #vidModal .vid-head-main{ min-width:0; flex:1; }
-    #vidModal .vid-save-btn{
+    #vidModal .vid-actions{
       flex:0 0 auto;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    #vidModal .vid-save-btn{
       min-width:66px;
       height:38px;
       padding:0 14px;
@@ -134,6 +139,18 @@ function injectStudentPopupLayoutStyles() {
       cursor:pointer;
       white-space:nowrap;
     }
+    #vidModal .vid-save-btn:disabled{
+      cursor:default;
+      opacity:.72;
+    }
+    #vidModal .vid-save-status{
+      min-width:64px;
+      font-size:13px;
+      font-weight:800;
+      color:#15803d;
+      white-space:nowrap;
+    }
+    #vidModal .vid-save-status.is-error{ color:#b91c1c; }
     #vidModal #chkZone{
       flex:1 1 auto;
       min-height:0;
@@ -262,7 +279,10 @@ function ensureModal() {
               <div id="autoAssignCountToggle" style="display:flex;gap:6px;flex-wrap:wrap"></div>
             </div>
           </div>
-          <button id="mSave" class="vid-save-btn" type="button">저장</button>
+          <div class="vid-actions">
+            <button id="mSave" class="vid-save-btn" type="button">저장</button>
+            <span id="mSaveStatus" class="vid-save-status" aria-live="polite"></span>
+          </div>
         </div>
         <div id="chkZone"></div>
       </div>
@@ -526,8 +546,17 @@ export function initVideoModal() {
   const vidModal = $('vidModal');
   const mTitle = $('mTitle');
   const chkZone = $('chkZone');
+  const mSave = $('mSave');
+  const mSaveStatus = $('mSaveStatus');
+
+  function setSaveStatus(message = '', isError = false) {
+    if (!mSaveStatus) return;
+    mSaveStatus.textContent = message;
+    mSaveStatus.classList.toggle('is-error', !!isError);
+  }
 
   async function openVideoModalForRow(rowOrButton, opts = {}) {
+    setSaveStatus('');
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingSid = tr?.dataset?.sid;
     const stu = state.students.find(x => String(x.id) === String(editingSid));
@@ -736,7 +765,9 @@ export function initVideoModal() {
   });
 
   /* ───────────── 저장 ───────────── */
-  $('mSave').onclick = () => {
+  mSave.onclick = () => {
+    setSaveStatus('');
+    mSave.disabled = true;
     const today = todayLocalKey();
     const selected = Array.from(
       document.querySelectorAll('#chkZone input[type="checkbox"]:checked')
@@ -763,10 +794,12 @@ export function initVideoModal() {
       .then(u => {
         const obj = unwrapOkPayload(u, 'updates') || u;
         if (obj && typeof obj === 'object') state.updates = obj;
-        toast('저장 완료');
-        $('vidModal').style.display = 'none';
+        setSaveStatus('저장 완료');
         document.dispatchEvent(new CustomEvent('admin:refresh'));
       })
-      .catch(() => toast('저장 실패'));
+      .catch(() => setSaveStatus('저장 실패', true))
+      .finally(() => {
+        mSave.disabled = false;
+      });
   };
 }

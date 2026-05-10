@@ -558,11 +558,14 @@ function shouldSkipForLow(stu, v) {
   return Number(ex['하']) === 0;
 }
 
-async function fetchWatchForSid(sid) {
+async function fetchWatchForSid(sid, date = '') {
   const key = String(sid || '').trim();
   if (!key) return {};
   try {
-    const payload = await fetch(`/api/watch/latest?sid=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(r => r.json());
+    const params = new URLSearchParams({ sid: key });
+    const dateKey = String(date || '').trim();
+    if (dateKey) params.set('date', dateKey);
+    const payload = await fetch(`/api/watch/latest?${params.toString()}`, { cache: 'no-store' }).then(r => r.json());
     return (payload && typeof payload.watch === 'object') ? payload.watch : {};
   } catch {
     return {};
@@ -1446,7 +1449,7 @@ export function initLogModal() {
 
 /* 자동 판정 애드온 */
 (() => {
-  const TH_DONE = 95, TH_INTERRUPTED = 5;
+  const TH_DONE = 90, TH_INTERRUPTED = 5;
 
   const pctOf = (w) => (!w || !Number(w.dur))
     ? 0
@@ -1492,7 +1495,7 @@ export function initLogModal() {
     const sid = tr?.dataset?.sid;
     if (!sid) return;
 
-    const raw = await fetchWatchForSid(sid);
+    const raw = await fetchWatchForSid(sid, editingLogDate || getAdminDate());
 
     const watchByMid = {};
     Object.keys(raw).forEach(k => { watchByMid[String(k)] = raw[k]; });

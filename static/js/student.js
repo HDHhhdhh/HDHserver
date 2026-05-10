@@ -82,7 +82,7 @@ window.todayLocalKey = function () {
     const last = Math.max(0, Number(entry.last) || 0);
     const dur = Math.max(0, Number(entry.dur) || 0);
     const updatedAt = Math.max(0, Number(entry.updatedAt) || 0);
-    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last: Math.floor(last),
@@ -98,7 +98,7 @@ window.todayLocalKey = function () {
 
     const last = Math.max(a.last, b.last);
     const dur = Math.max(a.dur, b.dur);
-    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last,
@@ -197,7 +197,7 @@ window.todayLocalKey = function () {
 
       const pct = snap.dur > 0 ? (snap.last / snap.dur) : 0;
       let status = null;
-      if (pct >= 0.95) status = 'done';
+      if (pct >= 0.90) status = 'done';
       else if (pct >= 0.05) status = 'interrupted';
 
       if (status) {
@@ -1014,7 +1014,7 @@ window.todayLocalKey = function () {
               const dur = await controller.getDuration?.();
               if (Number.isFinite(pos) && Number.isFinite(dur) && dur > 0) {
                 const pct = (pos / dur) * 100;
-                const ended = pct >= 95 || pos >= dur - 1;
+                const ended = pct >= 90 || pos >= dur - 1;
                 if (Math.abs(pos - lastSent) >= 1) {
                   repost('kollus.progress', { currentTime: pos, duration: dur, ended });
                   lastSent = pos;
@@ -1077,7 +1077,7 @@ window.todayLocalKey = function () {
       const dur = Math.max(0, Number(data.duration) || 0);
       const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
       const pct = dur > 0 ? (cur / dur) : 0;
-      const doneByPct = pct >= 0.95;
+      const doneByPct = pct >= 0.90;
       setProgress(data.mid, {
         last: cur,
         dur,

@@ -135,7 +135,7 @@ def _normalize_watch_entry_for_mid_migration(entry) -> dict:
         updated_at = 0
 
     completed = bool(entry.get("completed", False))
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if dur > 0 and (last / dur) >= 0.90:
         completed = True
 
     return {
@@ -153,7 +153,7 @@ def _merge_watch_entries_for_mid_migration(prev, incoming) -> dict:
     last = max(a["last"], b["last"])
     dur = max(a["dur"], b["dur"])
     completed = a["completed"] or b["completed"]
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if dur > 0 and (last / dur) >= 0.90:
         completed = True
 
     return {
@@ -829,6 +829,8 @@ def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
 #   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
 PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
+WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
+PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
 
 
 def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
@@ -844,6 +846,16 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
         all_page_meta = {}
     else:
         all_page_meta = dict(all_page_meta)
+    watch_auto_meta = out.get(WATCH_AUTO_PROGRESS_META_KEY)
+    if not isinstance(watch_auto_meta, dict):
+        watch_auto_meta = {}
+    else:
+        watch_auto_meta = dict(watch_auto_meta)
+    manual_meta = out.get(PROGRESS_MANUAL_META_KEY)
+    if not isinstance(manual_meta, dict):
+        manual_meta = {}
+    else:
+        manual_meta = dict(manual_meta)
 
     for mid, st in inc.items():
         mid_s = str(mid).strip()
@@ -867,11 +879,24 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
                 all_page_meta[mid_s] = True
         else:
             all_page_meta.pop(mid_s, None)
+        watch_auto_meta.pop(mid_s, None)
+        if source_s == "auto" or st_s == "":
+            manual_meta.pop(mid_s, None)
+        else:
+            manual_meta[mid_s] = True
 
     if all_page_meta:
         out[PROGRESS_ALL_STUDENTS_META_KEY] = all_page_meta
     else:
         out.pop(PROGRESS_ALL_STUDENTS_META_KEY, None)
+    if watch_auto_meta:
+        out[WATCH_AUTO_PROGRESS_META_KEY] = watch_auto_meta
+    else:
+        out.pop(WATCH_AUTO_PROGRESS_META_KEY, None)
+    if manual_meta:
+        out[PROGRESS_MANUAL_META_KEY] = manual_meta
+    else:
+        out.pop(PROGRESS_MANUAL_META_KEY, None)
 
     return out
 

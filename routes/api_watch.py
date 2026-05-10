@@ -8,6 +8,11 @@ from core.storage import load, save_atomic, nocache_resp
 
 bp_api_watch = Blueprint("api_watch", __name__)
 
+WATCH_INTERRUPTED_RATIO = 0.05
+WATCH_DONE_RATIO = 0.90
+AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
+MANUAL_PROGRESS_META_KEY = "__manualProgressMids"
+
 
 def _watch_lock():
     from routes.api_basic import _InterProcessFileLock
@@ -43,7 +48,7 @@ def _norm_watch_entry(entry) -> dict:
         updated_at = 0
 
     completed = bool(entry.get("completed", False))
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if _watch_ratio({"last": last, "dur": dur}) >= WATCH_DONE_RATIO:
         completed = True
 
     return {
@@ -54,6 +59,27 @@ def _norm_watch_entry(entry) -> dict:
     }
 
 
+def _watch_ratio(entry) -> float:
+    if not isinstance(entry, dict):
+        return 0.0
+    try:
+        last = max(0, float(entry.get("last", 0) or 0))
+        dur = max(0, float(entry.get("dur", 0) or 0))
+    except Exception:
+        return 0.0
+    return last / dur if dur > 0 else 0.0
+
+
+def _watch_auto_status(entry) -> str:
+    e = _norm_watch_entry(entry)
+    pct = _watch_ratio(e)
+    if e["completed"] or pct >= WATCH_DONE_RATIO:
+        return "done"
+    if pct >= WATCH_INTERRUPTED_RATIO or (e["dur"] <= 0 and e["last"] > 0):
+        return "interrupted"
+    return ""
+
+
 def _merge_watch_entry(prev, incoming) -> dict:
     a = _norm_watch_entry(prev)
     b = _norm_watch_entry(incoming)
@@ -61,7 +87,7 @@ def _merge_watch_entry(prev, incoming) -> dict:
     last = max(a["last"], b["last"])
     dur = max(a["dur"], b["dur"])
     completed = a["completed"] or b["completed"]
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if _watch_ratio({"last": last, "dur": dur}) >= WATCH_DONE_RATIO:
         completed = True
 
     return {
@@ -126,6 +152,20 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
     return merged
 
 
+def _get_watch_entry(date: str, sid: str, mid: str) -> dict:
+    data = load(WATCH_PATH)
+    if not isinstance(data, dict):
+        return {}
+    by_date = data.get(str(date or "").strip())
+    if not isinstance(by_date, dict):
+        return {}
+    for key in _sid_keys(sid):
+        by_sid = by_date.get(key)
+        if isinstance(by_sid, dict):
+            return _norm_watch_entry(by_sid.get(str(mid or "").strip()))
+    return {}
+
+
 def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     date = str(date or "").strip()
     sid = str(sid or "").strip()
@@ -160,34 +200,47 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 
         merged = dict(cur_sid)
         prev = str(cur_sid.get(mid) or "").strip()
+        auto_meta = cur_sid.get(AUTO_PROGRESS_META_KEY)
+        if not isinstance(auto_meta, dict):
+            auto_meta = {}
+        else:
+            auto_meta = dict(auto_meta)
+        prev_auto = prev in ("done", "interrupted") and str(auto_meta.get(mid) or "").strip() == prev
+        manual_meta = cur_sid.get(MANUAL_PROGRESS_META_KEY)
+        manual_override = isinstance(manual_meta, dict) and bool(manual_meta.get(mid))
 
-        # watch-status는 "자동 반영" 경로이므로 수동으로 지정된 상태를 우선한다.
-        # "none"은 관리자가 수동으로 흰색 처리한 명시 상태이므로 자동값으로 덮지 않는다.
-        # - interrupted 자동값은 기존 상태가 없을 때만 세팅
-        # - done 자동값은 interrupted를 done으로 올리는 것만 허용
-        # - skip/done은 자동값으로 덮어쓰지 않음
+        def set_auto(value: str) -> None:
+            merged[mid] = value
+            auto_meta[mid] = value
+
+        # Automatic watch progress may advance only values it wrote before.
+        # Manual progress patches remove this marker in routes.api_basic.
         if status in ("", "none"):
-            if prev not in ("done", "interrupted", "skip", "none"):
+            if prev_auto:
+                merged.pop(mid, None)
+                auto_meta.pop(mid, None)
+            elif prev not in ("done", "interrupted", "skip", "none"):
                 merged.pop(mid, None)
         elif status == "interrupted":
-            if prev in ("done", "interrupted", "skip", "none"):
-                pass
-            else:
-                merged[mid] = "interrupted"
+            if prev == "":
+                set_auto("interrupted")
+            elif prev_auto and prev != "done":
+                set_auto("interrupted")
         elif status == "done":
-            if prev == "none":
-                merged[mid] = "none"
-            elif prev == "skip":
-                merged[mid] = "skip"
-            else:
-                merged[mid] = "done"
+            # Legacy auto-interrupted records predate AUTO_PROGRESS_META_KEY, so
+            # allow a done upgrade unless a newer manual patch marked the mid.
+            if prev == "" or prev_auto or (prev == "interrupted" and not manual_override):
+                set_auto("done")
         elif status == "skip":
-            if prev in ("done", "none"):
-                pass
-            else:
-                merged[mid] = "skip"
+            if prev == "":
+                set_auto("skip")
         else:
             merged[mid] = status
+
+        if auto_meta:
+            merged[AUTO_PROGRESS_META_KEY] = auto_meta
+        else:
+            merged.pop(AUTO_PROGRESS_META_KEY, None)
 
         if merged:
             day[sid_key] = merged
@@ -205,6 +258,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 @bp_api_watch.get("/api/watch/latest")
 def api_watch_latest():
     sid = str(request.args.get("sid") or "").strip()
+    date = str(request.args.get("date") or "").strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
 
@@ -214,7 +268,8 @@ def api_watch_latest():
 
     out = {}
     keys = _sid_keys(sid)
-    for by_date in data.values():
+    date_items = [(date, data.get(date))] if date else data.items()
+    for _, by_date in date_items:
         if not isinstance(by_date, dict):
             continue
 
@@ -237,7 +292,7 @@ def api_watch_latest():
             if current is None or _watch_rank(normalized) > _watch_rank(current):
                 out[mid_s] = normalized
 
-    return jsonify({"ok": True, "sid": sid, "watch": out})
+    return jsonify({"ok": True, "sid": sid, "date": date, "watch": out})
 
 @bp_api_watch.route("/api/watch", methods=["GET", "POST"])
 def api_watch():
@@ -267,8 +322,10 @@ def api_watch():
     }
 
     merged = _save_watch_entry(date, sid, mid, incoming)
+    status = _watch_auto_status(merged)
+    progress = _save_progress_status(date, sid, mid, status) if status else {}
 
-    return jsonify({"ok": True, "watch": merged})
+    return jsonify({"ok": True, "watch": merged, "progress": progress})
 
 
 @bp_api_watch.post("/api/watch-status")
@@ -283,6 +340,14 @@ def api_watch_status():
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
     if status not in ("done", "interrupted", "skip", "none", ""):
         return jsonify({"ok": False, "error": "bad status"}), 400
+
+    if status == "interrupted":
+        try:
+            watch = _get_watch_entry(date, sid, mid)
+            if _watch_auto_status(watch) == "done":
+                status = "done"
+        except Exception:
+            pass
 
     merged = _save_progress_status(date, sid, mid, status)
 
