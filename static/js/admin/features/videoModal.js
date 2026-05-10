@@ -143,14 +143,43 @@ function injectStudentPopupLayoutStyles() {
       cursor:default;
       opacity:.72;
     }
-    #vidModal .vid-save-status{
-      min-width:64px;
-      font-size:13px;
-      font-weight:800;
-      color:#15803d;
+    #vidSavePopup{
+      position:fixed;
+      left:50%;
+      top:50%;
+      transform:translate(-50%, -50%) scale(.96);
+      z-index:100002;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      height:54px;
+      min-width:180px;
+      padding:0 18px;
+      box-sizing:border-box;
+      border-radius:14px;
+      border:1px solid #bbf7d0;
+      background:#16a34a;
+      color:#fff;
+      font-size:20px;
+      font-weight:900;
       white-space:nowrap;
+      box-shadow:0 16px 36px rgba(15,23,42,.28);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .16s ease, transform .16s ease;
     }
-    #vidModal .vid-save-status.is-error{ color:#b91c1c; }
+    #vidSavePopup.is-open{
+      opacity:1;
+      transform:translate(-50%, -50%) scale(1);
+    }
+    #vidSavePopup.is-error{
+      border-color:#fecaca;
+      background:#dc2626;
+    }
+    body.dark #vidSavePopup{
+      border-color:#334155;
+      box-shadow:0 16px 36px rgba(0,0,0,.48);
+    }
     #vidModal #chkZone{
       flex:1 1 auto;
       min-height:0;
@@ -281,12 +310,12 @@ function ensureModal() {
           </div>
           <div class="vid-actions">
             <button id="mSave" class="vid-save-btn" type="button">저장</button>
-            <span id="mSaveStatus" class="vid-save-status" aria-live="polite"></span>
           </div>
         </div>
         <div id="chkZone"></div>
       </div>
-    </div>`);
+    </div>
+    <div id="vidSavePopup" role="status" aria-live="polite"></div>`);
 }
 
 /* ───────────── 공통 fetch helpers ───────────── */
@@ -547,16 +576,29 @@ export function initVideoModal() {
   const mTitle = $('mTitle');
   const chkZone = $('chkZone');
   const mSave = $('mSave');
-  const mSaveStatus = $('mSaveStatus');
+  const vidSavePopup = $('vidSavePopup');
+  let savePopupTimer = null;
 
-  function setSaveStatus(message = '', isError = false) {
-    if (!mSaveStatus) return;
-    mSaveStatus.textContent = message;
-    mSaveStatus.classList.toggle('is-error', !!isError);
+  function showSavePopup(message, isError = false) {
+    if (!vidSavePopup) return;
+    window.clearTimeout(savePopupTimer);
+    vidSavePopup.textContent = message;
+    vidSavePopup.classList.toggle('is-error', !!isError);
+    vidSavePopup.classList.add('is-open');
+    savePopupTimer = window.setTimeout(() => {
+      vidSavePopup.classList.remove('is-open');
+    }, isError ? 1800 : 1200);
+  }
+
+  function hideSavePopup() {
+    window.clearTimeout(savePopupTimer);
+    if (!vidSavePopup) return;
+    vidSavePopup.classList.remove('is-open', 'is-error');
+    vidSavePopup.textContent = '';
   }
 
   async function openVideoModalForRow(rowOrButton, opts = {}) {
-    setSaveStatus('');
+    hideSavePopup();
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingSid = tr?.dataset?.sid;
     const stu = state.students.find(x => String(x.id) === String(editingSid));
@@ -766,7 +808,7 @@ export function initVideoModal() {
 
   /* ───────────── 저장 ───────────── */
   mSave.onclick = () => {
-    setSaveStatus('');
+    hideSavePopup();
     mSave.disabled = true;
     const today = todayLocalKey();
     const selected = Array.from(
@@ -794,10 +836,10 @@ export function initVideoModal() {
       .then(u => {
         const obj = unwrapOkPayload(u, 'updates') || u;
         if (obj && typeof obj === 'object') state.updates = obj;
-        setSaveStatus('저장 완료');
+        showSavePopup('저장 완료');
         document.dispatchEvent(new CustomEvent('admin:refresh'));
       })
-      .catch(() => setSaveStatus('저장 실패', true))
+      .catch(() => showSavePopup('저장 실패', true))
       .finally(() => {
         mSave.disabled = false;
       });
