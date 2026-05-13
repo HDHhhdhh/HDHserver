@@ -1274,8 +1274,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
         assigned = _normalize_assigned(cur)
         if not assigned:
             continue
-        blocked = blocked_by_sid.get(str(sid)) or set()
-        cleaned = [mid for mid in assigned if mid in valid_mids and mid not in blocked]
+        cleaned = [mid for mid in assigned if mid in valid_mids]
         if cleaned != assigned:
             if cleaned:
                 updates[today][sid] = cleaned
