@@ -11,6 +11,7 @@ let editingLogSid = null;
 let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
+const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -1131,13 +1132,22 @@ export function initLogModal() {
     const explicitNoneMids = new Set();
     dates.forEach(d => {
       const day = (state.progress?.[d] || {})[sid] || {};
+      const manualMeta = (day[PROGRESS_MANUAL_META_KEY] && typeof day[PROGRESS_MANUAL_META_KEY] === 'object')
+        ? day[PROGRESS_MANUAL_META_KEY]
+        : {};
       Object.entries(day).forEach(([mid, st]) => {
         const key = String(mid);
         if (key.startsWith('__') || key === 'tests') return;
         const value = String(st || 'none');
+        if (value === 'none') {
+          if (manualMeta[key]) {
+            progEntry[key] = value;
+            explicitNoneMids.add(key);
+          }
+          return;
+        }
         progEntry[key] = value;
-        if (value === 'none') explicitNoneMids.add(key);
-        else explicitNoneMids.delete(key);
+        explicitNoneMids.delete(key);
       });
     });
 
@@ -1412,9 +1422,19 @@ export function initLogModal() {
     };
   }
 
+  async function saveRecordPopupForCurrent() {
+    await saveBase(false);
+  }
+
+  window.saveRecordPopup = saveRecordPopupForCurrent;
+
   logSave.addEventListener('click', async () => {
     try {
-      await saveBase(false);
+      await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+      }
       toast('수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
@@ -1430,7 +1450,11 @@ export function initLogModal() {
 
   logComplete.addEventListener('click', async () => {
     try {
-      await saveBase(false);
+      await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+      }
       const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
       toast(`숙제 검사 완료 (${nowHHMM()})`);
@@ -1495,7 +1519,7 @@ export function initLogModal() {
     const sid = tr?.dataset?.sid;
     if (!sid) return;
 
-    const raw = await fetchWatchForSid(sid, editingLogDate || getAdminDate());
+    const raw = await fetchWatchForSid(sid);
 
     const watchByMid = {};
     Object.keys(raw).forEach(k => { watchByMid[String(k)] = raw[k]; });

@@ -54,9 +54,9 @@ function ensure() {
     background:rgba(0,0,0,.45); z-index:9999;
   }
   #extraModal .extra-panel{
-    width:420px; max-width:92vw; height:min(720px, 88vh); max-height:88vh;
+    width:546px; max-width:96vw; height:min(936px, 92vh); max-height:92vh;
     display:flex; flex-direction:column; overflow:hidden;
-    border-radius:12px; padding:14px; box-sizing:border-box;
+    border-radius:16px; padding:18px; box-sizing:border-box;
     border:1px solid var(--line, #334155);
     background:var(--card-dark, #0f172a);
     color:var(--text-dark, #e5e7eb);
@@ -69,8 +69,8 @@ function ensure() {
   }
   #extraModal .extra-topbar{
     flex:0 0 auto;
-    position:sticky; top:-14px; z-index:2;
-    margin:-14px -14px 10px; padding:14px 14px 10px;
+    position:sticky; top:-18px; z-index:2;
+    margin:-18px -18px 13px; padding:18px 18px 13px;
     background:var(--card-dark, #0f172a);
     border-bottom:1px solid color-mix(in oklab, var(--line, #334155) 80%, transparent);
   }
@@ -78,15 +78,16 @@ function ensure() {
     background:var(--card-light, #ffffff);
     border-bottom-color:color-mix(in oklab, var(--line, #e5e7eb) 80%, transparent);
   }
-  #extraModal .extra-head{ display:flex; align-items:center; justify-content:space-between; gap:10px }
-  #extraModal .extra-title{ margin:0; font-size:16px; font-weight:800 }
-  #extraModal .extra-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px }
+  #extraModal .extra-head{ display:flex; align-items:center; justify-content:space-between; gap:13px }
+  #extraModal .extra-title{ margin:0; font-size:21px; font-weight:800 }
+  #extraModal .extra-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:13px }
   #extraModal .extra-actions-top{ margin-top:0; flex-shrink:0 }
-  #extraModal .extra-search-row{ display:flex; gap:8px; margin-top:10px }
+  #extraModal .extra-search-row{ display:flex; gap:10px; margin-top:13px }
   #extraModal .extra-search{
-    min-width:0; flex:1; height:36px; box-sizing:border-box;
+    min-width:0; flex:1; height:47px; box-sizing:border-box;
     border:1px solid var(--line, #334155);
-    border-radius:10px; padding:0 10px;
+    border-radius:13px; padding:0 13px;
+    font-size:17px;
     background:color-mix(in oklab, var(--card-dark, #0f172a) 90%, var(--accent,#60a5fa));
     color:var(--text-dark, #e5e7eb);
     outline:none;
@@ -101,9 +102,9 @@ function ensure() {
     box-shadow:0 0 0 2px color-mix(in oklab, var(--accent,#2563eb) 22%, transparent);
   }
   #extraModal .extra-search::placeholder{ color:currentColor; opacity:.55 }
-  #extraModal .extra-search-row .ex-btn{ height:36px; white-space:nowrap }
+  #extraModal .extra-search-row .ex-btn{ height:47px; white-space:nowrap }
   #extraModal .extra-search-hint{
-    min-height:16px; margin-top:5px; font-size:12px; line-height:16px; opacity:.7;
+    min-height:21px; margin-top:7px; font-size:16px; line-height:21px; opacity:.7;
   }
 
   /* ── 공통 버튼 ──────────────────────────────────────── */
@@ -111,7 +112,8 @@ function ensure() {
     border:1px solid var(--line, #334155);
     background:color-mix(in oklab, var(--card-dark, #0f172a) 85%, var(--accent,#60a5fa));
     color:var(--text-dark, #e5e7eb);
-    border-radius:10px; padding:7px 12px; cursor:pointer; font-weight:600;
+    border-radius:13px; padding:9px 16px; cursor:pointer; font-weight:600;
+    font-size:17px;
   }
   body:not(.dark) #extraModal .ex-btn{
     background:color-mix(in oklab, #ffffff 85%, var(--accent,#2563eb));
@@ -125,10 +127,10 @@ function ensure() {
   }
 
   /* ── 리스트 ────────────────────────────────────────── */
-  #exZone{ flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+  #exZone{ flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:8px; }
   #exZone .row{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:8px 10px; border-radius:12px; border:1px solid var(--line,#334155);
+    display:flex; align-items:center; justify-content:space-between; gap:13px;
+    padding:10px 13px; border-radius:16px; border:1px solid var(--line,#334155);
     background:color-mix(in oklab, var(--card-dark,#0f172a) 92%, #0000);
     transition:background .15s ease, border-color .15s ease;
   }
@@ -146,17 +148,18 @@ function ensure() {
     border-color:color-mix(in oklab, var(--accent,#2563eb) 45%, var(--line,#e5e7eb));
   }
 
-  #exZone .row label{ display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; color:inherit }
+  #exZone .row label{ display:flex; align-items:center; gap:10px; cursor:pointer; flex:1; color:inherit; font-size:17px }
   #exZone .row small{ opacity:.75; color:inherit }
 
   #exZone input[type="checkbox"]{
-    width:16px; height:16px; accent-color:var(--accent,#2563eb); margin:0;
+    width:21px; height:21px; accent-color:var(--accent,#2563eb); margin:0;
   }
 
   /* ── 슬롯 버튼(요일1·요일2) ─────────────────────────── */
-  #exZone .slot-box{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end }
+  #exZone .slot-box{ display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end }
   #exZone .slot-btn{
-    min-width:42px; height:34px; padding:0 10px; border-radius:10px; cursor:pointer; font-weight:900;
+    min-width:55px; height:44px; padding:0 13px; border-radius:13px; cursor:pointer; font-weight:900;
+    font-size:17px;
     border:1px solid var(--line,#334155);
     background:color-mix(in oklab, var(--chip, rgba(96,165,250,.12)) 70%, transparent);
     color:inherit;
@@ -342,7 +345,13 @@ export function initExtraModal() {
   // 닫기
   document.body.addEventListener('click', (e) => {
     const closeBtn = e.target.closest?.('#extraModal .ex-close');
-    if (closeBtn || e.target.id === 'extraModal') exModal.style.display = 'none';
+    if (closeBtn) exModal.style.display = 'none';
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (exModal.style.display === 'none') return;
+    exModal.style.display = 'none';
   });
 
   // 체크박스 변화 → 행 하이라이트 토글

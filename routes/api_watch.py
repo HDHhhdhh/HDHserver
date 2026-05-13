@@ -216,9 +216,11 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         # Automatic watch progress may advance only values it wrote before.
         # Manual progress patches remove this marker in routes.api_basic.
         if status in ("", "none"):
-            if prev_auto:
+            if prev_auto and prev != "done":
                 merged.pop(mid, None)
                 auto_meta.pop(mid, None)
+            elif prev_auto and prev == "done":
+                pass
             elif prev not in ("done", "interrupted", "skip", "none"):
                 merged.pop(mid, None)
         elif status == "interrupted":

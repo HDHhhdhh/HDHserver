@@ -865,6 +865,45 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
             continue
 
         st_s = str(st).strip()
+        if source_s == "auto":
+            prev_s = str(out.get(mid_s) or "").strip()
+            prev_auto = (
+                prev_s in ("done", "interrupted", "skip")
+                and str(watch_auto_meta.get(mid_s) or "").strip() == prev_s
+            )
+            manual_override = bool(manual_meta.get(mid_s))
+
+            all_page_meta.pop(mid_s, None)
+            if st_s in ("", "none"):
+                if prev_auto and prev_s != "done":
+                    out.pop(mid_s, None)
+                    watch_auto_meta.pop(mid_s, None)
+                elif prev_s not in ("done", "interrupted", "skip", "none"):
+                    out.pop(mid_s, None)
+                    watch_auto_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "interrupted":
+                if prev_s == "" or (prev_auto and prev_s != "done"):
+                    out[mid_s] = "interrupted"
+                    watch_auto_meta[mid_s] = "interrupted"
+                    manual_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "done":
+                if prev_s == "" or prev_auto or (prev_s == "interrupted" and not manual_override):
+                    out[mid_s] = "done"
+                    watch_auto_meta[mid_s] = "done"
+                    manual_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "skip":
+                if prev_s == "":
+                    out[mid_s] = "skip"
+                    watch_auto_meta[mid_s] = "skip"
+                    manual_meta.pop(mid_s, None)
+                continue
+
         if st_s == "none":
             out[mid_s] = "none"
         elif st_s == "":
@@ -1084,6 +1123,8 @@ AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
 DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
 MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
 MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
+WATCH_INTERRUPTED_RATIO = 0.05
+WATCH_DONE_RATIO = 0.90
 
 
 def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
@@ -1121,11 +1162,86 @@ def _build_latest_status_by_sid(progress: dict) -> dict:
     return out
 
 
+def _watch_ratio(entry: dict) -> float:
+    if not isinstance(entry, dict):
+        return 0.0
+    try:
+        last = max(0.0, float(entry.get("last") or 0))
+        dur = max(0.0, float(entry.get("dur") or 0))
+    except Exception:
+        return 0.0
+    if dur <= 0:
+        return 0.0
+    return max(0.0, min(1.0, last / dur))
+
+
+def _watch_auto_status(entry: dict) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    if bool(entry.get("completed")) or _watch_ratio(entry) >= WATCH_DONE_RATIO:
+        return "done"
+    if _watch_ratio(entry) >= WATCH_INTERRUPTED_RATIO:
+        return "interrupted"
+    return ""
+
+
+def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
+    blocked: dict[str, set[str]] = {}
+    manual_cleared_at: dict[tuple[str, str], str] = {}
+
+    if isinstance(progress, dict):
+        for d in sorted(progress.keys()):
+            day = progress.get(d) or {}
+            if not isinstance(day, dict):
+                continue
+            for sid, mids in day.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                manual_meta = mids.get(PROGRESS_MANUAL_META_KEY)
+                if not isinstance(manual_meta, dict):
+                    manual_meta = {}
+                for mid, st in mids.items():
+                    mid_s = str(mid)
+                    if mid_s.startswith("__") or mid_s == "tests":
+                        continue
+                    st_s = str(st or "").strip()
+                    key = (sid_s, mid_s)
+                    if st_s in ("done", "skip"):
+                        blocked.setdefault(sid_s, set()).add(mid_s)
+                    elif st_s == "none" and manual_meta.get(mid_s):
+                        blocked.setdefault(sid_s, set()).discard(mid_s)
+                        manual_cleared_at[key] = str(d)
+
+    if isinstance(watch, dict):
+        for d in sorted(watch.keys()):
+            by_date = watch.get(d) or {}
+            if not isinstance(by_date, dict):
+                continue
+            for sid, mids in by_date.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                for mid, entry in mids.items():
+                    mid_s = str(mid or "").strip()
+                    if not mid_s:
+                        continue
+                    status = _watch_auto_status(entry)
+                    if status != "done":
+                        continue
+                    cleared_at = manual_cleared_at.get((sid_s, mid_s), "")
+                    if cleared_at and str(cleared_at) >= str(d):
+                        continue
+                    blocked.setdefault(sid_s, set()).add(mid_s)
+
+    return blocked
+
+
 def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
 
 
-def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str | None = None):
+def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str | None = None, watch=None):
     today = date_key or _today_kst_iso()
 
     if not isinstance(updates, dict):
@@ -1141,7 +1257,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
             if mid:
                 valid_mids.add(mid)
 
-    last_status = _build_latest_status_by_sid(progress)
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
 
     def _normalize_assigned(val):
         if isinstance(val, list):
@@ -1158,7 +1274,8 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
         assigned = _normalize_assigned(cur)
         if not assigned:
             continue
-        cleaned = [mid for mid in assigned if mid in valid_mids]
+        blocked = blocked_by_sid.get(str(sid)) or set()
+        cleaned = [mid for mid in assigned if mid in valid_mids and mid not in blocked]
         if cleaned != assigned:
             if cleaned:
                 updates[today][sid] = cleaned
@@ -1189,11 +1306,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
         ]
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
 
-        blocked = {
-            str(mid)
-            for mid, st in (last_status.get(sid) or {}).items()
-            if st in ("done", "skip")
-        }
+        blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
 
         max_assign = _student_auto_video_assign_count(stu)
 
@@ -1229,11 +1342,12 @@ def _load_updates_with_auto_assign(students=None, videos=None, date_key: str | N
     students = students if students is not None else load(STU_PATH)
     videos = videos if videos is not None else load(VID_PATH)
     progress = load(PRG_PATH)
+    watch = load(WATCH_PATH)
 
     with _updates_lock():
         updates = load(UPD_PATH) or {}
         before = _json_stable(updates)
-        fixed = _ensure_today_auto_assign(updates, students, videos, progress, date_key=date_key)
+        fixed = _ensure_today_auto_assign(updates, students, videos, progress, date_key=date_key, watch=watch)
         if _json_stable(fixed) != before:
             save_atomic(UPD_PATH, fixed)
         return fixed
