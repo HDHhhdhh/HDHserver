@@ -38,7 +38,8 @@
 
       <div class="rail-shortcuts">
         <button class="rail-cta" type="button" data-ui-action="open-extra">+ 보강 등록</button>
-        <button class="rail-cta muted" type="button" id="exportTodayCsv">오늘 명단 CSV</button>
+        <button class="rail-cta danger" type="button" data-ui-action="open-absent">결석 등록</button>
+        <button class="rail-cta muted" type="button" id="exportRosterRail">명단 내보내기</button>
       </div>
     </aside>
 
@@ -98,7 +99,9 @@
 
         <div class="hero-actions" aria-label="빠른 작업">
           <button id="extraBtn" class="btn" type="button">+ 보강 등록</button>
+          <button id="absentRegisterBtn" class="btn danger" type="button">결석 등록</button>
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
+          <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
         </div>
       </section>
 

@@ -268,8 +268,92 @@ function downloadTextFile(filename, contents, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function rosterToCsv(students) {
+  const columns = [
+    'sid',
+    'name',
+    'school',
+    'grade',
+    'curriculum',
+    'sub_curriculum',
+    'level',
+    'schedule',
+    'visit_times',
+    'auto_video_assign_count',
+    'sub_book_1',
+    'sub_book_2',
+    'doc_url',
+  ];
+
+  const lines = [columns.map(csvCell).join(',')];
+
+  students.forEach(stu => {
+    const schedule = ['day1', 'day2', 'day3', 'day4', 'day5']
+      .map(k => stu?.[k])
+      .filter(Boolean)
+      .join(' / ');
+    const visitTimes = ['visitTime1', 'visitTime2', 'visitTime3', 'visitTime4', 'visitTime5']
+      .map(k => stu?.[k])
+      .filter(Boolean)
+      .join(' / ');
+
+    lines.push([
+      stu?.id || '',
+      stu?.name || '',
+      stu?.school || '',
+      stu?.grade || '',
+      stu?.curriculum || '',
+      stu?.subCurriculum || '',
+      stu?.level || '',
+      schedule,
+      visitTimes,
+      stu?.autoVideoAssignCount || '',
+      stu?.subBook1 || '',
+      stu?.subBook2 || '',
+      stu?.docUrl || '',
+    ].map(csvCell).join(','));
+  });
+
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
+async function exportRosterCsv() {
+  let students = [];
+  try {
+    students = await fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    if (Array.isArray(students)) {
+      state.students = students;
+      window.students = students;
+    }
+  } catch (err) {
+    console.warn('[exportRoster] students load failed:', err);
+    students = Array.isArray(state.students) ? state.students : [];
+  }
+
+  if (!Array.isArray(students) || !students.length) {
+    toast('내보낼 명단이 없습니다.');
+    return;
+  }
+
+  const sorted = students.slice()
+    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ko'));
+  const stamp = exportDateStamp();
+  downloadTextFile(`학생명단_${stamp}.csv`, rosterToCsv(sorted), 'text/csv;charset=utf-8');
+  toast('명단 CSV 내보내기 완료');
+}
+
 export function initExport() {
   const btn = $('exportLogs');
+  const rosterButtons = [
+    $('exportRoster'),
+    $('exportRosterRail'),
+    $('exportTodayCsv'),
+  ].filter(Boolean);
+
+  rosterButtons.forEach(button => {
+    button.addEventListener('click', exportRosterCsv);
+  });
+
   if (!btn) return;
 
   btn.addEventListener('click', async () => {

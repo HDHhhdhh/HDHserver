@@ -1,7 +1,8 @@
 // /js/admin/features/extraModal.js
 // 오늘 보강 학생 모달 (요일 슬롯: 월1/월2 ... 토1/토2, 일1/일2) — 라이트/다크 테마 대응
-import { $, CT, toast, todayLocalKey } from '../core/utils.js';
+import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
 import { setArriveOverride } from './today.state.js';
 
 // ────────────────────────────────────────────
@@ -296,7 +297,7 @@ export function initExtraModal() {
 
   // 열기
   btn.addEventListener('click', async () => {
-    const today = todayLocalKey();
+    const today = getAdminDate();
 
     const slotMap = await loadDaySlots();
     const perDay = slotMap[today] || {};
@@ -380,7 +381,7 @@ export function initExtraModal() {
     const saveBtn = e.target.closest?.('#extraModal .ex-save');
     if (!saveBtn) return;
 
-    const today = todayLocalKey();
+    const today = getAdminDate();
 
     // 선택 학생
     const rows = Array.from(document.querySelectorAll('#exZone .row'));

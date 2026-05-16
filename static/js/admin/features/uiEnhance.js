@@ -103,6 +103,9 @@ function initRailActions() {
       case 'open-extra':
         clickById('extraBtn');
         break;
+      case 'open-absent':
+        clickById('absentRegisterBtn');
+        break;
       default:
         break;
     }

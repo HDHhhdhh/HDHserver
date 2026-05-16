@@ -23,6 +23,7 @@ from core.absent import load_absent, save_absent, DATE_RE
 bp_api_basic = Blueprint("api_basic", __name__)
 
 CT = {"Content-Type": "application/json"}
+STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^"
 
 # ─────────────────────────────────────────────
 # 공통 CRUD
@@ -46,6 +47,29 @@ def _load_progress_strict() -> dict:
     if not isinstance(data, dict):
         raise RuntimeError("progress.json must be an object")
     return data
+
+
+def _student_has_schedule_on_date(student: dict, date_key: str) -> bool:
+    try:
+        target = dt.date.fromisoformat(date_key)
+    except ValueError:
+        return False
+    wchr = "월화수목금토일"[target.weekday()]
+    for key, value in (student or {}).items():
+        if re.fullmatch(r"day\d+", str(key)) and str(value or "").startswith(wchr):
+            return True
+    return False
+
+
+def _student_is_registered_on_date(student: dict, sid: str, date_key: str) -> bool:
+    if _student_has_schedule_on_date(student, date_key):
+        return True
+    try:
+        extra = load(EXTRA_PATH) or {}
+    except Exception:
+        extra = {}
+    extra_ids = extra.get(date_key, []) if isinstance(extra, dict) else []
+    return str(sid) in {str(x) for x in (extra_ids or [])}
 
 
 def _extract_kollus_mid_from_url(url) -> str:
@@ -1527,6 +1551,29 @@ def api_student_bootstrap():
     if not student:
         return jsonify({"ok": False, "error": "student not found"}), 404
 
+    absences = load_absent()
+    absent_for_date = {
+        "by_date": {date: (absences.get("by_date") or {}).get(date, [])},
+        "by_student": {sid: (absences.get("by_student") or {}).get(sid)}
+            if (absences.get("by_student") or {}).get(sid) else {},
+    }
+
+    if not _student_is_registered_on_date(student, sid, date):
+        return nocache_resp({
+            "ok": True,
+            "date": date,
+            "students": [student],
+            "student": student,
+            "videos": [],
+            "updates": {date: {sid: []}},
+            "materials": {},
+            "assigns": {sid: []},
+            "absent": absent_for_date,
+            "logs": {date: {}},
+            "courseBlocked": True,
+            "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
+        })
+
     videos_all = load(VID_PATH) or []
     if date == _today_kst_iso():
         updates = _load_updates_with_auto_assign(students=students, videos=videos_all, date_key=date)
@@ -1546,13 +1593,6 @@ def api_student_bootstrap():
     material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
     assigned_materials = _assigned_material_list(material_assignment)
     materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
-
-    absences = load_absent()
-    absent_for_date = {
-        "by_date": {date: (absences.get("by_date") or {}).get(date, [])},
-        "by_student": {sid: (absences.get("by_student") or {}).get(sid)}
-            if (absences.get("by_student") or {}).get(sid) else {},
-    }
 
     logs = {}
     try:

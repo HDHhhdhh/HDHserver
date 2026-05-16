@@ -62,6 +62,8 @@ window.todayLocalKey = function () {
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
+  let courseBlocked = false;
+  let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -312,6 +314,10 @@ window.todayLocalKey = function () {
           b.absent || {},
           b.logs || {},
           await watchReq,
+          {
+            courseBlocked: b.courseBlocked === true,
+            blockMessage: b.blockMessage || '',
+          },
         ];
       }
       if (res.status !== 404) throw new Error(`bootstrap ${res.status}`);
@@ -328,6 +334,7 @@ window.todayLocalKey = function () {
       fetch("/api/absent").then(r => r.json()).catch(() => ({})),
       fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
       watchReq,
+      { courseBlocked: false, blockMessage: '' },
     ]);
   }
 
@@ -484,7 +491,7 @@ window.todayLocalKey = function () {
   }
 
   /* ───────────── main ───────────── */
-  async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw]) {
+  async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw, bootstrapMeta]) {
     let stu = stuArr.find(s => String(s.id) === String(sid));
     if (!stu) {
       const recoveredSid = await recoverStudentSid(stuArr, sid);
@@ -503,6 +510,8 @@ window.todayLocalKey = function () {
     updatesCache = upd || {};
     absentByDateCache = normalizeAbsentByDate(absentRaw);
     logsCache = logsRaw || {};
+    courseBlocked = bootstrapMeta?.courseBlocked === true;
+    courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     mergeServerWatchIntoLocal((watchRaw && typeof watchRaw.watch === 'object') ? watchRaw.watch : {});
 
     const nameEl = $('stuName');
@@ -815,6 +824,18 @@ window.todayLocalKey = function () {
     const frame = $('player');
 
     const today = todayLocalKey();
+
+    if (courseBlocked) {
+      if (listBox) {
+        listBox.textContent = '';
+        const li = document.createElement('li');
+        li.style.opacity = '.75';
+        li.textContent = courseBlockMessage;
+        listBox.appendChild(li);
+      }
+      if (frame) frame.src = "";
+      return;
+    }
 
     // ❌ 결석이면 오늘 영상 표시 금지
     {
