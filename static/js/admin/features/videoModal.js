@@ -32,6 +32,7 @@ const STUDENT_POPUP_LAYOUT = {
   gap: 15,
   side: 513,
   log: 855,
+  test: 513,
   tip: 435,
   height: 1188,
 };
@@ -68,13 +69,14 @@ function injectStudentPopupLayoutStyles() {
       --student-popup-top:50px;
       --student-popup-gap:15px;
       --student-popup-side-w:513px;
+      --student-popup-test-w:513px;
       --student-popup-tip-w:435px;
       --student-popup-log-w:855px;
       --student-popup-h:1188px;
       --student-popup-content-zoom:1;
       --student-tooltip-content-zoom:1.8;
       --student-log-notes-h:344px;
-      --student-popup-total-w:calc(var(--student-popup-side-w) + var(--student-popup-log-w) + var(--student-popup-tip-w) + (var(--student-popup-gap) * 2));
+      --student-popup-total-w:calc(var(--student-popup-side-w) + var(--student-popup-log-w) + var(--student-popup-test-w) + var(--student-popup-tip-w) + (var(--student-popup-gap) * 3));
       --student-popup-left:calc(50vw - (var(--student-popup-total-w) / 2));
     }
     #studentPopupScrim{
@@ -84,7 +86,8 @@ function injectStudentPopupLayoutStyles() {
     }
     #studentPopupScrim.is-open{ display:block; }
     #vidModal.student-work-layout,
-    #logModal.student-work-layout{
+    #logModal.student-work-layout,
+    #testModal.student-work-layout{
       display:block !important;
       z-index:99990 !important;
       align-items:initial !important;
@@ -191,7 +194,8 @@ function injectStudentPopupLayoutStyles() {
       padding-top:10px;
     }
     #vidModal.student-work-layout .vid-card > *,
-    #logModal.student-work-layout .log-card > *{
+    #logModal.student-work-layout .log-card > *,
+    #testModal.student-work-layout .test-card > *{
       zoom:var(--student-popup-content-zoom) !important;
     }
     #logModal.student-work-layout .log-card{
@@ -208,9 +212,26 @@ function injectStudentPopupLayoutStyles() {
       border:2px solid #111827 !important;
       box-shadow:0 20px 44px rgba(0,0,0,.54) !important;
     }
-    #adminSchoolTip.student-work-layout{
+    #testModal.student-work-layout .test-card{
+      position:fixed !important;
       top:var(--student-popup-top) !important;
       left:calc(var(--student-popup-left) + var(--student-popup-side-w) + var(--student-popup-log-w) + (var(--student-popup-gap) * 2)) !important;
+      width:var(--student-popup-test-w) !important;
+      height:var(--student-popup-h) !important;
+      max-width:none !important;
+      max-height:var(--student-popup-h) !important;
+      transform:none !important;
+      box-sizing:border-box !important;
+      pointer-events:auto !important;
+      border:2px solid #111827 !important;
+      box-shadow:0 20px 44px rgba(0,0,0,.54) !important;
+      display:flex !important;
+      flex-direction:column !important;
+      overflow:hidden !important;
+    }
+    #adminSchoolTip.student-work-layout{
+      top:var(--student-popup-top) !important;
+      left:calc(var(--student-popup-left) + var(--student-popup-side-w) + var(--student-popup-log-w) + var(--student-popup-test-w) + (var(--student-popup-gap) * 3)) !important;
       right:auto !important;
       width:var(--student-popup-tip-w) !important;
       max-width:var(--student-popup-tip-w) !important;
@@ -226,6 +247,7 @@ function injectStudentPopupLayoutStyles() {
       zoom:var(--student-tooltip-content-zoom) !important;
     }
     #logModal.student-work-layout .log-card{ padding:10px !important; }
+    #testModal.student-work-layout .test-card{ padding:14px !important; }
   `;
   document.head.appendChild(s);
   syncStudentPopupLayoutVars();
@@ -234,7 +256,15 @@ function injectStudentPopupLayoutStyles() {
 function syncStudentPopupLayoutVars() {
   const root = document.documentElement;
   const currentDpr = window.devicePixelRatio || STUDENT_POPUP_BASE_DPR || 1;
-  const zoomLock = Math.max(0.45, Math.min(1.8, STUDENT_POPUP_BASE_DPR / currentDpr));
+  const dprScale = STUDENT_POPUP_BASE_DPR / currentDpr;
+  const baseTotal =
+    STUDENT_POPUP_LAYOUT.side +
+    STUDENT_POPUP_LAYOUT.log +
+    STUDENT_POPUP_LAYOUT.test +
+    STUDENT_POPUP_LAYOUT.tip +
+    (STUDENT_POPUP_LAYOUT.gap * 3);
+  const widthScale = (Math.max(640, window.innerWidth) - 24) / baseTotal;
+  const zoomLock = Math.max(0.35, Math.min(1.8, dprScale, widthScale));
   const usableHeight = Math.max(420, window.innerHeight - 28);
   const height = Math.min(Math.round(STUDENT_POPUP_LAYOUT.height * zoomLock), usableHeight);
   const next = {
@@ -242,6 +272,7 @@ function syncStudentPopupLayoutVars() {
     gap: Math.max(8, Math.round(STUDENT_POPUP_LAYOUT.gap * zoomLock)),
     side: Math.round(STUDENT_POPUP_LAYOUT.side * zoomLock),
     log: Math.round(STUDENT_POPUP_LAYOUT.log * zoomLock),
+    test: Math.round(STUDENT_POPUP_LAYOUT.test * zoomLock),
     tip: Math.round(STUDENT_POPUP_LAYOUT.tip * zoomLock),
     height,
   };
@@ -250,6 +281,7 @@ function syncStudentPopupLayoutVars() {
   root.style.setProperty('--student-popup-gap', `${next.gap}px`);
   root.style.setProperty('--student-popup-side-w', `${next.side}px`);
   root.style.setProperty('--student-popup-log-w', `${next.log}px`);
+  root.style.setProperty('--student-popup-test-w', `${next.test}px`);
   root.style.setProperty('--student-popup-tip-w', `${next.tip}px`);
   root.style.setProperty('--student-popup-h', `${next.height}px`);
   root.style.setProperty('--student-popup-content-zoom', String(zoomLock));
@@ -759,7 +791,10 @@ export function initVideoModal() {
   window.closeVideoAssignmentPopup = () => {
     vidModal.style.display = 'none';
     vidModal.classList.remove('student-work-layout');
-    if (!document.querySelector('#logModal.student-work-layout')) hideStudentPopupScrim();
+    if (
+      !document.querySelector('#logModal.student-work-layout') &&
+      !document.querySelector('#testModal.student-work-layout')
+    ) hideStudentPopupScrim();
   };
 
   window.showStudentPopupBackdrop = showStudentPopupScrim;
@@ -905,6 +940,10 @@ export function initVideoModal() {
       const logOpen = document.querySelector('#logModal.student-work-layout');
       if (logOpen && typeof window.saveRecordPopup === 'function') {
         await window.saveRecordPopup();
+      }
+      const testOpen = document.querySelector('#testModal.student-work-layout');
+      if (testOpen && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
       }
       document.dispatchEvent(new CustomEvent('admin:refresh'));
     } catch (err) {

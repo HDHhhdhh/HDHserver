@@ -4,6 +4,7 @@
 import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { initTestModal } from './testModal.js';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
@@ -946,6 +947,7 @@ async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
 
 export function initLogModal() {
   ensureModal();
+  initTestModal();
 
   const logModal = $('logModal');
   const logTitle = $('logTitle');
@@ -1290,9 +1292,15 @@ export function initLogModal() {
         console.warn('[logModal] open video popup failed:', err);
       });
     }
+    let testOpen = Promise.resolve();
+    if (unified && window.openTestAssignmentPopupForRow) {
+      testOpen = window.openTestAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open test popup failed:', err);
+      });
+    }
 
     await openLogModalForRow(tr, { layout: unified ? 'student-work' : undefined });
-    await videoOpen;
+    await Promise.allSettled([videoOpen, testOpen]);
   });
 
   const close = () => {
@@ -1306,6 +1314,7 @@ export function initLogModal() {
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
     if (wasUnified) {
       try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
+      try { if (window.closeTestAssignmentPopup) window.closeTestAssignmentPopup(); } catch {}
     }
     try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
@@ -1435,6 +1444,9 @@ export function initLogModal() {
       if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
         await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
       }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+      }
       toast('수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
@@ -1454,6 +1466,9 @@ export function initLogModal() {
       const unified = logModal.classList.contains('student-work-layout');
       if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
         await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+      }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
       }
       const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });

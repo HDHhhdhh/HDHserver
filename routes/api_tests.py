@@ -15,6 +15,7 @@ from core.paths import (
 from core.storage import load, save_atomic, nocache_resp, utc_now_isoz
 
 bp_api_tests = Blueprint("api_tests", __name__)
+TEST_TYPE_ORDER = ("REVIEW", "UNIT", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
 
 TEST_LEVEL_RE = re.compile(r"""
   (?:\(|\[)?\s*
@@ -27,6 +28,13 @@ def _tests_lock():
     from routes.api_basic import _InterProcessFileLock
 
     tp = str(getattr(TESTS_PATH, "__fspath__", lambda: str(TESTS_PATH))())
+    return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+
+
+def _tests_config_lock():
+    from routes.api_basic import _InterProcessFileLock
+
+    tp = str(getattr(TESTS_CFG_PATH, "__fspath__", lambda: str(TESTS_CFG_PATH))())
     return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
 
 
@@ -79,6 +87,13 @@ def _canon_test_name(name: str) -> str:
 def _normalize_test_type(raw: str) -> str:
     s = str(raw or "").strip()
     up = s.upper()
+    compact = re.sub(r"\s+", "", s)
+    if "REVIEW" in up or "복습" in compact:
+        return "REVIEW"
+    if "SCHOOL" in up or "학군지" in compact:
+        return "SCHOOL_PAST"
+    if "ILSAN" in up or "일산" in compact:
+        return "ILSAN_PAST"
     if "HELL" in up:
         return "HELL"
     if "FINAL" in up:
@@ -115,6 +130,8 @@ def _build_test_catalog(cfg: dict) -> dict:
                 "test_name": canon,
                 "unit_name": unit_name or canon,
                 "test_level": test_level,
+                "difficulty": str(t.get("difficulty") or "").strip(),
+                "round": str(t.get("round") or "").strip(),
             }
             if test_id:
                 by_id[test_id] = meta
@@ -469,7 +486,8 @@ def post_tests_config():
     payload = request.get_json(force=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "invalid payload"}), 400
-    save_atomic(TESTS_CFG_PATH, payload)
+    with _tests_config_lock():
+        save_atomic(TESTS_CFG_PATH, payload)
     return jsonify({"ok": True})
 
 def _parse_date(s: str) -> dt.date | None:
@@ -696,7 +714,7 @@ def api_tests_stats():
     unit_agg: dict[tuple[str, str, str], dict] = {}
     series_agg: dict[tuple[str, str, str], dict] = {}
     wrong_freq: dict[str, dict[int, int]] = {}
-    type_summary = {"UNIT": _make_stats_agg(), "FINAL": _make_stats_agg(), "HELL": _make_stats_agg()}
+    type_summary = {key: _make_stats_agg() for key in TEST_TYPE_ORDER}
 
     for rec in _iter_test_records(start, end):
         sid = rec["sid"]
@@ -731,7 +749,7 @@ def api_tests_stats():
             )
             ga = unit_agg.setdefault(group_key, _make_stats_agg())
             _push_stats_agg(ga, correct, total)
-        elif type_key in ("FINAL", "HELL"):
+        elif type_key:
             group_key = (
                 type_key,
                 curriculum,
@@ -791,6 +809,7 @@ def api_tests_stats():
         10**9 if x.get("test_level") is None else int(x.get("test_level")),
     ))
 
+    series_rows_by_type: dict[str, list[dict]] = {}
     final_rows = []
     hell_rows = []
     for (type_key, curriculum, test_name), ga in series_agg.items():
@@ -802,16 +821,19 @@ def api_tests_stats():
             "curriculum": curriculum,
             "test_name": test_name,
         })
+        series_rows_by_type.setdefault(type_key, []).append(base)
         if type_key == "FINAL":
             final_rows.append(base)
         elif type_key == "HELL":
             hell_rows.append(base)
+    for rows in series_rows_by_type.values():
+        rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
     final_rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
     hell_rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
 
     summary = {}
-    for type_key in ("UNIT", "FINAL", "HELL"):
-        base = _finalize_stats_agg(type_summary[type_key])
+    for type_key in TEST_TYPE_ORDER:
+        base = _finalize_stats_agg(type_summary.setdefault(type_key, _make_stats_agg()))
         if base:
             summary[type_key] = base
 
@@ -821,6 +843,7 @@ def api_tests_stats():
         "by_test": out,
         "summary": summary,
         "unit_rows": unit_rows,
+        "series_rows": series_rows_by_type,
         "final_rows": final_rows,
         "hell_rows": hell_rows,
     })

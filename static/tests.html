@@ -705,7 +705,7 @@
       <h1 class="topbar-title">
         테스트 관리 <span id="testsTotalPill" class="pill">0개</span>
       </h1>
-      <div class="topbar-sub">단원평가와 APEX 테스트를 등록하고, 최근 제출 통계를 한 화면에서 관리합니다.</div>
+      <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 자동 배정 규칙을 한 화면에서 관리합니다.</div>
     </div>
 
     <nav class="topbar-nav" aria-label="주요 링크">
@@ -727,10 +727,10 @@
     <section class="card hero-card">
       <div class="hero-copy">
         <div class="hero-eyebrow">Test Workspace</div>
-        <h2 class="hero-title">시험 등록부터 통계 확인까지 한 흐름으로 관리하세요</h2>
+        <h2 class="hero-title">테스트 목록과 자동 배정 기준을 실사용 흐름으로 관리하세요</h2>
         <p class="hero-desc">
-          왼쪽에서 유형과 커리를 선택해 시험 목록을 관리하고, 오른쪽에서 시험명/문항 수/정답을 편집할 수 있습니다.
-          아래 통계에서는 과목/단원/레벨 기준 집계를 확인하고, 행을 클릭하면 개인별 성적을 바로 볼 수 있습니다.
+          왼쪽에서 분류와 과목을 선택해 테스트 목록을 관리하고, 오른쪽에서 과목/난이도/회차/정답을 편집할 수 있습니다.
+          자동 배정 규칙은 관리자 테스트 팝업에서 학생 레벨에 맞는 테스트를 추천할 때 사용됩니다.
         </p>
       </div>
 
@@ -741,9 +741,9 @@
           <span id="visibleTestsMeta" class="hero-metric-help">현재 목록 0개</span>
         </div>
         <div class="hero-metric">
-          <span class="hero-metric-label">통계 집계 범위</span>
+          <span class="hero-metric-label">자동 배정 규칙</span>
           <strong id="testsRangeLabel" class="hero-metric-value">최근 30일</strong>
-          <span class="hero-metric-help">기간을 바꾸면 요약 카드와 개인 성적 패널이 함께 갱신됩니다.</span>
+          <span class="hero-metric-help">과목별로 학생 레벨과 테스트 난이도를 연결합니다.</span>
         </div>
       </div>
     </section>
@@ -753,28 +753,29 @@
         <div class="card-head">
           <h2>시험 목록</h2>
         </div>
-        <div class="card-sub">유형과 커리를 선택하면 해당 범위의 시험만 모아서 볼 수 있습니다.</div>
+        <div class="card-sub">분류와 과목을 선택하면 해당 범위의 테스트만 모아서 볼 수 있습니다.</div>
 
         <div class="tests-toolbar">
           <div class="toolbar-group">
-            <span class="toolbar-label">유형</span>
+            <span class="toolbar-label">분류</span>
             <select id="cfgType">
-  <option value="단원평가">단원평가</option>
-  <option value="FINAL">APEX FINAL</option>
-  <option value="HELL">APEX HELL</option>
+  <option value="REVIEW">복습 테스트</option>
+  <option value="UNIT" selected>단원평가</option>
+  <option value="SCHOOL_PAST">학군지 기출</option>
+  <option value="ILSAN_PAST">일산 기출</option>
 </select>
           </div>
 
           <div class="toolbar-group">
-            <span class="toolbar-label">커리</span>
+            <span class="toolbar-label">과목</span>
             <select id="cfgCur">
   <option value="공수1">공수1</option>
   <option value="공수2">공수2</option>
   <option value="대수">대수</option>
-  <option value="미적1">미적1</option>
-  <option value="미적2">미적2</option>
-  <option value="확통">확통</option>
+  <option value="미적분1">미적분1</option>
+  <option value="미적분2">미적분2</option>
   <option value="기하">기하</option>
+  <option value="확통">확통</option>
 </select>
           </div>
 
@@ -790,7 +791,7 @@
         <div class="card-head">
           <h2>시험 편집</h2>
         </div>
-        <div class="card-sub">기존 시험을 선택하거나 새 시험을 추가한 뒤 이름/문항 수/정답을 저장하세요.</div>
+        <div class="card-sub">기존 테스트를 선택하거나 새 테스트를 추가한 뒤 과목/난이도/회차/정답을 저장하세요.</div>
 
         <div class="editor-banner">
           <div>
@@ -801,9 +802,27 @@
 
         <div class="field-grid">
           <div class="field-row">
+            <label for="cfgSubject">과목</label>
+            <select id="cfgSubject"></select>
+            <div class="helper">관리자 테스트 팝업에서 학생 커리큘럼과 매칭되는 기준입니다.</div>
+          </div>
+
+          <div class="field-row">
+            <label for="cfgDifficulty">난이도</label>
+            <select id="cfgDifficulty"></select>
+            <div class="helper">복습/기출은 상·중상, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+          </div>
+
+          <div class="field-row">
+            <label for="cfgRound">회차</label>
+            <input type="number" id="cfgRound" min="1" max="99" step="1">
+            <div class="helper">같은 분류/과목/난이도 안에서 표시되는 회차입니다.</div>
+          </div>
+
+          <div class="field-row">
             <label for="cfgName">시험명</label>
             <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
-            <div class="helper">단원평가는 단원명과 레벨을 포함해 적으면 통계 분리가 쉬워집니다.</div>
+            <div class="helper">학생과 상담 기록에 표시될 이름입니다.</div>
           </div>
 
           <div class="field-row">
@@ -828,6 +847,17 @@
           <button id="btnSaveTest" class="btn" type="button">저장</button>
         </div>
       </section>
+    </section>
+
+    <section class="card" aria-label="자동 배정 규칙">
+      <div class="card-head">
+        <h2>자동 배정 규칙</h2>
+      </div>
+      <div class="card-sub">현재 선택한 분류에서 과목별 난이도가 어떤 학생 레벨에 추천될지 설정합니다.</div>
+      <div id="ruleGrid" class="panel-table-wrap"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button id="btnSaveRules" class="btn" type="button">규칙 저장</button>
+      </div>
     </section>
 
     <section class="card" aria-label="테스트 통계">

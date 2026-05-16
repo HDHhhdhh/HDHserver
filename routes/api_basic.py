@@ -885,6 +885,47 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
         mid_s = str(mid).strip()
         if not mid_s:
             continue
+        if mid_s == "tests":
+            if not isinstance(st, dict):
+                continue
+
+            cur_tests = out.get("tests")
+            if not isinstance(cur_tests, dict):
+                cur_tests = {}
+            else:
+                cur_tests = dict(cur_tests)
+
+            for test_key, test_status in st.items():
+                test_key_s = str(test_key or "").strip()
+                if not test_key_s:
+                    continue
+
+                if test_status is None or test_status is False:
+                    cur_tests.pop(test_key_s, None)
+                    continue
+
+                if isinstance(test_status, str):
+                    status_s = test_status.strip()
+                    if status_s in ("", "none"):
+                        cur_tests.pop(test_key_s, None)
+                    else:
+                        cur_tests[test_key_s] = status_s
+                    continue
+
+                if isinstance(test_status, dict):
+                    if test_status.get("remove") is True:
+                        cur_tests.pop(test_key_s, None)
+                    else:
+                        cur_tests[test_key_s] = dict(test_status)
+                    continue
+
+                cur_tests[test_key_s] = str(test_status).strip()
+
+            if cur_tests:
+                out["tests"] = cur_tests
+            else:
+                out.pop("tests", None)
+            continue
         if mid_s.startswith("__"):
             continue
 
