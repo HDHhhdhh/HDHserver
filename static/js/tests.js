@@ -265,7 +265,7 @@ function updateChrome(selected = null) {
   if ($('#testsTotalPill')) $('#testsTotalPill').textContent = `${total}개`;
   if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = `${categoryLabel(ui.category)} · ${ui.subject}`;
   if ($('#visibleTestsMeta')) $('#visibleTestsMeta').textContent = `현재 목록 ${visible.length}개`;
-  if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = `${categoryLabel(ui.category)} 규칙`;
+  if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = '4개 분류 기준';
   if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected?.name || '선택된 테스트 없음';
 }
 
@@ -333,54 +333,73 @@ function fillEditor() {
 function renderRules() {
   const host = $('#ruleGrid');
   if (!host) return;
-  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
-  const rules = TEST_CFG.autoAssignRules?.[ui.category] || {};
 
   host.innerHTML = `
-    <table class="stats-table" style="min-width:860px;margin:0">
-      <thead>
-        <tr>
-          <th style="text-align:left;">과목</th>
-          <th style="text-align:left;">테스트 난이도</th>
-          ${STUDENT_LEVELS.map(level => `<th>${escapeHtml(level)}</th>`).join('')}
-        </tr>
-      </thead>
-      <tbody>
-        ${SUBJECTS.map(subject => def.difficulties.map((difficulty, index) => {
-          const levels = Array.isArray(rules?.[subject]?.[difficulty]) ? rules[subject][difficulty].map(String) : [];
-          return `
-            <tr>
-              ${index === 0 ? `<td rowspan="${def.difficulties.length}" style="text-align:left;font-weight:800;">${escapeHtml(subject)}</td>` : ''}
-              <td style="text-align:left;"><span class="level-pill">${escapeHtml(difficulty)}</span></td>
-              ${STUDENT_LEVELS.map(level => `
-                <td style="text-align:center;">
-                  <input type="checkbox" class="rule-check"
-                    data-subject="${escapeAttr(subject)}"
-                    data-difficulty="${escapeAttr(difficulty)}"
-                    data-level="${escapeAttr(level)}"
-                    ${levels.includes(level) ? 'checked' : ''}>
-                </td>
-              `).join('')}
-            </tr>
-          `;
-        }).join('')).join('')}
-      </tbody>
-    </table>
+    <div class="rule-grid-inner">
+      ${CATEGORY_DEFS.map(def => renderRuleSection(def)).join('')}
+    </div>
+  `;
+}
+
+function renderRuleSection(def) {
+  const rules = TEST_CFG.autoAssignRules?.[def.key] || {};
+  const difficultyLabel = def.key === 'UNIT' ? 'Lv.3 · Lv.4 · Lv.5 · Lv.6' : '상 · 중상';
+  return `
+    <section class="rule-section" data-rule-category="${escapeAttr(def.key)}">
+      <div class="rule-section-head">
+        <div class="rule-section-title">
+          <strong>${escapeHtml(def.label)}</strong>
+          <span>과목별 테스트 난이도와 학생 정보 레벨 연결</span>
+        </div>
+        <span class="rule-section-meta">${escapeHtml(difficultyLabel)}</span>
+      </div>
+      <table class="stats-table" style="margin:0">
+        <thead>
+          <tr>
+            <th style="text-align:left;">과목</th>
+            <th style="text-align:left;">테스트 난이도</th>
+            ${STUDENT_LEVELS.map(level => `<th>${escapeHtml(level)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${SUBJECTS.map(subject => def.difficulties.map((difficulty, index) => {
+            const levels = Array.isArray(rules?.[subject]?.[difficulty]) ? rules[subject][difficulty].map(String) : [];
+            return `
+              <tr>
+                ${index === 0 ? `<td rowspan="${def.difficulties.length}" style="text-align:left;font-weight:800;">${escapeHtml(subject)}</td>` : ''}
+                <td style="text-align:left;"><span class="level-pill">${escapeHtml(difficulty)}</span></td>
+                ${STUDENT_LEVELS.map(level => `
+                  <td style="text-align:center;">
+                    <input type="checkbox" class="rule-check"
+                      data-category="${escapeAttr(def.key)}"
+                      data-subject="${escapeAttr(subject)}"
+                      data-difficulty="${escapeAttr(difficulty)}"
+                      data-level="${escapeAttr(level)}"
+                      ${levels.includes(level) ? 'checked' : ''}>
+                  </td>
+                `).join('')}
+              </tr>
+            `;
+          }).join('')).join('')}
+        </tbody>
+      </table>
+    </section>
   `;
 }
 
 function readRulesFromGrid() {
-  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
   TEST_CFG.autoAssignRules = TEST_CFG.autoAssignRules || {};
-  TEST_CFG.autoAssignRules[ui.category] = TEST_CFG.autoAssignRules[ui.category] || {};
 
-  SUBJECTS.forEach(subject => {
-    TEST_CFG.autoAssignRules[ui.category][subject] = TEST_CFG.autoAssignRules[ui.category][subject] || {};
-    def.difficulties.forEach(difficulty => {
-      const levels = Array.from(document.querySelectorAll(`.rule-check[data-subject="${CSS.escape(subject)}"][data-difficulty="${CSS.escape(difficulty)}"]:checked`))
-        .map(input => input.dataset.level)
-        .filter(Boolean);
-      TEST_CFG.autoAssignRules[ui.category][subject][difficulty] = levels;
+  CATEGORY_DEFS.forEach(def => {
+    TEST_CFG.autoAssignRules[def.key] = TEST_CFG.autoAssignRules[def.key] || {};
+    SUBJECTS.forEach(subject => {
+      TEST_CFG.autoAssignRules[def.key][subject] = TEST_CFG.autoAssignRules[def.key][subject] || {};
+      def.difficulties.forEach(difficulty => {
+        const levels = Array.from(document.querySelectorAll(`.rule-check[data-category="${CSS.escape(def.key)}"][data-subject="${CSS.escape(subject)}"][data-difficulty="${CSS.escape(difficulty)}"]:checked`))
+          .map(input => input.dataset.level)
+          .filter(Boolean);
+        TEST_CFG.autoAssignRules[def.key][subject][difficulty] = levels;
+      });
     });
   });
 }
@@ -392,6 +411,252 @@ async function saveConfig() {
     body: JSON.stringify(TEST_CFG),
   });
   if (!res.ok) throw new Error(`tests-config save failed: ${res.status}`);
+}
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadCsvTemplate() {
+  const rows = [
+    ['분류', '과목', '난이도', '회차', '시험명', '문항수', '1회차정답', '2회차정답', '3회차정답'],
+    ['복습 테스트', '대수', '상', '1', '대수 복습 상 1회차', '20', '1 2 3 4', '1 2 3 4', '1 2 3 4'],
+    ['단원평가', '공수1', 'Lv.4', '1', '원의 방정식 Lv.4', '20', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
+    ['학군지 기출', '미적분1', '중상', '1', '학군지 미적분1 중상 1회차', '20', '', '', ''],
+    ['일산 기출', '기하', '상', '1', '일산 기하 상 1회차', '20', '', '', ''],
+  ];
+  const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'test_catalog_template.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (quoted) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      quoted = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows.filter(items => items.some(item => String(item || '').trim()));
+}
+
+function headerKey(value) {
+  const s = String(value || '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\s+/g, '');
+  const aliases = {
+    id: 'id',
+    testid: 'id',
+    테스트id: 'id',
+    분류: 'category',
+    구분: 'category',
+    category: 'category',
+    type: 'category',
+    과목: 'subject',
+    subject: 'subject',
+    curriculum: 'subject',
+    course: 'subject',
+    난이도: 'difficulty',
+    레벨: 'difficulty',
+    difficulty: 'difficulty',
+    level: 'difficulty',
+    회차: 'round',
+    round: 'round',
+    session: 'round',
+    no: 'round',
+    시험명: 'name',
+    테스트명: 'name',
+    name: 'name',
+    title: 'name',
+    문항수: 'problems',
+    문제수: 'problems',
+    problems: 'problems',
+    '1회차정답': 'answers1',
+    '1회정답': 'answers1',
+    answer1: 'answers1',
+    answers1: 'answers1',
+    '2회차정답': 'answers2',
+    '2회정답': 'answers2',
+    answer2: 'answers2',
+    answers2: 'answers2',
+    '3회차정답': 'answers3',
+    '3회정답': 'answers3',
+    answer3: 'answers3',
+    answers3: 'answers3',
+    정답: 'answers',
+    answers: 'answers',
+    answer: 'answers',
+  };
+  return aliases[s] || s;
+}
+
+function rowObject(headers, cells) {
+  const out = {};
+  headers.forEach((header, idx) => {
+    if (!header) return;
+    out[header] = String(cells[idx] ?? '').trim();
+  });
+  return out;
+}
+
+function answerKeysFromCsvRow(row, problems) {
+  if (row.answers1 || row.answers2 || row.answers3) {
+    const one = parseAnswerSpec(row.answers1 || '', problems);
+    return {
+      '1': one,
+      '2': parseAnswerSpec(row.answers2 || row.answers1 || '', problems),
+      '3': parseAnswerSpec(row.answers3 || row.answers1 || '', problems),
+    };
+  }
+  return parseAnswerSpec3(row.answers || '', problems);
+}
+
+function findExistingTest(cat, patch) {
+  const tests = Array.isArray(cat.tests) ? cat.tests : [];
+  if (patch.id) {
+    const byId = tests.find(test => String(test?.id || '').trim() === patch.id);
+    if (byId) return byId;
+  }
+  return tests.find(test =>
+    canonText(test?.name) === patch.name &&
+    normalizeSubject(test?.curriculum || test?.subject) === patch.curriculum &&
+    String(normalizeDifficulty(patch.categoryKey, test?.difficulty || test?.level, test?.name)).trim() === patch.difficulty &&
+    String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim() === patch.round
+  ) || null;
+}
+
+async function importTestsFromCsv(file) {
+  const rows = parseCsv(await file.text());
+  if (rows.length < 2) {
+    alert('가져올 시험 행이 없습니다.');
+    return;
+  }
+
+  const headers = rows[0].map(headerKey);
+  if (!headers.includes('name')) {
+    alert('CSV 첫 줄에 시험명 열이 필요합니다.');
+    return;
+  }
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors = [];
+  let lastCategory = ui.category;
+  let lastSubject = ui.subject;
+
+  rows.slice(1).forEach((cells, idx) => {
+    const row = rowObject(headers, cells);
+    const name = canonText(row.name);
+    if (!name) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 시험명 없음`);
+      return;
+    }
+
+    const categoryKey = categoryKeyFrom(row.category || ui.category);
+    const def = CATEGORY_BY_KEY[categoryKey];
+    if (!def) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 분류 "${row.category}"`);
+      return;
+    }
+
+    const subject = normalizeSubject(row.subject || ui.subject);
+    if (!SUBJECTS.includes(subject)) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 과목 "${row.subject}"`);
+      return;
+    }
+
+    const difficulty = normalizeDifficulty(categoryKey, row.difficulty, name);
+    const round = normalizeRound(row.round || '1', name);
+    const problemsRaw = Number(row.problems || 20);
+    const problems = Number.isFinite(problemsRaw) ? Math.max(1, Math.min(100, Math.trunc(problemsRaw))) : 20;
+    const answerKeys = answerKeysFromCsvRow(row, problems);
+    const rawId = canonText(row.id);
+    const id = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
+    const patch = {
+      id,
+      name,
+      categoryKey,
+      problems,
+      curriculum: subject,
+      difficulty,
+      round,
+      answerKeys,
+      answerKey: answerKeys['1'],
+    };
+
+    const cat = TEST_CFG.categories[categoryKey] = TEST_CFG.categories[categoryKey] || { label: def.label, tests: [] };
+    if (!Array.isArray(cat.tests)) cat.tests = [];
+    cat.label = cat.label || def.label;
+
+    const existing = findExistingTest(cat, patch);
+    if (existing) {
+      if (!rawId) patch.id = canonText(existing.id) || patch.id;
+      Object.assign(existing, patch);
+      updated += 1;
+    } else {
+      cat.tests.push(patch);
+      added += 1;
+    }
+    lastCategory = categoryKey;
+    lastSubject = subject;
+  });
+
+  if (!added && !updated) {
+    alert(`가져온 시험이 없습니다.${errors.length ? `\n${errors.slice(0, 5).join('\n')}` : ''}`);
+    return;
+  }
+
+  await saveConfig();
+  ui.category = lastCategory;
+  ui.subject = lastSubject;
+  ui.selectedId = '';
+  $('#cfgType') && ($('#cfgType').value = ui.category);
+  $('#cfgCur') && ($('#cfgCur').value = ui.subject);
+  await loadConfigAndStats();
+
+  const detail = errors.length ? `\n건너뜀 ${skipped}건\n${errors.slice(0, 5).join('\n')}` : '';
+  alert(`CSV 가져오기 완료\n추가 ${added}건 · 업데이트 ${updated}건${detail}`);
 }
 
 async function loadConfigAndStats() {
@@ -500,6 +765,28 @@ function bindUI() {
     const raw = selectedRawTest();
     if (raw) raw.curriculum = normalizeSubject(e.target.value);
     renderTestList();
+  });
+
+  $('#btnCsvTemplate')?.addEventListener('click', downloadCsvTemplate);
+
+  $('#btnImportCsv')?.addEventListener('click', () => {
+    const input = $('#csvFile');
+    if (!input) return;
+    input.value = '';
+    input.click();
+  });
+
+  $('#csvFile')?.addEventListener('change', async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    try {
+      await importTestsFromCsv(file);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || 'CSV 가져오기에 실패했습니다.');
+    } finally {
+      e.target.value = '';
+    }
   });
 
   $('#btnNewTest')?.addEventListener('click', () => {

@@ -103,12 +103,12 @@
 
     body.admin.tests-page .page {
       width: 100%;
-      max-width: 1380px;
+      max-width: none;
       margin: 0 auto;
-      padding: 24px 32px 42px;
+      padding: 18px clamp(18px, 2vw, 34px) 42px;
       display: flex;
       flex-direction: column;
-      gap: 22px;
+      gap: 18px;
       box-sizing: border-box;
     }
 
@@ -184,8 +184,8 @@
 
     body.admin.tests-page .tests-shell {
       display: grid;
-      grid-template-columns: 390px minmax(0, 1fr);
-      gap: 22px;
+      grid-template-columns: minmax(440px, .9fr) minmax(760px, 1.6fr);
+      gap: 16px;
       align-items: start;
     }
 
@@ -243,7 +243,7 @@
       border-radius: 16px;
       background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
       overflow: auto;
-      max-height: 620px;
+      max-height: 720px;
       padding: 8px;
       box-sizing: border-box;
     }
@@ -318,8 +318,8 @@
 
     body.admin.tests-page .field-row {
       display: grid;
-      grid-template-columns: 90px minmax(0, 1fr) 1.05fr;
-      gap: 10px;
+      grid-template-columns: 108px minmax(280px, .9fr) minmax(340px, 1.1fr);
+      gap: 12px 16px;
       align-items: center;
     }
 
@@ -398,6 +398,18 @@
       border-color: color-mix(in oklab, var(--line) 58%, #3b82f6 42%);
     }
 
+    body.admin.tests-page .summary-card[data-type="REVIEW"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #14b8a6 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="SCHOOL_PAST"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #f59e0b 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="ILSAN_PAST"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #a855f7 42%);
+    }
+
     body.admin.tests-page .summary-card[data-type="FINAL"] {
       border-color: color-mix(in oklab, var(--line) 58%, #10b981 42%);
     }
@@ -450,7 +462,7 @@
     body.admin.tests-page .stats-table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 860px;
+      min-width: 1040px;
       margin: 0;
     }
 
@@ -535,8 +547,38 @@
       border-color: rgba(59, 130, 246, .28);
     }
 
+    body.admin.tests-page .type-pill[data-type="REVIEW"] {
+      background: rgba(20, 184, 166, .14);
+      color: #0f766e;
+      border-color: rgba(20, 184, 166, .28);
+    }
+
+    body.admin.tests-page .type-pill[data-type="SCHOOL_PAST"] {
+      background: rgba(245, 158, 11, .16);
+      color: #92400e;
+      border-color: rgba(245, 158, 11, .3);
+    }
+
+    body.admin.tests-page .type-pill[data-type="ILSAN_PAST"] {
+      background: rgba(168, 85, 247, .14);
+      color: #7e22ce;
+      border-color: rgba(168, 85, 247, .28);
+    }
+
     body.dark.admin.tests-page .type-pill[data-type="UNIT"] {
       color: #93c5fd;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="REVIEW"] {
+      color: #5eead4;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="SCHOOL_PAST"] {
+      color: #fcd34d;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="ILSAN_PAST"] {
+      color: #d8b4fe;
     }
 
     body.admin.tests-page .type-pill[data-type="FINAL"] {
@@ -563,6 +605,57 @@
       min-width: 54px;
       background: color-mix(in oklab, var(--card) 92%, var(--fg) 8%);
       color: var(--fg);
+    }
+
+    body.admin.tests-page .import-file {
+      display: none;
+    }
+
+    body.admin.tests-page .rule-grid-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 12px;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .rule-section {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .rule-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 92%, var(--accent) 8%);
+    }
+
+    body.admin.tests-page .rule-section-title {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    body.admin.tests-page .rule-section-title strong {
+      font-size: 15px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .rule-section-title span,
+    body.admin.tests-page .rule-section-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .rule-section table {
+      min-width: 1040px !important;
     }
 
     body.admin.tests-page .stat-title {
@@ -652,7 +745,7 @@
       padding: 22px 12px !important;
     }
 
-    @media (max-width: 1160px) {
+    @media (max-width: 1080px) {
       body.admin.tests-page .hero-card,
       body.admin.tests-page .tests-shell {
         grid-template-columns: 1fr;
@@ -705,7 +798,7 @@
       <h1 class="topbar-title">
         테스트 관리 <span id="testsTotalPill" class="pill">0개</span>
       </h1>
-      <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 자동 배정 규칙을 한 화면에서 관리합니다.</div>
+      <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 분류별 배정 기준을 한 화면에서 관리합니다.</div>
     </div>
 
     <nav class="topbar-nav" aria-label="주요 링크">
@@ -727,10 +820,10 @@
     <section class="card hero-card">
       <div class="hero-copy">
         <div class="hero-eyebrow">Test Workspace</div>
-        <h2 class="hero-title">테스트 목록과 자동 배정 기준을 실사용 흐름으로 관리하세요</h2>
+        <h2 class="hero-title">테스트 목록과 배정 기준을 실사용 흐름으로 관리하세요</h2>
         <p class="hero-desc">
           왼쪽에서 분류와 과목을 선택해 테스트 목록을 관리하고, 오른쪽에서 과목/난이도/회차/정답을 편집할 수 있습니다.
-          자동 배정 규칙은 관리자 테스트 팝업에서 학생 레벨에 맞는 테스트를 추천할 때 사용됩니다.
+          테스트 팝업은 자동 배정하지 않고 선생님이 클릭한 항목만 저장합니다.
         </p>
       </div>
 
@@ -741,9 +834,9 @@
           <span id="visibleTestsMeta" class="hero-metric-help">현재 목록 0개</span>
         </div>
         <div class="hero-metric">
-          <span class="hero-metric-label">자동 배정 규칙</span>
-          <strong id="testsRangeLabel" class="hero-metric-value">최근 30일</strong>
-          <span class="hero-metric-help">과목별로 학생 레벨과 테스트 난이도를 연결합니다.</span>
+          <span class="hero-metric-label">분류별 배정 기준</span>
+          <strong id="testsRangeLabel" class="hero-metric-value">4개 분류</strong>
+          <span class="hero-metric-help">복습/단원/학군지/일산 기준을 각각 관리합니다.</span>
         </div>
       </div>
     </section>
@@ -780,6 +873,9 @@
           </div>
 
           <div class="toolbar-spacer"></div>
+          <button id="btnCsvTemplate" class="btn secondary" type="button">CSV 양식</button>
+          <button id="btnImportCsv" class="btn secondary" type="button">CSV 가져오기</button>
+          <input id="csvFile" class="import-file" type="file" accept=".csv,text/csv">
           <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
         </div>
 
@@ -849,11 +945,11 @@
       </section>
     </section>
 
-    <section class="card" aria-label="자동 배정 규칙">
+    <section class="card" aria-label="분류별 배정 기준">
       <div class="card-head">
-        <h2>자동 배정 규칙</h2>
+        <h2>분류별 배정 기준</h2>
       </div>
-      <div class="card-sub">현재 선택한 분류에서 과목별 난이도가 어떤 학생 레벨에 추천될지 설정합니다.</div>
+      <div class="card-sub">네 가지 테스트 분류를 각각 별도 표로 관리합니다. 현재 팝업에서는 이 기준으로 자동 체크하지 않고, 클릭한 테스트만 배정됩니다.</div>
       <div id="ruleGrid" class="panel-table-wrap"></div>
       <div class="btn-row" style="margin-top:12px">
         <button id="btnSaveRules" class="btn" type="button">규칙 저장</button>

@@ -15,14 +15,6 @@ const CATEGORY_DEFS = [
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
 const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
 const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
-const STUDENT_LEVELS = ['하', '중', '중상', '상'];
-
-const DEFAULT_AUTO_RULES = {
-  REVIEW: defaultTwoBandRules(),
-  SCHOOL_PAST: defaultTwoBandRules(),
-  ILSAN_PAST: defaultTwoBandRules(),
-  UNIT: defaultUnitRules(),
-};
 
 let initialized = false;
 let editingSid = null;
@@ -37,30 +29,7 @@ let initialTestMap = {};
 let selectedKeys = new Set();
 let submittedIds = new Set();
 let submittedNames = new Set();
-
-function defaultTwoBandRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    out[subject] = {
-      '상': ['상', '중상'],
-      '중상': ['중', '하'],
-    };
-  });
-  return out;
-}
-
-function defaultUnitRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    out[subject] = {
-      'Lv.3': ['하'],
-      'Lv.4': ['중'],
-      'Lv.5': ['중상'],
-      'Lv.6': ['상'],
-    };
-  });
-  return out;
-}
+let testSelectionTouched = false;
 
 async function fetchJSONSafe(url, init = {}) {
   const res = await fetch(url, { cache: 'no-store', ...init });
@@ -98,11 +67,6 @@ function normalizeSubject(value) {
     '확률과통계': '확통',
   };
   return aliases[compact] || compact || '공수1';
-}
-
-function normalizeStudentLevel(value) {
-  const s = String(value || '').trim();
-  return STUDENT_LEVELS.includes(s) ? s : '';
 }
 
 function categoryLabel(key) {
@@ -158,52 +122,6 @@ function testKey(test) {
   ].filter(Boolean).join(' / ');
 }
 
-function ensureDefaultRules(cfg) {
-  const root = cfg && typeof cfg === 'object' ? cfg : {};
-  if (!root.autoAssignRules || typeof root.autoAssignRules !== 'object') {
-    root.autoAssignRules = {};
-  }
-
-  CATEGORY_KEYS.forEach(categoryKey => {
-    if (!root.autoAssignRules[categoryKey] || typeof root.autoAssignRules[categoryKey] !== 'object') {
-      root.autoAssignRules[categoryKey] = {};
-    }
-    SUBJECTS.forEach(subject => {
-      if (!root.autoAssignRules[categoryKey][subject] || typeof root.autoAssignRules[categoryKey][subject] !== 'object') {
-        root.autoAssignRules[categoryKey][subject] = {};
-      }
-      const defaults = DEFAULT_AUTO_RULES[categoryKey]?.[subject] || {};
-      Object.entries(defaults).forEach(([difficulty, levels]) => {
-        if (!Array.isArray(root.autoAssignRules[categoryKey][subject][difficulty])) {
-          root.autoAssignRules[categoryKey][subject][difficulty] = levels.slice();
-        }
-      });
-    });
-  });
-
-  return root.autoAssignRules;
-}
-
-function levelsForRule(cfg, categoryKey, subject, difficulty) {
-  const rules = ensureDefaultRules(cfg);
-  const levels = rules?.[categoryKey]?.[subject]?.[difficulty];
-  return Array.isArray(levels) ? levels.map(String) : [];
-}
-
-function autoDifficultyFor(stu, categoryKey, subject) {
-  const level = normalizeStudentLevel(stu?.level);
-  const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
-  const cfg = state.testsConfig || { categories: {} };
-
-  for (const difficulty of def.difficulties) {
-    if (levelsForRule(cfg, categoryKey, subject, difficulty).includes(level)) {
-      return difficulty;
-    }
-  }
-
-  return def.difficulties[0] || '';
-}
-
 function normalizeConfig(cfg) {
   const out = (cfg && typeof cfg === 'object') ? cfg : {};
   if (!out.categories || typeof out.categories !== 'object') out.categories = {};
@@ -216,7 +134,6 @@ function normalizeConfig(cfg) {
     out.categories[def.key].label = out.categories[def.key].label || def.label;
   });
 
-  ensureDefaultRules(out);
   return out;
 }
 
@@ -364,11 +281,6 @@ function syncSelectedFromProgress() {
   );
 }
 
-function nextRecommendedTest() {
-  const list = visibleTests();
-  return list.find(test => !isSubmitted(test) && !selectedKeys.has(test._key)) || null;
-}
-
 function renderCategories() {
   const host = $('testCategoryTabs');
   if (!host) return;
@@ -396,11 +308,8 @@ function renderFilters() {
     ).join('');
   }
 
-  const autoEl = $('testAutoTarget');
-  if (autoEl) {
-    const auto = autoDifficultyFor(activeStudent, activeCategory, activeSubject);
-    autoEl.textContent = `자동 기준: ${activeStudent?.level || '-'} → ${auto || '-'}`;
-  }
+  const metaEl = $('testStudentMeta');
+  if (metaEl) metaEl.textContent = `학생 레벨: ${activeStudent?.level || '-'}`;
 }
 
 function renderList() {
@@ -538,7 +447,7 @@ function ensureModal() {
           <div>
             <h3 id="testTitle">테스트 배정</h3>
             <div class="test-sub">
-              <span id="testAutoTarget">자동 기준: -</span>
+              <span id="testStudentMeta">학생 레벨: -</span>
               <span aria-hidden="true"> · </span>
               <span id="testVisibleCount">0개</span>
             </div>
@@ -563,9 +472,8 @@ function ensureModal() {
           <div class="test-toolbar">
             <div class="test-sub">체크된 항목이 오늘 선택 날짜에 배정됩니다.</div>
             <div class="test-mini-actions">
-              <button id="testAutoPick" type="button">자동 배정</button>
-              <button id="testPickAll" type="button">목록 전체</button>
-              <button id="testPickNone" type="button">해제</button>
+              <button id="testPickAll" type="button">목록 전체 선택</button>
+              <button id="testPickNone" type="button">선택 해제</button>
             </div>
           </div>
 
@@ -598,6 +506,7 @@ function closeModal() {
   catalogByKey = new Map();
   initialTestMap = {};
   selectedKeys = new Set();
+  testSelectionTouched = false;
   if (wasUnified && !document.querySelector('#vidModal.student-work-layout') && !document.querySelector('#logModal.student-work-layout')) {
     try { window.hideStudentPopupBackdrop?.(); } catch {}
   }
@@ -627,12 +536,8 @@ async function openModalForRow(rowOrButton, opts = {}) {
   syncSelectedFromProgress();
 
   activeCategory = chooseInitialCategory();
-  activeDifficulty = autoDifficultyFor(activeStudent, activeCategory, activeSubject);
-
-  if (selectedKeys.size === 0) {
-    const recommended = nextRecommendedTest();
-    if (recommended) selectedKeys.add(recommended._key);
-  }
+  activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
+  testSelectionTouched = false;
 
   renderAll();
   setModalOpen(true, opts.layout);
@@ -712,6 +617,11 @@ async function patchLogAssignment(items, appendToNotes) {
 
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
+  if (!testSelectionTouched) {
+    const items = selectedAssignmentObjects();
+    if (options.showPopup !== false) toast('변경된 테스트 배정이 없습니다');
+    return items;
+  }
 
   const patchTests = {};
   const allKeys = new Set([...Object.keys(initialTestMap), ...selectedKeys]);
@@ -752,6 +662,7 @@ async function saveModal(options = {}) {
   if (options.showPopup !== false) toast('테스트 배정 저장됨');
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
+  testSelectionTouched = false;
   return items;
 }
 
@@ -763,15 +674,8 @@ function bindEventsOnce() {
     const categoryBtn = e.target.closest('#testCategoryTabs .test-tab');
     if (categoryBtn) {
       activeCategory = categoryBtn.dataset.category || activeCategory;
-      activeDifficulty = autoDifficultyFor(activeStudent, activeCategory, activeSubject);
+      activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
       renderAll();
-      return;
-    }
-
-    if (e.target.closest('#testAutoPick')) {
-      const hit = nextRecommendedTest();
-      if (hit) selectedKeys.add(hit._key);
-      renderList();
       return;
     }
 
@@ -779,6 +683,7 @@ function bindEventsOnce() {
       visibleTests().forEach(test => {
         if (!isSubmitted(test)) selectedKeys.add(test._key);
       });
+      testSelectionTouched = true;
       renderList();
       return;
     }
@@ -787,6 +692,7 @@ function bindEventsOnce() {
       visibleTests().forEach(test => {
         if (!isSubmitted(test)) selectedKeys.delete(test._key);
       });
+      testSelectionTouched = true;
       renderList();
       return;
     }
@@ -811,7 +717,7 @@ function bindEventsOnce() {
   document.body.addEventListener('change', (e) => {
     if (e.target?.id === 'testSubject') {
       activeSubject = normalizeSubject(e.target.value);
-      activeDifficulty = autoDifficultyFor(activeStudent, activeCategory, activeSubject);
+      activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
       renderAll();
       return;
     }
@@ -827,6 +733,7 @@ function bindEventsOnce() {
       const key = check.value;
       if (check.checked) selectedKeys.add(key);
       else selectedKeys.delete(key);
+      testSelectionTouched = true;
       renderList();
     }
   });
