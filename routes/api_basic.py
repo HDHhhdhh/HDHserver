@@ -447,6 +447,14 @@ def _normalize_video_assign_list(value) -> list[str]:
     return out
 
 
+
+def _is_manual_video_assignment(value) -> bool:
+    if not isinstance(value, dict):
+        return False
+    source = str(value.get("source") or "").strip().lower()
+    return source == "manual" or value.get("manual") is True or value.get("manualVideoAssign") is True
+
+
 def _merge_update_assignment(current, incoming):
     if incoming is None:
         return current
@@ -1410,7 +1418,10 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
 
         completion_videos = cur_vids or _student_completion_videos(stu, videos)
         if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
-            if _sid_lookup(updates[today], sid) is not None:
+            cur = _sid_lookup(updates[today], sid)
+            if _has_assigned(cur) and _is_manual_video_assignment(cur):
+                continue
+            if cur is not None:
                 _write_sid_mapping(updates[today], sid, None)
                 changed = True
             continue
@@ -1438,7 +1449,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
 
         if picked:
             print("[AUTOASSIGN] PICK sid =", sid, "picked =", picked, flush=True)
-            updates[today][sid] = picked
+            updates[today][sid] = {"videos": picked, "source": "auto"}
             changed = True
 
     return updates

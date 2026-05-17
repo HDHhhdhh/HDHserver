@@ -1348,6 +1348,9 @@ export function initLogModal() {
 
   function clearVideoAssignmentIfAllDone(saveResult) {
     if (!saveResult?.allProgressDone) return false;
+    if (typeof window.hasManualVideoAssignmentSelection === 'function' && window.hasManualVideoAssignmentSelection()) {
+      return false;
+    }
     if (typeof window.clearVideoAssignmentPopupForCurrent === 'function') {
       window.clearVideoAssignmentPopupForCurrent();
     }
