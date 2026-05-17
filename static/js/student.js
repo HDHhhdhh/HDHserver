@@ -62,10 +62,12 @@ window.todayLocalKey = function () {
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
+  let assignedTestsCache = [];
   let courseBlocked = false;
   let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
   let courseVideosCompleted = false;
   const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
+  window.__ASSIGNED_TESTS__ = [];
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -320,6 +322,7 @@ window.todayLocalKey = function () {
             courseBlocked: b.courseBlocked === true,
             blockMessage: b.blockMessage || '',
             courseVideosCompleted: b.courseVideosCompleted === true,
+            assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
           },
         ];
       }
@@ -337,7 +340,7 @@ window.todayLocalKey = function () {
       fetch("/api/absent").then(r => r.json()).catch(() => ({})),
       fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
       watchReq,
-      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false },
+      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false, assignedTests: [] },
     ]);
   }
 
@@ -453,6 +456,98 @@ window.todayLocalKey = function () {
     return [];
   }
 
+  function normalizeAssignedTestStatus(status) {
+    const s = String(status || '').trim();
+    if (s === 'interrupted' || s === 'skip' || s === 'done' || s === 'assigned') return s;
+    return s ? 'assigned' : '';
+  }
+
+  function assignedTestStatusLabel(status) {
+    const s = normalizeAssignedTestStatus(status);
+    if (s === 'interrupted') return '주황';
+    if (s === 'skip') return '빨강';
+    return s ? '배정' : '';
+  }
+
+  function normalizeAssignedTests(items) {
+    const seen = new Set();
+    return (Array.isArray(items) ? items : []).map(item => {
+      if (!item || typeof item !== 'object') return null;
+      const id = String(item.id || item.testId || '').trim();
+      const label = String(item.label || '').trim();
+      const name = String(item.name || item.testName || label || '').trim();
+      if (!id && !label && !name) return null;
+      const status = normalizeAssignedTestStatus(item.status) || 'assigned';
+      const key = id || label || name;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        ...item,
+        id,
+        label,
+        name,
+        categoryLabel: String(item.categoryLabel || item.category || '').trim(),
+        curriculum: String(item.curriculum || '').trim(),
+        difficulty: String(item.difficulty || '').trim(),
+        round: String(item.round || '').trim(),
+        status,
+        statusLabel: item.statusLabel || assignedTestStatusLabel(status),
+      };
+    }).filter(Boolean);
+  }
+
+  function renderAssignedTests() {
+    const panel = $('assignedTestsPanel');
+    const list = $('assignedTestList');
+    const openBtn = $('openTestSubmit');
+    const hasTests = assignedTestsCache.length > 0;
+
+    if (openBtn) openBtn.hidden = !hasTests;
+    if (panel) panel.hidden = !hasTests;
+    if (!hasTests || !list) return;
+
+    list.textContent = '';
+    assignedTestsCache.forEach(test => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'assigned-test-btn';
+      btn.dataset.testId = test.id || '';
+      btn.dataset.status = normalizeAssignedTestStatus(test.status) || 'assigned';
+
+      const main = document.createElement('span');
+      main.className = 'assigned-test-main';
+
+      const name = document.createElement('span');
+      name.className = 'assigned-test-name';
+      name.textContent = test.name || test.label || '배정 테스트';
+
+      const meta = document.createElement('span');
+      meta.className = 'assigned-test-meta';
+      meta.textContent = [
+        test.categoryLabel,
+        test.curriculum,
+        test.difficulty,
+        test.round ? (String(test.round).includes('회') ? test.round : `${test.round}회차`) : '',
+      ].filter(Boolean).join(' · ');
+
+      const status = document.createElement('span');
+      status.className = 'assigned-test-status';
+      status.textContent = test.statusLabel || assignedTestStatusLabel(test.status);
+
+      main.append(name, meta);
+      btn.append(main, status);
+      btn.addEventListener('click', () => {
+        if (typeof window.openAssignedTestSubmit === 'function') {
+          window.openAssignedTestSubmit(test.id || test.label || '');
+        }
+      });
+
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+  }
+
   async function recoverStudentSid(stuArr, missingSid) {
     const byId = new Map((Array.isArray(stuArr) ? stuArr : []).map(s => [String(s?.id || ""), s]));
     const missing = String(missingSid || "").trim();
@@ -513,6 +608,8 @@ window.todayLocalKey = function () {
     updatesCache = upd || {};
     absentByDateCache = normalizeAbsentByDate(absentRaw);
     logsCache = logsRaw || {};
+    assignedTestsCache = normalizeAssignedTests(bootstrapMeta?.assignedTests);
+    window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
@@ -522,6 +619,7 @@ window.todayLocalKey = function () {
     if (nameEl) nameEl.textContent = `${stu.name} (${stu.curriculum})`;
 
     // 재생 목록 최초 렌더
+    renderAssignedTests();
     renderAssignedList();
 
     const listBox = $('vidList');
@@ -1445,6 +1543,14 @@ window.todayLocalKey = function () {
  * ────────────────────────────────────────────*/
 (() => {
   const CT = { 'Content-Type': 'application/json' };
+  const TEST_TYPE_OPTIONS = [
+    { value: 'UNIT', label: '단원평가', keys: ['UNIT', '단원평가'] },
+    { value: 'REVIEW', label: '복습 테스트', keys: ['REVIEW'] },
+    { value: 'SCHOOL_PAST', label: '학군지 기출', keys: ['SCHOOL_PAST'] },
+    { value: 'ILSAN_PAST', label: '일산 기출', keys: ['ILSAN_PAST'] },
+    { value: 'FINAL', label: 'APEX FINAL', keys: ['FINAL'] },
+    { value: 'HELL', label: 'APEX HELL', keys: ['HELL'] },
+  ];
 
   // ✅ sid는 이미 위에서 window.__STU_SID__ 세팅해둔 거 우선 사용
   const sid = window.__STU_SID__ || (() => {
@@ -1475,6 +1581,20 @@ window.todayLocalKey = function () {
     return m ? m[1].trim() : '';
   }
 
+  function getAssignedTestsForSubmit() {
+    return Array.isArray(window.__ASSIGNED_TESTS__) ? window.__ASSIGNED_TESTS__ : [];
+  }
+
+  function assignedRound(value) {
+    const raw = String(value || '').trim();
+    const m = raw.match(/(\d{1,2})/);
+    return m ? m[1] : raw;
+  }
+
+  function typeLabel(typeVal) {
+    return TEST_TYPE_OPTIONS.find(opt => opt.value === typeVal || opt.keys.includes(typeVal))?.label || typeVal || '';
+  }
+
   // ───────────── tests-config 로드/정규화 ─────────────
   let TEST_CFG = { categories: {} };
 
@@ -1495,13 +1615,26 @@ window.todayLocalKey = function () {
 
         const problems = Number.isFinite(+t.problems) ? Math.max(1, +t.problems) : 20;
         const curriculum = String(t.curriculum || '').trim() || '';
+        const difficulty = String(t.difficulty || t.level || '').trim() || '';
+        const round = String(t.round || t.session || t.no || '1').trim() || '1';
 
         // ✅ 새 스키마
         const answerKeys = (t.answerKeys && typeof t.answerKeys === 'object') ? t.answerKeys : null;
         // ✅ 구 스키마(혹시 남아있으면 fallback 용)
         const answerKey = t.answerKey ?? t.answers ?? null;
 
-        return { id, name, problems, curriculum, answerKeys, answerKey };
+        return {
+          id,
+          name,
+          problems,
+          curriculum,
+          difficulty,
+          round,
+          categoryKey: String(k || '').trim(),
+          categoryLabel: cat.label,
+          answerKeys,
+          answerKey,
+        };
       }).filter(Boolean);
     }
     return cfg;
@@ -1522,12 +1655,17 @@ window.todayLocalKey = function () {
 
   function resolveCategoryKeysByType(typeVal) {
     const hits = [];
+    const option = TEST_TYPE_OPTIONS.find(opt => opt.value === typeVal || opt.keys.includes(typeVal));
     for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
       const label = String(cat.label || '').trim();
       const k = String(key || '').trim().toUpperCase();
       const lv = label.toUpperCase();
 
-      if (typeVal === '단원평가') {
+      if (option) {
+        if (option.keys.some(rawKey => k === String(rawKey).toUpperCase())) hits.push(key);
+        else if (option.keys.some(rawKey => lv.includes(String(rawKey).toUpperCase()))) hits.push(key);
+        else if (option.label && label.includes(option.label.replace('APEX ', ''))) hits.push(key);
+      } else if (typeVal === '단원평가') {
         if (lv.includes('단원') || lv.includes('UNIT') || k === 'UNIT') hits.push(key);
       } else if (typeVal === 'FINAL') {
         if (lv.includes('FINAL') || k === 'FINAL') hits.push(key);
@@ -1536,6 +1674,27 @@ window.todayLocalKey = function () {
       }
     }
     return hits;
+  }
+
+  function assignedMatchesTest(test) {
+    const assigned = getAssignedTestsForSubmit();
+    if (!assigned.length || !test) return false;
+    return assigned.some(item => {
+      const assignedId = String(item.id || item.testId || '').trim();
+      if (assignedId && assignedId === String(test.id || '').trim()) return true;
+
+      const itemName = String(item.name || item.testName || '').trim();
+      const itemLabel = String(item.label || '').trim();
+      const nameOk = itemName
+        ? itemName === String(test.name || '').trim()
+        : (itemLabel && itemLabel.includes(String(test.name || '').trim()));
+      if (!nameOk) return false;
+
+      const roundOk = !item.round || !test.round || assignedRound(item.round) === assignedRound(test.round);
+      const curOk = !item.curriculum || !test.curriculum || String(item.curriculum) === String(test.curriculum);
+      const diffOk = !item.difficulty || !test.difficulty || String(item.difficulty) === String(test.difficulty);
+      return roundOk && curOk && diffOk;
+    });
   }
 
   function listTestsForType(typeVal, myCur) {
@@ -1549,14 +1708,49 @@ window.todayLocalKey = function () {
     // 커리 정보가 있으면 커리 일치하는 시험을 우선 보여주고, 없으면 전체
     if (myCur) {
       const same = out.filter(t => !t.curriculum || t.curriculum === myCur);
-      return same.length ? same : out;
+      const scoped = same.length ? same : out;
+      return scoped.filter(assignedMatchesTest);
     }
-    return out;
+    return out.filter(assignedMatchesTest);
   }
 
   function findTestById(typeVal, testId, myCur) {
     const list = listTestsForType(typeVal, myCur);
     return list.find(t => String(t.id) === String(testId)) || null;
+  }
+
+  function listAssignedConfiguredTests(myCur) {
+    const out = [];
+    TEST_TYPE_OPTIONS.forEach(opt => {
+      listTestsForType(opt.value, myCur).forEach(test => out.push(test));
+    });
+    return out;
+  }
+
+  function typeValueForTest(test) {
+    const key = String(test?.categoryKey || '').trim().toUpperCase();
+    const label = String(test?.categoryLabel || '').trim().toUpperCase();
+    const hit = TEST_TYPE_OPTIONS.find(opt =>
+      opt.keys.some(rawKey => key === String(rawKey).toUpperCase() || label.includes(String(rawKey).toUpperCase())) ||
+      (opt.label && String(test?.categoryLabel || '').includes(opt.label.replace('APEX ', '')))
+    );
+    return hit?.value || 'UNIT';
+  }
+
+  function roundLabel(round) {
+    const r = String(round || '').trim();
+    return r ? (/회/.test(r) ? r : `${r}회차`) : '';
+  }
+
+  function findSiblingTestByRound(typeVal, test, round, myCur) {
+    if (!test) return null;
+    const targetRound = String(round || '').trim();
+    return listTestsForType(typeVal, myCur).find(item =>
+      String(item.name || '') === String(test.name || '') &&
+      String(item.curriculum || '') === String(test.curriculum || '') &&
+      String(item.difficulty || '') === String(test.difficulty || '') &&
+      String(item.round || '') === targetRound
+    ) || null;
   }
 
   // ───────────── 답안 파싱/클라 채점(fallback용) ─────────────
@@ -1673,9 +1867,7 @@ window.todayLocalKey = function () {
               <div>
                 <label>종류</label>
                 <select id="tsType">
-                  <option value="단원평가" selected>단원평가</option>
-                  <option value="FINAL">APEX FINAL</option>
-                  <option value="HELL">APEX HELL</option>
+                  <option value="UNIT" selected>단원평가</option>
                 </select>
               </div>
               <div>
@@ -1726,43 +1918,71 @@ window.todayLocalKey = function () {
     const memoEl = document.getElementById('tsMemo');
     const infoEl = document.getElementById('tsInfo');
 
-    const myCur = getMyCurriculumFromNamebar();
+    const currentCur = () => getMyCurriculumFromNamebar();
 
     await loadTestsConfig();
 
-    function renderTestOptions() {
+    function renderTypeOptions(preselectType = '') {
+      const myCur = currentCur();
+      const available = TEST_TYPE_OPTIONS.filter(opt => listTestsForType(opt.value, myCur).length);
+      if (!available.length) {
+        selType.innerHTML = `<option value="">(배정 없음)</option>`;
+        return '';
+      }
+
+      selType.innerHTML = available.map(opt =>
+        `<option value="${opt.value}">${opt.label}</option>`
+      ).join('');
+      selType.value = available.some(opt => opt.value === preselectType)
+        ? preselectType
+        : available[0].value;
+      return selType.value;
+    }
+
+    function renderTestOptions(preselectTestId = '') {
+      const myCur = currentCur();
       const type = selType.value;
       const list = listTestsForType(type, myCur);
 
       if (!list.length) {
         selTestId.innerHTML = `<option value="">(시험 없음)</option>`;
-        infoEl.textContent = '등록된 시험이 없습니다. 선생님이 테스트 관리에서 시험/정답을 먼저 등록해야 합니다.';
+        infoEl.textContent = '오늘 배정된 시험이 없습니다.';
         return;
       }
 
       selTestId.innerHTML = list.map(t => {
         const curTag = t.curriculum ? ` (${t.curriculum})` : '';
-        return `<option value="${t.id}">${t.name}${curTag}</option>`;
+        const meta = [t.difficulty, roundLabel(t.round)].filter(Boolean).join(' · ');
+        return `<option value="${t.id}">${t.name}${curTag}${meta ? ` · ${meta}` : ''}</option>`;
       }).join('');
+
+      if (preselectTestId && list.some(t => String(t.id) === String(preselectTestId))) {
+        selTestId.value = String(preselectTestId);
+      }
 
       updateInfo();
     }
 
     function updateInfo(extra) {
+      const myCur = currentCur();
       const type = selType.value;
       const testId = selTestId.value;
-      const round = parseInt(selRound.value, 10) || 1;
       const t = findTestById(type, testId, myCur);
+      const round = parseInt(t?.round || selRound.value, 10) || 1;
 
       if (!t) {
         infoEl.textContent = '시험을 선택하세요.';
         return;
       }
 
+      if (selRound && String(selRound.value || '') !== String(round)) {
+        selRound.value = String(round);
+      }
+
       const key = getKeyForRound(t, round);
       const keyOk = Array.isArray(key) && key.length;
 
-      let msg = `문항 수: ${t.problems}문항\n회차: ${round}회차\n`;
+      let msg = `${typeLabel(type)}\n문항 수: ${t.problems}문항\n회차: ${round}회차\n`;
       msg += keyOk
         ? '정답키 등록됨 → 제출하면 서버가 자동 채점합니다.'
         : '정답키가 아직 등록되지 않았습니다 → 선생님께 말해 주세요.';
@@ -1771,34 +1991,59 @@ window.todayLocalKey = function () {
       infoEl.textContent = msg;
     }
 
-    const open = () => {
-      renderTestOptions();
+    const open = (preselectTestId = '') => {
+      const assigned = getAssignedTestsForSubmit();
+      if (!assigned.length) return;
+      const myCur = currentCur();
+      const fallback = listAssignedConfiguredTests(myCur)[0] || null;
+      const requested = preselectTestId
+        ? listAssignedConfiguredTests(myCur).find(t => String(t.id) === String(preselectTestId)) || fallback
+        : fallback;
+      const nextType = requested ? typeValueForTest(requested) : '';
+
+      renderTypeOptions(nextType);
+      renderTestOptions(requested?.id || preselectTestId);
       answersTextEl.value = '';
       memoEl.value = '';
       modal.style.display = 'flex';
     };
     const close = () => { modal.style.display = 'none'; };
 
-    btnOpen?.addEventListener('click', open);
+    btnOpen?.addEventListener('click', () => open());
     btnClose?.addEventListener('click', close);
     modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
-    selType.addEventListener('change', renderTestOptions);
-    selTestId.addEventListener('change', updateInfo);
-    selRound.addEventListener('change', updateInfo);
+    selType.addEventListener('change', () => {
+      renderTestOptions();
+    });
+    selTestId.addEventListener('change', () => {
+      const t = findTestById(selType.value, selTestId.value, currentCur());
+      if (t?.round) selRound.value = String(t.round);
+      updateInfo();
+    });
+    selRound.addEventListener('change', () => {
+      const myCur = currentCur();
+      const current = findTestById(selType.value, selTestId.value, myCur);
+      const sibling = findSiblingTestByRound(selType.value, current, selRound.value, myCur);
+      if (sibling) selTestId.value = sibling.id;
+      updateInfo();
+    });
+
+    window.openAssignedTestSubmit = (testId = '') => open(testId);
 
     btnSubmit?.addEventListener('click', async () => {
       const type = selType.value;
       const testId = selTestId.value;
-      const round = parseInt(selRound.value, 10) || 1;
       const answersText = String(answersTextEl.value || '').trim();
       const memo = String(memoEl.value || '').trim();
 
       if (!testId) return alert('시험을 선택해주세요.');
       if (!answersText) return alert('답을 입력해주세요.');
 
-      const t = findTestById(type, testId, myCur);
+      const t = findTestById(type, testId, currentCur());
       if (!t) return alert('시험 정보를 찾지 못했습니다.');
+      const round = parseInt(t.round || selRound.value, 10) || 1;
+      if (selRound) selRound.value = String(round);
 
       // ✅ 1) 서버 자동 채점/저장
       try {
@@ -1844,7 +2089,7 @@ window.todayLocalKey = function () {
 
       const graded = gradeClientSide(answersText, key, t.problems);
       const score = `${graded.correct}/${graded.total}`;
-      const fullName = (type === '단원평가') ? t.name : `${type} / ${t.name}`;
+      const fullName = (type === 'UNIT' || type === '단원평가') ? t.name : `${typeLabel(type)} / ${t.name}`;
 
       // 구버전 서버는 name/score/wrong로 저장되던 방식
       const payload = { sid, name: fullName, score, wrong: graded.wrong, memo };

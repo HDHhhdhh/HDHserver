@@ -50,6 +50,10 @@ body.student-page * {
   box-sizing: border-box;
 }
 
+body.student-page [hidden] {
+  display: none !important;
+}
+
 body.student-page .student-shell {
   display: grid;
   gap: 14px;
@@ -331,6 +335,78 @@ body.student-page #vidList .badge-done {
   margin-left: 6px;
   font-size: 12px;
   font-weight: 600;
+}
+
+/* =========================================
+   Assigned Tests
+   ========================================= */
+body.student-page #assignedTestList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+body.student-page .assigned-test-btn {
+  width: 100%;
+  min-height: 52px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 88%, #ffffff 12%);
+  color: var(--stu-text);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.student-page .assigned-test-btn:hover {
+  border-color: var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 74%, var(--stu-accent) 26%);
+}
+
+body.student-page .assigned-test-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+body.student-page .assigned-test-name {
+  font-size: 14px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.student-page .assigned-test-meta {
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+body.student-page .assigned-test-status {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  background: var(--stu-ok);
+  color: #fff;
+}
+
+body.student-page .assigned-test-btn[data-status="interrupted"] .assigned-test-status {
+  background: #f59e0b;
+  color: #111827;
+}
+
+body.student-page .assigned-test-btn[data-status="skip"] .assigned-test-status {
+  background: #ef4444;
+  color: #fff;
 }
 
 /* =========================================

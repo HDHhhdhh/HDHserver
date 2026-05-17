@@ -447,12 +447,113 @@ def _normalize_video_assign_list(value) -> list[str]:
     return out
 
 
-
 def _is_manual_video_assignment(value) -> bool:
     if not isinstance(value, dict):
         return False
     source = str(value.get("source") or "").strip().lower()
     return source == "manual" or value.get("manual") is True or value.get("manualVideoAssign") is True
+
+
+def _normalize_test_assignment_status(value) -> str:
+    if isinstance(value, dict):
+        value = value.get("status")
+    s = str(value or "").strip()
+    if not s or s == "none":
+        return ""
+    if s in ("assigned", "done", "interrupted", "skip"):
+        return s
+    return "assigned"
+
+
+def _test_assignment_status_label(status: str) -> str:
+    s = _normalize_test_assignment_status(status)
+    if s == "interrupted":
+        return "주황"
+    if s == "skip":
+        return "빨강"
+    return "배정" if s else ""
+
+
+def _round_label_for_assignment(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw if "회" in raw else f"{raw}회차"
+
+
+def _fallback_assigned_test_from_label(label: str, status: str) -> dict:
+    parts = [p.strip() for p in str(label or "").split(" / ") if p.strip()]
+    item = {
+        "label": str(label or "").strip(),
+        "name": parts[-1] if parts else str(label or "").strip(),
+        "status": status,
+        "statusLabel": _test_assignment_status_label(status),
+    }
+    if len(parts) >= 5:
+        item.update({
+            "categoryLabel": parts[0],
+            "curriculum": parts[1],
+            "difficulty": parts[2],
+            "round": parts[3].replace("회차", "").replace("회", "").strip(),
+        })
+    return item
+
+
+def _student_assigned_tests_for_date(progress_all: dict, logs_map: dict, date: str, sid: str) -> list[dict]:
+    day_progress = progress_all.get(date) if isinstance(progress_all, dict) else {}
+    progress_entry = _sid_lookup(day_progress if isinstance(day_progress, dict) else {}, sid)
+    progress_tests = progress_entry.get("tests") if isinstance(progress_entry, dict) else {}
+    if not isinstance(progress_tests, dict):
+        progress_tests = {}
+
+    status_by_label = {
+        str(label).strip(): _normalize_test_assignment_status(status)
+        for label, status in progress_tests.items()
+    }
+    status_by_label = {label: status for label, status in status_by_label.items() if label and status}
+
+    day_logs = logs_map.get(date) if isinstance(logs_map, dict) else {}
+    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+    log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
+    if not isinstance(log_items, list):
+        log_items = []
+
+    by_label = {}
+    for raw in log_items:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label") or "").strip()
+        if not label:
+            pieces = [
+                raw.get("categoryLabel"),
+                raw.get("curriculum"),
+                raw.get("difficulty"),
+                _round_label_for_assignment(raw.get("round")),
+                raw.get("name"),
+            ]
+            label = " / ".join(str(x).strip() for x in pieces if str(x or "").strip())
+        if label:
+            by_label[label] = dict(raw)
+
+    labels = list(status_by_label.keys())
+    if not labels:
+        labels = [
+            str(item.get("label") or "").strip()
+            for item in log_items
+            if isinstance(item, dict) and str(item.get("label") or "").strip()
+        ]
+        status_by_label = {label: "assigned" for label in labels}
+
+    out = []
+    for label in labels:
+        status = status_by_label.get(label) or "assigned"
+        item = dict(by_label.get(label) or _fallback_assigned_test_from_label(label, status))
+        item["label"] = item.get("label") or label
+        item["status"] = status
+        item["statusLabel"] = _test_assignment_status_label(status)
+        out.append(item)
+
+    return out
 
 
 def _merge_update_assignment(current, incoming):
@@ -1671,6 +1772,7 @@ def api_student_bootstrap():
             "assigns": {sid: []},
             "absent": absent_for_date,
             "logs": {date: {}},
+            "assignedTests": [],
             "courseBlocked": True,
             "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
         })
@@ -1725,6 +1827,8 @@ def api_student_bootstrap():
         except Exception:
             logs = {date: {}}
 
+    assigned_tests = _student_assigned_tests_for_date(progress_all, logs, date, sid)
+
     return nocache_resp({
         "ok": True,
         "date": date,
@@ -1736,6 +1840,7 @@ def api_student_bootstrap():
         "assigns": {sid: material_assignment or []},
         "absent": absent_for_date,
         "logs": logs,
+        "assignedTests": assigned_tests,
         "courseVideosCompleted": course_videos_completed,
     })
 

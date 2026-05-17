@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="/css/student.css?v=20260415b">
+  <link rel="stylesheet" href="/css/student.css?v=20260517a">
 
   <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
   <script defer src="/js/student.js"></script>
@@ -47,7 +47,7 @@
         <h2 id="stuName" class="namebar-title"></h2>
         <p class="namebar-desc">오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.</p>
       </div>
-      <button id="openTestSubmit" class="ts-btn" type="button">테스트 제출</button>
+      <button id="openTestSubmit" class="ts-btn" type="button" hidden>테스트 제출</button>
     </section>
 
     <main class="student-main">
@@ -67,6 +67,13 @@
             </ul>
           </aside>
         </div>
+      </section>
+
+      <section class="panel tests-panel" id="assignedTestsPanel" hidden>
+        <h3 class="section-title">오늘 테스트</h3>
+        <ul id="assignedTestList">
+          <li class="muted">테스트를 불러오는 중...</li>
+        </ul>
       </section>
 
       <section class="panel materials-panel">
