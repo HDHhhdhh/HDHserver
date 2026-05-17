@@ -14,6 +14,14 @@
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import {
+  loadWeekendSlots,
+  hasWeekday,
+  yoilOf,
+  truthy,
+  labelFor,
+  getSlots,
+} from './today.state.js';
 
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
 
@@ -268,78 +276,180 @@ function downloadTextFile(filename, contents, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function rosterToCsv(students) {
-  const columns = [
-    'sid',
-    'name',
-    'school',
-    'grade',
-    'curriculum',
-    'sub_curriculum',
-    'level',
-    'schedule',
-    'visit_times',
-    'auto_video_assign_count',
-    'sub_book_1',
-    'sub_book_2',
-    'doc_url',
-  ];
-
+function rosterToCsv(rows) {
+  const columns = ['타임', '대화명', '텍스트'];
   const lines = [columns.map(csvCell).join(',')];
 
-  students.forEach(stu => {
-    const schedule = ['day1', 'day2', 'day3', 'day4', 'day5']
-      .map(k => stu?.[k])
-      .filter(Boolean)
-      .join(' / ');
-    const visitTimes = ['visitTime1', 'visitTime2', 'visitTime3', 'visitTime4', 'visitTime5']
-      .map(k => stu?.[k])
-      .filter(Boolean)
-      .join(' / ');
-
+  rows.forEach(row => {
     lines.push([
-      stu?.id || '',
-      stu?.name || '',
-      stu?.school || '',
-      stu?.grade || '',
-      stu?.curriculum || '',
-      stu?.subCurriculum || '',
-      stu?.level || '',
-      schedule,
-      visitTimes,
-      stu?.autoVideoAssignCount || '',
-      stu?.subBook1 || '',
-      stu?.subBook2 || '',
-      stu?.docUrl || '',
+      row.time || '',
+      row.chatName || '',
+      '',
     ].map(csvCell).join(','));
   });
 
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
-async function exportRosterCsv() {
-  let students = [];
+function schoolForRoster(stu) {
+  const raw = normStr(
+    stu?.school ?? stu?.schoolName ?? stu?.highSchool ?? stu?.middleSchool ??
+    stu?.high ?? stu?.middle ?? stu?.schoolHigh ?? stu?.schoolMiddle ?? ''
+  );
+  return raw.replace(/고등학교$/u, '').replace(/고$/u, '');
+}
+
+function gradeNumberForRoster(stu) {
+  const raw = normStr(stu?.grade ?? '');
+  const m = raw.match(/\d+/);
+  return m ? m[0] : raw;
+}
+
+function chatNameForRoster(stu) {
+  const school = schoolForRoster(stu);
+  const grade = gradeNumberForRoster(stu);
+  const name = normStr(stu?.name ?? '');
+  return `A ${school}${grade}${school || grade ? ' ' : ''}${name}`.trim();
+}
+
+function rosterTimeLabel(dateStr, sid) {
+  return normStr(labelFor(dateStr, sid)).replace(/[·]/g, ', ');
+}
+
+function rosterSlots(dateStr, sid) {
+  const slots = getSlots(dateStr, sid);
+  if (slots.length) return slots;
+
+  return (rosterTimeLabel(dateStr, sid).match(/[1-2]/g) || [])
+    .map(n => parseInt(n, 10))
+    .filter(n => n === 1 || n === 2);
+}
+
+async function loadExtraAttendMap() {
   try {
-    students = await fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    const extra = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
+    return (extra && typeof extra === 'object') ? extra : {};
+  } catch {
+    return {};
+  }
+}
+
+async function ensureLogsForRosterDate(dateStr) {
+  if (state.logs?.[dateStr]) return;
+  try {
+    const data = await fetch(`/api/logs?date=${encodeURIComponent(dateStr)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status));
+    if (data && typeof data === 'object') {
+      state.logs = state.logs || {};
+      state.logs[dateStr] = (data[dateStr] && typeof data[dateStr] === 'object') ? data[dateStr] : {};
+      window.logs = state.logs;
+    }
+  } catch { /* keep current state.logs */ }
+}
+
+async function ensureAbsentForRosterDate() {
+  try {
+    const data = await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json());
+    if (data && typeof data === 'object') {
+      state.absentByDate = (data.by_date && typeof data.by_date === 'object') ? data.by_date : (state.absentByDate || {});
+      state.absences = (data.by_student && typeof data.by_student === 'object') ? data.by_student : (state.absences || {});
+      window.absentByDate = state.absentByDate;
+      if (window.state) {
+        window.state.absentByDate = state.absentByDate;
+        window.state.absences = state.absences;
+      }
+    }
+  } catch { /* keep current absence state */ }
+}
+
+async function loadRosterStudents(dateStr) {
+  const students = Array.isArray(state.students) ? state.students : [];
+  const extraMap = await loadExtraAttendMap();
+  const wchr = yoilOf(dateStr);
+
+  const regular = students.filter(stu => hasWeekday(stu, wchr));
+  const extraIds = (extraMap[dateStr] || []).map(x => String(x).trim()).filter(Boolean);
+  const extraStudents = extraIds
+    .map(id => students.find(stu => String(stu?.id) === id))
+    .filter(Boolean);
+
+  const seen = new Set();
+  let list = [...regular, ...extraStudents].filter(stu => {
+    const sid = String(stu?.id ?? '');
+    if (!sid || seen.has(sid)) return false;
+    seen.add(sid);
+    return true;
+  });
+
+  const absentSet = new Set((state.absentByDate?.[dateStr] || []).map(String));
+  list = list.filter(stu => !absentSet.has(String(stu?.id)));
+
+  await ensureLogsForRosterDate(dateStr);
+  const logsDay = state.logs?.[dateStr] || {};
+  list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).done));
+
+  return list.sort((a, b) => {
+    const aSlots = rosterSlots(dateStr, a.id);
+    const bSlots = rosterSlots(dateStr, b.id);
+    const aRank = aSlots.includes(1) ? 1 : aSlots.includes(2) ? 2 : 9;
+    const bRank = bSlots.includes(1) ? 1 : bSlots.includes(2) ? 2 : 9;
+    if (aRank !== bRank) return aRank - bRank;
+    return normStr(a?.name).localeCompare(normStr(b?.name), 'ko');
+  });
+}
+
+function buildRosterRows(dateStr, students) {
+  return students.map(stu => ({
+    time: rosterTimeLabel(dateStr, stu.id),
+    chatName: chatNameForRoster(stu),
+    slots: rosterSlots(dateStr, stu.id),
+  }));
+}
+
+function rosterRowSlotNumbers(row) {
+  const fromSlots = Array.isArray(row?.slots) ? row.slots : [];
+  const fromLabel = String(row?.time || '').match(/[1-2]/g) || [];
+  return Array.from(new Set([...fromSlots, ...fromLabel]
+    .map(n => parseInt(n, 10))
+    .filter(n => n === 1 || n === 2)))
+    .sort((a, b) => a - b);
+}
+
+async function exportRosterCsv() {
+  const dateStr = exportDateStamp();
+  try {
+    const students = await fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status));
     if (Array.isArray(students)) {
       state.students = students;
       window.students = students;
     }
   } catch (err) {
     console.warn('[exportRoster] students load failed:', err);
-    students = Array.isArray(state.students) ? state.students : [];
   }
 
-  if (!Array.isArray(students) || !students.length) {
+  await loadWeekendSlots();
+  await ensureAbsentForRosterDate();
+
+  const students = await loadRosterStudents(dateStr);
+  if (!students.length) {
     toast('내보낼 명단이 없습니다.');
     return;
   }
 
-  const sorted = students.slice()
-    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ko'));
-  const stamp = exportDateStamp();
-  downloadTextFile(`학생명단_${stamp}.csv`, rosterToCsv(sorted), 'text/csv;charset=utf-8');
-  toast('명단 CSV 내보내기 완료');
+  const rows = buildRosterRows(dateStr, students);
+  const wchr = yoilOf(dateStr);
+  const firstRows = rows.filter(row => {
+    const slots = rosterRowSlotNumbers(row);
+    return slots.includes(1) || !slots.length;
+  });
+  const secondRows = rows.filter(row => {
+    const slots = rosterRowSlotNumbers(row);
+    return slots.includes(2) && !slots.includes(1);
+  });
+
+  downloadTextFile(`학생명단_${dateStr}_${wchr}1.csv`, rosterToCsv(firstRows), 'text/csv;charset=utf-8');
+  downloadTextFile(`학생명단_${dateStr}_${wchr}2.csv`, rosterToCsv(secondRows), 'text/csv;charset=utf-8');
+  toast('명단 CSV 2개 내보내기 완료');
 }
 
 export function initExport() {
