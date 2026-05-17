@@ -217,6 +217,16 @@ function injectStudentPopupLayoutStyles() {
       line-height:1.35;
       padding:2px 0;
     }
+    #vidModal .vid-row.is-selected:not(.vid-extra-row){
+      border-radius:8px;
+      background:#eff6ff;
+      box-shadow:inset 3px 0 0 #2563eb;
+      padding-left:6px;
+    }
+    #vidModal .vid-row.is-scroll-target{
+      outline:2px solid rgba(37,99,235,.38);
+      outline-offset:2px;
+    }
     #vidModal .vid-row input{ margin-right:4px; }
     #vidModal .vid-extra-section{
       min-height:0;
@@ -415,19 +425,22 @@ function hideStudentPopupScrim() {
 }
 
 function scrollVideoPopupToFirstChecked() {
-  const scroller = document.querySelector('#chkZone');
   const checked = document.querySelector('#chkZone input[type="checkbox"]:checked');
-  const row = checked?.closest('label');
+  const row = checked?.closest('.vid-row');
+  const scroller = row?.closest('.vid-course-list, .vid-extra-list') || document.querySelector('#chkZone');
   if (!scroller || !row) return;
 
   const scrollerRect = scroller.getBoundingClientRect();
   const rowRect = row.getBoundingClientRect();
+  const offset = Math.max(24, Math.round(scrollerRect.height * 0.25));
   const target =
     scroller.scrollTop +
     (rowRect.top - scrollerRect.top) -
-    Math.max(24, Math.round(scrollerRect.height * 0.25));
+    offset;
 
   scroller.scrollTop = Math.max(0, target);
+  row.classList.add('is-scroll-target');
+  window.setTimeout(() => row.classList.remove('is-scroll-target'), 1200);
 }
 
 function ensureModal() {

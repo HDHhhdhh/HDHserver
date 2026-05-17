@@ -24,10 +24,17 @@ const DEFAULT_RULES = {
 
 let TEST_CFG = { categories: {} };
 let TEST_STATS = null;
+let TEST_STATS_DETAIL = null;
 const ui = {
   category: 'UNIT',
   subject: '공수1',
+  difficulty: '',
+  round: '',
   selectedId: '',
+  statsCategory: 'UNIT',
+  statsTestId: '',
+  statsSearch: '',
+  statsSort: 'default',
 };
 
 function defaultTwoBandRules() {
@@ -132,6 +139,13 @@ function normalizeRound(value, name = '') {
   return raw || '1';
 }
 
+function roundLabel(value) {
+  const r = String(value || '').trim();
+  if (!r) return '';
+  if (r === '-') return '-';
+  return /회/.test(r) ? r : `${r}회차`;
+}
+
 function ensureConfig(raw) {
   const cfg = (raw && typeof raw === 'object') ? raw : {};
   if (!cfg.categories || typeof cfg.categories !== 'object') cfg.categories = {};
@@ -190,6 +204,8 @@ function getCategoryTests(categoryKey = ui.category) {
 function getVisibleTests() {
   return getCategoryTests(ui.category)
     .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .filter(test => !ui.round || String(test.round || '') === String(ui.round))
     .sort((a, b) =>
       String(a.difficulty).localeCompare(String(b.difficulty), 'ko') ||
       Number(a.round || 0) - Number(b.round || 0) ||
@@ -230,18 +246,22 @@ function parseAnswerSpec3(text, problems) {
 }
 
 function answerKeysToText(test) {
+  return answerKeyForTest(test).join(' ');
+}
+
+function answerKeyForTest(test) {
   const p = Number(test?.problems || 0) || 0;
+  const round = String(test?.round || '1').trim() || '1';
   if (test?.answerKeys && typeof test.answerKeys === 'object') {
-    const a1 = Array.isArray(test.answerKeys['1']) ? test.answerKeys['1'] : new Array(p).fill('');
-    const a2 = Array.isArray(test.answerKeys['2']) ? test.answerKeys['2'] : a1;
-    const a3 = Array.isArray(test.answerKeys['3']) ? test.answerKeys['3'] : a1;
-    return [a1.join(' '), a2.join(' '), a3.join(' ')].join('\n').trimEnd();
+    const exact = Array.isArray(test.answerKeys[round]) ? test.answerKeys[round] : null;
+    if (exact) return parseAnswerSpec(exact, p);
+    const firstKey = Object.keys(test.answerKeys).find(key => Array.isArray(test.answerKeys[key]));
+    if (firstKey) return parseAnswerSpec(test.answerKeys[firstKey], p);
   }
   if (test?.answerKey != null) {
-    const arr = Array.isArray(test.answerKey) ? test.answerKey : parseAnswerSpec(test.answerKey, p);
-    return arr.join(' ');
+    return Array.isArray(test.answerKey) ? parseAnswerSpec(test.answerKey, p) : parseAnswerSpec(test.answerKey, p);
   }
-  return '';
+  return new Array(p).fill('');
 }
 
 function updateDifficultyOptions() {
@@ -249,6 +269,45 @@ function updateDifficultyOptions() {
   if (!sel) return;
   const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
   sel.innerHTML = def.difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
+}
+
+function updateListDifficultyOptions() {
+  const sel = $('#cfgDifficultyFilter');
+  if (!sel) return;
+  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+  const difficulties = def.difficulties || [];
+  if (!difficulties.includes(ui.difficulty)) ui.difficulty = difficulties[0] || '';
+  sel.innerHTML = difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
+  sel.value = ui.difficulty;
+}
+
+function roundSortValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 9999;
+}
+
+function availableRounds() {
+  const rounds = new Set();
+  getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .forEach(test => {
+      const round = String(test.round || '').trim();
+      if (round) rounds.add(round);
+    });
+  return Array.from(rounds).sort((a, b) => roundSortValue(a) - roundSortValue(b) || String(a).localeCompare(String(b), 'ko'));
+}
+
+function updateRoundOptions() {
+  const sel = $('#cfgRoundFilter');
+  if (!sel) return;
+  const rounds = availableRounds();
+  if (ui.round && !rounds.includes(ui.round)) ui.round = '';
+  sel.innerHTML = [
+    '<option value="">전체 회차</option>',
+    ...rounds.map(round => `<option value="${escapeAttr(round)}">${escapeHtml(roundLabel(round))}</option>`),
+  ].join('');
+  sel.value = ui.round;
 }
 
 function updateSubjectOptions() {
@@ -261,9 +320,15 @@ function updateSubjectOptions() {
 function updateChrome(selected = null) {
   const visible = getVisibleTests();
   const total = CATEGORY_DEFS.reduce((sum, def) => sum + getCategoryTests(def.key).length, 0);
+  const scope = [
+    categoryLabel(ui.category),
+    ui.subject,
+    ui.difficulty || '난이도 전체',
+    ui.round ? roundLabel(ui.round) : '전체 회차',
+  ].filter(Boolean).join(' · ');
 
   if ($('#testsTotalPill')) $('#testsTotalPill').textContent = `${total}개`;
-  if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = `${categoryLabel(ui.category)} · ${ui.subject}`;
+  if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = scope;
   if ($('#visibleTestsMeta')) $('#visibleTestsMeta').textContent = `현재 목록 ${visible.length}개`;
   if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = '4개 분류 기준';
   if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected?.name || '선택된 테스트 없음';
@@ -282,18 +347,7 @@ function renderTestList() {
     return;
   }
 
-  listEl.innerHTML = tests.map(test => {
-    const stat = TEST_STATS?.by_test?.[canonText(test.name)];
-    const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
-    const active = test.id === ui.selectedId ? 'active' : '';
-    return `
-      <button type="button" data-id="${escapeAttr(test.id)}" class="${active}">
-        ${escapeHtml(test.name)}
-        <span class="small">(${escapeHtml(test.difficulty)} · ${escapeHtml(test.round)}회차 · ${escapeHtml(test.problems)}문항)</span>
-        ${statBadge}
-      </button>
-    `;
-  }).join('');
+  listEl.innerHTML = renderGroupedTestList(tests);
 
   listEl.querySelectorAll('button[data-id]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -302,6 +356,43 @@ function renderTestList() {
       fillEditor();
     });
   });
+}
+
+function renderGroupedTestList(tests) {
+  const groups = new Map();
+  tests.forEach(test => {
+    const key = `${test.difficulty || '-'}|||${test.round || '-'}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(test);
+  });
+
+  return Array.from(groups.entries()).map(([key, items]) => {
+    const [difficulty, round] = key.split('|||');
+    return `
+      <section class="test-list-group">
+        <div class="test-list-group-head">
+          <span>${escapeHtml(difficulty)} · ${escapeHtml(roundLabel(round))}</span>
+          <span class="test-list-group-count">${items.length}개</span>
+        </div>
+        <div class="test-list-group-body">
+          ${items.map(test => renderTestButton(test)).join('')}
+        </div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderTestButton(test) {
+  const stat = statForTest(test);
+  const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
+  const active = test.id === ui.selectedId ? 'active' : '';
+  return `
+    <button type="button" data-id="${escapeAttr(test.id)}" class="${active}">
+      ${escapeHtml(test.name)}
+      <span class="small">(${escapeHtml(test.problems)}문항)</span>
+      ${statBadge}
+    </button>
+  `;
 }
 
 function fillEditor() {
@@ -536,16 +627,14 @@ function rowObject(headers, cells) {
   return out;
 }
 
-function answerKeysFromCsvRow(row, problems) {
-  if (row.answers1 || row.answers2 || row.answers3) {
-    const one = parseAnswerSpec(row.answers1 || '', problems);
-    return {
-      '1': one,
-      '2': parseAnswerSpec(row.answers2 || row.answers1 || '', problems),
-      '3': parseAnswerSpec(row.answers3 || row.answers1 || '', problems),
-    };
-  }
-  return parseAnswerSpec3(row.answers || '', problems);
+function hasRoundAnswerColumns(row) {
+  return ['1', '2', '3'].some(round => String(row[`answers${round}`] || '').trim());
+}
+
+function answerKeyFromCsvRow(row, round, problems) {
+  const direct = String(row[`answers${round}`] || '').trim();
+  if (direct) return parseAnswerSpec(direct, problems);
+  return parseAnswerSpec(row.answers || '', problems);
 }
 
 function findExistingTest(cat, patch) {
@@ -581,8 +670,11 @@ async function importTestsFromCsv(file) {
   const errors = [];
   let lastCategory = ui.category;
   let lastSubject = ui.subject;
+  let lastDifficulty = ui.difficulty;
+  let lastRound = ui.round;
 
   rows.slice(1).forEach((cells, idx) => {
+    const sourceOrder = idx + 1;
     const row = rowObject(headers, cells);
     const name = canonText(row.name);
     if (!name) {
@@ -607,39 +699,48 @@ async function importTestsFromCsv(file) {
     }
 
     const difficulty = normalizeDifficulty(categoryKey, row.difficulty, name);
-    const round = normalizeRound(row.round || '1', name);
+    const csvRound = normalizeRound(row.round || '1', name);
     const problemsRaw = Number(row.problems || 20);
     const problems = Number.isFinite(problemsRaw) ? Math.max(1, Math.min(100, Math.trunc(problemsRaw))) : 20;
-    const answerKeys = answerKeysFromCsvRow(row, problems);
     const rawId = canonText(row.id);
-    const id = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
-    const patch = {
-      id,
-      name,
-      categoryKey,
-      problems,
-      curriculum: subject,
-      difficulty,
-      round,
-      answerKeys,
-      answerKey: answerKeys['1'],
-    };
+    const baseId = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
+    const rounds = categoryKey === 'UNIT' && hasRoundAnswerColumns(row) ? ['1', '2', '3'] : [csvRound];
 
     const cat = TEST_CFG.categories[categoryKey] = TEST_CFG.categories[categoryKey] || { label: def.label, tests: [] };
     if (!Array.isArray(cat.tests)) cat.tests = [];
     cat.label = cat.label || def.label;
 
-    const existing = findExistingTest(cat, patch);
-    if (existing) {
-      if (!rawId) patch.id = canonText(existing.id) || patch.id;
-      Object.assign(existing, patch);
-      updated += 1;
-    } else {
-      cat.tests.push(patch);
-      added += 1;
-    }
+    rounds.forEach(round => {
+      const answerKey = answerKeyFromCsvRow(row, round, problems);
+      const patch = {
+        id: rounds.length > 1 ? `${baseId}_r${round}` : baseId,
+        sourceId: rounds.length > 1 ? baseId : canonText(row.sourceId || row.source_id || ''),
+        name,
+        categoryKey,
+        problems,
+        curriculum: subject,
+        difficulty,
+        sortOrder: sourceOrder,
+        sourceOrder,
+        round,
+        answerKeys: { [round]: answerKey },
+        answerKey,
+      };
+
+      const existing = findExistingTest(cat, patch);
+      if (existing) {
+        if (!rawId && rounds.length === 1) patch.id = canonText(existing.id) || patch.id;
+        Object.assign(existing, patch);
+        updated += 1;
+      } else {
+        cat.tests.push(patch);
+        added += 1;
+      }
+    });
     lastCategory = categoryKey;
     lastSubject = subject;
+    lastDifficulty = difficulty;
+    lastRound = rounds[rounds.length - 1] || csvRound;
   });
 
   if (!added && !updated) {
@@ -650,6 +751,8 @@ async function importTestsFromCsv(file) {
   await saveConfig();
   ui.category = lastCategory;
   ui.subject = lastSubject;
+  ui.difficulty = lastDifficulty;
+  ui.round = lastRound;
   ui.selectedId = '';
   $('#cfgType') && ($('#cfgType').value = ui.category);
   $('#cfgCur') && ($('#cfgCur').value = ui.subject);
@@ -660,6 +763,8 @@ async function importTestsFromCsv(file) {
 }
 
 async function loadConfigAndStats() {
+  TEST_STATS_DETAIL = null;
+  ui.statsTestId = '';
   TEST_CFG = ensureConfig(await fetchJSONSafe('/api/tests-config').catch(() => ({ categories: {} })));
 
   const typeSel = $('#cfgType');
@@ -675,12 +780,15 @@ async function loadConfigAndStats() {
   }
 
   updateSubjectOptions();
+  updateListDifficultyOptions();
+  updateRoundOptions();
   updateDifficultyOptions();
   renderTestList();
   fillEditor();
   renderRules();
   renderStatsSummary();
   renderStatsTable();
+  renderStatsDetail();
 }
 
 function renderStatsSummary() {
@@ -692,59 +800,254 @@ function renderStatsSummary() {
     const count = getCategoryTests(def.key).length;
     const metric = row?.count ? `${Number(row.avg_pct || 0).toFixed(1)}%` : `${count}개`;
     const meta = row?.count ? `응시 ${row.count}건` : '등록 테스트';
+    const active = ui.statsCategory === def.key ? ' is-active' : '';
     return `
-      <article class="summary-card" data-type="${escapeAttr(def.key)}">
+      <button type="button" class="summary-card${active}" data-type="${escapeAttr(def.key)}" data-stats-category="${escapeAttr(def.key)}">
         <div class="summary-label">${escapeHtml(def.label)}</div>
         <div class="summary-value">${escapeHtml(metric)}</div>
         <div class="summary-meta">${escapeHtml(meta)}</div>
-      </article>
+      </button>
     `;
   });
   box.innerHTML = cards.join('');
+  box.querySelectorAll('[data-stats-category]').forEach(button => {
+    button.addEventListener('click', () => {
+      ui.statsCategory = button.dataset.statsCategory || 'UNIT';
+      ui.statsTestId = '';
+      TEST_STATS_DETAIL = null;
+      renderStatsSummary();
+      renderStatsTable();
+      renderStatsDetail();
+    });
+  });
 }
 
 function fmtPct(value) {
   return (typeof value === 'number' && Number.isFinite(value)) ? `${value.toFixed(1)}%` : '-';
 }
 
+function fmtNumber(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? value.toFixed(1) : '-';
+}
+
+function statsSignature(test) {
+  return [
+    test?.categoryKey || ui.statsCategory || '',
+    test?.curriculum || '',
+    canonText(test?.name),
+    String(test?.round || '').trim(),
+  ].join('\u241f');
+}
+
+function statForTest(test) {
+  const byId = TEST_STATS?.by_test_id || {};
+  if (test?.id && byId[test.id]) return byId[test.id];
+  const bySignature = TEST_STATS?.by_test_signature || {};
+  const sig = statsSignature(test);
+  if (sig && bySignature[sig]) return bySignature[sig];
+  return TEST_STATS?.by_test?.[canonText(test?.name)] || null;
+}
+
+function syncStatsControls() {
+  const search = $('#statSearch');
+  if (search && search.value !== ui.statsSearch) search.value = ui.statsSearch;
+  const sort = $('#statSort');
+  if (sort) sort.value = ui.statsSort;
+}
+
+function defaultStatsCompare(a, b) {
+  return String(a.curriculum || '').localeCompare(String(b.curriculum || ''), 'ko') ||
+    String(a.difficulty || '').localeCompare(String(b.difficulty || ''), 'ko') ||
+    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ko');
+}
+
+function statsCount(row) {
+  const count = Number(row?.stat?.count || 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function statsAvg(row, emptyValue) {
+  const avg = Number(row?.stat?.avg_pct);
+  return Number.isFinite(avg) ? avg : emptyValue;
+}
+
+function statsSearchText(row) {
+  return [
+    row.typeLabel,
+    row.curriculum,
+    row.name,
+    row.difficulty,
+    roundLabel(row.round || ''),
+    row.problems ? `${row.problems}문항` : '',
+  ].map(canonText).join(' ').toLowerCase();
+}
+
+function compareStatsRows(a, b) {
+  switch (ui.statsSort) {
+    case 'name':
+      return String(a.name || '').localeCompare(String(b.name || ''), 'ko') || defaultStatsCompare(a, b);
+    case 'taken_desc':
+      return statsCount(b) - statsCount(a) || defaultStatsCompare(a, b);
+    case 'taken_asc':
+      return statsCount(a) - statsCount(b) || defaultStatsCompare(a, b);
+    case 'avg_desc':
+      return statsAvg(b, -1) - statsAvg(a, -1) || defaultStatsCompare(a, b);
+    case 'avg_asc':
+      return statsAvg(a, 101) - statsAvg(b, 101) || defaultStatsCompare(a, b);
+    case 'round':
+      return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) || defaultStatsCompare(a, b);
+    default:
+      return defaultStatsCompare(a, b);
+  }
+}
+
 function renderStatsTable() {
   const tbody = $('#statsTable tbody');
   if (!tbody) return;
-  const stats = TEST_STATS?.by_test || {};
-  const rows = CATEGORY_DEFS.flatMap(def => getCategoryTests(def.key).map(test => ({
+  syncStatsControls();
+  const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
+  const query = canonText(ui.statsSearch).toLowerCase();
+  const rows = getCategoryTests(def.key).map(test => ({
     ...test,
     typeLabel: def.label,
-    stat: stats[canonText(test.name)] || null,
-  })));
+    stat: statForTest(test),
+  }))
+    .filter(row => !query || statsSearchText(row).includes(query))
+    .sort(compareStatsRows);
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">등록된 테스트가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${query ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = rows.map(row => `
-    <tr class="data-row">
+    <tr class="data-row ${row.id === ui.statsTestId ? 'is-active' : ''}" data-stat-test-id="${escapeAttr(row.id)}">
       <td style="text-align:left;"><span class="type-pill" data-type="${escapeAttr(row.categoryKey)}">${escapeHtml(row.typeLabel)}</span></td>
       <td style="text-align:left;">${escapeHtml(row.curriculum || '-')}</td>
       <td style="text-align:left;">
         <div class="stat-title">
           <span class="stat-main">${escapeHtml(row.name)}</span>
-          <span class="stat-sub">${escapeHtml(row.difficulty)} · ${escapeHtml(row.round)}회차</span>
+          <span class="stat-sub">${escapeHtml(row.problems)}문항</span>
         </div>
       </td>
       <td><span class="level-pill">${escapeHtml(row.difficulty || '-')}</span></td>
+      <td>${escapeHtml(roundLabel(row.round || '-'))}</td>
       <td>${escapeHtml(row.stat?.count || 0)}</td>
       <td>${escapeHtml(fmtPct(row.stat?.avg_pct))}</td>
-      <td>${escapeHtml(fmtPct(row.stat?.min_pct))}</td>
-      <td>${escapeHtml(fmtPct(row.stat?.max_pct))}</td>
     </tr>
   `).join('');
+
+  tbody.querySelectorAll('[data-stat-test-id]').forEach(rowEl => {
+    rowEl.addEventListener('click', () => {
+      const testId = rowEl.dataset.statTestId || '';
+      const row = rows.find(item => item.id === testId);
+      ui.statsTestId = testId;
+      TEST_STATS_DETAIL = null;
+      renderStatsTable();
+      renderStatsDetail(row, true);
+    });
+  });
+}
+
+async function loadStatsDetail(test) {
+  if (!test?.id) return null;
+  const recent = Number($('#statRecent')?.value || '30') || 30;
+  const params = new URLSearchParams({ test_id: test.id, recent_days: String(recent) });
+  return fetchJSONSafe(`/api/tests-records?${params.toString()}`);
+}
+
+function detailMetric(label, value) {
+  return `
+    <div class="detail-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderStatsDetail(test = null, fetchDetail = false) {
+  const host = $('#statsDetail');
+  if (!host) return;
+
+  const selected = test || getCategoryTests(ui.statsCategory).find(item => item.id === ui.statsTestId);
+  if (!selected) {
+    host.innerHTML = `
+      <div class="stats-detail-empty">
+        통계 표에서 시험을 선택하면 평균, 표준편차, 최고/최저/중앙값과 학생별 점수를 볼 수 있습니다.
+      </div>
+    `;
+    return;
+  }
+
+  const stat = statForTest(selected) || {};
+  if (fetchDetail) {
+    TEST_STATS_DETAIL = { records: [] };
+    renderStatsDetail(selected, false);
+    loadStatsDetail(selected).then(detail => {
+      TEST_STATS_DETAIL = detail;
+      renderStatsDetail(selected, false);
+    }).catch(err => {
+      console.error(err);
+    });
+    return;
+  }
+
+  const records = Array.isArray(TEST_STATS_DETAIL?.records) ? TEST_STATS_DETAIL.records : [];
+  const studentRows = records.map(rec => `
+    <tr>
+      <td style="text-align:left;">${escapeHtml(rec.studentName || rec.sid || '-')}</td>
+      <td>${escapeHtml(rec.level || '-')}</td>
+      <td>${escapeHtml(fmtPct(rec.pct))}</td>
+      <td>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</td>
+      <td style="text-align:left;">${escapeHtml((rec.createdAt || '').slice(0, 10) || '-')}</td>
+    </tr>
+  `).join('');
+
+  host.innerHTML = `
+    <section class="stats-detail-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">${escapeHtml(selected.name)}</div>
+          <div class="panel-subtitle">${escapeHtml(selected.curriculum || '-')} · ${escapeHtml(selected.difficulty || '-')} · ${escapeHtml(roundLabel(selected.round || '-'))}</div>
+        </div>
+      </div>
+      <div class="detail-metrics">
+        ${detailMetric('응시', stat.count || 0)}
+        ${detailMetric('평균', fmtPct(stat.avg_pct))}
+        ${detailMetric('표준편차', fmtNumber(stat.stddev_pct))}
+        ${detailMetric('중앙값', fmtPct(stat.median_pct))}
+        ${detailMetric('최대', fmtPct(stat.max_pct))}
+        ${detailMetric('최소', fmtPct(stat.min_pct))}
+      </div>
+      <div class="panel-table-wrap">
+        <table class="stats-table detail-student-table">
+          <thead>
+            <tr>
+              <th>학생</th>
+              <th>레벨</th>
+              <th>점수</th>
+              <th>정답</th>
+              <th>응시일</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="5" class="empty-cell">응시 기록이 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
 }
 
 function bindUI() {
   $('#cfgType')?.addEventListener('change', e => {
     ui.category = e.target.value || 'UNIT';
+    ui.difficulty = '';
+    ui.round = '';
     ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateRoundOptions();
     updateDifficultyOptions();
     renderTestList();
     fillEditor();
@@ -755,10 +1058,42 @@ function bindUI() {
 
   $('#cfgCur')?.addEventListener('change', e => {
     ui.subject = normalizeSubject(e.target.value);
+    ui.round = '';
     ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateRoundOptions();
     renderTestList();
     fillEditor();
     renderRules();
+  });
+
+  $('#cfgDifficultyFilter')?.addEventListener('change', e => {
+    ui.difficulty = String(e.target.value || '').trim();
+    ui.round = '';
+    ui.selectedId = '';
+    updateRoundOptions();
+    renderTestList();
+    fillEditor();
+  });
+
+  $('#cfgRoundFilter')?.addEventListener('change', e => {
+    ui.round = String(e.target.value || '').trim();
+    ui.selectedId = '';
+    renderTestList();
+    fillEditor();
+  });
+
+  $('#statSearch')?.addEventListener('input', e => {
+    ui.statsSearch = String(e.target.value || '').trim();
+    ui.statsTestId = '';
+    TEST_STATS_DETAIL = null;
+    renderStatsTable();
+    renderStatsDetail();
+  });
+
+  $('#statSort')?.addEventListener('change', e => {
+    ui.statsSort = String(e.target.value || 'default');
+    renderStatsTable();
   });
 
   $('#cfgSubject')?.addEventListener('change', e => {
@@ -793,7 +1128,7 @@ function bindUI() {
     const cat = TEST_CFG.categories[ui.category];
     const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
     const difficulty = def.difficulties[0] || '';
-    const round = String(getVisibleTests().length + 1);
+    const round = ui.round || '1';
     const id = `t_${ui.category.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const test = {
       id,
@@ -802,11 +1137,15 @@ function bindUI() {
       curriculum: ui.subject,
       difficulty,
       round,
-      answerKeys: { '1': [], '2': [], '3': [] },
+      answerKeys: { [round]: [] },
       answerKey: [],
     };
     cat.tests.push(test);
     ui.selectedId = id;
+    ui.difficulty = difficulty;
+    ui.round = round;
+    updateListDifficultyOptions();
+    updateRoundOptions();
     renderTestList();
     fillEditor();
   });
@@ -838,13 +1177,15 @@ function bindUI() {
     test.difficulty = difficulty;
     test.round = round;
     test.problems = problems;
-    test.answerKeys = parseAnswerSpec3(answers, problems);
-    test.answerKey = test.answerKeys['1'];
+    test.answerKey = parseAnswerSpec(answers, problems);
+    test.answerKeys = { [round]: test.answerKey };
 
     try {
       await saveConfig();
       alert('저장 완료');
       ui.subject = subject;
+      ui.difficulty = difficulty;
+      ui.round = round;
       $('#cfgCur') && ($('#cfgCur').value = subject);
       await loadConfigAndStats();
     } catch (e) {

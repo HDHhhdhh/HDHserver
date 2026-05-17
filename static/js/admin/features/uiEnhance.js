@@ -1,4 +1,5 @@
 import { $ } from '../core/utils.js';
+import { initAttendanceLedgerLink } from './attendanceLedgerLink.js';
 
 const DENSITY_KEY = 'adminDensityMode';
 
@@ -144,5 +145,6 @@ export function initAdminUiEnhance() {
 
   initDensityToggle();
   initRailActions();
+  initAttendanceLedgerLink();
   initMetricWatchers();
 }

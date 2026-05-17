@@ -1165,6 +1165,22 @@
   <option value="365">최근 1년</option>
 </select>
             </div>
+            <div class="toolbar-group">
+              <span class="toolbar-label">검색</span>
+              <input id="statSearch" type="search" placeholder="시험명, 과목, 레벨">
+            </div>
+            <div class="toolbar-group">
+              <span class="toolbar-label">정렬</span>
+              <select id="statSort">
+                <option value="default" selected>기본순</option>
+                <option value="name">시험명순</option>
+                <option value="taken_desc">응시 많은순</option>
+                <option value="taken_asc">응시 적은순</option>
+                <option value="avg_desc">평균 높은순</option>
+                <option value="avg_asc">평균 낮은순</option>
+                <option value="round">회차순</option>
+              </select>
+            </div>
             <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
           </div>
 
