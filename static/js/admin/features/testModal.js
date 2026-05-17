@@ -15,6 +15,13 @@ const CATEGORY_DEFS = [
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
 const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
 const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
+const ROUND_OPTIONS = ['1', '2', '3'];
+const TEST_STATUS_LABELS = {
+  assigned: '배정',
+  done: '배정',
+  interrupted: '주황',
+  skip: '빨강',
+};
 
 let initialized = false;
 let editingSid = null;
@@ -23,10 +30,12 @@ let activeStudent = null;
 let activeCategory = 'UNIT';
 let activeSubject = '공수1';
 let activeDifficulty = 'Lv.3';
+let activeRound = '1';
 let activeCatalog = [];
 let catalogByKey = new Map();
 let initialTestMap = {};
 let selectedKeys = new Set();
+let selectedStatuses = new Map();
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
@@ -112,6 +121,43 @@ function roundLabel(value) {
   return /회/.test(r) ? r : `${r}회차`;
 }
 
+function normalizeAssignmentStatus(status) {
+  const s = String(status || '').trim();
+  if (!s || s === 'none') return '';
+  if (s === 'assigned' || s === 'done' || s === 'interrupted' || s === 'skip') return s;
+  return 'assigned';
+}
+
+function testStatusLabel(status, submitted = false) {
+  if (submitted) return '완료';
+  const s = normalizeAssignmentStatus(status);
+  return s ? (TEST_STATUS_LABELS[s] || '배정') : '미배정';
+}
+
+function nextStatusOf(status) {
+  const s = normalizeAssignmentStatus(status);
+  if (!s) return 'assigned';
+  if (s === 'assigned' || s === 'done') return 'interrupted';
+  return '';
+}
+
+function statusForKey(key) {
+  return normalizeAssignmentStatus(selectedStatuses.get(key));
+}
+
+function setTestStatus(key, status) {
+  const k = String(key || '').trim();
+  if (!k) return;
+  const normalized = normalizeAssignmentStatus(status);
+  if (normalized) {
+    selectedStatuses.set(k, normalized);
+    selectedKeys.add(k);
+  } else {
+    selectedStatuses.delete(k);
+    selectedKeys.delete(k);
+  }
+}
+
 function testKey(test) {
   return [
     categoryLabel(test.categoryKey),
@@ -135,6 +181,49 @@ function normalizeConfig(cfg) {
   });
 
   return out;
+}
+
+function ruleDefaultDifficulty(categoryKey, subject, student = activeStudent) {
+  const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
+  const difficulties = def?.difficulties || [];
+  const level = canonText(student?.level);
+  const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
+  if (level && rules && typeof rules === 'object') {
+    const hit = difficulties.find(diff =>
+      Array.isArray(rules?.[diff]) && rules[diff].map(canonText).includes(level)
+    );
+    if (hit) return hit;
+  }
+  return difficulties[0] || '';
+}
+
+function roundOptionsFor(categoryKey, subject, difficulty) {
+  const rounds = new Set();
+  activeCatalog
+    .filter(test =>
+      test.categoryKey === categoryKey &&
+      normalizeSubject(test.curriculum) === normalizeSubject(subject) &&
+      String(test.difficulty || '') === String(difficulty || '')
+    )
+    .forEach(test => {
+      const round = normalizeRound(test.round || '');
+      if (round) rounds.add(round);
+    });
+
+  const out = Array.from(rounds).sort((a, b) =>
+    Number(a || 0) - Number(b || 0) || String(a).localeCompare(String(b), 'ko')
+  );
+  return out.length ? out : ROUND_OPTIONS.slice();
+}
+
+function defaultRoundFor(categoryKey, subject, difficulty) {
+  const rounds = roundOptionsFor(categoryKey, subject, difficulty);
+  return rounds.includes('1') ? '1' : (rounds[0] || '1');
+}
+
+function applyRuleDefaults(categoryKey = activeCategory) {
+  activeDifficulty = ruleDefaultDifficulty(categoryKey, activeSubject, activeStudent);
+  activeRound = defaultRoundFor(categoryKey, activeSubject, activeDifficulty);
 }
 
 function collectCatalog(cfg) {
@@ -164,17 +253,29 @@ function collectCatalog(cfg) {
         difficulty,
         round,
         problems: Number.isFinite(+rawTest.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
+        _catalogIndex: idx,
       };
       test._key = testKey(test);
       out.push(test);
     });
   });
 
+  const rankIn = (list, value) => {
+    const index = list.indexOf(value);
+    return index >= 0 ? index : list.length;
+  };
+  const orderValue = (test) => {
+    const raw = test?.sortOrder ?? test?.sourceOrder ?? test?.order ?? test?.sourceIndex ?? test?._catalogIndex;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 999999;
+  };
+
   out.sort((a, b) =>
-    CATEGORY_KEYS.indexOf(a.categoryKey) - CATEGORY_KEYS.indexOf(b.categoryKey) ||
-    SUBJECTS.indexOf(a.curriculum) - SUBJECTS.indexOf(b.curriculum) ||
+    rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
+    rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
     String(a.difficulty).localeCompare(String(b.difficulty), 'ko') ||
     Number(a.round || 0) - Number(b.round || 0) ||
+    orderValue(a) - orderValue(b) ||
     String(a.name).localeCompare(String(b.name), 'ko')
   );
 
@@ -201,8 +302,14 @@ function pushSubmittedRecord(rec) {
   const name = canonText(rec.name || rec.testName || rec.title);
   if (id) submittedIds.add(id);
   if (name) {
-    submittedNames.add(name);
-    if (name.includes('/')) submittedNames.add(canonText(name.split('/').pop()));
+    const round = normalizeRound(rec.round || rec.testMeta?.round || '');
+    if (round) {
+      submittedNames.add(`${name}|||${round}`);
+      if (name.includes('/')) submittedNames.add(`${canonText(name.split('/').pop())}|||${round}`);
+    } else {
+      submittedNames.add(name);
+      if (name.includes('/')) submittedNames.add(canonText(name.split('/').pop()));
+    }
   }
 }
 
@@ -258,8 +365,10 @@ function getCurrentProgressTests() {
 
 function isSubmitted(test) {
   if (!test) return false;
+  const name = canonText(test.name);
+  const round = normalizeRound(test.round || '');
   return submittedIds.has(String(test.id || '').trim()) ||
-    submittedNames.has(canonText(test.name)) ||
+    submittedNames.has(`${name}|||${round}`) ||
     submittedNames.has(canonText(`${categoryLabel(test.categoryKey)} / ${test.name}`)) ||
     submittedNames.has(canonText(test._key));
 }
@@ -268,17 +377,18 @@ function visibleTests() {
   return activeCatalog.filter(test =>
     test.categoryKey === activeCategory &&
     normalizeSubject(test.curriculum) === activeSubject &&
-    String(test.difficulty || '') === String(activeDifficulty || '')
+    String(test.difficulty || '') === String(activeDifficulty || '') &&
+    normalizeRound(test.round || '') === String(activeRound || '1')
   );
 }
 
 function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
-  selectedKeys = new Set(
-    Object.entries(initialTestMap)
-      .filter(([, status]) => String(status || '').trim() && String(status || '').trim() !== 'none')
-      .map(([key]) => key)
-  );
+  selectedKeys = new Set();
+  selectedStatuses = new Map();
+  Object.entries(initialTestMap).forEach(([key, status]) => {
+    setTestStatus(key, normalizeAssignmentStatus(status));
+  });
 }
 
 function renderCategories() {
@@ -294,6 +404,7 @@ function renderCategories() {
 function renderFilters() {
   const subjectSel = $('testSubject');
   const difficultySel = $('testDifficulty');
+  const roundSel = $('testRound');
   if (subjectSel) {
     subjectSel.innerHTML = SUBJECTS.map(subject =>
       `<option value="${escapeHtml(subject)}"${subject === activeSubject ? ' selected' : ''}>${escapeHtml(subject)}</option>`
@@ -301,15 +412,38 @@ function renderFilters() {
   }
 
   const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
-  if (!difficulties.includes(activeDifficulty)) activeDifficulty = difficulties[0] || '';
+  if (!difficulties.includes(activeDifficulty)) {
+    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent);
+  }
   if (difficultySel) {
     difficultySel.innerHTML = difficulties.map(diff =>
       `<option value="${escapeHtml(diff)}"${diff === activeDifficulty ? ' selected' : ''}>${escapeHtml(diff)}</option>`
     ).join('');
   }
 
+  const rounds = roundOptionsFor(activeCategory, activeSubject, activeDifficulty);
+  if (!rounds.includes(String(activeRound))) {
+    activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
+  }
+  if (roundSel) {
+    roundSel.innerHTML = rounds.map(round =>
+      `<option value="${round}"${round === activeRound ? ' selected' : ''}>${roundLabel(round)}</option>`
+    ).join('');
+  }
+
   const metaEl = $('testStudentMeta');
   if (metaEl) metaEl.textContent = `학생 레벨: ${activeStudent?.level || '-'}`;
+}
+
+function applyTestRowStatus(row, status) {
+  if (!row || row.disabled) return;
+  const key = row.dataset.testKey || '';
+  const next = normalizeAssignmentStatus(status);
+  setTestStatus(key, next);
+  row.dataset.state = next || 'none';
+  row.classList.toggle('is-selected', !!next);
+  const statusEl = row.querySelector('.test-status');
+  if (statusEl) statusEl.textContent = testStatusLabel(next);
 }
 
 function renderList() {
@@ -323,7 +457,7 @@ function renderList() {
   if (!tests.length) {
     list.innerHTML = `
       <div class="test-empty">
-        선택한 분류/과목/난이도에 등록된 테스트가 없습니다.
+        선택한 분류/과목/난이도/회차에 등록된 테스트가 없습니다.
       </div>
     `;
     return;
@@ -331,18 +465,19 @@ function renderList() {
 
   list.innerHTML = tests.map(test => {
     const done = isSubmitted(test);
-    const checked = done || selectedKeys.has(test._key);
-    const status = done ? '완료' : (checked ? '배정' : '미배정');
+    const rowStatus = statusForKey(test._key);
+    const checked = done || !!rowStatus;
+    const stateName = done ? 'done' : (rowStatus || 'none');
+    const status = testStatusLabel(rowStatus, done);
     return `
-      <label class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}">
-        <input type="checkbox" class="test-check" value="${escapeHtml(test._key)}"
-          ${checked ? ' checked' : ''} ${done ? ' disabled' : ''}>
+      <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}"
+        data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}" ${done ? ' disabled' : ''}>
         <span class="test-row-main">
           <strong>${escapeHtml(test.name)}</strong>
           <span>${escapeHtml(categoryLabel(test.categoryKey))} · ${escapeHtml(test.curriculum)} · ${escapeHtml(test.difficulty)} · ${escapeHtml(roundLabel(test.round))}</span>
         </span>
         <span class="test-status">${escapeHtml(status)}</span>
-      </label>
+      </button>
     `;
   }).join('');
 }
@@ -391,7 +526,7 @@ function ensureStyles() {
     #testModal .test-tab.is-active{ background:#2563eb; border-color:#2563eb; color:#fff; }
     body.dark #testModal .test-tab{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
     body.dark #testModal .test-tab.is-active{ background:#2563eb; color:#fff; border-color:#2563eb; }
-    #testModal .test-filter-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    #testModal .test-filter-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
     #testModal .test-field label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
     body.dark #testModal .test-field label{ color:#94a3b8; }
     #testModal select{
@@ -408,12 +543,17 @@ function ensureStyles() {
     body.dark #testModal .test-mini-actions button{ background:#334155; color:#e5e7eb; border-color:#475569; }
     #testModal .test-list{ display:flex; flex-direction:column; gap:6px; }
     #testModal .test-row{
-      display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:8px; align-items:center;
+      display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; text-align:left;
       min-height:46px; padding:7px 8px; border:1px solid #e5e7eb; border-radius:9px;
-      background:#fff; cursor:pointer; box-sizing:border-box;
+      background:#fff; color:inherit; cursor:pointer; box-sizing:border-box; user-select:none;
+      font:inherit;
     }
     body.dark #testModal .test-row{ background:#0b1220; border-color:#334155; }
-    #testModal .test-row.is-selected{ background:#10b98118; border-color:#10b98170; }
+    #testModal .test-row:disabled{ cursor:default; opacity:1; }
+    #testModal .test-row[data-state="assigned"],
+    #testModal .test-row[data-state="done"]{ background:#10b98118; border-color:#10b98170; }
+    #testModal .test-row[data-state="interrupted"]{ background:#f59e0b22; border-color:#f59e0b70; }
+    #testModal .test-row[data-state="skip"]{ background:#ef444422; border-color:#ef444470; }
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
     #testModal .test-row-main{ min-width:0; display:flex; flex-direction:column; gap:2px; }
     #testModal .test-row-main strong{ font-size:13px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -424,7 +564,10 @@ function ensureStyles() {
       font-size:11px; font-weight:900; white-space:nowrap;
     }
     body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
-    #testModal .test-row.is-selected .test-status{ background:#10b981; color:#fff; }
+    #testModal .test-row[data-state="assigned"] .test-status,
+    #testModal .test-row[data-state="done"] .test-status{ background:#10b981; color:#fff; }
+    #testModal .test-row[data-state="interrupted"] .test-status{ background:#f59e0b; color:#111827; }
+    #testModal .test-row[data-state="skip"] .test-status{ background:#ef4444; color:#fff; }
     #testModal .test-row.is-done .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-note-option{
       display:flex; align-items:center; gap:7px; padding:9px 10px; border:1px solid #e5e7eb;
@@ -433,6 +576,9 @@ function ensureStyles() {
     body.dark #testModal .test-note-option{ background:#0b1220; border-color:#334155; }
     #testModal .test-empty{ padding:14px; border:1px dashed #cbd5e1; border-radius:9px; color:#64748b; font-size:13px; }
     body.dark #testModal .test-empty{ border-color:#475569; color:#94a3b8; }
+    @media (max-width:560px){
+      #testModal .test-filter-grid{ grid-template-columns:1fr; }
+    }
   `;
   document.head.appendChild(s);
 }
@@ -467,10 +613,14 @@ function ensureModal() {
               <label for="testDifficulty">난이도</label>
               <select id="testDifficulty"></select>
             </div>
+            <div class="test-field">
+              <label for="testRound">회차</label>
+              <select id="testRound"></select>
+            </div>
           </div>
 
           <div class="test-toolbar">
-            <div class="test-sub">체크된 항목이 오늘 선택 날짜에 배정됩니다.</div>
+            <div class="test-sub">색상 표시된 항목이 오늘 선택 날짜에 배정됩니다.</div>
             <div class="test-mini-actions">
               <button id="testPickAll" type="button">목록 전체 선택</button>
               <button id="testPickNone" type="button">선택 해제</button>
@@ -506,7 +656,9 @@ function closeModal() {
   catalogByKey = new Map();
   initialTestMap = {};
   selectedKeys = new Set();
+  selectedStatuses = new Map();
   testSelectionTouched = false;
+  activeRound = '1';
   if (wasUnified && !document.querySelector('#vidModal.student-work-layout') && !document.querySelector('#logModal.student-work-layout')) {
     try { window.hideStudentPopupBackdrop?.(); } catch {}
   }
@@ -536,7 +688,7 @@ async function openModalForRow(rowOrButton, opts = {}) {
   syncSelectedFromProgress();
 
   activeCategory = chooseInitialCategory();
-  activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
+  applyRuleDefaults(activeCategory);
   testSelectionTouched = false;
 
   renderAll();
@@ -544,9 +696,13 @@ async function openModalForRow(rowOrButton, opts = {}) {
 }
 
 function selectedAssignmentObjects() {
-  return Array.from(selectedKeys).map(key => {
+  const order = new Map(activeCatalog.map((test, idx) => [test._key, idx]));
+  return Array.from(selectedStatuses.entries()).sort((a, b) =>
+    (order.get(a[0]) ?? 999999) - (order.get(b[0]) ?? 999999)
+  ).map(([key, rawStatus]) => {
+    const status = normalizeAssignmentStatus(rawStatus) || 'assigned';
     const test = catalogByKey.get(key);
-    if (!test) return { label: key };
+    if (!test) return { label: key, status, statusLabel: testStatusLabel(status) };
     return {
       id: test.id,
       name: test.name,
@@ -556,6 +712,8 @@ function selectedAssignmentObjects() {
       difficulty: test.difficulty,
       round: String(test.round || ''),
       label: test._key,
+      status,
+      statusLabel: testStatusLabel(status),
     };
   });
 }
@@ -564,7 +722,8 @@ function buildAssignmentNote(items) {
   if (!items.length) return '';
   const lines = items.map(item => {
     if (!item || !item.name) return `- ${item.label}`;
-    return `- ${item.categoryLabel} / ${item.curriculum} / ${item.difficulty} / ${roundLabel(item.round)}: ${item.name}`;
+    const status = item.status && item.status !== 'assigned' ? ` (${item.statusLabel || testStatusLabel(item.status)})` : '';
+    return `- ${item.categoryLabel} / ${item.curriculum} / ${item.difficulty} / ${roundLabel(item.round)}: ${item.name}${status}`;
   });
   return `[테스트 배정]\n${lines.join('\n')}`;
 }
@@ -624,15 +783,13 @@ async function saveModal(options = {}) {
   }
 
   const patchTests = {};
-  const allKeys = new Set([...Object.keys(initialTestMap), ...selectedKeys]);
+  const allKeys = new Set([...Object.keys(initialTestMap), ...selectedStatuses.keys()]);
   allKeys.forEach(key => {
     const test = catalogByKey.get(key);
     if (test && isSubmitted(test)) {
       patchTests[key] = 'done';
-    } else if (selectedKeys.has(key)) {
-      patchTests[key] = 'assigned';
     } else {
-      patchTests[key] = '';
+      patchTests[key] = statusForKey(key) || '';
     }
   });
 
@@ -670,18 +827,62 @@ function bindEventsOnce() {
   if (initialized) return;
   initialized = true;
 
+  let pointerDown = false;
+  let dragActive = false;
+  let dragTarget = null;
+  let dragButton = 0;
+  let startStatus = '';
+  let startIndex = -1;
+  let suppressClickOnce = false;
+  let dragRows = [];
+  let dragInitialStatuses = [];
+
+  const testRowFromTarget = (target) => target?.closest?.('#testAssignList .test-row');
+  const rebuildDragRows = () => {
+    dragRows = Array.from(document.querySelectorAll('#testAssignList .test-row:not(:disabled)'));
+    dragInitialStatuses = dragRows.map(row => statusForKey(row.dataset.testKey));
+  };
+
+  function applyDragRange(currentRow) {
+    if (!pointerDown || !dragActive) return;
+    const curIndex = dragRows.indexOf(currentRow);
+    if (curIndex === -1 || startIndex === -1) return;
+
+    const lo = Math.min(startIndex, curIndex);
+    const hi = Math.max(startIndex, curIndex);
+    dragRows.forEach((row, idx) => {
+      const initial = dragInitialStatuses[idx] || '';
+      const next = (idx >= lo && idx <= hi) ? dragTarget : initial;
+      applyTestRowStatus(row, next);
+    });
+  }
+
+  function handleDragMove(e) {
+    if (!pointerDown) return;
+    const row = testRowFromTarget(e.target);
+    if (!row || row.disabled) return;
+
+    if (!dragActive) {
+      dragActive = true;
+      dragTarget = dragButton === 2 ? 'skip' : nextStatusOf(startStatus);
+    }
+    applyDragRange(row);
+    testSelectionTouched = true;
+    e.preventDefault();
+  }
+
   document.body.addEventListener('click', async (e) => {
     const categoryBtn = e.target.closest('#testCategoryTabs .test-tab');
     if (categoryBtn) {
       activeCategory = categoryBtn.dataset.category || activeCategory;
-      activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
+      applyRuleDefaults(activeCategory);
       renderAll();
       return;
     }
 
     if (e.target.closest('#testPickAll')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) selectedKeys.add(test._key);
+        if (!isSubmitted(test)) setTestStatus(test._key, 'assigned');
       });
       testSelectionTouched = true;
       renderList();
@@ -690,7 +891,7 @@ function bindEventsOnce() {
 
     if (e.target.closest('#testPickNone')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) selectedKeys.delete(test._key);
+        if (!isSubmitted(test)) setTestStatus(test._key, '');
       });
       testSelectionTouched = true;
       renderList();
@@ -712,28 +913,76 @@ function bindEventsOnce() {
       const tr = standaloneBtn.closest('tr[data-sid]');
       if (tr) await openModalForRow(tr);
     }
+
+    const row = testRowFromTarget(e.target);
+    if (row && !row.disabled) {
+      if (suppressClickOnce) {
+        suppressClickOnce = false;
+        return;
+      }
+      const key = row.dataset.testKey || '';
+      applyTestRowStatus(row, nextStatusOf(statusForKey(key)));
+      testSelectionTouched = true;
+    }
+  });
+
+  document.body.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 && e.button !== 2) return;
+    const row = testRowFromTarget(e.target);
+    if (!row || row.disabled) return;
+    if (e.button === 2) e.preventDefault();
+
+    rebuildDragRows();
+    startIndex = dragRows.indexOf(row);
+    if (startIndex === -1) return;
+
+    pointerDown = true;
+    dragActive = false;
+    dragTarget = null;
+    dragButton = e.button;
+    startStatus = statusForKey(row.dataset.testKey);
+  });
+
+  document.body.addEventListener('mousemove', handleDragMove);
+  document.body.addEventListener('mouseover', handleDragMove);
+
+  document.body.addEventListener('contextmenu', (e) => {
+    const row = testRowFromTarget(e.target);
+    if (!row || row.disabled) return;
+    e.preventDefault();
+    applyTestRowStatus(row, 'skip');
+    testSelectionTouched = true;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!pointerDown) return;
+    pointerDown = false;
+    if (dragActive && dragButton === 0) suppressClickOnce = true;
+
+    dragActive = false;
+    dragTarget = null;
+    dragButton = 0;
+    startStatus = '';
+    startIndex = -1;
   });
 
   document.body.addEventListener('change', (e) => {
     if (e.target?.id === 'testSubject') {
       activeSubject = normalizeSubject(e.target.value);
-      activeDifficulty = CATEGORY_BY_KEY[activeCategory]?.difficulties?.[0] || '';
+      applyRuleDefaults(activeCategory);
       renderAll();
       return;
     }
 
     if (e.target?.id === 'testDifficulty') {
       activeDifficulty = e.target.value || activeDifficulty;
+      activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
       renderAll();
       return;
     }
 
-    const check = e.target?.closest?.('.test-check');
-    if (check) {
-      const key = check.value;
-      if (check.checked) selectedKeys.add(key);
-      else selectedKeys.delete(key);
-      testSelectionTouched = true;
+    if (e.target?.id === 'testRound') {
+      activeRound = String(e.target.value || '1');
       renderList();
     }
   });

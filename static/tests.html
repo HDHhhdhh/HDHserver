@@ -184,14 +184,41 @@
 
     body.admin.tests-page .tests-shell {
       display: grid;
-      grid-template-columns: minmax(440px, .9fr) minmax(760px, 1.6fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
-      align-items: start;
+      align-items: stretch;
+    }
+
+    body.admin.tests-page .tests-shell > .card {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: clamp(640px, calc(100vh - 320px), 1080px);
+      overflow: hidden;
+    }
+
+    body.admin.tests-page .card-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-right: 2px;
+      box-sizing: border-box;
+      scrollbar-gutter: stable;
+    }
+
+    body.admin.tests-page .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
 
     body.admin.tests-page .card-head h2 {
       margin: 0;
       font-size: 20px;
+      min-width: 0;
     }
 
     body.admin.tests-page .card-sub {
@@ -242,8 +269,7 @@
       border: 1px solid var(--line);
       border-radius: 16px;
       background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
-      overflow: auto;
-      max-height: 720px;
+      overflow: visible;
       padding: 8px;
       box-sizing: border-box;
     }
@@ -281,6 +307,40 @@
       font-size: 11px;
       color: var(--muted);
       margin-left: 6px;
+    }
+
+    body.admin.tests-page .test-list-group {
+      margin: 0 0 10px;
+      border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+      border-radius: 13px;
+      overflow: hidden;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .test-list-group:last-child {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .test-list-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 92%, var(--accent) 8%);
+      font-size: 12px;
+      font-weight: 900;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .test-list-group-count {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .test-list-group-body {
+      padding: 7px;
     }
 
     body.admin.tests-page .editor-panel {
@@ -385,13 +445,35 @@
     }
 
     body.admin.tests-page .summary-card {
+      appearance: none;
       position: relative;
       overflow: hidden;
+      width: 100%;
       padding: 14px;
       border-radius: 16px;
       border: 1px solid var(--line);
       background: color-mix(in oklab, var(--card) 93%, var(--accent) 7%);
       box-shadow: 0 8px 20px rgba(0, 0, 0, .12);
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease;
+    }
+
+    body.admin.tests-page .summary-card:hover {
+      transform: translateY(-1px);
+      background: color-mix(in oklab, var(--card) 88%, var(--accent) 12%);
+    }
+
+    body.admin.tests-page .summary-card:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+    }
+
+    body.admin.tests-page .summary-card.is-active {
+      border-color: color-mix(in oklab, var(--accent) 68%, var(--line) 32%);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, .14), inset 0 0 0 2px color-mix(in oklab, var(--accent) 36%, transparent);
     }
 
     body.admin.tests-page .summary-card[data-type="UNIT"] {
@@ -464,6 +546,43 @@
       border-collapse: collapse;
       min-width: 1040px;
       margin: 0;
+    }
+
+    body.admin.tests-page #statsTable {
+      min-width: 0;
+      table-layout: fixed;
+    }
+
+    body.admin.tests-page #statsTable th,
+    body.admin.tests-page #statsTable td {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(1) {
+      width: 84px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(2) {
+      width: 64px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(4),
+    body.admin.tests-page #statsTable th:nth-child(5) {
+      width: 66px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(6),
+    body.admin.tests-page #statsTable th:nth-child(7) {
+      width: 58px;
+    }
+
+    body.admin.tests-page #statsTable .stat-main {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     body.admin.tests-page .stats-table thead th {
@@ -658,6 +777,18 @@
       min-width: 1040px !important;
     }
 
+    body.admin.tests-page .rule-check {
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    body.admin.tests-page .rule-check:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
+      outline-offset: 3px;
+    }
+
     body.admin.tests-page .stat-title {
       display: flex;
       flex-direction: column;
@@ -739,6 +870,53 @@
       color: var(--muted);
     }
 
+    body.admin.tests-page .stats-detail-panel,
+    body.admin.tests-page .stats-detail-empty {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
+    }
+
+    body.admin.tests-page .stats-detail-panel {
+      overflow: hidden;
+    }
+
+    body.admin.tests-page .stats-detail-empty {
+      padding: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    body.admin.tests-page .detail-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      padding: 14px 16px 2px;
+    }
+
+    body.admin.tests-page .detail-metric {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: color-mix(in oklab, var(--card) 94%, var(--accent) 6%);
+      min-height: 66px;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .detail-metric span {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    body.admin.tests-page .detail-metric strong {
+      font-size: 18px;
+      color: var(--fg);
+    }
+
     body.admin.tests-page .empty-cell {
       text-align: center !important;
       color: var(--muted);
@@ -746,13 +924,22 @@
     }
 
     @media (max-width: 1080px) {
-      body.admin.tests-page .hero-card,
-      body.admin.tests-page .tests-shell {
+      body.admin.tests-page .hero-card {
         grid-template-columns: 1fr;
       }
 
       body.admin.tests-page .hero-metrics {
         grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      body.admin.tests-page .tests-shell {
+        grid-template-columns: 1fr;
+      }
+
+      body.admin.tests-page .tests-shell > .card {
+        height: clamp(720px, 136vh, 1240px);
       }
     }
 
@@ -801,15 +988,6 @@
       <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 분류별 배정 기준을 한 화면에서 관리합니다.</div>
     </div>
 
-    <nav class="topbar-nav" aria-label="주요 링크">
-      <a href="/admin">대시보드</a>
-      <a href="/students">전체학생</a>
-      <a href="/school-cal">학교일정</a>
-      <a href="/tests" class="active" aria-current="page">테스트</a>
-      <a href="/video-manage">영상관리</a>
-      <a href="/file-manage">자료실</a>
-    </nav>
-
     <label class="switch" title="다크모드">
       <input type="checkbox" id="darkToggle">
       <span class="slider"></span>
@@ -846,22 +1024,23 @@
         <div class="card-head">
           <h2>시험 목록</h2>
         </div>
-        <div class="card-sub">분류와 과목을 선택하면 해당 범위의 테스트만 모아서 볼 수 있습니다.</div>
+        <div class="card-scroll">
+          <div class="card-sub">분류, 과목, 난이도, 회차 순서로 테스트 목록을 좁혀 볼 수 있습니다.</div>
 
-        <div class="tests-toolbar">
-          <div class="toolbar-group">
-            <span class="toolbar-label">분류</span>
-            <select id="cfgType">
+          <div class="tests-toolbar">
+            <div class="toolbar-group">
+              <span class="toolbar-label">분류</span>
+              <select id="cfgType">
   <option value="REVIEW">복습 테스트</option>
   <option value="UNIT" selected>단원평가</option>
   <option value="SCHOOL_PAST">학군지 기출</option>
   <option value="ILSAN_PAST">일산 기출</option>
 </select>
-          </div>
+            </div>
 
-          <div class="toolbar-group">
-            <span class="toolbar-label">과목</span>
-            <select id="cfgCur">
+            <div class="toolbar-group">
+              <span class="toolbar-label">과목</span>
+              <select id="cfgCur">
   <option value="공수1">공수1</option>
   <option value="공수2">공수2</option>
   <option value="대수">대수</option>
@@ -870,129 +1049,146 @@
   <option value="기하">기하</option>
   <option value="확통">확통</option>
 </select>
+            </div>
+
+            <div class="toolbar-group">
+              <span class="toolbar-label">난이도</span>
+              <select id="cfgDifficultyFilter"></select>
+            </div>
+
+            <div class="toolbar-group">
+              <span class="toolbar-label">회차</span>
+              <select id="cfgRoundFilter"></select>
+            </div>
+
+            <div class="toolbar-spacer"></div>
+            <button id="btnCsvTemplate" class="btn secondary" type="button">CSV 양식</button>
+            <button id="btnImportCsv" class="btn secondary" type="button">CSV 가져오기</button>
+            <input id="csvFile" class="import-file" type="file" accept=".csv,text/csv">
+            <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
           </div>
 
-          <div class="toolbar-spacer"></div>
-          <button id="btnCsvTemplate" class="btn secondary" type="button">CSV 양식</button>
-          <button id="btnImportCsv" class="btn secondary" type="button">CSV 가져오기</button>
-          <input id="csvFile" class="import-file" type="file" accept=".csv,text/csv">
-          <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
+          <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
+          <div id="testList" class="test-list"></div>
         </div>
-
-        <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
-        <div id="testList" class="test-list"></div>
       </section>
 
       <section class="card editor-panel">
         <div class="card-head">
           <h2>시험 편집</h2>
         </div>
-        <div class="card-sub">기존 테스트를 선택하거나 새 테스트를 추가한 뒤 과목/난이도/회차/정답을 저장하세요.</div>
+        <div class="card-scroll">
+          <div class="card-sub">분류와 관계없이 기존 테스트를 선택하거나 새 테스트를 추가한 뒤 과목/난이도/회차/정답을 저장하세요.</div>
 
-        <div class="editor-banner">
-          <div>
-            <strong id="editorSelectionLabel">선택된 시험 없음</strong>
-            <div><span>왼쪽에서 시험을 고르면 아래 항목에서 바로 수정할 수 있습니다.</span></div>
-          </div>
-        </div>
-
-        <div class="field-grid">
-          <div class="field-row">
-            <label for="cfgSubject">과목</label>
-            <select id="cfgSubject"></select>
-            <div class="helper">관리자 테스트 팝업에서 학생 커리큘럼과 매칭되는 기준입니다.</div>
+          <div class="editor-banner">
+            <div>
+              <strong id="editorSelectionLabel">선택된 시험 없음</strong>
+              <div><span>왼쪽에서 시험을 고르면 아래 항목에서 바로 수정할 수 있습니다.</span></div>
+            </div>
           </div>
 
-          <div class="field-row">
-            <label for="cfgDifficulty">난이도</label>
-            <select id="cfgDifficulty"></select>
-            <div class="helper">복습/기출은 상·중상, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+          <div class="field-grid">
+            <div class="field-row">
+              <label for="cfgSubject">과목</label>
+              <select id="cfgSubject"></select>
+              <div class="helper">관리자 테스트 팝업에서 학생 커리큘럼과 매칭되는 기준입니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgDifficulty">난이도</label>
+              <select id="cfgDifficulty"></select>
+              <div class="helper">복습/기출은 상·중상, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgRound">회차</label>
+              <input type="number" id="cfgRound" min="1" max="99" step="1">
+              <div class="helper">같은 분류/과목/난이도 안에서 표시되는 회차입니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgName">시험명</label>
+              <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
+              <div class="helper">학생과 상담 기록에 표시될 이름입니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgProblems">문항 수</label>
+              <input type="number" id="cfgProblems" min="1" max="100" step="1">
+              <div class="helper">정답 배열 길이는 문항 수에 맞춰 자동 정리됩니다.</div>
+            </div>
           </div>
 
-          <div class="field-row">
-            <label for="cfgRound">회차</label>
-            <input type="number" id="cfgRound" min="1" max="99" step="1">
-            <div class="helper">같은 분류/과목/난이도 안에서 표시되는 회차입니다.</div>
+          <div class="answer-block">
+            <label for="cfgAnswers" class="answer-label">정답</label>
+            <textarea id="cfgAnswers" placeholder="선택한 회차의 정답"></textarea>
+            <div class="answers-help">
+              · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
+              · 단원평가도 회차마다 독립 시험으로 저장되며, 현재 선택한 회차의 정답만 수정됩니다.<br>
+              · CSV 가져오기는 1회차/2회차/3회차 정답 열을 각각 별도 시험으로 펼쳐 저장합니다.
+            </div>
           </div>
 
-          <div class="field-row">
-            <label for="cfgName">시험명</label>
-            <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
-            <div class="helper">학생과 상담 기록에 표시될 이름입니다.</div>
+          <div class="btn-row">
+            <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
+            <button id="btnSaveTest" class="btn" type="button">저장</button>
           </div>
-
-          <div class="field-row">
-            <label for="cfgProblems">문항 수</label>
-            <input type="number" id="cfgProblems" min="1" max="100" step="1">
-            <div class="helper">정답 배열 길이는 문항 수에 맞춰 자동 정리됩니다.</div>
-          </div>
-        </div>
-
-        <div class="answer-block">
-          <label for="cfgAnswers" class="answer-label">정답 (회차 1~3)</label>
-          <textarea id="cfgAnswers" placeholder="1회차 정답&#10;2회차 정답&#10;3회차 정답"></textarea>
-          <div class="answers-help">
-            · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
-            · 3줄 입력 시 각 줄이 1회차/2회차/3회차로 저장됩니다.<br>
-            · 1줄만 입력하면 1~3회차에 동일 정답이 저장됩니다.
-          </div>
-        </div>
-
-        <div class="btn-row">
-          <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
-          <button id="btnSaveTest" class="btn" type="button">저장</button>
         </div>
       </section>
-    </section>
 
-    <section class="card" aria-label="분류별 배정 기준">
-      <div class="card-head">
-        <h2>분류별 배정 기준</h2>
-      </div>
-      <div class="card-sub">네 가지 테스트 분류를 각각 별도 표로 관리합니다. 현재 팝업에서는 이 기준으로 자동 체크하지 않고, 클릭한 테스트만 배정됩니다.</div>
-      <div id="ruleGrid" class="panel-table-wrap"></div>
-      <div class="btn-row" style="margin-top:12px">
-        <button id="btnSaveRules" class="btn" type="button">규칙 저장</button>
-      </div>
-    </section>
+      <section class="card" aria-label="분류별 배정 기준">
+        <div class="card-head">
+          <h2>분류별 배정 기준</h2>
+        </div>
+        <div class="card-scroll">
+          <div class="card-sub">네 가지 테스트 분류를 각각 별도 표로 관리합니다. 테스트 배정 팝업은 이 기준으로 기본 과목/난이도/회차를 먼저 보여주고, 클릭한 테스트만 배정됩니다.</div>
+          <div id="ruleGrid" class="panel-table-wrap"></div>
+          <div class="btn-row" style="margin-top:12px">
+            <button id="btnSaveRules" class="btn" type="button">규칙 저장</button>
+          </div>
+        </div>
+      </section>
 
-    <section class="card" aria-label="테스트 통계">
-      <div class="card-head">
-        <h2>테스트 통계</h2>
-      </div>
-      <div class="card-sub">최근 제출 기록을 기반으로 유형별 흐름을 보고, 행을 클릭하면 개인 성적까지 확인할 수 있습니다.</div>
+      <section class="card" aria-label="테스트 통계">
+        <div class="card-head">
+          <h2>테스트 통계</h2>
+        </div>
+        <div class="card-scroll">
+          <div class="card-sub">최근 제출 기록을 기반으로 유형별 흐름을 보고, 행을 클릭하면 개인 성적까지 확인할 수 있습니다.</div>
 
-      <div class="stats-toolbar">
-        <div class="toolbar-group">
-          <span class="toolbar-label">기간</span>
-          <select id="statRecent">
+          <div class="stats-toolbar">
+            <div class="toolbar-group">
+              <span class="toolbar-label">기간</span>
+              <select id="statRecent">
   <option value="30" selected>최근 30일</option>
   <option value="90">최근 90일</option>
   <option value="365">최근 1년</option>
 </select>
+            </div>
+            <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
+          </div>
+
+          <div id="statsSummary" class="stats-summary"></div>
+
+          <div class="stats-table-wrap">
+            <table class="stats-table" id="statsTable">
+              <thead>
+                <tr>
+                  <th>구분</th>
+                  <th>과목</th>
+                  <th>시험명</th>
+                  <th>레벨</th>
+                  <th>회차</th>
+                  <th>응시</th>
+                  <th>평균</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="statsDetail" class="stats-detail"></div>
         </div>
-        <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
-      </div>
-
-      <div id="statsSummary" class="stats-summary"></div>
-
-      <div class="stats-table-wrap">
-        <table class="stats-table" id="statsTable">
-          <thead>
-            <tr>
-              <th>구분</th>
-              <th>과목</th>
-              <th>단원 / 시험명</th>
-              <th>레벨</th>
-              <th>응시</th>
-              <th>평균</th>
-              <th>최소</th>
-              <th>최대</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
+      </section>
     </section>
   </main>
 
