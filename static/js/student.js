@@ -64,6 +64,8 @@ window.todayLocalKey = function () {
   let logsCache = {};         // /api/logs 전체
   let courseBlocked = false;
   let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
+  let courseVideosCompleted = false;
+  const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -317,6 +319,7 @@ window.todayLocalKey = function () {
           {
             courseBlocked: b.courseBlocked === true,
             blockMessage: b.blockMessage || '',
+            courseVideosCompleted: b.courseVideosCompleted === true,
           },
         ];
       }
@@ -334,7 +337,7 @@ window.todayLocalKey = function () {
       fetch("/api/absent").then(r => r.json()).catch(() => ({})),
       fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
       watchReq,
-      { courseBlocked: false, blockMessage: '' },
+      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false },
     ]);
   }
 
@@ -512,6 +515,7 @@ window.todayLocalKey = function () {
     logsCache = logsRaw || {};
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
+    courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
     mergeServerWatchIntoLocal((watchRaw && typeof watchRaw.watch === 'object') ? watchRaw.watch : {});
 
     const nameEl = $('stuName');
@@ -873,7 +877,10 @@ window.todayLocalKey = function () {
       // if (fixed) return renderAssignedList();
 
       if (listBox) {
-        listBox.innerHTML = "<li style='opacity:.65'>오늘 할당된 영상이 없습니다 문의 부탁</li>";
+        const msg = courseVideosCompleted
+          ? COURSE_VIDEOS_COMPLETED_MESSAGE
+          : "오늘 할당된 영상이 없습니다 문의 부탁";
+        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
       if (frame) frame.src = "";
       return;
@@ -893,7 +900,10 @@ window.todayLocalKey = function () {
     if (!myVids.length) {
       // 매칭되는 영상이 정말 하나도 없을 때만 빈 상태 처리
       if (listBox) {
-        listBox.innerHTML = "<li style='opacity:.65'>오늘 할당된 영상이 없습니다 문의 부탁</li>";
+        const msg = courseVideosCompleted
+          ? COURSE_VIDEOS_COMPLETED_MESSAGE
+          : "오늘 할당된 영상이 없습니다 문의 부탁";
+        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
       if (frame) frame.src = "";
       return;

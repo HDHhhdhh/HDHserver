@@ -1206,6 +1206,47 @@ def _student_auto_video_assign_count(stu: dict) -> int:
     return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD))
 
 
+def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
+    if not isinstance(stu, dict):
+        return []
+
+    cur_key = (stu.get("curriculum") or "").strip()
+    sub_key = (stu.get("subCurriculum") or "").strip()
+
+    exact = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+        and (v.get("subCurriculum") or "").strip() == sub_key
+    ]
+    if exact:
+        exact.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+        return exact
+
+    fallback = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+    ]
+    fallback.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+    return fallback
+
+
+def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid: dict) -> bool:
+    mids = [
+        str(v.get("mid") or "").strip()
+        for v in (course_videos or [])
+        if isinstance(v, dict) and str(v.get("mid") or "").strip()
+    ]
+    if not mids:
+        return False
+
+    latest = latest_status_by_sid.get(str(sid), {})
+    if not isinstance(latest, dict):
+        return False
+    return all(str(latest.get(mid) or "").strip() == "done" for mid in mids)
+
+
 def _build_latest_status_by_sid(progress: dict) -> dict:
     out = {}
     if not isinstance(progress, dict):
@@ -1322,6 +1363,7 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
             if mid:
                 valid_mids.add(mid)
 
+    latest_status_by_sid = _build_latest_status_by_sid(progress)
     blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
 
     def _normalize_assigned(val):
@@ -1358,10 +1400,6 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
         cur_key = (stu.get("curriculum") or "").strip()
         sub_key = (stu.get("subCurriculum") or "").strip()
 
-        cur = updates[today].get(sid)
-        if _has_assigned(cur):
-            continue
-
         cur_vids = [
             v for v in (videos or [])
             if isinstance(v, dict)
@@ -1369,6 +1407,17 @@ def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str
             and (v.get("subCurriculum") or "").strip() == sub_key
         ]
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+
+        completion_videos = cur_vids or _student_completion_videos(stu, videos)
+        if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
+            if _sid_lookup(updates[today], sid) is not None:
+                _write_sid_mapping(updates[today], sid, None)
+                changed = True
+            continue
+
+        cur = _sid_lookup(updates[today], sid)
+        if _has_assigned(cur):
+            continue
 
         blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
 
@@ -1616,6 +1665,13 @@ def api_student_bootstrap():
         })
 
     videos_all = load(VID_PATH) or []
+    progress_all = load(PRG_PATH) or {}
+    latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+    course_videos_completed = _course_videos_completed(
+        _student_completion_videos(student, videos_all),
+        sid,
+        latest_status_by_sid,
+    )
     if date == _today_kst_iso():
         updates = _load_updates_with_auto_assign(students=students, videos=videos_all, date_key=date)
     else:
@@ -1669,6 +1725,7 @@ def api_student_bootstrap():
         "assigns": {sid: material_assignment or []},
         "absent": absent_for_date,
         "logs": logs,
+        "courseVideosCompleted": course_videos_completed,
     })
 
 

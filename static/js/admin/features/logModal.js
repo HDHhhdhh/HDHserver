@@ -136,6 +136,25 @@ async function patchProgressEntry(date, sid, progressMap) {
  * - 1) /api/logs/entry?date&sid
  * - 2) 없으면 /api/logs fallback
  */
+async function clearVideoAssignmentForDateSid(date, sid) {
+  const t = String(date || '').trim();
+  const s = String(sid || '').trim();
+  if (!t || !s) return;
+
+  state.updates = state.updates || {};
+  state.updates[t] = state.updates[t] || {};
+  delete state.updates[t][s];
+  if (/^\d+$/.test(s)) delete state.updates[t][String(Number(s))];
+  if (!Object.keys(state.updates[t]).length) delete state.updates[t];
+
+  const res = await fetch('/api/updates/patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: t, sid: s, remove: true }),
+  });
+  if (!res.ok) throw new Error('video assignment clear failed');
+}
+
 async function fetchLogEntryFromServer(date, sid) {
   const t = String(date);
   const s = String(sid);
@@ -1211,6 +1230,7 @@ export function initLogModal() {
 
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
     renderHwTable(merged);
+
     logModalSnapshot = {
       // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
       // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
@@ -1321,6 +1341,19 @@ export function initLogModal() {
   window.closeStudentWorkPopups = close;
   logClose.addEventListener('click', close);
 
+  function isCurrentLogProgressAllDone() {
+    const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
+    return cells.length > 0 && cells.every(cell => String(cell.dataset.state || 'none') === 'done');
+  }
+
+  function clearVideoAssignmentIfAllDone(saveResult) {
+    if (!saveResult?.allProgressDone) return false;
+    if (typeof window.clearVideoAssignmentPopupForCurrent === 'function') {
+      window.clearVideoAssignmentPopupForCurrent();
+    }
+    return true;
+  }
+
   async function saveBase(doneFlag) {
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
@@ -1421,6 +1454,11 @@ export function initLogModal() {
       state.logs[today][sid] = next;
     }
 
+    const allProgressDone = isCurrentLogProgressAllDone();
+    if (allProgressDone) {
+      await clearVideoAssignmentForDateSid(today, sid);
+    }
+
     logModalSnapshot = {
       notes: notesNow,
       homeworkTable: hwRows,
@@ -1429,20 +1467,26 @@ export function initLogModal() {
       notes: notesNow,
       homeworkTable: normalizeHwRowsForCompare(hwRows),
     };
+
+    return { allProgressDone };
   }
 
   async function saveRecordPopupForCurrent() {
-    await saveBase(false);
+    return await saveBase(false);
   }
 
   window.saveRecordPopup = saveRecordPopupForCurrent;
 
   logSave.addEventListener('click', async () => {
     try {
-      await saveRecordPopupForCurrent();
+      const saveResult = await saveRecordPopupForCurrent();
       const unified = logModal.classList.contains('student-work-layout');
       if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
-        await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
       }
       if (unified && typeof window.saveTestAssignmentPopup === 'function') {
         await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
@@ -1462,10 +1506,14 @@ export function initLogModal() {
 
   logComplete.addEventListener('click', async () => {
     try {
-      await saveRecordPopupForCurrent();
+      const saveResult = await saveRecordPopupForCurrent();
       const unified = logModal.classList.contains('student-work-layout');
       if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
-        await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
       }
       if (unified && typeof window.saveTestAssignmentPopup === 'function') {
         await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
