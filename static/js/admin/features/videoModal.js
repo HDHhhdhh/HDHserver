@@ -25,6 +25,7 @@ let activeExtraSubCurriculum = '';
 let activeExtraQuery = '';
 let activePrimaryVideoMids = new Set();
 let activeVideoNoteHtml = '';
+let videoOpenSeq = 0;
 
 const AUTO_ASSIGN_FIELD = 'autoVideoAssignCount';
 const DEFAULT_AUTO_ASSIGN_COUNT = 3;
@@ -1098,6 +1099,7 @@ export function initVideoModal() {
   }
 
   async function openVideoModalForRow(rowOrButton, opts = {}) {
+    const openSeq = ++videoOpenSeq;
     hideSavePopup();
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingSid = tr?.dataset?.sid;
@@ -1105,9 +1107,16 @@ export function initVideoModal() {
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
     const today = getAdminDate();
+    mTitle.textContent = `${stu.name} - ${stu.curriculum} (${stu.subCurriculum || '전체'})`;
+    chkZone.innerHTML = '<div class="vid-loading" style="padding:14px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-weight:800">영상 배정 불러오는 중...</div>';
+    if (mSave) mSave.disabled = true;
+    if (opts.layout === 'student-work') syncStudentPopupLayoutVars();
+    vidModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
+    vidModal.style.display = 'flex';
 
     // ✅ 결석 관련 fetch 없음. 필요한 것만 hydrate.
     await hydrateForVideoModal(today, editingSid);
+    if (openSeq !== videoOpenSeq || String(editingSid) !== String(tr?.dataset?.sid || '')) return;
 
     mTitle.textContent = `${stu.name} – ${stu.curriculum} (${stu.subCurriculum || '전체'})`;
     renderAutoAssignControl(stu);
@@ -1222,6 +1231,7 @@ export function initVideoModal() {
     if (opts.layout === 'student-work') syncStudentPopupLayoutVars();
     vidModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     vidModal.style.display = 'flex';
+    if (mSave) mSave.disabled = false;
     requestAnimationFrame(scrollVideoPopupToFirstChecked);
   }
 
@@ -1233,6 +1243,7 @@ export function initVideoModal() {
     selectedVideoMids().length > 0 && (activeVideoSelectionDirty || activeAssignmentManual)
   );
   window.closeVideoAssignmentPopup = () => {
+    videoOpenSeq += 1;
     vidModal.style.display = 'none';
     vidModal.classList.remove('student-work-layout');
     if (

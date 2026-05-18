@@ -365,8 +365,8 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
 // ─────────────────────────────────────────────
 let _orderMap = null; // { "YYYY-MM-DD": ["sid", ...] }
 
-export async function loadOrderMap() {
-  if (_orderMap) return _orderMap;
+export async function loadOrderMap(options = {}) {
+  if (_orderMap && !options.force) return _orderMap;
   try { _orderMap = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
   catch { _orderMap = {}; }
   return _orderMap;
@@ -449,8 +449,8 @@ async function fetchAttendDay(dateKey) {
   } catch {}
   return null;
 }
-export async function ensureAttendLoaded(dateKey) {
-  if (_attCache.has(dateKey)) return;
+export async function ensureAttendLoaded(dateKey, options = {}) {
+  if (_attCache.has(dateKey) && !options.force) return;
   const server = await fetchAttendDay(dateKey);
   if (server) { _attCache.set(dateKey, server); saveAttendMapLocal(dateKey, server); }
   else { const local = loadAttendMapLocal(dateKey); _attCache.set(dateKey, local); }
@@ -493,8 +493,8 @@ async function fetchContactDay(dateKey) {
   } catch {}
   return null;
 }
-export async function ensureContactLoaded(dateKey) {
-  if (_contactCache.has(dateKey)) return;
+export async function ensureContactLoaded(dateKey, options = {}) {
+  if (_contactCache.has(dateKey) && !options.force) return;
   const server = await fetchContactDay(dateKey);
   if (server) { _contactCache.set(dateKey, server); saveContactMapLocal(dateKey, server); }
   else { const local = loadContactMapLocal(dateKey); _contactCache.set(dateKey, local); }
@@ -558,8 +558,8 @@ async function fetchArriveAll() {
   } catch {}
   return null;
 }
-export async function ensureArriveLoaded(dateKey) {
-  if (_arriveCache.has(dateKey)) return;
+export async function ensureArriveLoaded(dateKey, options = {}) {
+  if (_arriveCache.has(dateKey) && !options.force) return;
 
   const day = await fetchArriveDay(dateKey);
   if (day) { _arriveCache.set(dateKey, day); saveArriveMapLocal(dateKey, day); return; }

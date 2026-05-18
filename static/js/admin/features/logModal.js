@@ -13,6 +13,8 @@ let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
+let logOpenSeq = 0;
+let logModalReady = true;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -191,6 +193,20 @@ async function fetchLogEntryFromServer(date, sid) {
   }
 }
 
+async function fetchJSONCached(url, ttlMs = 2500) {
+  const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const now = Date.now();
+  const hit = cache.get(url);
+  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+
+  const promise = fetch(url, { cache: 'no-store' }).then(async (res) => {
+    if (!res.ok) return {};
+    return await res.json().catch(() => ({}));
+  });
+  cache.set(url, { ts: now, promise });
+  return promise;
+}
+
 function mergeDateSidMap(target, incoming) {
   if (!incoming || typeof incoming !== 'object') return;
   Object.entries(incoming).forEach(([date, bySid]) => {
@@ -212,10 +228,7 @@ async function hydrateLogHistoryForSid(sid) {
 
   try {
     const q = new URLSearchParams({ sid: s }).toString();
-    const res = await fetch(`/api/logs?${q}`, { cache: 'no-store' });
-    if (!res.ok) return false;
-
-    const data = await res.json().catch(() => ({}));
+    const data = await fetchJSONCached(`/api/logs?${q}`);
     state.logs = state.logs || {};
     mergeDateSidMap(state.logs, data);
     window.logs = state.logs;
@@ -232,10 +245,7 @@ async function hydrateProgressHistoryForSid(sid) {
 
   try {
     const q = new URLSearchParams({ sid: s }).toString();
-    const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
-    if (!res.ok) return false;
-
-    const data = await res.json().catch(() => ({}));
+    const data = await fetchJSONCached(`/api/progress?${q}`);
     state.progress = state.progress || {};
     mergeDateSidMap(state.progress, data);
     window.progressData = state.progress;
@@ -1125,6 +1135,7 @@ export function initLogModal() {
   });
 
   async function openLogModalForRow(rowOrButton, opts = {}) {
+    const openSeq = ++logOpenSeq;
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingLogSid = tr?.dataset?.sid;
     editingLogDate = tr?.dataset?.date || getAdminDate();
@@ -1136,11 +1147,29 @@ export function initLogModal() {
     const today = editingLogDate;
     const sid = String(editingLogSid);
 
+    logModalReady = false;
+    logModalSnapshot = { notes: '', homeworkTable: [] };
+    logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
+    logNotes.value = '불러오는 중...';
+    logNotes.disabled = true;
+    if (logSave) logSave.disabled = true;
+    if (logComplete) logComplete.disabled = true;
+    progEl.innerHTML = '<div class="log-loading">진도 불러오는 중...</div>';
+    renderHwTable([]);
+    logModal.style.display = 'flex';
+    resetLogModalScroll();
+
     await Promise.allSettled([
       hydrateTodayLogFromServer(today, sid),
       hydrateLogHistoryForSid(sid),
       hydrateProgressHistoryForSid(sid),
     ]);
+    if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
+    logNotes.disabled = false;
+    if (logSave) logSave.disabled = false;
+    if (logComplete) logComplete.disabled = false;
+    logModalReady = true;
 
     const dates = Array.from(new Set([
       ...Object.keys(state.progress || {}),
@@ -1281,7 +1310,7 @@ export function initLogModal() {
     requestAnimationFrame(resetLogModalScroll);
 
     try {
-      if (window.showStudentTooltipForSid) {
+      if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
         window.showStudentTooltipForSid(editingLogSid, {
           variant: 'log',
           fixed: true,
@@ -1303,32 +1332,49 @@ export function initLogModal() {
     if (!tr) return;
 
     const unified = btn.classList.contains('openStudentPopups');
-    if (unified && window.showStudentPopupBackdrop) {
-      try { window.showStudentPopupBackdrop(); } catch {}
-    }
-    let videoOpen = Promise.resolve();
-    if (unified && window.openVideoAssignmentPopupForRow) {
-      videoOpen = window.openVideoAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
-        console.warn('[logModal] open video popup failed:', err);
-      });
-    }
-    let testOpen = Promise.resolve();
-    if (unified && window.openTestAssignmentPopupForRow) {
-      testOpen = window.openTestAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
-        console.warn('[logModal] open test popup failed:', err);
-      });
+    if (!unified) {
+      await openLogModalForRow(tr);
+      return;
     }
 
-    await openLogModalForRow(tr, { layout: unified ? 'student-work' : undefined });
-    await Promise.allSettled([videoOpen, testOpen]);
+    if (window.showStudentPopupBackdrop) {
+      try { window.showStudentPopupBackdrop(); } catch {}
+    }
+    try {
+      window.showStudentTooltipForSid?.(tr.dataset.sid, {
+        variant: 'log',
+        fixed: true,
+        layout: 'student-work',
+      });
+    } catch {}
+
+    const openTasks = [
+      openLogModalForRow(tr, { layout: 'student-work', tooltipAlreadyShown: true }).catch((err) => {
+        console.warn('[logModal] open log popup failed:', err);
+      }),
+    ];
+    if (window.openVideoAssignmentPopupForRow) {
+      openTasks.push(window.openVideoAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open video popup failed:', err);
+      }));
+    }
+    if (window.openTestAssignmentPopupForRow) {
+      openTasks.push(window.openTestAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open test popup failed:', err);
+      }));
+    }
+
+    await Promise.allSettled(openTasks);
   });
 
   const close = () => {
+    logOpenSeq += 1;
     const wasUnified = logModal.classList.contains('student-work-layout');
     logModal.style.display = 'none';
     logModal.classList.remove('student-work-layout');
     editingLogSid = null;
     editingLogDate = null;
+    logModalReady = false;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
@@ -1475,6 +1521,7 @@ export function initLogModal() {
   }
 
   async function saveRecordPopupForCurrent() {
+    if (!logModalReady) throw new Error('기록 팝업을 불러오는 중입니다.');
     return await saveBase(false);
   }
 

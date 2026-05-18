@@ -36,9 +36,9 @@ import {
   bindTodayTableEvents,
 } from './today.render.js';
 
-async function ensureLogsForDate(dateKey) {
+async function ensureLogsForDate(dateKey, options = {}) {
   const key = String(dateKey || '').trim();
-  if (!key || state.logs?.[key]) return;
+  if (!key || (state.logs?.[key] && !options.force)) return;
   try {
     const res = await fetch(`/api/logs?date=${encodeURIComponent(key)}`, { cache: 'no-store' });
     if (!res.ok) return;
@@ -47,6 +47,52 @@ async function ensureLogsForDate(dateKey) {
       state.logs = state.logs || {};
       state.logs[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
       window.logs = state.logs;
+    }
+  } catch {}
+}
+
+async function ensureProgressForDate(dateKey, options = {}) {
+  const key = String(dateKey || '').trim();
+  if (!key || (state.progress?.[key] && !options.force)) return;
+  try {
+    const res = await fetch(`/api/progress?date=${encodeURIComponent(key)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.progress = state.progress || {};
+      state.progress[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      window.progressData = state.progress;
+    }
+  } catch {}
+}
+
+async function refreshStudentsIfNeeded(options = {}) {
+  if (!options.force && Array.isArray(state.students) && state.students.length) return;
+  try {
+    const res = await fetch('/api/students', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      state.students = data;
+      window.students = state.students;
+    }
+  } catch {}
+}
+
+async function refreshAbsencesIfNeeded(options = {}) {
+  if (!options.force && state.absentByDate && Object.keys(state.absentByDate).length) return;
+  try {
+    const res = await fetch('/api/absent', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.absentByDate = data.by_date || data.absentByDate || state.absentByDate || {};
+      state.absences = data.by_student || data.absences || state.absences || {};
+      window.absentByDate = state.absentByDate;
+      if (window.state) {
+        window.state.absentByDate = state.absentByDate;
+        window.state.absences = state.absences;
+      }
     }
   } catch {}
 }
@@ -127,7 +173,72 @@ async function refreshStaleDoneWarning(dateKey) {
 // 가나다 정렬 토글 (localStorage 유지)
 // ─────────────────────────────────────────────
 const LS_ALPHA_SORT = 'todayAlphaSortOnly';
+const LS_SEARCH_FIELD = 'todaySearchField';
+const TODAY_SEARCH_FIELDS = new Set(['all', 'name', 'school', 'curriculum']);
 let _alphaSortOnly = (localStorage.getItem(LS_ALPHA_SORT) === '1');
+let _todaySearchField = TODAY_SEARCH_FIELDS.has(localStorage.getItem(LS_SEARCH_FIELD))
+  ? localStorage.getItem(LS_SEARCH_FIELD)
+  : 'all';
+
+function normalizeSearch(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+const HANGUL_BASE = 0xac00;
+const HANGUL_END = 0xd7a3;
+const HANGUL_INITIALS_COMPAT = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const HANGUL_INITIALS_LEAD = [
+  0x1100, 0x1101, 0x1102, 0x1103, 0x1104, 0x1105, 0x1106, 0x1107, 0x1108,
+  0x1109, 0x110a, 0x110b, 0x110c, 0x110d, 0x110e, 0x110f, 0x1110, 0x1111, 0x1112,
+].map(code => String.fromCharCode(code));
+
+function hangulInitials(value, initials = HANGUL_INITIALS_COMPAT) {
+  return Array.from(String(value || '')).map(ch => {
+    const code = ch.charCodeAt(0);
+    if (code < HANGUL_BASE || code > HANGUL_END) return ch;
+    return initials[Math.floor((code - HANGUL_BASE) / 588)] || ch;
+  }).join('');
+}
+
+function searchKeyForText(value) {
+  const raw = String(value || '');
+  return normalizeSearch([
+    raw,
+    hangulInitials(raw, HANGUL_INITIALS_COMPAT),
+    hangulInitials(raw, HANGUL_INITIALS_LEAD),
+  ].join(' '));
+}
+
+function studentFieldValues(stu, field) {
+  const school = [
+    stu?.school,
+    stu?.schoolName,
+    stu?.highSchool,
+    stu?.middleSchool,
+    stu?.high,
+    stu?.middle,
+    stu?.schoolHigh,
+    stu?.schoolMiddle,
+  ];
+  const curriculum = [
+    stu?.curriculum,
+    stu?.subCurriculum,
+    stu?.subject,
+    stu?.course,
+  ];
+
+  if (field === 'name') return [stu?.name, stu?.id];
+  if (field === 'school') return school;
+  if (field === 'curriculum') return curriculum;
+  return [stu?.name, stu?.id, ...school, ...curriculum];
+}
+
+function studentSearchKey(stu, field) {
+  return searchKeyForText(studentFieldValues(stu, field).filter(Boolean).join(' '));
+}
 
 function alphaBtnText() { return _alphaSortOnly ? '원래정렬' : '가나다정렬'; }
 function updateAlphaSortBtn() {
@@ -137,8 +248,45 @@ function updateAlphaSortBtn() {
   btn.setAttribute('aria-pressed', _alphaSortOnly ? 'true' : 'false');
   btn.dataset.on = _alphaSortOnly ? '1' : '0';
 }
+
+function ensureTodaySearchControls(tools) {
+  if (!tools || document.getElementById('todaySearchInput')) return;
+
+  const search = document.createElement('div');
+  search.className = 'today-search';
+  search.innerHTML = `
+    <select id="todaySearchField" aria-label="오늘 학생 검색 대상">
+      <option value="all">전체</option>
+      <option value="name">이름</option>
+      <option value="school">학교</option>
+      <option value="curriculum">과목</option>
+    </select>
+    <input id="todaySearchInput" type="search" autocomplete="off"
+           placeholder="오늘 학생 검색" aria-label="오늘 학생 검색">
+    <span id="todaySearchHint" class="today-search-hint" aria-live="polite"></span>
+  `;
+  tools.appendChild(search);
+
+  const field = search.querySelector('#todaySearchField');
+  const input = search.querySelector('#todaySearchInput');
+  field.value = _todaySearchField;
+  field.addEventListener('change', () => {
+    _todaySearchField = TODAY_SEARCH_FIELDS.has(field.value) ? field.value : 'all';
+    try { localStorage.setItem(LS_SEARCH_FIELD, _todaySearchField); } catch {}
+    applyTodaySearchFilter();
+  });
+  input.addEventListener('input', applyTodaySearchFilter);
+  input.addEventListener('search', applyTodaySearchFilter);
+  input.addEventListener('compositionend', applyTodaySearchFilter);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      input.value = '';
+      applyTodaySearchFilter();
+    }
+  });
+}
 function ensureAlphaSortBtn() {
-  if (document.getElementById('todayAlphaSortBtn')) return;
+  if (document.getElementById('todayAlphaSortBtn') && document.getElementById('todaySearchInput')) return;
 
   if (!document.getElementById('todayAlphaSortBtnStyle')) {
     const s = document.createElement('style');
@@ -158,7 +306,32 @@ function ensureAlphaSortBtn() {
       .today-tools .btn-sort:hover{filter:brightness(1.03)}
       .today-tools .btn-sort:active{transform:scale(.98)}
       .today-tools .btn-sort[data-on="1"]{background:rgba(99,102,241,.12);border-color:rgba(99,102,241,.55)}
+      .today-search{
+        display:flex;align-items:center;gap:8px;flex:1 1 420px;min-width:min(100%, 320px);
+        margin-left:auto;
+      }
+      .today-search select,
+      .today-search input{
+        height:42px;border-radius:12px;border:1px solid rgba(148,163,184,.55);
+        background:rgba(248,250,252,.96);color:#0f172a;box-sizing:border-box;
+        font-size:15px;font-weight:700;outline:none;
+      }
+      .today-search select{flex:0 0 116px;padding:0 10px}
+      .today-search input{min-width:0;flex:1 1 auto;padding:0 13px}
+      .today-search input:focus,
+      .today-search select:focus{border-color:rgba(37,99,235,.72);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+      .today-search .today-search-hint{
+        flex:0 0 auto;min-width:72px;font-size:13px;font-weight:800;color:#64748b;text-align:right;
+      }
+      body.dark .today-search select,
+      body.dark .today-search input{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}
+      body.dark .today-search .today-search-hint{color:#94a3b8}
+      #todayWrap tr.is-search-hidden{display:none !important}
       #todayWrap[data-alpha="1"] .drag-handle{opacity:.35;cursor:default !important}
+      @media (max-width:720px){
+        .today-search{flex-basis:100%;margin-left:0}
+        .today-search .today-search-hint{display:none}
+      }
     `;
     document.head.appendChild(s);
   }
@@ -172,6 +345,13 @@ function ensureAlphaSortBtn() {
     tools.id = 'todayTools';
     tools.className = 'today-tools';
     wrap.insertAdjacentElement('beforebegin', tools);
+  }
+
+  if (document.getElementById('todayAlphaSortBtn')) {
+    ensureTodaySearchControls(tools);
+    updateAlphaSortBtn();
+    wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
+    return;
   }
 
   const btn = document.createElement('button');
@@ -191,6 +371,7 @@ function ensureAlphaSortBtn() {
   });
 
   tools.appendChild(btn);
+  ensureTodaySearchControls(tools);
   updateAlphaSortBtn();
   wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
 }
@@ -199,6 +380,34 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', ensureAlphaSortBtn, { once: true });
 } else {
   ensureAlphaSortBtn();
+}
+
+function applyTodaySearchFilter() {
+  const host = document.getElementById('todayWrap');
+  const input = document.getElementById('todaySearchInput');
+  const field = document.getElementById('todaySearchField');
+  const hint = document.getElementById('todaySearchHint');
+  if (!host || !input) return;
+
+  const query = normalizeSearch(input.value);
+  const mode = TODAY_SEARCH_FIELDS.has(field?.value) ? field.value : _todaySearchField;
+  const rows = Array.from(host.querySelectorAll('tr[data-sid]'));
+  let visible = 0;
+
+  for (const row of rows) {
+    const sid = String(row.dataset.sid || '');
+    const stu = (state.students || []).find(s => String(s.id) === sid);
+    const key = stu ? studentSearchKey(stu, mode) : searchKeyForText(row.textContent || '');
+    const matches = !query || key.includes(query);
+    row.hidden = !matches;
+    row.classList.toggle('is-search-hidden', !matches);
+    row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+    if (matches) visible += 1;
+  }
+
+  if (hint) {
+    hint.textContent = query ? `${visible}/${rows.length}명` : '';
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -261,7 +470,12 @@ function sortDoneEntries(entries) {
 async function loadExtraAttendMap() {
   try {
     const m = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
-    return (m && typeof m === 'object') ? m : {};
+    if (m && typeof m === 'object') {
+      state.extra = m;
+      window.extra = state.extra;
+      return m;
+    }
+    return {};
   } catch {
     return {};
   }
@@ -339,19 +553,28 @@ async function computeTodayList(dateKey) {
 // ─────────────────────────────────────────────
 // 공개: 로드 + 렌더
 // ─────────────────────────────────────────────
-export async function loadTodayAndRender() {
+let todayRenderSeq = 0;
+
+export async function loadTodayAndRender(options = {}) {
   ensureAlphaSortBtn();
   updateAlphaSortBtn();
 
+  const force = !!options.force;
+  const seq = ++todayRenderSeq;
   const dateKey = getAdminDate();
 
   await Promise.all([
-    ensureLogsForDate(dateKey),
+    refreshStudentsIfNeeded({ force }),
+    refreshAbsencesIfNeeded({ force }),
+    ensureLogsForDate(dateKey, { force }),
+    ensureProgressForDate(dateKey, { force }),
     loadWeekendSlots(),
-    ensureAttendLoaded(dateKey),
-    ensureContactLoaded(dateKey),
-    ensureArriveLoaded(dateKey),
+    ensureAttendLoaded(dateKey, { force }),
+    ensureContactLoaded(dateKey, { force }),
+    ensureArriveLoaded(dateKey, { force }),
   ]);
+
+  if (seq !== todayRenderSeq || String(getAdminDate() || '') !== String(dateKey || '')) return;
 
   const doneEntries = sortDoneEntries(
     collectUnarchivedLogsByDate(dateKey),
@@ -359,14 +582,16 @@ export async function loadTodayAndRender() {
 
   const [{ list: raw }] = await Promise.all([
     computeTodayList(dateKey),
-    loadOrderMap(),
+    loadOrderMap({ force }),
   ]);
+  if (seq !== todayRenderSeq || String(getAdminDate() || '') !== String(dateKey || '')) return;
   const list = _alphaSortOnly ? raw : applySavedOrder(raw, dateKey);
 
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
 
   renderToday(list, dateKey, _alphaSortOnly);
+  applyTodaySearchFilter();
   renderDone(doneEntries);
   renderStaleDoneWarning({ total: 0, byDate: [] });
   void refreshStaleDoneWarning(dateKey);
@@ -384,5 +609,51 @@ if (document.readyState === 'loading') {
   bindTodayTableEvents(loadTodayAndRender);
 }
 
-document.addEventListener('admin:refresh', loadTodayAndRender);
-document.addEventListener('admin:date-change', loadTodayAndRender);
+function isElementEditing(el) {
+  if (!el || el === document.body) return false;
+  if (el.id === 'todaySearchInput' || el.id === 'todaySearchField') return false;
+  return !!el.closest?.('input, textarea, select, [contenteditable="true"]');
+}
+
+function isModalOpen(el) {
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+}
+
+function shouldSkipAutoRefresh() {
+  if (document.hidden) return true;
+  if (isElementEditing(document.activeElement)) return true;
+  return [
+    '#logModal',
+    '#vidModal',
+    '#testModal',
+    '#extraModal',
+    '#absentRegisterModal',
+    '#attendModal',
+    '#selectionModal',
+    '#yoilModal',
+  ].some(selector => isModalOpen(document.querySelector(selector)));
+}
+
+function initAdminAutoRefresh() {
+  if (window.__adminTodayAutoRefreshStarted) return;
+  window.__adminTodayAutoRefreshStarted = true;
+
+  const refresh = () => {
+    if (shouldSkipAutoRefresh()) return;
+    loadTodayAndRender({ force: true, reason: 'auto' });
+  };
+
+  window.setInterval(refresh, 30 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+}
+
+document.addEventListener('admin:refresh', (ev) => {
+  const force = !!ev?.detail?.force;
+  loadTodayAndRender({ force, reason: 'event' });
+});
+document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));
+initAdminAutoRefresh();

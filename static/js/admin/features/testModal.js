@@ -39,6 +39,7 @@ let selectedStatuses = new Map();
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
+let testOpenSeq = 0;
 
 async function fetchJSONSafe(url, init = {}) {
   const res = await fetch(url, { cache: 'no-store', ...init });
@@ -46,6 +47,17 @@ async function fetchJSONSafe(url, init = {}) {
   if (!res.ok) throw new Error(`[testModal] ${init.method || 'GET'} ${url} -> ${res.status}\n${txt.slice(0, 200)}`);
   try { return txt.trim() ? JSON.parse(txt) : {}; }
   catch (e) { throw new Error(`[testModal] Bad JSON from ${url}: ${e?.message}\n${txt.slice(0, 200)}`); }
+}
+
+async function fetchJSONCached(url, ttlMs = 2500) {
+  const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const now = Date.now();
+  const hit = cache.get(url);
+  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+
+  const promise = fetchJSONSafe(url).catch(() => ({}));
+  cache.set(url, { ts: now, promise });
+  return promise;
 }
 
 function escapeHtml(s) {
@@ -329,8 +341,8 @@ function collectSubmittedFromState(sid) {
 async function hydrateForTestPopup(date, sid) {
   const [cfg, logs, progress, testsJson] = await Promise.all([
     fetchJSONSafe('/api/tests-config').catch(() => ({ categories: {} })),
-    fetchJSONSafe(`/api/logs?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
-    fetchJSONSafe(`/api/progress?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
+    fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`),
+    fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`),
     fetchJSONSafe('/api/tests').catch(() => ({})),
   ]);
 
@@ -646,7 +658,29 @@ function setModalOpen(open, layout) {
   modal.style.display = open ? 'flex' : 'none';
 }
 
+function renderLoadingState(student) {
+  const title = $('testTitle');
+  const meta = $('testStudentMeta');
+  const count = $('testVisibleCount');
+  const save = $('testSave');
+  if (title) title.textContent = student ? `${student.name || ''} 테스트 배정` : '테스트 배정';
+  if (meta) meta.textContent = '불러오는 중...';
+  if (count) count.textContent = '';
+  if (save) save.disabled = true;
+  const tabs = $('testCategoryTabs');
+  if (tabs) tabs.innerHTML = '<button type="button" class="test-tab is-active" disabled>불러오는 중</button>';
+  ['testSubject', 'testDifficulty', 'testRound'].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.disabled = true;
+    el.innerHTML = '<option>불러오는 중</option>';
+  });
+  const list = $('testAssignList');
+  if (list) list.innerHTML = '<div class="test-empty">테스트 목록을 불러오는 중...</div>';
+}
+
 function closeModal() {
+  testOpenSeq += 1;
   const wasUnified = $('testModal')?.classList.contains('student-work-layout');
   setModalOpen(false);
   editingSid = null;
@@ -673,6 +707,7 @@ function chooseInitialCategory() {
 
 async function openModalForRow(rowOrButton, opts = {}) {
   ensureModal();
+  const openSeq = ++testOpenSeq;
 
   const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
   editingSid = String(tr?.dataset?.sid || '').trim();
@@ -684,7 +719,10 @@ async function openModalForRow(rowOrButton, opts = {}) {
   }
 
   activeSubject = normalizeSubject(activeStudent.curriculum);
+  renderLoadingState(activeStudent);
+  setModalOpen(true, opts.layout);
   await hydrateForTestPopup(editingDate, editingSid);
+  if (openSeq !== testOpenSeq || editingSid !== String(tr?.dataset?.sid || '').trim()) return;
   syncSelectedFromProgress();
 
   activeCategory = chooseInitialCategory();
@@ -692,6 +730,12 @@ async function openModalForRow(rowOrButton, opts = {}) {
   testSelectionTouched = false;
 
   renderAll();
+  ['testSubject', 'testDifficulty', 'testRound'].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = false;
+  });
+  const save = $('testSave');
+  if (save) save.disabled = false;
   setModalOpen(true, opts.layout);
 }
 
