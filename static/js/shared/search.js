@@ -38,6 +38,38 @@ export function normalizeSearch(value) {
     .replace(/\s+/g, '');
 }
 
+export const SEARCH_HELP_TEXT = '초성 검색 · 띄어쓰기=AND';
+
+export function searchPlaceholder(label = '검색') {
+  const head = String(label || '검색').trim() || '검색';
+  return `${head} (${SEARCH_HELP_TEXT})`;
+}
+
+export function applySearchPlaceholder(input, label = '검색') {
+  if (!input) return;
+  input.placeholder = searchPlaceholder(label);
+  input.dataset.searchHelp = SEARCH_HELP_TEXT;
+}
+
+export function searchTerms(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .map(normalizeSearch)
+    .filter(Boolean);
+}
+
+export function matchesSearchKey(searchKey, query) {
+  const terms = searchTerms(query);
+  if (!terms.length) return true;
+  const key = String(searchKey || '');
+  return terms.every(term => key.includes(term));
+}
+
+export function matchesSearchText(value, query) {
+  return matchesSearchKey(searchKeyForText(value), query);
+}
+
 export function hangulInitials(value, initials = HANGUL_INITIALS_COMPAT) {
   return Array.from(String(value || '')).map(ch => {
     const code = ch.charCodeAt(0);
@@ -98,6 +130,12 @@ export function studentSearchKey(stu, extraFields = []) {
 const api = {
   expandCompoundInitials,
   normalizeSearch,
+  SEARCH_HELP_TEXT,
+  searchPlaceholder,
+  applySearchPlaceholder,
+  searchTerms,
+  matchesSearchKey,
+  matchesSearchText,
   hangulInitials,
   searchKeyForText,
   studentSearchKey,

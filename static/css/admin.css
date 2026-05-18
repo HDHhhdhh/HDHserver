@@ -728,6 +728,19 @@ body.admin.dark tbody tr:hover {
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--card) 92%, #ffffff 8%);
   padding: 8px;
+  max-height: min(48vh, 340px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+
+#calendar .fc {
+  min-width: 0;
+}
+
+#calendar .fc-view-harness {
+  height: auto !important;
+  min-height: 464px;
 }
 
 #calendar .fc .fc-toolbar-title {

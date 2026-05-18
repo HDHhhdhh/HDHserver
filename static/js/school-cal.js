@@ -2,6 +2,11 @@ import {
   getActiveSchoolCalendarYear,
   isSchoolCalendarV2,
 } from './shared/schoolCalendar.js';
+import {
+  applySearchPlaceholder,
+  matchesSearchKey,
+  searchKeyForText,
+} from './shared/search.js';
 
 (() => {
   const CT = { 'Content-Type': 'application/json' };
@@ -48,6 +53,7 @@ import {
   const examSelect = document.getElementById('examSelect');
   const searchInput = document.getElementById('calSearch');
   const searchStatusEl = document.getElementById('searchStatus');
+  applySearchPlaceholder(searchInput, '학교/과목/교과서 검색');
   if (!table || !theadTr || !addBtn || !saveBtn || !statusEl || !yearSelect || !semesterSelect || !examSelect) return;
 
   const tbody = table.querySelector('tbody');
@@ -266,12 +272,8 @@ import {
     return EXAMS[viewMode] || EXAMS.mid;
   }
 
-  function normalizeSearch(value) {
-    return String(value ?? '').trim().toLocaleLowerCase('ko').replace(/\s+/g, '');
-  }
-
   function searchKeyFor(...values) {
-    return normalizeSearch(values.filter((v) => v != null).join(' '));
+    return searchKeyForText(values.filter((v) => v != null).join(' '));
   }
 
   function nextSchoolId() {
@@ -536,14 +538,12 @@ import {
     });
   }
 
-  function schoolMatchesQuery(school, query) {
-    if (!query) return true;
-    return searchKeyFor(school.school).includes(query);
+  function schoolMatchesQuery(school, queryText) {
+    return matchesSearchKey(searchKeyFor(school.school), queryText);
   }
 
-  function gradeMatchesQuery(school, gradeRow, query) {
-    if (!query) return true;
-    return searchKeyFor(
+  function gradeMatchesQuery(school, gradeRow, queryText) {
+    return matchesSearchKey(searchKeyFor(
       school.school,
       gradeRow.grade,
       gradeRow.phase,
@@ -552,13 +552,13 @@ import {
       gradeRow.fields?.midtermNote,
       gradeRow.fields?.finalMath,
       gradeRow.fields?.finalNote,
-    ).includes(query);
+    ), queryText);
   }
 
   function renderBody() {
     ensureAtLeastOneSchool();
 
-    const query = normalizeSearch(searchQuery);
+    const query = String(searchQuery || '').trim();
     const chunks = [];
     let visibleSchools = 0;
     let visibleGrades = 0;

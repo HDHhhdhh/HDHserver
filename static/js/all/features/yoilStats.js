@@ -1,7 +1,7 @@
 ﻿// /js/all/yoilStats.js
 import { $ } from '../core/utils.js';
 import { state } from '../core/state.js';
-import { searchKeyForText } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 
 function escapeHtml(s = '') {
   return String(s)
@@ -414,11 +414,15 @@ function bindYoilClick(container) {
   container.addEventListener('input', (e) => {
     const search = e.target.closest('.school-grade-search');
     if (!search) return;
+    applySearchPlaceholder(search, '학교/학년 검색');
 
-    const q = searchText(search.value);
     container.querySelectorAll('.school-grade-row').forEach(row => {
       const school = row.dataset.schoolSearch || '';
-      row.style.display = !q || school.includes(q) ? '' : 'none';
+      row.style.display = matchesSearchKey(school, search.value) ? '' : 'none';
     });
+  });
+
+  container.querySelectorAll('.school-grade-search').forEach(input => {
+    applySearchPlaceholder(input, '학교/학년 검색');
   });
 }

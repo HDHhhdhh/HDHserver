@@ -2,7 +2,7 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { setAttended, setContacted } from './today.state.js';
-import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 
 async function clearTodayOrder(dateStr) {
   try {
@@ -272,6 +272,7 @@ export function initAbsentRegister() {
   if (!btn) return;
 
   const getRows = () => Array.from(document.querySelectorAll('#absentZone .row'));
+  applySearchPlaceholder(search, '학생 이름 검색');
 
   function setStudentSelected(row, selected) {
     const chk = row?.querySelector('.chk-sid');
@@ -281,12 +282,13 @@ export function initAbsentRegister() {
   }
 
   function applySearchFilter() {
-    const needle = normalizeSearch(search?.value);
+    const queryText = search?.value || '';
+    const needle = normalizeSearch(queryText);
     let visible = 0;
 
     for (const row of getRows()) {
       const key = row.dataset.searchKey || normalizeSearch(row.textContent || '');
-      const matches = !needle || key.includes(needle);
+      const matches = matchesSearchKey(key, queryText);
       row.hidden = !matches;
       row.classList.toggle('is-filtered-out', !matches);
       row.setAttribute('aria-hidden', matches ? 'false' : 'true');

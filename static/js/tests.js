@@ -2,7 +2,7 @@
 // Test catalog management for admin `/tests`.
 /* global fetch */
 
-import { normalizeSearch, searchKeyForText } from './shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
 
 const $ = (sel) => document.querySelector(sel);
 const CT = { 'Content-Type': 'application/json' };
@@ -852,7 +852,10 @@ function statForTest(test) {
 
 function syncStatsControls() {
   const search = $('#statSearch');
-  if (search && search.value !== ui.statsSearch) search.value = ui.statsSearch;
+  if (search) {
+    applySearchPlaceholder(search, '시험명, 과목, 레벨 검색');
+    if (search.value !== ui.statsSearch) search.value = ui.statsSearch;
+  }
   const sort = $('#statSort');
   if (sort) sort.value = ui.statsSort;
 }
@@ -909,17 +912,17 @@ function renderStatsTable() {
   if (!tbody) return;
   syncStatsControls();
   const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
-  const query = normalizeSearch(ui.statsSearch);
+  const queryText = ui.statsSearch || '';
   const rows = getCategoryTests(def.key).map(test => ({
     ...test,
     typeLabel: def.label,
     stat: statForTest(test),
   }))
-    .filter(row => !query || statsSearchText(row).includes(query))
+    .filter(row => matchesSearchKey(statsSearchText(row), queryText))
     .sort(compareStatsRows);
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${query ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${queryText.trim() ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
     return;
   }
 

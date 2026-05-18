@@ -4,7 +4,7 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { setArriveOverride } from './today.state.js';
-import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 
 // ────────────────────────────────────────────
 // (선택) 오늘 순서 캐시 삭제 → 새 보강 추가 시 하단 고정 현상 방지
@@ -208,6 +208,7 @@ export function initExtraModal() {
   }
 
   const getRows = () => Array.from(document.querySelectorAll('#exZone .row'));
+  applySearchPlaceholder(exSearch, '학생 이름 검색');
 
   function escapeAttr(value) {
     return String(value ?? '')
@@ -230,12 +231,13 @@ export function initExtraModal() {
   }
 
   function applySearchFilter() {
-    const needle = normalizeSearch(exSearch?.value);
+    const queryText = exSearch?.value || '';
+    const needle = normalizeSearch(queryText);
     let visible = 0;
 
     for (const row of getRows()) {
       const key = row.dataset.searchKey || normalizeSearch(row.textContent || '');
-      const matches = !needle || key.includes(needle);
+      const matches = matchesSearchKey(key, queryText);
       row.hidden = !matches;
       row.classList.toggle('is-filtered-out', !matches);
       row.setAttribute('aria-hidden', matches ? 'false' : 'true');

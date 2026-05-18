@@ -10,7 +10,7 @@
 import { $, toast } from '../core/utils.js';
 import { patchField } from '../core/api.js';
 import { state } from '../core/state.js';
-import { normalizeSearch, searchKeyForText } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 
 const subCurrOptions = ['A:Ble', 'APEX'];
 const CURRICULUM_OPTIONS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
@@ -427,6 +427,7 @@ function bindAllStudentSearch() {
   const input = document.getElementById('allStudentSearchInput');
   if (!input || input.dataset.bound === '1') return;
   input.dataset.bound = '1';
+  applySearchPlaceholder(input, '학생 검색');
   input.addEventListener('input', applyAllStudentSearch);
   input.addEventListener('search', applyAllStudentSearch);
   input.addEventListener('compositionend', applyAllStudentSearch);
@@ -446,16 +447,16 @@ function applyAllStudentSearch() {
     return;
   }
 
-  const query = normalizeSearch(input.value);
+  const queryText = input.value || '';
   let visible = 0;
   rows.forEach(row => {
     const key = row.dataset.searchKey || searchKeyForText(row.textContent || '');
-    const show = !query || key.includes(query);
+    const show = matchesSearchKey(key, queryText);
     row.hidden = !show;
     row.style.display = show ? '' : 'none';
     if (show) visible += 1;
   });
-  if (hint) hint.textContent = query ? `${visible}/${rows.length}명` : '';
+  if (hint) hint.textContent = queryText.trim() ? `${visible}/${rows.length}명` : '';
 }
 
 /* ─────────────────────────────────────────

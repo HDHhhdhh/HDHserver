@@ -11,7 +11,7 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { normalizeSearch, searchKeyForText } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 
 let editingSid = null;
 let activeVideoList = [];
@@ -697,7 +697,7 @@ function selectedExtraVideoItems(selectedMids) {
 function extraVideoCandidates(assignedSet) {
   const subject = String(activeExtraSubject || '').trim();
   const sub = String(activeExtraSubCurriculum || '').trim();
-  const query = normalizeSearch(activeExtraQuery || '');
+  const queryText = activeExtraQuery || '';
 
   return (state.videos || [])
     .filter(v => {
@@ -705,9 +705,9 @@ function extraVideoCandidates(assignedSet) {
       if (!mid || activePrimaryVideoMids.has(mid)) return false;
       if (subject && videoCurriculum(v) !== subject) return false;
       if (sub && videoSubCurriculum(v) !== sub) return false;
-      if (query) {
+      if (queryText.trim()) {
         const hay = searchKeyForText([v.title, v.chapter, v.curriculum, v.subCurriculum].join(' '));
-        if (!hay.includes(query)) return false;
+        if (!matchesSearchKey(hay, queryText)) return false;
       }
       return true;
     })
@@ -1282,12 +1282,17 @@ export function initVideoModal() {
     activeExtraVideoSearchOpen = !activeExtraVideoSearchOpen;
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
     if (activeExtraVideoSearchOpen) {
-      requestAnimationFrame(() => $('extraVideoSearch')?.focus());
+      requestAnimationFrame(() => {
+        const input = $('extraVideoSearch');
+        applySearchPlaceholder(input, '영상 제목 검색');
+        input?.focus();
+      });
     }
   });
 
   chkZone.addEventListener('input', (e) => {
     if (e.target?.id !== 'extraVideoSearch') return;
+    applySearchPlaceholder(e.target, '영상 제목 검색');
     const selected = selectedVideoMids();
     activeExtraQuery = String(e.target.value || '');
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));

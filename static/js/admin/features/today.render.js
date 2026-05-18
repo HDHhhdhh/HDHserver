@@ -190,9 +190,19 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
     .chk4 .c input:disabled{cursor:not-allowed;opacity:.95}
+    #todayWrap table th:nth-last-child(2),
+    #todayWrap table td:nth-last-child(2){
+      width:104px;max-width:104px;white-space:nowrap;
+      padding-right:4px!important;
+    }
+    #todayWrap table th:last-child,
+    #todayWrap table td:last-child{
+      width:34px;min-width:34px;
+      padding-left:0!important;padding-right:4px!important;
+    }
     .makeup-count-cell{
-      text-align:left;width:48px;min-width:48px;
-      padding-left:4px!important;padding-right:8px!important;
+      text-align:left;width:34px;min-width:34px;
+      padding-left:0!important;padding-right:4px!important;
       font-weight:800
     }
     .makeup-count-badge{

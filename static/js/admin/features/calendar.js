@@ -4,7 +4,7 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
-import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { applySearchPlaceholder, matchesSearchKey, studentSearchKey } from '../../shared/search.js';
 import { buildPendingMakeups, formatMakeupDate, makeupPendingActivationDate } from './makeupPending.js';
 
 export function initCalendar() {
@@ -361,6 +361,7 @@ export function initCalendar() {
     `);
 
     const search = $('makeupPlannerSearch');
+    applySearchPlaceholder(search, '보강 학생 검색');
     search?.addEventListener('input', renderMakeupPlanner);
     search?.addEventListener('search', renderMakeupPlanner);
     search?.addEventListener('compositionend', renderMakeupPlanner);
@@ -404,28 +405,27 @@ export function initCalendar() {
     const search = $('makeupPlannerSearch');
     if (!list) return;
 
-    const query = normalizeSearch(search?.value || '');
+    const queryText = search?.value || '';
     const items = getPendingMakeups();
     const visible = items.filter(item => {
-      if (!query) return true;
       const key = studentSearchKey(item.student, [
         item.school,
         item.course,
         item.absenceDate,
         formatMakeupDate(item.absenceDate),
       ]);
-      return key.includes(query);
+      return matchesSearchKey(key, queryText);
     });
 
     if (hint) {
       const suffix = makeupSelection ? ' 날짜 선택 중' : '';
-      hint.textContent = query
+      hint.textContent = queryText.trim()
         ? `${visible.length}/${items.length}명${suffix}`
         : `${items.length}건${suffix}`;
     }
 
     if (!visible.length) {
-      list.innerHTML = `<div class="makeup-empty">${query ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
+      list.innerHTML = `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
       return;
     }
 
@@ -614,14 +614,21 @@ export function initCalendar() {
     return Math.max(56, Math.round(h));
   }
 
+  function canScrollCalendar(delta) {
+    const max = calendarEl.scrollHeight - calendarEl.clientHeight;
+    if (max <= 1) return false;
+    if (delta > 0) return calendarEl.scrollTop < max - 1;
+    return calendarEl.scrollTop > 1;
+  }
+
   calendarEl.addEventListener('wheel', (ev) => {
     const delta = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
-    if (Math.abs(delta) < 24) return;
+    if (Math.abs(delta) < 24 || !canScrollCalendar(delta)) return;
     ev.preventDefault();
+    ev.stopPropagation();
     if (wheelRowLocked) return;
     wheelRowLocked = true;
-    const target = document.scrollingElement || document.documentElement;
-    target.scrollBy({
+    calendarEl.scrollBy({
       top: (delta > 0 ? 1 : -1) * calendarRowScrollAmount(),
       behavior: 'smooth',
     });

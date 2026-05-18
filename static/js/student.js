@@ -23,6 +23,67 @@ try {
   if (window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
 } catch {}
 
+const STUDENT_SEARCH_HELP_TEXT = '초성 검색 · 띄어쓰기=AND';
+const STUDENT_HANGUL_INITIALS = [
+  '\u3131', '\u3132', '\u3134', '\u3137', '\u3138', '\u3139', '\u3141', '\u3142', '\u3143',
+  '\u3145', '\u3146', '\u3147', '\u3148', '\u3149', '\u314a', '\u314b', '\u314c', '\u314d', '\u314e',
+];
+const STUDENT_COMPOUND_INITIALS = new Map([
+  ['\u3133', '\u3131\u3145'],
+  ['\u3135', '\u3134\u3148'],
+  ['\u3136', '\u3134\u314e'],
+  ['\u313a', '\u3139\u3131'],
+  ['\u313b', '\u3139\u3141'],
+  ['\u313c', '\u3139\u3142'],
+  ['\u313d', '\u3139\u3145'],
+  ['\u313e', '\u3139\u314c'],
+  ['\u313f', '\u3139\u314d'],
+  ['\u3140', '\u3139\u314e'],
+  ['\u3144', '\u3142\u3145'],
+]);
+
+function studentSearchPlaceholder(label = '검색') {
+  return window.SearchUtils?.searchPlaceholder?.(label) || `${label} (${STUDENT_SEARCH_HELP_TEXT})`;
+}
+
+function studentNormalizeSearch(value) {
+  if (window.SearchUtils?.normalizeSearch) return window.SearchUtils.normalizeSearch(value);
+  return Array.from(String(value || ''))
+    .map(ch => STUDENT_COMPOUND_INITIALS.get(ch) || ch)
+    .join('')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+function studentSearchTerms(value) {
+  if (window.SearchUtils?.searchTerms) return window.SearchUtils.searchTerms(value);
+  return String(value || '').trim().split(/\s+/).map(studentNormalizeSearch).filter(Boolean);
+}
+
+function studentHangulInitials(value) {
+  return Array.from(String(value || '')).map(ch => {
+    const code = ch.charCodeAt(0);
+    if (code < 0xac00 || code > 0xd7a3) return ch;
+    return STUDENT_HANGUL_INITIALS[Math.floor((code - 0xac00) / 588)] || ch;
+  }).join('');
+}
+
+function studentSearchKeyForText(value) {
+  if (window.SearchUtils?.searchKeyForText) return window.SearchUtils.searchKeyForText(value);
+  const raw = String(value || '');
+  return studentNormalizeSearch([raw, studentHangulInitials(raw)].join(' '));
+}
+
+function studentMatchesSearchKey(key, query) {
+  if (window.SearchUtils?.matchesSearchKey) return window.SearchUtils.matchesSearchKey(key, query);
+  const terms = studentSearchTerms(query);
+  if (!terms.length) return true;
+  const hay = String(key || '');
+  return terms.every(term => hay.includes(term));
+}
+
+
 // ===== [중요] HTML <head>에 아래 스크립트를 추가해야 VG Controller가 동작합니다 =====
 // <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
 
@@ -623,7 +684,7 @@ window.todayLocalKey = function () {
       ctrl.innerHTML = `
         <div class="crumb" id="matCrumb"></div>
         <div class="right">
-          <input id="matSearch" type="search" placeholder="검색" />
+          <input id="matSearch" type="search" placeholder="${studentSearchPlaceholder('검색')}" />
           <button id="matMode" class="toggle" aria-pressed="false">폴더 보기</button>
         </div>
       `;
@@ -754,15 +815,15 @@ window.todayLocalKey = function () {
     function renderMat() {
       const list = $('matList'); if (!list) return;
       renderCrumb();
-      const q = state.query.toLowerCase();
+      const q = state.query;
 
       if (state.mode === 'tree') {
         const cur = getNode(state.curPath) || tree;
         const folders = Array.from(cur.children.values())
-          .filter(nd => !q || nd.name.toLowerCase().includes(q))
+          .filter(nd => studentMatchesSearchKey(studentSearchKeyForText(nd.name), q))
           .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
         const files = (cur.files || [])
-          .filter(f => !q || (f.title || f.name).toLowerCase().includes(q))
+          .filter(f => studentMatchesSearchKey(studentSearchKeyForText([f.title, f.name].join(' ')), q))
           .sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, 'ko'));
 
         list.textContent = '';
@@ -778,7 +839,9 @@ window.todayLocalKey = function () {
         (function walk(nd, acc = []) {
           for (const f of (nd.files || [])) {
             const t = f.title || f.name;
-            if (!q || t.toLowerCase().includes(q)) all.push({ title: t, url: f.url, path: acc.join('/') });
+            if (studentMatchesSearchKey(studentSearchKeyForText([t, acc.join('/')].join(' ')), q)) {
+              all.push({ title: t, url: f.url, path: acc.join('/') });
+            }
           }
           for (const ch of nd.children.values()) walk(ch, [...acc, ch.name]);
         })(tree, []);

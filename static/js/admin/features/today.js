@@ -13,6 +13,8 @@
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import {
+  applySearchPlaceholder,
+  matchesSearchKey,
   normalizeSearch as normalizeSharedSearch,
   searchKeyForText as sharedSearchKeyForText,
 } from '../../shared/search.js';
@@ -266,6 +268,7 @@ function ensureTodaySearchControls(tools) {
 
   const field = search.querySelector('#todaySearchField');
   const input = search.querySelector('#todaySearchInput');
+  applySearchPlaceholder(input, '오늘 학생 검색');
   field.value = _todaySearchField;
   field.addEventListener('change', () => {
     _todaySearchField = TODAY_SEARCH_FIELDS.has(field.value) ? field.value : 'all';
@@ -386,7 +389,7 @@ function applyTodaySearchFilter() {
   const hint = document.getElementById('todaySearchHint');
   if (!host || !input) return;
 
-  const query = normalizeSearch(input.value);
+  const queryText = input.value || '';
   const mode = TODAY_SEARCH_FIELDS.has(field?.value) ? field.value : _todaySearchField;
   const rows = Array.from(host.querySelectorAll('tr[data-sid]'));
   let visible = 0;
@@ -395,7 +398,7 @@ function applyTodaySearchFilter() {
     const sid = String(row.dataset.sid || '');
     const stu = (state.students || []).find(s => String(s.id) === sid);
     const key = stu ? studentSearchKey(stu, mode) : searchKeyForText(row.textContent || '');
-    const matches = !query || key.includes(query);
+    const matches = matchesSearchKey(key, queryText);
     row.hidden = !matches;
     row.classList.toggle('is-search-hidden', !matches);
     row.setAttribute('aria-hidden', matches ? 'false' : 'true');
@@ -403,7 +406,7 @@ function applyTodaySearchFilter() {
   }
 
   if (hint) {
-    hint.textContent = query ? `${visible}/${rows.length}명` : '';
+    hint.textContent = queryText.trim() ? `${visible}/${rows.length}명` : '';
   }
 }
 
