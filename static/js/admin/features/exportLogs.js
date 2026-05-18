@@ -24,6 +24,7 @@ import {
 } from './today.state.js';
 
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
+const ROSTER_TEXT_DEFAULT = '📢 도착 예정 시간 알려주세요!';
 
 /* ─────────────────────────────────────────────
  * ✅ 숙제 출력(헤더 포함, 괄호 제거 버전)
@@ -284,7 +285,7 @@ function rosterToCsv(rows) {
     lines.push([
       row.time || '',
       row.chatName || '',
-      '',
+      row.text || ROSTER_TEXT_DEFAULT,
     ].map(csvCell).join(','));
   });
 
