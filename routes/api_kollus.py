@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import re
 import time
 from urllib.parse import urlencode
 
 import jwt
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, abort, jsonify, request
 
-from routes.api_watch import _save_progress_status, _save_watch_entry
+from core.paths import STU_PATH, VID_PATH
+from core.storage import load
+from routes.api_watch import (
+    WATCH_DONE_RATIO,
+    WATCH_INTERRUPTED_RATIO,
+    _save_progress_status,
+    _save_watch_entry,
+)
 
 bp_api_kollus = Blueprint("api_kollus", __name__)
 
@@ -16,6 +25,7 @@ KOLLUS_POLICY_KEY = "서비스키"
 KOLLUS_SERVICE_KEY = "시크릿키"
 TOKEN_EXPIRE_SEC = 36000
 KST = dt.timezone(dt.timedelta(hours=9))
+MID_RE = re.compile(r"^[A-Za-z0-9_-]{4,128}$")
 
 
 def kollus_signed_url(mid: str, client_ip: str, sid: str = "") -> str:
@@ -49,6 +59,35 @@ def local_only(f):
         return f(*args, **kwargs)
 
     return wrapper
+
+
+def _known_mid(mid: str) -> bool:
+    mid = str(mid or "").strip()
+    if not MID_RE.fullmatch(mid):
+        return False
+    videos = load(VID_PATH) or []
+    return any(isinstance(v, dict) and str(v.get("mid") or "").strip() == mid for v in videos)
+
+
+def _known_sid(sid: str) -> bool:
+    sid = str(sid or "").strip()
+    if not sid:
+        return False
+    students = load(STU_PATH) or []
+    return any(isinstance(s, dict) and str(s.get("id") or "").strip() == sid for s in students)
+
+
+def _callback_secret_ok() -> bool:
+    expected = str(os.environ.get("KOLLUS_CALLBACK_SECRET") or "").strip()
+    if not expected:
+        return True
+    provided = (
+        request.headers.get("X-Kollus-Secret")
+        or request.args.get("token")
+        or request.form.get("token")
+        or ""
+    )
+    return str(provided).strip() == expected
 
 
 def _pick_mapping_value(mapping: dict, *keys: str):
@@ -146,8 +185,8 @@ def _extract_callback_fields() -> dict:
     play_time = max(0, _to_int(play_time, 0))
     real_playtime = max(0, _to_int(real_playtime, 0))
 
-    completed = pct >= 95
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    completed = (pct / 100) >= WATCH_DONE_RATIO
+    if dur > 0 and (last / dur) >= WATCH_DONE_RATIO:
         completed = True
 
     return {
@@ -168,19 +207,32 @@ def _extract_callback_fields() -> dict:
 def api_get_url():
     mid = str(request.args.get("mid", "") or "").strip()
     sid = str(request.args.get("sid", "") or "").strip()
-    if not mid:
+    if not mid or not MID_RE.fullmatch(mid):
         return jsonify({"ok": False, "error": "missing mid"}), 400
+    if not _known_mid(mid):
+        return jsonify({"ok": False, "error": "unknown mid"}), 404
+    if sid and not _known_sid(sid):
+        return jsonify({"ok": False, "error": "unknown sid"}), 404
     client_ip = get_real_client_ip()
     return kollus_signed_url(mid, client_ip, sid=sid)
 
 
 @bp_api_kollus.route("/api/kollus/lms-callback", methods=["GET", "POST"])
 def api_kollus_lms_callback():
+    if not _callback_secret_ok():
+        abort(403)
+
     payload = _extract_callback_fields()
     sid = payload["sid"]
     mid = payload["mid"]
     if not sid or not mid:
         return jsonify({"ok": False, "error": "missing sid/mid"}), 400
+    if not MID_RE.fullmatch(mid):
+        return jsonify({"ok": False, "error": "bad mid"}), 400
+    if not _known_sid(sid):
+        return jsonify({"ok": False, "error": "unknown sid"}), 404
+    if not _known_mid(mid):
+        return jsonify({"ok": False, "error": "unknown mid"}), 404
 
     has_progress = (
         payload["completed"]
@@ -210,7 +262,7 @@ def api_kollus_lms_callback():
     elif payload["dur"] <= 0:
         if payload["last"] > 0 or payload["play_time"] > 0 or payload["real_playtime"] > 0:
             status = "interrupted"
-    elif payload["pct"] >= 5:
+    elif (payload["pct"] / 100) >= WATCH_INTERRUPTED_RATIO:
         status = "interrupted"
 
     progress = _save_progress_status(payload["date"], sid, mid, status) if status else {}

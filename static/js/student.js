@@ -62,6 +62,10 @@ window.todayLocalKey = function () {
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
+  let courseBlocked = false;
+  let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
+  let courseVideosCompleted = false;
+  const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -82,7 +86,7 @@ window.todayLocalKey = function () {
     const last = Math.max(0, Number(entry.last) || 0);
     const dur = Math.max(0, Number(entry.dur) || 0);
     const updatedAt = Math.max(0, Number(entry.updatedAt) || 0);
-    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last: Math.floor(last),
@@ -98,7 +102,7 @@ window.todayLocalKey = function () {
 
     const last = Math.max(a.last, b.last);
     const dur = Math.max(a.dur, b.dur);
-    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last,
@@ -197,7 +201,7 @@ window.todayLocalKey = function () {
 
       const pct = snap.dur > 0 ? (snap.last / snap.dur) : 0;
       let status = null;
-      if (pct >= 0.95) status = 'done';
+      if (pct >= 0.90) status = 'done';
       else if (pct >= 0.05) status = 'interrupted';
 
       if (status) {
@@ -293,16 +297,51 @@ window.todayLocalKey = function () {
   }
 
   /* ───────────── 데이터 로드 ───────────── */
-  Promise.all([
-    fetch("/api/students").then(r => r.json()),
-    fetch("/api/videos").then(r => r.json()),
-    fetch("/api/updates").then(r => r.json()).catch(() => ({})),
-    fetch("/api/materials").then(r => r.json()).catch(() => ({})),
-    fetch("/api/mat-assign").then(r => r.json()).catch(() => ({})),
-    fetch("/api/absent").then(r => r.json()).catch(() => ({})),
-    fetch("/api/logs").then(r => r.json()).catch(() => ({})),
-    fetch(`/api/watch/latest?sid=${encodeURIComponent(sid)}`).then(r => r.json()).catch(() => ({}))
-  ]).then(init).catch(err => alert("데이터 로드 실패\n" + err));
+  async function loadInitialData() {
+    const today = todayLocalKey();
+    const watchReq = fetch(`/api/watch/latest?sid=${encodeURIComponent(sid)}`)
+      .then(r => r.json()).catch(() => ({}));
+
+    try {
+      const q = new URLSearchParams({ sid: String(sid), date: today }).toString();
+      const res = await fetch(`/api/student/bootstrap?${q}`, { cache: 'no-store' });
+      if (res.ok) {
+        const b = await res.json();
+        return [
+          Array.isArray(b.students) ? b.students : (b.student ? [b.student] : []),
+          Array.isArray(b.videos) ? b.videos : [],
+          b.updates || {},
+          b.materials || {},
+          b.assigns || {},
+          b.absent || {},
+          b.logs || {},
+          await watchReq,
+          {
+            courseBlocked: b.courseBlocked === true,
+            blockMessage: b.blockMessage || '',
+            courseVideosCompleted: b.courseVideosCompleted === true,
+          },
+        ];
+      }
+      if (res.status !== 404) throw new Error(`bootstrap ${res.status}`);
+    } catch (err) {
+      console.warn('[student] bootstrap failed, using legacy load:', err);
+    }
+
+    return Promise.all([
+      fetch("/api/students").then(r => r.json()),
+      fetch("/api/videos").then(r => r.json()),
+      fetch("/api/updates").then(r => r.json()).catch(() => ({})),
+      fetch("/api/materials").then(r => r.json()).catch(() => ({})),
+      fetch("/api/mat-assign").then(r => r.json()).catch(() => ({})),
+      fetch("/api/absent").then(r => r.json()).catch(() => ({})),
+      fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
+      watchReq,
+      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false },
+    ]);
+  }
+
+  loadInitialData().then(init).catch(err => alert("데이터 로드 실패\n" + err));
 
   /* ───────────── 자동배정 헬퍼 ───────────── */
 
@@ -391,10 +430,10 @@ window.todayLocalKey = function () {
     todayMap[sidStr] = last.map(String);
     nextUpdates[today] = todayMap;
 
-    await fetch('/api/updates', {
+    await fetch('/api/updates/patch', {
       method: 'POST',
       headers: CT,
-      body: JSON.stringify(nextUpdates)
+      body: JSON.stringify({ date: today, sid: sidStr, videos: last.map(String) })
     });
 
     updatesCache = nextUpdates;
@@ -455,7 +494,7 @@ window.todayLocalKey = function () {
   }
 
   /* ───────────── main ───────────── */
-  async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw]) {
+  async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw, bootstrapMeta]) {
     let stu = stuArr.find(s => String(s.id) === String(sid));
     if (!stu) {
       const recoveredSid = await recoverStudentSid(stuArr, sid);
@@ -474,6 +513,9 @@ window.todayLocalKey = function () {
     updatesCache = upd || {};
     absentByDateCache = normalizeAbsentByDate(absentRaw);
     logsCache = logsRaw || {};
+    courseBlocked = bootstrapMeta?.courseBlocked === true;
+    courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
+    courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
     mergeServerWatchIntoLocal((watchRaw && typeof watchRaw.watch === 'object') ? watchRaw.watch : {});
 
     const nameEl = $('stuName');
@@ -639,9 +681,20 @@ window.todayLocalKey = function () {
 
     function renderCrumb() {
       const el = $('matCrumb'); if (!el) return;
-      const parts = ['<a data-idx="-1">/</a>'];
-      state.curPath.forEach((s, i) => { parts.push(`<span class="sep">›</span><a data-idx="${i}">${s}</a>`); });
-      el.innerHTML = parts.join(' ');
+      el.textContent = '';
+      const root = document.createElement('a');
+      root.dataset.idx = '-1';
+      root.textContent = '/';
+      el.appendChild(root);
+      state.curPath.forEach((s, i) => {
+        const sep = document.createElement('span');
+        sep.className = 'sep';
+        sep.textContent = '›';
+        const link = document.createElement('a');
+        link.dataset.idx = String(i);
+        link.textContent = s;
+        el.append(' ', sep, ' ', link);
+      });
       el.querySelectorAll('a[data-idx]').forEach(a => {
         a.addEventListener('click', () => {
           const idx = +a.dataset.idx;
@@ -651,16 +704,51 @@ window.todayLocalKey = function () {
     }
 
     function liFolder(name, count) {
-      return `<li class="mat-folder" data-type="dir" data-name="${name}">
-        <span>📁</span> <span>${name}</span> <span class="muted">(${count})</span>
-      </li>`;
+      const li = document.createElement('li');
+      li.className = 'mat-folder';
+      li.dataset.type = 'dir';
+      li.dataset.name = String(name || '');
+
+      const icon = document.createElement('span');
+      icon.textContent = '📁';
+      const label = document.createElement('span');
+      label.textContent = String(name || '');
+      const badge = document.createElement('span');
+      badge.className = 'muted';
+      badge.textContent = `(${count})`;
+
+      li.append(icon, label, badge);
+      return li;
     }
     function liFile(title, url, pathHint) {
       const disp = cleanDisplayName(title);
-      return `<li class="mat-file" data-type="file">
-        <span>📄</span> <a href="${url}" download>${disp}</a>
-        ${pathHint ? `<span class="muted" style="margin-left:6px">(${pathHint})</span>` : ''}
-      </li>`;
+      const li = document.createElement('li');
+      li.className = 'mat-file';
+      li.dataset.type = 'file';
+
+      const icon = document.createElement('span');
+      icon.textContent = '📄';
+      const link = document.createElement('a');
+      link.href = String(url || '');
+      link.download = '';
+      link.textContent = disp;
+
+      li.append(icon, link);
+      if (pathHint) {
+        const hint = document.createElement('span');
+        hint.className = 'muted';
+        hint.style.marginLeft = '6px';
+        hint.textContent = `(${pathHint})`;
+        li.append(hint);
+      }
+      return li;
+    }
+
+    function appendEmptyMatMessage(list, text) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = text;
+      list.appendChild(li);
     }
 
     function renderMat() {
@@ -677,9 +765,10 @@ window.todayLocalKey = function () {
           .filter(f => !q || (f.title || f.name).toLowerCase().includes(q))
           .sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, 'ko'));
 
-        list.innerHTML =
-          (folders.map(nd => liFolder(nd.name, nd.files.length + nd.children.size)).join('')) +
-          (files.map(f => liFile(f.title || f.name, f.url)).join('')) || '<li class="muted">이 폴더에 항목이 없습니다</li>';
+        list.textContent = '';
+        folders.forEach(nd => list.appendChild(liFolder(nd.name, nd.files.length + nd.children.size)));
+        files.forEach(f => list.appendChild(liFile(f.title || f.name, f.url)));
+        if (!folders.length && !files.length) appendEmptyMatMessage(list, '이 폴더에 항목이 없습니다');
 
         list.querySelectorAll('li[data-type="dir"]').forEach(li => {
           li.addEventListener('click', () => setPath([...state.curPath, li.getAttribute('data-name')]));
@@ -694,7 +783,9 @@ window.todayLocalKey = function () {
           for (const ch of nd.children.values()) walk(ch, [...acc, ch.name]);
         })(tree, []);
         all.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
-        list.innerHTML = all.map(f => liFile(f.title, f.url, f.path)).join('') || '<li class="muted">표시할 파일이 없습니다</li>';
+        list.textContent = '';
+        all.forEach(f => list.appendChild(liFile(f.title, f.url, f.path)));
+        if (!all.length) appendEmptyMatMessage(list, '표시할 파일이 없습니다');
       }
     }
 
@@ -738,6 +829,18 @@ window.todayLocalKey = function () {
 
     const today = todayLocalKey();
 
+    if (courseBlocked) {
+      if (listBox) {
+        listBox.textContent = '';
+        const li = document.createElement('li');
+        li.style.opacity = '.75';
+        li.textContent = courseBlockMessage;
+        listBox.appendChild(li);
+      }
+      if (frame) frame.src = "";
+      return;
+    }
+
     // ❌ 결석이면 오늘 영상 표시 금지
     {
       const absList = (absentByDateCache?.[today] || []);
@@ -774,7 +877,10 @@ window.todayLocalKey = function () {
       // if (fixed) return renderAssignedList();
 
       if (listBox) {
-        listBox.innerHTML = "<li style='opacity:.65'>오늘 할당된 영상이 없습니다 문의 부탁</li>";
+        const msg = courseVideosCompleted
+          ? COURSE_VIDEOS_COMPLETED_MESSAGE
+          : "오늘 할당된 영상이 없습니다 문의 부탁";
+        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
       if (frame) frame.src = "";
       return;
@@ -794,7 +900,10 @@ window.todayLocalKey = function () {
     if (!myVids.length) {
       // 매칭되는 영상이 정말 하나도 없을 때만 빈 상태 처리
       if (listBox) {
-        listBox.innerHTML = "<li style='opacity:.65'>오늘 할당된 영상이 없습니다 문의 부탁</li>";
+        const msg = courseVideosCompleted
+          ? COURSE_VIDEOS_COMPLETED_MESSAGE
+          : "오늘 할당된 영상이 없습니다 문의 부탁";
+        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
       if (frame) frame.src = "";
       return;
@@ -804,22 +913,41 @@ window.todayLocalKey = function () {
     myVids.sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
 
     if (listBox) {
-      listBox.innerHTML = myVids.map((v, i) => {
+      listBox.textContent = '';
+      myVids.forEach((v, i) => {
         const num = v.exNum?.[essayBandOf(stuCache.level)] || '';
         const prog = getProgress(v.mid);
         const done = prog?.completed;
         const pct = (prog?.dur > 0)
           ? Math.min(100, Math.round((prog.last || 0) / prog.dur * 100))
           : 0;
-        const badge = done
-          ? ` <span class="badge-done">✅</span>`
-          : (pct ? ` <span class="badge-done" title="진행도">${fmtPct(pct)}</span>` : '');
-        return `
-  <li data-mid="${v.mid}" class="${i === 0 ? 'active' : ''}">
-    <span class="video-main">${v.chapter}. ${v.title}${badge}</span>
-    ${num ? `<span class="essay-badge">[서술형 ${num}번]</span>` : ''}
-  </li>`;
-      }).join("");
+
+        const li = document.createElement('li');
+        li.dataset.mid = String(v.mid ?? '');
+        if (i === 0) li.className = 'active';
+
+        const main = document.createElement('span');
+        main.className = 'video-main';
+        main.append(`${v.chapter}. ${v.title}`);
+
+        if (done || pct) {
+          const badge = document.createElement('span');
+          badge.className = 'badge-done';
+          badge.textContent = done ? '✅' : fmtPct(pct);
+          if (!done) badge.title = '진행도';
+          main.append(' ', badge);
+        }
+        li.appendChild(main);
+
+        if (num) {
+          const essay = document.createElement('span');
+          essay.className = 'essay-badge';
+          essay.textContent = `[서술형 ${num}번]`;
+          li.appendChild(essay);
+        }
+
+        listBox.appendChild(li);
+      });
     }
 
     const preferMid = getLastMid();
@@ -917,7 +1045,7 @@ window.todayLocalKey = function () {
               const dur = await controller.getDuration?.();
               if (Number.isFinite(pos) && Number.isFinite(dur) && dur > 0) {
                 const pct = (pos / dur) * 100;
-                const ended = pct >= 95 || pos >= dur - 1;
+                const ended = pct >= 90 || pos >= dur - 1;
                 if (Math.abs(pos - lastSent) >= 1) {
                   repost('kollus.progress', { currentTime: pos, duration: dur, ended });
                   lastSent = pos;
@@ -980,7 +1108,7 @@ window.todayLocalKey = function () {
       const dur = Math.max(0, Number(data.duration) || 0);
       const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
       const pct = dur > 0 ? (cur / dur) : 0;
-      const doneByPct = pct >= 0.95;
+      const doneByPct = pct >= 0.90;
       setProgress(data.mid, {
         last: cur,
         dur,
@@ -1059,6 +1187,35 @@ window.todayLocalKey = function () {
     return true;
   }
 
+  function fieldName(...parts) {
+    return parts.map(part => String(part ?? '')).join('_');
+  }
+
+  function namedInputs(name) {
+    return Array.from(document.getElementsByName(String(name)));
+  }
+
+  function appendRequiredBadge(el, required) {
+    if (!required) return;
+    const reqBadge = document.createElement('span');
+    reqBadge.style.color = '#ef4444';
+    reqBadge.style.fontWeight = '600';
+    reqBadge.textContent = ' (필수)';
+    el.appendChild(reqBadge);
+  }
+
+  function appendChoice(parent, type, name, value, checked, labelText) {
+    const label = document.createElement('label');
+    label.style.display = 'block';
+    const input = document.createElement('input');
+    input.type = type;
+    input.name = String(name);
+    input.value = String(value);
+    input.checked = !!checked;
+    label.append(input, ` ${labelText ?? ''}`);
+    parent.appendChild(label);
+  }
+
   function loadAnnouncements() {
     Promise.all([
       fetch('/api/announcements', { cache: 'no-store' }).then(r => r.json()),
@@ -1124,16 +1281,23 @@ window.todayLocalKey = function () {
       pollBox.style.display = '';
       pollQ.textContent = a.poll.question;
       const type = a.poll.multiple ? 'checkbox' : 'radio';
-      const name = `poll_${a.id}`;
+      const name = fieldName('poll', a.id);
       const st = statusMap[a.id]?.poll;
 
-      pollOptsBox.innerHTML = a.poll.options.map((opt, i) => {
+      pollOptsBox.textContent = '';
+      a.poll.options.forEach((opt, i) => {
         const checked = Array.isArray(st) ? st.includes(i) : (st === i);
-        return `<label style="display:block;margin:.25rem 0">
-          <input type="${type}" name="${name}" value="${i}" ${checked ? 'checked' : ''}>
-          ${opt}
-        </label>`;
-      }).join('');
+        const label = document.createElement('label');
+        label.style.display = 'block';
+        label.style.margin = '.25rem 0';
+        const input = document.createElement('input');
+        input.type = type;
+        input.name = name;
+        input.value = String(i);
+        input.checked = checked;
+        label.append(input, ` ${opt ?? ''}`);
+        pollOptsBox.appendChild(label);
+      });
     } else {
       pollBox.style.display = 'none';
       pollOptsBox.innerHTML = '';
@@ -1142,36 +1306,33 @@ window.todayLocalKey = function () {
     if (Array.isArray(a.survey) && a.survey.length) {
       surveyBox.style.display = '';
       const st = statusMap[a.id]?.survey || {};
-      surveyBox.innerHTML = a.survey.map(q => {
+      surveyBox.textContent = '';
+      a.survey.forEach(q => {
         const val = st[q.id] ?? '';
-        const reqBadge = q.required ? ' <span style="color:#ef4444;font-weight:600">(필수)</span>' : '';
+        const field = fieldName(a.id, q.id);
+        const wrap = document.createElement('div');
+        wrap.style.margin = '.5rem 0';
+        const label = document.createElement('div');
+        label.style.fontWeight = '600';
+        label.textContent = q.label ?? '';
+        appendRequiredBadge(label, q.required);
+        wrap.appendChild(label);
+
         if (q.type === 'radio' && Array.isArray(q.options) && q.options.length) {
-          return `
-            <div style="margin:.5rem 0">
-              <div style="font-weight:600">${q.label}${reqBadge}</div>
-              ${q.options.map(op => `
-                <label style="display:block">
-                  <input type="radio" name="${a.id}_${q.id}" value="${op}" ${val === op ? 'checked' : ''}> ${op}
-                </label>`).join('')}
-            </div>`;
-        }
-        if (q.type === 'checkbox' && Array.isArray(q.options) && q.options.length) {
+          q.options.forEach(op => appendChoice(wrap, 'radio', field, op, val === op, op));
+        } else if (q.type === 'checkbox' && Array.isArray(q.options) && q.options.length) {
           const arr = Array.isArray(val) ? val : [];
-          return `
-            <div style="margin:.5rem 0">
-              <div style="font-weight:600">${q.label}${reqBadge}</div>
-              ${q.options.map(op => `
-                <label style="display:block">
-                  <input type="checkbox" name="${a.id}_${q.id}" value="${op}" ${arr.includes(op) ? 'checked' : ''}> ${op}
-                </label>`).join('')}
-            </div>`;
+          q.options.forEach(op => appendChoice(wrap, 'checkbox', field, op, arr.includes(op), op));
+        } else {
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.name = field;
+          input.value = typeof val === 'string' ? val : '';
+          input.style.width = '100%';
+          wrap.appendChild(input);
         }
-        return `
-          <div style="margin:.5rem 0">
-            <div style="font-weight:600">${q.label}${reqBadge}</div>
-            <input type="text" name="${a.id}_${q.id}" value="${(typeof val === 'string' ? val : '')}" style="width:100%">
-          </div>`;
-      }).join('');
+        surveyBox.appendChild(wrap);
+      });
     } else {
       surveyBox.style.display = 'none';
       surveyBox.innerHTML = '';
@@ -1183,12 +1344,12 @@ window.todayLocalKey = function () {
 
     let pollAnswer = null;
     if (active.poll && active.poll.question) {
-      const name = `poll_${active.id}`;
+      const name = fieldName('poll', active.id);
       if (active.poll.multiple) {
-        pollAnswer = Array.from(document.querySelectorAll(`input[name="${name}"]:checked`))
+        pollAnswer = namedInputs(name).filter(i => i.checked)
           .map(i => parseInt(i.value, 10));
       } else {
-        const r = document.querySelector(`input[name="${name}"]:checked`);
+        const r = namedInputs(name).find(i => i.checked);
         pollAnswer = r ? parseInt(r.value, 10) : null;
       }
     }
@@ -1197,14 +1358,15 @@ window.todayLocalKey = function () {
     if (Array.isArray(active.survey) && active.survey.length) {
       surveyAnswers = {};
       for (const q of active.survey) {
+        const name = fieldName(active.id, q.id);
         if (q.type === 'checkbox') {
-          const arr = Array.from(document.querySelectorAll(`input[name="${active.id}_${q.id}"]:checked`)).map(i => i.value);
+          const arr = namedInputs(name).filter(i => i.checked).map(i => i.value);
           surveyAnswers[q.id] = arr;
         } else if (q.type === 'radio') {
-          const r = document.querySelector(`input[name="${active.id}_${q.id}"]:checked`);
+          const r = namedInputs(name).find(i => i.checked);
           surveyAnswers[q.id] = r ? r.value : null;
         } else {
-          const t = document.querySelector(`input[name="${active.id}_${q.id}"]`);
+          const t = namedInputs(name)[0];
           surveyAnswers[q.id] = t ? t.value : '';
         }
       }
@@ -1694,13 +1856,16 @@ window.todayLocalKey = function () {
         // 마지막 백업: logs.json 직접 머지
         try {
           const today = todayLocalKey();
-          const logs = await fetch('/api/logs', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-          logs[today] = logs[today] || {};
-          const entry = logs[today][sid] || {};
-          const tests = Array.isArray(entry.tests) ? entry.tests : [];
+          const logs = await fetch(`/api/logs/entry?date=${encodeURIComponent(today)}&sid=${encodeURIComponent(sid)}`, { cache: 'no-store' })
+            .then(r => r.json()).catch(() => ({}));
+          const entry = (logs && logs.entry && typeof logs.entry === 'object') ? logs.entry : {};
+          const tests = Array.isArray(entry.tests) ? entry.tests.slice() : [];
           tests.push({ name: fullName, score, wrong: graded.wrong, memo, createdAt: new Date().toISOString() });
-          logs[today][sid] = { ...entry, tests };
-          const ok = await fetch('/api/logs', { method: 'POST', headers: CT, body: JSON.stringify(logs) });
+          const ok = await fetch('/api/logs/patch', {
+            method: 'POST',
+            headers: CT,
+            body: JSON.stringify({ date: today, sid, entry: { tests } })
+          });
           if (!ok.ok) throw new Error(String(ok.status));
         } catch {
           alert('제출 실패: 나중에 다시 시도해주세요.');

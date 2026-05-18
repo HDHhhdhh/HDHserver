@@ -38,7 +38,8 @@
 
       <div class="rail-shortcuts">
         <button class="rail-cta" type="button" data-ui-action="open-extra">+ 보강 등록</button>
-        <button class="rail-cta muted" type="button" id="exportTodayCsv">오늘 명단 CSV</button>
+        <button class="rail-cta danger" type="button" data-ui-action="open-absent">결석 등록</button>
+        <button class="rail-cta muted" type="button" id="exportRosterRail">명단 내보내기</button>
       </div>
     </aside>
 
@@ -60,6 +61,7 @@
       </header>
 
       <div class="global-links" aria-label="관리 링크">
+        <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/10cpoU0OxFx7DwGO3VBAFhPJx68kHIX_ugRzOong9IGs/edit?gid=1803596204#gid=1803596204" class="btn secondary" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원 출석부</a>
         <a href="/video-manage" class="btn secondary" target="_blank" rel="noopener noreferrer">영상관리</a>
         <a href="/students" class="btn secondary" target="_blank" rel="noopener noreferrer">전체학생</a>
         <a href="/school-cal" class="btn secondary" target="_blank" rel="noopener noreferrer">학교일정</a>
@@ -98,7 +100,9 @@
 
         <div class="hero-actions" aria-label="빠른 작업">
           <button id="extraBtn" class="btn" type="button">+ 보강 등록</button>
+          <button id="absentRegisterBtn" class="btn danger" type="button">결석 등록</button>
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
+          <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
         </div>
       </section>
 
@@ -165,7 +169,7 @@
   <div id="logModal" class="modal-backdrop">
     <div class="modal-panel wide">
       <h3 id="logTitle" class="mt-0"></h3>
-      <label>특이사항:
+      <label>상담 기록:
         <textarea id="logNotes" rows="2" placeholder=""></textarea>
       </label>
       <div id="logProgress" class="progress-grid mt-8"></div>

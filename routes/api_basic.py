@@ -23,6 +23,7 @@ from core.absent import load_absent, save_absent, DATE_RE
 bp_api_basic = Blueprint("api_basic", __name__)
 
 CT = {"Content-Type": "application/json"}
+STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^"
 
 # ─────────────────────────────────────────────
 # 공통 CRUD
@@ -46,6 +47,29 @@ def _load_progress_strict() -> dict:
     if not isinstance(data, dict):
         raise RuntimeError("progress.json must be an object")
     return data
+
+
+def _student_has_schedule_on_date(student: dict, date_key: str) -> bool:
+    try:
+        target = dt.date.fromisoformat(date_key)
+    except ValueError:
+        return False
+    wchr = "월화수목금토일"[target.weekday()]
+    for key, value in (student or {}).items():
+        if re.fullmatch(r"day\d+", str(key)) and str(value or "").startswith(wchr):
+            return True
+    return False
+
+
+def _student_is_registered_on_date(student: dict, sid: str, date_key: str) -> bool:
+    if _student_has_schedule_on_date(student, date_key):
+        return True
+    try:
+        extra = load(EXTRA_PATH) or {}
+    except Exception:
+        extra = {}
+    extra_ids = extra.get(date_key, []) if isinstance(extra, dict) else []
+    return str(sid) in {str(x) for x in (extra_ids or [])}
 
 
 def _extract_kollus_mid_from_url(url) -> str:
@@ -135,7 +159,7 @@ def _normalize_watch_entry_for_mid_migration(entry) -> dict:
         updated_at = 0
 
     completed = bool(entry.get("completed", False))
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if dur > 0 and (last / dur) >= 0.90:
         completed = True
 
     return {
@@ -153,7 +177,7 @@ def _merge_watch_entries_for_mid_migration(prev, incoming) -> dict:
     last = max(a["last"], b["last"])
     dur = max(a["dur"], b["dur"])
     completed = a["completed"] or b["completed"]
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
+    if dur > 0 and (last / dur) >= 0.90:
         completed = True
 
     return {
@@ -375,6 +399,157 @@ def _progress_lock():
     return _InterProcessFileLock(pp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
 
 
+def _updates_lock():
+    up = str(getattr(UPD_PATH, "__fspath__", lambda: str(UPD_PATH))())
+    return _InterProcessFileLock(up + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+
+
+def _sid_lookup(mapping: dict, sid: str):
+    if not isinstance(mapping, dict):
+        return None
+    keys = [str(sid or "").strip()]
+    if keys[0].isdigit():
+        alt = str(int(keys[0]))
+        if alt not in keys:
+            keys.append(alt)
+    for key in keys:
+        if key and key in mapping:
+            return mapping.get(key)
+    return None
+
+
+def _write_sid_mapping(mapping: dict, sid: str, value) -> None:
+    key = str(sid or "").strip()
+    if not key:
+        return
+    num_key = str(int(key)) if key.isdigit() else None
+    if num_key and num_key != key:
+        mapping.pop(num_key, None)
+    if value is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = value
+
+
+def _normalize_video_assign_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("videos")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+
+def _is_manual_video_assignment(value) -> bool:
+    if not isinstance(value, dict):
+        return False
+    source = str(value.get("source") or "").strip().lower()
+    return source == "manual" or value.get("manual") is True or value.get("manualVideoAssign") is True
+
+
+def _merge_update_assignment(current, incoming):
+    if incoming is None:
+        return current
+
+    videos = _normalize_video_assign_list(incoming)
+    if isinstance(incoming, list):
+        return videos
+
+    if isinstance(incoming, dict):
+        if incoming.get("remove") is True:
+            return None
+        out = dict(current) if isinstance(current, dict) else {}
+        for key, value in incoming.items():
+            if key in ("remove",):
+                continue
+            if key == "videos":
+                out["videos"] = videos
+            elif value is not None:
+                out[str(key)] = value
+        if "videos" not in incoming and videos:
+            out["videos"] = videos
+        return out if out else (videos if videos else current)
+
+    return current
+
+
+def _merge_updates_payload(current, incoming):
+    if not isinstance(current, dict):
+        current = {}
+    if not isinstance(incoming, dict):
+        return current
+
+    out = dict(current)
+    for date, by_sid in incoming.items():
+        date_s = str(date or "").strip()
+        if not DATE_RE.match(date_s) or not isinstance(by_sid, dict):
+            continue
+
+        day = out.setdefault(date_s, {})
+        if not isinstance(day, dict):
+            out[date_s] = {}
+            day = out[date_s]
+
+        for sid, value in by_sid.items():
+            sid_s = str(sid or "").strip()
+            if not sid_s:
+                continue
+            merged = _merge_update_assignment(_sid_lookup(day, sid_s), value)
+            _write_sid_mapping(day, sid_s, merged)
+
+        if not day:
+            out.pop(date_s, None)
+    return out
+
+
+def _assigned_material_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("materials")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("id") or item.get("url") or item.get("path")
+        key = str(item or "").strip()
+        if not key or key in seen:
+            continue
+        out.append(key)
+        seen.add(key)
+    return out
+
+
+def _filter_materials_for_assignment(materials, assigned):
+    if not isinstance(materials, dict):
+        return {}
+    wanted = {str(x) for x in (assigned or []) if str(x or "").strip()}
+    if not wanted:
+        return {}
+
+    out = {}
+    for key, value in materials.items():
+        item = value if isinstance(value, dict) else {}
+        candidates = {
+            str(key),
+            str(item.get("id") or ""),
+            str(item.get("mid") or ""),
+            str(item.get("url") or ""),
+            str(item.get("path") or ""),
+        }
+        if candidates & wanted:
+            out[key] = value
+    return out
+
+
 # ─────────────────────────────────────────────
 # ✅ logs 안전 merge (날아감 방지)
 # - PATCH가 기본
@@ -396,6 +571,156 @@ def _is_empty_value(v) -> bool:
 
 def _truthy(v) -> bool:
     return v is True or v == 1 or v == "1" or v == "true"
+
+
+def _is_question_placeholder(value) -> bool:
+    text = re.sub(r"\s+", "", str(value or ""))
+    return len(text) >= 2 and set(text) == {"?"}
+
+
+def _looks_corrupted_placeholder_text(value) -> bool:
+    text = str(value or "").strip()
+    if text.count("?") < 2:
+        return False
+    # If any real Korean/CJK/Latin text remains, keep it. This avoids
+    # stripping legitimate notes such as "확인??" while hiding mojibake.
+    return re.search(r"[A-Za-z가-힣一-龥]", text) is None
+
+
+def _clean_placeholder_text(value) -> str:
+    text = str(value or "").strip()
+    return "" if _is_question_placeholder(text) or _looks_corrupted_placeholder_text(text) else text
+
+
+def _student_homework_books(sid: str) -> List[str]:
+    try:
+        students = load(STU_PATH) or []
+    except Exception:
+        students = []
+    if not isinstance(students, list):
+        return []
+
+    sid_s = str(sid or "").strip()
+    stu = next(
+        (s for s in students if isinstance(s, dict) and str(s.get("id") or "").strip() == sid_s),
+        None,
+    )
+    if not stu:
+        return []
+
+    books: List[str] = []
+    for key in sorted(stu.keys(), key=lambda k: int(k[7:]) if re.match(r"^subBook\d+$", str(k)) else 999):
+        if not re.match(r"^subBook\d+$", str(key)):
+            continue
+        val = str(stu.get(key) or "").strip()
+        if val and val not in books:
+            books.append(val)
+    return books
+
+
+def _book_key(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip()).lower()
+
+
+def _hw_row_summary(row: dict) -> str:
+    if not isinstance(row, dict) or row.get("_deleted"):
+        return ""
+
+    book = str(row.get("book") or "").strip()
+    this_hw = str(row.get("this") or "").strip()
+    pct = row.get("pct")
+    pct_s = "" if pct in ("", None) else f"{str(pct).strip()}%"
+    comment = str(row.get("comment") or "").strip()
+    next_hw = str(row.get("next") or "").strip()
+
+    parts: List[str] = []
+    if book:
+        parts.append(f"[{book}]")
+    if this_hw:
+        parts.append(this_hw)
+    if pct_s:
+        parts.append(pct_s)
+    if comment:
+        parts.append(f"({comment})")
+    if next_hw:
+        parts.append(f"→ {next_hw}")
+    return " ".join(parts).strip()
+
+
+def _repair_homework_rows(rows, sid: str) -> tuple[list, bool]:
+    if not isinstance(rows, list):
+        return [], False
+
+    books = _student_homework_books(sid)
+    used = {
+        _book_key(row.get("book"))
+        for row in rows
+        if isinstance(row, dict) and not _is_question_placeholder(row.get("book"))
+    }
+    used.discard("")
+
+    out: List[dict] = []
+    changed = False
+
+    for row in rows:
+        if not isinstance(row, dict):
+            changed = True
+            continue
+
+        next_row = dict(row)
+
+        raw_book = str(next_row.get("book") or "").strip()
+        if _is_question_placeholder(raw_book):
+            replacement = next((b for b in books if _book_key(b) not in used), "")
+            next_row["book"] = replacement
+            if replacement:
+                used.add(_book_key(replacement))
+            changed = True
+        elif raw_book:
+            used.add(_book_key(raw_book))
+
+        for field in ("this", "comment", "next"):
+            if field in next_row:
+                cleaned = _clean_placeholder_text(next_row.get(field))
+                if cleaned != str(next_row.get(field) or "").strip():
+                    next_row[field] = cleaned
+                    changed = True
+
+        out.append(next_row)
+
+    return out, changed
+
+
+def _repair_log_entry_placeholders(entry: dict, sid: str) -> dict:
+    if not isinstance(entry, dict):
+        return {}
+
+    out = dict(entry)
+
+    if "notes" in out:
+        cleaned_notes = _clean_placeholder_text(out.get("notes"))
+        if cleaned_notes:
+            out["notes"] = cleaned_notes
+        else:
+            out.pop("notes", None)
+
+    rows = out.get("homeworkTable")
+    repaired_rows, changed = _repair_homework_rows(rows, sid)
+
+    if isinstance(rows, list):
+        out["homeworkTable"] = repaired_rows
+        if changed:
+            summary = " / ".join(
+                s for s in (_hw_row_summary(row) for row in repaired_rows) if s
+            )
+            if summary:
+                out["homework"] = summary
+            else:
+                out.pop("homework", None)
+    elif _is_question_placeholder(out.get("homework")):
+        out.pop("homework", None)
+
+    return out
 
 
 def _merge_entry_safe(cur: dict, inc: dict) -> dict:
@@ -532,26 +857,158 @@ def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
 # ─────────────────────────────────────────────
 # ✅ progress 1건(date/sid) 안전 merge
 # - inc[mid] = "done" | "interrupted" | "skip" | "none"
-# - "none" 은 명시 삭제 의미
+# - "none" is an explicit manual clear marker. It must override older
+#   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
-def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
+PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
+WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
+PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
+
+
+def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
     if not isinstance(cur, dict):
         cur = {}
     if not isinstance(inc, dict):
         return dict(cur)
 
     out = dict(cur)
+    source_s = str(source or "").strip()
+    all_page_meta = out.get(PROGRESS_ALL_STUDENTS_META_KEY)
+    if not isinstance(all_page_meta, dict):
+        all_page_meta = {}
+    else:
+        all_page_meta = dict(all_page_meta)
+    watch_auto_meta = out.get(WATCH_AUTO_PROGRESS_META_KEY)
+    if not isinstance(watch_auto_meta, dict):
+        watch_auto_meta = {}
+    else:
+        watch_auto_meta = dict(watch_auto_meta)
+    manual_meta = out.get(PROGRESS_MANUAL_META_KEY)
+    if not isinstance(manual_meta, dict):
+        manual_meta = {}
+    else:
+        manual_meta = dict(manual_meta)
 
     for mid, st in inc.items():
         mid_s = str(mid).strip()
         if not mid_s:
             continue
+        if mid_s == "tests":
+            if not isinstance(st, dict):
+                continue
+
+            cur_tests = out.get("tests")
+            if not isinstance(cur_tests, dict):
+                cur_tests = {}
+            else:
+                cur_tests = dict(cur_tests)
+
+            for test_key, test_status in st.items():
+                test_key_s = str(test_key or "").strip()
+                if not test_key_s:
+                    continue
+
+                if test_status is None or test_status is False:
+                    cur_tests.pop(test_key_s, None)
+                    continue
+
+                if isinstance(test_status, str):
+                    status_s = test_status.strip()
+                    if status_s in ("", "none"):
+                        cur_tests.pop(test_key_s, None)
+                    else:
+                        cur_tests[test_key_s] = status_s
+                    continue
+
+                if isinstance(test_status, dict):
+                    if test_status.get("remove") is True:
+                        cur_tests.pop(test_key_s, None)
+                    else:
+                        cur_tests[test_key_s] = dict(test_status)
+                    continue
+
+                cur_tests[test_key_s] = str(test_status).strip()
+
+            if cur_tests:
+                out["tests"] = cur_tests
+            else:
+                out.pop("tests", None)
+            continue
+        if mid_s.startswith("__"):
+            continue
 
         st_s = str(st).strip()
-        if st_s == "none" or st_s == "":
+        if source_s == "auto":
+            prev_s = str(out.get(mid_s) or "").strip()
+            prev_auto = (
+                prev_s in ("done", "interrupted", "skip")
+                and str(watch_auto_meta.get(mid_s) or "").strip() == prev_s
+            )
+            manual_override = bool(manual_meta.get(mid_s))
+
+            all_page_meta.pop(mid_s, None)
+            if st_s in ("", "none"):
+                if prev_auto and prev_s != "done":
+                    out.pop(mid_s, None)
+                    watch_auto_meta.pop(mid_s, None)
+                elif prev_s not in ("done", "interrupted", "skip", "none"):
+                    out.pop(mid_s, None)
+                    watch_auto_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "interrupted":
+                if prev_s == "" or (prev_auto and prev_s != "done"):
+                    out[mid_s] = "interrupted"
+                    watch_auto_meta[mid_s] = "interrupted"
+                    manual_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "done":
+                if prev_s == "" or prev_auto or (prev_s == "interrupted" and not manual_override):
+                    out[mid_s] = "done"
+                    watch_auto_meta[mid_s] = "done"
+                    manual_meta.pop(mid_s, None)
+                continue
+
+            if st_s == "skip":
+                if prev_s == "":
+                    out[mid_s] = "skip"
+                    watch_auto_meta[mid_s] = "skip"
+                    manual_meta.pop(mid_s, None)
+                continue
+
+        if st_s == "none":
+            out[mid_s] = "none"
+        elif st_s == "":
             out.pop(mid_s, None)
         else:
             out[mid_s] = st_s
+
+        if source_s == "allStudents":
+            if st_s == "":
+                all_page_meta.pop(mid_s, None)
+            else:
+                all_page_meta[mid_s] = True
+        else:
+            all_page_meta.pop(mid_s, None)
+        watch_auto_meta.pop(mid_s, None)
+        if source_s == "auto" or st_s == "":
+            manual_meta.pop(mid_s, None)
+        else:
+            manual_meta[mid_s] = True
+
+    if all_page_meta:
+        out[PROGRESS_ALL_STUDENTS_META_KEY] = all_page_meta
+    else:
+        out.pop(PROGRESS_ALL_STUDENTS_META_KEY, None)
+    if watch_auto_meta:
+        out[WATCH_AUTO_PROGRESS_META_KEY] = watch_auto_meta
+    else:
+        out.pop(WATCH_AUTO_PROGRESS_META_KEY, None)
+    if manual_meta:
+        out[PROGRESS_MANUAL_META_KEY] = manual_meta
+    else:
+        out.pop(PROGRESS_MANUAL_META_KEY, None)
 
     return out
 
@@ -618,7 +1075,8 @@ def _db_get_entry(con: sqlite3.Connection, date: str, sid: str) -> dict:
 
 
 def _db_upsert_entry(con: sqlite3.Connection, date: str, sid: str, entry: dict):
-    ej = json.dumps(entry or {}, ensure_ascii=False)
+    safe_entry = _repair_log_entry_placeholders(entry or {}, sid)
+    ej = json.dumps(safe_entry, ensure_ascii=False)
     ua = _now_kst_iso()
     con.execute(
         """
@@ -642,7 +1100,74 @@ def _db_dump_all(con: sqlite3.Connection) -> dict:
             e = json.loads(r["entry_json"]) if r["entry_json"] else {}
         except Exception:
             e = {}
-        out.setdefault(d, {})[s] = e
+        out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
+    return out
+
+
+def _db_dump_date(con: sqlite3.Connection, date: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {date: {}}
+    rows = con.execute("SELECT sid, entry_json FROM logs WHERE date=?;", (date,)).fetchall()
+    for r in rows:
+        s = str(r["sid"])
+        try:
+            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
+        except Exception:
+            e = {}
+        out[date][s] = _repair_log_entry_placeholders(e, s)
+    return out
+
+
+def _db_dump_sid(con: sqlite3.Connection, sid: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {}
+    rows = con.execute("SELECT date, sid, entry_json FROM logs WHERE sid=?;", (sid,)).fetchall()
+    for r in rows:
+        d = str(r["date"])
+        s = str(r["sid"])
+        try:
+            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
+        except Exception:
+            e = {}
+        if isinstance(e, dict) and e:
+            out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
+    return out
+
+
+def _db_dump_date_sid(con: sqlite3.Connection, date: str, sid: str) -> dict:
+    out: Dict[str, Dict[str, dict]] = {date: {}}
+    entry = _db_get_entry(con, date, sid)
+    if isinstance(entry, dict) and entry:
+        out[date][sid] = _repair_log_entry_placeholders(entry, sid)
+    return out
+
+
+def _filter_logs_map(data: dict, date_filter: str = "", sid_filter: str = "") -> dict:
+    if not isinstance(data, dict):
+        return {}
+
+    dates = [date_filter] if date_filter else sorted(data.keys())
+    out: Dict[str, Dict[str, dict]] = {}
+
+    for d in dates:
+        by_sid = data.get(d) if isinstance(data, dict) else None
+        if not isinstance(by_sid, dict):
+            if date_filter:
+                out.setdefault(str(d), {})
+            continue
+
+        if sid_filter:
+            entry = _sid_lookup(by_sid, sid_filter)
+            if isinstance(entry, dict) and entry:
+                out.setdefault(str(d), {})[str(sid_filter)] = _repair_log_entry_placeholders(entry, sid_filter)
+            elif date_filter:
+                out.setdefault(str(d), {})
+            continue
+
+        out[str(d)] = {
+            str(sid): _repair_log_entry_placeholders(entry, str(sid))
+            for sid, entry in by_sid.items()
+            if isinstance(entry, dict)
+        }
+
     return out
 
 
@@ -667,6 +1192,69 @@ def _has_assigned(val) -> bool:
     return False
 
 
+AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
+DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
+MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
+MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
+WATCH_INTERRUPTED_RATIO = 0.05
+WATCH_DONE_RATIO = 0.90
+
+
+def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
+    try:
+        n = int(round(float(value)))
+    except Exception:
+        n = default
+    return max(MIN_AUTO_VIDEO_ASSIGN_COUNT, min(MAX_AUTO_VIDEO_ASSIGN_COUNT, n))
+
+
+def _student_auto_video_assign_count(stu: dict) -> int:
+    if not isinstance(stu, dict):
+        return DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
+    return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD))
+
+
+def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
+    if not isinstance(stu, dict):
+        return []
+
+    cur_key = (stu.get("curriculum") or "").strip()
+    sub_key = (stu.get("subCurriculum") or "").strip()
+
+    exact = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+        and (v.get("subCurriculum") or "").strip() == sub_key
+    ]
+    if exact:
+        exact.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+        return exact
+
+    fallback = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+    ]
+    fallback.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+    return fallback
+
+
+def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid: dict) -> bool:
+    mids = [
+        str(v.get("mid") or "").strip()
+        for v in (course_videos or [])
+        if isinstance(v, dict) and str(v.get("mid") or "").strip()
+    ]
+    if not mids:
+        return False
+
+    latest = latest_status_by_sid.get(str(sid), {})
+    if not isinstance(latest, dict):
+        return False
+    return all(str(latest.get(mid) or "").strip() == "done" for mid in mids)
+
+
 def _build_latest_status_by_sid(progress: dict) -> dict:
     out = {}
     if not isinstance(progress, dict):
@@ -681,16 +1269,94 @@ def _build_latest_status_by_sid(progress: dict) -> dict:
                 continue
             sm = out.setdefault(str(sid), {})
             for mid, st in mids.items():
-                sm[str(mid)] = st
+                mid_s = str(mid)
+                if mid_s.startswith("__") or mid_s == "tests":
+                    continue
+                sm[mid_s] = st
     return out
+
+
+def _watch_ratio(entry: dict) -> float:
+    if not isinstance(entry, dict):
+        return 0.0
+    try:
+        last = max(0.0, float(entry.get("last") or 0))
+        dur = max(0.0, float(entry.get("dur") or 0))
+    except Exception:
+        return 0.0
+    if dur <= 0:
+        return 0.0
+    return max(0.0, min(1.0, last / dur))
+
+
+def _watch_auto_status(entry: dict) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    if bool(entry.get("completed")) or _watch_ratio(entry) >= WATCH_DONE_RATIO:
+        return "done"
+    if _watch_ratio(entry) >= WATCH_INTERRUPTED_RATIO:
+        return "interrupted"
+    return ""
+
+
+def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
+    blocked: dict[str, set[str]] = {}
+    manual_cleared_at: dict[tuple[str, str], str] = {}
+
+    if isinstance(progress, dict):
+        for d in sorted(progress.keys()):
+            day = progress.get(d) or {}
+            if not isinstance(day, dict):
+                continue
+            for sid, mids in day.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                manual_meta = mids.get(PROGRESS_MANUAL_META_KEY)
+                if not isinstance(manual_meta, dict):
+                    manual_meta = {}
+                for mid, st in mids.items():
+                    mid_s = str(mid)
+                    if mid_s.startswith("__") or mid_s == "tests":
+                        continue
+                    st_s = str(st or "").strip()
+                    key = (sid_s, mid_s)
+                    if st_s in ("done", "skip"):
+                        blocked.setdefault(sid_s, set()).add(mid_s)
+                    elif st_s == "none" and manual_meta.get(mid_s):
+                        blocked.setdefault(sid_s, set()).discard(mid_s)
+                        manual_cleared_at[key] = str(d)
+
+    if isinstance(watch, dict):
+        for d in sorted(watch.keys()):
+            by_date = watch.get(d) or {}
+            if not isinstance(by_date, dict):
+                continue
+            for sid, mids in by_date.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                for mid, entry in mids.items():
+                    mid_s = str(mid or "").strip()
+                    if not mid_s:
+                        continue
+                    status = _watch_auto_status(entry)
+                    if status != "done":
+                        continue
+                    cleared_at = manual_cleared_at.get((sid_s, mid_s), "")
+                    if cleared_at and str(cleared_at) >= str(d):
+                        continue
+                    blocked.setdefault(sid_s, set()).add(mid_s)
+
+    return blocked
 
 
 def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
 
 
-def _ensure_today_auto_assign(updates, students, videos, progress):
-    today = _today_kst_iso()
+def _ensure_today_auto_assign(updates, students, videos, progress, date_key: str | None = None, watch=None):
+    today = date_key or _today_kst_iso()
 
     if not isinstance(updates, dict):
         updates = {}
@@ -705,7 +1371,8 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
             if mid:
                 valid_mids.add(mid)
 
-    last_status = _build_latest_status_by_sid(progress)
+    latest_status_by_sid = _build_latest_status_by_sid(progress)
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
 
     def _normalize_assigned(val):
         if isinstance(val, list):
@@ -741,10 +1408,6 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
         cur_key = (stu.get("curriculum") or "").strip()
         sub_key = (stu.get("subCurriculum") or "").strip()
 
-        cur = updates[today].get(sid)
-        if _has_assigned(cur):
-            continue
-
         cur_vids = [
             v for v in (videos or [])
             if isinstance(v, dict)
@@ -753,21 +1416,23 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
         ]
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
 
-        blocked = {
-            str(mid)
-            for mid, st in (last_status.get(sid) or {}).items()
-            if st in ("done", "skip")
-        }
+        completion_videos = cur_vids or _student_completion_videos(stu, videos)
+        if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
+            cur = _sid_lookup(updates[today], sid)
+            if _has_assigned(cur) and _is_manual_video_assignment(cur):
+                continue
+            if cur is not None:
+                _write_sid_mapping(updates[today], sid, None)
+                changed = True
+            continue
 
-        sub_norm = sub_key.strip()
-        lvl = (stu.get("level") or "").strip()
+        cur = _sid_lookup(updates[today], sid)
+        if _has_assigned(cur):
+            continue
 
-        if sub_norm == "A:Ble":
-            max_assign = 1
-        elif sub_norm == "APEX":
-            max_assign = 2 if lvl in ("중", "하") else 3
-        else:
-            max_assign = 3
+        blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
+
+        max_assign = _student_auto_video_assign_count(stu)
 
         picked = []
         for v in cur_vids:
@@ -784,10 +1449,32 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
 
         if picked:
             print("[AUTOASSIGN] PICK sid =", sid, "picked =", picked, flush=True)
-            updates[today][sid] = picked
+            updates[today][sid] = {"videos": picked, "source": "auto"}
             changed = True
 
     return updates
+
+
+def _json_stable(obj) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def _load_updates_with_auto_assign(students=None, videos=None, date_key: str | None = None):
+    students = students if students is not None else load(STU_PATH)
+    videos = videos if videos is not None else load(VID_PATH)
+    progress = load(PRG_PATH)
+    watch = load(WATCH_PATH)
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        before = _json_stable(updates)
+        fixed = _ensure_today_auto_assign(updates, students, videos, progress, date_key=date_key, watch=watch)
+        if _json_stable(fixed) != before:
+            save_atomic(UPD_PATH, fixed)
+        return fixed
 
 
 # ─────────────────────────────────────────────
@@ -812,7 +1499,30 @@ def api_videos():
 
 @bp_api_basic.route("/api/progress", methods=["GET"])
 def api_progress():
-    return jsonify(_load_progress_strict())
+    data = _load_progress_strict()
+    date = str(request.args.get("date") or "").strip()
+    sid = str(request.args.get("sid") or "").strip()
+
+    if date:
+        if not DATE_RE.match(date):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+        day = data.get(date) if isinstance(data, dict) else {}
+        if sid:
+            entry = _sid_lookup(day if isinstance(day, dict) else {}, sid) or {}
+            return jsonify({date: {str(sid): entry}})
+        return jsonify({date: day if isinstance(day, dict) else {}})
+
+    if sid:
+        out = {}
+        for d, day in (data.items() if isinstance(data, dict) else []):
+            if not isinstance(day, dict):
+                continue
+            entry = _sid_lookup(day, sid)
+            if isinstance(entry, dict) and entry:
+                out[d] = {str(sid): entry}
+        return jsonify(out)
+
+    return jsonify(data)
 
 
 @bp_api_basic.post("/api/progress/patch")
@@ -833,6 +1543,7 @@ def api_progress_patch():
     date = str(body.get("date") or "").strip()
     sid = str(body.get("sid") or "").strip()
     prog = body.get("progress") or {}
+    source = str(body.get("source") or "").strip()
 
     if not date or not sid or not isinstance(prog, dict):
         return jsonify({"ok": False, "error": "bad payload"}), 400
@@ -852,7 +1563,7 @@ def api_progress_patch():
             if not isinstance(cur_sid, dict):
                 cur_sid = {}
 
-            merged = _merge_progress_day_sid(cur_sid, prog)
+            merged = _merge_progress_day_sid(cur_sid, prog, source=source)
 
             if merged:
                 day[sid] = merged
@@ -874,19 +1585,159 @@ def api_progress_patch():
 @bp_api_basic.route("/api/updates", methods=["GET", "POST"])
 def api_updates():
     if request.method == "GET":
-        updates = load(UPD_PATH)
-        fixed = _ensure_today_auto_assign(
-            updates,
-            load(STU_PATH),
-            load(VID_PATH),
-            load(PRG_PATH)
-        )
-        if fixed != updates:
-            save_atomic(UPD_PATH, fixed)
-        return nocache_resp(fixed)
+        return nocache_resp(_load_updates_with_auto_assign())
 
-    save_atomic(UPD_PATH, request.get_json(force=True))
+    incoming = request.get_json(force=True) or {}
+    with _updates_lock():
+        current = load(UPD_PATH) or {}
+        merged = _merge_updates_payload(current, incoming)
+        save_atomic(UPD_PATH, merged)
     return "", 204
+
+
+@bp_api_basic.post("/api/updates/patch")
+def api_updates_patch():
+    body = request.get_json(force=True) or {}
+    date = str(body.get("date") or "").strip()
+    sid = str(body.get("sid") or "").strip()
+    remove = bool(body.get("remove"))
+
+    if not date or not sid or not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+
+    if remove:
+        incoming = {"remove": True}
+    else:
+        incoming = dict(body.get("entry") or {}) if isinstance(body.get("entry"), dict) else {}
+        if "videos" in body:
+            incoming["videos"] = body.get("videos")
+        if not incoming:
+            incoming["videos"] = []
+
+    try:
+        with _updates_lock():
+            current = load(UPD_PATH) or {}
+            day = current.setdefault(date, {})
+            if not isinstance(day, dict):
+                current[date] = {}
+                day = current[date]
+
+            if remove:
+                _write_sid_mapping(day, sid, None)
+                assignment = []
+            else:
+                assignment = _merge_update_assignment(_sid_lookup(day, sid), incoming)
+                _write_sid_mapping(day, sid, assignment)
+
+            if not day:
+                current.pop(date, None)
+
+            save_atomic(UPD_PATH, current)
+        return jsonify({"ok": True, "assignment": assignment})
+    except TimeoutError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+
+
+@bp_api_basic.get("/api/student/bootstrap")
+def api_student_bootstrap():
+    sid = str(request.args.get("sid") or "").strip()
+    date = str(request.args.get("date") or _today_kst_iso()).strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "missing sid"}), 400
+    if not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+
+    students = load(STU_PATH) or []
+    student = next((s for s in students if isinstance(s, dict) and str(s.get("id")) == sid), None)
+    if not student:
+        return jsonify({"ok": False, "error": "student not found"}), 404
+
+    absences = load_absent()
+    absent_for_date = {
+        "by_date": {date: (absences.get("by_date") or {}).get(date, [])},
+        "by_student": {sid: (absences.get("by_student") or {}).get(sid)}
+            if (absences.get("by_student") or {}).get(sid) else {},
+    }
+
+    if not _student_is_registered_on_date(student, sid, date):
+        return nocache_resp({
+            "ok": True,
+            "date": date,
+            "students": [student],
+            "student": student,
+            "videos": [],
+            "updates": {date: {sid: []}},
+            "materials": {},
+            "assigns": {sid: []},
+            "absent": absent_for_date,
+            "logs": {date: {}},
+            "courseBlocked": True,
+            "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
+        })
+
+    videos_all = load(VID_PATH) or []
+    progress_all = load(PRG_PATH) or {}
+    latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+    course_videos_completed = _course_videos_completed(
+        _student_completion_videos(student, videos_all),
+        sid,
+        latest_status_by_sid,
+    )
+    if date == _today_kst_iso():
+        updates = _load_updates_with_auto_assign(students=students, videos=videos_all, date_key=date)
+    else:
+        updates = load(UPD_PATH) or {}
+    day_updates = updates.get(date) if isinstance(updates, dict) else {}
+    assignment = _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
+    assigned_videos = _normalize_video_assign_list(assignment)
+    assigned_set = set(assigned_videos)
+
+    videos = [
+        v for v in videos_all
+        if isinstance(v, dict) and str(v.get("mid") or "").strip() in assigned_set
+    ]
+
+    assigns = load(ASN_PATH) or {}
+    material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
+    assigned_materials = _assigned_material_list(material_assignment)
+    materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
+
+    logs = {}
+    try:
+        con = _db_connect()
+        _db_ensure_schema(con)
+        entry = _db_get_entry(con, date, sid)
+        if isinstance(entry, dict) and entry:
+            logs = {date: {sid: entry}}
+    except Exception:
+        logs = {}
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if not logs:
+        try:
+            json_logs = load(LOGS_PATH) or {}
+            entry = _sid_lookup((json_logs.get(date) or {}) if isinstance(json_logs, dict) else {}, sid)
+            logs = {date: {sid: entry}} if isinstance(entry, dict) and entry else {date: {}}
+        except Exception:
+            logs = {date: {}}
+
+    return nocache_resp({
+        "ok": True,
+        "date": date,
+        "students": [student],
+        "student": student,
+        "videos": videos,
+        "updates": {date: {sid: assignment or []}},
+        "materials": materials,
+        "assigns": {sid: material_assignment or []},
+        "absent": absent_for_date,
+        "logs": logs,
+        "courseVideosCompleted": course_videos_completed,
+    })
 
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
@@ -985,7 +1836,7 @@ def api_logs_entry():
             pass
 
         if isinstance(entry, dict) and entry:
-            return jsonify({"ok": True, "source": "sqlite", "entry": entry})
+            return jsonify({"ok": True, "source": "sqlite", "entry": _repair_log_entry_placeholders(entry, sid)})
     except Exception as e:
         print("[logs.entry] sqlite failed:", e, flush=True)
         try:
@@ -1001,7 +1852,107 @@ def api_logs_entry():
     except Exception:
         entry = {}
 
-    return jsonify({"ok": True, "source": "json", "entry": entry})
+    return jsonify({"ok": True, "source": "json", "entry": _repair_log_entry_placeholders(entry, sid)})
+
+
+def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
+    entries: Dict[str, Dict[str, dict]] = {}
+    sqlite_keys = set()
+
+    con = None
+    try:
+        con = _db_connect()
+        _db_ensure_schema(con)
+        for row in con.execute("SELECT date, sid FROM logs;").fetchall():
+            sqlite_keys.add((str(row["date"]), str(row["sid"])))
+
+        rows = con.execute(
+            """
+            SELECT date, sid, entry_json
+            FROM logs
+            WHERE json_extract(entry_json, ?) IN (1, 'true')
+              AND COALESCE(json_extract(entry_json, ?), 0) NOT IN (1, 'true');
+            """,
+            ("$.done", "$.archived"),
+        ).fetchall()
+        for row in rows:
+            d = str(row["date"])
+            sid = str(row["sid"])
+            try:
+                entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
+            except Exception:
+                entry = {}
+            if isinstance(entry, dict):
+                entries.setdefault(d, {})[sid] = _repair_log_entry_placeholders(entry, sid)
+    except Exception as e:
+        print("[logs.unarchived-summary] sqlite failed:", e, flush=True)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    try:
+        json_map = load(LOGS_PATH) or {}
+        if isinstance(json_map, dict):
+            for d, by_sid in json_map.items():
+                if not isinstance(by_sid, dict):
+                    continue
+                d_s = str(d)
+                day = entries.setdefault(str(d), {})
+                for sid, entry in by_sid.items():
+                    sid_s = str(sid)
+                    if (d_s, sid_s) in sqlite_keys or sid_s in day or not isinstance(entry, dict):
+                        continue
+                    if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
+                        continue
+                    day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
+    except Exception:
+        pass
+
+    by_date: Dict[str, int] = {}
+    students = set()
+    total = 0
+    today = _today_kst_iso()
+    for d, by_sid in entries.items():
+        d_s = str(d)
+        if exclude_date and d_s == exclude_date:
+            continue
+        if d_s >= today:
+            continue
+        if not isinstance(by_sid, dict):
+            continue
+        for sid, entry in by_sid.items():
+            if not isinstance(entry, dict):
+                continue
+            if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
+                continue
+            by_date[d_s] = by_date.get(d_s, 0) + 1
+            students.add(str(sid))
+            total += 1
+
+    return {
+        "ok": True,
+        "excludeDate": exclude_date,
+        "total": total,
+        "students": len(students),
+        "byDate": [
+            {"date": d, "count": by_date[d]}
+            for d in sorted(by_date.keys(), reverse=True)
+        ],
+    }
+
+
+@bp_api_basic.get("/api/logs/unarchived-summary")
+def api_logs_unarchived_summary():
+    exclude_date = str(
+        request.args.get("exclude_date")
+        or request.args.get("excludeDate")
+        or ""
+    ).strip()
+    if exclude_date and not DATE_RE.match(exclude_date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+    return jsonify(_summarize_unarchived_done_logs(exclude_date))
 
 
 # ─────────────────────────────────────────────
@@ -1013,12 +1964,24 @@ def api_logs_entry():
 @bp_api_basic.route("/api/logs", methods=["GET", "POST"])
 def api_logs():
     if request.method == "GET":
+        date_filter = str(request.args.get("date") or "").strip()
+        sid_filter = str(request.args.get("sid") or "").strip()
+        if date_filter and not DATE_RE.match(date_filter):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+
         sqlite_map = {}
         sqlite_ok = False
         try:
             con = _db_connect()
             _db_ensure_schema(con)
-            sqlite_map = _db_dump_all(con)
+            if date_filter and sid_filter:
+                sqlite_map = _db_dump_date_sid(con, date_filter, sid_filter)
+            elif date_filter:
+                sqlite_map = _db_dump_date(con, date_filter)
+            elif sid_filter:
+                sqlite_map = _db_dump_sid(con, sid_filter)
+            else:
+                sqlite_map = _db_dump_all(con)
             sqlite_ok = True
         except Exception as e:
             print("[logs] sqlite GET failed:", e, flush=True)
@@ -1034,6 +1997,8 @@ def api_logs():
             json_map = load(LOGS_PATH) or {}
             if not isinstance(json_map, dict):
                 json_map = {}
+            if date_filter or sid_filter:
+                json_map = _filter_logs_map(json_map, date_filter, sid_filter)
         except Exception:
             json_map = {}
 
@@ -1052,7 +2017,7 @@ def api_logs():
                 sid_s = str(sid)
                 if sid_s not in day:
                     if isinstance(entry, dict):
-                        day[sid_s] = entry
+                        day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
         return nocache_resp(out)
 
     incoming = request.get_json(force=True) or {}
@@ -1076,9 +2041,10 @@ def api_logs():
                     continue
                 date_s = str(date)
                 sid_s = str(sid)
+                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
 
                 cur = _db_get_entry(con, date_s, sid_s)
-                merged = _merge_entry_safe(cur, entry)
+                merged = _merge_entry_safe(cur, safe_entry)
                 _db_upsert_entry(con, date_s, sid_s, merged)
         con.execute("COMMIT;")
         sqlite_ok = True
@@ -1113,8 +2079,9 @@ def api_logs():
                 if not isinstance(entry, dict):
                     continue
                 sid_s = str(sid)
+                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
                 cur_entry = cur_day.get(sid_s, {})
-                cur_day[sid_s] = _merge_entry_safe(cur_entry, entry)
+                cur_day[sid_s] = _merge_entry_safe(cur_entry, safe_entry)
 
         save_atomic(LOGS_PATH, current)
 
@@ -1152,6 +2119,9 @@ def api_logs_patch():
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
 
+    entry = _repair_log_entry_placeholders(entry, sid)
+    base = _repair_log_entry_placeholders(base, sid)
+
     merged: dict = {}
 
     sqlite_ok = False
@@ -1161,7 +2131,7 @@ def api_logs_patch():
         con = _db_connect()
         _db_ensure_schema(con)
         con.execute("BEGIN IMMEDIATE;")
-        cur = _db_get_entry(con, date, sid)
+        cur = _repair_log_entry_placeholders(_db_get_entry(con, date, sid), sid)
         if _entry_conflicts_with_base(cur, base):
             con.execute("ROLLBACK;")
             # SQLite? JSON? ?? ??? ??? ?? ?? ?? ??? JSON ???? ??.
@@ -1199,6 +2169,7 @@ def api_logs_patch():
             cur_json = day.get(sid, {})
             if not isinstance(cur_json, dict):
                 cur_json = {}
+            cur_json = _repair_log_entry_placeholders(cur_json, sid)
 
             if _entry_conflicts_with_base(cur_json, base):
                 return jsonify({
@@ -1210,6 +2181,7 @@ def api_logs_patch():
 
             if not merged:
                 merged = _merge_entry_safe(cur_json, entry)
+            merged = _repair_log_entry_placeholders(merged, sid)
             day[sid] = merged
 
             save_atomic(LOGS_PATH, current)
@@ -1270,6 +2242,8 @@ def api_update_student_field():
     students: List[dict] = load(STU_PATH)
     for s in students:
         if str(s.get("id")) == str(sid):
+            if field == AUTO_VIDEO_ASSIGN_FIELD:
+                value = _coerce_auto_video_assign_count(value)
             s[field] = value
             save_atomic(STU_PATH, students)
             return "OK"

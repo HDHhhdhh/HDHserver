@@ -171,6 +171,23 @@ export function isHwChecked(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];
   return !!(e && truthy(e.hwChecked));
 }
+export async function setHomeworkCheckedRemote(dateKey, sid, checked) {
+  const on = !!checked;
+  if (on) {
+    const t = nowHHMM();
+    await patchLog(dateKey, sid, {
+      hwChecked: true,
+      hwCheckedAt: t,
+      hwAssigned: true,
+      hwAssignedAt: t,
+    });
+    return;
+  }
+  await patchLog(dateKey, sid, {
+    hwChecked: false,
+    hwAssigned: false,
+  }, ['hwCheckedAt', 'hwAssignedAt']);
+}
 export async function setLogFlagRemote(dateKey, sid, field, checked) {
   await patchLog(dateKey, sid, { [field]: checked ? true : false });
 }
@@ -611,6 +628,36 @@ export function collectUnarchivedLogsByDate(dateKey) {
     const timeCmp = bTime.localeCompare(aTime);
     if (timeCmp !== 0) return timeCmp;
 
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+
+  return out;
+}
+
+export function collectUnarchivedLogsExceptDate(dateKey) {
+  const logs = state.logs || {};
+  const selectedDate = String(dateKey || '').trim();
+  if (!selectedDate) return [];
+
+  const out = [];
+  for (const date of Object.keys(logs).sort()) {
+    if (date === selectedDate) continue;
+
+    const dayMap = logs[date] || {};
+    if (!dayMap || typeof dayMap !== 'object') continue;
+
+    for (const sid of Object.keys(dayMap)) {
+      const e = dayMap[sid] || {};
+      const done = truthy(e.done);
+      const archived = truthy(e.archived);
+      if (!done || archived) continue;
+      out.push([String(sid), e, date]);
+    }
+  }
+
+  out.sort((a, b) => {
+    const dateCmp = String(b[2]).localeCompare(String(a[2]));
+    if (dateCmp !== 0) return dateCmp;
     return String(a[0]).localeCompare(String(b[0]));
   });
 

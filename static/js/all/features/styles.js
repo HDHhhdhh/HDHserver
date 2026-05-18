@@ -26,23 +26,23 @@ body.dark #allWrap .subBookInput { background:#1e293b; color:#e2e8f0; }
 /* ───── 신규 학생 입력 바(두 줄) ───── */
 .ns-wrap {
   display:grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap:10px;
-  padding:12px;
-  margin:12px 0 16px;
-  border-radius:14px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap:15px;
+  padding:18px;
+  margin:12px 0 24px;
+  border-radius:21px;
   background:var(--card-light);
 }
 body.dark .ns-wrap { background:var(--card-dark); }
 
 .ns-input {
-  height:38px;
-  padding:0 12px;
-  border-radius:12px;
+  height:57px;
+  padding:0 18px;
+  border-radius:18px;
   border:1px solid #cbd5e1;
   background:#f1f5f9;
   color:#111827;
-  font:14px/38px system-ui, "Noto Sans KR", sans-serif;
+  font:21px/57px system-ui, "Noto Sans KR", sans-serif;
   box-sizing:border-box;
 }
 body.dark .ns-input {
@@ -59,13 +59,14 @@ body.dark .ns-input:focus {
 
 /* 추가 버튼 */
 .ns-btn {
-  height:38px;
-  padding:0 16px;
+  height:57px;
+  padding:0 24px;
   border:none;
-  border-radius:12px;
+  border-radius:18px;
   background:#3b82f6;
   color:#fff;
-  font-weight:600;
+  font-size:21px;
+  font-weight:700;
   cursor:pointer;
   grid-column: 1 / -1;   /* 버튼은 두 줄 전체 폭 차지 */
 }

@@ -30,6 +30,22 @@ export function initEscClose() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
 
+    if (typeof window.closeStudentWorkPopups === 'function') {
+      const logModal = document.getElementById('logModal');
+      const vidModal = document.getElementById('vidModal');
+      const unifiedOpen =
+        logModal?.classList?.contains('student-work-layout') ||
+        vidModal?.classList?.contains('student-work-layout');
+      if (unifiedOpen) {
+        try {
+          window.closeStudentWorkPopups();
+          return;
+        } catch (err) {
+          console.warn('[escClose] closeStudentWorkPopups error', err);
+        }
+      }
+    }
+
     // 학생 툴팁(로그 모달에서 띄운 고정 툴팁 포함) 먼저 닫기
     hideStudentTipHard();
 

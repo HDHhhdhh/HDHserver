@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import filecmp
 import json
+import logging
 import os
 import pathlib
 import shutil
@@ -11,6 +12,8 @@ import uuid
 from typing import Any
 
 from flask import jsonify, make_response
+
+log = logging.getLogger(__name__)
 
 
 def utc_now_isoz() -> str:
@@ -22,7 +25,13 @@ def load(path) -> Any:
         # Accept UTF-8 with or without BOM to avoid silently returning {}
         # when files are saved by editors/tools that prepend BOM.
         return json.loads(path.read_text("utf-8-sig"))
+    except FileNotFoundError:
+        return {} if str(path).endswith(".json") else None
+    except json.JSONDecodeError:
+        log.exception("JSON decode failed for %s", path)
+        raise
     except Exception:
+        log.exception("JSON load failed for %s", path)
         return {} if str(path).endswith(".json") else None
 
 

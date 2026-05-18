@@ -73,6 +73,13 @@ function ensureStyles() {
     font-size:12px;
   }
   .adb-btn:hover{ filter:brightness(.97); }
+  #adb_today{
+    height:48px;
+    padding:0 12px;
+    border-radius:12px;
+    font-size:18px;
+    font-weight:800;
+  }
   body.dark .adb-btn{ color:#e2e8f0; }
   .adb-hint{ opacity:.75; }
   `;

@@ -1,4 +1,5 @@
 import { $ } from '../core/utils.js';
+import { initAttendanceLedgerLink } from './attendanceLedgerLink.js';
 
 const DENSITY_KEY = 'adminDensityMode';
 
@@ -103,6 +104,9 @@ function initRailActions() {
       case 'open-extra':
         clickById('extraBtn');
         break;
+      case 'open-absent':
+        clickById('absentRegisterBtn');
+        break;
       default:
         break;
     }
@@ -141,5 +145,6 @@ export function initAdminUiEnhance() {
 
   initDensityToggle();
   initRailActions();
+  initAttendanceLedgerLink();
   initMetricWatchers();
 }

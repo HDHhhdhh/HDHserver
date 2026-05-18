@@ -1,7 +1,9 @@
 # Local runtime data and private records
 /*.json
 /*.sqlite
+/*.sqlite-*
 /*.db
+/*.db-*
 /*.csv
 /*.tmp
 *.bak*
@@ -9,6 +11,7 @@ progress.json.*.tmp
 
 # Mirrored backups and generated/local data
 /_data_mirror/
+/_runtime_backups/
 /data/
 /files/
 /instance/

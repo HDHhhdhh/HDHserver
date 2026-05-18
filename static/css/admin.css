@@ -897,6 +897,47 @@ body.admin[data-density="compact"] a.btn {
   font-size: 12px;
 }
 
+body.admin .global-links {
+  gap: 16px;
+}
+
+body.admin .hero-actions {
+  gap: 16px;
+}
+
+body.admin .global-links a.btn,
+body.admin .hero-actions #extraBtn,
+body.admin .hero-actions #absentRegisterBtn,
+body.admin .hero-actions #exportLogs,
+body.admin .hero-actions #exportRoster,
+body.admin #absentRecoverBtn,
+body.admin #clearAllBtn,
+body.admin .rail-shortcuts .rail-cta[data-ui-action="open-extra"],
+body.admin .rail-shortcuts .rail-cta[data-ui-action="open-absent"],
+body.admin .rail-shortcuts #exportRosterRail {
+  height: 54px !important;
+  padding: 0 18px !important;
+  border-radius: 15px !important;
+  font-size: 19.5px !important;
+  line-height: 1 !important;
+}
+
+body.admin .btn.danger,
+body.admin button.btn.danger,
+body.admin .rail-cta.danger {
+  background: #dc2626 !important;
+  border-color: #b91c1c !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 22px rgba(220, 38, 38, .22);
+}
+
+body.admin .btn.danger:hover,
+body.admin button.btn.danger:hover,
+body.admin .rail-cta.danger:hover {
+  background: #b91c1c !important;
+  border-color: #991b1b !important;
+}
+
 /* =========================================
    Responsive
    ========================================= */

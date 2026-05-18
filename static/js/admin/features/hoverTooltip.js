@@ -31,6 +31,7 @@ export function initHoverTooltip() {
     if (tipEl) return tipEl;
     tipEl = document.createElement('div');
     tipEl.id = 'adminSchoolTip';
+    tipEl.setAttribute('aria-label', '툴팁 팝업');
     tipEl.style.cssText = `
       position: fixed;
       top: 0; left: 0;
@@ -51,6 +52,7 @@ export function initHoverTooltip() {
     tipEl.addEventListener('pointerdown', (ev) => {
       // 고정 모드에서만 드래그 허용 (로그 모달 고정 툴팁)
       if (tipMode !== 'fixed') return;
+      if (tipEl.classList.contains('student-work-layout')) return;
       if (ev.button !== 0) return; // 좌클릭만
 
       const rect = tipEl.getBoundingClientRect();
@@ -135,6 +137,97 @@ export function initHoverTooltip() {
       <div style="min-width:54px; opacity:.8">${label}</div>
       <div style="font-weight:700; word-break:break-word">${value || '-'}</div>
     </div>`;
+
+  const escHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[m]));
+
+  function pickTextbook(entry = {}) {
+    return String(
+      entry.textbook || entry.mathTextbook || entry.book || entry.mathBook ||
+      entry['교과서'] || entry['수학교과서'] || ''
+    ).trim();
+  }
+
+  function normalizeSubjectKey(value) {
+    const compact = String(value ?? '')
+      .trim()
+      .replace(/[Ⅰⅰ]/g, '1')
+      .replace(/[Ⅱⅱ]/g, '2')
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[():：·._-]/g, '');
+
+    const aliases = {
+      '공통수학1': '공수1',
+      '공통수학2': '공수2',
+      '미적1': '미적분1',
+      '미적2': '미적분2',
+      '확률과통계': '확통',
+    };
+
+    return aliases[compact] || compact;
+  }
+
+  function filterScheduleEntriesForStudent(scheduleEntries, stu) {
+    if (!scheduleEntries.length) return scheduleEntries;
+
+    const curriculumKey = normalizeSubjectKey(stu?.curriculum);
+    if (!curriculumKey) return scheduleEntries;
+
+    const exact = scheduleEntries.filter((entry) => (
+      normalizeSubjectKey(entry?.phase) === curriculumKey
+    ));
+    if (exact.length) return exact;
+
+    const loose = scheduleEntries.filter((entry) => {
+      const phaseKey = normalizeSubjectKey(entry?.phase);
+      return phaseKey && (phaseKey.includes(curriculumKey) || curriculumKey.includes(phaseKey));
+    });
+
+    return loose.length ? loose : scheduleEntries;
+  }
+
+  function buildTextbookPublisherHtml(scheduleEntries, fallbackEntry) {
+    const sourceEntries = scheduleEntries.length
+      ? scheduleEntries
+      : (fallbackEntry && Object.keys(fallbackEntry).length ? [fallbackEntry] : []);
+    const items = [];
+    const seen = new Set();
+
+    sourceEntries.forEach((entry, idx) => {
+      const textbook = pickTextbook(entry || {});
+      if (!textbook) return;
+
+      const phase = String(entry?.phase || '').trim();
+      const grade = String(entry?.grade || '').trim();
+      const label = phase || (sourceEntries.length > 1 ? (grade || `트랙 ${idx + 1}`) : '');
+      const key = `${label}::${textbook}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ label, textbook });
+    });
+
+    if (!items.length) return '';
+
+    return `
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0 8px; font-size:12.5px">
+        ${items.map(({ label, textbook }) => `
+          <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 8px;
+                       border:1px solid rgba(255,255,255,.14); border-radius:999px;
+                       background:rgba(255,255,255,.07); font-weight:700;">
+            <span aria-hidden="true">📕</span>
+            ${label ? `<span style="opacity:.82">${escHtml(label)}</span>` : ''}
+            <span>${escHtml(textbook)}</span>
+          </span>
+        `).join('')}
+      </div>
+    `;
+  }
 
   // ───────────────────────────────────────────
   // 학사일정: 기말(final) 우선, 없으면 중간(midterm) 폴백
@@ -291,24 +384,18 @@ export function initHoverTooltip() {
   // 영상/테스트 표시 (옵션으로 영상/테스트 각각 on/off)
   // ───────────────────────────────────────────
   function renderProgressTables(stu, opts = {}) {
-    const { includeVideo = true, includeTests = true } = opts;
+    const { includeVideo = true } = opts;
     const today = new Date().toISOString().slice(0, 10);
 
     const allDates = Object.keys(state.progress || {}).filter(d => d <= today).sort();
     const mergedProg = {};
-    const mergedTests = {};
 
     allDates.forEach(d => {
       const per = state.progress[d]?.[stu.id] || {};
       Object.entries(per).forEach(([k, v]) => {
-        if (k === 'tests') return;
+        if (String(k).startsWith('__') || k === 'tests') return;
         mergedProg[k] = v;
       });
-      if (per.tests && typeof per.tests === 'object') {
-        Object.entries(per.tests).forEach(([tname, st]) => {
-          mergedTests[tname] = st;
-        });
-      }
     });
 
     let progBlock = '';
@@ -348,71 +435,7 @@ export function initHoverTooltip() {
       `;
     }
 
-    let unitBlock = '';
-    let finalBlock = '';
-    let hellBlock = '';
-
-    if (includeTests) {
-      const logsDates = Object.keys(state.logs || {}).filter(d => d <= today).sort();
-      const takenMap = {};
-      logsDates.forEach(d => {
-        const entry = state.logs[d]?.[stu.id];
-        const tests = Array.isArray(entry?.tests) ? entry.tests : [];
-        tests.forEach(t => {
-          const nm = String(t.name || '').trim();
-          if (nm) takenMap[nm] = true;
-        });
-      });
-
-      const norm = (s) => {
-        const raw = String(s || '').toLowerCase().replace(/\s+/g, '');
-        const m = raw.match(/(final|파이널|hell|헬)\s*([0-9]+)/);
-        if (m) return `${m[1].replace('파이널', 'final').replace('헬', 'hell')}${m[2]}`;
-        return raw;
-      };
-
-      const doneSet = new Set([
-        ...Object.entries(mergedTests).filter(([, st]) => st === 'done').map(([k]) => norm(k)),
-        ...Object.keys(takenMap).map(norm),
-      ]);
-
-      const testChip = (name, label = name) => {
-        const ok = doneSet.has(norm(name));
-        const color = ok ? '#10b981' : '#1f2937';
-        const tt = `${label} (${ok ? '완료' : '미응시'})`;
-        return `
-          <div title="${tt}"
-               style="
-                 padding:4px 8px; margin:3px; border:1px solid #111; background:${color};
-                 color:#fff; font-size:11px; white-space:nowrap; border-radius:8px; flex:0 0 auto;">
-            ${label}
-          </div>`;
-      };
-
-      const UNIT_LIST = ['명제1', '명제2'].map(n => [n, n]);
-      const FINAL_LIST = [1, 2, 3, 4].map(n => [`final${n}`, `파이널 ${n}`]);
-      const HELL_LIST = [1, 2, 3, 4].map(n => [`hell${n}`, `헬 ${n}`]);
-
-      const chipRow = (pairs) => `
-        <div style="display:flex; flex-wrap:wrap; align-items:center; max-width:100%;">
-          ${pairs.map(([k, label]) => testChip(k, label)).join('')}
-        </div>`;
-
-      unitBlock = `
-        <div style="margin-top:10px;font-weight:800;font-size:13px">테스트(단원평가)</div>
-        ${chipRow(UNIT_LIST)}
-      `;
-      finalBlock = `
-        <div style="margin-top:8px;font-weight:800;font-size:13px">파이널</div>
-        ${chipRow(FINAL_LIST)}
-      `;
-      hellBlock = `
-        <div style="margin-top:8px;font-weight:800;font-size:13px">헬</div>
-        ${chipRow(HELL_LIST)}
-      `;
-    }
-
-    return progBlock + unitBlock + finalBlock + hellBlock;
+    return progBlock;
   }
 
   // ───────────────────────────────────────────
@@ -512,11 +535,31 @@ export function initHoverTooltip() {
     tipEl.style.top = `${top}px`;
   }
 
+  function resetStudentWorkTooltipPlacement() {
+    if (!tipEl) return;
+    tipEl.classList.remove('student-work-layout');
+    tipEl.style.right = 'auto';
+    tipEl.style.width = '';
+    tipEl.style.maxWidth = 'min(1100px, 92vw)';
+    tipEl.style.transform = 'translate(10px, 10px)';
+  }
+
+  function placeForStudentWorkLayout() {
+    if (!tipEl) return;
+    tipEl.classList.add('student-work-layout');
+    tipEl.style.transform = 'none';
+    tipEl.style.right = '';
+    tipEl.style.left = '';
+    tipEl.style.top = '';
+    tipEl.style.width = '';
+    tipEl.style.maxWidth = '';
+  }
+
   // ───────────────────────────────────────────
   // HTML 구성
   // ───────────────────────────────────────────
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = true } = opts;
+    const { includeVideo = true, includeTests = false } = opts;
 
     const name = (stu.name || '').trim();
     const level = stu.level || '';
@@ -528,10 +571,10 @@ export function initHoverTooltip() {
       stu.highSchool || stu.schoolHigh || stu.high || stu.highschool || stu.high_school || stu['고등학교'] ||
       stu.middleSchool || stu.schoolMiddle || stu.middle || stu.middleschool || stu.middle_school || stu['중학교'] || '';
 
-    const scheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
+    const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
+    const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
     const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
-    const textbook =
-      sc.textbook || sc.mathTextbook || sc.book || sc.mathBook || sc['교과서'] || sc['수학교과서'] || '';
+    const textbookPublisherBlock = buildTextbookPublisherHtml(scheduleEntries, sc);
 
     const badgeColor =
       level === '상' ? '#2563eb' :
@@ -554,10 +597,11 @@ export function initHoverTooltip() {
       <div style="font-size:13px; margin-bottom:4px">
         ${days ? `<span style="margin-right:8px">📅 ${days}</span>` : ''}
         ${subBooks ? `<span style="margin-right:8px">📘 ${subBooks}</span>` : ''}
-        ${textbook ? `<span>📕 ${textbook}</span>` : ''}
       </div>
+      ${textbookPublisherBlock}
     `;
 
+    const examDetailMinHeight = !includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px');
     const examRows = (scheduleEntries.length ? scheduleEntries : [sc]).map((entry, idx) => {
       const exam = pickExam(entry || {}, 'auto');
       const remain = calcRemainingSessions(entry || {}, stu);
@@ -581,7 +625,7 @@ export function initHoverTooltip() {
             ${pill('수학시험일', exam.math || '-', { big: true })}
             ${remainInline}
           </div>
-          <div style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:8px">
+          <div style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:12px; min-height:${examDetailMinHeight}">
             <div style="font-weight:800; margin-bottom:4px">${exam.label} 범위/특이사항</div>
             ${em('범위', exam.range)}
             ${em('비고', exam.note)}
@@ -616,14 +660,15 @@ export function initHoverTooltip() {
     tipMode = opts.fixed ? 'fixed' : 'hover';
 
     let includeVideo = true;
-    let includeTests = true;
+    let includeTests = false;
 
     if (variant === 'log') {
       includeVideo = false;
-      includeTests = true;
     }
 
     const el = ensureTip();
+    const useStudentWorkLayout = opts.layout === 'student-work';
+    if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = buildTipHtml(stu, { includeVideo, includeTests });
     el.style.display = 'block';
 
@@ -637,7 +682,9 @@ export function initHoverTooltip() {
     }
 
     requestAnimationFrame(() => {
-      if (tipMode === 'fixed') {
+      if (useStudentWorkLayout) {
+        placeForStudentWorkLayout();
+      } else if (tipMode === 'fixed') {
         placeForLogModal();
       } else {
         if (ev) placeTooltip(ev);
@@ -656,7 +703,8 @@ export function initHoverTooltip() {
     try {
       showTooltipForElement(anchorEl, null, {
         fixed: !!(opts && opts.fixed),
-        variant: opts?.variant || 'default'
+        variant: opts?.variant || 'default',
+        layout: opts?.layout
       });
     } catch (e) { console.warn(e); }
   };
@@ -667,7 +715,8 @@ export function initHoverTooltip() {
       try {
         showTooltipForElement(el, null, {
           fixed: !!(opts && opts.fixed),
-          variant: opts?.variant || 'default'
+          variant: opts?.variant || 'default',
+          layout: opts?.layout
         });
       } catch (e) { console.warn(e); }
     }
@@ -680,6 +729,7 @@ export function initHoverTooltip() {
     tipVariant = 'default';
     tipEl.style.pointerEvents = 'none';
     tipEl.style.cursor = 'default';
+    resetStudentWorkTooltipPlacement();
     dragState = null;
   };
 

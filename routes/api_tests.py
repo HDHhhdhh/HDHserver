@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from statistics import median
+from statistics import median, pstdev
 import datetime as dt
 import re
 import time
@@ -15,6 +15,7 @@ from core.paths import (
 from core.storage import load, save_atomic, nocache_resp, utc_now_isoz
 
 bp_api_tests = Blueprint("api_tests", __name__)
+TEST_TYPE_ORDER = ("REVIEW", "UNIT", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
 
 TEST_LEVEL_RE = re.compile(r"""
   (?:\(|\[)?\s*
@@ -27,6 +28,13 @@ def _tests_lock():
     from routes.api_basic import _InterProcessFileLock
 
     tp = str(getattr(TESTS_PATH, "__fspath__", lambda: str(TESTS_PATH))())
+    return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+
+
+def _tests_config_lock():
+    from routes.api_basic import _InterProcessFileLock
+
+    tp = str(getattr(TESTS_CFG_PATH, "__fspath__", lambda: str(TESTS_CFG_PATH))())
     return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
 
 
@@ -79,6 +87,13 @@ def _canon_test_name(name: str) -> str:
 def _normalize_test_type(raw: str) -> str:
     s = str(raw or "").strip()
     up = s.upper()
+    compact = re.sub(r"\s+", "", s)
+    if "REVIEW" in up or "복습" in compact:
+        return "REVIEW"
+    if "SCHOOL" in up or "학군지" in compact:
+        return "SCHOOL_PAST"
+    if "ILSAN" in up or "일산" in compact:
+        return "ILSAN_PAST"
     if "HELL" in up:
         return "HELL"
     if "FINAL" in up:
@@ -115,6 +130,9 @@ def _build_test_catalog(cfg: dict) -> dict:
                 "test_name": canon,
                 "unit_name": unit_name or canon,
                 "test_level": test_level,
+                "difficulty": str(t.get("difficulty") or "").strip(),
+                "round": str(t.get("round") or "").strip(),
+                "source_id": str(t.get("sourceId") or t.get("source_id") or "").strip(),
             }
             if test_id:
                 by_id[test_id] = meta
@@ -161,6 +179,44 @@ def _resolve_test_meta(raw_name: str, test_id: str, catalog: dict) -> dict:
     if not base["type"] and canon:
         base["type"] = "UNIT"
     return base
+
+def _record_meta(rec: dict, catalog: dict) -> dict:
+    resolved = _resolve_test_meta(rec.get("name"), rec.get("test_id"), catalog)
+    snap = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
+    if not snap:
+        return resolved
+
+    out = dict(resolved)
+    for key in ("type", "curriculum", "test_name", "unit_name", "test_level", "difficulty", "round", "source_id"):
+        value = snap.get(key)
+        if value is not None and str(value).strip() != "":
+            out[key] = value
+    return out
+
+def _meta_matches_target(meta: dict, target: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(target, dict):
+        return False
+
+    meta_name = _canon_test_name(meta.get("test_name") or meta.get("unit_name") or "")
+    target_name = _canon_test_name(target.get("test_name") or target.get("unit_name") or "")
+    if target_name and meta_name != target_name:
+        return False
+
+    for key in ("type", "curriculum", "difficulty", "round"):
+        meta_value = str(meta.get(key) or "").strip()
+        target_value = str(target.get(key) or "").strip()
+        if meta_value and target_value and meta_value != target_value:
+            return False
+
+    return True
+
+def _stats_signature(meta: dict, fallback_name: str = "") -> str:
+    return "\u241f".join([
+        str(meta.get("type") or "").strip(),
+        str(meta.get("curriculum") or "").strip(),
+        _canon_test_name(meta.get("test_name") or fallback_name),
+        str(meta.get("round") or "").strip(),
+    ])
 
 def _score_bucket(pct: float) -> str:
     if pct < 50:
@@ -210,6 +266,7 @@ def _finalize_stats_agg(agg: dict) -> dict | None:
         "p90_pct": round(pct_sorted[p90_idx], 2),
         "min_pct": round(min(pct_list), 2),
         "max_pct": round(max(pct_list), 2),
+        "stddev_pct": round(pstdev(pct_list), 2) if len(pct_list) > 1 else 0.0,
         "avg_correct": round(sum(correct_list) / len(correct_list), 2),
         "avg_total": round(sum(total_list) / len(total_list), 2),
         "pct_hist": dict(agg["pct_hist"]),
@@ -321,13 +378,14 @@ def submit_test():
     if not sid or (not name and not test_id):
         return jsonify({'ok': False, 'error': 'sid and (name or testId) required'}), 400
 
+    cfg = _load_tests_cfg()
+    tdef = _find_test_def_by_id(cfg, test_id) if test_id else None
+
+    if tdef and not name:
+        name = str(tdef.get("name") or "").strip()
+
     pct = None
     if answers_text is not None:
-        cfg = _load_tests_cfg()
-        tdef = _find_test_def_by_id(cfg, test_id) if test_id else None
-
-        if tdef and not name:
-            name = str(tdef.get("name") or "").strip()
 
         problems = None
         if isinstance(tdef, dict):
@@ -352,6 +410,17 @@ def submit_test():
 
     today = dt.date.today().isoformat()
     now_iso = utc_now_isoz()
+    meta = _resolve_test_meta(name, test_id, _build_test_catalog(cfg))
+    meta_snapshot = {
+        "type": meta.get("type") or "",
+        "curriculum": meta.get("curriculum") or "",
+        "test_name": meta.get("test_name") or _canon_test_name(name),
+        "unit_name": meta.get("unit_name") or "",
+        "test_level": meta.get("test_level"),
+        "difficulty": meta.get("difficulty") or "",
+        "round": meta.get("round") or str(round_no),
+        "source_id": meta.get("source_id") or "",
+    }
 
     record = {
         'testId': test_id,
@@ -361,7 +430,15 @@ def submit_test():
         'wrong': wrong if isinstance(wrong, list) else [],
         'memo': memo,
         'pct': pct,
-        'createdAt': now_iso
+        'createdAt': now_iso,
+        'type': meta_snapshot["type"],
+        'curriculum': meta_snapshot["curriculum"],
+        'testName': meta_snapshot["test_name"],
+        'unitName': meta_snapshot["unit_name"],
+        'testLevel': meta_snapshot["test_level"],
+        'difficulty': meta_snapshot["difficulty"],
+        'sourceId': meta_snapshot["source_id"],
+        'testMeta': meta_snapshot,
     }
 
     logs_saved = False
@@ -469,7 +546,8 @@ def post_tests_config():
     payload = request.get_json(force=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "invalid payload"}), 400
-    save_atomic(TESTS_CFG_PATH, payload)
+    with _tests_config_lock():
+        save_atomic(TESTS_CFG_PATH, payload)
     return jsonify({"ok": True})
 
 def _parse_date(s: str) -> dt.date | None:
@@ -509,6 +587,17 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                     created_at = rec.get("createdAt") or ""
                     wrong = rec.get("wrong") if isinstance(rec.get("wrong"), list) else []
                     memo = str(rec.get("memo") or "").strip()
+                    raw_meta = rec.get("testMeta") if isinstance(rec.get("testMeta"), dict) else {}
+                    snap_meta = {
+                        "type": str(rec.get("type") or raw_meta.get("type") or "").strip(),
+                        "curriculum": str(rec.get("curriculum") or raw_meta.get("curriculum") or "").strip(),
+                        "test_name": str(rec.get("testName") or raw_meta.get("test_name") or raw_meta.get("testName") or "").strip(),
+                        "unit_name": str(rec.get("unitName") or raw_meta.get("unit_name") or raw_meta.get("unitName") or "").strip(),
+                        "test_level": rec.get("testLevel") if rec.get("testLevel") is not None else raw_meta.get("test_level") or raw_meta.get("testLevel"),
+                        "difficulty": str(rec.get("difficulty") or raw_meta.get("difficulty") or "").strip(),
+                        "round": str(raw_meta.get("round") or rec.get("round") or "").strip(),
+                        "source_id": str(rec.get("sourceId") or raw_meta.get("source_id") or raw_meta.get("sourceId") or "").strip(),
+                    }
                     if not name or "/" not in score:
                         continue
                     try:
@@ -534,21 +623,25 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                         "created_at": str(created_at),
                         "memo": memo,
                         "day": day,
+                        "meta": snap_meta,
                     }
 
-    for item in _walk(load(LOGS_PATH)):
-        yield item
+    # tests.json is the durable student-test store. logs.json is kept as a
+    # legacy fallback so old 상담/수업 기록 embedded tests still appear.
     for item in _walk(load(TESTS_PATH)):
+        yield item
+    for item in _walk(load(LOGS_PATH)):
         yield item
 
 @bp_api_tests.get("/api/tests-records")
 def api_tests_records():
+    test_id_q = str(request.args.get("test_id") or request.args.get("testId") or "").strip()
     test_q = str(request.args.get("test") or "").strip()
     type_q = _normalize_test_type(request.args.get("type") or "")
     curriculum_q = str(request.args.get("curriculum") or "").strip()
     unit_name_q = str(request.args.get("unit_name") or "").strip()
     test_level_q = str(request.args.get("test_level") or "").strip()
-    if not any([test_q, type_q, curriculum_q, unit_name_q, test_level_q]):
+    if not any([test_id_q, test_q, type_q, curriculum_q, unit_name_q, test_level_q]):
         return jsonify({"ok": False, "error": "missing filter"}), 400
 
     recent = request.args.get("recent_days")
@@ -581,11 +674,25 @@ def api_tests_records():
         return ""
 
     target = _canon_test_name(test_q)
+    by_id = catalog.get("by_id") if isinstance(catalog, dict) else {}
+    target_meta = by_id.get(test_id_q) if isinstance(by_id, dict) and test_id_q else None
 
     recs = []
     for rec in _iter_test_records(start, end):
         sid = rec["sid"]
-        meta = _resolve_test_meta(rec.get("name"), rec.get("test_id"), catalog)
+        rec_test_id = str(rec.get("test_id") or "").strip()
+        meta = _record_meta(rec, catalog)
+        if test_id_q:
+            if rec_test_id:
+                target_source_id = str(target_meta.get("source_id") or "").strip() if isinstance(target_meta, dict) else ""
+                if rec_test_id == test_id_q:
+                    pass
+                elif target_source_id and rec_test_id == target_source_id and _meta_matches_target(meta, target_meta):
+                    pass
+                else:
+                    continue
+            elif not _meta_matches_target(meta, target_meta):
+                continue
         nm = meta.get("test_name") or _canon_test_name(rec.get("name"))
         if target and nm != target:
             continue
@@ -616,6 +723,7 @@ def api_tests_records():
             "total": total,
             "createdAt": rec["created_at"],
             "memo": rec["memo"],
+            "testId": rec_test_id,
             "type": meta.get("type") or "",
             "curriculum": meta.get("curriculum") or "",
             "testName": nm,
@@ -623,7 +731,7 @@ def api_tests_records():
             "testLevel": meta.get("test_level"),
         })
 
-    recs.sort(key=lambda r: r.get("createdAt", ""), reverse=True)
+    recs.sort(key=lambda r: (-float(r.get("pct") or 0), str(r.get("studentName") or ""), str(r.get("createdAt") or "")))
 
     return nocache_resp({
         "range": {"start": start.isoformat(), "end": end.isoformat()},
@@ -693,23 +801,33 @@ def api_tests_stats():
         }
 
     agg: dict[str, dict] = {}
+    agg_by_id: dict[str, dict] = {}
+    agg_by_signature: dict[str, dict] = {}
     unit_agg: dict[tuple[str, str, str], dict] = {}
     series_agg: dict[tuple[str, str, str], dict] = {}
     wrong_freq: dict[str, dict[int, int]] = {}
-    type_summary = {"UNIT": _make_stats_agg(), "FINAL": _make_stats_agg(), "HELL": _make_stats_agg()}
+    type_summary = {key: _make_stats_agg() for key in TEST_TYPE_ORDER}
 
     for rec in _iter_test_records(start, end):
         sid = rec["sid"]
         correct = int(rec["correct"])
         total = int(rec["total"])
         wrong = rec["wrong"]
-        meta = _resolve_test_meta(rec.get("name"), rec.get("test_id"), catalog)
+        meta = _record_meta(rec, catalog)
         key_name = meta.get("test_name") or _canon_test_name(rec.get("name"))
         if not key_name:
             continue
 
         a = agg.setdefault(key_name, _make_stats_agg())
         _push_stats_agg(a, correct, total)
+        sig = _stats_signature(meta, key_name)
+        if sig:
+            sa = agg_by_signature.setdefault(sig, _make_stats_agg())
+            _push_stats_agg(sa, correct, total)
+        test_id = str(rec.get("test_id") or "").strip()
+        if test_id:
+            ia = agg_by_id.setdefault(test_id, _make_stats_agg())
+            _push_stats_agg(ia, correct, total)
 
         band = sid_band.get(str(sid))
         if band:
@@ -731,7 +849,7 @@ def api_tests_stats():
             )
             ga = unit_agg.setdefault(group_key, _make_stats_agg())
             _push_stats_agg(ga, correct, total)
-        elif type_key in ("FINAL", "HELL"):
+        elif type_key:
             group_key = (
                 type_key,
                 curriculum,
@@ -773,6 +891,20 @@ def api_tests_stats():
 
         out[test_name] = base
 
+    out_by_id: dict[str, dict] = {}
+    for test_id, a in agg_by_id.items():
+        base = _finalize_stats_agg(a)
+        if not base:
+            continue
+        out_by_id[test_id] = base
+
+    out_by_signature: dict[str, dict] = {}
+    for sig, a in agg_by_signature.items():
+        base = _finalize_stats_agg(a)
+        if not base:
+            continue
+        out_by_signature[sig] = base
+
     unit_rows = []
     for (curriculum, unit_name, test_level), ga in unit_agg.items():
         base = _finalize_stats_agg(ga)
@@ -791,6 +923,7 @@ def api_tests_stats():
         10**9 if x.get("test_level") is None else int(x.get("test_level")),
     ))
 
+    series_rows_by_type: dict[str, list[dict]] = {}
     final_rows = []
     hell_rows = []
     for (type_key, curriculum, test_name), ga in series_agg.items():
@@ -802,16 +935,19 @@ def api_tests_stats():
             "curriculum": curriculum,
             "test_name": test_name,
         })
+        series_rows_by_type.setdefault(type_key, []).append(base)
         if type_key == "FINAL":
             final_rows.append(base)
         elif type_key == "HELL":
             hell_rows.append(base)
+    for rows in series_rows_by_type.values():
+        rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
     final_rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
     hell_rows.sort(key=lambda x: (str(x.get("curriculum") or ""), str(x.get("test_name") or "")))
 
     summary = {}
-    for type_key in ("UNIT", "FINAL", "HELL"):
-        base = _finalize_stats_agg(type_summary[type_key])
+    for type_key in TEST_TYPE_ORDER:
+        base = _finalize_stats_agg(type_summary.setdefault(type_key, _make_stats_agg()))
         if base:
             summary[type_key] = base
 
@@ -819,8 +955,11 @@ def api_tests_stats():
         "range": {"start": start.isoformat(), "end": end.isoformat()},
         "updatedAt": utc_now_isoz(),
         "by_test": out,
+        "by_test_id": out_by_id,
+        "by_test_signature": out_by_signature,
         "summary": summary,
         "unit_rows": unit_rows,
+        "series_rows": series_rows_by_type,
         "final_rows": final_rows,
         "hell_rows": hell_rows,
     })

@@ -4,12 +4,19 @@ import { api } from './api.js';
 export const state = {
   students: [], videos: [], materials: {}, updates: {}, assigns: {},
   extra: {}, logs: {}, absences: {}, absentByDate: {}, progress: {},
-  schoolCal: {},
+  schoolCal: {}, testsConfig: { categories: {} },
 };
 
+function todayLocalKey() {
+  const now = new Date();
+  const tz = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - tz).toISOString().slice(0, 10);
+}
+
 export async function bootstrap() {
+  const today = todayLocalKey();
   const [
-    students, videos, materials, updates, assigns, extra, logs, abs, progress, schoolCal
+    students, videos, materials, updates, assigns, extra, logs, abs, progress, schoolCal, testsConfig
   ] = await Promise.all([
     api.get('/api/students'),
     api.get('/api/videos'),
@@ -17,10 +24,11 @@ export async function bootstrap() {
     api.get('/api/updates').catch(()=> ({})),
     api.get('/api/mat-assign').catch(()=> ({})),
     api.get('/api/extra-attend').catch(()=> ({})),
-    api.get('/api/logs').catch(()=> ({})),
+    api.get(`/api/logs?date=${encodeURIComponent(today)}`).catch(()=> ({})),
     api.get('/api/absent').catch(()=> ({})),
-    api.get('/api/progress').catch(()=> ({})),
+    api.get(`/api/progress?date=${encodeURIComponent(today)}`).catch(()=> ({})),
     api.get('/api/school-calendar').catch(()=> ({})),
+    api.get('/api/tests-config').catch(()=> ({ categories: {} })),
   ]);
 
   state.students = students;
@@ -37,12 +45,14 @@ export async function bootstrap() {
   state.absences    = isUnified ? (abs.by_student || {}) : (abs || {});
 
   state.schoolCal = schoolCal || {};
+  state.testsConfig = testsConfig || { categories: {} };
 
   // 전역 노출(기존 코드 호환)
   window.students = state.students;
   window.extra = state.extra;
   window.absentByDate = state.absentByDate;
   window.schoolCal = state.schoolCal;
+  window.testsConfig = state.testsConfig;
   window.logs = state.logs;
   window.progressData = state.progress;
   window.videos = state.videos;

@@ -1,14 +1,18 @@
 // /js/admin/features/logModal.js
 /* global fetch */
 
-import { $, toast, postJSON, todayLocalKey } from '../core/utils.js';
+import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
+import { initTestModal } from './testModal.js';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
 let editingLogSid = null;
+let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
+const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -132,6 +136,25 @@ async function patchProgressEntry(date, sid, progressMap) {
  * - 1) /api/logs/entry?date&sid
  * - 2) 없으면 /api/logs fallback
  */
+async function clearVideoAssignmentForDateSid(date, sid) {
+  const t = String(date || '').trim();
+  const s = String(sid || '').trim();
+  if (!t || !s) return;
+
+  state.updates = state.updates || {};
+  state.updates[t] = state.updates[t] || {};
+  delete state.updates[t][s];
+  if (/^\d+$/.test(s)) delete state.updates[t][String(Number(s))];
+  if (!Object.keys(state.updates[t]).length) delete state.updates[t];
+
+  const res = await fetch('/api/updates/patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: t, sid: s, remove: true }),
+  });
+  if (!res.ok) throw new Error('video assignment clear failed');
+}
+
 async function fetchLogEntryFromServer(date, sid) {
   const t = String(date);
   const s = String(sid);
@@ -168,6 +191,61 @@ async function fetchLogEntryFromServer(date, sid) {
   }
 }
 
+function mergeDateSidMap(target, incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  Object.entries(incoming).forEach(([date, bySid]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return;
+    if (!bySid || typeof bySid !== 'object') return;
+
+    target[date] = target[date] || {};
+    Object.entries(bySid).forEach(([sid, entry]) => {
+      if (entry && typeof entry === 'object') {
+        target[date][String(sid)] = entry;
+      }
+    });
+  });
+}
+
+async function hydrateLogHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const res = await fetch(`/api/logs?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+
+    const data = await res.json().catch(() => ({}));
+    state.logs = state.logs || {};
+    mergeDateSidMap(state.logs, data);
+    window.logs = state.logs;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateLogHistoryForSid failed:', e);
+    return false;
+  }
+}
+
+async function hydrateProgressHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+
+    const data = await res.json().catch(() => ({}));
+    state.progress = state.progress || {};
+    mergeDateSidMap(state.progress, data);
+    window.progressData = state.progress;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateProgressHistoryForSid failed:', e);
+    return false;
+  }
+}
+
 async function hydrateTodayLogFromServer(today, sid) {
   const t = String(today);
   const s = String(sid);
@@ -199,7 +277,24 @@ function injectStyles() {
     }
     body.dark #logModal .log-card{ background:#0f172a; color:#e5e7eb; border-color:#334155; }
 
-    #logModal h3{ margin:6px 0 10px; font-size:18px; font-weight:800; }
+    #logModal .log-header-row{
+      position:sticky;
+      top:0;
+      z-index:6;
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin:-2px 0 10px;
+      padding:2px 0 10px;
+      background:#ffffff;
+      border-bottom:1px solid rgba(226,232,240,.9);
+    }
+    body.dark #logModal .log-header-row{
+      background:#0f172a;
+      border-bottom-color:#334155;
+    }
+    #logModal h3{ margin:6px 0 0; font-size:36px; font-weight:900; line-height:1.12; }
     #logModal label{ display:block; margin:10px 0 8px; font-size:14px; }
 
     #logModal textarea,
@@ -218,6 +313,14 @@ function injectStyles() {
       border-color:#475569;
       background:#0b1220;
       color:#e5e7eb;
+    }
+    #logModal #logNotes{
+      height:min(48vh, var(--student-log-notes-h, 416px));
+      min-height:260px;
+      resize:vertical;
+      font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','맑은 고딕',sans-serif;
+      font-size:28px;
+      line-height:1.35;
     }
 
     #logProgress{
@@ -407,11 +510,12 @@ function injectStyles() {
     }
     body.dark .hw-del-btn{ border-color:#334155; background:#0b1220; color:#e5e7eb; }
 
-    #logModal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
+    #logModal .actions{ display:flex; gap:12px; justify-content:flex-end; margin:0; flex-wrap:wrap; }
     #logModal .actions button{
-      height:36px; padding:0 12px; border-radius:10px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
-      font-weight:900; white-space:nowrap;
+      height:54px; min-width:96px; padding:0 18px; border-radius:14px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
+      font-size:20px; font-weight:900; white-space:nowrap;
     }
+    #logModal .actions #logCompleteBtn{ min-width:180px; }
     body.dark #logModal .actions button{ border-color:#334155; background:#1f2937; color:#e5e7eb; }
   `;
   document.head.appendChild(s);
@@ -419,11 +523,18 @@ function injectStyles() {
 
 function modalTemplateHTML() {
   return `
-      <div id="logModal">
+      <div id="logModal" aria-label="기록 팝업">
         <div class="log-card">
-          <h3 id="logTitle">수업 기록</h3>
+          <div class="log-header-row">
+            <h3 id="logTitle">수업 기록</h3>
+            <div class="actions" aria-label="기록 작업">
+              <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
+              <button type="button" id="logSave">저장</button>
+              <button type="button" id="logClose">닫기</button>
+            </div>
+          </div>
 
-          <label>특이사항<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
+          <label class="notes-label">상담 기록<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
 
           <label>진도</label>
           <div id="logProgress"></div>
@@ -451,12 +562,6 @@ function modalTemplateHTML() {
             </div>
           </div>
 
-          <div class="actions">
-            <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
-            <button type="button" id="logAssignBtn">숙제 배정 완료</button>
-            <button type="button" id="logSave">저장</button>
-            <button type="button" id="logClose">닫기</button>
-          </div>
         </div>
       </div>`;
 }
@@ -474,11 +579,14 @@ function shouldSkipForLow(stu, v) {
   return Number(ex['하']) === 0;
 }
 
-async function fetchWatchForSid(sid) {
+async function fetchWatchForSid(sid, date = '') {
   const key = String(sid || '').trim();
   if (!key) return {};
   try {
-    const payload = await fetch(`/api/watch/latest?sid=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(r => r.json());
+    const params = new URLSearchParams({ sid: key });
+    const dateKey = String(date || '').trim();
+    if (dateKey) params.set('date', dateKey);
+    const payload = await fetch(`/api/watch/latest?${params.toString()}`, { cache: 'no-store' }).then(r => r.json());
     return (payload && typeof payload.watch === 'object') ? payload.watch : {};
   } catch {
     return {};
@@ -494,14 +602,30 @@ function escapeAttr(s) {
     .replace(/>/g, '&gt;');
 }
 
+function isQuestionPlaceholder(s) {
+  const text = String(s ?? '').replace(/\s+/g, '');
+  return text.length >= 2 && /^[?]+$/.test(text);
+}
+
+function looksCorruptedPlaceholderText(s) {
+  const text = String(s ?? '').trim();
+  if ((text.match(/\?/g) || []).length < 2) return false;
+  return !/[A-Za-z가-힣一-龥]/.test(text);
+}
+
+function cleanHwText(s) {
+  const text = String(s ?? '').trim();
+  return (isQuestionPlaceholder(text) || looksCorruptedPlaceholderText(text)) ? '' : text;
+}
+
 function normHwRows(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.book ?? '').trim(),
-    this: String(r?.this ?? '').trim(),
+    book: cleanHwText(r?.book),
+    this: cleanHwText(r?.this),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.comment ?? '').trim(),
-    next: String(r?.next ?? '').trim(),
+    comment: cleanHwText(r?.comment),
+    next: cleanHwText(r?.next),
     _deleted: !!(r?._deleted || r?._del || r?.deleted),
   }));
 }
@@ -531,10 +655,10 @@ function entryHwRows(entry) {
 function normOldHwRows4(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.name ?? '').trim(),
-    this: String(r?.unit ?? '').trim(),
+    book: cleanHwText(r?.name),
+    this: cleanHwText(r?.unit),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.rem ?? '').trim(),
+    comment: cleanHwText(r?.rem),
     next: '',
     _deleted: false,
   }));
@@ -739,10 +863,10 @@ function collectHwTable() {
   host.querySelectorAll('.hwItem').forEach(item => {
     if (item.dataset.deleted === '1' || item.style.display === 'none') return;
 
-    const book = (item.querySelector('.hwBook')?.value || '').trim();
-    const thisHw = (item.querySelector('.hwThis')?.value || '').trim();
-    const comment = (item.querySelector('.hwComment')?.value || '').trim();
-    const next = (item.querySelector('.hwNext')?.value || '').trim();
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
+    const comment = cleanHwText(item.querySelector('.hwComment')?.value);
+    const next = cleanHwText(item.querySelector('.hwNext')?.value);
 
     const wrap = item.querySelector('.pctWrap');
     const range = item.querySelector('.hwPctRange');
@@ -761,11 +885,11 @@ function collectHwTable() {
 
 function normalizeHwRowsForCompare(rows) {
   return activeHwRows(rows).map(r => ({
-    book: String(r.book || '').trim(),
-    this: String(r.this || '').trim(),
+    book: cleanHwText(r.book),
+    this: cleanHwText(r.this),
     pct: r.pct === '' ? '' : String(r.pct || '').trim(),
-    comment: String(r.comment || '').trim(),
-    next: String(r.next || '').trim(),
+    comment: cleanHwText(r.comment),
+    next: cleanHwText(r.next),
     _deleted: !!r._deleted,
   }));
 }
@@ -815,7 +939,7 @@ function buildHwSummary(rows) {
 
 /* hw flags PATCH */
 async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
-  const date = dateKey || todayLocalKey();
+  const date = dateKey || getAdminDate();
   const ksid = String(sid);
   const t = nowHHMM();
 
@@ -842,12 +966,12 @@ async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
 
 export function initLogModal() {
   ensureModal();
+  initTestModal();
 
   const logModal = $('logModal');
   const logTitle = $('logTitle');
   const logNotes = $('logNotes');
   const logSave = $('logSave');
-  const logAssign = $('logAssignBtn');
   const logClose = $('logClose');
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
@@ -919,6 +1043,7 @@ export function initLogModal() {
   const updateCellState = (cell, next) => {
     if (!cell) return;
     cell.dataset.state = next;
+    cell.dataset.explicitNone = next === 'none' ? '1' : '';
     cell.dataset.cleared = (next === 'none' && cell.dataset.initial !== 'none') ? '1' : '';
   };
 
@@ -999,20 +1124,23 @@ export function initLogModal() {
     startState = cell.dataset.state || 'none';
   });
 
-  document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
-    if (!btn) return;
-
-    editingLogSid = btn.closest('tr')?.dataset.sid;
+  async function openLogModalForRow(rowOrButton, opts = {}) {
+    const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
+    editingLogSid = tr?.dataset?.sid;
+    editingLogDate = tr?.dataset?.date || getAdminDate();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
     logTitle.textContent = `${stu.name} – ${stu.curriculum}`;
-    const today = todayLocalKey();
+    const today = editingLogDate;
     const sid = String(editingLogSid);
 
-    await hydrateTodayLogFromServer(today, sid);
+    await Promise.allSettled([
+      hydrateTodayLogFromServer(today, sid),
+      hydrateLogHistoryForSid(sid),
+      hydrateProgressHistoryForSid(sid),
+    ]);
 
     const dates = Array.from(new Set([
       ...Object.keys(state.progress || {}),
@@ -1022,13 +1150,30 @@ export function initLogModal() {
       .sort();
 
     const progEntry = {};
+    const explicitNoneMids = new Set();
     dates.forEach(d => {
       const day = (state.progress?.[d] || {})[sid] || {};
-      Object.entries(day).forEach(([mid, st]) => { progEntry[String(mid)] = st; });
+      const manualMeta = (day[PROGRESS_MANUAL_META_KEY] && typeof day[PROGRESS_MANUAL_META_KEY] === 'object')
+        ? day[PROGRESS_MANUAL_META_KEY]
+        : {};
+      Object.entries(day).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        const value = String(st || 'none');
+        if (value === 'none') {
+          if (manualMeta[key]) {
+            progEntry[key] = value;
+            explicitNoneMids.add(key);
+          }
+          return;
+        }
+        progEntry[key] = value;
+        explicitNoneMids.delete(key);
+      });
     });
 
     const logEntry = (state.logs[today] || {})[sid] || {};
-    const todayNotes = String(logEntry.notes || '');
+    const todayNotes = cleanHwText(logEntry.notes);
     let seededNotes = todayNotes;
 
     // 오늘 특이사항이 비어 있으면, 가장 최근 특이사항을 실제 텍스트로 미리 채운다.
@@ -1037,7 +1182,7 @@ export function initLogModal() {
         const d = dates[i];
         if (d >= today) continue;
         const prev = (state.logs[d] || {})[sid];
-        const prevNotes = String(prev?.notes || '');
+        const prevNotes = cleanHwText(prev?.notes);
         if (prevNotes.trim()) {
           seededNotes = prevNotes;
           break;
@@ -1045,7 +1190,7 @@ export function initLogModal() {
       }
     }
 
-    logNotes.value = seededNotes;
+    logNotes.value = cleanHwText(seededNotes);
     logNotes.placeholder = '';
 
     const todayRows = entryHwRows(logEntry);
@@ -1085,6 +1230,7 @@ export function initLogModal() {
 
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
     renderHwTable(merged);
+
     logModalSnapshot = {
       // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
       // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
@@ -1107,9 +1253,12 @@ export function initLogModal() {
         cell.dataset.mid = String(v.mid);
 
         const autoSkip = shouldSkipForLow(stu, v);
-        const initial = progEntry[String(v.mid)] || (autoSkip ? 'skip' : 'none');
+        const midKey = String(v.mid);
+        const hasExplicitNone = explicitNoneMids.has(midKey);
+        const initial = hasExplicitNone ? 'none' : (progEntry[midKey] || (autoSkip ? 'skip' : 'none'));
         cell.dataset.initial = initial;
         cell.dataset.state = initial;
+        cell.dataset.explicitNone = hasExplicitNone ? '1' : '';
         cell.dataset.cleared = '';
 
         cell.addEventListener('click', () => {
@@ -1126,31 +1275,90 @@ export function initLogModal() {
         progEl.append(cell);
       });
 
+    logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     logModal.style.display = 'flex';
     resetLogModalScroll();
     requestAnimationFrame(resetLogModalScroll);
 
     try {
       if (window.showStudentTooltipForSid) {
-        window.showStudentTooltipForSid(editingLogSid, { variant: 'log', fixed: true });
+        window.showStudentTooltipForSid(editingLogSid, {
+          variant: 'log',
+          fixed: true,
+          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
+        });
       }
     } catch (err) {
       console.warn('[logModal] show tooltip failed:', err);
     }
+  }
+
+  window.openRecordPopupForRow = openLogModalForRow;
+
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.editLog,.openStudentPopups');
+    if (!btn) return;
+
+    const tr = btn.closest('tr[data-sid]');
+    if (!tr) return;
+
+    const unified = btn.classList.contains('openStudentPopups');
+    if (unified && window.showStudentPopupBackdrop) {
+      try { window.showStudentPopupBackdrop(); } catch {}
+    }
+    let videoOpen = Promise.resolve();
+    if (unified && window.openVideoAssignmentPopupForRow) {
+      videoOpen = window.openVideoAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open video popup failed:', err);
+      });
+    }
+    let testOpen = Promise.resolve();
+    if (unified && window.openTestAssignmentPopupForRow) {
+      testOpen = window.openTestAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open test popup failed:', err);
+      });
+    }
+
+    await openLogModalForRow(tr, { layout: unified ? 'student-work' : undefined });
+    await Promise.allSettled([videoOpen, testOpen]);
   });
 
   const close = () => {
+    const wasUnified = logModal.classList.contains('student-work-layout');
     logModal.style.display = 'none';
+    logModal.classList.remove('student-work-layout');
     editingLogSid = null;
+    editingLogDate = null;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
+    if (wasUnified) {
+      try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
+      try { if (window.closeTestAssignmentPopup) window.closeTestAssignmentPopup(); } catch {}
+    }
+    try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
+  window.closeStudentWorkPopups = close;
   logClose.addEventListener('click', close);
-  logModal.addEventListener('click', (e) => { if (e.target === logModal) close(); });
+
+  function isCurrentLogProgressAllDone() {
+    const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
+    return cells.length > 0 && cells.every(cell => String(cell.dataset.state || 'none') === 'done');
+  }
+
+  function clearVideoAssignmentIfAllDone(saveResult) {
+    if (!saveResult?.allProgressDone) return false;
+    if (typeof window.hasManualVideoAssignmentSelection === 'function' && window.hasManualVideoAssignmentSelection()) {
+      return false;
+    }
+    if (typeof window.clearVideoAssignmentPopupForCurrent === 'function') {
+      window.clearVideoAssignmentPopupForCurrent();
+    }
+    return true;
+  }
 
   async function saveBase(doneFlag) {
-    const today = todayLocalKey();
+    const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
 
     const prevLog = (state.logs?.[today] || {})[sid] || {};
@@ -1180,7 +1388,11 @@ export function initLogModal() {
     const oldDates = Object.keys(state.progress).filter(d => d < today);
     const oldTotal = {};
     oldDates.forEach(d => {
-      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => { oldTotal[String(mid)] = st; });
+      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        oldTotal[key] = st;
+      });
     });
     const label = (mid, st) => {
       if (st === 'none') return null;
@@ -1196,7 +1408,7 @@ export function initLogModal() {
       .join(', ');
 
     const hwRows = collectHwTable();
-    const notesNow = (logNotes.value || '').trim();
+    const notesNow = cleanHwText(logNotes.value);
     const clearKeys = [];
     const entry = {};
     const base = {};
@@ -1245,6 +1457,11 @@ export function initLogModal() {
       state.logs[today][sid] = next;
     }
 
+    const allProgressDone = isCurrentLogProgressAllDone();
+    if (allProgressDone) {
+      await clearVideoAssignmentForDateSid(today, sid);
+    }
+
     logModalSnapshot = {
       notes: notesNow,
       homeworkTable: hwRows,
@@ -1253,11 +1470,30 @@ export function initLogModal() {
       notes: notesNow,
       homeworkTable: normalizeHwRowsForCompare(hwRows),
     };
+
+    return { allProgressDone };
   }
+
+  async function saveRecordPopupForCurrent() {
+    return await saveBase(false);
+  }
+
+  window.saveRecordPopup = saveRecordPopupForCurrent;
 
   logSave.addEventListener('click', async () => {
     try {
-      await saveBase(false);
+      const saveResult = await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
+      }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+      }
       toast('수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
@@ -1271,28 +1507,21 @@ export function initLogModal() {
     }
   });
 
-  logAssign?.addEventListener('click', async () => {
-    try {
-      await saveBase(false);
-      const today = todayLocalKey();
-      await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: false });
-      toast(`숙제 배정 완료 (${nowHHMM()})`);
-      close();
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
-    } catch (err) {
-      if (err?.message) {
-        alert(err.message);
-        return;
-      }
-      console.error(err);
-      alert('숙제 배정 완료 저장 실패');
-    }
-  });
-
   logComplete.addEventListener('click', async () => {
     try {
-      await saveBase(false);
-      const today = todayLocalKey();
+      const saveResult = await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
+      }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+      }
+      const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
       toast(`숙제 검사 완료 (${nowHHMM()})`);
       close();
@@ -1310,7 +1539,7 @@ export function initLogModal() {
 
 /* 자동 판정 애드온 */
 (() => {
-  const TH_DONE = 95, TH_INTERRUPTED = 5;
+  const TH_DONE = 90, TH_INTERRUPTED = 5;
 
   const pctOf = (w) => (!w || !Number(w.dur))
     ? 0
@@ -1336,6 +1565,7 @@ export function initLogModal() {
         if (!st) return;
 
         // 이미 사람이 지정한 상태(done/interrupted/skip)가 있으면 자동값으로 덮지 않는다.
+        if (cell.dataset.explicitNone === '1') return;
         const current = String(cell.dataset.state || 'none');
         if (current !== 'none') return;
 
@@ -1348,7 +1578,7 @@ export function initLogModal() {
   }
 
   document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
+    const btn = e.target.closest('.editLog,.openStudentPopups');
     if (!btn) return;
 
     const tr = btn.closest('tr[data-sid]');

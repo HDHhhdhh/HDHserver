@@ -47,8 +47,8 @@
       #wrap { overflow: auto; }
       #calTable {
         table-layout: auto;
-        width: max(1120px, 100%);
-        min-width: 1120px;
+        width: max(1440px, 100%);
+        min-width: 1440px;
       }
       #calTable th, #calTable td {
         padding: 10px 8px;
@@ -329,7 +329,7 @@
   }
 
   function applyColgroup() {
-    const widths = ['86px', '220px', '110px', '150px', '120px', '10.5rem', '12rem', '62px'];
+    const widths = ['86px', '220px', '110px', '150px', '120px', '10.5rem', '12rem', '13rem', '12rem', '62px'];
     table.querySelector('colgroup')?.remove();
     const cg = document.createElement('colgroup');
     cg.innerHTML = widths.map((w) => (w ? `<col style="width:${w}">` : '<col>')).join('');
@@ -337,7 +337,9 @@
   }
 
   function renderHead() {
-    const dynamicCols = [[viewMode === 'mid' ? '중간 수학시험일' : '기말 수학시험일', '12rem']];
+    const dynamicCols = viewMode === 'mid'
+      ? [['중간 수학시험일', '12rem'], ['시험 관련 정보', '13rem'], ['1차 지필고사 기간', '12rem']]
+      : [['기말 수학시험일', '12rem'], ['시험 관련 정보', '13rem'], ['2차 지필고사 기간', '12rem']];
 
     const cols = [
       ['열기/#', '86px'],
@@ -358,11 +360,15 @@
     if (viewMode === 'mid') {
       return `
         <td><input type="text" class="${prefix}-mid-math" value="${esc(fields.midtermMath || '')}" placeholder="${esc(placeholders.midtermMath || '예: 4/30(목), 5/1(금)')}"></td>
+        <td><input type="text" class="${prefix}-mid-note" value="${esc(fields.midtermNote || '')}" placeholder="${esc(placeholders.midtermNote || '예: 서술형 포함 / 범위 추후 공지')}"></td>
+        <td><input type="text" class="${prefix}-mid-period" value="${esc(fields.midterm || '')}" placeholder="${esc(placeholders.midterm || '예: 4/27~4/30')}"></td>
       `;
     }
 
     return `
       <td><input type="text" class="${prefix}-fin-math" value="${esc(fields.finalMath || '')}" placeholder="${esc(placeholders.finalMath || '예: 6/26(목), 6/27(금)')}"></td>
+      <td><input type="text" class="${prefix}-fin-note" value="${esc(fields.finalNote || '')}" placeholder="${esc(placeholders.finalNote || '예: 서술형 포함 / 범위 추후 공지')}"></td>
+      <td><input type="text" class="${prefix}-fin-period" value="${esc(fields.final || '')}" placeholder="${esc(placeholders.final || '예: 6/29~7/3')}"></td>
     `;
   }
 
@@ -453,11 +459,15 @@
     if (viewMode === 'mid') {
       return {
         midtermMath: rowEl.querySelector(`.${prefix}-mid-math`)?.value.trim() || '',
+        midtermNote: rowEl.querySelector(`.${prefix}-mid-note`)?.value.trim() || '',
+        midterm: rowEl.querySelector(`.${prefix}-mid-period`)?.value.trim() || '',
       };
     }
 
     return {
       finalMath: rowEl.querySelector(`.${prefix}-fin-math`)?.value.trim() || '',
+      finalNote: rowEl.querySelector(`.${prefix}-fin-note`)?.value.trim() || '',
+      final: rowEl.querySelector(`.${prefix}-fin-period`)?.value.trim() || '',
     };
   }
 
@@ -782,7 +792,7 @@
     ensureAtLeastOneSchool();
     lastSavedSnapshot = JSON.stringify(buildPayloadFromState());
     if (tableNoteEl) {
-      tableNoteEl.textContent = '가독성을 위해 수학시험일 중심으로 편집합니다. (중간/기말 탭에서 각각 입력)';
+      tableNoteEl.textContent = '수학시험일, 시험 관련 정보, 시험 기간을 중간/기말 탭에서 각각 입력합니다.';
     }
     render();
   })();

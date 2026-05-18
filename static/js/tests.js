@@ -1,896 +1,1238 @@
-// /js/tests.js — 테스트 관리(정의/정답 3회차) + 통계 대시보드 + 개인별 성적
+// /js/tests.js
+// Test catalog management for admin `/tests`.
 /* global fetch */
 
 const $ = (sel) => document.querySelector(sel);
-const CT = { "Content-Type": "application/json" };
+const CT = { 'Content-Type': 'application/json' };
+
+const CATEGORY_DEFS = [
+  { key: 'REVIEW', label: '복습 테스트', difficulties: ['상', '중상'] },
+  { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
+  { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
+  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['상', '중상'] },
+];
+const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
+const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
+const STUDENT_LEVELS = ['하', '중', '중상', '상'];
+
+const DEFAULT_RULES = {
+  REVIEW: defaultTwoBandRules(),
+  SCHOOL_PAST: defaultTwoBandRules(),
+  ILSAN_PAST: defaultTwoBandRules(),
+  UNIT: defaultUnitRules(),
+};
+
+let TEST_CFG = { categories: {} };
+let TEST_STATS = null;
+let TEST_STATS_DETAIL = null;
+const ui = {
+  category: 'UNIT',
+  subject: '공수1',
+  difficulty: '',
+  round: '',
+  selectedId: '',
+  statsCategory: 'UNIT',
+  statsTestId: '',
+  statsSearch: '',
+  statsSort: 'default',
+};
+
+function defaultTwoBandRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      '상': ['상', '중상'],
+      '중상': ['중', '하'],
+    };
+  });
+  return out;
+}
+
+function defaultUnitRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      'Lv.3': ['하'],
+      'Lv.4': ['중'],
+      'Lv.5': ['중상'],
+      'Lv.6': ['상'],
+    };
+  });
+  return out;
+}
 
 async function fetchJSONSafe(url, init = {}) {
-  const res = await fetch(url, { cache: "no-store", ...init });
+  const res = await fetch(url, { cache: 'no-store', ...init });
   const body = await res.text();
-  if (!res.ok) throw new Error(`[tests] ${init.method || "GET"} ${url} -> ${res.status}\n${body.slice(0, 500)}`);
+  if (!res.ok) throw new Error(`[tests] ${init.method || 'GET'} ${url} -> ${res.status}\n${body.slice(0, 500)}`);
   try { return body.trim() ? JSON.parse(body) : {}; }
   catch (e) { throw new Error(`[tests] Bad JSON from ${url}: ${e?.message}\n${body.slice(0, 500)}`); }
 }
 
-let TEST_CFG = { categories: {} };
-let TEST_STATS = null;
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[m]));
+}
 
-// stats 이름 -> curriculum 매핑(설정 기반)
-let TEST_NAME_TO_CUR = {};
-let CUR_SET = new Set();
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;');
+}
 
-function normalizeCfg(x) {
-  const cfg = (x && typeof x === "object") ? x : {};
-  if (!cfg.categories || typeof cfg.categories !== "object") cfg.categories = {};
+function canonText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
 
-  for (const [k, v] of Object.entries(cfg.categories)) {
-    const cat = cfg.categories[k] = (v && typeof v === "object") ? v : {};
-    cat.label = (typeof cat.label === "string" && cat.label.trim()) ? cat.label : k;
-    if (!Array.isArray(cat.tests)) cat.tests = [];
+function normalizeSubject(value) {
+  const compact = String(value || '').trim().replace(/\s+/g, '');
+  const aliases = {
+    '공통수학1': '공수1',
+    '공통수학2': '공수2',
+    '미적1': '미적분1',
+    '미적분Ⅰ': '미적분1',
+    '미적분I': '미적분1',
+    '미적2': '미적분2',
+    '미적분Ⅱ': '미적분2',
+    '미적분II': '미적분2',
+    '확률과통계': '확통',
+  };
+  return aliases[compact] || compact || '공수1';
+}
 
-    cat.tests = cat.tests.map(t => {
-      if (!t || typeof t !== "object") return null;
+function categoryLabel(key) {
+  return CATEGORY_BY_KEY[key]?.label || key || '';
+}
 
-      const id = String(t.id || "").trim() || `t_${k}_${Math.random().toString(36).slice(2, 9)}`;
-      const name = String(t.name || "").trim() || id;
-      const problems = Number.isFinite(+t.problems) ? Math.max(1, +t.problems) : 20;
-      const curriculum = (t.curriculum || "").trim() || "공수1";
+function categoryKeyFrom(rawKey, label = '') {
+  const raw = `${rawKey || ''} ${label || ''}`.toUpperCase();
+  const ko = `${rawKey || ''} ${label || ''}`.replace(/\s+/g, '');
+  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
+  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
+  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
+  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
+  return String(rawKey || '').trim();
+}
 
-      // ✅ 새 스키마: answerKeys {"1":[], "2":[], "3":[]}
-      // ✅ 구 스키마: answerKey / answers
-      const answerKeys = (t.answerKeys && typeof t.answerKeys === "object") ? t.answerKeys : null;
-      const answerKey = t.answerKey ?? t.answers ?? null;
+function normalizeDifficulty(categoryKey, raw, name = '') {
+  const text = String(raw || '').trim();
+  const def = CATEGORY_BY_KEY[categoryKey];
+  if (def?.difficulties.includes(text)) return text;
 
-      const out = { id, name, problems, curriculum };
+  const source = `${text} ${name}`;
+  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
+  if (lv) return `Lv.${lv[1]}`;
+  if (source.includes('중상')) return '중상';
+  if (source.includes('상')) return '상';
+  return def?.difficulties?.[0] || '';
+}
 
-      if (answerKeys) {
-        out.answerKeys = {
-          "1": Array.isArray(answerKeys["1"]) ? answerKeys["1"] : null,
-          "2": Array.isArray(answerKeys["2"]) ? answerKeys["2"] : null,
-          "3": Array.isArray(answerKeys["3"]) ? answerKeys["3"] : null,
-        };
-      } else if (answerKey != null) {
-        out.answerKey = answerKey;
+function normalizeRound(value, name = '') {
+  const raw = String(value || '').trim();
+  const source = `${raw} ${name}`;
+  const m = source.match(/(\d{1,2})\s*(?:회차|회)/);
+  if (m) return m[1];
+  if (/^\d{1,2}$/.test(raw)) return raw;
+  return raw || '1';
+}
+
+function roundLabel(value) {
+  const r = String(value || '').trim();
+  if (!r) return '';
+  if (r === '-') return '-';
+  return /회/.test(r) ? r : `${r}회차`;
+}
+
+function ensureConfig(raw) {
+  const cfg = (raw && typeof raw === 'object') ? raw : {};
+  if (!cfg.categories || typeof cfg.categories !== 'object') cfg.categories = {};
+
+  CATEGORY_DEFS.forEach(def => {
+    if (!cfg.categories[def.key] || typeof cfg.categories[def.key] !== 'object') {
+      cfg.categories[def.key] = { label: def.label, tests: [] };
+    }
+    if (!Array.isArray(cfg.categories[def.key].tests)) cfg.categories[def.key].tests = [];
+    cfg.categories[def.key].label = cfg.categories[def.key].label || def.label;
+  });
+
+  if (!cfg.autoAssignRules || typeof cfg.autoAssignRules !== 'object') cfg.autoAssignRules = {};
+  CATEGORY_DEFS.forEach(def => {
+    if (!cfg.autoAssignRules[def.key] || typeof cfg.autoAssignRules[def.key] !== 'object') {
+      cfg.autoAssignRules[def.key] = {};
+    }
+    SUBJECTS.forEach(subject => {
+      if (!cfg.autoAssignRules[def.key][subject] || typeof cfg.autoAssignRules[def.key][subject] !== 'object') {
+        cfg.autoAssignRules[def.key][subject] = {};
       }
-
-      return out;
-    }).filter(Boolean);
-  }
+      const defaults = DEFAULT_RULES[def.key]?.[subject] || {};
+      Object.entries(defaults).forEach(([difficulty, levels]) => {
+        if (!Array.isArray(cfg.autoAssignRules[def.key][subject][difficulty])) {
+          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
+        }
+      });
+    });
+  });
 
   return cfg;
 }
 
-function rebuildNameToCurriculumMap() {
-  TEST_NAME_TO_CUR = {};
-  CUR_SET = new Set();
-  for (const cat of Object.values(TEST_CFG.categories || {})) {
-    for (const t of (cat.tests || [])) {
-      const name = canonTestName(t.name);
-      const cur = String(t.curriculum || "").trim() || "공수1";
-      if (name) TEST_NAME_TO_CUR[name] = cur;
-      CUR_SET.add(cur);
-    }
-  }
+function normalizeTest(rawTest, rawCategoryKey, idx = 0) {
+  const categoryKey = categoryKeyFrom(rawCategoryKey);
+  const name = canonText(rawTest?.name || rawTest?.title || `테스트 ${idx + 1}`);
+  const curriculum = normalizeSubject(rawTest?.curriculum || rawTest?.subject || ui.subject);
+  return {
+    ...(rawTest || {}),
+    id: canonText(rawTest?.id) || `t_${categoryKey}_${Date.now()}_${idx}`,
+    name,
+    categoryKey,
+    curriculum,
+    difficulty: normalizeDifficulty(categoryKey, rawTest?.difficulty || rawTest?.level, name),
+    round: normalizeRound(rawTest?.round || rawTest?.session || rawTest?.no, name),
+    problems: Number.isFinite(+rawTest?.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
+  };
 }
 
-function resolveCategoryKeysByType(typeVal) {
-  const hits = [];
-  for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
-    const label = String(cat.label || "").trim();
-    const k = String(key || "").trim().toUpperCase();
-    const lv = label.toUpperCase();
-    if (typeVal === "단원평가") {
-      if (lv.includes("단원") || lv.includes("UNIT") || k === "UNIT") hits.push(key);
-    } else if (typeVal === "FINAL") {
-      if (lv.includes("FINAL") || k === "FINAL") hits.push(key);
-    } else if (typeVal === "HELL") {
-      if (lv.includes("HELL") || k === "HELL") hits.push(key);
-    }
-  }
-  return hits;
+function getCategoryTests(categoryKey = ui.category) {
+  const cat = TEST_CFG.categories?.[categoryKey];
+  if (!cat || !Array.isArray(cat.tests)) return [];
+  return cat.tests.map((test, idx) => normalizeTest(test, categoryKey, idx));
 }
 
-function getCategoryKeyForType(typeVal) {
-  const keys = resolveCategoryKeysByType(typeVal);
-  if (keys.length) return keys[0];
-  const map = { "단원평가": "UNIT", "FINAL": "FINAL", "HELL": "HELL" };
-  const key = map[typeVal] || String(typeVal || "").toUpperCase();
-  if (!TEST_CFG.categories[key]) TEST_CFG.categories[key] = { label: typeVal, tests: [] };
-  return key;
+function getVisibleTests() {
+  return getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .filter(test => !ui.round || String(test.round || '') === String(ui.round))
+    .sort((a, b) =>
+      String(a.difficulty).localeCompare(String(b.difficulty), 'ko') ||
+      Number(a.round || 0) - Number(b.round || 0) ||
+      String(a.name).localeCompare(String(b.name), 'ko')
+    );
 }
 
-// ───────────── 정답 파싱 ─────────────
+function selectedRawTest() {
+  const cat = TEST_CFG.categories?.[ui.category];
+  if (!cat || !Array.isArray(cat.tests)) return null;
+  return cat.tests.find(test => String(test.id) === String(ui.selectedId)) || null;
+}
+
 function parseAnswerSpec(text, problems) {
-  if (!text && text !== 0) return null;
-  if (Array.isArray(text)) return text;
-
-  const s = String(text).trim();
-  if (!s) return null;
-
+  if (Array.isArray(text)) return text.slice(0, problems);
+  const s = String(text ?? '').trim();
+  if (!s) return new Array(problems).fill('');
   let arr;
   if (/[\s,]/.test(s)) arr = s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
-  else arr = s.split("").map(v => v.trim());
-
-  if (!arr.length) return null;
-
-  if (problems && problems > 0) {
-    if (arr.length > problems) arr = arr.slice(0, problems);
-    if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(""));
-  }
-
+  else arr = s.split('').map(v => v.trim()).filter(Boolean);
+  if (arr.length > problems) arr = arr.slice(0, problems);
+  if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(''));
   return arr;
 }
 
 function parseAnswerSpec3(text, problems) {
-  const raw = String(text ?? "");
-  const lines = raw.replace(/\r\n/g, "\n").split("\n").slice(0, 3);
-
-  // 1줄만 있으면 1~3회차 동일로 저장
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n').slice(0, 3);
   if (lines.length <= 1) {
-    const a = parseAnswerSpec(lines[0] || "", problems) || new Array(problems).fill("");
-    return { "1": a, "2": [...a], "3": [...a] };
+    const base = parseAnswerSpec(lines[0] || '', problems);
+    return { '1': base, '2': base.slice(), '3': base.slice() };
   }
-
-  const a1 = parseAnswerSpec(lines[0] || "", problems) || new Array(problems).fill("");
-  const a2 = parseAnswerSpec(lines[1] || "", problems) || [...a1];
-  const a3 = parseAnswerSpec(lines[2] || "", problems) || [...a1];
-
-  return { "1": a1, "2": a2, "3": a3 };
+  const one = parseAnswerSpec(lines[0] || '', problems);
+  return {
+    '1': one,
+    '2': parseAnswerSpec(lines[1] || '', problems),
+    '3': parseAnswerSpec(lines[2] || '', problems),
+  };
 }
 
 function answerKeysToText(test) {
+  return answerKeyForTest(test).join(' ');
+}
+
+function answerKeyForTest(test) {
   const p = Number(test?.problems || 0) || 0;
-
-  // 새 스키마
-  if (test?.answerKeys && typeof test.answerKeys === "object") {
-    const a1 = Array.isArray(test.answerKeys["1"]) ? test.answerKeys["1"] : new Array(p).fill("");
-    const a2 = Array.isArray(test.answerKeys["2"]) ? test.answerKeys["2"] : a1;
-    const a3 = Array.isArray(test.answerKeys["3"]) ? test.answerKeys["3"] : a1;
-    return [
-      (a1 || []).join(" "),
-      (a2 || []).join(" "),
-      (a3 || []).join(" "),
-    ].join("\n").trimEnd();
+  const round = String(test?.round || '1').trim() || '1';
+  if (test?.answerKeys && typeof test.answerKeys === 'object') {
+    const exact = Array.isArray(test.answerKeys[round]) ? test.answerKeys[round] : null;
+    if (exact) return parseAnswerSpec(exact, p);
+    const firstKey = Object.keys(test.answerKeys).find(key => Array.isArray(test.answerKeys[key]));
+    if (firstKey) return parseAnswerSpec(test.answerKeys[firstKey], p);
   }
-
-  // 구 스키마
   if (test?.answerKey != null) {
-    const arr = Array.isArray(test.answerKey) ? test.answerKey : (parseAnswerSpec(test.answerKey, 0) || []);
-    return arr.join(" ");
+    return Array.isArray(test.answerKey) ? parseAnswerSpec(test.answerKey, p) : parseAnswerSpec(test.answerKey, p);
   }
-
-  return "";
+  return new Array(p).fill('');
 }
 
-function canonTestName(name) {
-  let s = String(name || "").trim();
-  if (!s) return "";
-  s = s.replace(/\s+/g, " ");
-  return s;
+function updateDifficultyOptions() {
+  const sel = $('#cfgDifficulty');
+  if (!sel) return;
+  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+  sel.innerHTML = def.difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
 }
 
-const state = {
-  type: "단원평가",
-  curriculum: "공수1",
-  selectedId: null,
-
-  selectedStatQuery: null,
-  selectedStatLabel: "",
-  selectedStatKey: "",
-  selectedBand: "",
-};
-
-// ───────────── XSS escape ─────────────
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[m]));
-}
-function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
-
-// ───────────── 편집 커리 셀렉트(동적 주입) ─────────────
-function ensureEditCurriculumUI() {
-  if ($("#cfgEditCur")) return;
-
-  const probEl = $("#cfgProblems");
-  if (!probEl) return;
-
-  const row = document.createElement("div");
-  row.className = "field-row";
-  row.style.marginTop = "6px";
-  row.innerHTML = `
-    <label for="cfgEditCur">시험 커리</label>
-    <select id="cfgEditCur">
-      <option value="공수1">공수1</option>
-      <option value="공수2">공수2</option>
-      <option value="대수">대수</option>
-      <option value="미적1">미적1</option>
-      <option value="미적2">미적2</option>
-      <option value="확통">확통</option>
-      <option value="기하">기하</option>
-    </select>
-    <div class="helper">이 시험이 속한 커리를 바꿀 수 있습니다.</div>
-  `;
-
-  const probRow = probEl.closest(".field-row");
-  if (probRow && probRow.parentElement) probRow.insertAdjacentElement("afterend", row);
-  else probEl.insertAdjacentElement("afterend", row);
-
-  $("#cfgEditCur")?.addEventListener("change", () => {
-    const val = $("#cfgEditCur").value;
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
-    const t = (cat.tests || []).find(x => x.id === state.selectedId);
-    if (!t) return;
-    t.curriculum = val;
-    renderTestList();
-  });
+function updateListDifficultyOptions() {
+  const sel = $('#cfgDifficultyFilter');
+  if (!sel) return;
+  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+  const difficulties = def.difficulties || [];
+  if (!difficulties.includes(ui.difficulty)) ui.difficulty = difficulties[0] || '';
+  sel.innerHTML = difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
+  sel.value = ui.difficulty;
 }
 
-// ───────────── 왼쪽(시험 목록) ─────────────
-function getTestsForCurrentSelection() {
-  const catKey = getCategoryKeyForType(state.type);
-  const cat = TEST_CFG.categories[catKey];
-  if (!cat) return [];
-  const all = (cat.tests || []);
-  return all.filter(t => String(t.curriculum || "").trim() === state.curriculum);
+function roundSortValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 9999;
 }
 
-function getTotalTestsCount() {
-  let total = 0;
-  for (const cat of Object.values(TEST_CFG.categories || {})) {
-    if (!cat || !Array.isArray(cat.tests)) continue;
-    total += cat.tests.length;
+function availableRounds() {
+  const rounds = new Set();
+  getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .forEach(test => {
+      const round = String(test.round || '').trim();
+      if (round) rounds.add(round);
+    });
+  return Array.from(rounds).sort((a, b) => roundSortValue(a) - roundSortValue(b) || String(a).localeCompare(String(b), 'ko'));
+}
+
+function updateRoundOptions() {
+  const sel = $('#cfgRoundFilter');
+  if (!sel) return;
+  const rounds = availableRounds();
+  if (ui.round && !rounds.includes(ui.round)) ui.round = '';
+  sel.innerHTML = [
+    '<option value="">전체 회차</option>',
+    ...rounds.map(round => `<option value="${escapeAttr(round)}">${escapeHtml(roundLabel(round))}</option>`),
+  ].join('');
+  sel.value = ui.round;
+}
+
+function updateSubjectOptions() {
+  const editor = $('#cfgSubject');
+  if (editor) {
+    editor.innerHTML = SUBJECTS.map(subject => `<option value="${escapeAttr(subject)}">${escapeHtml(subject)}</option>`).join('');
   }
-  return total;
 }
 
-function getRecentRangeLabel() {
-  const recent = String($("#statRecent")?.value || "30").trim();
-  if (recent === "365") return "최근 1년";
-  return `최근 ${recent || "30"}일`;
-}
+function updateChrome(selected = null) {
+  const visible = getVisibleTests();
+  const total = CATEGORY_DEFS.reduce((sum, def) => sum + getCategoryTests(def.key).length, 0);
+  const scope = [
+    categoryLabel(ui.category),
+    ui.subject,
+    ui.difficulty || '난이도 전체',
+    ui.round ? roundLabel(ui.round) : '전체 회차',
+  ].filter(Boolean).join(' · ');
 
-function updatePageChrome(selectedTest = null) {
-  const totalEl = $("#testsTotalPill");
-  if (totalEl) totalEl.textContent = `${getTotalTestsCount()}개`;
-
-  const scopeEl = $("#testsScopeLabel");
-  if (scopeEl) scopeEl.textContent = `${state.type} · ${state.curriculum}`;
-
-  const visibleEl = $("#visibleTestsMeta");
-  if (visibleEl) {
-    const visibleCount = getTestsForCurrentSelection().length;
-    visibleEl.textContent = `현재 목록 ${visibleCount}개`;
-  }
-
-  const rangeEl = $("#testsRangeLabel");
-  if (rangeEl) rangeEl.textContent = getRecentRangeLabel();
-
-  const editorEl = $("#editorSelectionLabel");
-  if (editorEl) editorEl.textContent = selectedTest?.name || "선택된 시험 없음";
-}
-
-function buildStatsBadgeForTest(test) {
-  if (!TEST_STATS || !TEST_STATS.by_test) return "";
-  const key = canonTestName(test.name);
-  const entry = TEST_STATS.by_test[key];
-  if (!entry || !entry.count) return "";
-  const avg = entry.avg_pct?.toFixed ? entry.avg_pct.toFixed(1) : entry.avg_pct;
-  return `<span class="small">· ${escapeHtml(avg)}% / ${escapeHtml(entry.count)}명</span>`;
+  if ($('#testsTotalPill')) $('#testsTotalPill').textContent = `${total}개`;
+  if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = scope;
+  if ($('#visibleTestsMeta')) $('#visibleTestsMeta').textContent = `현재 목록 ${visible.length}개`;
+  if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = '4개 분류 기준';
+  if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected?.name || '선택된 테스트 없음';
 }
 
 function renderTestList() {
-  const listEl = $("#testList");
+  const listEl = $('#testList');
   if (!listEl) return;
 
-  const tests = getTestsForCurrentSelection();
-  updatePageChrome((tests || []).find(t => t.id === state.selectedId) || null);
+  const tests = getVisibleTests();
+  const selected = tests.find(test => test.id === ui.selectedId) || null;
+  updateChrome(selected);
+
   if (!tests.length) {
-    listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">아직 등록된 시험이 없습니다. [새 시험] 버튼을 눌러 추가하세요.</div>`;
+    listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">등록된 테스트가 없습니다. 새 테스트를 추가하세요.</div>`;
     return;
   }
 
-  listEl.innerHTML = tests.map(t => {
-    const statsBadge = buildStatsBadgeForTest(t);
-    const active = (t.id === state.selectedId) ? "active" : "";
-    return `<button type="button" data-id="${escapeAttr(t.id)}" class="${active}">
-      ${escapeHtml(t.name)}
-      <span class="small">(${escapeHtml(t.problems)}문항)</span>
-      ${statsBadge}
-    </button>`;
-  }).join("");
+  listEl.innerHTML = renderGroupedTestList(tests);
 
-  listEl.querySelectorAll("button[data-id]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      state.selectedId = btn.getAttribute("data-id");
+  listEl.querySelectorAll('button[data-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ui.selectedId = btn.dataset.id || '';
       renderTestList();
-      fillEditorFromSelection();
+      fillEditor();
     });
   });
 }
 
-function fillEditorFromSelection() {
-  ensureEditCurriculumUI();
+function renderGroupedTestList(tests) {
+  const groups = new Map();
+  tests.forEach(test => {
+    const key = `${test.difficulty || '-'}|||${test.round || '-'}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(test);
+  });
 
-  const nameEl = $("#cfgName");
-  const probEl = $("#cfgProblems");
-  const ansEl = $("#cfgAnswers");
-  const editCurEl = $("#cfgEditCur");
-
-  const catKey = getCategoryKeyForType(state.type);
-  const tests = (TEST_CFG.categories[catKey]?.tests || []);
-
-  let sel = tests.find(t => t.id === state.selectedId);
-  if (!sel) sel = tests[0];
-
-  if (!sel) {
-    if (nameEl) nameEl.value = "";
-    if (probEl) probEl.value = "";
-    if (ansEl) ansEl.value = "";
-    if (editCurEl) editCurEl.value = "공수1";
-    updatePageChrome(null);
-    return;
-  }
-
-  state.selectedId = sel.id;
-  if (nameEl) nameEl.value = sel.name || "";
-  if (probEl) probEl.value = sel.problems || "";
-
-  if (ansEl) ansEl.value = answerKeysToText(sel);
-
-  if (editCurEl) {
-    const c = String(sel.curriculum || "").trim() || "공수1";
-    editCurEl.value = c;
-  }
-  updatePageChrome(sel);
+  return Array.from(groups.entries()).map(([key, items]) => {
+    const [difficulty, round] = key.split('|||');
+    return `
+      <section class="test-list-group">
+        <div class="test-list-group-head">
+          <span>${escapeHtml(difficulty)} · ${escapeHtml(roundLabel(round))}</span>
+          <span class="test-list-group-count">${items.length}개</span>
+        </div>
+        <div class="test-list-group-body">
+          ${items.map(test => renderTestButton(test)).join('')}
+        </div>
+      </section>
+    `;
+  }).join('');
 }
 
-// ───────────── 통계 툴바/필터 ─────────────
-function findTypeForTestName(name) {
-  const n = String(name || "").trim();
-  for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
-    const label = String(cat.label || "").trim();
-    const typeGuess = label || key;
-    for (const t of (cat.tests || [])) {
-      if (String(t.name).trim() === n) return typeGuess;
-    }
-  }
-  return null;
-}
-
-function fmtPct(val) {
-  return (typeof val === "number" && Number.isFinite(val)) ? `${val.toFixed(1)}%` : "-";
-}
-
-function statTypeLabel(type) {
-  if (type === "UNIT") return "단원평가";
-  if (type === "FINAL") return "파이널";
-  if (type === "HELL") return "APEX HELL";
-  return type || "-";
-}
-
-function normalizeStatQuery(query) {
-  if (!query || typeof query !== "object") return null;
-  const out = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value == null) continue;
-    const text = String(value).trim();
-    if (!text) continue;
-    out[key] = text;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-function statQueryKey(query) {
-  const normalized = normalizeStatQuery(query);
-  if (!normalized) return "";
-  return JSON.stringify(Object.keys(normalized).sort().reduce((acc, key) => {
-    acc[key] = normalized[key];
-    return acc;
-  }, {}));
-}
-
-function statQueryLabel(query) {
-  const normalized = normalizeStatQuery(query) || {};
-  const parts = [statTypeLabel(normalized.type || "")];
-  if (normalized.curriculum) parts.push(normalized.curriculum);
-  if (normalized.type === "UNIT") {
-    if (normalized.unit_name) parts.push(normalized.unit_name);
-    if (normalized.test_level) parts.push(`Lv.${normalized.test_level}`);
-  } else if (normalized.test) {
-    parts.push(normalized.test);
-  }
-  return parts.filter(Boolean).join(" / ");
-}
-
-function buildStatsRows() {
-  const rows = [];
-  const unitRows = Array.isArray(TEST_STATS?.unit_rows) ? TEST_STATS.unit_rows : [];
-  const finalRows = Array.isArray(TEST_STATS?.final_rows) ? TEST_STATS.final_rows : [];
-  const hellRows = Array.isArray(TEST_STATS?.hell_rows) ? TEST_STATS.hell_rows : [];
-
-  for (const row of unitRows) {
-    const query = normalizeStatQuery({
-      type: "UNIT",
-      curriculum: row.curriculum || "",
-      unit_name: row.unit_name || "",
-      test_level: row.test_level,
-    });
-    rows.push({
-      type: "UNIT",
-      typeLabel: statTypeLabel("UNIT"),
-      curriculum: row.curriculum || "-",
-      name: row.unit_name || "-",
-      subtitle: row.test_level == null ? "단원 기준 집계" : `레벨 ${row.test_level} 분리 집계`,
-      level: row.test_level == null ? "-" : `Lv.${row.test_level}`,
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  for (const row of finalRows) {
-    const query = normalizeStatQuery({
-      type: "FINAL",
-      curriculum: row.curriculum || "",
-      test: row.test_name || "",
-    });
-    rows.push({
-      type: "FINAL",
-      typeLabel: statTypeLabel("FINAL"),
-      curriculum: row.curriculum || "-",
-      name: row.test_name || "-",
-      subtitle: "시험 기준 집계",
-      level: "-",
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  for (const row of hellRows) {
-    const query = normalizeStatQuery({
-      type: "HELL",
-      curriculum: row.curriculum || "",
-      test: row.test_name || "",
-    });
-    rows.push({
-      type: "HELL",
-      typeLabel: statTypeLabel("HELL"),
-      curriculum: row.curriculum || "-",
-      name: row.test_name || "-",
-      subtitle: "시험 기준 집계",
-      level: "-",
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  return rows;
-}
-
-function renderStatsTable() {
-  const tbody = $("#statsTable tbody");
-  const thead = $("#statsTable thead");
-  if (!tbody || !thead) return;
-
-  thead.innerHTML = `
-    <tr>
-      <th style="text-align:left;">구분</th>
-      <th style="text-align:left;">과목</th>
-      <th style="text-align:left;">단원 / 시험명</th>
-      <th>레벨</th>
-      <th>응시</th>
-      <th>평균</th>
-      <th>최소</th>
-      <th>최대</th>
-    </tr>
+function renderTestButton(test) {
+  const stat = statForTest(test);
+  const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
+  const active = test.id === ui.selectedId ? 'active' : '';
+  return `
+    <button type="button" data-id="${escapeAttr(test.id)}" class="${active}">
+      ${escapeHtml(test.name)}
+      <span class="small">(${escapeHtml(test.problems)}문항)</span>
+      ${statBadge}
+    </button>
   `;
+}
 
-  const rows = buildStatsRows();
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">집계된 시험 데이터가 없습니다.</td></tr>`;
+function fillEditor() {
+  updateSubjectOptions();
+  updateDifficultyOptions();
+
+  const raw = selectedRawTest();
+  const test = raw ? normalizeTest(raw, ui.category) : null;
+  if (!test) {
+    $('#cfgSubject') && ($('#cfgSubject').value = ui.subject);
+    $('#cfgDifficulty') && ($('#cfgDifficulty').value = (CATEGORY_BY_KEY[ui.category]?.difficulties?.[0] || ''));
+    $('#cfgRound') && ($('#cfgRound').value = '1');
+    $('#cfgName') && ($('#cfgName').value = '');
+    $('#cfgProblems') && ($('#cfgProblems').value = '');
+    $('#cfgAnswers') && ($('#cfgAnswers').value = '');
+    updateChrome(null);
     return;
   }
 
-  const groups = [
-    ["UNIT", "단원평가"],
-    ["FINAL", "파이널"],
-    ["HELL", "APEX HELL"],
-  ].map(([type, label]) => ({
-    type,
-    label,
-    rows: rows.filter((row) => row.type === type),
-  })).filter((group) => group.rows.length);
-
-  tbody.innerHTML = groups.map((group) => `
-    <tr class="group-row">
-      <td colspan="8">
-        <span class="group-label">${escapeHtml(group.label)}</span>
-        <span class="group-meta">${escapeHtml(group.rows.length)}개 항목</span>
-      </td>
-    </tr>
-    ${group.rows.map((row) => {
-      const isActive = state.selectedStatKey && row.key === state.selectedStatKey;
-      const rowClass = `data-row${isActive ? " is-active" : ""}`;
-      return `
-        <tr class="${rowClass}" data-key="${escapeAttr(row.key)}">
-          <td style="text-align:left;"><span class="type-pill" data-type="${escapeAttr(row.type)}">${escapeHtml(row.typeLabel)}</span></td>
-          <td style="text-align:left;"><span class="stat-main">${escapeHtml(row.curriculum)}</span></td>
-          <td style="text-align:left;">
-            <div class="stat-title">
-              <span class="stat-main">${escapeHtml(row.name)}</span>
-              <span class="stat-sub">${escapeHtml(row.subtitle || row.label)}</span>
-            </div>
-          </td>
-          <td><span class="level-pill">${escapeHtml(row.level)}</span></td>
-          <td><span class="metric-main">${escapeHtml(row.count)}</span><span class="metric-sub">응시</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.avg))}</span><span class="metric-sub">중앙 ${escapeHtml(fmtPct(row.median))}</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.min))}</span><span class="metric-sub">최소</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.max))}</span><span class="metric-sub">P90 ${escapeHtml(fmtPct(row.p90))}</span></td>
-        </tr>
-      `;
-    }).join("")}
-  `).join("");
-
-  tbody.querySelectorAll("tr[data-key]").forEach((tr) => {
-    tr.addEventListener("click", async () => {
-      const key = tr.getAttribute("data-key") || "";
-      const picked = rows.find((row) => row.key === key);
-      if (!picked) return;
-      state.selectedStatQuery = picked.query;
-      state.selectedStatLabel = picked.label;
-      state.selectedStatKey = picked.key;
-      renderStatsTable();
-      await loadAndRenderPersonalScores();
-    });
-  });
+  if ($('#cfgSubject')) $('#cfgSubject').value = test.curriculum;
+  if ($('#cfgDifficulty')) $('#cfgDifficulty').value = test.difficulty;
+  if ($('#cfgRound')) $('#cfgRound').value = test.round || '1';
+  if ($('#cfgName')) $('#cfgName').value = test.name || '';
+  if ($('#cfgProblems')) $('#cfgProblems').value = test.problems || '';
+  if ($('#cfgAnswers')) $('#cfgAnswers').value = answerKeysToText(test);
+  updateChrome(test);
 }
 
-function renderStatsSummary() {
-  const box = $("#statsSummary");
-  if (!box) return;
+function renderRules() {
+  const host = $('#ruleGrid');
+  if (!host) return;
 
-  const summary = (TEST_STATS && typeof TEST_STATS.summary === "object" && TEST_STATS.summary) ? TEST_STATS.summary : {};
-  const order = [
-    ["UNIT", "단원평가"],
-    ["FINAL", "파이널"],
-    ["HELL", "APEX HELL"],
-  ];
-
-  const cards = order
-    .map(([key, label]) => {
-      const row = summary[key];
-      if (!row || typeof row !== "object" || !row.count) return "";
-      return `
-        <article class="summary-card" data-type="${escapeAttr(key)}">
-          <div class="summary-label">${escapeHtml(label)}</div>
-          <div class="summary-value">${escapeHtml(fmtPct(row.avg_pct))}</div>
-          <div class="summary-meta">응시 ${escapeHtml(row.count)}건</div>
-          <div class="summary-meta">중앙 ${escapeHtml(fmtPct(row.median_pct))} · P90 ${escapeHtml(fmtPct(row.p90_pct))}</div>
-        </article>
-      `;
-    })
-    .filter(Boolean);
-
-  box.innerHTML = cards.length
-    ? cards.join("")
-    : `<div class="summary-empty">아직 통계 데이터가 부족합니다.</div>`;
-}
-
-// ───────────── 개인별 성적 패널 ─────────────
-function ensurePersonalPanel() {
-  let panel = $("#personalPanel");
-  if (panel) return panel;
-
-  const statsTable = $("#statsTable");
-  if (!statsTable) return null;
-  const anchor = statsTable.closest(".stats-table-wrap") || statsTable;
-
-  panel = document.createElement("div");
-  panel.id = "personalPanel";
-  panel.className = "personal-panel";
-  panel.innerHTML = `
-    <div class="panel-head">
-      <div>
-        <div class="panel-title">개인별 성적</div>
-        <div id="personalTitle" class="panel-subtitle"></div>
-      </div>
-      <div class="panel-controls">
-        <span class="panel-subtitle">레벨</span>
-        <select id="personalBand" style="font-size:12px; padding:4px 8px;">
-          <option value="">전체</option>
-          <option value="상">상</option>
-          <option value="중상">중상</option>
-          <option value="중">중</option>
-          <option value="하">하</option>
-        </select>
-      </div>
+  host.innerHTML = `
+    <div class="rule-grid-inner">
+      ${CATEGORY_DEFS.map(def => renderRuleSection(def)).join('')}
     </div>
+  `;
+}
 
-    <div class="panel-table-wrap">
-      <table class="stats-table" id="personalTable" style="margin:0;">
+function renderRuleSection(def) {
+  const rules = TEST_CFG.autoAssignRules?.[def.key] || {};
+  const difficultyLabel = def.key === 'UNIT' ? 'Lv.3 · Lv.4 · Lv.5 · Lv.6' : '상 · 중상';
+  return `
+    <section class="rule-section" data-rule-category="${escapeAttr(def.key)}">
+      <div class="rule-section-head">
+        <div class="rule-section-title">
+          <strong>${escapeHtml(def.label)}</strong>
+          <span>과목별 테스트 난이도와 학생 정보 레벨 연결</span>
+        </div>
+        <span class="rule-section-meta">${escapeHtml(difficultyLabel)}</span>
+      </div>
+      <table class="stats-table" style="margin:0">
         <thead>
           <tr>
-            <th style="text-align:left;">이름</th>
-            <th style="text-align:left;">레벨</th>
-            <th>점수(%)</th>
-            <th>정답/문항</th>
-            <th style="text-align:left;">제출시각</th>
+            <th style="text-align:left;">과목</th>
+            <th style="text-align:left;">테스트 난이도</th>
+            ${STUDENT_LEVELS.map(level => `<th>${escapeHtml(level)}</th>`).join('')}
           </tr>
         </thead>
-        <tbody></tbody>
+        <tbody>
+          ${SUBJECTS.map(subject => def.difficulties.map((difficulty, index) => {
+            const levels = Array.isArray(rules?.[subject]?.[difficulty]) ? rules[subject][difficulty].map(String) : [];
+            return `
+              <tr>
+                ${index === 0 ? `<td rowspan="${def.difficulties.length}" style="text-align:left;font-weight:800;">${escapeHtml(subject)}</td>` : ''}
+                <td style="text-align:left;"><span class="level-pill">${escapeHtml(difficulty)}</span></td>
+                ${STUDENT_LEVELS.map(level => `
+                  <td style="text-align:center;">
+                    <input type="checkbox" class="rule-check"
+                      data-category="${escapeAttr(def.key)}"
+                      data-subject="${escapeAttr(subject)}"
+                      data-difficulty="${escapeAttr(difficulty)}"
+                      data-level="${escapeAttr(level)}"
+                      ${levels.includes(level) ? 'checked' : ''}>
+                  </td>
+                `).join('')}
+              </tr>
+            `;
+          }).join('')).join('')}
+        </tbody>
       </table>
-    </div>
-
-    <div id="personalHint" class="panel-hint"></div>
+    </section>
   `;
+}
 
-  anchor.insertAdjacentElement("afterend", panel);
+function readRulesFromGrid() {
+  TEST_CFG.autoAssignRules = TEST_CFG.autoAssignRules || {};
 
-  $("#personalBand")?.addEventListener("change", async (e) => {
-    state.selectedBand = e.target.value || "";
-    await loadAndRenderPersonalScores();
+  CATEGORY_DEFS.forEach(def => {
+    TEST_CFG.autoAssignRules[def.key] = TEST_CFG.autoAssignRules[def.key] || {};
+    SUBJECTS.forEach(subject => {
+      TEST_CFG.autoAssignRules[def.key][subject] = TEST_CFG.autoAssignRules[def.key][subject] || {};
+      def.difficulties.forEach(difficulty => {
+        const levels = Array.from(document.querySelectorAll(`.rule-check[data-category="${CSS.escape(def.key)}"][data-subject="${CSS.escape(subject)}"][data-difficulty="${CSS.escape(difficulty)}"]:checked`))
+          .map(input => input.dataset.level)
+          .filter(Boolean);
+        TEST_CFG.autoAssignRules[def.key][subject][difficulty] = levels;
+      });
+    });
   });
-
-  return panel;
 }
 
-function renderPersonalEmpty(msg) {
-  ensurePersonalPanel();
-  const tbody = $("#personalTable tbody");
-  const titleEl = $("#personalTitle");
-  const hintEl = $("#personalHint");
-  if (titleEl) titleEl.textContent = msg || "";
-  if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">통계 항목을 선택하세요.</td></tr>`;
-  if (hintEl) hintEl.textContent = "";
+async function saveConfig() {
+  const res = await fetch('/api/tests-config', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify(TEST_CFG),
+  });
+  if (!res.ok) throw new Error(`tests-config save failed: ${res.status}`);
 }
 
-async function loadAndRenderPersonalScores() {
-  ensurePersonalPanel();
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 
-  const tbody = $("#personalTable tbody");
-  const titleEl = $("#personalTitle");
-  const hintEl = $("#personalHint");
-  if (!tbody || !titleEl || !hintEl) return;
+function downloadCsvTemplate() {
+  const rows = [
+    ['분류', '과목', '난이도', '회차', '시험명', '문항수', '1회차정답', '2회차정답', '3회차정답'],
+    ['복습 테스트', '대수', '상', '1', '대수 복습 상 1회차', '20', '1 2 3 4', '1 2 3 4', '1 2 3 4'],
+    ['단원평가', '공수1', 'Lv.4', '1', '원의 방정식 Lv.4', '20', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
+    ['학군지 기출', '미적분1', '중상', '1', '학군지 미적분1 중상 1회차', '20', '', '', ''],
+    ['일산 기출', '기하', '상', '1', '일산 기하 상 1회차', '20', '', '', ''],
+  ];
+  const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'test_catalog_template.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-  const query = normalizeStatQuery(state.selectedStatQuery);
-  if (!query) {
-    renderPersonalEmpty("통계 표에서 행을 클릭하면 개인 성적이 나옵니다.");
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (quoted) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      quoted = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows.filter(items => items.some(item => String(item || '').trim()));
+}
+
+function headerKey(value) {
+  const s = String(value || '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\s+/g, '');
+  const aliases = {
+    id: 'id',
+    testid: 'id',
+    테스트id: 'id',
+    분류: 'category',
+    구분: 'category',
+    category: 'category',
+    type: 'category',
+    과목: 'subject',
+    subject: 'subject',
+    curriculum: 'subject',
+    course: 'subject',
+    난이도: 'difficulty',
+    레벨: 'difficulty',
+    difficulty: 'difficulty',
+    level: 'difficulty',
+    회차: 'round',
+    round: 'round',
+    session: 'round',
+    no: 'round',
+    시험명: 'name',
+    테스트명: 'name',
+    name: 'name',
+    title: 'name',
+    문항수: 'problems',
+    문제수: 'problems',
+    problems: 'problems',
+    '1회차정답': 'answers1',
+    '1회정답': 'answers1',
+    answer1: 'answers1',
+    answers1: 'answers1',
+    '2회차정답': 'answers2',
+    '2회정답': 'answers2',
+    answer2: 'answers2',
+    answers2: 'answers2',
+    '3회차정답': 'answers3',
+    '3회정답': 'answers3',
+    answer3: 'answers3',
+    answers3: 'answers3',
+    정답: 'answers',
+    answers: 'answers',
+    answer: 'answers',
+  };
+  return aliases[s] || s;
+}
+
+function rowObject(headers, cells) {
+  const out = {};
+  headers.forEach((header, idx) => {
+    if (!header) return;
+    out[header] = String(cells[idx] ?? '').trim();
+  });
+  return out;
+}
+
+function hasRoundAnswerColumns(row) {
+  return ['1', '2', '3'].some(round => String(row[`answers${round}`] || '').trim());
+}
+
+function answerKeyFromCsvRow(row, round, problems) {
+  const direct = String(row[`answers${round}`] || '').trim();
+  if (direct) return parseAnswerSpec(direct, problems);
+  return parseAnswerSpec(row.answers || '', problems);
+}
+
+function findExistingTest(cat, patch) {
+  const tests = Array.isArray(cat.tests) ? cat.tests : [];
+  if (patch.id) {
+    const byId = tests.find(test => String(test?.id || '').trim() === patch.id);
+    if (byId) return byId;
+  }
+  return tests.find(test =>
+    canonText(test?.name) === patch.name &&
+    normalizeSubject(test?.curriculum || test?.subject) === patch.curriculum &&
+    String(normalizeDifficulty(patch.categoryKey, test?.difficulty || test?.level, test?.name)).trim() === patch.difficulty &&
+    String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim() === patch.round
+  ) || null;
+}
+
+async function importTestsFromCsv(file) {
+  const rows = parseCsv(await file.text());
+  if (rows.length < 2) {
+    alert('가져올 시험 행이 없습니다.');
     return;
   }
 
-  const recent = Number($("#statRecent")?.value || "30") || 30;
-  const band = String($("#personalBand")?.value || state.selectedBand || "").trim();
-  state.selectedBand = band;
+  const headers = rows[0].map(headerKey);
+  if (!headers.includes('name')) {
+    alert('CSV 첫 줄에 시험명 열이 필요합니다.');
+    return;
+  }
 
-  const label = state.selectedStatLabel || statQueryLabel(query);
-  titleEl.textContent = `${label}${band ? ` · ${band}` : ""}`;
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors = [];
+  let lastCategory = ui.category;
+  let lastSubject = ui.subject;
+  let lastDifficulty = ui.difficulty;
+  let lastRound = ui.round;
 
-  tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">불러오는 중...</td></tr>`;
-  hintEl.textContent = "";
-
-  try {
-    const q = new URLSearchParams();
-    q.set("recent_days", String(recent));
-    for (const [key, value] of Object.entries(query)) {
-      q.set(key, value);
-    }
-    if (band) q.set("band", band);
-
-    const data = await fetchJSONSafe(`/api/tests-records?${q.toString()}`);
-    const recs = Array.isArray(data.records) ? data.records : [];
-
-    if (!recs.length) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">개인 성적 데이터가 없습니다.</td></tr>`;
-      hintEl.textContent = `최근 ${recent}일`;
+  rows.slice(1).forEach((cells, idx) => {
+    const sourceOrder = idx + 1;
+    const row = rowObject(headers, cells);
+    const name = canonText(row.name);
+    if (!name) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 시험명 없음`);
       return;
     }
 
-    tbody.innerHTML = recs.map(r => {
-      const nm = escapeHtml(r.studentName || r.sid || "");
-      const lv = escapeHtml(r.level || "");
-      const pct = (typeof r.pct === "number") ? r.pct.toFixed(1) : escapeHtml(String(r.pct || ""));
-      const ct = `${r.correct ?? ""}/${r.total ?? ""}`;
-      const when = escapeHtml(String(r.createdAt || ""));
-      return `
-        <tr>
-          <td style="text-align:left;">${nm}</td>
-          <td style="text-align:left;">${lv || "-"}</td>
-          <td style="text-align:right;">${pct}</td>
-          <td style="text-align:right;">${escapeHtml(ct)}</td>
-          <td style="text-align:left; font-size:11px; opacity:.85;">${when}</td>
-        </tr>
-      `;
-    }).join("");
+    const categoryKey = categoryKeyFrom(row.category || ui.category);
+    const def = CATEGORY_BY_KEY[categoryKey];
+    if (!def) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 분류 "${row.category}"`);
+      return;
+    }
 
-    hintEl.textContent = `총 ${recs.length}건 · 최근 ${recent}일`;
-  } catch (e) {
-    console.error(e);
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">로드 실패</td></tr>`;
-    hintEl.textContent = String(e?.message || e).slice(0, 180);
+    const subject = normalizeSubject(row.subject || ui.subject);
+    if (!SUBJECTS.includes(subject)) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 과목 "${row.subject}"`);
+      return;
+    }
+
+    const difficulty = normalizeDifficulty(categoryKey, row.difficulty, name);
+    const csvRound = normalizeRound(row.round || '1', name);
+    const problemsRaw = Number(row.problems || 20);
+    const problems = Number.isFinite(problemsRaw) ? Math.max(1, Math.min(100, Math.trunc(problemsRaw))) : 20;
+    const rawId = canonText(row.id);
+    const baseId = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
+    const rounds = categoryKey === 'UNIT' && hasRoundAnswerColumns(row) ? ['1', '2', '3'] : [csvRound];
+
+    const cat = TEST_CFG.categories[categoryKey] = TEST_CFG.categories[categoryKey] || { label: def.label, tests: [] };
+    if (!Array.isArray(cat.tests)) cat.tests = [];
+    cat.label = cat.label || def.label;
+
+    rounds.forEach(round => {
+      const answerKey = answerKeyFromCsvRow(row, round, problems);
+      const patch = {
+        id: rounds.length > 1 ? `${baseId}_r${round}` : baseId,
+        sourceId: rounds.length > 1 ? baseId : canonText(row.sourceId || row.source_id || ''),
+        name,
+        categoryKey,
+        problems,
+        curriculum: subject,
+        difficulty,
+        sortOrder: sourceOrder,
+        sourceOrder,
+        round,
+        answerKeys: { [round]: answerKey },
+        answerKey,
+      };
+
+      const existing = findExistingTest(cat, patch);
+      if (existing) {
+        if (!rawId && rounds.length === 1) patch.id = canonText(existing.id) || patch.id;
+        Object.assign(existing, patch);
+        updated += 1;
+      } else {
+        cat.tests.push(patch);
+        added += 1;
+      }
+    });
+    lastCategory = categoryKey;
+    lastSubject = subject;
+    lastDifficulty = difficulty;
+    lastRound = rounds[rounds.length - 1] || csvRound;
+  });
+
+  if (!added && !updated) {
+    alert(`가져온 시험이 없습니다.${errors.length ? `\n${errors.slice(0, 5).join('\n')}` : ''}`);
+    return;
   }
+
+  await saveConfig();
+  ui.category = lastCategory;
+  ui.subject = lastSubject;
+  ui.difficulty = lastDifficulty;
+  ui.round = lastRound;
+  ui.selectedId = '';
+  $('#cfgType') && ($('#cfgType').value = ui.category);
+  $('#cfgCur') && ($('#cfgCur').value = ui.subject);
+  await loadConfigAndStats();
+
+  const detail = errors.length ? `\n건너뜀 ${skipped}건\n${errors.slice(0, 5).join('\n')}` : '';
+  alert(`CSV 가져오기 완료\n추가 ${added}건 · 업데이트 ${updated}건${detail}`);
 }
 
-// ───────────── 로드/리렌더 ─────────────
 async function loadConfigAndStats() {
-  try { TEST_CFG = normalizeCfg(await fetchJSONSafe("/api/tests-config")); }
-  catch { TEST_CFG = { categories: {} }; }
+  TEST_STATS_DETAIL = null;
+  ui.statsTestId = '';
+  TEST_CFG = ensureConfig(await fetchJSONSafe('/api/tests-config').catch(() => ({ categories: {} })));
 
-  rebuildNameToCurriculumMap();
-  ensureEditCurriculumUI();
-
-  state.selectedStatQuery = normalizeStatQuery(state.selectedStatQuery);
-  state.selectedStatKey = state.selectedStatQuery ? statQueryKey(state.selectedStatQuery) : "";
-  state.selectedStatLabel = state.selectedStatQuery ? (state.selectedStatLabel || statQueryLabel(state.selectedStatQuery)) : "";
+  const typeSel = $('#cfgType');
+  const curSel = $('#cfgCur');
+  if (typeSel) typeSel.value = ui.category;
+  if (curSel) curSel.value = ui.subject;
 
   try {
-    const recent = Number($("#statRecent")?.value || "30") || 30;
+    const recent = Number($('#statRecent')?.value || '30') || 30;
     TEST_STATS = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
   } catch {
     TEST_STATS = null;
   }
 
+  updateSubjectOptions();
+  updateListDifficultyOptions();
+  updateRoundOptions();
+  updateDifficultyOptions();
   renderTestList();
-  fillEditorFromSelection();
-  renderStatsTable();
+  fillEditor();
+  renderRules();
   renderStatsSummary();
-
-  ensurePersonalPanel();
-  if (state.selectedStatQuery) await loadAndRenderPersonalScores();
-  else renderPersonalEmpty("통계 표에서 행을 클릭하면 개인 성적이 나옵니다.");
+  renderStatsTable();
+  renderStatsDetail();
 }
 
-// ───────────── 이벤트 ─────────────
+function renderStatsSummary() {
+  const box = $('#statsSummary');
+  if (!box) return;
+  const summary = TEST_STATS?.summary || {};
+  const cards = CATEGORY_DEFS.map(def => {
+    const row = summary[def.key];
+    const count = getCategoryTests(def.key).length;
+    const metric = row?.count ? `${Number(row.avg_pct || 0).toFixed(1)}%` : `${count}개`;
+    const meta = row?.count ? `응시 ${row.count}건` : '등록 테스트';
+    const active = ui.statsCategory === def.key ? ' is-active' : '';
+    return `
+      <button type="button" class="summary-card${active}" data-type="${escapeAttr(def.key)}" data-stats-category="${escapeAttr(def.key)}">
+        <div class="summary-label">${escapeHtml(def.label)}</div>
+        <div class="summary-value">${escapeHtml(metric)}</div>
+        <div class="summary-meta">${escapeHtml(meta)}</div>
+      </button>
+    `;
+  });
+  box.innerHTML = cards.join('');
+  box.querySelectorAll('[data-stats-category]').forEach(button => {
+    button.addEventListener('click', () => {
+      ui.statsCategory = button.dataset.statsCategory || 'UNIT';
+      ui.statsTestId = '';
+      TEST_STATS_DETAIL = null;
+      renderStatsSummary();
+      renderStatsTable();
+      renderStatsDetail();
+    });
+  });
+}
+
+function fmtPct(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? `${value.toFixed(1)}%` : '-';
+}
+
+function fmtNumber(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? value.toFixed(1) : '-';
+}
+
+function statsSignature(test) {
+  return [
+    test?.categoryKey || ui.statsCategory || '',
+    test?.curriculum || '',
+    canonText(test?.name),
+    String(test?.round || '').trim(),
+  ].join('\u241f');
+}
+
+function statForTest(test) {
+  const byId = TEST_STATS?.by_test_id || {};
+  if (test?.id && byId[test.id]) return byId[test.id];
+  const bySignature = TEST_STATS?.by_test_signature || {};
+  const sig = statsSignature(test);
+  if (sig && bySignature[sig]) return bySignature[sig];
+  return TEST_STATS?.by_test?.[canonText(test?.name)] || null;
+}
+
+function syncStatsControls() {
+  const search = $('#statSearch');
+  if (search && search.value !== ui.statsSearch) search.value = ui.statsSearch;
+  const sort = $('#statSort');
+  if (sort) sort.value = ui.statsSort;
+}
+
+function defaultStatsCompare(a, b) {
+  return String(a.curriculum || '').localeCompare(String(b.curriculum || ''), 'ko') ||
+    String(a.difficulty || '').localeCompare(String(b.difficulty || ''), 'ko') ||
+    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ko');
+}
+
+function statsCount(row) {
+  const count = Number(row?.stat?.count || 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function statsAvg(row, emptyValue) {
+  const avg = Number(row?.stat?.avg_pct);
+  return Number.isFinite(avg) ? avg : emptyValue;
+}
+
+function statsSearchText(row) {
+  return [
+    row.typeLabel,
+    row.curriculum,
+    row.name,
+    row.difficulty,
+    roundLabel(row.round || ''),
+    row.problems ? `${row.problems}문항` : '',
+  ].map(canonText).join(' ').toLowerCase();
+}
+
+function compareStatsRows(a, b) {
+  switch (ui.statsSort) {
+    case 'name':
+      return String(a.name || '').localeCompare(String(b.name || ''), 'ko') || defaultStatsCompare(a, b);
+    case 'taken_desc':
+      return statsCount(b) - statsCount(a) || defaultStatsCompare(a, b);
+    case 'taken_asc':
+      return statsCount(a) - statsCount(b) || defaultStatsCompare(a, b);
+    case 'avg_desc':
+      return statsAvg(b, -1) - statsAvg(a, -1) || defaultStatsCompare(a, b);
+    case 'avg_asc':
+      return statsAvg(a, 101) - statsAvg(b, 101) || defaultStatsCompare(a, b);
+    case 'round':
+      return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) || defaultStatsCompare(a, b);
+    default:
+      return defaultStatsCompare(a, b);
+  }
+}
+
+function renderStatsTable() {
+  const tbody = $('#statsTable tbody');
+  if (!tbody) return;
+  syncStatsControls();
+  const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
+  const query = canonText(ui.statsSearch).toLowerCase();
+  const rows = getCategoryTests(def.key).map(test => ({
+    ...test,
+    typeLabel: def.label,
+    stat: statForTest(test),
+  }))
+    .filter(row => !query || statsSearchText(row).includes(query))
+    .sort(compareStatsRows);
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${query ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(row => `
+    <tr class="data-row ${row.id === ui.statsTestId ? 'is-active' : ''}" data-stat-test-id="${escapeAttr(row.id)}">
+      <td style="text-align:left;"><span class="type-pill" data-type="${escapeAttr(row.categoryKey)}">${escapeHtml(row.typeLabel)}</span></td>
+      <td style="text-align:left;">${escapeHtml(row.curriculum || '-')}</td>
+      <td style="text-align:left;">
+        <div class="stat-title">
+          <span class="stat-main">${escapeHtml(row.name)}</span>
+          <span class="stat-sub">${escapeHtml(row.problems)}문항</span>
+        </div>
+      </td>
+      <td><span class="level-pill">${escapeHtml(row.difficulty || '-')}</span></td>
+      <td>${escapeHtml(roundLabel(row.round || '-'))}</td>
+      <td>${escapeHtml(row.stat?.count || 0)}</td>
+      <td>${escapeHtml(fmtPct(row.stat?.avg_pct))}</td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('[data-stat-test-id]').forEach(rowEl => {
+    rowEl.addEventListener('click', () => {
+      const testId = rowEl.dataset.statTestId || '';
+      const row = rows.find(item => item.id === testId);
+      ui.statsTestId = testId;
+      TEST_STATS_DETAIL = null;
+      renderStatsTable();
+      renderStatsDetail(row, true);
+    });
+  });
+}
+
+async function loadStatsDetail(test) {
+  if (!test?.id) return null;
+  const recent = Number($('#statRecent')?.value || '30') || 30;
+  const params = new URLSearchParams({ test_id: test.id, recent_days: String(recent) });
+  return fetchJSONSafe(`/api/tests-records?${params.toString()}`);
+}
+
+function detailMetric(label, value) {
+  return `
+    <div class="detail-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderStatsDetail(test = null, fetchDetail = false) {
+  const host = $('#statsDetail');
+  if (!host) return;
+
+  const selected = test || getCategoryTests(ui.statsCategory).find(item => item.id === ui.statsTestId);
+  if (!selected) {
+    host.innerHTML = `
+      <div class="stats-detail-empty">
+        통계 표에서 시험을 선택하면 평균, 표준편차, 최고/최저/중앙값과 학생별 점수를 볼 수 있습니다.
+      </div>
+    `;
+    return;
+  }
+
+  const stat = statForTest(selected) || {};
+  if (fetchDetail) {
+    TEST_STATS_DETAIL = { records: [] };
+    renderStatsDetail(selected, false);
+    loadStatsDetail(selected).then(detail => {
+      TEST_STATS_DETAIL = detail;
+      renderStatsDetail(selected, false);
+    }).catch(err => {
+      console.error(err);
+    });
+    return;
+  }
+
+  const records = Array.isArray(TEST_STATS_DETAIL?.records) ? TEST_STATS_DETAIL.records : [];
+  const studentRows = records.map(rec => `
+    <tr>
+      <td style="text-align:left;">${escapeHtml(rec.studentName || rec.sid || '-')}</td>
+      <td>${escapeHtml(rec.level || '-')}</td>
+      <td>${escapeHtml(fmtPct(rec.pct))}</td>
+      <td>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</td>
+      <td style="text-align:left;">${escapeHtml((rec.createdAt || '').slice(0, 10) || '-')}</td>
+    </tr>
+  `).join('');
+
+  host.innerHTML = `
+    <section class="stats-detail-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">${escapeHtml(selected.name)}</div>
+          <div class="panel-subtitle">${escapeHtml(selected.curriculum || '-')} · ${escapeHtml(selected.difficulty || '-')} · ${escapeHtml(roundLabel(selected.round || '-'))}</div>
+        </div>
+      </div>
+      <div class="detail-metrics">
+        ${detailMetric('응시', stat.count || 0)}
+        ${detailMetric('평균', fmtPct(stat.avg_pct))}
+        ${detailMetric('표준편차', fmtNumber(stat.stddev_pct))}
+        ${detailMetric('중앙값', fmtPct(stat.median_pct))}
+        ${detailMetric('최대', fmtPct(stat.max_pct))}
+        ${detailMetric('최소', fmtPct(stat.min_pct))}
+      </div>
+      <div class="panel-table-wrap">
+        <table class="stats-table detail-student-table">
+          <thead>
+            <tr>
+              <th>학생</th>
+              <th>레벨</th>
+              <th>점수</th>
+              <th>정답</th>
+              <th>응시일</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="5" class="empty-cell">응시 기록이 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function bindUI() {
-  const typeSel = $("#cfgType");
-  const curSel = $("#cfgCur");
-  const newBtn = $("#btnNewTest");
-  const saveBtn = $("#btnSaveTest");
-  const delBtn = $("#btnDeleteTest");
-  const reloadBtn = $("#btnReloadStats");
-  const recentSel = $("#statRecent");
-
-  typeSel?.addEventListener("change", () => {
-    state.type = typeSel.value;
-    state.selectedId = null;
+  $('#cfgType')?.addEventListener('change', e => {
+    ui.category = e.target.value || 'UNIT';
+    ui.difficulty = '';
+    ui.round = '';
+    ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateRoundOptions();
+    updateDifficultyOptions();
     renderTestList();
-    fillEditorFromSelection();
+    fillEditor();
+    renderRules();
+    renderStatsSummary();
+    renderStatsTable();
   });
 
-  curSel?.addEventListener("change", () => {
-    state.curriculum = curSel.value;
-    state.selectedId = null;
+  $('#cfgCur')?.addEventListener('change', e => {
+    ui.subject = normalizeSubject(e.target.value);
+    ui.round = '';
+    ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateRoundOptions();
     renderTestList();
-    fillEditorFromSelection();
+    fillEditor();
+    renderRules();
   });
 
-  newBtn?.addEventListener("click", () => {
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
+  $('#cfgDifficultyFilter')?.addEventListener('change', e => {
+    ui.difficulty = String(e.target.value || '').trim();
+    ui.round = '';
+    ui.selectedId = '';
+    updateRoundOptions();
+    renderTestList();
+    fillEditor();
+  });
 
-    const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const cur = state.curriculum || "공수1";
-    const baseName = `${state.type} ${cur} ${cat.tests.length + 1}회`;
+  $('#cfgRoundFilter')?.addEventListener('change', e => {
+    ui.round = String(e.target.value || '').trim();
+    ui.selectedId = '';
+    renderTestList();
+    fillEditor();
+  });
 
+  $('#statSearch')?.addEventListener('input', e => {
+    ui.statsSearch = String(e.target.value || '').trim();
+    ui.statsTestId = '';
+    TEST_STATS_DETAIL = null;
+    renderStatsTable();
+    renderStatsDetail();
+  });
+
+  $('#statSort')?.addEventListener('change', e => {
+    ui.statsSort = String(e.target.value || 'default');
+    renderStatsTable();
+  });
+
+  $('#cfgSubject')?.addEventListener('change', e => {
+    const raw = selectedRawTest();
+    if (raw) raw.curriculum = normalizeSubject(e.target.value);
+    renderTestList();
+  });
+
+  $('#btnCsvTemplate')?.addEventListener('click', downloadCsvTemplate);
+
+  $('#btnImportCsv')?.addEventListener('click', () => {
+    const input = $('#csvFile');
+    if (!input) return;
+    input.value = '';
+    input.click();
+  });
+
+  $('#csvFile')?.addEventListener('change', async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    try {
+      await importTestsFromCsv(file);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || 'CSV 가져오기에 실패했습니다.');
+    } finally {
+      e.target.value = '';
+    }
+  });
+
+  $('#btnNewTest')?.addEventListener('click', () => {
+    const cat = TEST_CFG.categories[ui.category];
+    const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+    const difficulty = def.difficulties[0] || '';
+    const round = ui.round || '1';
+    const id = `t_${ui.category.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const test = {
       id,
-      name: baseName,
+      name: `${categoryLabel(ui.category)} ${ui.subject} ${difficulty} ${round}회차`,
       problems: 20,
-      curriculum: cur,
-      // ✅ 기본: 3회차 동일 빈키
-      answerKeys: { "1": [], "2": [], "3": [] }
+      curriculum: ui.subject,
+      difficulty,
+      round,
+      answerKeys: { [round]: [] },
+      answerKey: [],
     };
     cat.tests.push(test);
-
-    state.selectedId = id;
+    ui.selectedId = id;
+    ui.difficulty = difficulty;
+    ui.round = round;
+    updateListDifficultyOptions();
+    updateRoundOptions();
     renderTestList();
-    fillEditorFromSelection();
+    fillEditor();
   });
 
-  saveBtn?.addEventListener("click", async () => {
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
+  $('#btnSaveTest')?.addEventListener('click', async () => {
+    const cat = TEST_CFG.categories[ui.category];
     if (!cat) return;
+    const name = canonText($('#cfgName')?.value || '');
+    const problems = Math.max(1, Number($('#cfgProblems')?.value || 0));
+    const subject = normalizeSubject($('#cfgSubject')?.value || ui.subject);
+    const difficulty = String($('#cfgDifficulty')?.value || '').trim();
+    const round = normalizeRound($('#cfgRound')?.value || '1');
+    const answers = $('#cfgAnswers')?.value || '';
 
-    const nameEl = $("#cfgName");
-    const probEl = $("#cfgProblems");
-    const ansEl = $("#cfgAnswers");
-    const editCurEl = $("#cfgEditCur");
+    if (!name) {
+      alert('테스트명을 입력해주세요.');
+      return;
+    }
 
-    const name = nameEl?.value?.trim() || "";
-    const problems = Math.max(1, Number(probEl?.value) || 0);
-    const answersText = ansEl?.value || "";
-    const editCur = String(editCurEl?.value || "").trim();
-
-    if (!name) { alert("시험명을 입력해주세요."); return; }
-
-    let test = (cat.tests || []).find(t => t.id === state.selectedId);
-
-    const cur = editCur || (state.curriculum || "공수1");
-
+    let test = selectedRawTest();
     if (!test) {
-      const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      test = { id, name, problems, curriculum: cur, answerKeys: { "1": [], "2": [], "3": [] } };
+      test = { id: `t_${ui.category.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` };
       cat.tests.push(test);
-      state.selectedId = id;
+      ui.selectedId = test.id;
     }
 
     test.name = name;
+    test.curriculum = subject;
+    test.difficulty = difficulty;
+    test.round = round;
     test.problems = problems;
-    test.curriculum = cur;
-
-    // ✅ 3줄 파싱해서 answerKeys로 저장
-    test.answerKeys = parseAnswerSpec3(answersText, problems);
-
-    // 구 스키마 호환용(서버/다른 화면이 answerKey만 보는 경우 대비)
-    test.answerKey = test.answerKeys["1"];
+    test.answerKey = parseAnswerSpec(answers, problems);
+    test.answerKeys = { [round]: test.answerKey };
 
     try {
-      const res = await fetch("/api/tests-config", { method: "POST", headers: CT, body: JSON.stringify(TEST_CFG) });
-      if (!res.ok) throw new Error(String(res.status));
-      alert("저장 완료");
+      await saveConfig();
+      alert('저장 완료');
+      ui.subject = subject;
+      ui.difficulty = difficulty;
+      ui.round = round;
+      $('#cfgCur') && ($('#cfgCur').value = subject);
       await loadConfigAndStats();
     } catch (e) {
       console.error(e);
-      alert("저장에 실패했습니다.");
+      alert('저장에 실패했습니다.');
     }
   });
 
-  delBtn?.addEventListener("click", async () => {
-    if (!state.selectedId) { alert("삭제할 시험을 선택해주세요."); return; }
-    if (!confirm("정말 이 시험 정의를 삭제할까요? (학생들의 기출 기록은 그대로 남습니다)")) return;
+  $('#btnDeleteTest')?.addEventListener('click', async () => {
+    if (!ui.selectedId) {
+      alert('삭제할 테스트를 선택해주세요.');
+      return;
+    }
+    if (!confirm('정말 이 테스트 정의를 삭제할까요? 제출 기록은 유지됩니다.')) return;
 
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
-
-    cat.tests = (cat.tests || []).filter(t => t.id !== state.selectedId);
-    state.selectedId = null;
-
+    const cat = TEST_CFG.categories[ui.category];
+    cat.tests = (cat.tests || []).filter(test => String(test.id) !== String(ui.selectedId));
+    ui.selectedId = '';
     try {
-      const res = await fetch("/api/tests-config", { method: "POST", headers: CT, body: JSON.stringify(TEST_CFG) });
-      if (!res.ok) throw new Error(String(res.status));
-      alert("삭제 완료");
+      await saveConfig();
+      alert('삭제 완료');
       await loadConfigAndStats();
     } catch (e) {
       console.error(e);
-      alert("삭제에 실패했습니다.");
+      alert('삭제에 실패했습니다.');
     }
   });
 
-  reloadBtn?.addEventListener("click", () => loadConfigAndStats());
-  recentSel?.addEventListener("change", () => loadConfigAndStats());
+  $('#btnSaveRules')?.addEventListener('click', async () => {
+    try {
+      readRulesFromGrid();
+      await saveConfig();
+      alert('규칙 저장 완료');
+    } catch (e) {
+      console.error(e);
+      alert('규칙 저장에 실패했습니다.');
+    }
+  });
+
+  $('#btnReloadStats')?.addEventListener('click', () => loadConfigAndStats());
+  $('#statRecent')?.addEventListener('change', () => loadConfigAndStats());
 }
 
-// ───────────── init ─────────────
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener('DOMContentLoaded', () => {
   bindUI();
   loadConfigAndStats().catch(err => {
     console.error(err);
-    alert("테스트 설정/통계 로드에 실패했습니다.");
+    alert('테스트 설정/통계 로드에 실패했습니다.');
   });
 });
-  

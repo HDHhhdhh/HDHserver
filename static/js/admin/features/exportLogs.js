@@ -8,11 +8,23 @@
 //
 // ✅ 숙제 출력: 괄호 없이 "교재 / 이번숙제 / 진행률 / 코멘트 / 다음숙제"  (빈칸은 공백으로 유지)
 // ✅ 숙제 블록에 컬럼명(헤더) 라인을 항상 출력
-// ✅ (추가) 다운로드 파일명에 오늘 날짜(YYYY-MM-DD) 포함
+// ✅ (추가) 다운로드 파일명에 관리자 선택 날짜(YYYY-MM-DD) 포함
 // ✅ (추가) 특이사항(notes/memo/special 등) 내용 있으면 출력
 
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
+import {
+  loadWeekendSlots,
+  hasWeekday,
+  yoilOf,
+  truthy,
+  labelFor,
+  getSlots,
+} from './today.state.js';
+
+const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
+const ROSTER_TEXT_DEFAULT = '📢 도착 예정 시간 알려주세요!';
 
 /* ─────────────────────────────────────────────
  * ✅ 숙제 출력(헤더 포함, 괄호 제거 버전)
@@ -23,7 +35,7 @@ const HW_HEADER_LINE = '교재 / 이번 숙제 / 진행률 / 코멘트 / 다음�
 
 function normStr(v) { return String(v ?? '').trim(); }
 
-function hwRowToLine(r) {
+function hwRowToFields(r) {
   const book = normStr(r?.book ?? r?.textbook ?? r?.name ?? r?.교재 ?? '');
 
   const thisHw = normStr(
@@ -37,11 +49,22 @@ function hwRowToLine(r) {
   const comment = normStr(r?.comment ?? r?.memo ?? r?.note ?? r?.코멘트 ?? r?.비고 ?? '');
   const nextHw  = normStr(r?.nextHw ?? r?.next ?? r?.nextHomework ?? r?.다음숙제 ?? r?.다음 ?? '');
 
+  return { book, thisHw, pct, comment, nextHw };
+}
+
+function hwFieldsHaveContent(fields) {
+  if (!fields || typeof fields !== 'object') return false;
+  return !!(fields.book || fields.thisHw || fields.pct || fields.comment || fields.nextHw);
+}
+
+function hwRowToLine(r) {
+  const fields = hwRowToFields(r);
+
   // 전부 비면 출력 X
-  if (!book && !thisHw && !pct && !comment && !nextHw) return '';
+  if (!hwFieldsHaveContent(fields)) return '';
 
   // ✅ 5칸 고정 (빈칸도 자리 유지)
-  return `${book} / ${thisHw} / ${pct} / ${comment} / ${nextHw}`;
+  return `${fields.book} / ${fields.thisHw} / ${fields.pct} / ${fields.comment} / ${fields.nextHw}`;
 }
 
 function buildHwBlockFromTable(rows) {
@@ -67,6 +90,25 @@ function buildHwBlockFromLegacyString(str) {
     return `숙제 :\n${HW_HEADER_LINE}\n`;
   }
   return `숙제 :\n${HW_HEADER_LINE}\n${line}`;
+}
+
+function homeworkRowsForCsv(entry) {
+  if (Array.isArray(entry?.homeworkTable) && entry.homeworkTable.length) {
+    return entry.homeworkTable
+      .map(hwRowToFields)
+      .filter(hwFieldsHaveContent);
+  }
+
+  const legacy = String(entry?.homework || '').replace(/\r?\n/g, ' ').trim();
+  if (!legacy) return [];
+
+  return [{
+    book: '',
+    thisHw: legacy,
+    pct: '',
+    comment: '',
+    nextHw: '',
+  }];
 }
 
 /* ─────────────────────────────────────────────
@@ -98,6 +140,19 @@ function pickSpecialText(entry) {
     }
   }
   return '';
+}
+
+function schoolForStudent(stu) {
+  if (!stu || typeof stu !== 'object') return '';
+  return normStr(
+    stu.school ?? stu.schoolName ?? stu.highSchool ?? stu.middleSchool ??
+    stu.high ?? stu.middle ?? stu.schoolHigh ?? stu.schoolMiddle ?? ''
+  );
+}
+
+function curriculumForStudent(stu) {
+  if (!stu || typeof stu !== 'object') return '';
+  return normStr(`${stu.curriculum || ''}${stu.subCurriculum ? ` ${stu.subCurriculum}` : ''}`);
 }
 
 /* ─────────────────────────────────────────────
@@ -137,25 +192,301 @@ function buildPriorBefore(dateStr, sid) {
     .forEach(d => {
       const day = state.progress[d] || {};
       const prog = day?.[sid] || {};
-      Object.entries(prog || {}).forEach(([mid, st]) => { prior[mid] = st; });
+      Object.entries(prog || {}).forEach(([mid, st]) => {
+        if (String(mid).startsWith('__') || mid === 'tests') return;
+        prior[mid] = st;
+      });
     });
   return prior;
 }
 
-/* 오늘 날짜 YYYY-MM-DD (로컬) */
-function todayYYYYMMDD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function allStudentsProgressMids(entry) {
+  const raw = entry?.[ALL_STUDENTS_PROGRESS_META];
+  if (!raw || typeof raw !== 'object') return new Set();
+  return new Set(
+    Object.entries(raw)
+      .filter(([, on]) => on === true || on === 'true' || on === 1 || on === '1')
+      .map(([mid]) => String(mid))
+  );
+}
+
+function exportDateStamp() {
+  return String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
+}
+
+function csvCell(value) {
+  const s = String(value ?? '');
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function recordsToCsv(records) {
+  const columns = [
+    'date',
+    'sid',
+    'name',
+    'school',
+    'curriculum',
+    'notes',
+    'tests',
+    'progress',
+    'homework_row',
+    'homework_book',
+    'homework_current',
+    'homework_progress',
+    'homework_comment',
+    'homework_next',
+  ];
+
+  const lines = [columns.map(csvCell).join(',')];
+
+  for (const record of records) {
+    const hwRows = record.homeworkRows.length ? record.homeworkRows : [null];
+    hwRows.forEach((hw, idx) => {
+      lines.push([
+        record.date,
+        record.sid,
+        record.name,
+        record.school,
+        record.curriculum,
+        record.notes,
+        record.testLines.join(' / '),
+        record.diffs.join(', '),
+        hw ? String(idx + 1) : '',
+        hw?.book || '',
+        hw?.thisHw || '',
+        hw?.pct || '',
+        hw?.comment || '',
+        hw?.nextHw || '',
+      ].map(csvCell).join(','));
+    });
+  }
+
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
+function downloadTextFile(filename, contents, type) {
+  const blob = new Blob([contents], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function rosterToCsv(rows) {
+  const columns = ['타임', '대화명', '텍스트'];
+  const lines = [columns.map(csvCell).join(',')];
+
+  rows.forEach(row => {
+    lines.push([
+      row.time || '',
+      row.chatName || '',
+      row.text || ROSTER_TEXT_DEFAULT,
+    ].map(csvCell).join(','));
+  });
+
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
+function schoolForRoster(stu) {
+  const raw = normStr(
+    stu?.school ?? stu?.schoolName ?? stu?.highSchool ?? stu?.middleSchool ??
+    stu?.high ?? stu?.middle ?? stu?.schoolHigh ?? stu?.schoolMiddle ?? ''
+  );
+  return raw.replace(/고등학교$/u, '').replace(/고$/u, '');
+}
+
+function gradeNumberForRoster(stu) {
+  const raw = normStr(stu?.grade ?? '');
+  const m = raw.match(/\d+/);
+  return m ? m[0] : raw;
+}
+
+function chatNameForRoster(stu) {
+  const school = schoolForRoster(stu);
+  const grade = gradeNumberForRoster(stu);
+  const name = normStr(stu?.name ?? '');
+  return `A ${school}${grade}${school || grade ? ' ' : ''}${name}`.trim();
+}
+
+function rosterTimeLabel(dateStr, sid) {
+  return normStr(labelFor(dateStr, sid)).replace(/[·]/g, ', ');
+}
+
+function rosterSlots(dateStr, sid) {
+  const slots = getSlots(dateStr, sid);
+  if (slots.length) return slots;
+
+  return (rosterTimeLabel(dateStr, sid).match(/[1-2]/g) || [])
+    .map(n => parseInt(n, 10))
+    .filter(n => n === 1 || n === 2);
+}
+
+async function loadExtraAttendMap() {
+  try {
+    const extra = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
+    return (extra && typeof extra === 'object') ? extra : {};
+  } catch {
+    return {};
+  }
+}
+
+async function ensureLogsForRosterDate(dateStr) {
+  if (state.logs?.[dateStr]) return;
+  try {
+    const data = await fetch(`/api/logs?date=${encodeURIComponent(dateStr)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status));
+    if (data && typeof data === 'object') {
+      state.logs = state.logs || {};
+      state.logs[dateStr] = (data[dateStr] && typeof data[dateStr] === 'object') ? data[dateStr] : {};
+      window.logs = state.logs;
+    }
+  } catch { /* keep current state.logs */ }
+}
+
+async function ensureAbsentForRosterDate() {
+  try {
+    const data = await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json());
+    if (data && typeof data === 'object') {
+      state.absentByDate = (data.by_date && typeof data.by_date === 'object') ? data.by_date : (state.absentByDate || {});
+      state.absences = (data.by_student && typeof data.by_student === 'object') ? data.by_student : (state.absences || {});
+      window.absentByDate = state.absentByDate;
+      if (window.state) {
+        window.state.absentByDate = state.absentByDate;
+        window.state.absences = state.absences;
+      }
+    }
+  } catch { /* keep current absence state */ }
+}
+
+async function loadRosterStudents(dateStr) {
+  const students = Array.isArray(state.students) ? state.students : [];
+  const extraMap = await loadExtraAttendMap();
+  const wchr = yoilOf(dateStr);
+
+  const regular = students.filter(stu => hasWeekday(stu, wchr));
+  const extraIds = (extraMap[dateStr] || []).map(x => String(x).trim()).filter(Boolean);
+  const extraStudents = extraIds
+    .map(id => students.find(stu => String(stu?.id) === id))
+    .filter(Boolean);
+
+  const seen = new Set();
+  let list = [...regular, ...extraStudents].filter(stu => {
+    const sid = String(stu?.id ?? '');
+    if (!sid || seen.has(sid)) return false;
+    seen.add(sid);
+    return true;
+  });
+
+  const absentSet = new Set((state.absentByDate?.[dateStr] || []).map(String));
+  list = list.filter(stu => !absentSet.has(String(stu?.id)));
+
+  await ensureLogsForRosterDate(dateStr);
+  const logsDay = state.logs?.[dateStr] || {};
+  list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).done));
+
+  return list.sort((a, b) => {
+    const aSlots = rosterSlots(dateStr, a.id);
+    const bSlots = rosterSlots(dateStr, b.id);
+    const aRank = aSlots.includes(1) ? 1 : aSlots.includes(2) ? 2 : 9;
+    const bRank = bSlots.includes(1) ? 1 : bSlots.includes(2) ? 2 : 9;
+    if (aRank !== bRank) return aRank - bRank;
+    return normStr(a?.name).localeCompare(normStr(b?.name), 'ko');
+  });
+}
+
+function buildRosterRows(dateStr, students) {
+  return students.map(stu => ({
+    time: rosterTimeLabel(dateStr, stu.id),
+    chatName: chatNameForRoster(stu),
+    slots: rosterSlots(dateStr, stu.id),
+  }));
+}
+
+function rosterRowSlotNumbers(row) {
+  const fromSlots = Array.isArray(row?.slots) ? row.slots : [];
+  const fromLabel = String(row?.time || '').match(/[1-2]/g) || [];
+  return Array.from(new Set([...fromSlots, ...fromLabel]
+    .map(n => parseInt(n, 10))
+    .filter(n => n === 1 || n === 2)))
+    .sort((a, b) => a - b);
+}
+
+async function exportRosterCsv() {
+  const dateStr = exportDateStamp();
+  try {
+    const students = await fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    if (Array.isArray(students)) {
+      state.students = students;
+      window.students = students;
+    }
+  } catch (err) {
+    console.warn('[exportRoster] students load failed:', err);
+  }
+
+  await loadWeekendSlots();
+  await ensureAbsentForRosterDate();
+
+  const students = await loadRosterStudents(dateStr);
+  if (!students.length) {
+    toast('내보낼 명단이 없습니다.');
+    return;
+  }
+
+  const rows = buildRosterRows(dateStr, students);
+  const wchr = yoilOf(dateStr);
+  const firstRows = rows.filter(row => {
+    const slots = rosterRowSlotNumbers(row);
+    return slots.includes(1) || !slots.length;
+  });
+  const secondRows = rows.filter(row => {
+    const slots = rosterRowSlotNumbers(row);
+    return slots.includes(2) && !slots.includes(1);
+  });
+
+  downloadTextFile(`학생명단_${dateStr}_${wchr}1.csv`, rosterToCsv(firstRows), 'text/csv;charset=utf-8');
+  downloadTextFile(`학생명단_${dateStr}_${wchr}2.csv`, rosterToCsv(secondRows), 'text/csv;charset=utf-8');
+  toast('명단 CSV 2개 내보내기 완료');
 }
 
 export function initExport() {
   const btn = $('exportLogs');
+  const rosterButtons = [
+    $('exportRoster'),
+    $('exportRosterRail'),
+    $('exportTodayCsv'),
+  ].filter(Boolean);
+
+  rosterButtons.forEach(button => {
+    button.addEventListener('click', exportRosterCsv);
+  });
+
   if (!btn) return;
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    try {
+      const [logs, progress] = await Promise.all([
+        fetch('/api/logs', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch('/api/progress', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      ]);
+      if (logs && typeof logs === 'object') {
+        state.logs = logs;
+        window.logs = state.logs;
+      }
+      if (progress && typeof progress === 'object') {
+        state.progress = progress;
+        window.progressData = state.progress;
+      }
+    } catch (err) {
+      console.warn('[exportLogs] full history load failed:', err);
+      toast('내보내기 데이터 로드 실패');
+      return;
+    }
+
     // 비디오 인덱스 (mid -> video)
     const videoMap = new Map((state.videos || []).map(v => [String(v.mid), v || {}]));
     const chapterNum = (v) => {
@@ -195,7 +526,7 @@ export function initExport() {
       return String(a.date).localeCompare(String(b.date));
     });
 
-    let out = '';
+    const records = [];
 
     targets.forEach(({ sid, date, entry: logEntry }) => {
       const stu = (state.students || []).find(s => String(s.id) === String(sid));
@@ -204,10 +535,18 @@ export function initExport() {
       // 해당 날짜의 진도/이전 누적
       const progThatDay = state.progress?.[date]?.[sid] || {};
       const before = buildPriorBefore(date, String(sid));
+      const exportSkipMids = allStudentsProgressMids(progThatDay);
 
       // 변화만 + skip 제외 + 챕터순
       const diffObjs = Object.entries(progThatDay)
-        .filter(([mid, st]) => before[mid] !== st && st !== 'none' && st !== 'skip')
+        .filter(([mid, st]) =>
+          !String(mid).startsWith('__') &&
+          mid !== 'tests' &&
+          !exportSkipMids.has(String(mid)) &&
+          before[mid] !== st &&
+          st !== 'none' &&
+          st !== 'skip'
+        )
         .map(([mid, st]) => {
           const v = videoMap.get(String(mid)) || {};
           return { mid, st, chap: chapterNum(v) };
@@ -239,6 +578,7 @@ export function initExport() {
       }).filter(Boolean);
 
       const hasTests = testLines.length > 0;
+      const homeworkRows = homeworkRowsForCsv(logEntry);
 
       // 숙제 실제 내용 여부(헤더 제외)
       const hwHasContent = (() => {
@@ -253,22 +593,42 @@ export function initExport() {
       // 정책: 진도/숙제내용/테스트/특이사항 다 비면 출력 제외
       if (diffs.length === 0 && !hwHasContent && !hasTests && !hasSpecial) return;
 
-      const curLabel = stu.curriculum + (stu.subCurriculum ? ` ${stu.subCurriculum}` : '');
+      const curLabel = curriculumForStudent(stu);
 
       // 헤더 날짜는 "그 기록 날짜" 기준
       const d = new Date(date);
       const headerDate = `${d.getMonth() + 1}/${d.getDate()}`;
 
-      out += `(${headerDate}) ${stu.name}\n`;
+      records.push({
+        date,
+        sid: String(sid),
+        name: normStr(stu.name),
+        school: schoolForStudent(stu),
+        curriculum: curLabel,
+        notes: special,
+        testLines,
+        diffs,
+        homeworkRows,
+        hwBlock,
+        hwHasContent,
+        hasSpecial,
+        hasTests,
+        headerDate,
+      });
+    });
 
-      if (hasSpecial) out += `특이사항 : ${special}\n\n`;
-      if (hasTests) out += `테스트 : ${testLines.join(' / ')}\n\n`;
+    let out = '';
+    records.forEach((record) => {
+      out += `(${record.headerDate}) ${record.name}\n`;
 
-      out += `진도 (${curLabel}) : ${diffs.join(', ')}\n\n`;
+      if (record.hasSpecial) out += `특이사항 : ${record.notes}\n\n`;
+      if (record.hasTests) out += `테스트 : ${record.testLines.join(' / ')}\n\n`;
+
+      out += `진도 (${record.curriculum}) : ${record.diffs.join(', ')}\n\n`;
 
       // ✅ 숙제 출력
-      if (hwHasContent) {
-        out += `${hwBlock}\n\n\n`;
+      if (record.hwHasContent) {
+        out += `${record.hwBlock}\n\n\n`;
       } else {
         out += `숙제 :\n${HW_HEADER_LINE}\n\n\n`;
       }
@@ -279,19 +639,11 @@ export function initExport() {
       return;
     }
 
-    // 다운로드
-    const blob = new Blob([out], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-
     // ✅ 파일명 날짜 포함
-    const stamp = todayYYYYMMDD();
-    a.download = `수업기록_완료미정리_${stamp}.txt`;
+    const stamp = exportDateStamp();
+    downloadTextFile(`수업기록_완료미정리_${stamp}.txt`, out, 'text/plain;charset=utf-8');
+    downloadTextFile(`수업기록_완료미정리_${stamp}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
 
-    a.click();
-    URL.revokeObjectURL(url);
-
-    toast('수업 기록 내보내기 완료');
+    toast('수업 기록 TXT/CSV 내보내기 완료');
   });
 }

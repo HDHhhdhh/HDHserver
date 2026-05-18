@@ -36,6 +36,93 @@ import {
   bindTodayTableEvents,
 } from './today.render.js';
 
+async function ensureLogsForDate(dateKey) {
+  const key = String(dateKey || '').trim();
+  if (!key || state.logs?.[key]) return;
+  try {
+    const res = await fetch(`/api/logs?date=${encodeURIComponent(key)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.logs = state.logs || {};
+      state.logs[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      window.logs = state.logs;
+    }
+  } catch {}
+}
+
+function ensureStaleDoneWarningStyle() {
+  if (document.getElementById('staleDoneWarningStyle')) return;
+  const s = document.createElement('style');
+  s.id = 'staleDoneWarningStyle';
+  s.textContent = `
+    #staleDoneWarning{
+      display:block;margin:8px 0 0;padding:7px 9px;border-radius:8px;
+      border:1px solid rgba(245,158,11,.45);
+      background:rgba(245,158,11,.12);
+      color:#92400e;font-weight:700;line-height:1.35;
+    }
+    body.dark #staleDoneWarning{
+      border-color:rgba(251,191,36,.5);
+      background:rgba(251,191,36,.13);
+      color:#fde68a;
+    }
+    #staleDoneWarning[hidden]{display:none}
+  `;
+  document.head.appendChild(s);
+}
+
+function renderStaleDoneWarning(summary) {
+  const anchor = document.getElementById('todaySlotCounts');
+  if (!anchor) return;
+
+  ensureStaleDoneWarningStyle();
+
+  let el = document.getElementById('staleDoneWarning');
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'staleDoneWarning';
+    el.className = 'hero-sub';
+    el.setAttribute('aria-live', 'polite');
+    anchor.insertAdjacentElement('afterend', el);
+  }
+
+  const byDateRows = Array.isArray(summary?.byDate) ? summary.byDate : [];
+  const total = Number(summary?.total || 0);
+  if (!total || !byDateRows.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+
+  const preview = byDateRows
+    .slice(0, 3)
+    .map((row) => `${row.date} ${row.count}건`)
+    .join(', ');
+  const more = byDateRows.length > 3 ? ` 외 ${byDateRows.length - 3}일` : '';
+  const students = Number(summary?.students || 0);
+  const studentText = students && students !== total ? `/${students}명` : '';
+
+  el.hidden = false;
+  el.textContent = `정리 필요: 어제까지 완료/자유석 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+}
+
+let staleSummaryRequestSeq = 0;
+async function refreshStaleDoneWarning(dateKey) {
+  const seq = ++staleSummaryRequestSeq;
+  try {
+    const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
+    const res = await fetch(`/api/logs/unarchived-summary?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (seq !== staleSummaryRequestSeq) return;
+    if (String(getAdminDate() || '') !== String(dateKey || '')) return;
+    renderStaleDoneWarning(data);
+  } catch (err) {
+    console.warn('[today] stale done summary failed:', err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // 가나다 정렬 토글 (localStorage 유지)
 // ─────────────────────────────────────────────
@@ -60,10 +147,11 @@ function ensureAlphaSortBtn() {
       .today-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
       .today-tools .btn-sort{
         display:inline-flex;align-items:center;justify-content:center;
-        height:32px;padding:0 12px;border-radius:10px;
+        height:48px;padding:0 18px;border-radius:15px;
         border:1px solid rgba(148,163,184,.55);
         background:rgba(248,250,252,.95);
-        cursor:pointer;user-select:none;font-size:13px;line-height:1;
+        cursor:pointer;user-select:none;font-size:19.5px;line-height:1;
+        font-weight:800;
         transition:transform .08s ease, filter .12s ease, background .12s ease, border-color .12s ease;
       }
       body.dark .today-tools .btn-sort{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}
@@ -257,18 +345,22 @@ export async function loadTodayAndRender() {
 
   const dateKey = getAdminDate();
 
-  await loadWeekendSlots();
-  await ensureAttendLoaded(dateKey);
-  await ensureContactLoaded(dateKey);
-  await ensureArriveLoaded(dateKey);
+  await Promise.all([
+    ensureLogsForDate(dateKey),
+    loadWeekendSlots(),
+    ensureAttendLoaded(dateKey),
+    ensureContactLoaded(dateKey),
+    ensureArriveLoaded(dateKey),
+  ]);
 
   const doneEntries = sortDoneEntries(
     collectUnarchivedLogsByDate(dateKey),
   );
 
-  const { list: raw } = await computeTodayList(dateKey);
-
-  await loadOrderMap();
+  const [{ list: raw }] = await Promise.all([
+    computeTodayList(dateKey),
+    loadOrderMap(),
+  ]);
   const list = _alphaSortOnly ? raw : applySavedOrder(raw, dateKey);
 
   const wrap = document.getElementById('todayWrap');
@@ -276,6 +368,8 @@ export async function loadTodayAndRender() {
 
   renderToday(list, dateKey, _alphaSortOnly);
   renderDone(doneEntries);
+  renderStaleDoneWarning({ total: 0, byDate: [] });
+  void refreshStaleDoneWarning(dateKey);
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));

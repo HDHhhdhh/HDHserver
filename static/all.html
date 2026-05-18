@@ -34,10 +34,33 @@
     }
 
     .topbar a:hover { background: var(--btn-bg-hover); }
+    body.all-page {
+      max-width: none;
+      margin: 0;
+      padding: 0 32px 36px;
+      box-sizing: border-box;
+    }
+    body.all-page .topbar,
+    body.all-page .all-page-shell {
+      width: min(1680px, calc(100vw - 64px));
+      margin-left: auto !important;
+      margin-right: auto !important;
+      box-sizing: border-box;
+    }
+    body.all-page .topbar {
+      margin-bottom: 1.4rem !important;
+    }
+    @media (max-width: 900px) {
+      body.all-page { padding: 0 12px 24px; }
+      body.all-page .topbar,
+      body.all-page .all-page-shell {
+        width: calc(100vw - 24px);
+      }
+    }
   </style>
 </head>
 
-<body>
+<body class="all-page">
   <header
     class="topbar"
     style="position:sticky;top:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;margin:0 0 1.6rem 0;background:var(--topbar-bg);color:var(--topbar-fg);border-bottom:1px solid var(--topbar-border);backdrop-filter:saturate(120%) blur(6px);"
@@ -67,21 +90,21 @@
     </label>
   </header>
 
-  <p><a href="/admin">← 관리자 페이지로 돌아가기</a></p>
-
-  <div id="yoilStats" style="margin-bottom:1.5rem;"></div>
+  <main id="allPageShell" class="all-page-shell">
+    <div id="newStuMount"></div>
+    <div id="yoilStats" style="margin-bottom:1.5rem;"></div>
+    <div id="allWrap">Loading...</div>
+  </main>
 
   <div id="yoilModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);justify-content:center;align-items:center;z-index:9999;">
     <div style="background:white;padding:1rem;border-radius:8px;max-height:80%;overflow:auto;width:300px;">
       <h3 id="yoilTitle" style="margin-top:0;"></h3>
       <div id="yoilList" style="white-space:pre-line;font-size:14px;"></div>
       <div style="text-align:right;margin-top:1rem;">
-        <button onclick="document.getElementById('yoilModal').style.display='none'">닫기</button>
+        <button id="yoilClose" onclick="document.getElementById('yoilModal').style.display='none'">닫기</button>
       </div>
     </div>
   </div>
-
-  <div id="allWrap">Loading...</div>
 
   <div id="progModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);justify-content:center;align-items:center;z-index:9999;">
     <div style="background:#fff;padding:1rem;border-radius:8px;max-height:80%;overflow:auto;width:360px;">

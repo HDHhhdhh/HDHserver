@@ -20,7 +20,7 @@ import {
   setArriveOverride,
   isAttended, setAttended,
   isContacted, setContacted,
-  isHwAssigned, isHwChecked, setLogFlagRemote,
+  isHwChecked, setHomeworkCheckedRemote,
   getLeaveTime, setLeaveTimeRemote,
   saveWeekendSlotsFromLabel,
   saveOrder,
@@ -184,11 +184,9 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 input{width:18px;height:18px;accent-color:#10b981;margin:0}
     .chk4 .c + .c{margin-left:6px}
     .chk4 .c[data-kind="contact"] input{accent-color:#3b82f6}
-    .chk4 .c[data-kind="assign"] input{accent-color:#8b5cf6}
     .chk4 .c[data-kind="check"] input{accent-color:#f59e0b}
     .chk4 .c[data-on="1"]{background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.45)}
     .chk4 .c[data-kind="contact"][data-on="1"]{background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.45)}
-    .chk4 .c[data-kind="assign"][data-on="1"]{background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.55)}
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
     .chk4 .c input:disabled{cursor:not-allowed;opacity:.95}
@@ -392,8 +390,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
     <td><button class="btn-doc" data-doc-url="${docUrl}" title="문서 열기">📄</button></td>
 
     <td>
-      <button class="editVid" title="영상 배정">🎬</button>
-      <button class="editLog" title="수업 기록">📝</button>
+      <button class="openStudentPopups" title="영상 배정 + 수업 기록">🧾</button>
       <button class="markAbsent" title="결석">🚫</button>
       <button class="markLeave" title="하원">🏠</button>
       <button class="undoDone" title="완료 되돌리기" style="margin-left:6px">↩️</button>
@@ -430,7 +427,6 @@ export function renderToday(list, dateKey, alphaSortOnly) {
 
     const attended = isAttended(dateKey, s.id);
     const contacted = isContacted(dateKey, s.id);
-    const hwAssigned = isHwAssigned(dateKey, s.id);
     const hwChecked = isHwChecked(dateKey, s.id);
 
     const arriveTime = plannedTimeFor(dateKey, s.id);
@@ -445,7 +441,7 @@ export function renderToday(list, dateKey, alphaSortOnly) {
     return `
       <tr data-sid="${s.id}" data-date="${dateKey}"
           ${attended ? 'data-att="1"' : ''} ${contacted ? 'data-contact="1"' : ''}
-          ${hwAssigned ? 'data-hwassign="1"' : ''} ${hwChecked ? 'data-hw="1"' : ''}>
+          ${hwChecked ? 'data-hw="1"' : ''}>
         <td class="drag-handle" style="cursor:${alphaSortOnly ? 'default' : 'grab'};width:24px;text-align:center">::</td>
 
         <td>
@@ -473,7 +469,7 @@ export function renderToday(list, dateKey, alphaSortOnly) {
         </td>
 
         <td style="text-align:center;width:206px">
-          <div class="chk4" aria-label="체크 4종">
+          <div class="chk4" aria-label="체크 3종">
             <label class="c" data-kind="att" data-on="${attended ? '1' : '0'}" title="출석">
               <input type="checkbox" class="attendChk" data-id="${s.id}" ${attended ? 'checked' : ''}>
             </label>
@@ -482,9 +478,6 @@ export function renderToday(list, dateKey, alphaSortOnly) {
             </label>
             <label class="c" data-kind="check" data-on="${hwChecked ? '1' : '0'}" title="숙제 체크 완료">
               <input type="checkbox" class="hwCheckChk" data-id="${s.id}" ${hwChecked ? 'checked' : ''}>
-            </label>
-            <label class="c" data-kind="assign" data-on="${hwAssigned ? '1' : '0'}" title="숙제 배정">
-              <input type="checkbox" class="hwAssignChk" data-id="${s.id}" ${hwAssigned ? 'checked' : ''}>
             </label>
           </div>
         </td>
@@ -500,8 +493,7 @@ export function renderToday(list, dateKey, alphaSortOnly) {
         <td><button class="btn-doc" data-doc-url="${s.docUrl || ''}" title="문서 열기">📄</button></td>
 
         <td>
-          <button class="editVid" title="영상 배정">🎬</button>
-          <button class="editLog" title="수업 기록">📝</button>
+          <button class="openStudentPopups" title="영상 배정 + 수업 기록">🧾</button>
           <button class="openTestProgress" title="테스트 진도">🧪</button>
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
@@ -602,8 +594,7 @@ export function renderDone(doneEntries) {
         <td>${curLabel}</td>
         <td><button class="btn-doc" data-doc-url="${docUrl}" title="문서 열기">📄</button></td>
         <td>
-          <button class="editVid" title="영상 배정">🎬</button>
-          <button class="editLog" title="수업 기록">📝</button>
+          <button class="openStudentPopups" title="영상 배정 + 수업 기록">🧾</button>
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
           <button class="undoDone" title="완료 되돌리기" style="margin-left:6px">↩️</button>
@@ -861,28 +852,14 @@ export function bindTodayTableEvents(loadTodayAndRender) {
       return;
     }
 
-    // Homework flags use log patch endpoints.
-    const ha = ev.target.closest?.('.hwAssignChk');
-    if (ha) {
-      const tr = ha.closest('tr[data-sid]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const checked = ha.checked;
-
-      try { await setLogFlagRemote(dateKey, sid, 'hwAssigned', checked); }
-      catch (e) { console.error(e); alert('숙제 배정 저장 실패'); }
-
-      const pill = ha.closest('.c'); if (pill) pill.dataset.on = checked ? '1' : '0';
-      await loadTodayAndRender();
-      return;
-    }
-
+    // Homework completion is the single visible homework flag.
     const hc = ev.target.closest?.('.hwCheckChk');
     if (hc) {
       const tr = hc.closest('tr[data-sid]'); if (!tr) return;
       const sid = tr.dataset.sid;
       const checked = hc.checked;
 
-      try { await setLogFlagRemote(dateKey, sid, 'hwChecked', checked); }
+      try { await setHomeworkCheckedRemote(dateKey, sid, checked); }
       catch (e) { console.error(e); alert('숙제 체크 저장 실패'); }
 
       const pill = hc.closest('.c'); if (pill) pill.dataset.on = checked ? '1' : '0';

@@ -9,7 +9,7 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from core.paths import ANNS_PATH, ANN_STATUS_PATH
-from core.storage import load, save_atomic
+from core.storage import file_lock, load, save_atomic
 
 bp_api_announcements = Blueprint("api_announcements", __name__)
 
@@ -30,6 +30,31 @@ def _try_json(val):
             return val
     return val
 
+def _announcement_from_body(
+    body: dict[str, Any],
+    existing: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, tuple[Any, int] | None]:
+    existing = existing or {}
+    title = (body.get("title") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not title or not content:
+        return None, (jsonify({"ok": False, "error": "title/content required"}), 400)
+
+    poll = _try_json(body.get("poll") or None)
+    survey = _try_json(body.get("survey") or None)
+    targets = _try_json(body.get("targets") or "all")
+
+    return {
+        "id": existing.get("id") or body.get("id") or f"a_{int(time.time()*1000)}",
+        "title": title,
+        "content": content,
+        "createdAt": existing.get("createdAt") or body.get("createdAt") or dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "targets": targets,
+        "poll": poll,
+        "survey": survey,
+        "requireCompletion": bool(body.get("requireCompletion", False)),
+    }, None
+
 @bp_api_announcements.route("/api/announcements", methods=["GET", "POST"])
 def api_announcements():
     if request.method == "GET":
@@ -45,50 +70,54 @@ def api_announcements():
         return jsonify(anns)
 
     body = _get_payload_json_or_form()
-    title = (body.get("title") or "").strip()
-    content = (body.get("content") or "").strip()
-    if not title or not content:
-        return jsonify({"ok": False, "error": "title/content required"}), 400
-
-    poll    = _try_json(body.get("poll") or None)
-    survey  = _try_json(body.get("survey") or None)
-    targets = _try_json(body.get("targets") or "all")
-
-    ann = {
-        "id": body.get("id") or f"a_{int(time.time()*1000)}",
-        "title": title,
-        "content": content,
-        "createdAt": body.get("createdAt") or dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        "targets": targets,
-        "poll": poll,
-        "survey": survey,
-        "requireCompletion": bool(body.get("requireCompletion", False)),
-    }
-    anns = load(ANNS_PATH)
-    anns.append(ann)
-    save_atomic(ANNS_PATH, anns)
+    ann, error = _announcement_from_body(body)
+    if error:
+        return error
+    with file_lock(ANNS_PATH):
+        anns = load(ANNS_PATH)
+        anns.append(ann)
+        save_atomic(ANNS_PATH, anns)
     return jsonify(ann), 201
+
+@bp_api_announcements.put("/api/announcements/<aid>")
+def api_announcement_update(aid: str):
+    body = _get_payload_json_or_form()
+    with file_lock(ANNS_PATH):
+        anns = load(ANNS_PATH)
+        for idx, current in enumerate(anns):
+            if str(current.get("id")) != str(aid):
+                continue
+            ann, error = _announcement_from_body(body, existing=current)
+            if error:
+                return error
+            anns[idx] = ann
+            save_atomic(ANNS_PATH, anns)
+            return jsonify(ann)
+    return jsonify({"ok": False, "error": "not found"}), 404
 
 @bp_api_announcements.delete("/api/announcements/<aid>")
 def api_announcement_delete(aid: str):
-    anns = load(ANNS_PATH)
-    new_anns = [a for a in anns if str(a.get("id")) != str(aid)]
-    if len(new_anns) == len(anns):
-        return jsonify({"ok": False, "error": "not found"}), 404
-    save_atomic(ANNS_PATH, new_anns)
+    with file_lock(ANNS_PATH):
+        anns = load(ANNS_PATH)
+        new_anns = [a for a in anns if str(a.get("id")) != str(aid)]
+        if len(new_anns) == len(anns):
+            return jsonify({"ok": False, "error": "not found"}), 404
+        save_atomic(ANNS_PATH, new_anns)
 
-    stat = load(ANN_STATUS_PATH)
-    changed = False
-    for sid in list(stat.keys()):
-        if aid in stat[sid]:
-            del stat[sid][aid]
-            changed = True
-        if not stat[sid]:
-            del stat[sid]
-            changed = True
-    if changed:
-        save_atomic(ANN_STATUS_PATH, stat)
+    with file_lock(ANN_STATUS_PATH):
+        stat = load(ANN_STATUS_PATH)
+        changed = False
+        for sid in list(stat.keys()):
+            if aid in stat[sid]:
+                del stat[sid][aid]
+                changed = True
+            if not stat[sid]:
+                del stat[sid]
+                changed = True
+        if changed:
+            save_atomic(ANN_STATUS_PATH, stat)
     return jsonify({"ok": True})
+
 
 @bp_api_announcements.get("/api/announce-status")
 def api_announce_status():
@@ -108,6 +137,7 @@ def api_announce_ack():
     stat[sid][aid]["acked"] = True
     save_atomic(ANN_STATUS_PATH, stat)
     return jsonify({"ok": True})
+
 
 @bp_api_announcements.post("/api/announce-submit")
 def api_announce_submit():
@@ -150,4 +180,3 @@ def api_announce_submit():
             save_atomic(ANN_STATUS_PATH, stat)
 
     return jsonify({"ok": True})
-    
