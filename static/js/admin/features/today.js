@@ -326,7 +326,8 @@ function ensureAlphaSortBtn() {
       body.dark .today-search select,
       body.dark .today-search input{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}
       body.dark .today-search .today-search-hint{color:#94a3b8}
-      #todayWrap tr.is-search-hidden{display:none !important}
+      #todayWrap tr.is-search-hidden,
+      #doneWrap tr.is-search-hidden{display:none !important}
       #todayWrap[data-alpha="1"] .drag-handle{opacity:.35;cursor:default !important}
       @media (max-width:720px){
         .today-search{flex-basis:100%;margin-left:0}
@@ -384,6 +385,7 @@ if (document.readyState === 'loading') {
 
 function applyTodaySearchFilter() {
   const host = document.getElementById('todayWrap');
+  const doneHost = document.getElementById('doneWrap');
   const input = document.getElementById('todaySearchInput');
   const field = document.getElementById('todaySearchField');
   const hint = document.getElementById('todaySearchHint');
@@ -391,8 +393,11 @@ function applyTodaySearchFilter() {
 
   const queryText = input.value || '';
   const mode = TODAY_SEARCH_FIELDS.has(field?.value) ? field.value : _todaySearchField;
-  const rows = Array.from(host.querySelectorAll('tr[data-sid]'));
-  let visible = 0;
+  const todayRows = Array.from(host.querySelectorAll('tr[data-sid]'));
+  const doneRows = Array.from(doneHost?.querySelectorAll('tr[data-sid]') || []);
+  const rows = [...todayRows, ...doneRows];
+  let todayVisible = 0;
+  let doneVisible = 0;
 
   for (const row of rows) {
     const sid = String(row.dataset.sid || '');
@@ -402,11 +407,14 @@ function applyTodaySearchFilter() {
     row.hidden = !matches;
     row.classList.toggle('is-search-hidden', !matches);
     row.setAttribute('aria-hidden', matches ? 'false' : 'true');
-    if (matches) visible += 1;
+    if (matches && row.closest('#doneWrap')) doneVisible += 1;
+    else if (matches) todayVisible += 1;
   }
 
   if (hint) {
-    hint.textContent = queryText.trim() ? `${visible}/${rows.length}명` : '';
+    hint.textContent = queryText.trim()
+      ? `${todayVisible}/${todayRows.length}명 · 완료 ${doneVisible}/${doneRows.length}`
+      : '';
   }
 }
 
@@ -596,9 +604,9 @@ export async function loadTodayAndRender(options = {}) {
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
 
+  renderDone(doneEntries);
   renderToday(list, dateKey, _alphaSortOnly, makeupCounts);
   applyTodaySearchFilter();
-  renderDone(doneEntries);
   renderStaleDoneWarning({ total: 0, byDate: [] });
   void refreshStaleDoneWarning(dateKey);
   document.dispatchEvent(new CustomEvent('today:rendered', {

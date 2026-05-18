@@ -1,3 +1,5 @@
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
+
 const toast = msg => {
     const d = document.createElement('div');
     d.textContent = msg;
@@ -42,6 +44,8 @@ const $ = id => document.getElementById(id);
 
     let videos = [];
     const CT = { "Content-Type": "application/json" };
+    const vidTable = $('vidTable');
+    const saveVidBtn = $('saveVid');
 
     function extractKollusMid(url) {
         const raw = String(url || '').trim();
@@ -139,14 +143,27 @@ const $ = id => document.getElementById(id);
     function drawVid() {
         const curEl = document.getElementById('curriculumFilter');
         const subEl = document.getElementById('subCurriculumFilter');
+        const searchEl = document.getElementById('videoSearch');
         const curSel = curEl ? curEl.value : '';
         const subSel = subEl ? subEl.value : '';
+        const queryText = searchEl ? searchEl.value : '';
+        if (!vidTable) return;
 
         // ② videos 배열에서 필터 적용 (빈 값이면 전체)
         const list = videos
             .filter(v =>
                 (!curSel || v.curriculum === curSel) &&
-                (!subSel || v.subCurriculum === subSel)
+                (!subSel || v.subCurriculum === subSel) &&
+                matchesSearchKey(searchKeyForText([
+                    v.id,
+                    v.curriculum,
+                    v.subCurriculum,
+                    v.chapter,
+                    v.title,
+                    v.url,
+                    v.mid,
+                    JSON.stringify(v.exNum || {}),
+                ].join(' ')), queryText)
             )
             // ③ 커리큘럼→세부과정→챕터 순으로 정렬
             .sort((a, b) => {
@@ -254,6 +271,7 @@ const $ = id => document.getElementById(id);
     const filterDiv = document.createElement('div');
     filterDiv.style.margin = '0.5rem 0';
     filterDiv.innerHTML = `
+  <input id="videoSearch" type="search" autocomplete="off" placeholder="영상 검색" style="min-width:240px;margin-right:1rem;">
   <label style="margin-right:0.5rem;">커리큘럼:</label>
   <select id="curriculumFilter" style="margin-right:1rem;">
    <option value="">전체</option>
@@ -267,6 +285,16 @@ const $ = id => document.getElementById(id);
   </select>
 `;
     videoSection.prepend(filterDiv);
+    const videoSearch = document.getElementById('videoSearch');
+    applySearchPlaceholder(videoSearch, '영상 검색');
+    videoSearch?.addEventListener('input', drawVid);
+    videoSearch?.addEventListener('search', drawVid);
+    videoSearch?.addEventListener('compositionend', drawVid);
+    videoSearch?.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        videoSearch.value = '';
+        drawVid();
+    });
 
     // 드롭다운 변경 시 drawVid() 재실행
     document.getElementById('curriculumFilter')
@@ -332,7 +360,7 @@ const $ = id => document.getElementById(id);
 
 
     /* 영상 저장 */
-    saveVid.onclick = () => {
+    saveVidBtn.onclick = () => {
         // ① 테이블 행 순회
         document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
             const i = +tr.dataset.idx;

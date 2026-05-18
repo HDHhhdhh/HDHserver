@@ -34,6 +34,27 @@ export function initCalendar() {
     return next;
   }
 
+  function startOfWeek(date) {
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  }
+
+  function rollingFiveWeekRange(currentDate) {
+    const middleWeekStart = startOfWeek(currentDate);
+    const start = addDays(middleWeekStart, -14);
+    return { start, end: addDays(start, 35) };
+  }
+
+  function weekTitleForRange(startDate) {
+    const middleWeekStart = addDays(startOfWeek(startDate), 14);
+    const titleDate = addDays(middleWeekStart, 1);
+    const year = String(titleDate.getFullYear()).slice(2);
+    const month = titleDate.getMonth() + 1;
+    const week = Math.floor((titleDate.getDate() - 1) / 7) + 1;
+    return `${year}년 ${month}월 ${week}주차`;
+  }
+
   function parseMonthDayTokens(raw) {
     const txt = String(raw || '').trim();
     if (!txt) return [];
@@ -566,8 +587,23 @@ export function initCalendar() {
   }
 
   const calendar = new FullCalendar.Calendar(calendarEl, {
-    initialView: 'dayGridMonth',
+    initialView: 'rollingFiveWeek',
     initialDate: firstExamDate,
+    views: {
+      rollingFiveWeek: {
+        type: 'dayGrid',
+        duration: { weeks: 5 },
+        dateAlignment: 'week',
+        visibleRange: rollingFiveWeekRange,
+      },
+    },
+    headerToolbar: { left: 'title', center: '', right: 'today' },
+    buttonText: { today: 'today' },
+    dateIncrement: { weeks: 1 },
+    height: 'auto',
+    contentHeight: 'auto',
+    expandRows: true,
+    stickyHeaderDates: true,
     locale: 'ko',
     dayMaxEvents: false,
     dayMaxEventRows: false,
@@ -592,6 +628,8 @@ export function initCalendar() {
       if (tooltip) info.el.setAttribute('title', tooltip);
     },
     datesSet: range => {
+      const titleEl = calendarEl.querySelector('.fc-toolbar-title');
+      if (titleEl) titleEl.textContent = weekTitleForRange(range.start);
       fetchCountsForRange(range.start, range.end).then(refreshCountBadges);
       refreshMakeupPlanner();
     }
@@ -607,32 +645,16 @@ export function initCalendar() {
     cancelMakeupSelection();
   });
 
-  let wheelRowLocked = false;
-  function calendarRowScrollAmount() {
-    const row = calendarEl.querySelector('.fc-daygrid-body tr');
-    const h = row?.getBoundingClientRect?.().height || 82;
-    return Math.max(56, Math.round(h));
-  }
-
-  function canScrollCalendar(delta) {
-    const max = calendarEl.scrollHeight - calendarEl.clientHeight;
-    if (max <= 1) return false;
-    if (delta > 0) return calendarEl.scrollTop < max - 1;
-    return calendarEl.scrollTop > 1;
-  }
-
+  let wheelWeekLocked = false;
   calendarEl.addEventListener('wheel', (ev) => {
     const delta = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
-    if (Math.abs(delta) < 24 || !canScrollCalendar(delta)) return;
+    if (Math.abs(delta) < 24) return;
     ev.preventDefault();
     ev.stopPropagation();
-    if (wheelRowLocked) return;
-    wheelRowLocked = true;
-    calendarEl.scrollBy({
-      top: (delta > 0 ? 1 : -1) * calendarRowScrollAmount(),
-      behavior: 'smooth',
-    });
-    window.setTimeout(() => { wheelRowLocked = false; }, 180);
+    if (wheelWeekLocked) return;
+    wheelWeekLocked = true;
+    calendar.incrementDate({ weeks: delta > 0 ? 1 : -1 });
+    window.setTimeout(() => { wheelWeekLocked = false; }, 180);
   }, { passive: false });
 
   async function refreshSchoolExamEvents() {

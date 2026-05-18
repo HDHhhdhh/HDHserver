@@ -190,19 +190,16 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
     .chk4 .c input:disabled{cursor:not-allowed;opacity:.95}
-    #todayWrap table th:nth-last-child(2),
-    #todayWrap table td:nth-last-child(2){
-      width:104px;max-width:104px;white-space:nowrap;
-      padding-right:4px!important;
-    }
-    #todayWrap table th:last-child,
-    #todayWrap table td:last-child{
-      width:34px;min-width:34px;
-      padding-left:0!important;padding-right:4px!important;
-    }
+    #todayWrap table.today-table{min-width:1140px;table-layout:fixed}
+    #doneWrap table.done-table{min-width:1060px;table-layout:fixed}
+    .today-table th,.today-table td,.done-table th,.done-table td{overflow:hidden;text-overflow:ellipsis}
+    .today-check-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell{text-align:center}
+    .today-action-cell,.done-action-cell{white-space:nowrap;overflow:visible!important;text-overflow:clip!important}
+    .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+    .today-actions button{flex:0 0 auto}
     .makeup-count-cell{
-      text-align:left;width:34px;min-width:34px;
-      padding-left:0!important;padding-right:4px!important;
+      width:64px;min-width:64px;
+      padding-left:4px!important;padding-right:4px!important;
       font-weight:800
     }
     .makeup-count-badge{
@@ -269,7 +266,12 @@ function _ensureDoneTableIfMissing() {
   if (tb) return tb;
 
   wrap.innerHTML = `
-    <table>
+    <table class="done-table">
+      <colgroup>
+        <col style="width:32px"><col style="width:72px"><col style="width:84px"><col style="width:84px">
+        <col style="width:120px"><col style="width:104px"><col style="width:120px"><col style="width:160px">
+        <col style="width:56px"><col style="width:228px">
+      </colgroup>
       <thead>
         <tr>
           <th style="width:24px"></th>
@@ -470,9 +472,9 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
       <tr data-sid="${s.id}" data-date="${dateKey}"
           ${attended ? 'data-att="1"' : ''} ${contacted ? 'data-contact="1"' : ''}
           ${hwChecked ? 'data-hw="1"' : ''}>
-        <td class="drag-handle" style="cursor:${alphaSortOnly ? 'default' : 'grab'};width:24px;text-align:center">::</td>
+        <td class="drag-handle today-drag-cell" style="cursor:${alphaSortOnly ? 'default' : 'grab'};text-align:center">::</td>
 
-        <td>
+        <td class="today-slot-cell">
           <span class="slotLabel" contenteditable="true" spellcheck="false"
                 data-orig="${labelText}"
                 style="display:inline-block;min-width:48px;padding:2px 6px;border-radius:6px;border:1px solid transparent">
@@ -496,7 +498,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           </span>
         </td>
 
-        <td style="text-align:center;width:206px">
+        <td class="today-check-cell">
           <div class="chk4" aria-label="체크 3종">
             <label class="c" data-kind="att" data-on="${attended ? '1' : '0'}" title="출석">
               <input type="checkbox" class="attendChk" data-id="${s.id}" ${attended ? 'checked' : ''}>
@@ -518,7 +520,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
 
         <td>${school || ''}</td>
         <td>${curLabel}</td>
-        <td><button class="btn-doc" data-doc-url="${s.docUrl || ''}" title="문서 열기">📄</button></td>
+        <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${s.docUrl || ''}" title="문서 열기">📄</button></td>
 
         <td>
           <button class="openStudentPopups" title="영상 배정 + 수업 기록">🧾</button>
@@ -534,20 +536,25 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   }).join('');
 
   host.innerHTML = list.length ? `
-    <table>
+    <table class="today-table">
+      <colgroup>
+        <col style="width:32px"><col style="width:72px"><col style="width:84px"><col style="width:84px">
+        <col style="width:168px"><col style="width:120px"><col style="width:120px"><col style="width:160px">
+        <col style="width:56px"><col style="width:168px"><col style="width:64px">
+      </colgroup>
       <thead>
         <tr>
-          <th style="width:24px"></th>
+          <th></th>
           <th>구분</th>
-          <th style="width:84px">도착</th>
-          <th style="width:84px">하원</th>
-          <th style="width:206px">출석/연락/숙제</th>
+          <th>도착</th>
+          <th>하원</th>
+          <th>출석/연락/숙제</th>
           <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
           <th>문서</th>
           <th>작업</th>
-          <th style="width:48px;padding-left:4px">보강</th>
+          <th>보강</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -637,7 +644,12 @@ export function renderDone(doneEntries) {
   }).join('');
 
   wrap.innerHTML = `
-    <table>
+    <table class="done-table">
+      <colgroup>
+        <col style="width:32px"><col style="width:72px"><col style="width:84px"><col style="width:84px">
+        <col style="width:120px"><col style="width:104px"><col style="width:120px"><col style="width:160px">
+        <col style="width:56px"><col style="width:228px">
+      </colgroup>
       <thead>
         <tr>
           <th style="width:24px"></th>

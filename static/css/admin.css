@@ -662,6 +662,7 @@ body.admin.dark tbody tr:hover {
 .btn-doc,
 .editVid,
 .editLog,
+.openStudentPopups,
 .openTestProgress,
 .markAbsent,
 .markLeave,
@@ -728,10 +729,7 @@ body.admin.dark tbody tr:hover {
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--card) 92%, #ffffff 8%);
   padding: 8px;
-  max-height: min(48vh, 340px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-behavior: smooth;
+  overflow: visible;
 }
 
 #calendar .fc {
@@ -740,19 +738,35 @@ body.admin.dark tbody tr:hover {
 
 #calendar .fc-view-harness {
   height: auto !important;
-  min-height: 464px;
+  min-height: 430px;
 }
 
 #calendar .fc .fc-toolbar-title {
-  font-size: 15px;
+  font-size: 18px;
+  font-weight: 900;
 }
 
 #calendar .fc .fc-button {
   border-radius: 9px;
 }
 
+#calendar .fc-header-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin-bottom: 8px;
+  padding: 2px 0 6px;
+  background: color-mix(in srgb, var(--card) 94%, #ffffff 6%);
+}
+
+#calendar .fc-scrollgrid-section-header th {
+  position: sticky;
+  top: 42px;
+  z-index: 11;
+}
+
 #calendar .fc-daygrid-day-frame {
-  min-height: 76px;
+  min-height: 82px;
 }
 
 #calendar .fc-daygrid-day-top {
