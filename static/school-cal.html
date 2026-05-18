@@ -91,6 +91,32 @@
       flex-wrap: wrap;
     }
 
+    .field-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--sc-muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .select-field,
+    .search-field {
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--sc-line-strong);
+      background: var(--sc-surface);
+      color: var(--sc-text);
+      padding: 0 10px;
+      font-weight: 700;
+      box-sizing: border-box;
+    }
+
+    .search-field {
+      width: min(320px, 48vw);
+      font-weight: 600;
+    }
+
     .btn {
       height: 36px;
       padding: 0 12px;
@@ -227,10 +253,23 @@
         <span id="status" class="status-chip" aria-live="polite"></span>
       </div>
       <div class="tool-group">
-        <div class="seg" id="viewSeg">
-          <button type="button" data-mode="mid" class="active">중간</button>
-          <button type="button" data-mode="final">기말</button>
-        </div>
+        <label class="field-label">년도
+          <select id="yearSelect" class="select-field"></select>
+        </label>
+        <label class="field-label">학기
+          <select id="semesterSelect" class="select-field">
+            <option value="1">1학기</option>
+            <option value="2">2학기</option>
+          </select>
+        </label>
+        <label class="field-label">시험
+          <select id="examSelect" class="select-field">
+            <option value="mid">중간고사</option>
+            <option value="final">기말고사</option>
+          </select>
+        </label>
+        <input id="calSearch" class="search-field" type="search" autocomplete="off" placeholder="학교/과목/교과서 검색">
+        <span id="searchStatus" class="status-chip" aria-live="polite"></span>
       </div>
     </div>
 

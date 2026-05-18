@@ -1,11 +1,11 @@
-﻿import {
+import {
   getActiveSchoolCalendarYear,
-  getSchoolCalendarSchoolMap,
   isSchoolCalendarV2,
 } from './shared/schoolCalendar.js';
 
 (() => {
   const CT = { 'Content-Type': 'application/json' };
+  const PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
   const SCHEDULE_KEYS = [
     'textbook',
     'semesterStart',
@@ -19,14 +19,36 @@
     'finalNote',
   ];
   const GRADE_PHASE_DELIM = '::';
+  const EXAMS = {
+    mid: {
+      label: '중간고사',
+      periodLabel: '중간 지필고사 기간',
+      mathLabel: '중간 수학시험일',
+      period: 'midterm',
+      math: 'midtermMath',
+      note: 'midtermNote',
+    },
+    final: {
+      label: '기말고사',
+      periodLabel: '기말 지필고사 기간',
+      mathLabel: '기말 수학시험일',
+      period: 'final',
+      math: 'finalMath',
+      note: 'finalNote',
+    },
+  };
 
   const table = document.getElementById('calTable');
   const theadTr = document.getElementById('theadRow');
   const addBtn = document.getElementById('addRow');
   const saveBtn = document.getElementById('saveBtn');
   const statusEl = document.getElementById('status');
-  const seg = document.getElementById('viewSeg');
-  if (!table || !theadTr || !addBtn || !saveBtn || !statusEl || !seg) return;
+  const yearSelect = document.getElementById('yearSelect');
+  const semesterSelect = document.getElementById('semesterSelect');
+  const examSelect = document.getElementById('examSelect');
+  const searchInput = document.getElementById('calSearch');
+  const searchStatusEl = document.getElementById('searchStatus');
+  if (!table || !theadTr || !addBtn || !saveBtn || !statusEl || !yearSelect || !semesterSelect || !examSelect) return;
 
   const tbody = table.querySelector('tbody');
   if (!tbody) return;
@@ -35,7 +57,9 @@
   let calendarDoc = {};
   let schoolsData = [];
   let editingYear = String(new Date().getFullYear());
+  let editingSemester = '1';
   let viewMode = 'mid';
+  let searchQuery = '';
   let autoSaveTimer = null;
   let lastSavedSnapshot = '';
   let schoolSeq = 1;
@@ -47,8 +71,8 @@
       #wrap { overflow: auto; }
       #calTable {
         table-layout: auto;
-        width: max(1440px, 100%);
-        min-width: 1440px;
+        width: max(1420px, 100%);
+        min-width: 1420px;
       }
       #calTable th, #calTable td {
         padding: 10px 8px;
@@ -78,7 +102,22 @@
         z-index: 12;
       }
       .school-row td {
-        border-top: 2px solid #d8e7fb;
+        border-top: 3px solid #7fb3f2;
+        border-bottom: 1px solid #c7dcf6;
+        background: #eaf4ff;
+      }
+      .school-row td:first-child {
+        box-shadow: inset 5px 0 0 var(--sc-accent);
+      }
+      .grade-row td {
+        background: #f8fafc;
+      }
+      .grade-row.is-last-grade td {
+        border-bottom: 2px solid #c6ddf7;
+      }
+      .grade-row.search-match td,
+      .school-row.search-match td {
+        background: #fff7df;
       }
       #calTable input[type="text"] {
         width: 100%;
@@ -102,8 +141,13 @@
         height: 30px;
         border-radius: 8px;
         cursor: pointer;
-        border: 1px solid #cbd5e1;
-        background: #fff;
+        border: 1px solid var(--sc-accent);
+        background: var(--sc-accent);
+        color: #fff;
+        font-weight: 900;
+      }
+      .btn-del:hover {
+        filter: brightness(0.94);
       }
       .btn-toggle, .btn-add-grade {
         border: 1px solid #cbd5e1;
@@ -120,17 +164,24 @@
         height: 30px;
       }
       .school-name-wrap { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
-      .common-chip {
-        display:inline-block;
+      .common-chip,
+      .muted-cell {
+        display:inline-flex;
+        min-height: 30px;
+        align-items:center;
         border:1px solid #cbd5e1;
         border-radius:999px;
-        padding:4px 9px;
+        padding:0 9px;
         font-size:12px;
         font-weight: 700;
         color:#475569;
         background:#f8fafc;
       }
-      .grade-row td { background: #f8fafc; }
+      .muted-cell {
+        border-style: dashed;
+        color:#7b8ca3;
+        background:#f6f9fd;
+      }
       .grade-hint {
         color:#475569;
         font-size:12px;
@@ -149,16 +200,18 @@
         color:#e2e8f0;
       }
       body.dark .btn-del {
-        background:#0b1220;
-        border-color:#334155;
-        color:#e2e8f0;
+        background:#2563eb;
+        border-color:#3b82f6;
+        color:#eff6ff;
       }
-      body.dark .common-chip {
+      body.dark .common-chip,
+      body.dark .muted-cell {
         border-color:#334155;
         color:#cbd5e1;
         background:#0b1220;
       }
       body.dark .grade-row td { background:#111827; }
+      body.dark .grade-row.is-last-grade td { border-bottom-color:#2a4a74; }
       body.dark .grade-hint { color:#cbd5e1; }
       body.dark #calTable tbody tr:hover td {
         background: #14243b;
@@ -172,7 +225,13 @@
         background:#152b46;
       }
       body.dark .school-row td {
-        border-top-color: #2a4a74;
+        background:#142b48;
+        border-top-color: #4f83c7;
+        border-bottom-color:#2a4a74;
+      }
+      body.dark .grade-row.search-match td,
+      body.dark .school-row.search-match td {
+        background:#352d16;
       }
       body.dark #calTable input[type="text"] {
         background:#0b1220;
@@ -203,6 +262,18 @@
     }[m]));
   }
 
+  function examConfig() {
+    return EXAMS[viewMode] || EXAMS.mid;
+  }
+
+  function normalizeSearch(value) {
+    return String(value ?? '').trim().toLocaleLowerCase('ko').replace(/\s+/g, '');
+  }
+
+  function searchKeyFor(...values) {
+    return normalizeSearch(values.filter((v) => v != null).join(' '));
+  }
+
   function nextSchoolId() {
     const id = `s${schoolSeq}`;
     schoolSeq += 1;
@@ -220,6 +291,26 @@
     for (const key of SCHEDULE_KEYS) {
       out[key] = String(entry?.[key] ?? '').trim();
     }
+    return out;
+  }
+
+  function normalizeCommonFields(entry = {}) {
+    const out = normalizeScheduleFields(entry);
+    out.textbook = '';
+    out.midtermMath = '';
+    out.midtermRange = '';
+    out.midtermNote = '';
+    out.finalMath = '';
+    out.finalRange = '';
+    out.finalNote = '';
+    return out;
+  }
+
+  function normalizeGradeFields(entry = {}) {
+    const out = normalizeScheduleFields(entry);
+    out.semesterStart = '';
+    out.midterm = '';
+    out.final = '';
     return out;
   }
 
@@ -254,12 +345,12 @@
     return {
       id: school.id,
       school: String(school.school || '').trim(),
-      common: normalizeScheduleFields(school.common || {}),
+      common: normalizeCommonFields(school.common || {}),
       grades: (school.grades || []).map((gradeRow) => ({
         id: gradeRow.id || nextGradeId(),
         grade: String(gradeRow.grade || '').trim(),
         phase: String(gradeRow.phase || '').trim(),
-        fields: normalizeScheduleFields(gradeRow.fields || {}),
+        fields: normalizeGradeFields(gradeRow.fields || {}),
       })),
     };
   }
@@ -268,8 +359,22 @@
     return [...rows].sort((a, b) => String(a.school || '').localeCompare(String(b.school || ''), 'ko'));
   }
 
-  function loadSchoolsFromDoc(payload, year) {
-    const schoolMap = getSchoolCalendarSchoolMap(payload, year);
+  function getYearBundle(payload, year) {
+    if (!isSchoolCalendarV2(payload)) return {};
+    return isObject(payload.years?.[String(year)]) ? payload.years[String(year)] : {};
+  }
+
+  function getSchoolMapForSelection(payload, year, semester) {
+    const yearBundle = getYearBundle(payload, year);
+    const semesters = isObject(yearBundle.semesters) ? yearBundle.semesters : {};
+    const semesterBundle = semesters[String(semester)];
+    if (isObject(semesterBundle?.schools)) return semesterBundle.schools;
+    if (String(semester) === '1' && isObject(yearBundle.schools)) return yearBundle.schools;
+    return {};
+  }
+
+  function loadSchoolsFromDoc(payload, year, semester) {
+    const schoolMap = getSchoolMapForSelection(payload, year, semester);
     const rows = [];
 
     for (const [schoolName, entry] of Object.entries(schoolMap)) {
@@ -279,20 +384,20 @@
         rows.push({
           id: nextSchoolId(),
           school: schoolName,
-          common: normalizeScheduleFields(entry),
+          common: normalizeCommonFields(entry),
           grades: [],
         });
         continue;
       }
 
-      const common = normalizeScheduleFields(isObject(entry.common) ? entry.common : {});
+      const common = normalizeCommonFields(isObject(entry.common) ? entry.common : {});
       const grades = [];
 
       const rawGrades = isObject(entry.grades) ? entry.grades : {};
       Object.entries(rawGrades).forEach(([gradeKey, gradeEntry]) => {
         if (!isObject(gradeEntry)) return;
         const token = parseGradeToken(gradeKey, gradeEntry);
-        const fields = normalizeScheduleFields(gradeEntry);
+        const fields = normalizeGradeFields(gradeEntry);
         const hasMeta = token.grade || token.phase;
         if (!hasMeta && !hasScheduleValue(fields)) return;
         grades.push({
@@ -324,12 +429,24 @@
     return sortLoadedSchools(rows);
   }
 
+  function shortYear(year) {
+    const y = String(year || '').trim();
+    return /^\d{4}$/.test(y) ? y.slice(2) : y;
+  }
+
+  function pageLabel() {
+    return `${shortYear(editingYear)}년 ${editingSemester}학기 ${examConfig().label}`;
+  }
+
   function updateTitle() {
-    document.title = editingYear ? `학교 일정 관리 (${editingYear})` : '학교 일정 관리';
+    document.title = `학교 일정 관리 (${pageLabel()})`;
+    if (tableNoteEl) {
+      tableNoteEl.textContent = `${pageLabel()} · 학교 행에는 개학/지필고사 기간을, 학년-과목 행에는 교과서/수학시험일/시험 정보를 입력합니다.`;
+    }
   }
 
   function applyColgroup() {
-    const widths = ['86px', '220px', '110px', '150px', '120px', '10.5rem', '12rem', '13rem', '12rem', '62px'];
+    const widths = ['86px', '220px', '10.5rem', '12rem', '110px', '150px', '130px', '12rem', '14rem', '62px'];
     table.querySelector('colgroup')?.remove();
     const cg = document.createElement('colgroup');
     cg.innerHTML = widths.map((w) => (w ? `<col style="width:${w}">` : '<col>')).join('');
@@ -337,18 +454,17 @@
   }
 
   function renderHead() {
-    const dynamicCols = viewMode === 'mid'
-      ? [['중간 수학시험일', '12rem'], ['시험 관련 정보', '13rem'], ['1차 지필고사 기간', '12rem']]
-      : [['기말 수학시험일', '12rem'], ['시험 관련 정보', '13rem'], ['2차 지필고사 기간', '12rem']];
-
+    const exam = examConfig();
     const cols = [
       ['열기/#', '86px'],
       ['학교명', '220px'],
+      ['개학(날짜)', '10.5rem'],
+      [exam.periodLabel, '12rem'],
       ['학년', '110px'],
       ['과목/트랙', '150px'],
-      ['교과서', '120px'],
-      ['개학(날짜)', '10.5rem'],
-      ...dynamicCols,
+      ['교과서', '130px'],
+      [exam.mathLabel, '12rem'],
+      ['시험 관련 정보', '14rem'],
       ['삭제', '62px'],
     ];
 
@@ -356,29 +472,15 @@
     applyColgroup();
   }
 
-  function buildModeCells(prefix, fields = {}, placeholders = {}) {
-    if (viewMode === 'mid') {
-      return `
-        <td><input type="text" class="${prefix}-mid-math" value="${esc(fields.midtermMath || '')}" placeholder="${esc(placeholders.midtermMath || '예: 4/30(목), 5/1(금)')}"></td>
-        <td><input type="text" class="${prefix}-mid-note" value="${esc(fields.midtermNote || '')}" placeholder="${esc(placeholders.midtermNote || '예: 서술형 포함 / 범위 추후 공지')}"></td>
-        <td><input type="text" class="${prefix}-mid-period" value="${esc(fields.midterm || '')}" placeholder="${esc(placeholders.midterm || '예: 4/27~4/30')}"></td>
-      `;
-    }
-
-    return `
-      <td><input type="text" class="${prefix}-fin-math" value="${esc(fields.finalMath || '')}" placeholder="${esc(placeholders.finalMath || '예: 6/26(목), 6/27(금)')}"></td>
-      <td><input type="text" class="${prefix}-fin-note" value="${esc(fields.finalNote || '')}" placeholder="${esc(placeholders.finalNote || '예: 서술형 포함 / 범위 추후 공지')}"></td>
-      <td><input type="text" class="${prefix}-fin-period" value="${esc(fields.final || '')}" placeholder="${esc(placeholders.final || '예: 6/29~7/3')}"></td>
-    `;
-  }
-
-  function buildSchoolRow(school, index) {
+  function buildSchoolRow(school, index, options = {}) {
     const expanded = expandedSchoolIds.has(school.id);
+    const exam = examConfig();
+    const matchClass = options.matched ? ' search-match' : '';
     return `
-      <tr class="school-row" data-school-id="${esc(school.id)}">
+      <tr class="school-row${matchClass}" data-school-id="${esc(school.id)}">
         <td>
           <div class="row-index-wrap">
-            <button type="button" class="btn-toggle" data-action="toggle-school" title="학년 행 펼치기">${expanded ? '▼' : '▶'}</button>
+            <button type="button" class="btn-toggle" data-action="toggle-school" title="학년 행 펼치기">${expanded || searchQuery ? '▼' : '▶'}</button>
             <span>${index}</span>
           </div>
         </td>
@@ -388,37 +490,37 @@
             <button type="button" class="btn-add-grade" data-action="add-grade" title="학년 행 추가">+학년</button>
           </div>
         </td>
-        <td><span class="common-chip">공통</span></td>
-        <td><span class="grade-hint">-</span></td>
-        <td><input type="text" class="sc-textbook" value="${esc(school.common.textbook || '')}" placeholder="예: YBM"></td>
         <td><input type="text" class="sc-sem" value="${esc(school.common.semesterStart || '')}" placeholder="예: 3/4(화)"></td>
-        ${buildModeCells('sc', school.common)}
+        <td><input type="text" class="sc-period" value="${esc(school.common[exam.period] || '')}" placeholder="${esc(exam.period === 'midterm' ? '예: 4/27~4/30' : '예: 6/29~7/3')}"></td>
+        <td><span class="common-chip">학교 공통</span></td>
+        <td><span class="muted-cell">-</span></td>
+        <td><span class="muted-cell">학년 행</span></td>
+        <td><span class="muted-cell">학년 행</span></td>
+        <td><span class="muted-cell">학년 행</span></td>
         <td style="text-align:center"><button type="button" class="btn-del" title="학교 삭제">X</button></td>
       </tr>
     `;
   }
 
-  function buildGradeRow(school, gradeRow) {
-    const placeholders = {
-      midterm: school.common.midterm,
-      midtermMath: school.common.midtermMath,
-      midtermRange: school.common.midtermRange,
-      midtermNote: school.common.midtermNote,
-      final: school.common.final,
-      finalMath: school.common.finalMath,
-      finalRange: school.common.finalRange,
-      finalNote: school.common.finalNote,
-    };
+  function buildGradeRow(school, gradeRow, options = {}) {
+    const exam = examConfig();
+    const rowClass = [
+      'grade-row',
+      options.last ? 'is-last-grade' : '',
+      options.matched ? 'search-match' : '',
+    ].filter(Boolean).join(' ');
 
     return `
-      <tr class="grade-row" data-school-id="${esc(school.id)}" data-grade-id="${esc(gradeRow.id)}">
+      <tr class="${rowClass}" data-school-id="${esc(school.id)}" data-grade-id="${esc(gradeRow.id)}">
         <td><span class="grade-hint">└&gt;</span></td>
-        <td><span class="grade-hint">학년별</span></td>
+        <td><span class="grade-hint">${esc(school.school || '학년별')}</span></td>
+        <td><span class="muted-cell">학교 행</span></td>
+        <td><span class="muted-cell">학교 행</span></td>
         <td><input type="text" class="gr-grade" value="${esc(gradeRow.grade || '')}" placeholder="예: 1학년"></td>
         <td><input type="text" class="gr-phase" value="${esc(gradeRow.phase || '')}" placeholder="예: 수학1 / 미적분"></td>
-        <td><input type="text" class="gr-textbook" value="${esc(gradeRow.fields.textbook || '')}" placeholder="${esc(placeholders.textbook || '')}"></td>
-        <td><input type="text" class="gr-sem" value="${esc(gradeRow.fields.semesterStart || '')}" placeholder="${esc(placeholders.semesterStart || '')}"></td>
-        ${buildModeCells('gr', gradeRow.fields, placeholders)}
+        <td><input type="text" class="gr-textbook" value="${esc(gradeRow.fields.textbook || '')}" placeholder="예: YBM"></td>
+        <td><input type="text" class="gr-exam-math" value="${esc(gradeRow.fields[exam.math] || '')}" placeholder="${esc(exam.mathLabel)}"></td>
+        <td><input type="text" class="gr-exam-note" value="${esc(gradeRow.fields[exam.note] || '')}" placeholder="예: 서술형 포함 / 범위 추후 공지"></td>
         <td style="text-align:center"><button type="button" class="btn-del" title="학년 행 삭제">X</button></td>
       </tr>
     `;
@@ -429,45 +531,87 @@
     schoolsData.push({
       id: nextSchoolId(),
       school: '',
-      common: normalizeScheduleFields({}),
+      common: normalizeCommonFields({}),
       grades: [],
     });
+  }
+
+  function schoolMatchesQuery(school, query) {
+    if (!query) return true;
+    return searchKeyFor(school.school).includes(query);
+  }
+
+  function gradeMatchesQuery(school, gradeRow, query) {
+    if (!query) return true;
+    return searchKeyFor(
+      school.school,
+      gradeRow.grade,
+      gradeRow.phase,
+      gradeRow.fields?.textbook,
+      gradeRow.fields?.midtermMath,
+      gradeRow.fields?.midtermNote,
+      gradeRow.fields?.finalMath,
+      gradeRow.fields?.finalNote,
+    ).includes(query);
   }
 
   function renderBody() {
     ensureAtLeastOneSchool();
 
+    const query = normalizeSearch(searchQuery);
     const chunks = [];
+    let visibleSchools = 0;
+    let visibleGrades = 0;
+
     schoolsData.forEach((school, index) => {
-      chunks.push(buildSchoolRow(school, index + 1));
-      if (!expandedSchoolIds.has(school.id)) return;
-      school.grades.forEach((gradeRow) => {
-        chunks.push(buildGradeRow(school, gradeRow));
+      const schoolMatch = schoolMatchesQuery(school, query);
+      const gradeMatches = (school.grades || []).filter((gradeRow) => schoolMatch || gradeMatchesQuery(school, gradeRow, query));
+      const shouldShowSchool = !query || schoolMatch || gradeMatches.length > 0;
+      if (!shouldShowSchool) return;
+
+      visibleSchools += 1;
+      chunks.push(buildSchoolRow(school, index + 1, { matched: !!query && schoolMatch }));
+
+      const showGrades = query ? gradeMatches.length > 0 : expandedSchoolIds.has(school.id);
+      if (!showGrades) return;
+
+      gradeMatches.forEach((gradeRow, rowIndex) => {
+        const matched = !!query && gradeMatchesQuery(school, gradeRow, query);
+        visibleGrades += 1;
+        chunks.push(buildGradeRow(school, gradeRow, {
+          last: rowIndex === gradeMatches.length - 1,
+          matched,
+        }));
       });
     });
 
     tbody.innerHTML = chunks.join('');
+    if (searchStatusEl) {
+      searchStatusEl.textContent = query ? `${visibleSchools}개 학교 / ${visibleGrades}행` : '';
+    }
   }
 
   function render() {
     updateTitle();
     renderHead();
     renderBody();
+    syncPageSelectors();
   }
 
-  function readModeFieldsFromRow(rowEl, prefix) {
-    if (viewMode === 'mid') {
-      return {
-        midtermMath: rowEl.querySelector(`.${prefix}-mid-math`)?.value.trim() || '',
-        midtermNote: rowEl.querySelector(`.${prefix}-mid-note`)?.value.trim() || '',
-        midterm: rowEl.querySelector(`.${prefix}-mid-period`)?.value.trim() || '',
-      };
-    }
-
+  function readSchoolFieldsFromRow(rowEl) {
+    const exam = examConfig();
     return {
-      finalMath: rowEl.querySelector(`.${prefix}-fin-math`)?.value.trim() || '',
-      finalNote: rowEl.querySelector(`.${prefix}-fin-note`)?.value.trim() || '',
-      final: rowEl.querySelector(`.${prefix}-fin-period`)?.value.trim() || '',
+      semesterStart: rowEl.querySelector('.sc-sem')?.value.trim() || '',
+      [exam.period]: rowEl.querySelector('.sc-period')?.value.trim() || '',
+    };
+  }
+
+  function readGradeFieldsFromRow(rowEl) {
+    const exam = examConfig();
+    return {
+      textbook: rowEl.querySelector('.gr-textbook')?.value.trim() || '',
+      [exam.math]: rowEl.querySelector('.gr-exam-math')?.value.trim() || '',
+      [exam.note]: rowEl.querySelector('.gr-exam-note')?.value.trim() || '',
     };
   }
 
@@ -488,21 +632,17 @@
       const prev = prevMap.get(schoolId) || {
         id: schoolId,
         school: '',
-        common: normalizeScheduleFields({}),
+        common: normalizeCommonFields({}),
         grades: [],
       };
 
-      const commonPatch = {
-        textbook: tr.querySelector('.sc-textbook')?.value.trim() || '',
-        semesterStart: tr.querySelector('.sc-sem')?.value.trim() || '',
-        ...readModeFieldsFromRow(tr, 'sc'),
-      };
-
+      const commonPatch = readSchoolFieldsFromRow(tr);
+      const preserveHiddenGrades = !!searchQuery || !expandedSchoolIds.has(schoolId);
       const school = {
         id: schoolId,
         school: tr.querySelector('.inp-school')?.value.trim() || prev.school || '',
-        common: normalizeScheduleFields({ ...prev.common, ...commonPatch }),
-        grades: expandedSchoolIds.has(schoolId) ? [] : (prev.grades || []),
+        common: normalizeCommonFields({ ...prev.common, ...commonPatch }),
+        grades: preserveHiddenGrades ? [...(prev.grades || [])] : [],
       };
 
       next.push(school);
@@ -518,19 +658,28 @@
       const prevGrade = prevGradeMapBySchool.get(schoolId)?.get(gradeId);
       const grade = tr.querySelector('.gr-grade')?.value.trim() || '';
       const phase = tr.querySelector('.gr-phase')?.value.trim() || String(prevGrade?.phase || '').trim();
-      const fieldsPatch = {
-        textbook: tr.querySelector('.gr-textbook')?.value.trim() || '',
-        semesterStart: tr.querySelector('.gr-sem')?.value.trim() || '',
-        ...readModeFieldsFromRow(tr, 'gr'),
-      };
-      const fields = normalizeScheduleFields({ ...(prevGrade?.fields || {}), ...fieldsPatch });
+      const fieldsPatch = readGradeFieldsFromRow(tr);
+      const fields = normalizeGradeFields({ ...(prevGrade?.fields || {}), ...fieldsPatch });
 
       if (!grade && !phase && !hasScheduleValue(fields)) return;
 
-      school.grades.push({ id: gradeId, grade, phase, fields });
+      const nextGrade = { id: gradeId, grade, phase, fields };
+      const existingIndex = school.grades.findIndex((row) => String(row.id) === String(gradeId));
+      if (existingIndex >= 0) school.grades[existingIndex] = nextGrade;
+      else school.grades.push(nextGrade);
     });
 
-    schoolsData = next;
+    if (searchQuery) {
+      const updated = new Set(next.map((school) => String(school.id)));
+      const ordered = schoolsData.map((school) => nextById.get(school.id) || cloneSchoolEntry(school));
+      next.forEach((school) => {
+        if (!updated.has(String(school.id))) return;
+        if (!ordered.some((row) => String(row.id) === String(school.id))) ordered.push(school);
+      });
+      schoolsData = ordered;
+    } else {
+      schoolsData = next;
+    }
     ensureAtLeastOneSchool();
   }
 
@@ -544,7 +693,8 @@
 
   function buildPayloadFromState() {
     const activeYear = String(editingYear || getActiveSchoolCalendarYear(calendarDoc) || new Date().getFullYear());
-    const existingSchools = getSchoolCalendarSchoolMap(calendarDoc, activeYear);
+    const semesterKey = String(editingSemester || '1');
+    const existingSchools = getSchoolMapForSelection(calendarDoc, activeYear, semesterKey);
     const schools = {};
 
     schoolsData.forEach((schoolEntry) => {
@@ -559,7 +709,7 @@
       (schoolEntry.grades || []).forEach((gradeRow) => {
         const grade = String(gradeRow.grade || '').trim();
         const phase = String(gradeRow.phase || '').trim();
-        const fields = normalizeScheduleFields(gradeRow.fields || {});
+        const fields = normalizeGradeFields(gradeRow.fields || {});
 
         if (!grade && !phase && !hasScheduleValue(fields)) return;
         if (!grade) return;
@@ -576,20 +726,41 @@
 
       schools[schoolName] = {
         ...existing,
-        common: normalizeScheduleFields(schoolEntry.common || {}),
+        common: normalizeCommonFields(schoolEntry.common || {}),
         grades,
       };
     });
 
     const base = isSchoolCalendarV2(calendarDoc) ? calendarDoc : {};
     const years = { ...(base.years || {}) };
-    const yearBundle = isObject(years[activeYear]) ? years[activeYear] : {};
-    years[activeYear] = { ...yearBundle, schools };
+    const yearBundle = isObject(years[activeYear]) ? { ...years[activeYear] } : {};
+    const semesters = isObject(yearBundle.semesters) ? { ...yearBundle.semesters } : {};
+    const semesterBundle = isObject(semesters[semesterKey]) ? { ...semesters[semesterKey] } : {};
+
+    semesters[semesterKey] = {
+      ...semesterBundle,
+      schools,
+    };
+
+    const nextYearBundle = {
+      ...yearBundle,
+      activeSemester: semesterKey,
+      activeExam: viewMode,
+      semesters,
+    };
+
+    if (semesterKey === '1') {
+      nextYearBundle.schools = schools;
+    }
+
+    years[activeYear] = nextYearBundle;
 
     return {
       ...base,
       version: 2,
       activeYear,
+      activeSemester: semesterKey,
+      activeExam: viewMode,
       years,
     };
   }
@@ -606,6 +777,7 @@
 
     if (statusEl) {
       if (mode === 'auto') statusEl.textContent = '자동 저장 중...';
+      else if (mode === 'switch') statusEl.textContent = '페이지 저장 중...';
       else if (mode === 'manual') statusEl.textContent = '저장 중...';
     }
 
@@ -652,10 +824,11 @@
     const newSchool = {
       id: nextSchoolId(),
       school: '',
-      common: normalizeScheduleFields({}),
+      common: normalizeCommonFields({}),
       grades: [],
     };
     schoolsData.push(newSchool);
+    expandedSchoolIds.add(newSchool.id);
     render();
     const row = tbody.querySelector(`tr.school-row[data-school-id="${newSchool.id}"] .inp-school`);
     row?.focus();
@@ -672,7 +845,7 @@
       id: nextGradeId(),
       grade: '',
       phase: '',
-      fields: normalizeScheduleFields({}),
+      fields: normalizeGradeFields({}),
     };
     school.grades.push(newGrade);
 
@@ -707,23 +880,96 @@
     render();
   }
 
-  seg.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-mode]');
-    if (!btn) return;
-    const mode = btn.dataset.mode;
-    if (viewMode === mode) return;
+  function coerceSemester(value) {
+    return String(value) === '2' ? '2' : '1';
+  }
 
-    syncFromView();
-    viewMode = mode;
-    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+  function coerceExam(value) {
+    return value === 'final' ? 'final' : 'mid';
+  }
+
+  function readStoredPage() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(PAGE_STORAGE_KEY) || '{}');
+      return isObject(stored) ? stored : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function persistPageSelection() {
+    localStorage.setItem(PAGE_STORAGE_KEY, JSON.stringify({
+      year: editingYear,
+      semester: editingSemester,
+      exam: viewMode,
+    }));
+  }
+
+  function getAvailableYears() {
+    const years = new Set();
+    const current = new Date().getFullYear();
+    [current - 1, current, current + 1].forEach((year) => years.add(String(year)));
+    Object.keys(calendarDoc?.years || {}).forEach((year) => years.add(String(year)));
+    if (editingYear) years.add(String(editingYear));
+    return [...years].sort((a, b) => Number(a) - Number(b));
+  }
+
+  function syncPageSelectors() {
+    const yearOptions = getAvailableYears();
+    yearSelect.innerHTML = yearOptions
+      .map((year) => `<option value="${esc(year)}">${esc(shortYear(year))}년</option>`)
+      .join('');
+    yearSelect.value = editingYear;
+    semesterSelect.value = editingSemester;
+    examSelect.value = viewMode;
+  }
+
+  async function switchPageFromSelectors() {
+    const nextYear = String(yearSelect.value || editingYear || new Date().getFullYear());
+    const nextSemester = coerceSemester(semesterSelect.value);
+    const nextExam = coerceExam(examSelect.value);
+    if (nextYear === editingYear && nextSemester === editingSemester && nextExam === viewMode) return;
+
+    await saveCalendar('switch');
+
+    editingYear = nextYear;
+    editingSemester = nextSemester;
+    viewMode = nextExam;
+    persistPageSelection();
+    expandedSchoolIds.clear();
+    schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear, editingSemester);
+    ensureAtLeastOneSchool();
+    lastSavedSnapshot = JSON.stringify(buildPayloadFromState());
     render();
-    scheduleAutoSave();
+  }
+
+  [yearSelect, semesterSelect, examSelect].forEach((el) => {
+    el.addEventListener('change', () => {
+      switchPageFromSelectors();
+    });
   });
 
   addBtn.addEventListener('click', addSchoolRow);
 
   saveBtn.addEventListener('click', () => {
     saveCalendar('manual');
+  });
+
+  searchInput?.addEventListener('input', () => {
+    searchQuery = searchInput.value || '';
+    renderBody();
+  });
+
+  searchInput?.addEventListener('search', () => {
+    searchQuery = searchInput.value || '';
+    renderBody();
+  });
+
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    searchInput.value = '';
+    searchQuery = '';
+    renderBody();
   });
 
   tbody.addEventListener('click', (e) => {
@@ -787,13 +1033,16 @@
       calendarDoc = {};
     }
 
-    editingYear = getActiveSchoolCalendarYear(calendarDoc) || String(calendarDoc.activeYear || new Date().getFullYear());
-    schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear);
+    const stored = readStoredPage();
+    editingYear = String(stored.year || calendarDoc.activeYear || getActiveSchoolCalendarYear(calendarDoc) || new Date().getFullYear());
+    editingSemester = coerceSemester(stored.semester || calendarDoc.activeSemester || getYearBundle(calendarDoc, editingYear).activeSemester || '1');
+    viewMode = coerceExam(stored.exam || calendarDoc.activeExam || getYearBundle(calendarDoc, editingYear).activeExam || 'mid');
+    syncPageSelectors();
+    persistPageSelection();
+
+    schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear, editingSemester);
     ensureAtLeastOneSchool();
     lastSavedSnapshot = JSON.stringify(buildPayloadFromState());
-    if (tableNoteEl) {
-      tableNoteEl.textContent = '수학시험일, 시험 관련 정보, 시험 기간을 중간/기말 탭에서 각각 입력합니다.';
-    }
     render();
   })();
 })();
