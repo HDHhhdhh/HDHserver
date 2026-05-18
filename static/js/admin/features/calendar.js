@@ -5,7 +5,7 @@ import { state } from '../core/state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
-import { buildPendingMakeups, formatMakeupDate } from './makeupPending.js';
+import { buildPendingMakeups, formatMakeupDate, makeupPendingActivationDate } from './makeupPending.js';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
@@ -352,7 +352,7 @@ export function initCalendar() {
         <div class="makeup-planner-head">
           <div>
             <h4>보강 잡기</h4>
-            <p id="makeupPlannerHint">결석으로 보강이 필요한 학생입니다.</p>
+            <p id="makeupPlannerHint">내일 이후 결석으로 보강이 필요한 학생입니다.</p>
           </div>
           <input id="makeupPlannerSearch" type="search" autocomplete="off" placeholder="보강 학생 검색">
         </div>
@@ -366,6 +366,11 @@ export function initCalendar() {
     search?.addEventListener('compositionend', renderMakeupPlanner);
     search?.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Escape') return;
+      if (makeupSelection) {
+        ev.preventDefault();
+        cancelMakeupSelection();
+        return;
+      }
       search.value = '';
       renderMakeupPlanner();
     });
@@ -388,6 +393,7 @@ export function initCalendar() {
       students: state.students || [],
       absentByDate: state.absentByDate || {},
       extra: EXTRA || state.extra || {},
+      minAbsenceDate: makeupPendingActivationDate(),
     });
   }
 
@@ -446,6 +452,12 @@ export function initCalendar() {
     document.querySelectorAll('.makeup-slot-popover').forEach(el => el.remove());
   }
 
+  function cancelMakeupSelection() {
+    makeupSelection = null;
+    closeMakeupSlotPicker();
+    renderMakeupPlanner();
+  }
+
   function openMakeupSlotPicker(dateStr, dayEl) {
     if (!makeupSelection || !dayEl) return;
     closeMakeupSlotPicker();
@@ -454,7 +466,10 @@ export function initCalendar() {
     const pop = document.createElement('div');
     pop.className = 'makeup-slot-popover';
     pop.innerHTML = `
-      <div class="makeup-slot-title">${escapeHtml(makeupSelection.name || '')}</div>
+      <div class="makeup-slot-head">
+        <div class="makeup-slot-title">${escapeHtml(makeupSelection.name || '')}</div>
+        <button type="button" class="makeup-slot-close" data-makeup-action="cancel" aria-label="닫기">×</button>
+      </div>
       <div class="makeup-slot-actions">
         ${MAKEUP_SLOTS.map(slot => `
           <button type="button" data-slot="${slot}">${slot}타임</button>
@@ -464,6 +479,14 @@ export function initCalendar() {
     dayEl.appendChild(pop);
 
     pop.addEventListener('click', (ev) => {
+      const closeBtn = ev.target.closest('[data-makeup-action="cancel"]');
+      if (closeBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cancelMakeupSelection();
+        return;
+      }
+
       const btn = ev.target.closest('button[data-slot]');
       if (!btn) return;
       const slot = parseInt(btn.dataset.slot, 10);
@@ -578,16 +601,31 @@ export function initCalendar() {
   refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
 
-  let wheelMonthLocked = false;
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !makeupSelection) return;
+    ev.preventDefault();
+    cancelMakeupSelection();
+  });
+
+  let wheelRowLocked = false;
+  function calendarRowScrollAmount() {
+    const row = calendarEl.querySelector('.fc-daygrid-body tr');
+    const h = row?.getBoundingClientRect?.().height || 82;
+    return Math.max(56, Math.round(h));
+  }
+
   calendarEl.addEventListener('wheel', (ev) => {
     const delta = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
     if (Math.abs(delta) < 24) return;
     ev.preventDefault();
-    if (wheelMonthLocked) return;
-    wheelMonthLocked = true;
-    if (delta > 0) calendar.next();
-    else calendar.prev();
-    window.setTimeout(() => { wheelMonthLocked = false; }, 420);
+    if (wheelRowLocked) return;
+    wheelRowLocked = true;
+    const target = document.scrollingElement || document.documentElement;
+    target.scrollBy({
+      top: (delta > 0 ? 1 : -1) * calendarRowScrollAmount(),
+      behavior: 'smooth',
+    });
+    window.setTimeout(() => { wheelRowLocked = false; }, 180);
   }, { passive: false });
 
   async function refreshSchoolExamEvents() {

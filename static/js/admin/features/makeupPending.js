@@ -6,6 +6,20 @@ function normDate(value) {
   return DATE_RE.test(s) ? s : '';
 }
 
+export function nextLocalDateKey(offsetDays = 1) {
+  const d = new Date();
+  d.setDate(d.getDate() + Number(offsetDays || 0));
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+export function makeupPendingActivationDate() {
+  return nextLocalDateKey(1);
+}
+
 export function studentSchool(stu) {
   return String(
     stu?.school ||
@@ -60,10 +74,11 @@ function byStudentMapFromDates(dateMap) {
   return out;
 }
 
-export function buildPendingMakeups({ students = [], absentByDate = {}, extra = {} } = {}) {
+export function buildPendingMakeups({ students = [], absentByDate = {}, extra = {}, minAbsenceDate = '' } = {}) {
   const studentsBySid = new Map((students || []).map(stu => [String(stu?.id), stu]));
   const absencesBySid = byStudentMapFromDates(absentByDate);
   const extrasBySid = byStudentMapFromDates(extra);
+  const minDate = normDate(minAbsenceDate);
   const pending = [];
 
   for (const [sid, absenceDates] of absencesBySid.entries()) {
@@ -71,6 +86,8 @@ export function buildPendingMakeups({ students = [], absentByDate = {}, extra = 
     let scheduleIndex = 0;
 
     for (const absenceDate of absenceDates) {
+      if (minDate && absenceDate < minDate) continue;
+
       while (scheduleIndex < scheduled.length && scheduled[scheduleIndex] <= absenceDate) {
         scheduleIndex += 1;
       }

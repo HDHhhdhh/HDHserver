@@ -16,7 +16,7 @@ import {
   normalizeSearch as normalizeSharedSearch,
   searchKeyForText as sharedSearchKeyForText,
 } from '../../shared/search.js';
-import { countPendingMakeupsBySid } from './makeupPending.js';
+import { countPendingMakeupsBySid, makeupPendingActivationDate } from './makeupPending.js';
 
 import {
   loadWeekendSlots,
@@ -587,6 +587,7 @@ export async function loadTodayAndRender(options = {}) {
     students: state.students || [],
     absentByDate: state.absentByDate || {},
     extra: state.extra || {},
+    minAbsenceDate: makeupPendingActivationDate(),
   });
 
   const wrap = document.getElementById('todayWrap');

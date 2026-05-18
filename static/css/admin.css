@@ -759,17 +759,17 @@ body.admin.dark tbody tr:hover {
   left: 50%;
   top: 54%;
   transform: translate(-50%, -50%);
-  font-size: 22px;
-  font-weight: 950;
+  font-size: 20px;
+  font-weight: 780;
   line-height: 1;
-  color: #1d4ed8;
+  color: color-mix(in srgb, var(--brand) 42%, var(--ink-soft) 58%);
   pointer-events: none;
   letter-spacing: 0;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, .9);
+  text-shadow: none;
 }
 
 body.dark #calendar .att-count-badge {
-  color: #93c5fd;
+  color: color-mix(in srgb, var(--brand) 48%, var(--ink-soft) 52%);
   text-shadow: none;
 }
 
@@ -793,12 +793,48 @@ body.dark #calendar .makeup-slot-popover {
   box-shadow: 0 12px 28px rgba(0, 0, 0, .4);
 }
 
-#calendar .makeup-slot-title {
+#calendar .makeup-slot-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
   margin-bottom: 6px;
+  padding: 0 22px;
+  position: relative;
+}
+
+#calendar .makeup-slot-title {
   font-size: 12px;
   font-weight: 900;
   color: var(--ink);
   text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#calendar .makeup-slot-close {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translateY(-50%);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#calendar .makeup-slot-close:hover {
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--card-soft) 88%, #ffffff 12%);
+  color: var(--ink);
 }
 
 #calendar .makeup-slot-actions {

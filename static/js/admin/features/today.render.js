@@ -190,12 +190,16 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
     .chk4 .c input:disabled{cursor:not-allowed;opacity:.95}
-    .makeup-count-cell{text-align:center;width:70px;font-weight:900}
+    .makeup-count-cell{
+      text-align:left;width:48px;min-width:48px;
+      padding-left:4px!important;padding-right:8px!important;
+      font-weight:800
+    }
     .makeup-count-badge{
       display:inline-flex;align-items:center;justify-content:center;
-      min-width:30px;height:30px;padding:0 8px;border-radius:999px;
+      min-width:24px;height:24px;padding:0 7px;border-radius:999px;
       border:1px solid rgba(148,163,184,.55);
-      background:rgba(248,250,252,.95);color:#64748b;
+      background:rgba(248,250,252,.95);color:#64748b;font-size:12px;
       box-sizing:border-box;
     }
     .makeup-count-badge.needs{
@@ -533,7 +537,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           <th>커리큘럼</th>
           <th>문서</th>
           <th>작업</th>
-          <th style="width:70px">보강</th>
+          <th style="width:48px;padding-left:4px">보강</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
