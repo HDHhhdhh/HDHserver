@@ -11,6 +11,7 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { normalizeSearch, searchKeyForText } from '../../shared/search.js';
 
 let editingSid = null;
 let activeVideoList = [];
@@ -696,7 +697,7 @@ function selectedExtraVideoItems(selectedMids) {
 function extraVideoCandidates(assignedSet) {
   const subject = String(activeExtraSubject || '').trim();
   const sub = String(activeExtraSubCurriculum || '').trim();
-  const query = String(activeExtraQuery || '').trim().toLowerCase();
+  const query = normalizeSearch(activeExtraQuery || '');
 
   return (state.videos || [])
     .filter(v => {
@@ -705,7 +706,7 @@ function extraVideoCandidates(assignedSet) {
       if (subject && videoCurriculum(v) !== subject) return false;
       if (sub && videoSubCurriculum(v) !== sub) return false;
       if (query) {
-        const hay = [v.title, v.chapter, v.curriculum, v.subCurriculum].map(x => String(x || '').toLowerCase()).join(' ');
+        const hay = searchKeyForText([v.title, v.chapter, v.curriculum, v.subCurriculum].join(' '));
         if (!hay.includes(query)) return false;
       }
       return true;

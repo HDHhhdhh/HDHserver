@@ -4,6 +4,7 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { setArriveOverride } from './today.state.js';
+import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
 
 // ────────────────────────────────────────────
 // (선택) 오늘 순서 캐시 삭제 → 새 보강 추가 시 하단 고정 현상 방지
@@ -206,25 +207,7 @@ export function initExtraModal() {
     catch { return {}; }
   }
 
-  const normalizeSearch = (value) => String(value || '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/\s+/g, '');
-
   const getRows = () => Array.from(document.querySelectorAll('#exZone .row'));
-
-  function studentSearchKey(stu) {
-    return normalizeSearch([
-      stu?.name,
-      stu?.school,
-      stu?.schoolName,
-      stu?.highSchool,
-      stu?.middleSchool,
-      stu?.curriculum,
-      stu?.subCurriculum,
-      stu?.id,
-    ].filter(Boolean).join(' '));
-  }
 
   function escapeAttr(value) {
     return String(value ?? '')

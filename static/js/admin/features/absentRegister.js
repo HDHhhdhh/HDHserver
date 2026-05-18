@@ -2,6 +2,7 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { setAttended, setContacted } from './today.state.js';
+import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
 
 async function clearTodayOrder(dateStr) {
   try {
@@ -68,32 +69,12 @@ async function loadExtraAttendMap() {
   return state.extra || {};
 }
 
-function normalizeSearch(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/\s+/g, '');
-}
-
 function escapeAttr(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-}
-
-function studentSearchKey(stu) {
-  return normalizeSearch([
-    stu?.name,
-    stu?.school,
-    stu?.schoolName,
-    stu?.highSchool,
-    stu?.middleSchool,
-    stu?.curriculum,
-    stu?.subCurriculum,
-    stu?.id,
-  ].filter(Boolean).join(' '));
 }
 
 function dayValues(stu) {

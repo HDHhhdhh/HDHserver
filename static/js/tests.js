@@ -2,6 +2,8 @@
 // Test catalog management for admin `/tests`.
 /* global fetch */
 
+import { normalizeSearch, searchKeyForText } from './shared/search.js';
+
 const $ = (sel) => document.querySelector(sel);
 const CT = { 'Content-Type': 'application/json' };
 
@@ -873,14 +875,14 @@ function statsAvg(row, emptyValue) {
 }
 
 function statsSearchText(row) {
-  return [
+  return searchKeyForText([
     row.typeLabel,
     row.curriculum,
     row.name,
     row.difficulty,
     roundLabel(row.round || ''),
     row.problems ? `${row.problems}문항` : '',
-  ].map(canonText).join(' ').toLowerCase();
+  ].map(canonText).join(' '));
 }
 
 function compareStatsRows(a, b) {
@@ -907,7 +909,7 @@ function renderStatsTable() {
   if (!tbody) return;
   syncStatsControls();
   const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
-  const query = canonText(ui.statsSearch).toLowerCase();
+  const query = normalizeSearch(ui.statsSearch);
   const rows = getCategoryTests(def.key).map(test => ({
     ...test,
     typeLabel: def.label,

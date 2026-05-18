@@ -12,6 +12,11 @@
 
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import {
+  normalizeSearch as normalizeSharedSearch,
+  searchKeyForText as sharedSearchKeyForText,
+} from '../../shared/search.js';
+import { countPendingMakeupsBySid } from './makeupPending.js';
 
 import {
   loadWeekendSlots,
@@ -181,10 +186,7 @@ let _todaySearchField = TODAY_SEARCH_FIELDS.has(localStorage.getItem(LS_SEARCH_F
   : 'all';
 
 function normalizeSearch(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/\s+/g, '');
+  return normalizeSharedSearch(value);
 }
 
 const HANGUL_BASE = 0xac00;
@@ -204,12 +206,7 @@ function hangulInitials(value, initials = HANGUL_INITIALS_COMPAT) {
 }
 
 function searchKeyForText(value) {
-  const raw = String(value || '');
-  return normalizeSearch([
-    raw,
-    hangulInitials(raw, HANGUL_INITIALS_COMPAT),
-    hangulInitials(raw, HANGUL_INITIALS_LEAD),
-  ].join(' '));
+  return sharedSearchKeyForText(value);
 }
 
 function studentFieldValues(stu, field) {
@@ -586,11 +583,16 @@ export async function loadTodayAndRender(options = {}) {
   ]);
   if (seq !== todayRenderSeq || String(getAdminDate() || '') !== String(dateKey || '')) return;
   const list = _alphaSortOnly ? raw : applySavedOrder(raw, dateKey);
+  const makeupCounts = countPendingMakeupsBySid({
+    students: state.students || [],
+    absentByDate: state.absentByDate || {},
+    extra: state.extra || {},
+  });
 
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
 
-  renderToday(list, dateKey, _alphaSortOnly);
+  renderToday(list, dateKey, _alphaSortOnly, makeupCounts);
   applyTodaySearchFilter();
   renderDone(doneEntries);
   renderStaleDoneWarning({ total: 0, byDate: [] });

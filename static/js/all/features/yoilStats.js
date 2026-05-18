@@ -1,6 +1,7 @@
 ﻿// /js/all/yoilStats.js
 import { $ } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { searchKeyForText } from '../../shared/search.js';
 
 function escapeHtml(s = '') {
   return String(s)
@@ -52,7 +53,7 @@ function compareSchoolGradeRows(a, b) {
 }
 
 function searchText(v) {
-  return normText(v).toLocaleLowerCase('ko');
+  return searchKeyForText(normText(v));
 }
 
 export function renderYoilStats() {

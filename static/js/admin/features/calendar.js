@@ -1,15 +1,19 @@
 ﻿// /js/admin/features/calendar.js
 // FullCalendar 월 뷰 + 날짜별 인원 카운트 뱃지 + 출결 모달(+주말 슬롯 선택/보강 병합 저장 - 멀티 슬롯 지원)
-import { $ } from '../core/utils.js';
+import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
+import { normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { buildPendingMakeups, formatMakeupDate } from './makeupPending.js';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
 
   const CT = { 'Content-Type': 'application/json' };
   const WCHR = '일월화수목금토';
+  const MAKEUP_SLOTS = [1, 2];
+  const MAKEUP_ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const yoil = dateStr => WCHR[new Date(dateStr).getDay()];
   const isWeekend = dateStr => ['토', '일'].includes(yoil(dateStr));
@@ -269,6 +273,7 @@ export function initCalendar() {
 
   // 슬롯 버튼 클릭 핸들러 중복 방지 플래그
   let slotClickBound = false;
+  let makeupSelection = null;
 
   // 유틸: 학생이 해당 요일 정규 등원하는지
   function hasWeekday(s, w) {
@@ -317,11 +322,205 @@ export function initCalendar() {
       let badge = cell.querySelector('.att-count-badge');
       if (!badge) {
         badge = document.createElement('div'); badge.className = 'att-count-badge';
-        badge.style.cssText = 'position:absolute;right:4px;bottom:4px;font-size:11px;opacity:.85;pointer-events:none;';
         cell.style.position = 'relative'; cell.appendChild(badge);
       }
       badge.textContent = `${countMap[dateStr] || 0}명`;
     });
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/"/g, '&quot;');
+  }
+
+  function makeupItemKey(item) {
+    return `${item.sid}|${item.absenceDate}`;
+  }
+
+  function ensureMakeupPlanner() {
+    if (document.getElementById('makeupPlanner')) return;
+    calendarEl.insertAdjacentHTML('afterend', `
+      <section id="makeupPlanner" class="makeup-planner" aria-label="보강 잡기">
+        <div class="makeup-planner-head">
+          <div>
+            <h4>보강 잡기</h4>
+            <p id="makeupPlannerHint">결석으로 보강이 필요한 학생입니다.</p>
+          </div>
+          <input id="makeupPlannerSearch" type="search" autocomplete="off" placeholder="보강 학생 검색">
+        </div>
+        <div id="makeupPlannerList" class="makeup-planner-list"></div>
+      </section>
+    `);
+
+    const search = $('makeupPlannerSearch');
+    search?.addEventListener('input', renderMakeupPlanner);
+    search?.addEventListener('search', renderMakeupPlanner);
+    search?.addEventListener('compositionend', renderMakeupPlanner);
+    search?.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      search.value = '';
+      renderMakeupPlanner();
+    });
+
+    $('makeupPlannerList')?.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-makeup-action="pick"]');
+      if (!btn) return;
+      const key = btn.dataset.key || '';
+      const item = getPendingMakeups().find(row => makeupItemKey(row) === key);
+      if (!item) return;
+      makeupSelection = item;
+      closeMakeupSlotPicker();
+      renderMakeupPlanner();
+      toast('캘린더에서 보강 날짜를 클릭하세요.');
+    });
+  }
+
+  function getPendingMakeups() {
+    return buildPendingMakeups({
+      students: state.students || [],
+      absentByDate: state.absentByDate || {},
+      extra: EXTRA || state.extra || {},
+    });
+  }
+
+  function renderMakeupPlanner() {
+    ensureMakeupPlanner();
+    const list = $('makeupPlannerList');
+    const hint = $('makeupPlannerHint');
+    const search = $('makeupPlannerSearch');
+    if (!list) return;
+
+    const query = normalizeSearch(search?.value || '');
+    const items = getPendingMakeups();
+    const visible = items.filter(item => {
+      if (!query) return true;
+      const key = studentSearchKey(item.student, [
+        item.school,
+        item.course,
+        item.absenceDate,
+        formatMakeupDate(item.absenceDate),
+      ]);
+      return key.includes(query);
+    });
+
+    if (hint) {
+      const suffix = makeupSelection ? ' 날짜 선택 중' : '';
+      hint.textContent = query
+        ? `${visible.length}/${items.length}명${suffix}`
+        : `${items.length}건${suffix}`;
+    }
+
+    if (!visible.length) {
+      list.innerHTML = `<div class="makeup-empty">${query ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
+      return;
+    }
+
+    const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
+    list.innerHTML = visible.map(item => {
+      const key = makeupItemKey(item);
+      const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}`;
+      const active = key === activeKey ? ' is-active' : '';
+      return `
+        <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
+          <div class="makeup-label">${escapeHtml(label)}</div>
+          <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function refreshMakeupPlanner() {
+    await preloadExtraWeekend();
+    renderMakeupPlanner();
+  }
+
+  function closeMakeupSlotPicker() {
+    document.querySelectorAll('.makeup-slot-popover').forEach(el => el.remove());
+  }
+
+  function openMakeupSlotPicker(dateStr, dayEl) {
+    if (!makeupSelection || !dayEl) return;
+    closeMakeupSlotPicker();
+    dayEl.style.position = 'relative';
+
+    const pop = document.createElement('div');
+    pop.className = 'makeup-slot-popover';
+    pop.innerHTML = `
+      <div class="makeup-slot-title">${escapeHtml(makeupSelection.name || '')}</div>
+      <div class="makeup-slot-actions">
+        ${MAKEUP_SLOTS.map(slot => `
+          <button type="button" data-slot="${slot}">${slot}타임</button>
+        `).join('')}
+      </div>
+    `;
+    dayEl.appendChild(pop);
+
+    pop.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-slot]');
+      if (!btn) return;
+      const slot = parseInt(btn.dataset.slot, 10);
+      scheduleSelectedMakeup(dateStr, slot).catch(err => {
+        console.error(err);
+        alert('보강 저장 실패');
+      });
+    });
+  }
+
+  async function scheduleSelectedMakeup(dateStr, slot) {
+    if (!makeupSelection) return;
+    if (!MAKEUP_SLOTS.includes(slot)) return;
+    if (String(dateStr) <= String(makeupSelection.absenceDate)) {
+      alert('결석일 이후 날짜를 선택해주세요.');
+      return;
+    }
+
+    await preloadExtraWeekend();
+
+    const sid = String(makeupSelection.sid);
+    const dayIds = new Set((EXTRA[dateStr] || []).map(String));
+    dayIds.add(sid);
+    EXTRA[dateStr] = Array.from(dayIds);
+    state.extra = EXTRA;
+    window.extra = state.extra;
+
+    const perDaySlots = WEEKEND[dateStr] || {};
+    perDaySlots[sid] = [slot];
+    WEEKEND[dateStr] = perDaySlots;
+
+    await fetch('/api/extra-attend', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(EXTRA),
+    });
+    await fetch('/api/weekend-slots', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify({ [dateStr]: perDaySlots }),
+    });
+    await fetch('/arrive-time/patch', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify({
+        date: dateStr,
+        sid,
+        value: MAKEUP_ARRIVE_BY_SLOT[slot] || '',
+      }),
+    });
+
+    toast('보강 저장 완료');
+    makeupSelection = null;
+    closeMakeupSlotPicker();
+    await refreshMakeupPlanner();
+    await window.recalcCalendarCounts?.();
+    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
   }
 
   const calBadge = $('calTodayBadge');
@@ -350,6 +549,7 @@ export function initCalendar() {
     dayMaxEvents: false,
     dayMaxEventRows: false,
     events: schoolExamEvents,
+    dayCellContent: (arg) => ({ html: `<span class="cal-day-number">${arg.date.getDate()}</span>` }),
     eventOrderStrict: true,
     eventOrder: (a, b) => {
       const oa = Number(a.extendedProps?.order ?? 99);
@@ -357,15 +557,38 @@ export function initCalendar() {
       if (oa !== ob) return oa - ob;
       return String(a.title || '').localeCompare(String(b.title || ''), 'ko');
     },
-    dateClick: info => openAttendModal(info.dateStr),
+    dateClick: info => {
+      if (makeupSelection) {
+        openMakeupSlotPicker(info.dateStr, info.dayEl);
+        return;
+      }
+      openAttendModal(info.dateStr);
+    },
     eventDidMount: (info) => {
       const tooltip = String(info.event?.extendedProps?.tooltip || info.event?.title || '').trim();
       if (tooltip) info.el.setAttribute('title', tooltip);
     },
-    datesSet: range => { fetchCountsForRange(range.start, range.end).then(refreshCountBadges); }
+    datesSet: range => {
+      fetchCountsForRange(range.start, range.end).then(refreshCountBadges);
+      refreshMakeupPlanner();
+    }
   });
   calendar.render();
+  ensureMakeupPlanner();
+  refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
+
+  let wheelMonthLocked = false;
+  calendarEl.addEventListener('wheel', (ev) => {
+    const delta = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
+    if (Math.abs(delta) < 24) return;
+    ev.preventDefault();
+    if (wheelMonthLocked) return;
+    wheelMonthLocked = true;
+    if (delta > 0) calendar.next();
+    else calendar.prev();
+    window.setTimeout(() => { wheelMonthLocked = false; }, 420);
+  }, { passive: false });
 
   async function refreshSchoolExamEvents() {
     let events = buildSchoolExamEvents(state.schoolCal);
@@ -399,7 +622,11 @@ export function initCalendar() {
 
   // 외부에서 새로고침 필요할 때 호출
   window.recalcCalendarCounts = function () {
-    return fetchCountsForRange(calendar.view.currentStart, calendar.view.currentEnd).then(refreshCountBadges);
+    return fetchCountsForRange(calendar.view.currentStart, calendar.view.currentEnd)
+      .then(() => {
+        refreshCountBadges();
+        return refreshMakeupPlanner();
+      });
   };
 
   // ───────────────── 출결 모달 ─────────────────
@@ -598,6 +825,7 @@ export function initCalendar() {
         alert('결석 처리 완료');
         selectionModal.style.display = 'none';
         window.recalcCalendarCounts && window.recalcCalendarCounts();
+        refreshMakeupPlanner();
       } catch { alert('요청에 실패했습니다.'); }
       return;
     }
@@ -638,6 +866,7 @@ export function initCalendar() {
       $('attendModal').style.display = 'none';
       openAttendModal(dateStr);
       window.recalcCalendarCounts && window.recalcCalendarCounts();
+      refreshMakeupPlanner();
     } catch (e) {
       console.error(e);
       alert('요청에 실패했습니다.');
@@ -645,5 +874,8 @@ export function initCalendar() {
   });
 
   selectionClose?.addEventListener('click', () => selectionModal.style.display = 'none');
+  document.addEventListener('admin:refresh', () => refreshMakeupPlanner());
+  document.addEventListener('attendance:updated', () => refreshMakeupPlanner());
+  document.addEventListener('admin:date-change', () => refreshMakeupPlanner());
 }
 

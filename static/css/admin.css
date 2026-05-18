@@ -738,6 +738,197 @@ body.admin.dark tbody tr:hover {
   border-radius: 9px;
 }
 
+#calendar .fc-daygrid-day-frame {
+  min-height: 76px;
+}
+
+#calendar .fc-daygrid-day-top {
+  justify-content: flex-start;
+}
+
+#calendar .fc-daygrid-day-number {
+  padding: 7px 8px 0;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--ink);
+}
+
+#calendar .att-count-badge {
+  position: absolute;
+  left: 50%;
+  top: 54%;
+  transform: translate(-50%, -50%);
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1;
+  color: #1d4ed8;
+  pointer-events: none;
+  letter-spacing: 0;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+body.dark #calendar .att-count-badge {
+  color: #93c5fd;
+  text-shadow: none;
+}
+
+#calendar .makeup-slot-popover {
+  position: absolute;
+  left: 50%;
+  top: 34px;
+  z-index: 20;
+  width: 154px;
+  transform: translateX(-50%);
+  padding: 8px;
+  border: 1px solid rgba(37, 99, 235, .35);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .18);
+}
+
+body.dark #calendar .makeup-slot-popover {
+  border-color: #334155;
+  background: #0f172a;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .4);
+}
+
+#calendar .makeup-slot-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--ink);
+  text-align: center;
+}
+
+#calendar .makeup-slot-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+#calendar .makeup-slot-actions button {
+  height: 30px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+#calendar .makeup-slot-actions button:hover {
+  background: #dbeafe;
+}
+
+.makeup-planner {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card) 94%, #ffffff 6%);
+  padding: 12px;
+}
+
+.makeup-planner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.makeup-planner h4 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.makeup-planner p {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.makeup-planner input[type="search"] {
+  width: min(260px, 44%);
+  min-width: 150px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--ink);
+  box-sizing: border-box;
+}
+
+body.dark .makeup-planner input[type="search"] {
+  background: #0b1220;
+}
+
+.makeup-planner-list {
+  display: grid;
+  gap: 7px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.makeup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .64);
+}
+
+body.dark .makeup-row {
+  background: rgba(15, 23, 42, .5);
+}
+
+.makeup-row.is-active {
+  border-color: rgba(37, 99, 235, .62);
+  background: rgba(219, 234, 254, .68);
+}
+
+body.dark .makeup-row.is-active {
+  background: rgba(37, 99, 235, .2);
+}
+
+.makeup-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.makeup-pick-btn {
+  height: 32px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.makeup-empty {
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 #calendar .fc-daygrid-event.school-exam-event {
   border-radius: 6px;
   padding: 1px 3px;

@@ -7,6 +7,8 @@
 // - 기존 여러 id/data-속성 셀렉터를 모두 지원(마크업이 달라도 작동)
 // - 패널에 요소가 없으면 최소 UI를 자동 생성
 
+import { normalizeSearch, studentSearchKey } from './shared/search.js';
+
 // ------------------------------ 공통 헬퍼 ------------------------------
 const $  = (s, p=document) => p.querySelector(s);
 const $$ = (s, p=document) => Array.from(p.querySelectorAll(s));
@@ -180,7 +182,7 @@ function filteredStudents() {
   const cur = (S.ui.curSel.value||'').trim();
   const sub = (S.ui.subSel.value||'').trim();
   const lvSet = currentLevelSet();
-  const keyword = (S.ui.search?.value||'').trim();
+  const keyword = normalizeSearch(S.ui.search?.value || '');
 
   return S.students.filter(s=>{
     if (cur && (String(s.curriculum||'').trim()!==cur)) return false;
@@ -189,7 +191,7 @@ function filteredStudents() {
       const lv = String(s.level||'').trim() || '(빈값)';
       if (!lvSet.has(lv)) return false;
     }
-    if (keyword && !String(s.name||'').includes(keyword)) return false;
+    if (keyword && !studentSearchKey(s).includes(keyword)) return false;
     return true;
   });
 }

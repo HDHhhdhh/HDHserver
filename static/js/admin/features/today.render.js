@@ -190,6 +190,19 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
     .chk4 .c input:disabled{cursor:not-allowed;opacity:.95}
+    .makeup-count-cell{text-align:center;width:70px;font-weight:900}
+    .makeup-count-badge{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-width:30px;height:30px;padding:0 8px;border-radius:999px;
+      border:1px solid rgba(148,163,184,.55);
+      background:rgba(248,250,252,.95);color:#64748b;
+      box-sizing:border-box;
+    }
+    .makeup-count-badge.needs{
+      background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.45);color:#b91c1c;
+    }
+    body.dark .makeup-count-badge{background:rgba(2,6,23,.55);border-color:#334155;color:#94a3b8}
+    body.dark .makeup-count-badge.needs{background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.5);color:#fecaca}
   `;
   document.head.appendChild(s);
 })();
@@ -416,7 +429,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
 }
 
 // --- render ---
-export function renderToday(list, dateKey, alphaSortOnly) {
+export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   const host = $('todayWrap');
   const cnt = $('todayCount');
   if (!host) return;
@@ -437,6 +450,7 @@ export function renderToday(list, dateKey, alphaSortOnly) {
       s.high ?? s.middle ?? s.schoolHigh ?? s.schoolMiddle ?? '';
 
     const labelText = (label || yoilOf(dateKey) || '').trim();
+    const makeupCount = Number(makeupCounts?.[String(s.id)] || 0);
 
     return `
       <tr data-sid="${s.id}" data-date="${dateKey}"
@@ -498,6 +512,9 @@ export function renderToday(list, dateKey, alphaSortOnly) {
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
         </td>
+        <td class="makeup-count-cell">
+          <span class="makeup-count-badge ${makeupCount > 0 ? 'needs' : ''}">${makeupCount}</span>
+        </td>
       </tr>
     `;
   }).join('');
@@ -516,6 +533,7 @@ export function renderToday(list, dateKey, alphaSortOnly) {
           <th>커리큘럼</th>
           <th>문서</th>
           <th>작업</th>
+          <th style="width:70px">보강</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>

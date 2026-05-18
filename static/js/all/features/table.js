@@ -10,6 +10,7 @@
 import { $, toast } from '../core/utils.js';
 import { patchField } from '../core/api.js';
 import { state } from '../core/state.js';
+import { normalizeSearch, searchKeyForText } from '../../shared/search.js';
 
 const subCurrOptions = ['A:Ble', 'APEX'];
 const CURRICULUM_OPTIONS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
@@ -174,7 +175,7 @@ export function renderTable() {
     }).join('');
 
     return `
-    <tr data-id="${s.id}" data-curriculum="${escapeHtml(cur)}" data-subcurriculum="${escapeHtml(sub)}">
+    <tr data-id="${s.id}" data-curriculum="${escapeHtml(cur)}" data-subcurriculum="${escapeHtml(sub)}" data-search-key="${escapeHtml(tableSearchKeyForStudent(s))}">
       <td class="cell-name">
         <a href="/student/${s.id}" target="_blank" class="stuName"
            data-id="${s.id}" data-grade="${escapeHtml(grade)}"
@@ -354,7 +355,37 @@ export function renderTable() {
       #allWrap .curStats-item strong{
         font-weight:600;
       }
+      #allWrap .allStudentSearch{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        margin:0 0 12px;
+      }
+      #allWrap .allStudentSearch input{
+        width:min(420px, 100%);
+        height:38px;
+        border:1px solid #cbd5e1;
+        border-radius:9px;
+        padding:0 12px;
+        box-sizing:border-box;
+      }
+      #allWrap .allStudentSearch .allStudentSearchHint{
+        min-width:78px;
+        color:#64748b;
+        font-size:13px;
+        font-weight:700;
+      }
+      body.dark #allWrap .allStudentSearch input{
+        border-color:#334155;
+        background:#0b1220;
+        color:#e5e7eb;
+      }
     </style>
+
+    <div class="allStudentSearch">
+      <input id="allStudentSearchInput" type="search" autocomplete="off" placeholder="학생 검색">
+      <span id="allStudentSearchHint" class="allStudentSearchHint" aria-live="polite"></span>
+    </div>
 
     <div class="curStats" id="curStatsBox"></div>
 
@@ -385,9 +416,46 @@ export function renderTable() {
 
   // 커리 통계 최초 렌더
   renderCurStats();
+  bindAllStudentSearch();
+  applyAllStudentSearch();
 
   // ✅ 테이블 렌더 시점에 미니 진도 모달 준비(1회)
   ensureMiniProgModal();
+}
+
+function bindAllStudentSearch() {
+  const input = document.getElementById('allStudentSearchInput');
+  if (!input || input.dataset.bound === '1') return;
+  input.dataset.bound = '1';
+  input.addEventListener('input', applyAllStudentSearch);
+  input.addEventListener('search', applyAllStudentSearch);
+  input.addEventListener('compositionend', applyAllStudentSearch);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    input.value = '';
+    applyAllStudentSearch();
+  });
+}
+
+function applyAllStudentSearch() {
+  const input = document.getElementById('allStudentSearchInput');
+  const hint = document.getElementById('allStudentSearchHint');
+  const rows = Array.from(document.querySelectorAll('#allWrap .studentsTable tbody tr[data-id]'));
+  if (!input || !rows.length) {
+    if (hint) hint.textContent = '';
+    return;
+  }
+
+  const query = normalizeSearch(input.value);
+  let visible = 0;
+  rows.forEach(row => {
+    const key = row.dataset.searchKey || searchKeyForText(row.textContent || '');
+    const show = !query || key.includes(query);
+    row.hidden = !show;
+    row.style.display = show ? '' : 'none';
+    if (show) visible += 1;
+  });
+  if (hint) hint.textContent = query ? `${visible}/${rows.length}명` : '';
 }
 
 /* ─────────────────────────────────────────
@@ -561,6 +629,37 @@ function saveDocUrl(el) {
   patchField(sid, 'docUrl', value)     // 서버 반영
     .then(r => ok(r) ? toast('독스 URL 저장됨') : Promise.reject(r))
     .catch(() => alert('독스 URL 저장 실패'));
+}
+
+function tableSearchKeyForStudent(s) {
+  return searchKeyForText([
+    s?.name,
+    s?.id,
+    s?.school,
+    s?.schoolName,
+    s?.highSchool,
+    s?.middleSchool,
+    s?.high,
+    s?.middle,
+    s?.schoolHigh,
+    s?.schoolMiddle,
+    s?.고등학교,
+    s?.중학교,
+    s?.grade,
+    s?.gradeLevel,
+    s?.studentGrade,
+    s?.학년,
+    s?.level,
+    s?.curriculum,
+    s?.subCurriculum,
+    s?.day1,
+    s?.day2,
+    s?.day3,
+    s?.day4,
+    s?.day5,
+    s?.subBook1,
+    s?.subBook2,
+  ].filter(Boolean).join(' '));
 }
 
 function getVisitTimeFieldForDayField(dayField = '') {
