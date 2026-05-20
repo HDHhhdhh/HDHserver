@@ -910,17 +910,19 @@ body.makeup-selecting::before {
 }
 
 body.makeup-selecting #calendar {
+  scroll-margin-top: 110px;
   z-index: 1410;
   box-shadow: 0 22px 48px rgba(15, 23, 42, .24);
 }
 
 #calendar .makeup-calendar-guide {
-  position: fixed;
+  position: absolute;
   left: 50%;
-  top: 84px;
+  top: -14px;
   z-index: 1425;
   width: min(460px, calc(100% - 32px));
-  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  transform: translate(-50%, -100%);
   padding: 13px 18px;
   border: 1px solid rgba(37, 99, 235, .42);
   border-radius: 10px;

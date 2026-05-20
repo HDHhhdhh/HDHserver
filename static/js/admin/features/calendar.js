@@ -529,6 +529,11 @@ export function initCalendar() {
   function setMakeupSelection(item) {
     makeupSelection = item || null;
     updateMakeupFocusUI();
+    if (makeupSelection) {
+      window.requestAnimationFrame(() => {
+        calendarEl.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+      });
+    }
   }
 
   async function removePendingMakeup(item) {
