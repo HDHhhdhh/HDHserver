@@ -501,9 +501,9 @@ a.btn {
 /* =========================================
    Main page layout
    ========================================= */
-.page {
+body.admin .page {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.05fr);
   gap: 12px;
   align-items: start;
 }
@@ -609,6 +609,32 @@ body.admin.dark thead th {
 tbody td {
   padding: 8px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  vertical-align: middle;
+}
+
+#todayWrap .today-table th,
+#todayWrap .today-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+#todayWrap .today-table .slotLabel,
+#todayWrap .today-table .arriveLabel,
+#todayWrap .today-table .leaveLabel {
+  text-align: center;
+}
+
+#todayWrap .today-table .btn-doc,
+#todayWrap .today-table .today-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+#todayWrap .today-table .chk4,
+#todayWrap .today-table .today-actions {
   vertical-align: middle;
 }
 
@@ -726,6 +752,8 @@ body.admin.dark tbody tr:hover {
 
 #calendar {
   position: relative;
+  width: 100%;
+  max-width: 100%;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--card) 92%, #ffffff 8%);
@@ -737,9 +765,14 @@ body.admin.dark tbody tr:hover {
   min-width: 0;
 }
 
+#calendar .fc-scrollgrid {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
 #calendar .fc-view-harness {
   height: auto !important;
-  min-height: 430px;
+  min-height: 520px;
 }
 
 #calendar .fc .fc-toolbar-title {
@@ -766,9 +799,22 @@ body.admin.dark tbody tr:hover {
   z-index: 11;
 }
 
+#calendar .fc-col-header-cell-cushion {
+  padding: 9px 0;
+  color: #000000;
+  font-size: 15px;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+body.dark #calendar .fc-col-header-cell-cushion {
+  color: #f8fafc;
+}
+
 #calendar .fc-daygrid-day-frame {
   position: relative;
-  min-height: 82px;
+  height: var(--calendar-cell-height, 96px);
+  min-height: var(--calendar-cell-height, 96px);
   padding-top: 22px;
   box-sizing: border-box;
 }
@@ -1076,8 +1122,8 @@ body.dark .makeup-row.is-active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 850;
 }
 
 .makeup-actions {
@@ -1092,7 +1138,7 @@ body.dark .makeup-row.is-active {
   border-radius: 8px;
   background: #2563eb;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 900;
   cursor: pointer;
   padding: 0 12px;
@@ -1104,7 +1150,7 @@ body.dark .makeup-row.is-active {
   border-radius: 8px;
   background: #dc2626;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 900;
   cursor: pointer;
   padding: 0 12px;
@@ -1344,7 +1390,7 @@ body.admin .rail-cta.danger:hover {
     max-height: none;
   }
 
-  .page {
+  body.admin .page {
     grid-template-columns: 1fr;
   }
 

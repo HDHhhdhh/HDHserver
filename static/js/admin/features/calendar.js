@@ -13,6 +13,7 @@ export function initCalendar() {
 
   const CT = { 'Content-Type': 'application/json' };
   const WCHR = '일월화수목금토';
+  const WEEK_START_DAY = 1;
   const MAKEUP_SLOTS = [1, 2];
   const MAIN_WEEK_INDEX = 2;
   const MAKEUP_ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
@@ -38,7 +39,8 @@ export function initCalendar() {
 
   function startOfWeek(date) {
     const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    d.setDate(d.getDate() - d.getDay());
+    const offset = (d.getDay() - WEEK_START_DAY + 7) % 7;
+    d.setDate(d.getDate() - offset);
     return d;
   }
 
@@ -50,7 +52,7 @@ export function initCalendar() {
 
   function weekTitleForRange(startDate) {
     const middleWeekStart = addDays(startOfWeek(startDate), 7 * MAIN_WEEK_INDEX);
-    const titleDate = addDays(middleWeekStart, 1);
+    const titleDate = middleWeekStart;
     const year = String(titleDate.getFullYear()).slice(2);
     const month = titleDate.getMonth() + 1;
     const week = Math.floor((titleDate.getDate() - 1) / 7) + 1;
@@ -352,6 +354,14 @@ export function initCalendar() {
     try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
   }
 
+  function syncCalendarCellRatio() {
+    const cell = calendarEl.querySelector('.fc-daygrid-day');
+    if (!cell) return;
+    const width = cell.getBoundingClientRect().width;
+    if (!Number.isFinite(width) || width <= 0) return;
+    calendarEl.style.setProperty('--calendar-cell-height', `${Math.round(width * 0.75)}px`);
+  }
+
   // 캘린더 범위 내 날짜별 1/2타임 인원 카운트 계산(정규+보강 - 결석)
   async function fetchCountsForRange(start, end) {
     await preloadExtraWeekend();
@@ -390,6 +400,7 @@ export function initCalendar() {
       const counts = countMap[dateStr] || {};
       badge.textContent = `${counts[1] || 0}명 / ${counts[2] || 0}명`;
     });
+    syncCalendarCellRatio();
   }
 
   function escapeHtml(value) {
@@ -604,8 +615,8 @@ export function initCalendar() {
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
           <div class="makeup-label">${escapeHtml(label)}</div>
           <div class="makeup-actions">
-            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">제거</button>
             <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">제거</button>
           </div>
         </div>
       `;
@@ -718,7 +729,9 @@ export function initCalendar() {
   const calBadge = $('calTodayBadge');
   let schoolExamEvents = buildSchoolExamEvents();
   const firstExamDate = schoolExamEvents[0]?.start || undefined;
-  let movedToExamMonth = !!firstExamDate;
+  const startAtToday = new URLSearchParams(window.location.search).get('calendar') === 'today';
+  let movedToExamMonth = startAtToday || !!firstExamDate;
+  let calendarFocusDate = startAtToday ? new Date() : ((firstExamDate ? toSafeDate(...firstExamDate.split('-')) : null) || new Date());
 
   function updateExamBadge(count, source = 'cache') {
     if (!calBadge) return;
@@ -735,22 +748,40 @@ export function initCalendar() {
   }
 
   let calendar = null;
+  function currentVisibleRange() {
+    return rollingFiveWeekRange(calendarFocusDate || new Date());
+  }
+
+  function applyCalendarFocusDate() {
+    if (!calendar) return;
+    const range = currentVisibleRange();
+    calendar.changeView('rollingFiveWeek', range);
+    window.requestAnimationFrame(syncCalendarCellRatio);
+  }
+
+  function setCalendarFocusDate(date) {
+    const next = date instanceof Date
+      ? new Date(date.getFullYear(), date.getMonth(), date.getDate())
+      : toSafeDate(...String(date || '').split('-'));
+    if (!next) return;
+    calendarFocusDate = next;
+    applyCalendarFocusDate();
+  }
+
   function goToTodayMainWeek() {
     if (!calendar) return;
-    calendar.changeView('rollingFiveWeek', ymd(new Date()));
+    setCalendarFocusDate(new Date());
   }
 
   calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: 'rollingFiveWeek',
-    initialDate: firstExamDate,
+    initialDate: ymd(calendarFocusDate),
     views: {
       rollingFiveWeek: {
         type: 'dayGrid',
-        duration: { weeks: 5 },
-        dateAlignment: 'week',
-        visibleRange: rollingFiveWeekRange,
       },
     },
+    visibleRange: currentVisibleRange,
     headerToolbar: { left: 'title', center: '', right: 'centerToday' },
     customButtons: {
       centerToday: {
@@ -764,6 +795,7 @@ export function initCalendar() {
     expandRows: true,
     stickyHeaderDates: true,
     locale: 'ko',
+    firstDay: WEEK_START_DAY,
     dayMaxEvents: false,
     dayMaxEventRows: false,
     events: schoolExamEvents,
@@ -795,17 +827,47 @@ export function initCalendar() {
     datesSet: range => {
       const titleEl = calendarEl.querySelector('.fc-toolbar-title');
       if (titleEl) titleEl.textContent = weekTitleForRange(range.start);
+      syncCalendarCellRatio();
+      bindCenterTodayButton();
       fetchCountsForRange(range.start, range.end).then(refreshCountBadges);
       refreshMakeupPlanner();
     }
   });
   calendar.render();
+  function bindCenterTodayButton() {
+    let btn = calendarEl.querySelector('#calendarTodayButton');
+    if (!btn) {
+      const fcBtn = calendarEl.querySelector('.fc-centerToday-button');
+      if (!fcBtn) return;
+      btn = document.createElement('a');
+      btn.id = 'calendarTodayButton';
+      btn.className = 'fc-button fc-button-primary calendar-today-button';
+      btn.textContent = 'today';
+      btn.setAttribute('title', 'today');
+      btn.setAttribute('role', 'button');
+      btn.href = '/admin?calendar=today';
+      fcBtn.replaceWith(btn);
+    }
+    if (!btn || btn.dataset.centerTodayBound === '1') return;
+    btn.dataset.centerTodayBound = '1';
+    const handleTodayButton = (ev) => {
+      ev.preventDefault?.();
+      ev.stopImmediatePropagation?.();
+      goToTodayMainWeek();
+    };
+    btn.addEventListener('pointerdown', handleTodayButton, true);
+    btn.addEventListener('mousedown', handleTodayButton, true);
+    btn.addEventListener('click', handleTodayButton, true);
+  }
+
+  bindCenterTodayButton();
   ensureMakeupPlanner();
   refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
 
   calendarEl.addEventListener('click', (ev) => {
     const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
+    if (target?.closest('.calendar-today-button')) return;
     if (!target?.closest('.fc-centerToday-button')) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -826,7 +888,7 @@ export function initCalendar() {
     ev.stopPropagation();
     if (wheelWeekLocked) return;
     wheelWeekLocked = true;
-    calendar.incrementDate({ weeks: delta > 0 ? 1 : -1 });
+    setCalendarFocusDate(addDays(calendarFocusDate || calendar.view.currentStart, delta > 0 ? 7 : -7));
     window.setTimeout(() => { wheelWeekLocked = false; }, 180);
   }, { passive: false });
 
@@ -851,7 +913,7 @@ export function initCalendar() {
     calendar.removeAllEvents();
     if (events.length) calendar.addEventSource(events);
     if (!movedToExamMonth && events[0]?.start) {
-      calendar.gotoDate(events[0].start);
+      setCalendarFocusDate(events[0].start);
       movedToExamMonth = true;
     }
     updateExamBadge(events.length, source);
