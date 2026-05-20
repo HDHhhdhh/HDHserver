@@ -725,6 +725,7 @@ body.admin.dark tbody tr:hover {
 }
 
 #calendar {
+  position: relative;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--card) 92%, #ffffff 8%);
@@ -766,15 +767,30 @@ body.admin.dark tbody tr:hover {
 }
 
 #calendar .fc-daygrid-day-frame {
+  position: relative;
   min-height: 82px;
+  padding-top: 22px;
+  box-sizing: border-box;
 }
 
 #calendar .fc-daygrid-day-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: flex;
   justify-content: flex-end;
+  align-items: flex-start;
+  pointer-events: none;
 }
 
-#calendar .fc-daygrid-day-number {
-  padding: 8px 9px 0;
+#calendar .fc-daygrid-day-number,
+#calendar .cal-day-number {
+  display: inline-flex;
+  justify-content: flex-end;
+  margin-left: auto;
+  padding: 8px 9px 0 0;
   font-size: 14px;
   font-weight: 900;
   line-height: 1;
@@ -797,6 +813,26 @@ body.admin.dark tbody tr:hover {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand) 28%, transparent);
 }
 
+#calendar .fc-daygrid-day.fc-day-today {
+  background: color-mix(in srgb, #fff4b8 68%, var(--card) 32%);
+}
+
+#calendar .fc-daygrid-day.cal-main-week.fc-day-today {
+  background: color-mix(in srgb, #fff2a8 72%, var(--brand-soft) 28%);
+}
+
+#calendar .fc-daygrid-day.fc-day-today .fc-daygrid-day-frame {
+  box-shadow:
+    inset 0 0 0 2px rgba(245, 158, 11, .58),
+    inset 0 0 0 999px rgba(245, 158, 11, .06);
+}
+
+#calendar .fc-daygrid-day.fc-day-today .fc-daygrid-day-number,
+#calendar .fc-daygrid-day.fc-day-today .cal-day-number,
+#calendar .fc-daygrid-day.fc-day-today .att-count-badge {
+  opacity: 1;
+}
+
 #calendar .att-count-badge {
   position: absolute;
   left: 50%;
@@ -816,6 +852,62 @@ body.admin.dark tbody tr:hover {
 body.dark #calendar .att-count-badge {
   color: color-mix(in srgb, var(--brand) 40%, var(--ink-soft) 60%);
   text-shadow: none;
+}
+
+body.makeup-selecting::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(15, 23, 42, .46);
+  pointer-events: none;
+}
+
+body.makeup-selecting #calendar {
+  z-index: 1410;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, .24);
+}
+
+#calendar .makeup-calendar-guide {
+  position: fixed;
+  left: 50%;
+  top: 84px;
+  z-index: 1425;
+  width: min(460px, calc(100% - 32px));
+  transform: translateX(-50%);
+  padding: 13px 18px;
+  border: 1px solid rgba(37, 99, 235, .42);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, .22);
+  text-align: center;
+  pointer-events: none;
+}
+
+#calendar .makeup-calendar-guide[hidden] {
+  display: none;
+}
+
+#calendar .makeup-calendar-guide strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+#calendar .makeup-calendar-guide span {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+body.dark #calendar .makeup-calendar-guide {
+  border-color: #334155;
+  background: #0f172a;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, .42);
 }
 
 #calendar .makeup-slot-popover {
@@ -988,6 +1080,12 @@ body.dark .makeup-row.is-active {
   font-weight: 800;
 }
 
+.makeup-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .makeup-pick-btn {
   height: 32px;
   border: 1px solid #bfdbfe;
@@ -998,6 +1096,22 @@ body.dark .makeup-row.is-active {
   font-weight: 900;
   cursor: pointer;
   padding: 0 12px;
+}
+
+.makeup-remove-btn {
+  height: 32px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.makeup-remove-btn:hover {
+  background: #b91c1c;
 }
 
 .makeup-empty {

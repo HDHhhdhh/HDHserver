@@ -440,13 +440,24 @@ export function initCalendar() {
       renderMakeupPlanner();
     });
 
+    ensureMakeupFocusGuide();
+
     $('makeupPlannerList')?.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('[data-makeup-action="pick"]');
+      const btn = ev.target.closest('[data-makeup-action]');
       if (!btn) return;
       const key = btn.dataset.key || '';
       const item = getPendingMakeups().find(row => makeupItemKey(row) === key);
       if (!item) return;
-      makeupSelection = item;
+
+      if (btn.dataset.makeupAction === 'remove') {
+        removePendingMakeup(item).catch(err => {
+          console.error(err);
+          alert('제거 실패');
+        });
+        return;
+      }
+
+      setMakeupSelection(item);
       closeMakeupSlotPicker();
       renderMakeupPlanner();
       toast('캘린더에서 보강 날짜를 클릭하세요.');
@@ -478,8 +489,83 @@ export function initCalendar() {
     }
   }
 
+  function ensureMakeupFocusGuide() {
+    if (document.getElementById('makeupCalendarGuide')) return;
+    calendarEl.insertAdjacentHTML('afterbegin', `
+      <div id="makeupCalendarGuide" class="makeup-calendar-guide" hidden>
+        <strong>캘린더에서 보강 날짜를 선택하세요</strong>
+        <span id="makeupCalendarGuideSub"></span>
+      </div>
+    `);
+  }
+
+  function updateMakeupFocusUI() {
+    ensureMakeupFocusGuide();
+    const active = !!makeupSelection;
+    document.body.classList.toggle('makeup-selecting', active);
+    calendarEl.classList.toggle('is-makeup-selecting', active);
+    const guide = $('makeupCalendarGuide');
+    const sub = $('makeupCalendarGuideSub');
+    if (!guide) return;
+    guide.hidden = !active;
+    if (sub) {
+      sub.textContent = active
+        ? `${makeupSelection.name || makeupSelection.sid} - ${formatMakeupDate(makeupSelection.absenceDate)}`
+        : '';
+    }
+  }
+
+  function setMakeupSelection(item) {
+    makeupSelection = item || null;
+    updateMakeupFocusUI();
+  }
+
+  async function removePendingMakeup(item) {
+    if (!item) return;
+    const sid = String(item.sid || '').trim();
+    const absenceDate = String(item.absenceDate || '').trim();
+    if (!sid || !absenceDate) return;
+
+    const latestRes = await fetch('/api/absent', { cache: 'no-store' });
+    const latest = await latestRes.json().catch(() => null);
+    if (!latestRes.ok) throw new Error(`/api/absent ${latestRes.status}`);
+
+    const byDateSource = latest?.by_date || latest?.absentByDate || state.absentByDate || {};
+    const byStudentSource = latest?.by_student || latest?.absences || state.absences || {};
+    const byDate = Object.fromEntries(Object.entries(byDateSource).map(([date, ids]) => [
+      date,
+      Array.isArray(ids) ? ids.map(String) : [],
+    ]));
+    const byStudent = { ...byStudentSource };
+
+    const nextIds = (byDate[absenceDate] || []).map(String).filter(id => id !== sid);
+    if (nextIds.length) byDate[absenceDate] = nextIds;
+    else delete byDate[absenceDate];
+    if (String(byStudent[sid] || '') === absenceDate) delete byStudent[sid];
+
+    const res = await fetch('/api/absent', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify({ by_date: byDate, by_student: byStudent }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/absent ${res.status}`);
+
+    applyAbsentPayload(data || { by_date: byDate, by_student: byStudent });
+    if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
+      setMakeupSelection(null);
+      closeMakeupSlotPicker();
+    }
+    await refreshMakeupPlanner();
+    await window.recalcCalendarCounts?.();
+    document.dispatchEvent(new CustomEvent('attendance:updated'));
+    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    toast('보강 목록에서 제거했습니다.');
+  }
+
   function renderMakeupPlanner() {
     ensureMakeupPlanner();
+    updateMakeupFocusUI();
     const list = $('makeupPlannerList');
     const hint = $('makeupPlannerHint');
     const search = $('makeupPlannerSearch');
@@ -517,7 +603,10 @@ export function initCalendar() {
       return `
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
           <div class="makeup-label">${escapeHtml(label)}</div>
-          <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+          <div class="makeup-actions">
+            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">제거</button>
+            <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+          </div>
         </div>
       `;
     }).join('');
@@ -533,7 +622,7 @@ export function initCalendar() {
   }
 
   function cancelMakeupSelection() {
-    makeupSelection = null;
+    setMakeupSelection(null);
     closeMakeupSlotPicker();
     renderMakeupPlanner();
   }
@@ -619,7 +708,7 @@ export function initCalendar() {
     });
 
     toast('보강 저장 완료');
-    makeupSelection = null;
+    setMakeupSelection(null);
     closeMakeupSlotPicker();
     await refreshMakeupPlanner();
     await window.recalcCalendarCounts?.();
