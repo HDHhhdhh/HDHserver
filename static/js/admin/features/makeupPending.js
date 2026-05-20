@@ -16,8 +16,8 @@ export function nextLocalDateKey(offsetDays = 1) {
   ].join('-');
 }
 
-export function makeupPendingActivationDate() {
-  return nextLocalDateKey(1);
+export function makeupPendingActivationDate(anchorDate = '') {
+  return normDate(anchorDate) || nextLocalDateKey(0);
 }
 
 export function studentSchool(stu) {

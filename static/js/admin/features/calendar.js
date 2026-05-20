@@ -2,6 +2,7 @@
 // FullCalendar 월 뷰 + 날짜별 인원 카운트 뱃지 + 출결 모달(+주말 슬롯 선택/보강 병합 저장 - 멀티 슬롯 지원)
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, studentSearchKey } from '../../shared/search.js';
@@ -13,6 +14,7 @@ export function initCalendar() {
   const CT = { 'Content-Type': 'application/json' };
   const WCHR = '일월화수목금토';
   const MAKEUP_SLOTS = [1, 2];
+  const MAIN_WEEK_INDEX = 2;
   const MAKEUP_ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const yoil = dateStr => WCHR[new Date(dateStr).getDay()];
@@ -42,17 +44,23 @@ export function initCalendar() {
 
   function rollingFiveWeekRange(currentDate) {
     const middleWeekStart = startOfWeek(currentDate);
-    const start = addDays(middleWeekStart, -14);
+    const start = addDays(middleWeekStart, -7 * MAIN_WEEK_INDEX);
     return { start, end: addDays(start, 35) };
   }
 
   function weekTitleForRange(startDate) {
-    const middleWeekStart = addDays(startOfWeek(startDate), 14);
+    const middleWeekStart = addDays(startOfWeek(startDate), 7 * MAIN_WEEK_INDEX);
     const titleDate = addDays(middleWeekStart, 1);
     const year = String(titleDate.getFullYear()).slice(2);
     const month = titleDate.getMonth() + 1;
     const week = Math.floor((titleDate.getDate() - 1) / 7) + 1;
     return `${year}년 ${month}월 ${week}주차`;
+  }
+
+  function isMainWeekDate(date, rangeStart) {
+    if (!date || !rangeStart) return false;
+    const mainWeekStart = addDays(startOfWeek(rangeStart), 7 * MAIN_WEEK_INDEX);
+    return ymd(startOfWeek(date)) === ymd(mainWeekStart);
   }
 
   function parseMonthDayTokens(raw) {
@@ -301,19 +309,42 @@ export function initCalendar() {
     return Object.keys(s).some(k => /^day\d+$/.test(k) && String(s[k]).startsWith(w));
   }
 
+  function parseSlotNumbers(raw) {
+    const values = Array.isArray(raw) ? raw : [raw];
+    const slots = values.flatMap(value => {
+      const matches = String(value ?? '').match(/\d+/g) || [];
+      return matches.map(n => parseInt(n, 10));
+    }).filter(n => MAKEUP_SLOTS.includes(n));
+    return Array.from(new Set(slots)).sort((a, b) => a - b);
+  }
+
+  function getRegularSlots(stu, dateStr) {
+    const w = yoil(dateStr);
+    const values = Object.keys(stu || {})
+      .filter(k => /^day\d+$/.test(k) && stu[k])
+      .map(k => String(stu[k]))
+      .filter(v => v.startsWith(w));
+    return parseSlotNumbers(values);
+  }
+
+  function getMakeupSlots(dateStr, sid) {
+    const slots = parseSlotNumbers(WEEKEND?.[dateStr]?.[String(sid)]);
+    return slots.length ? slots : [1];
+  }
+
+  function addSlotCounts(slotSets, sid, slots, fallbackSlots = []) {
+    const validSlots = slots.filter(slot => MAKEUP_SLOTS.includes(slot));
+    const finalSlots = validSlots.length
+      ? validSlots
+      : fallbackSlots.filter(slot => MAKEUP_SLOTS.includes(slot));
+    (finalSlots.length ? finalSlots : [1]).forEach(slot => slotSets[slot].add(String(sid)));
+  }
+
   // ✅ 정규 주말 슬롯 추출(학생 스키마에서 요일 숫자 파싱)
   function getRegularWeekendSlots(stu, dateStr) {
     const w = yoil(dateStr);
     if (w !== '토' && w !== '일') return [];
-    const vals = Object.keys(stu)
-      .filter(k => /^day\d+$/.test(k) && stu[k])
-      .map(k => String(stu[k]))
-      .filter(v => v.startsWith(w));
-    const nums = vals.map(v => {
-      const m = v.match(/\d+/);
-      return m ? parseInt(m[0], 10) : null;
-    }).filter(n => Number.isInteger(n));
-    return Array.from(new Set(nums)).sort((a, b) => a - b);
+    return getRegularSlots(stu, dateStr);
   }
 
   async function preloadExtraWeekend() {
@@ -321,7 +352,7 @@ export function initCalendar() {
     try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
   }
 
-  // 월 뷰 범위 내 날짜별 인원 카운트 계산(정규+보강 - 결석)
+  // 캘린더 범위 내 날짜별 1/2타임 인원 카운트 계산(정규+보강 - 결석)
   async function fetchCountsForRange(start, end) {
     await preloadExtraWeekend();
     const days = []; const cur = new Date(start);
@@ -329,11 +360,22 @@ export function initCalendar() {
     countMap = {};
     for (const dateStr of days) {
       const wchr = yoil(dateStr);
-      const regularIds = state.students.filter(s => hasWeekday(s, wchr)).map(s => String(s.id));
-      const extraIds = (EXTRA[dateStr] || []).map(String);
-      const ids = new Set([...regularIds, ...extraIds]);
-      (state.absentByDate[dateStr] || []).map(String).forEach(id => ids.delete(id));
-      countMap[dateStr] = ids.size;
+      const slotSets = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, new Set()]));
+
+      (state.students || []).forEach(stu => {
+        if (!hasWeekday(stu, wchr)) return;
+        addSlotCounts(slotSets, stu.id, getRegularSlots(stu, dateStr), [1]);
+      });
+
+      (EXTRA[dateStr] || []).map(String).forEach(sid => {
+        addSlotCounts(slotSets, sid, getMakeupSlots(dateStr, sid), [1]);
+      });
+
+      (state.absentByDate?.[dateStr] || []).map(String).forEach(id => {
+        MAKEUP_SLOTS.forEach(slot => slotSets[slot].delete(id));
+      });
+
+      countMap[dateStr] = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, slotSets[slot].size]));
     }
   }
 
@@ -345,7 +387,8 @@ export function initCalendar() {
         badge = document.createElement('div'); badge.className = 'att-count-badge';
         cell.style.position = 'relative'; cell.appendChild(badge);
       }
-      badge.textContent = `${countMap[dateStr] || 0}명`;
+      const counts = countMap[dateStr] || {};
+      badge.textContent = `${counts[1] || 0}명 / ${counts[2] || 0}명`;
     });
   }
 
@@ -373,7 +416,7 @@ export function initCalendar() {
         <div class="makeup-planner-head">
           <div>
             <h4>보강 잡기</h4>
-            <p id="makeupPlannerHint">내일 이후 결석으로 보강이 필요한 학생입니다.</p>
+            <p id="makeupPlannerHint">운영일 이후 결석으로 보강이 필요한 학생입니다.</p>
           </div>
           <input id="makeupPlannerSearch" type="search" autocomplete="off" placeholder="보강 학생 검색">
         </div>
@@ -415,8 +458,24 @@ export function initCalendar() {
       students: state.students || [],
       absentByDate: state.absentByDate || {},
       extra: EXTRA || state.extra || {},
-      minAbsenceDate: makeupPendingActivationDate(),
+      minAbsenceDate: makeupPendingActivationDate(getAdminDate()),
     });
+  }
+
+  function applyAbsentPayload(data) {
+    if (!data || typeof data !== 'object') return;
+    const byDate = data.by_date || data.absentByDate;
+    const byStudent = data.by_student || data.absences;
+
+    if (byDate && typeof byDate === 'object') state.absentByDate = byDate;
+    if (byStudent && typeof byStudent === 'object') state.absences = byStudent;
+
+    window.absentByDate = state.absentByDate;
+    window.absences = state.absences;
+    if (window.state && typeof window.state === 'object') {
+      window.state.absentByDate = state.absentByDate;
+      window.state.absences = state.absences;
+    }
   }
 
   function renderMakeupPlanner() {
@@ -586,7 +645,13 @@ export function initCalendar() {
     calBadge.title = source === 'api' ? '학교일정 API 재조회 반영' : '초기 로드 반영';
   }
 
-  const calendar = new FullCalendar.Calendar(calendarEl, {
+  let calendar = null;
+  function goToTodayMainWeek() {
+    if (!calendar) return;
+    calendar.changeView('rollingFiveWeek', ymd(new Date()));
+  }
+
+  calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: 'rollingFiveWeek',
     initialDate: firstExamDate,
     views: {
@@ -597,8 +662,13 @@ export function initCalendar() {
         visibleRange: rollingFiveWeekRange,
       },
     },
-    headerToolbar: { left: 'title', center: '', right: 'today' },
-    buttonText: { today: 'today' },
+    headerToolbar: { left: 'title', center: '', right: 'centerToday' },
+    customButtons: {
+      centerToday: {
+        text: 'today',
+        click: goToTodayMainWeek,
+      },
+    },
     dateIncrement: { weeks: 1 },
     height: 'auto',
     contentHeight: 'auto',
@@ -608,7 +678,13 @@ export function initCalendar() {
     dayMaxEvents: false,
     dayMaxEventRows: false,
     events: schoolExamEvents,
-    dayCellContent: (arg) => ({ html: `<span class="cal-day-number">${arg.date.getDate()}</span>` }),
+    dayCellClassNames: (arg) => {
+      const viewStart = arg.view?.activeStart || arg.view?.currentStart;
+      return isMainWeekDate(arg.date, viewStart) ? ['cal-main-week'] : ['cal-side-week'];
+    },
+    dayCellContent: (arg) => ({
+      html: `<span class="cal-day-number">${arg.date.getMonth() + 1}/${arg.date.getDate()}</span>`,
+    }),
     eventOrderStrict: true,
     eventOrder: (a, b) => {
       const oa = Number(a.extendedProps?.order ?? 99);
@@ -638,6 +714,14 @@ export function initCalendar() {
   ensureMakeupPlanner();
   refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
+
+  calendarEl.addEventListener('click', (ev) => {
+    const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
+    if (!target?.closest('.fc-centerToday-button')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    goToTodayMainWeek();
+  }, true);
 
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape' || !makeupSelection) return;
@@ -689,7 +773,9 @@ export function initCalendar() {
 
   // 외부에서 새로고침 필요할 때 호출
   window.recalcCalendarCounts = function () {
-    return fetchCountsForRange(calendar.view.currentStart, calendar.view.currentEnd)
+    const viewStart = calendar.view.activeStart || calendar.view.currentStart;
+    const viewEnd = calendar.view.activeEnd || calendar.view.currentEnd;
+    return fetchCountsForRange(viewStart, viewEnd)
       .then(() => {
         refreshCountBadges();
         return refreshMakeupPlanner();
@@ -881,19 +967,29 @@ export function initCalendar() {
 
     // ── 결석 처리 ──
     if (mode === 'absent') {
+      state.absences = state.absences && typeof state.absences === 'object' ? state.absences : {};
+      state.absentByDate = state.absentByDate && typeof state.absentByDate === 'object' ? state.absentByDate : {};
       selectedIds.forEach(id => { state.absences[id] = dateStr; });
       const set = new Set([...(state.absentByDate[dateStr] || []), ...selectedIds]);
       state.absentByDate[dateStr] = [...set];
       try {
-        await fetch('/api/absent', {
+        const res = await fetch('/api/absent', {
           method: 'POST', headers: CT,
           body: JSON.stringify({ by_date: state.absentByDate, by_student: state.absences })
         });
+        let data = null;
+        try { data = await res.json(); } catch { }
+        if (!res.ok) throw new Error(`/api/absent ${res.status}`);
+        applyAbsentPayload(data);
         alert('결석 처리 완료');
         selectionModal.style.display = 'none';
-        window.recalcCalendarCounts && window.recalcCalendarCounts();
-        refreshMakeupPlanner();
-      } catch { alert('요청에 실패했습니다.'); }
+        document.dispatchEvent(new CustomEvent('attendance:updated'));
+        if (window.recalcCalendarCounts) await window.recalcCalendarCounts();
+        else refreshMakeupPlanner();
+      } catch (err) {
+        console.error(err);
+        alert('요청에 실패했습니다.');
+      }
       return;
     }
 

@@ -598,7 +598,7 @@ export async function loadTodayAndRender(options = {}) {
     students: state.students || [],
     absentByDate: state.absentByDate || {},
     extra: state.extra || {},
-    minAbsenceDate: makeupPendingActivationDate(),
+    minAbsenceDate: makeupPendingActivationDate(dateKey),
   });
 
   const wrap = document.getElementById('todayWrap');
