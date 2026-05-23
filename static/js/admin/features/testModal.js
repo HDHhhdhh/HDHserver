@@ -10,17 +10,20 @@ const CATEGORY_DEFS = [
   { key: 'REVIEW', label: '복습 테스트', short: '복습', difficulties: ['상', '중상'] },
   { key: 'UNIT', label: '단원평가', short: '단원', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', short: '학군지', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['상', '중상'] },
+  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['상', '중'] },
 ];
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
 const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
 const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
 const ROUND_OPTIONS = ['1', '2', '3'];
+const TERM_OPTIONS = ['중간고사', '기말고사'];
+const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
+const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '배정',
-  interrupted: '주황',
-  skip: '빨강',
+  interrupted: '배부',
+  skip: '제외',
 };
 
 let initialized = false;
@@ -31,6 +34,7 @@ let activeCategory = 'UNIT';
 let activeSubject = '공수1';
 let activeDifficulty = 'Lv.3';
 let activeRound = '1';
+let activeTerm = DEFAULT_TERM;
 let activeCatalog = [];
 let catalogByKey = new Map();
 let initialTestMap = {};
@@ -39,7 +43,17 @@ let selectedStatuses = new Map();
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
+let defaultExclusionsApplied = false;
 let testOpenSeq = 0;
+
+function isUnitCategory(categoryKey) {
+  return String(categoryKey || '') === 'UNIT';
+}
+
+function isTermCategory(categoryKey) {
+  const key = String(categoryKey || '');
+  return key === 'SCHOOL_PAST' || key === 'ILSAN_PAST';
+}
 
 async function fetchJSONSafe(url, init = {}) {
   const res = await fetch(url, { cache: 'no-store', ...init });
@@ -106,13 +120,14 @@ function canonicalCategoryKey(key, label = '') {
 
 function normalizeDifficulty(categoryKey, raw, name = '') {
   const text = String(raw || '').trim();
+  if (categoryKey === 'ILSAN_PAST' && text === '중상') return '중';
   const def = CATEGORY_BY_KEY[categoryKey];
   if (def?.difficulties.includes(text)) return text;
 
   const source = `${text} ${name}`;
   const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return '중상';
+  if (source.includes('중상')) return categoryKey === 'ILSAN_PAST' ? '중' : '중상';
   if (source.includes('상')) return '상';
 
   return def?.difficulties?.[0] || '';
@@ -133,6 +148,45 @@ function roundLabel(value) {
   return /회/.test(r) ? r : `${r}회차`;
 }
 
+function normalizeTerm(value, name = '') {
+  const source = `${value || ''} ${name || ''}`.trim();
+  if (!source) return DEFAULT_TERM;
+  if (TERM_OPTIONS.includes(source)) return source;
+  const lower = source.toLowerCase();
+  if (lower.includes('final') || lower.includes('end') || source.includes(TERM_OPTIONS[1])) return TERM_OPTIONS[1] || DEFAULT_TERM;
+  if (lower.includes('mid') || lower.includes('middle') || source.includes(TERM_OPTIONS[0])) return TERM_OPTIONS[0] || DEFAULT_TERM;
+  return DEFAULT_TERM;
+}
+
+function readSchoolCalendarPageSelection() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCHOOL_CAL_PAGE_STORAGE_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function termFromSchoolCalendarExam(value) {
+  const raw = String(value || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return '';
+  if (lower === 'final' || lower.includes('final') || lower.includes('end')) return TERM_OPTIONS[1] || DEFAULT_TERM;
+  if (lower === 'mid' || lower.includes('mid') || lower.includes('middle')) return TERM_OPTIONS[0] || DEFAULT_TERM;
+  return normalizeTerm(raw, '');
+}
+
+function defaultTermFromSchoolCalendar() {
+  const stored = readSchoolCalendarPageSelection();
+  const cal = state.schoolCal && typeof state.schoolCal === 'object' ? state.schoolCal : {};
+  const years = cal.years && typeof cal.years === 'object' ? cal.years : {};
+  const activeYear = String(stored.year || cal.activeYear || Object.keys(years).sort().at(-1) || '');
+  const yearBundle = activeYear && years[activeYear] && typeof years[activeYear] === 'object'
+    ? years[activeYear]
+    : {};
+  return termFromSchoolCalendarExam(stored.exam || cal.activeExam || yearBundle.activeExam) || DEFAULT_TERM;
+}
+
 function normalizeAssignmentStatus(status) {
   const s = String(status || '').trim();
   if (!s || s === 'none') return '';
@@ -149,6 +203,7 @@ function testStatusLabel(status, submitted = false) {
 function nextStatusOf(status) {
   const s = normalizeAssignmentStatus(status);
   if (!s) return 'assigned';
+  if (s === 'skip') return 'assigned';
   if (s === 'assigned' || s === 'done') return 'interrupted';
   return '';
 }
@@ -175,6 +230,7 @@ function testKey(test) {
     categoryLabel(test.categoryKey),
     test.curriculum,
     test.difficulty,
+    isTermCategory(test.categoryKey) ? test.term : '',
     roundLabel(test.round),
     test.name,
   ].filter(Boolean).join(' / ');
@@ -192,24 +248,58 @@ function normalizeConfig(cfg) {
     out.categories[def.key].label = out.categories[def.key].label || def.label;
   });
 
+  const ilsanRules = out.autoAssignRules?.ILSAN_PAST;
+  if (ilsanRules && typeof ilsanRules === 'object') {
+    Object.values(ilsanRules).forEach(subjectRules => {
+      if (!subjectRules || typeof subjectRules !== 'object' || !Array.isArray(subjectRules['중상'])) return;
+      const current = Array.isArray(subjectRules['중']) ? subjectRules['중'] : [];
+      subjectRules['중'] = Array.from(new Set([...current, ...subjectRules['중상']].map(String)));
+      delete subjectRules['중상'];
+    });
+  }
+
   return out;
 }
 
 function ruleDefaultDifficulty(categoryKey, subject, student = activeStudent) {
+  const hits = ruleDefaultDifficulties(categoryKey, subject, student);
+  return hits[0] || '';
+}
+
+function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) {
   const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
   const difficulties = def?.difficulties || [];
   const level = canonText(student?.level);
   const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
   if (level && rules && typeof rules === 'object') {
-    const hit = difficulties.find(diff =>
+    const hits = difficulties.filter(diff =>
       Array.isArray(rules?.[diff]) && rules[diff].map(canonText).includes(level)
     );
-    if (hit) return hit;
+    if (hits.length) return hits;
   }
-  return difficulties[0] || '';
+  return difficulties[0] ? [difficulties[0]] : [];
+}
+
+function visibleDifficultyValues() {
+  const assignedDifficulties = ruleDefaultDifficulties(activeCategory, activeSubject, activeStudent);
+  if (
+    !isUnitCategory(activeCategory) &&
+    assignedDifficulties.length > 1 &&
+    assignedDifficulties.includes(activeDifficulty)
+  ) {
+    return assignedDifficulties;
+  }
+  return activeDifficulty ? [activeDifficulty] : [];
+}
+
+function difficultyBadgeTone(categoryKey, difficulty) {
+  const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
+  const index = Math.max(0, difficulties.findIndex(diff => String(diff) === String(difficulty)));
+  return index === 0 ? 'high' : index === 1 ? 'middle' : 'base';
 }
 
 function roundOptionsFor(categoryKey, subject, difficulty) {
+  if (!isUnitCategory(categoryKey)) return [];
   const rounds = new Set();
   activeCatalog
     .filter(test =>
@@ -229,6 +319,7 @@ function roundOptionsFor(categoryKey, subject, difficulty) {
 }
 
 function defaultRoundFor(categoryKey, subject, difficulty) {
+  if (!isUnitCategory(categoryKey)) return '';
   const rounds = roundOptionsFor(categoryKey, subject, difficulty);
   return rounds.includes('1') ? '1' : (rounds[0] || '1');
 }
@@ -236,6 +327,7 @@ function defaultRoundFor(categoryKey, subject, difficulty) {
 function applyRuleDefaults(categoryKey = activeCategory) {
   activeDifficulty = ruleDefaultDifficulty(categoryKey, activeSubject, activeStudent);
   activeRound = defaultRoundFor(categoryKey, activeSubject, activeDifficulty);
+  if (isTermCategory(categoryKey) && !TERM_OPTIONS.includes(activeTerm)) activeTerm = defaultTermFromSchoolCalendar();
 }
 
 function collectCatalog(cfg) {
@@ -254,6 +346,9 @@ function collectCatalog(cfg) {
       const curriculum = normalizeSubject(rawTest.curriculum || rawTest.subject || rawTest.course || activeSubject);
       const difficulty = normalizeDifficulty(categoryKey, rawTest.difficulty || rawTest.level, name);
       const round = normalizeRound(rawTest.round || rawTest.session || rawTest.no, name);
+      const term = isTermCategory(categoryKey)
+        ? normalizeTerm(rawTest.term || rawTest.examTerm || rawTest.semesterTerm, name)
+        : '';
       const id = canonText(rawTest.id) || `t_${categoryKey}_${curriculum}_${difficulty}_${idx}`;
 
       const test = {
@@ -264,6 +359,7 @@ function collectCatalog(cfg) {
         curriculum,
         difficulty,
         round,
+        term,
         problems: Number.isFinite(+rawTest.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
         _catalogIndex: idx,
       };
@@ -282,14 +378,21 @@ function collectCatalog(cfg) {
     return Number.isFinite(n) ? n : 999999;
   };
 
-  out.sort((a, b) =>
-    rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
-    rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
-    String(a.difficulty).localeCompare(String(b.difficulty), 'ko') ||
-    Number(a.round || 0) - Number(b.round || 0) ||
-    orderValue(a) - orderValue(b) ||
-    String(a.name).localeCompare(String(b.name), 'ko')
-  );
+  out.sort((a, b) => {
+    const base =
+      rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
+      rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
+      String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
+    if (base) return base;
+    if (isUnitCategory(a.categoryKey) && isUnitCategory(b.categoryKey)) {
+      return Number(a.round || 0) - Number(b.round || 0) ||
+        orderValue(a) - orderValue(b) ||
+        String(a.name).localeCompare(String(b.name), 'ko');
+    }
+    return orderValue(a) - orderValue(b) ||
+      Number(a.round || 0) - Number(b.round || 0) ||
+      String(a.name).localeCompare(String(b.name), 'ko');
+  });
 
   return out;
 }
@@ -386,11 +489,13 @@ function isSubmitted(test) {
 }
 
 function visibleTests() {
+  const visibleDifficulties = visibleDifficultyValues();
   return activeCatalog.filter(test =>
     test.categoryKey === activeCategory &&
     normalizeSubject(test.curriculum) === activeSubject &&
-    String(test.difficulty || '') === String(activeDifficulty || '') &&
-    normalizeRound(test.round || '') === String(activeRound || '1')
+    visibleDifficulties.includes(String(test.difficulty || '')) &&
+    (!isTermCategory(activeCategory) || String(test.term || DEFAULT_TERM) === String(activeTerm || DEFAULT_TERM)) &&
+    (!isUnitCategory(activeCategory) || normalizeRound(test.round || '') === String(activeRound || '1'))
   );
 }
 
@@ -398,8 +503,14 @@ function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
   selectedKeys = new Set();
   selectedStatuses = new Map();
+  defaultExclusionsApplied = false;
   Object.entries(initialTestMap).forEach(([key, status]) => {
     setTestStatus(key, normalizeAssignmentStatus(status));
+  });
+  activeCatalog.forEach(test => {
+    if (!test?._key || selectedStatuses.has(test._key) || isSubmitted(test)) return;
+    setTestStatus(test._key, 'skip');
+    defaultExclusionsApplied = true;
   });
 }
 
@@ -417,6 +528,7 @@ function renderFilters() {
   const subjectSel = $('testSubject');
   const difficultySel = $('testDifficulty');
   const roundSel = $('testRound');
+  const termSel = $('testTerm');
   if (subjectSel) {
     subjectSel.innerHTML = SUBJECTS.map(subject =>
       `<option value="${escapeHtml(subject)}"${subject === activeSubject ? ' selected' : ''}>${escapeHtml(subject)}</option>`
@@ -434,13 +546,37 @@ function renderFilters() {
   }
 
   const rounds = roundOptionsFor(activeCategory, activeSubject, activeDifficulty);
-  if (!rounds.includes(String(activeRound))) {
-    activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
-  }
   if (roundSel) {
-    roundSel.innerHTML = rounds.map(round =>
-      `<option value="${round}"${round === activeRound ? ' selected' : ''}>${roundLabel(round)}</option>`
-    ).join('');
+    const roundField = roundSel.closest?.('.test-field');
+    const showRound = isUnitCategory(activeCategory);
+    if (roundField) roundField.style.display = showRound ? '' : 'none';
+    roundSel.disabled = !showRound;
+    if (showRound) {
+      if (!rounds.includes(String(activeRound))) {
+        activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
+      }
+      roundSel.innerHTML = rounds.map(round =>
+        `<option value="${round}"${round === activeRound ? ' selected' : ''}>${roundLabel(round)}</option>`
+      ).join('');
+    } else {
+      activeRound = '';
+      roundSel.innerHTML = '<option value="">전체 순번</option>';
+    }
+  }
+
+  if (termSel) {
+    const termField = termSel.closest?.('.test-field');
+    const showTerm = isTermCategory(activeCategory);
+    if (termField) termField.style.display = showTerm ? '' : 'none';
+    termSel.disabled = !showTerm;
+    if (showTerm) {
+      if (!TERM_OPTIONS.includes(activeTerm)) activeTerm = defaultTermFromSchoolCalendar();
+      termSel.innerHTML = TERM_OPTIONS.map(term =>
+        `<option value="${escapeHtml(term)}"${term === activeTerm ? ' selected' : ''}>${escapeHtml(term)}</option>`
+      ).join('');
+    } else {
+      termSel.innerHTML = '<option value="">전체 고사</option>';
+    }
   }
 
   const metaEl = $('testStudentMeta');
@@ -481,12 +617,28 @@ function renderList() {
     const checked = done || !!rowStatus;
     const stateName = done ? 'done' : (rowStatus || 'none');
     const status = testStatusLabel(rowStatus, done);
+    const baseMeta = [
+      categoryLabel(test.categoryKey),
+      test.curriculum,
+    ].filter(Boolean).join(' · ');
+    const tailMeta = [
+      isTermCategory(test.categoryKey) ? test.term : '',
+      isUnitCategory(test.categoryKey) ? roundLabel(test.round) : '',
+    ].filter(Boolean).join(' · ');
+    const tone = difficultyBadgeTone(test.categoryKey, test.difficulty);
     return `
       <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}"
-        data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}" ${done ? ' disabled' : ''}>
+        data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}"
+        data-category="${escapeHtml(test.categoryKey)}" data-curriculum="${escapeHtml(test.curriculum)}"
+        data-difficulty="${escapeHtml(test.difficulty)}" data-term="${escapeHtml(test.term || '')}"
+        data-round="${escapeHtml(test.round || '')}" ${done ? ' disabled' : ''}>
         <span class="test-row-main">
           <strong>${escapeHtml(test.name)}</strong>
-          <span>${escapeHtml(categoryLabel(test.categoryKey))} · ${escapeHtml(test.curriculum)} · ${escapeHtml(test.difficulty)} · ${escapeHtml(roundLabel(test.round))}</span>
+          <span class="test-row-meta">
+            <span class="test-meta-text">${escapeHtml(baseMeta)}</span>
+            <span class="test-difficulty-badge is-${escapeHtml(tone)}">${escapeHtml(test.difficulty)}</span>
+            ${tailMeta ? `<span class="test-meta-text">${escapeHtml(tailMeta)}</span>` : ''}
+          </span>
         </span>
         <span class="test-status">${escapeHtml(status)}</span>
       </button>
@@ -538,7 +690,7 @@ function ensureStyles() {
     #testModal .test-tab.is-active{ background:#2563eb; border-color:#2563eb; color:#fff; }
     body.dark #testModal .test-tab{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
     body.dark #testModal .test-tab.is-active{ background:#2563eb; color:#fff; border-color:#2563eb; }
-    #testModal .test-filter-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    #testModal .test-filter-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
     #testModal .test-field label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
     body.dark #testModal .test-field label{ color:#94a3b8; }
     #testModal select{
@@ -558,9 +710,12 @@ function ensureStyles() {
       display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; text-align:left;
       min-height:46px; padding:7px 8px; border:1px solid #e5e7eb; border-radius:9px;
       background:#fff; color:inherit; cursor:pointer; box-sizing:border-box; user-select:none;
-      font:inherit;
+      font:inherit; transition-property:background-color,border-color,box-shadow,transform;
+      transition-duration:.14s; transition-timing-function:cubic-bezier(.2,0,0,1);
     }
     body.dark #testModal .test-row{ background:#0b1220; border-color:#334155; }
+    #testModal .test-row:not(:disabled):hover{ border-color:#93c5fd; box-shadow:0 4px 12px rgba(15,23,42,.08); }
+    #testModal .test-row:not(:disabled):active{ transform:scale(.997); }
     #testModal .test-row:disabled{ cursor:default; opacity:1; }
     #testModal .test-row[data-state="assigned"],
     #testModal .test-row[data-state="done"]{ background:#10b98118; border-color:#10b98170; }
@@ -569,8 +724,23 @@ function ensureStyles() {
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
     #testModal .test-row-main{ min-width:0; display:flex; flex-direction:column; gap:2px; }
     #testModal .test-row-main strong{ font-size:13px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    #testModal .test-row-main span{ font-size:11px; color:#64748b; line-height:1.25; }
-    body.dark #testModal .test-row-main span{ color:#94a3b8; }
+    #testModal .test-row-meta{
+      min-width:0; display:flex; align-items:center; gap:5px; font-size:11px;
+      color:#64748b; line-height:1.25; white-space:nowrap; overflow:hidden;
+    }
+    body.dark #testModal .test-row-meta{ color:#94a3b8; }
+    #testModal .test-meta-text{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    #testModal .test-difficulty-badge{
+      flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
+      height:18px; min-width:26px; padding:0 6px; border-radius:999px;
+      border:1px solid #cbd5e1; background:#f8fafc; color:#334155;
+      font-size:10px; line-height:1; font-weight:900; letter-spacing:0;
+    }
+    #testModal .test-difficulty-badge.is-high{ border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8; }
+    #testModal .test-difficulty-badge.is-middle{ border-color:#fed7aa; background:#fff7ed; color:#c2410c; }
+    body.dark #testModal .test-difficulty-badge{ border-color:#475569; background:#111827; color:#cbd5e1; }
+    body.dark #testModal .test-difficulty-badge.is-high{ border-color:#1d4ed8; background:#1e3a8a66; color:#bfdbfe; }
+    body.dark #testModal .test-difficulty-badge.is-middle{ border-color:#c2410c; background:#7c2d1266; color:#fed7aa; }
     #testModal .test-status{
       justify-self:end; padding:3px 7px; border-radius:999px; background:#f1f5f9; color:#334155;
       font-size:11px; font-weight:900; white-space:nowrap;
@@ -626,6 +796,10 @@ function ensureModal() {
               <select id="testDifficulty"></select>
             </div>
             <div class="test-field">
+              <label for="testTerm">고사</label>
+              <select id="testTerm"></select>
+            </div>
+            <div class="test-field">
               <label for="testRound">회차</label>
               <select id="testRound"></select>
             </div>
@@ -669,7 +843,7 @@ function renderLoadingState(student) {
   if (save) save.disabled = true;
   const tabs = $('testCategoryTabs');
   if (tabs) tabs.innerHTML = '<button type="button" class="test-tab is-active" disabled>불러오는 중</button>';
-  ['testSubject', 'testDifficulty', 'testRound'].forEach((id) => {
+  ['testSubject', 'testDifficulty', 'testTerm', 'testRound'].forEach((id) => {
     const el = $(id);
     if (!el) return;
     el.disabled = true;
@@ -692,7 +866,9 @@ function closeModal() {
   selectedKeys = new Set();
   selectedStatuses = new Map();
   testSelectionTouched = false;
+  defaultExclusionsApplied = false;
   activeRound = '1';
+  activeTerm = defaultTermFromSchoolCalendar();
   if (wasUnified && !document.querySelector('#vidModal.student-work-layout') && !document.querySelector('#logModal.student-work-layout')) {
     try { window.hideStudentPopupBackdrop?.(); } catch {}
   }
@@ -723,6 +899,7 @@ async function openModalForRow(rowOrButton, opts = {}) {
   setModalOpen(true, opts.layout);
   await hydrateForTestPopup(editingDate, editingSid);
   if (openSeq !== testOpenSeq || editingSid !== String(tr?.dataset?.sid || '').trim()) return;
+  activeTerm = defaultTermFromSchoolCalendar();
   syncSelectedFromProgress();
 
   activeCategory = chooseInitialCategory();
@@ -730,10 +907,14 @@ async function openModalForRow(rowOrButton, opts = {}) {
   testSelectionTouched = false;
 
   renderAll();
-  ['testSubject', 'testDifficulty', 'testRound'].forEach((id) => {
+  ['testSubject', 'testDifficulty'].forEach((id) => {
     const el = $(id);
     if (el) el.disabled = false;
   });
+  const termEl = $('testTerm');
+  if (termEl) termEl.disabled = !isTermCategory(activeCategory);
+  const roundEl = $('testRound');
+  if (roundEl) roundEl.disabled = !isUnitCategory(activeCategory);
   const save = $('testSave');
   if (save) save.disabled = false;
   setModalOpen(true, opts.layout);
@@ -754,6 +935,7 @@ function selectedAssignmentObjects() {
       categoryLabel: categoryLabel(test.categoryKey),
       curriculum: test.curriculum,
       difficulty: test.difficulty,
+      term: isTermCategory(test.categoryKey) ? test.term : '',
       round: String(test.round || ''),
       label: test._key,
       status,
@@ -762,14 +944,45 @@ function selectedAssignmentObjects() {
   });
 }
 
+function shouldIncludeInAssignmentNote(item) {
+  const status = normalizeAssignmentStatus(item?.status) || 'assigned';
+  return status === 'assigned' || status === 'done';
+}
+
 function buildAssignmentNote(items) {
-  if (!items.length) return '';
-  const lines = items.map(item => {
+  const noteItems = (items || []).filter(shouldIncludeInAssignmentNote);
+  if (!noteItems.length) return '';
+  const lines = noteItems.map(item => {
     if (!item || !item.name) return `- ${item.label}`;
     const status = item.status && item.status !== 'assigned' ? ` (${item.statusLabel || testStatusLabel(item.status)})` : '';
-    return `- ${item.categoryLabel} / ${item.curriculum} / ${item.difficulty} / ${roundLabel(item.round)}: ${item.name}${status}`;
+    const parts = [item.categoryLabel, item.curriculum, item.difficulty];
+    if (item.term) parts.push(item.term);
+    if (item.round) parts.push(roundLabel(item.round));
+    return `- ${parts.filter(Boolean).join(' / ')}: ${item.name}${status}`;
   });
   return `[테스트 배정]\n${lines.join('\n')}`;
+}
+
+function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
+  const current = String(notes || '').trimEnd();
+  const previous = String(previousBlock || '').trim();
+  const replacement = String(nextBlock || '').trim();
+  if (!current) return replacement;
+
+  let next = current;
+  if (previous && next.includes(previous)) {
+    next = next.replace(previous, replacement);
+  } else {
+    let matched = false;
+    next = next.replace(/(^|\n{2,})\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, (match, prefix = '') => {
+      matched = true;
+      if (replacement) return `${prefix}${replacement}`;
+      return prefix ? '\n\n' : '';
+    });
+    if (!matched && replacement) next = `${next}\n\n${replacement}`;
+  }
+
+  return next.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 async function patchLogAssignment(items, appendToNotes) {
@@ -777,23 +990,27 @@ async function patchLogAssignment(items, appendToNotes) {
   const latest = await fetchJSONSafe(`/api/logs/entry?${q}`).catch(() => ({}));
   const entry = latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
   const clear = [];
+  const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
   const patchEntry = {
     updatedAt: new Date().toISOString(),
   };
-  if (items.length) patchEntry.assignedTests = items;
+  if (logItems.length) patchEntry.assignedTests = logItems;
   else clear.push('assignedTests');
 
-  const noteBlock = buildAssignmentNote(items);
+  const noteBlock = buildAssignmentNote(logItems);
   if (noteBlock) patchEntry.testAssignmentNote = noteBlock;
   else clear.push('testAssignmentNote');
 
-  if (appendToNotes && noteBlock) {
+  let notesChanged = false;
+  if (appendToNotes) {
     const prevNotes = String(entry.notes || '').trimEnd();
     const prevBlock = String(entry.testAssignmentNote || '').trim();
-    const nextNotes = prevBlock && prevNotes.includes(prevBlock)
-      ? prevNotes.replace(prevBlock, noteBlock)
-      : (prevNotes ? `${prevNotes}\n\n${noteBlock}` : noteBlock);
-    patchEntry.notes = nextNotes;
+    const nextNotes = replaceAssignmentNoteBlock(prevNotes, prevBlock, noteBlock);
+    if (nextNotes.trim() !== prevNotes.trim()) {
+      if (nextNotes.trim()) patchEntry.notes = nextNotes.trim();
+      else clear.push('notes');
+      notesChanged = true;
+    }
   }
 
   const body = {
@@ -802,7 +1019,9 @@ async function patchLogAssignment(items, appendToNotes) {
     entry: patchEntry,
   };
   if (clear.length) body.__clear = clear;
-  if (appendToNotes && noteBlock) body.base = { notes: String(entry.notes || '').trim() };
+  if (notesChanged) {
+    body.base = { notes: String(entry.notes || '').trim() };
+  }
 
   const saved = await fetchJSONSafe('/api/logs/patch', {
     method: 'POST',
@@ -820,7 +1039,7 @@ async function patchLogAssignment(items, appendToNotes) {
 
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
-  if (!testSelectionTouched) {
+  if (!testSelectionTouched && !defaultExclusionsApplied) {
     const items = selectedAssignmentObjects();
     if (options.showPopup !== false) toast('변경된 테스트 배정이 없습니다');
     return items;
@@ -864,6 +1083,7 @@ async function saveModal(options = {}) {
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
   testSelectionTouched = false;
+  defaultExclusionsApplied = false;
   return items;
 }
 
@@ -935,7 +1155,7 @@ function bindEventsOnce() {
 
     if (e.target.closest('#testPickNone')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) setTestStatus(test._key, '');
+        if (!isSubmitted(test)) setTestStatus(test._key, 'skip');
       });
       testSelectionTouched = true;
       renderList();
@@ -1022,6 +1242,12 @@ function bindEventsOnce() {
       activeDifficulty = e.target.value || activeDifficulty;
       activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
       renderAll();
+      return;
+    }
+
+    if (e.target?.id === 'testTerm') {
+      activeTerm = TERM_OPTIONS.includes(e.target.value) ? e.target.value : defaultTermFromSchoolCalendar();
+      renderList();
       return;
     }
 
