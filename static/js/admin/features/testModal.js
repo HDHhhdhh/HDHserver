@@ -19,6 +19,7 @@ const ROUND_OPTIONS = ['1', '2', '3'];
 const TERM_OPTIONS = ['중간고사', '기말고사'];
 const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
+const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '배정',
@@ -496,8 +497,32 @@ async function hydrateForTestPopup(date, sid) {
 }
 
 function getCurrentProgressTests() {
-  const raw = state.progress?.[editingDate]?.[editingSid]?.tests;
-  return (raw && typeof raw === 'object') ? raw : {};
+  const currentEntry = state.progress?.[editingDate]?.[editingSid];
+  const currentTests = currentEntry?.tests;
+  if (currentTests && typeof currentTests === 'object' && Object.keys(currentTests).length) {
+    return currentTests;
+  }
+  if (currentEntry && typeof currentEntry === 'object' && currentEntry[TEST_ASSIGN_CLEAR_KEY]) {
+    return {};
+  }
+
+  const sid = String(editingSid || '').trim();
+  const date = String(editingDate || '').trim();
+  if (!sid || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return {};
+
+  const dates = Object.keys(state.progress || {})
+    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < date)
+    .sort()
+    .reverse();
+
+  for (const d of dates) {
+    const entry = state.progress?.[d]?.[sid];
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
+    const tests = entry.tests;
+    if (tests && typeof tests === 'object' && Object.keys(tests).length) return tests;
+  }
+  return {};
 }
 
 function isSubmitted(test) {
@@ -1077,6 +1102,7 @@ async function saveModal(options = {}) {
       patchTests[key] = statusForKey(key) || '';
     }
   });
+  const hasAnyTestStatus = Object.values(patchTests).some(status => !!normalizeAssignmentStatus(status));
 
   state.progress = state.progress || {};
   state.progress[editingDate] = state.progress[editingDate] || {};
@@ -1088,7 +1114,10 @@ async function saveModal(options = {}) {
     body: JSON.stringify({
       date: editingDate,
       sid: editingSid,
-      progress: { tests: patchTests },
+      progress: {
+        tests: patchTests,
+        [TEST_ASSIGN_CLEAR_KEY]: hasAnyTestStatus ? '' : new Date().toISOString(),
+      },
     }),
   });
 
