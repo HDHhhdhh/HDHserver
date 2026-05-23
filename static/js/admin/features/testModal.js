@@ -266,6 +266,21 @@ function ruleDefaultDifficulty(categoryKey, subject, student = activeStudent) {
   return hits[0] || '';
 }
 
+function ruleLevelsForDifficulty(categoryKey, subject, difficulty) {
+  const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
+  if (!rules || typeof rules !== 'object') return null;
+  const levels = rules?.[difficulty];
+  return Array.isArray(levels) ? levels : null;
+}
+
+function autoAssignRuleAllowsDifficulty(categoryKey, subject, difficulty, student = activeStudent) {
+  const level = canonText(student?.level);
+  if (!level) return null;
+  const levels = ruleLevelsForDifficulty(categoryKey, subject, difficulty);
+  if (!levels) return null;
+  return levels.map(canonText).includes(level);
+}
+
 function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) {
   const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
   const difficulties = def?.difficulties || [];
@@ -273,7 +288,7 @@ function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) 
   const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
   if (level && rules && typeof rules === 'object') {
     const hits = difficulties.filter(diff =>
-      Array.isArray(rules?.[diff]) && rules[diff].map(canonText).includes(level)
+      autoAssignRuleAllowsDifficulty(categoryKey, subject, diff, student) === true
     );
     if (hits.length) return hits;
   }
@@ -296,6 +311,13 @@ function difficultyBadgeTone(categoryKey, difficulty) {
   const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
   const index = Math.max(0, difficulties.findIndex(diff => String(diff) === String(difficulty)));
   return index === 0 ? 'high' : index === 1 ? 'middle' : 'base';
+}
+
+function shouldDefaultExcludeTest(test) {
+  if (!test) return false;
+  const subject = normalizeSubject(test.curriculum);
+  const allowed = autoAssignRuleAllowsDifficulty(test.categoryKey, subject, test.difficulty, activeStudent);
+  return allowed === false;
 }
 
 function roundOptionsFor(categoryKey, subject, difficulty) {
@@ -508,7 +530,7 @@ function syncSelectedFromProgress() {
     setTestStatus(key, normalizeAssignmentStatus(status));
   });
   activeCatalog.forEach(test => {
-    if (!test?._key || selectedStatuses.has(test._key) || isSubmitted(test)) return;
+    if (!test?._key || selectedStatuses.has(test._key) || isSubmitted(test) || !shouldDefaultExcludeTest(test)) return;
     setTestStatus(test._key, 'skip');
     defaultExclusionsApplied = true;
   });
