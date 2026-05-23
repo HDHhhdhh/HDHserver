@@ -24,7 +24,9 @@ import {
 } from './today.state.js';
 
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
-const ROSTER_TEXT_DEFAULT = '📢 도착 예정 시간 알려주세요!';
+const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
+const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned', 'done']);
+const ROSTER_TEST_CATEGORY_ORDER = ['REVIEW', 'UNIT', 'SCHOOL_PAST', 'ILSAN_PAST'];
 
 /* ─────────────────────────────────────────────
  * ✅ 숙제 출력(헤더 포함, 괄호 제거 버전)
@@ -326,6 +328,242 @@ function rosterSlots(dateStr, sid) {
     .filter(n => n === 1 || n === 2);
 }
 
+function lookupSidEntry(map, sid) {
+  if (!map || typeof map !== 'object') return undefined;
+  const key = String(sid ?? '').trim();
+  if (!key) return undefined;
+  if (Object.prototype.hasOwnProperty.call(map, key)) return map[key];
+  if (/^\d+$/.test(key)) {
+    const alt = String(parseInt(key, 10));
+    if (Object.prototype.hasOwnProperty.call(map, alt)) return map[alt];
+  }
+  return undefined;
+}
+
+function rosterSubjectFor(stu, fallback = '') {
+  const raw = normStr(stu?.curriculum ?? stu?.course ?? fallback);
+  if (!raw) return '';
+  const first = raw.split(/\s+/)[0] || raw;
+  return first.split(':')[0].trim() || first;
+}
+
+function rosterAssignedVideoMids(dateStr, sid) {
+  const day = state.updates?.[dateStr] || {};
+  const assignment = lookupSidEntry(day, sid);
+  const raw = Array.isArray(assignment) ? assignment : assignment?.videos;
+  if (!Array.isArray(raw)) return [];
+  return raw.map(mid => String(mid || '').trim()).filter(Boolean);
+}
+
+function videoMapForRoster() {
+  return new Map((state.videos || [])
+    .map(video => [String(video?.mid || '').trim(), video])
+    .filter(([mid]) => mid));
+}
+
+function rosterVideoText(dateStr, sid, videoMap) {
+  const seen = new Set();
+  const videos = rosterAssignedVideoMids(dateStr, sid)
+    .map(mid => videoMap.get(mid))
+    .filter(Boolean)
+    .filter(video => {
+      const mid = String(video?.mid || '').trim();
+      if (!mid || seen.has(mid)) return false;
+      seen.add(mid);
+      return true;
+    })
+    .sort((a, b) => {
+      const ac = Number(a?.chapter);
+      const bc = Number(b?.chapter);
+      if (Number.isFinite(ac) && Number.isFinite(bc) && ac !== bc) return ac - bc;
+      return normStr(a?.title).localeCompare(normStr(b?.title), 'ko');
+    });
+
+  const chapters = videos
+    .map(video => Number(video?.chapter))
+    .filter(chapter => Number.isFinite(chapter))
+    .map(chapter => `${chapter}차시`);
+  return Array.from(new Set(chapters)).join(', ');
+}
+
+function normalizeRosterTestStatus(status) {
+  if (status && typeof status === 'object') status = status.status;
+  const s = normStr(status);
+  if (!s || s === 'none') return '';
+  if (['assigned', 'done', 'interrupted', 'skip'].includes(s)) return s;
+  return 'assigned';
+}
+
+function rosterCategoryKey(category, label = '') {
+  const raw = `${category || ''} ${label || ''}`.toUpperCase();
+  const ko = `${category || ''} ${label || ''}`.replace(/\s+/g, '');
+  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
+  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
+  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
+  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
+  return '';
+}
+
+function normalizeRosterDifficulty(categoryKey, difficulty, name = '') {
+  const raw = normStr(difficulty);
+  const source = `${raw} ${name}`;
+  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
+  if (lv) return `Lv.${lv[1]}`;
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중상')) return '중';
+  if (source.includes('중상')) return '중상';
+  if (source.includes('중')) return '중';
+  if (source.includes('상')) return '상';
+  return raw;
+}
+
+function cleanRosterRound(value) {
+  const raw = normStr(value);
+  const m = raw.match(/(\d{1,2})/);
+  return m ? m[1] : raw.replace(/회차|회/g, '').trim();
+}
+
+function roundListText(rounds) {
+  const uniq = Array.from(new Set(rounds.map(cleanRosterRound).filter(Boolean)))
+    .sort((a, b) => {
+      const an = Number(a);
+      const bn = Number(b);
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+      return String(a).localeCompare(String(b), 'ko');
+    });
+  if (!uniq.length) return '';
+  if (uniq.length === 1) return `${uniq[0]}회차`;
+  return `${uniq.slice(0, -1).join(', ')}, ${uniq[uniq.length - 1]}회차`;
+}
+
+function stripRosterUnitLevel(name, level) {
+  let out = normStr(name);
+  const lv = normStr(level).replace('.', '\\.');
+  if (lv) out = out.replace(new RegExp(`\\s*${lv}\\s*$`, 'i'), '').trim();
+  return out;
+}
+
+function parseRosterTestLabel(label, status = 'assigned', meta = {}) {
+  const parts = String(label || '').split('/').map(part => part.trim()).filter(Boolean);
+  const categoryLabel = normStr(meta.categoryLabel ?? meta.category ?? parts[0] ?? '');
+  const categoryKey = rosterCategoryKey(meta.categoryKey, categoryLabel);
+  const isPast = categoryKey === 'SCHOOL_PAST' || categoryKey === 'ILSAN_PAST';
+  const difficultyRaw = normStr(meta.difficulty ?? (isPast ? parts[2] : parts[2]) ?? '');
+  const nameFromLabel = isPast ? parts.slice(5).join(' / ') : parts.slice(4).join(' / ');
+  const name = normStr(meta.name ?? nameFromLabel);
+  return {
+    categoryKey,
+    categoryLabel,
+    curriculum: normStr(meta.curriculum ?? parts[1] ?? ''),
+    difficulty: normalizeRosterDifficulty(categoryKey, difficultyRaw, name || label),
+    term: isPast ? normStr(meta.term ?? meta.examTerm ?? parts[3] ?? '') : '',
+    round: cleanRosterRound(meta.round ?? (isPast ? parts[4] : parts[3]) ?? ''),
+    name,
+    label: normStr(meta.label ?? label),
+    status: normalizeRosterTestStatus(status || meta.status || 'assigned'),
+  };
+}
+
+function logAssignedTestsForRoster(dateStr, sid) {
+  const entry = lookupSidEntry(state.logs?.[dateStr] || {}, sid);
+  const items = entry?.assignedTests;
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(item => item && typeof item === 'object')
+    .map(item => parseRosterTestLabel(item.label || '', item.status || 'assigned', item));
+}
+
+function rosterAssignedTests(dateStr, sid) {
+  const logItems = logAssignedTestsForRoster(dateStr, sid);
+  const logByLabel = new Map(logItems.map(item => [item.label, item]));
+  const progressEntry = lookupSidEntry(state.progress?.[dateStr] || {}, sid);
+  const progressTests = progressEntry?.tests;
+
+  const items = [];
+  if (progressTests && typeof progressTests === 'object') {
+    Object.entries(progressTests).forEach(([label, status]) => {
+      const normalized = normalizeRosterTestStatus(status);
+      if (!ROSTER_TEST_STATUS_EXPORT.has(normalized)) return;
+      items.push(parseRosterTestLabel(label, normalized, logByLabel.get(label) || {}));
+    });
+  }
+
+  if (!items.length) {
+    logItems.forEach(item => {
+      if (ROSTER_TEST_STATUS_EXPORT.has(normalizeRosterTestStatus(item.status))) items.push(item);
+    });
+  }
+
+  return items
+    .filter(item => item.categoryKey)
+    .sort((a, b) =>
+      ROSTER_TEST_CATEGORY_ORDER.indexOf(a.categoryKey) - ROSTER_TEST_CATEGORY_ORDER.indexOf(b.categoryKey) ||
+      normStr(a.difficulty).localeCompare(normStr(b.difficulty), 'ko') ||
+      Number(cleanRosterRound(a.round) || 0) - Number(cleanRosterRound(b.round) || 0) ||
+      normStr(a.name).localeCompare(normStr(b.name), 'ko')
+    );
+}
+
+function appendRosterTestSections(lines, tests) {
+  const byCategory = tests.reduce((acc, item) => {
+    (acc[item.categoryKey] ||= []).push(item);
+    return acc;
+  }, {});
+
+  const reviewRounds = (byCategory.REVIEW || []).map(item => item.round);
+  if (reviewRounds.length) {
+    lines.push('', `복테 : ${roundListText(reviewRounds)}`);
+  }
+
+  const appendUnitGroups = () => {
+    const groups = new Map();
+    (byCategory.UNIT || []).forEach(item => {
+      const key = item.difficulty || 'Lv.';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(stripRosterUnitLevel(item.name, key));
+    });
+    Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b, 'ko', { numeric: true }))
+      .forEach(([level, names]) => {
+        lines.push('', `단원평가(${level})(30분) :`);
+        Array.from(new Set(names.filter(Boolean))).forEach(name => lines.push(name));
+      });
+  };
+
+  const appendPastGroups = (categoryKey, title, difficultyOrder) => {
+    const groups = new Map();
+    (byCategory[categoryKey] || []).forEach(item => {
+      const key = item.difficulty || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item.round);
+    });
+    Array.from(groups.entries())
+      .sort(([a], [b]) => {
+        const ai = difficultyOrder.indexOf(a);
+        const bi = difficultyOrder.indexOf(b);
+        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b, 'ko');
+      })
+      .forEach(([difficulty, rounds]) => {
+        const roundText = roundListText(rounds);
+        lines.push('', `${title}(${difficulty})(50분) :`);
+        if (roundText) lines.push(roundText);
+      });
+  };
+
+  appendUnitGroups();
+  appendPastGroups('SCHOOL_PAST', '학군지기출', ['상', '중상', '중']);
+  appendPastGroups('ILSAN_PAST', '일산기출', ['상', '중']);
+}
+
+function rosterTaskText(dateStr, stu, videoMap) {
+  const sid = String(stu?.id ?? '');
+  const subject = rosterSubjectFor(stu);
+  const lines = [ROSTER_TEXT_DEFAULT, '', `오늘 할 일${subject ? ` (${subject})` : ''}`];
+  const videos = rosterVideoText(dateStr, sid, videoMap);
+  if (videos) lines.push('', `영상 : ${videos}`);
+  appendRosterTestSections(lines, rosterAssignedTests(dateStr, sid));
+  return lines.join('\n');
+}
+
 async function loadExtraAttendMap() {
   try {
     const extra = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
@@ -400,9 +638,11 @@ async function loadRosterStudents(dateStr) {
 }
 
 function buildRosterRows(dateStr, students) {
+  const videos = videoMapForRoster();
   return students.map(stu => ({
     time: rosterTimeLabel(dateStr, stu.id),
     chatName: chatNameForRoster(stu),
+    text: rosterTaskText(dateStr, stu, videos),
     slots: rosterSlots(dateStr, stu.id),
   }));
 }
@@ -419,13 +659,32 @@ function rosterRowSlotNumbers(row) {
 async function exportRosterCsv() {
   const dateStr = exportDateStamp();
   try {
-    const students = await fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    const [students, videos, updates, progress] = await Promise.all([
+      fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch('/api/videos', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => null),
+      fetch('/api/updates', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => null),
+      fetch(`/api/progress?date=${encodeURIComponent(dateStr)}`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .catch(() => null),
+    ]);
     if (Array.isArray(students)) {
       state.students = students;
       window.students = students;
     }
+    if (Array.isArray(videos)) {
+      state.videos = videos;
+      window.videos = videos;
+    }
+    if (updates && typeof updates === 'object') {
+      state.updates = updates;
+      window.updates = updates;
+    }
+    if (progress && typeof progress === 'object') {
+      state.progress = { ...(state.progress || {}), ...progress };
+      window.progressData = state.progress;
+    }
   } catch (err) {
-    console.warn('[exportRoster] students load failed:', err);
+    console.warn('[exportRoster] roster task data load failed:', err);
   }
 
   await loadWeekendSlots();
