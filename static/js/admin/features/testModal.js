@@ -19,8 +19,8 @@ const ROUND_OPTIONS = ['1', '2', '3'];
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '배정',
-  interrupted: '주황',
-  skip: '빨강',
+  interrupted: '배부',
+  skip: '제외',
 };
 
 let initialized = false;
