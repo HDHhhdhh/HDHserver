@@ -20,6 +20,7 @@ const TERM_OPTIONS = ['중간고사', '기말고사'];
 const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
+const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '배정',
@@ -996,6 +997,29 @@ function shouldIncludeInAssignmentNote(item) {
   return status === 'assigned' || status === 'done';
 }
 
+function assignmentLabel(item) {
+  return String(item?.label || '').trim();
+}
+
+function mergeAssignmentItemsByLabel(...groups) {
+  const byLabel = new Map();
+  groups.flat().forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const label = assignmentLabel(item);
+    if (!label) return;
+    byLabel.set(label, { ...(byLabel.get(label) || {}), ...item, label });
+  });
+  return Array.from(byLabel.values());
+}
+
+function addedAssignmentNoteItems(items) {
+  return (items || []).filter(item => {
+    if (!shouldIncludeInAssignmentNote(item)) return false;
+    const previous = normalizeAssignmentStatus(initialTestMap?.[assignmentLabel(item)]);
+    return !shouldIncludeInAssignmentNote({ status: previous });
+  });
+}
+
 function buildAssignmentNote(items) {
   const noteItems = (items || []).filter(shouldIncludeInAssignmentNote);
   if (!noteItems.length) return '';
@@ -1032,21 +1056,32 @@ function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
   return next.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function patchLogAssignment(items, appendToNotes) {
+async function patchLogAssignment(items, appendToNotes, newlyAddedItems = []) {
   const q = new URLSearchParams({ date: editingDate, sid: editingSid }).toString();
   const latest = await fetchJSONSafe(`/api/logs/entry?${q}`).catch(() => ({}));
   const entry = latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
   const clear = [];
   const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
+  const currentLabels = new Set(logItems.map(assignmentLabel).filter(Boolean));
+  const previousDailyItems = Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY])
+    ? entry[TEST_ASSIGN_DAILY_ITEMS_KEY].filter(item => currentLabels.has(assignmentLabel(item)))
+    : [];
+  const dailyItems = mergeAssignmentItemsByLabel(previousDailyItems, newlyAddedItems)
+    .filter(item => currentLabels.has(assignmentLabel(item)))
+    .filter(shouldIncludeInAssignmentNote);
   const patchEntry = {
     updatedAt: new Date().toISOString(),
   };
   if (logItems.length) patchEntry.assignedTests = logItems;
   else clear.push('assignedTests');
 
-  const noteBlock = buildAssignmentNote(logItems);
-  if (noteBlock) patchEntry.testAssignmentNote = noteBlock;
-  else clear.push('testAssignmentNote');
+  const noteBlock = buildAssignmentNote(dailyItems);
+  if (dailyItems.length) {
+    patchEntry[TEST_ASSIGN_DAILY_ITEMS_KEY] = dailyItems;
+    patchEntry.testAssignmentNote = noteBlock;
+  } else {
+    clear.push(TEST_ASSIGN_DAILY_ITEMS_KEY, 'testAssignmentNote');
+  }
 
   let notesChanged = false;
   if (appendToNotes) {
@@ -1127,8 +1162,9 @@ async function saveModal(options = {}) {
   }
 
   const items = selectedAssignmentObjects();
+  const newlyAddedItems = addedAssignmentNoteItems(items);
   const appendToNotes = Boolean($('testAppendNotes')?.checked);
-  await patchLogAssignment(items, appendToNotes);
+  await patchLogAssignment(items, appendToNotes, newlyAddedItems);
 
   if (options.showPopup !== false) toast('테스트 배정 저장됨');
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
