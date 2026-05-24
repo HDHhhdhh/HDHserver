@@ -455,6 +455,166 @@ def _is_manual_video_assignment(value) -> bool:
     return source == "manual" or value.get("manual") is True or value.get("manualVideoAssign") is True
 
 
+def _normalize_test_assignment_status(value) -> str:
+    if isinstance(value, dict):
+        value = value.get("status")
+    s = str(value or "").strip()
+    if not s or s == "none":
+        return ""
+    if s in ("assigned", "done", "interrupted", "skip"):
+        return s
+    return "assigned"
+
+
+def _test_assignment_status_label(status: str) -> str:
+    s = _normalize_test_assignment_status(status)
+    if s == "interrupted":
+        return "배부"
+    if s == "skip":
+        return "제외"
+    return "배정" if s else ""
+
+
+def _round_label_for_assignment(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw if "회" in raw else f"{raw}회차"
+
+
+def _fallback_assigned_test_from_label(label: str, status: str) -> dict:
+    parts = [p.strip() for p in str(label or "").split(" / ") if p.strip()]
+    item = {
+        "label": str(label or "").strip(),
+        "name": parts[-1] if parts else str(label or "").strip(),
+        "status": status,
+        "statusLabel": _test_assignment_status_label(status),
+    }
+    if len(parts) >= 5:
+        item.update({
+            "categoryLabel": parts[0],
+            "curriculum": parts[1],
+            "difficulty": parts[2],
+            "round": parts[3].replace("회차", "").replace("회", "").strip(),
+        })
+    return item
+
+
+def _assigned_test_label(raw: dict) -> str:
+    label = str(raw.get("label") or "").strip()
+    if label:
+        return label
+    pieces = [
+        raw.get("categoryLabel"),
+        raw.get("curriculum"),
+        raw.get("difficulty"),
+        _round_label_for_assignment(raw.get("round")),
+        raw.get("name"),
+    ]
+    return " / ".join(str(x).strip() for x in pieces if str(x or "").strip())
+
+
+def _student_assigned_tests_for_date(
+    progress_all: dict,
+    logs_map: dict,
+    date: str,
+    sid: str,
+    fallback_logs_map=None,
+) -> list[dict]:
+    day_progress = progress_all.get(date) if isinstance(progress_all, dict) else {}
+    progress_entry = _sid_lookup(day_progress if isinstance(day_progress, dict) else {}, sid)
+    current_cleared = isinstance(progress_entry, dict) and bool(progress_entry.get(TEST_ASSIGN_CLEAR_META_KEY))
+    progress_tests = progress_entry.get("tests") if isinstance(progress_entry, dict) else {}
+    if not isinstance(progress_tests, dict):
+        progress_tests = {}
+
+    def normalized_status_map(tests):
+        if not isinstance(tests, dict):
+            return {}
+        statuses = {
+            str(label).strip(): _normalize_test_assignment_status(status)
+            for label, status in tests.items()
+        }
+        return {label: status for label, status in statuses.items() if label and status}
+
+    status_by_label = normalized_status_map(progress_tests)
+
+    by_label = {}
+    log_labels = []
+
+    def collect_log_items(source_map, source_date=None):
+        date_key = str(source_date or date)
+        day_logs = source_map.get(date_key) if isinstance(source_map, dict) else {}
+        log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+        log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
+        if not isinstance(log_items, list):
+            return
+        for raw in log_items:
+            if not isinstance(raw, dict):
+                continue
+            label = _assigned_test_label(raw)
+            if not label:
+                continue
+            if label not in log_labels:
+                log_labels.append(label)
+            item = dict(raw)
+            if label in by_label:
+                merged = dict(item)
+                merged.update(by_label[label])
+                by_label[label] = merged
+            else:
+                by_label[label] = item
+
+    if current_cleared and not status_by_label:
+        return []
+
+    collect_log_items(logs_map)
+    if not log_labels:
+        collect_log_items(fallback_logs_map)
+
+    if not status_by_label and not log_labels and isinstance(progress_all, dict):
+        previous_dates = (
+            d for d in progress_all.keys()
+            if DATE_RE.match(str(d or "")) and str(d) < str(date)
+        )
+        for prev_date in sorted(previous_dates, reverse=True):
+            prev_day = progress_all.get(prev_date)
+            prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
+            if not isinstance(prev_entry, dict):
+                continue
+            if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
+                break
+            prev_statuses = normalized_status_map(prev_entry.get("tests"))
+            if not prev_statuses:
+                continue
+            status_by_label = prev_statuses
+            collect_log_items(fallback_logs_map, prev_date)
+            break
+
+    labels = list(status_by_label.keys())
+    if not labels:
+        labels = list(log_labels)
+
+    out = []
+    for label in labels:
+        item = dict(by_label.get(label) or {})
+        status = (
+            status_by_label.get(label)
+            or _normalize_test_assignment_status(item.get("status"))
+            or "assigned"
+        )
+        if status == "skip":
+            continue
+        if not item:
+            item = _fallback_assigned_test_from_label(label, status)
+        item["label"] = item.get("label") or label
+        item["status"] = status
+        item["statusLabel"] = _test_assignment_status_label(status)
+        out.append(item)
+
+    return out
+
+
 def _merge_update_assignment(current, incoming):
     if incoming is None:
         return current
@@ -863,6 +1023,7 @@ def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
 PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
 WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
 PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
+TEST_ASSIGN_CLEAR_META_KEY = "__testsClearedAt"
 
 
 def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
@@ -892,6 +1053,13 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
     for mid, st in inc.items():
         mid_s = str(mid).strip()
         if not mid_s:
+            continue
+        if mid_s == TEST_ASSIGN_CLEAR_META_KEY:
+            marker = str(st or "").strip()
+            if marker:
+                out[TEST_ASSIGN_CLEAR_META_KEY] = marker
+            else:
+                out.pop(TEST_ASSIGN_CLEAR_META_KEY, None)
             continue
         if mid_s == "tests":
             if not isinstance(st, dict):
@@ -931,6 +1099,7 @@ def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
 
             if cur_tests:
                 out["tests"] = cur_tests
+                out.pop(TEST_ASSIGN_CLEAR_META_KEY, None)
             else:
                 out.pop("tests", None)
             continue
@@ -1671,6 +1840,7 @@ def api_student_bootstrap():
             "assigns": {sid: []},
             "absent": absent_for_date,
             "logs": {date: {}},
+            "assignedTests": [],
             "courseBlocked": True,
             "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
         })
@@ -1725,6 +1895,19 @@ def api_student_bootstrap():
         except Exception:
             logs = {date: {}}
 
+    try:
+        json_logs_for_assigned = load(LOGS_PATH) or {}
+    except Exception:
+        json_logs_for_assigned = {}
+
+    assigned_tests = _student_assigned_tests_for_date(
+        progress_all,
+        logs,
+        date,
+        sid,
+        json_logs_for_assigned,
+    )
+
     return nocache_resp({
         "ok": True,
         "date": date,
@@ -1736,6 +1919,7 @@ def api_student_bootstrap():
         "assigns": {sid: material_assignment or []},
         "absent": absent_for_date,
         "logs": logs,
+        "assignedTests": assigned_tests,
         "courseVideosCompleted": course_videos_completed,
     })
 
