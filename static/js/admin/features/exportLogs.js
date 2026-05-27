@@ -25,6 +25,7 @@ import {
 
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
 const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
+const ROSTER_DAILY_TESTS_KEY = 'testAssignmentDailyTests';
 const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned', 'done']);
 const ROSTER_TEST_CATEGORY_ORDER = ['REVIEW', 'UNIT', 'SCHOOL_PAST', 'ILSAN_PAST'];
 
@@ -463,17 +464,54 @@ function parseRosterTestLabel(label, status = 'assigned', meta = {}) {
   };
 }
 
-function logAssignedTestsForRoster(dateStr, sid) {
-  const entry = lookupSidEntry(state.logs?.[dateStr] || {}, sid);
-  const items = entry?.assignedTests;
+function parseRosterTestItems(items) {
   if (!Array.isArray(items)) return [];
   return items
     .filter(item => item && typeof item === 'object')
     .map(item => parseRosterTestLabel(item.label || '', item.status || 'assigned', item));
 }
 
+function logTestSnapshotForRoster(dateStr, sid) {
+  const entry = lookupSidEntry(state.logs?.[dateStr] || {}, sid);
+  if (!entry || typeof entry !== 'object') {
+    return { items: [], dailyLabels: null };
+  }
+
+  // progress.tests can intentionally carry unresolved tests from previous days.
+  // The roster export is a per-date handout, so prefer the daily assignment slice.
+  if (Array.isArray(entry[ROSTER_DAILY_TESTS_KEY])) {
+    const dailyItems = parseRosterTestItems(entry[ROSTER_DAILY_TESTS_KEY]);
+    return {
+      items: dailyItems,
+      dailyLabels: new Set(dailyItems.map(item => item.label).filter(Boolean)),
+    };
+  }
+
+  return {
+    items: parseRosterTestItems(entry.assignedTests),
+    dailyLabels: null,
+  };
+}
+
+function dedupeRosterTests(items) {
+  const byKey = new Map();
+  items.forEach(item => {
+    if (!item || !item.categoryKey) return;
+    const key = item.label || [
+      item.categoryKey,
+      item.curriculum,
+      item.difficulty,
+      item.term,
+      item.round,
+      item.name,
+    ].map(normStr).join('\u241f');
+    byKey.set(key, { ...(byKey.get(key) || {}), ...item });
+  });
+  return Array.from(byKey.values());
+}
+
 function rosterAssignedTests(dateStr, sid) {
-  const logItems = logAssignedTestsForRoster(dateStr, sid);
+  const { items: logItems, dailyLabels } = logTestSnapshotForRoster(dateStr, sid);
   const logByLabel = new Map(logItems.map(item => [item.label, item]));
   const progressEntry = lookupSidEntry(state.progress?.[dateStr] || {}, sid);
   const progressTests = progressEntry?.tests;
@@ -481,9 +519,12 @@ function rosterAssignedTests(dateStr, sid) {
   const items = [];
   if (progressTests && typeof progressTests === 'object') {
     Object.entries(progressTests).forEach(([label, status]) => {
+      const labelKey = normStr(label);
+      if (dailyLabels && dailyLabels.size && !dailyLabels.has(labelKey)) return;
+      if (dailyLabels && !dailyLabels.size) return;
       const normalized = normalizeRosterTestStatus(status);
       if (!ROSTER_TEST_STATUS_EXPORT.has(normalized)) return;
-      items.push(parseRosterTestLabel(label, normalized, logByLabel.get(label) || {}));
+      items.push(parseRosterTestLabel(labelKey, normalized, logByLabel.get(labelKey) || {}));
     });
   }
 
@@ -493,8 +534,7 @@ function rosterAssignedTests(dateStr, sid) {
     });
   }
 
-  return items
-    .filter(item => item.categoryKey)
+  return dedupeRosterTests(items)
     .sort((a, b) =>
       ROSTER_TEST_CATEGORY_ORDER.indexOf(a.categoryKey) - ROSTER_TEST_CATEGORY_ORDER.indexOf(b.categoryKey) ||
       normStr(a.difficulty).localeCompare(normStr(b.difficulty), 'ko') ||

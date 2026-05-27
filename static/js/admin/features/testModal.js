@@ -1034,26 +1034,27 @@ function buildAssignmentNote(items) {
   return `[테스트 배정]\n${lines.join('\n')}`;
 }
 
+function stripAssignmentNoteBlocks(notes) {
+  return String(notes || '')
+    .replace(/(?:^|\n+)\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
   const current = String(notes || '').trimEnd();
   const previous = String(previousBlock || '').trim();
   const replacement = String(nextBlock || '').trim();
   if (!current) return replacement;
 
-  let next = current;
-  if (previous && next.includes(previous)) {
-    next = next.replace(previous, replacement);
-  } else {
-    let matched = false;
-    next = next.replace(/(^|\n{2,})\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, (match, prefix = '') => {
-      matched = true;
-      if (replacement) return `${prefix}${replacement}`;
-      return prefix ? '\n\n' : '';
-    });
-    if (!matched && replacement) next = `${next}\n\n${replacement}`;
+  let base = current;
+  if (previous) {
+    base = base.split(previous).join('');
   }
-
-  return next.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  base = stripAssignmentNoteBlocks(base);
+  if (!replacement) return base;
+  return `${base ? `${base}\n\n` : ''}${replacement}`.trim();
 }
 
 async function patchLogAssignment(items, appendToNotes, newlyAddedItems = []) {

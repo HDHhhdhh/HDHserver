@@ -974,6 +974,13 @@ async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
     : { ...(state.logs[date][ksid] || {}), ...entry };
 }
 
+function stripGeneratedTestAssignmentBlocks(notes) {
+  return String(notes || '')
+    .replace(/(?:^|\n+)\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 export function initLogModal() {
   ensureModal();
   initTestModal();
@@ -1211,7 +1218,7 @@ export function initLogModal() {
         const d = dates[i];
         if (d >= today) continue;
         const prev = (state.logs[d] || {})[sid];
-        const prevNotes = cleanHwText(prev?.notes);
+        const prevNotes = stripGeneratedTestAssignmentBlocks(cleanHwText(prev?.notes));
         if (prevNotes.trim()) {
           seededNotes = prevNotes;
           break;
