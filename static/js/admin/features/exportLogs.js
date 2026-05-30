@@ -26,6 +26,7 @@ import {
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
 const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
 const ROSTER_DAILY_TESTS_KEY = 'testAssignmentDailyTests';
+const ROSTER_TEST_CLEAR_KEY = '__testsClearedAt';
 const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned', 'done']);
 const ROSTER_TEST_CATEGORY_ORDER = ['REVIEW', 'UNIT', 'SCHOOL_PAST', 'ILSAN_PAST'];
 
@@ -377,21 +378,6 @@ function rosterDateKeysBefore(dateStr, source) {
     .reverse();
 }
 
-function previousRosterAssignedVideoMids(dateStr, sid) {
-  for (const date of rosterDateKeysBefore(dateStr, state.updates)) {
-    const mids = rosterAssignedVideoMids(date, sid);
-    if (mids.length) return mids;
-  }
-  return [];
-}
-
-function rosterNewVideoMids(dateStr, sid) {
-  const current = rosterAssignedVideoMids(dateStr, sid);
-  if (!current.length) return [];
-  const previous = new Set(previousRosterAssignedVideoMids(dateStr, sid));
-  return current.filter(mid => !previous.has(mid));
-}
-
 function videoMapForRoster() {
   return new Map((state.videos || [])
     .map(video => [String(video?.mid || '').trim(), video])
@@ -400,7 +386,7 @@ function videoMapForRoster() {
 
 function rosterVideoText(dateStr, sid, videoMap) {
   const seen = new Set();
-  const videos = rosterNewVideoMids(dateStr, sid)
+  const videos = rosterAssignedVideoMids(dateStr, sid)
     .map(mid => videoMap.get(mid))
     .filter(Boolean)
     .filter(video => {
@@ -554,10 +540,35 @@ function rosterProgressTestStatuses(dateStr, sid) {
   return (progressTests && typeof progressTests === 'object') ? progressTests : {};
 }
 
+function rosterHasProgressTests(dateStr, sid) {
+  return Object.keys(rosterProgressTestStatuses(dateStr, sid)).length > 0;
+}
+
+function rosterTestsCleared(dateStr, sid) {
+  const progressEntry = lookupSidEntry(state.progress?.[dateStr] || {}, sid);
+  return !!(progressEntry && typeof progressEntry === 'object' && progressEntry[ROSTER_TEST_CLEAR_KEY]);
+}
+
+function rosterHasStudentDayActivity(dateStr, sid) {
+  const progressEntry = lookupSidEntry(state.progress?.[dateStr] || {}, sid);
+  if (progressEntry && typeof progressEntry === 'object') {
+    const hasProgressContent = Object.keys(progressEntry).some(key =>
+      key !== 'tests' && !String(key).startsWith('__')
+    );
+    if (hasProgressContent || rosterHasProgressTests(dateStr, sid) || rosterTestsCleared(dateStr, sid)) {
+      return true;
+    }
+  }
+
+  const logEntry = lookupSidEntry(state.logs?.[dateStr] || {}, sid);
+  return !!(logEntry && typeof logEntry === 'object' && Object.keys(logEntry).length);
+}
+
 function rosterActiveTestsForDate(dateStr, sid) {
   const { items: logItems } = logTestSnapshotForRoster(dateStr, sid);
   const logByLabel = new Map(logItems.map(item => [item.label, item]));
   const progressTests = rosterProgressTestStatuses(dateStr, sid);
+  const hasProgressTests = rosterHasProgressTests(dateStr, sid);
   const items = [];
 
   Object.entries(progressTests).forEach(([label, status]) => {
@@ -567,7 +578,7 @@ function rosterActiveTestsForDate(dateStr, sid) {
     items.push(parseRosterTestLabel(labelKey, normalized, logByLabel.get(labelKey) || {}));
   });
 
-  if (!items.length) {
+  if (!items.length && !hasProgressTests) {
     logItems.forEach(item => {
       if (ROSTER_TEST_STATUS_EXPORT.has(normalizeRosterTestStatus(item.status))) items.push(item);
     });
@@ -582,16 +593,45 @@ function rosterActiveTestsForDate(dateStr, sid) {
     );
 }
 
-function previousRosterActiveTestLabels(dateStr, sid) {
+function previousRosterActiveTests(dateStr, sid) {
   const dates = Array.from(new Set([
     ...rosterDateKeysBefore(dateStr, state.progress),
     ...rosterDateKeysBefore(dateStr, state.logs),
   ])).sort().reverse();
   for (const date of dates) {
-    const labels = rosterActiveTestsForDate(date, sid).map(item => item.label).filter(Boolean);
-    if (labels.length) return new Set(labels);
+    if (rosterTestsCleared(date, sid)) return [];
+    const items = rosterActiveTestsForDate(date, sid);
+    if (items.length) return items;
+    if (rosterHasStudentDayActivity(date, sid)) return [];
   }
-  return new Set();
+  return [];
+}
+
+function previousRosterActiveTestLabels(dateStr, sid) {
+  return new Set(previousRosterActiveTests(dateStr, sid).map(item => item.label).filter(Boolean));
+}
+
+function rosterAssignmentDeltaForDate(dateStr, sid) {
+  const active = rosterActiveTestsForDate(dateStr, sid);
+  if (!active.length) return [];
+  const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
+  if (!previousLabels.size) return active;
+  return active.filter(item => item.label && !previousLabels.has(item.label));
+}
+
+function previousRosterAssignedTests(dateStr, sid) {
+  const dates = Array.from(new Set([
+    ...rosterDateKeysBefore(dateStr, state.progress),
+    ...rosterDateKeysBefore(dateStr, state.logs),
+  ])).sort().reverse();
+
+  for (const date of dates) {
+    if (rosterTestsCleared(date, sid)) return [];
+    const delta = rosterAssignmentDeltaForDate(date, sid);
+    if (delta.length) return delta;
+    if (rosterHasStudentDayActivity(date, sid)) return [];
+  }
+  return [];
 }
 
 function rosterAssignedTests(dateStr, sid) {
@@ -610,9 +650,13 @@ function rosterAssignedTests(dateStr, sid) {
   }
 
   const active = rosterActiveTestsForDate(dateStr, sid);
-  const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
-  if (!previousLabels.size) return active;
-  return active.filter(item => item.label && !previousLabels.has(item.label));
+  if (rosterTestsCleared(dateStr, sid)) return [];
+  if (!active.length) {
+    if (rosterHasProgressTests(dateStr, sid)) return [];
+    return rosterSortTests(previousRosterAssignedTests(dateStr, sid));
+  }
+
+  return rosterSortTests(rosterAssignmentDeltaForDate(dateStr, sid));
 }
 
 function rosterSortTests(items) {
