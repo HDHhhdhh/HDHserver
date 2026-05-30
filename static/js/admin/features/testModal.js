@@ -342,10 +342,29 @@ function roundOptionsFor(categoryKey, subject, difficulty) {
   return out.length ? out : ROUND_OPTIONS.slice();
 }
 
+function unitTestsForRound(categoryKey, subject, difficulty, round) {
+  if (!isUnitCategory(categoryKey)) return [];
+  const normalizedRound = String(round || '1');
+  return activeCatalog.filter(test =>
+    test.categoryKey === categoryKey &&
+    normalizeSubject(test.curriculum) === normalizeSubject(subject) &&
+    String(test.difficulty || '') === String(difficulty || '') &&
+    normalizeRound(test.round || '') === normalizedRound
+  );
+}
+
+function isUnitRoundFullyColored(categoryKey, subject, difficulty, round) {
+  const tests = unitTestsForRound(categoryKey, subject, difficulty, round);
+  return tests.length > 0 && tests.every(test => isSubmitted(test) || !!statusForKey(test._key));
+}
+
 function defaultRoundFor(categoryKey, subject, difficulty) {
   if (!isUnitCategory(categoryKey)) return '';
   const rounds = roundOptionsFor(categoryKey, subject, difficulty);
-  return rounds.includes('1') ? '1' : (rounds[0] || '1');
+  const firstUncoloredRound = rounds.find(round =>
+    !isUnitRoundFullyColored(categoryKey, subject, difficulty, round)
+  );
+  return firstUncoloredRound || rounds[rounds.length - 1] || '1';
 }
 
 function applyRuleDefaults(categoryKey = activeCategory) {
