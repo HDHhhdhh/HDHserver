@@ -20,6 +20,15 @@ from core.paths import (
 )
 from core.log_repository import LogRepository
 from core import log_rules as _log_rules
+from core.progress_rules import (
+    PROGRESS_ALL_STUDENTS_META_KEY,
+    PROGRESS_MANUAL_META_KEY,
+    TEST_ASSIGN_CLEAR_META_KEY,
+    WATCH_AUTO_PROGRESS_META_KEY,
+    merge_progress_day_sid as _merge_progress_day_sid,
+    merge_watch_entry as _merge_watch_entries_for_mid_migration,
+    watch_auto_status as _watch_auto_status,
+)
 from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
@@ -142,53 +151,6 @@ def _merge_progress_status(existing: str, incoming: str) -> str:
     a = str(existing or "").strip()
     b = str(incoming or "").strip()
     return a if _progress_status_rank(a) >= _progress_status_rank(b) else b
-
-
-def _normalize_watch_entry_for_mid_migration(entry) -> dict:
-    if not isinstance(entry, dict):
-        entry = {}
-
-    try:
-        last = max(0, int(float(entry.get("last", 0) or 0)))
-    except Exception:
-        last = 0
-    try:
-        dur = max(0, int(float(entry.get("dur", 0) or 0)))
-    except Exception:
-        dur = 0
-    try:
-        updated_at = int(entry.get("updatedAt") or 0)
-    except Exception:
-        updated_at = 0
-
-    completed = bool(entry.get("completed", False))
-    if dur > 0 and (last / dur) >= 0.90:
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": updated_at,
-    }
-
-
-def _merge_watch_entries_for_mid_migration(prev, incoming) -> dict:
-    a = _normalize_watch_entry_for_mid_migration(prev)
-    b = _normalize_watch_entry_for_mid_migration(incoming)
-
-    last = max(a["last"], b["last"])
-    dur = max(a["dur"], b["dur"])
-    completed = a["completed"] or b["completed"]
-    if dur > 0 and (last / dur) >= 0.90:
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": max(a["updatedAt"], b["updatedAt"]),
-    }
 
 
 def _replace_mid_in_updates(data, old_mid: str, new_mid: str) -> bool:
@@ -901,169 +863,9 @@ def get_log_repository() -> LogRepository:
     )
 
 
-PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
-WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
-PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
-TEST_ASSIGN_CLEAR_META_KEY = "__testsClearedAt"
 TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
 TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
 _TEST_ANSWER_LINK_MAP_CACHE = {"mtime": None, "data": {}}
-
-
-def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
-    if not isinstance(cur, dict):
-        cur = {}
-    if not isinstance(inc, dict):
-        return dict(cur)
-
-    out = dict(cur)
-    source_s = str(source or "").strip()
-    all_page_meta = out.get(PROGRESS_ALL_STUDENTS_META_KEY)
-    if not isinstance(all_page_meta, dict):
-        all_page_meta = {}
-    else:
-        all_page_meta = dict(all_page_meta)
-    watch_auto_meta = out.get(WATCH_AUTO_PROGRESS_META_KEY)
-    if not isinstance(watch_auto_meta, dict):
-        watch_auto_meta = {}
-    else:
-        watch_auto_meta = dict(watch_auto_meta)
-    manual_meta = out.get(PROGRESS_MANUAL_META_KEY)
-    if not isinstance(manual_meta, dict):
-        manual_meta = {}
-    else:
-        manual_meta = dict(manual_meta)
-
-    for mid, st in inc.items():
-        mid_s = str(mid).strip()
-        if not mid_s:
-            continue
-        if mid_s == TEST_ASSIGN_CLEAR_META_KEY:
-            marker = str(st or "").strip()
-            if marker:
-                out[TEST_ASSIGN_CLEAR_META_KEY] = marker
-            else:
-                out.pop(TEST_ASSIGN_CLEAR_META_KEY, None)
-            continue
-        if mid_s == "tests":
-            if not isinstance(st, dict):
-                continue
-
-            cur_tests = out.get("tests")
-            if not isinstance(cur_tests, dict):
-                cur_tests = {}
-            else:
-                cur_tests = dict(cur_tests)
-
-            for test_key, test_status in st.items():
-                test_key_s = str(test_key or "").strip()
-                if not test_key_s:
-                    continue
-
-                if test_status is None or test_status is False:
-                    cur_tests.pop(test_key_s, None)
-                    continue
-
-                if isinstance(test_status, str):
-                    status_s = test_status.strip()
-                    if status_s in ("", "none"):
-                        cur_tests.pop(test_key_s, None)
-                    else:
-                        cur_tests[test_key_s] = status_s
-                    continue
-
-                if isinstance(test_status, dict):
-                    if test_status.get("remove") is True:
-                        cur_tests.pop(test_key_s, None)
-                    else:
-                        cur_tests[test_key_s] = dict(test_status)
-                    continue
-
-                cur_tests[test_key_s] = str(test_status).strip()
-
-            if cur_tests:
-                out["tests"] = cur_tests
-                out.pop(TEST_ASSIGN_CLEAR_META_KEY, None)
-            else:
-                out.pop("tests", None)
-            continue
-        if mid_s.startswith("__"):
-            continue
-
-        st_s = str(st).strip()
-        if source_s == "auto":
-            prev_s = str(out.get(mid_s) or "").strip()
-            prev_auto = (
-                prev_s in ("done", "interrupted", "skip")
-                and str(watch_auto_meta.get(mid_s) or "").strip() == prev_s
-            )
-            manual_override = bool(manual_meta.get(mid_s))
-
-            all_page_meta.pop(mid_s, None)
-            if st_s in ("", "none"):
-                if prev_auto and prev_s != "done":
-                    out.pop(mid_s, None)
-                    watch_auto_meta.pop(mid_s, None)
-                elif prev_s not in ("done", "interrupted", "skip", "none"):
-                    out.pop(mid_s, None)
-                    watch_auto_meta.pop(mid_s, None)
-                continue
-
-            if st_s == "interrupted":
-                if prev_s == "" or (prev_auto and prev_s != "done"):
-                    out[mid_s] = "interrupted"
-                    watch_auto_meta[mid_s] = "interrupted"
-                    manual_meta.pop(mid_s, None)
-                continue
-
-            if st_s == "done":
-                if prev_s == "" or prev_auto or (prev_s == "interrupted" and not manual_override):
-                    out[mid_s] = "done"
-                    watch_auto_meta[mid_s] = "done"
-                    manual_meta.pop(mid_s, None)
-                continue
-
-            if st_s == "skip":
-                if prev_s == "":
-                    out[mid_s] = "skip"
-                    watch_auto_meta[mid_s] = "skip"
-                    manual_meta.pop(mid_s, None)
-                continue
-
-        if st_s == "none":
-            out[mid_s] = "none"
-        elif st_s == "":
-            out.pop(mid_s, None)
-        else:
-            out[mid_s] = st_s
-
-        if source_s == "allStudents":
-            if st_s == "":
-                all_page_meta.pop(mid_s, None)
-            else:
-                all_page_meta[mid_s] = True
-        else:
-            all_page_meta.pop(mid_s, None)
-        watch_auto_meta.pop(mid_s, None)
-        if source_s == "auto" or st_s == "":
-            manual_meta.pop(mid_s, None)
-        else:
-            manual_meta[mid_s] = True
-
-    if all_page_meta:
-        out[PROGRESS_ALL_STUDENTS_META_KEY] = all_page_meta
-    else:
-        out.pop(PROGRESS_ALL_STUDENTS_META_KEY, None)
-    if watch_auto_meta:
-        out[WATCH_AUTO_PROGRESS_META_KEY] = watch_auto_meta
-    else:
-        out.pop(WATCH_AUTO_PROGRESS_META_KEY, None)
-    if manual_meta:
-        out[PROGRESS_MANUAL_META_KEY] = manual_meta
-    else:
-        out.pop(PROGRESS_MANUAL_META_KEY, None)
-
-    return out
 
 
 # ─────────────────────────────────────────────
@@ -1249,8 +1051,6 @@ AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
 DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
 MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
 MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
-WATCH_INTERRUPTED_RATIO = 0.05
-WATCH_DONE_RATIO = 0.90
 
 
 def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
@@ -1335,29 +1135,6 @@ def _build_latest_status_by_sid(progress: dict) -> dict:
                     continue
                 sm[mid_s] = st
     return out
-
-
-def _watch_ratio(entry: dict) -> float:
-    if not isinstance(entry, dict):
-        return 0.0
-    try:
-        last = max(0.0, float(entry.get("last") or 0))
-        dur = max(0.0, float(entry.get("dur") or 0))
-    except Exception:
-        return 0.0
-    if dur <= 0:
-        return 0.0
-    return max(0.0, min(1.0, last / dur))
-
-
-def _watch_auto_status(entry: dict) -> str:
-    if not isinstance(entry, dict):
-        return ""
-    if bool(entry.get("completed")) or _watch_ratio(entry) >= WATCH_DONE_RATIO:
-        return "done"
-    if _watch_ratio(entry) >= WATCH_INTERRUPTED_RATIO:
-        return "interrupted"
-    return ""
 
 
 def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:

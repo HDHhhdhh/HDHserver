@@ -206,7 +206,14 @@ def run_log_rules_unit_checks() -> None:
 
 
 def run_progress_rule_unit_checks() -> None:
-    from routes.api_basic import PROGRESS_MANUAL_META_KEY, _merge_progress_day_sid
+    from core.progress_rules import (
+        PROGRESS_ALL_STUDENTS_META_KEY,
+        PROGRESS_MANUAL_META_KEY,
+        WATCH_AUTO_PROGRESS_META_KEY,
+        merge_progress_day_sid,
+        merge_watch_entry,
+        watch_auto_status,
+    )
 
     manual = {
         "m1": "none",
@@ -214,13 +221,114 @@ def run_progress_rule_unit_checks() -> None:
         "m4": "interrupted",
         PROGRESS_MANUAL_META_KEY: {"m1": True, "m2": True, "m4": True},
     }
-    merged = _merge_progress_day_sid(manual, {"m1": "done", "m2": "done", "m4": "done"}, source="auto")
+    merged = merge_progress_day_sid(manual, {"m1": "done", "m2": "done", "m4": "done"}, source="auto")
     _assert_unit(merged.get("m1") == "none", "auto watch must not overwrite manual white")
     _assert_unit(merged.get("m2") == "skip", "auto watch must not overwrite manual skip")
     _assert_unit(merged.get("m4") == "interrupted", "auto watch must not overwrite manual interrupted")
 
-    legacy_auto = _merge_progress_day_sid({"m3": "interrupted"}, {"m3": "done"}, source="auto")
+    legacy_auto = merge_progress_day_sid({"m3": "interrupted"}, {"m3": "done"}, source="auto")
     _assert_unit(legacy_auto.get("m3") == "done", "legacy auto interrupted may upgrade to done")
+
+    auto_started = merge_progress_day_sid({}, {"m5": "interrupted"}, source="auto")
+    _assert_unit(auto_started.get("m5") == "interrupted", "auto watch should create interrupted")
+    _assert_unit(
+        auto_started.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m5") == "interrupted",
+        "auto watch should mark its own interrupted status",
+    )
+
+    auto_done = merge_progress_day_sid(auto_started, {"m5": "done"}, source="auto")
+    _assert_unit(auto_done.get("m5") == "done", "auto interrupted should advance to done")
+    _assert_unit(
+        auto_done.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m5") == "done",
+        "auto watch should advance its marker to done",
+    )
+
+    auto_clear = merge_progress_day_sid(auto_started, {"m5": ""}, source="auto")
+    _assert_unit("m5" not in auto_clear, "auto empty update should clear non-done auto progress")
+    _assert_unit(
+        WATCH_AUTO_PROGRESS_META_KEY not in auto_clear,
+        "auto clear should remove empty auto progress metadata",
+    )
+
+    auto_done_preserved = merge_progress_day_sid(auto_done, {"m5": ""}, source="auto")
+    _assert_unit(auto_done_preserved.get("m5") == "done", "auto empty update must not downgrade done")
+
+    manual_clear = merge_progress_day_sid(auto_done, {"m5": ""})
+    _assert_unit("m5" not in manual_clear, "manual empty update should clear progress")
+    _assert_unit(
+        WATCH_AUTO_PROGRESS_META_KEY not in manual_clear,
+        "manual clear should remove stale auto metadata",
+    )
+
+    all_students = merge_progress_day_sid({}, {"m6": "done"}, source="allStudents")
+    _assert_unit(all_students.get("m6") == "done", "all-students progress should set status")
+    _assert_unit(
+        all_students.get(PROGRESS_ALL_STUDENTS_META_KEY, {}).get("m6") is True,
+        "all-students progress should mark metadata",
+    )
+
+    _assert_unit(watch_auto_status({"last": 4, "dur": 100}) == "", "watch under threshold is not progress")
+    _assert_unit(
+        watch_auto_status({"last": 5, "dur": 100}) == "interrupted",
+        "watch interrupted threshold should be shared",
+    )
+    _assert_unit(
+        watch_auto_status({"last": 90, "dur": 100}) == "done",
+        "watch done threshold should be shared",
+    )
+    _assert_unit(
+        watch_auto_status({"last": 1, "dur": 0}) == "interrupted",
+        "watch with unknown duration and position should still count as started",
+    )
+
+    merged_watch = merge_watch_entry(
+        {"last": 80, "dur": 100, "completed": False, "updatedAt": 10},
+        {"last": 70, "dur": 120, "completed": False, "updatedAt": 20},
+    )
+    _assert_unit(merged_watch["last"] == 80, "watch merge must keep furthest position")
+    _assert_unit(merged_watch["dur"] == 120, "watch merge must keep longest duration")
+    _assert_unit(merged_watch["updatedAt"] == 20, "watch merge must keep newest timestamp")
+
+
+def run_watch_route_progress_unit_checks() -> None:
+    from core.progress_rules import PROGRESS_MANUAL_META_KEY, WATCH_AUTO_PROGRESS_META_KEY
+    import routes.api_basic as api_basic
+    import routes.api_watch as api_watch
+
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    old_basic_progress = api_basic.PRG_PATH
+    old_watch_progress = api_watch.PRG_PATH
+
+    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
+        progress_path = pathlib.Path(tmpdir) / "progress.json"
+        progress_path.write_text("{}", "utf-8")
+
+        api_basic.PRG_PATH = progress_path
+        api_watch.PRG_PATH = progress_path
+        try:
+            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "interrupted")
+            _assert_unit(merged.get("m1") == "interrupted", "watch route should save auto interrupted")
+            _assert_unit(
+                merged.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m1") == "interrupted",
+                "watch route should persist auto interrupted metadata",
+            )
+
+            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "done")
+            _assert_unit(merged.get("m1") == "done", "watch route should advance auto interrupted to done")
+
+            current = json.loads(progress_path.read_text("utf-8-sig"))
+            current["2026-06-06"]["007"].update({
+                "m2": "none",
+                PROGRESS_MANUAL_META_KEY: {"m2": True},
+            })
+            progress_path.write_text(json.dumps(current, ensure_ascii=False), "utf-8")
+
+            merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
+            _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
+        finally:
+            api_basic.PRG_PATH = old_basic_progress
+            api_watch.PRG_PATH = old_watch_progress
 
 
 def run_log_repository_unit_checks() -> None:
@@ -298,6 +406,7 @@ def run_unit_checks() -> bool:
     checks = [
         run_log_rules_unit_checks,
         run_progress_rule_unit_checks,
+        run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
     ]
     ok = True

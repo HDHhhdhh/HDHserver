@@ -246,6 +246,7 @@ window.todayLocalKey = function () {
     lastMid: (sid) => `stu:${sid}:last_video_mid`,
     prog: (sid, mid) => `stu:${sid}:watch:${mid}`, // {last, dur, completed, updatedAt}
   };
+  const WATCH_DONE_RATIO = 0.90;
 
   function getProgress(mid) {
     try {
@@ -260,7 +261,7 @@ window.todayLocalKey = function () {
     const last = Math.max(0, Number(entry.last) || 0);
     const dur = Math.max(0, Number(entry.dur) || 0);
     const updatedAt = Math.max(0, Number(entry.updatedAt) || 0);
-    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
+    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * WATCH_DONE_RATIO)));
 
     return {
       last: Math.floor(last),
@@ -276,7 +277,7 @@ window.todayLocalKey = function () {
 
     const last = Math.max(a.last, b.last);
     const dur = Math.max(a.dur, b.dur);
-    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
+    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * WATCH_DONE_RATIO)));
 
     return {
       last,
@@ -1412,7 +1413,7 @@ window.todayLocalKey = function () {
       const dur = Math.max(0, Number(data.duration) || 0);
       const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
       const pct = dur > 0 ? (cur / dur) : 0;
-      const doneByPct = pct >= 0.90;
+      const doneByPct = pct >= WATCH_DONE_RATIO;
       setProgress(data.mid, {
         last: cur,
         dur,

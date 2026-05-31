@@ -117,9 +117,10 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["video assignment", "row date", "data-date", "watch sync", "watch-status", "progress"],
         "answer": (
             "Admin video assignment saves use the row data-date captured when the modal opens, not the live admin date after that. "
-            "Student watch sync posts to /api/watch, which stores watch state and automatic progress together; /api/watch-status is kept for explicit status updates."
+            "Student watch sync posts to /api/watch, which stores watch state and automatic progress together; /api/watch-status is kept for explicit status updates. "
+            "Automatic watch/progress transitions are centralized in core/progress_rules.py so manual white/skip progress stays authoritative."
         ),
-        "sources": ["static/js/admin/features/videoModal.js", "static/js/student.js", "routes/api_watch.py"],
+        "sources": ["core/progress_rules.py", "static/js/admin/features/videoModal.js", "static/js/student.js", "routes/api_watch.py"],
     },
     {
         "title": "테스트 관리",

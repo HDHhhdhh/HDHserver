@@ -4,14 +4,25 @@ import time
 from flask import Blueprint, jsonify, request
 
 from core.paths import WATCH_PATH, PRG_PATH
+from core.progress_rules import (
+    PROGRESS_MANUAL_META_KEY,
+    VALID_VIDEO_PROGRESS_STATUSES,
+    WATCH_AUTO_PROGRESS_META_KEY,
+    WATCH_DONE_RATIO,
+    WATCH_INTERRUPTED_RATIO,
+    merge_auto_watch_progress_status,
+    merge_watch_entry as _merge_watch_entry,
+    normalize_watch_entry as _norm_watch_entry,
+    watch_auto_status as _watch_auto_status,
+    watch_rank as _watch_rank,
+    watch_ratio as _watch_ratio,
+)
 from core.storage import load, save_atomic, nocache_resp
 
 bp_api_watch = Blueprint("api_watch", __name__)
 
-WATCH_INTERRUPTED_RATIO = 0.05
-WATCH_DONE_RATIO = 0.90
-AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
-MANUAL_PROGRESS_META_KEY = "__manualProgressMids"
+AUTO_PROGRESS_META_KEY = WATCH_AUTO_PROGRESS_META_KEY
+MANUAL_PROGRESS_META_KEY = PROGRESS_MANUAL_META_KEY
 
 
 def _watch_lock():
@@ -28,85 +39,6 @@ def _sid_keys(sid: str) -> list[str]:
         if alt not in keys:
             keys.append(alt)
     return [k for k in keys if k]
-
-
-def _norm_watch_entry(entry) -> dict:
-    if not isinstance(entry, dict):
-        entry = {}
-
-    try:
-        last = max(0, int(float(entry.get("last", 0) or 0)))
-    except Exception:
-        last = 0
-    try:
-        dur = max(0, int(float(entry.get("dur", 0) or 0)))
-    except Exception:
-        dur = 0
-    try:
-        updated_at = int(entry.get("updatedAt") or 0)
-    except Exception:
-        updated_at = 0
-
-    completed = bool(entry.get("completed", False))
-    if _watch_ratio({"last": last, "dur": dur}) >= WATCH_DONE_RATIO:
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": updated_at,
-    }
-
-
-def _watch_ratio(entry) -> float:
-    if not isinstance(entry, dict):
-        return 0.0
-    try:
-        last = max(0, float(entry.get("last", 0) or 0))
-        dur = max(0, float(entry.get("dur", 0) or 0))
-    except Exception:
-        return 0.0
-    return last / dur if dur > 0 else 0.0
-
-
-def _watch_auto_status(entry) -> str:
-    e = _norm_watch_entry(entry)
-    pct = _watch_ratio(e)
-    if e["completed"] or pct >= WATCH_DONE_RATIO:
-        return "done"
-    if pct >= WATCH_INTERRUPTED_RATIO or (e["dur"] <= 0 and e["last"] > 0):
-        return "interrupted"
-    return ""
-
-
-def _merge_watch_entry(prev, incoming) -> dict:
-    a = _norm_watch_entry(prev)
-    b = _norm_watch_entry(incoming)
-
-    last = max(a["last"], b["last"])
-    dur = max(a["dur"], b["dur"])
-    completed = a["completed"] or b["completed"]
-    if _watch_ratio({"last": last, "dur": dur}) >= WATCH_DONE_RATIO:
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": max(a["updatedAt"], b["updatedAt"]),
-    }
-
-
-def _watch_rank(entry: dict) -> tuple:
-    e = _norm_watch_entry(entry)
-    pct = (e["last"] / e["dur"]) if e["dur"] > 0 else (1.0 if e["completed"] else 0.0)
-    return (
-        1 if e["completed"] else 0,
-        pct,
-        e["last"],
-        e["updatedAt"],
-    )
 
 
 def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
@@ -174,7 +106,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 
     if not date or not sid or not mid:
         raise ValueError("missing date/sid/mid")
-    if status not in ("done", "interrupted", "skip", "none", ""):
+    if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
     from routes.api_basic import _load_progress_strict, _progress_lock
@@ -198,51 +130,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if cur_sid is None:
             cur_sid = {}
 
-        merged = dict(cur_sid)
-        prev = str(cur_sid.get(mid) or "").strip()
-        auto_meta = cur_sid.get(AUTO_PROGRESS_META_KEY)
-        if not isinstance(auto_meta, dict):
-            auto_meta = {}
-        else:
-            auto_meta = dict(auto_meta)
-        prev_auto = prev in ("done", "interrupted") and str(auto_meta.get(mid) or "").strip() == prev
-        manual_meta = cur_sid.get(MANUAL_PROGRESS_META_KEY)
-        manual_override = isinstance(manual_meta, dict) and bool(manual_meta.get(mid))
-
-        def set_auto(value: str) -> None:
-            merged[mid] = value
-            auto_meta[mid] = value
-
-        # Automatic watch progress may advance only values it wrote before.
-        # Manual progress patches remove this marker in routes.api_basic.
-        if status in ("", "none"):
-            if prev_auto and prev != "done":
-                merged.pop(mid, None)
-                auto_meta.pop(mid, None)
-            elif prev_auto and prev == "done":
-                pass
-            elif prev not in ("done", "interrupted", "skip", "none"):
-                merged.pop(mid, None)
-        elif status == "interrupted":
-            if prev == "":
-                set_auto("interrupted")
-            elif prev_auto and prev != "done":
-                set_auto("interrupted")
-        elif status == "done":
-            # Legacy auto-interrupted records predate AUTO_PROGRESS_META_KEY, so
-            # allow a done upgrade unless a newer manual patch marked the mid.
-            if prev == "" or prev_auto or (prev == "interrupted" and not manual_override):
-                set_auto("done")
-        elif status == "skip":
-            if prev == "":
-                set_auto("skip")
-        else:
-            merged[mid] = status
-
-        if auto_meta:
-            merged[AUTO_PROGRESS_META_KEY] = auto_meta
-        else:
-            merged.pop(AUTO_PROGRESS_META_KEY, None)
+        merged = merge_auto_watch_progress_status(cur_sid, mid, status)
 
         if merged:
             day[sid_key] = merged
@@ -340,7 +228,7 @@ def api_watch_status():
 
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
-    if status not in ("done", "interrupted", "skip", "none", ""):
+    if status not in VALID_VIDEO_PROGRESS_STATUSES:
         return jsonify({"ok": False, "error": "bad status"}), 400
 
     if status == "interrupted":

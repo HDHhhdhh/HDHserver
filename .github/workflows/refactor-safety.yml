@@ -1,0 +1,31 @@
+name: Refactor safety
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Compile Python
+        run: python -m compileall -q app.py routes core scripts
+
+      - name: Run safety verification
+        run: python scripts/verify_refactor_safety.py
