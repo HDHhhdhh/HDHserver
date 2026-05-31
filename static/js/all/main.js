@@ -11,6 +11,7 @@ import { hookDeleteButtons } from './features/deleteButtons.js';
 import { hookCloneButtons } from './features/cloneButtons.js';
 import './features/escClose.js';
 import { mountNewStudentBar } from './features/addStudent.js';
+import { mountChatRosterExport } from './features/chatRosterExport.js';
 
 /** 이름+학교 기준으로 학생 dedup용 키 (table.js와 동일 로직) */
 function dedupKeyForStudent(s) {
@@ -67,6 +68,7 @@ function renderAll() {
     },
   });
   mountNewStudentBar();
+  mountChatRosterExport();
 }
 
 (async function init() {

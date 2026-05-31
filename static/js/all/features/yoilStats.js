@@ -2,6 +2,7 @@
 import { $ } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
+import { isSelfStudyDayField } from '../../shared/selfStudy.js';
 
 function escapeHtml(s = '') {
   return String(s)
@@ -81,6 +82,7 @@ export function renderYoilStats() {
 
   for (const s of state.students) {
     dayKeys.forEach(k => {
+      if (isSelfStudyDayField(s, k)) return;
       const d = slotKeyFor(s, k, s[k]);
       if (d && counts[d] != null) {
         counts[d]++;

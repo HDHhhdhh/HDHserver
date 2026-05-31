@@ -11,6 +11,7 @@ import { $, toast } from '../core/utils.js';
 import { patchField } from '../core/api.js';
 import { state } from '../core/state.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
+import { SELF_STUDY_DAYS_FIELD, isSelfStudyDayField, nextSelfStudyDays } from '../../shared/selfStudy.js';
 
 const subCurrOptions = ['A:Ble', 'APEX'];
 const CURRICULUM_OPTIONS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
@@ -162,7 +163,9 @@ export function renderTable() {
     // 요일/등원시간 렌더용
     const dayInputsHtml = [1, 2, 3, 4, 5].map(n => {
       const val = s[`day${n}`] || '';
-      return `<input class="dayInput" data-id="${s.id}" data-day="day${n}" value="${escapeHtml(val)}">`;
+      const dayField = `day${n}`;
+      const selfStudy = isSelfStudyDayField(s, dayField);
+      return `<input class="dayInput" data-id="${s.id}" data-day="${dayField}" data-self-study="${selfStudy ? '1' : '0'}" title="${selfStudy ? '자습' : ''}" value="${escapeHtml(val)}">`;
     }).join('');
 
     const timeInputsHtml = [1, 2, 3, 4, 5].map(n => {
@@ -266,13 +269,46 @@ export function renderTable() {
   host.innerHTML = `${datalist}
     <style>
       /* 표 스타일 범위 한정 */
-      #allWrap .studentsTable { width:100%; border-collapse:separate; border-spacing:0; }
+      body.all-page #allWrap {
+        overflow-x:hidden !important;
+      }
+      body.all-page #allWrap .studentsTable,
+      #allWrap .studentsTable {
+        width:100% !important;
+        min-width:0 !important;
+        max-width:100% !important;
+        table-layout:fixed !important;
+        border-collapse:separate;
+        border-spacing:0;
+      }
       #allWrap .studentsTable th,
-      #allWrap .studentsTable td { padding:10px 14px; vertical-align:middle; }
+      #allWrap .studentsTable td {
+        padding:7px 6px;
+        vertical-align:middle;
+        box-sizing:border-box;
+      }
 
-      /* 왼쪽 컬럼 넓힘 */
-      #allWrap .studentsTable col.col-name   { width:80px; min-width:80px; }
-      #allWrap .studentsTable col.col-school { width:120px; min-width:120px; }
+      #allWrap .studentsTable :where(input, select, button) {
+        max-width:100%;
+        box-sizing:border-box;
+      }
+
+      #allWrap .studentsTable th {
+        white-space:nowrap;
+        font-size:12px;
+      }
+
+      /* 한 화면에 모든 컬럼이 들어오도록 주요 컬럼 폭 고정 */
+      #allWrap .studentsTable col.col-name       { width:6%; }
+      #allWrap .studentsTable col.col-school     { width:7%; }
+      #allWrap .studentsTable col.col-grade      { width:5%; }
+      #allWrap .studentsTable col.col-level      { width:6%; }
+      #allWrap .studentsTable col.col-curriculum { width:14%; }
+      #allWrap .studentsTable col.col-schedule   { width:20%; }
+      #allWrap .studentsTable col.col-books      { width:16%; }
+      #allWrap .studentsTable col.col-docs       { width:16%; }
+      #allWrap .studentsTable col.col-del        { width:4%; }
+      #allWrap .studentsTable col.col-clone      { width:6%; }
 
       /* 내용 길이 대응 */
       #allWrap .studentsTable .cell-name a {
@@ -287,42 +323,116 @@ export function renderTable() {
       #allWrap .studentsTable .cell-school,
       #allWrap .studentsTable .cell-grade {
         display:inline-block;
-        min-width:80px;
+        min-width:0;
+        max-width:100%;
+        overflow-wrap:anywhere;
+        word-break:keep-all;
       }
 
       /* 커리/세부커리 정렬 */
       #allWrap .studentsTable .curCell{
-        display:flex;
+        display:grid;
+        grid-template-columns:minmax(0, 1.05fr) minmax(0, .95fr);
         gap:6px;
         align-items:center;
       }
-      #allWrap .studentsTable .curCell .curSelect{
-        min-width:90px;
-      }
+      #allWrap .studentsTable .levelSelect,
+      #allWrap .studentsTable .curCell .curSelect,
       #allWrap .studentsTable .curCell .subCurrSelect{
-        min-width:80px;
+        width:100%;
+        min-width:0;
+        padding-left:8px;
+        padding-right:22px;
       }
 
       /* 요일 / 등원시간 행 스타일 */
+      body.all-page #allWrap .studentsTable .dayInputRow,
+      body.all-page #allWrap .studentsTable .timeInputRow,
       #allWrap .studentsTable .dayInputRow,
       #allWrap .studentsTable .timeInputRow{
-        display:flex;
+        display:grid !important;
+        grid-template-columns:repeat(5, minmax(0, 1fr)) !important;
         gap:4px;
         margin-bottom:3px;
       }
+      body.all-page #allWrap .studentsTable .dayInputRow input.dayInput,
       #allWrap .studentsTable .dayInputRow input.dayInput{
-        width:3.4rem;
+        width:100% !important;
+        min-width:0 !important;
       }
+      body.all-page #allWrap .studentsTable .dayInputRow input.dayInput[data-self-study="1"],
+      #allWrap .studentsTable .dayInputRow input.dayInput[data-self-study="1"]{
+        background:#e5e7eb !important;
+        border-color:#9ca3af !important;
+        color:#374151 !important;
+      }
+      body.dark #allWrap .studentsTable .dayInputRow input.dayInput[data-self-study="1"]{
+        background:#374151 !important;
+        border-color:#64748b !important;
+        color:#e5e7eb !important;
+      }
+      body.all-page #allWrap .studentsTable .timeInputRow input.timeInput,
       #allWrap .studentsTable .timeInputRow input.timeInput{
-        width:3.4rem;
-        font-size:11px;
-        padding:4px 6px;
+        width:100% !important;
+        min-width:0 !important;
+        font-size:10px !important;
+        padding:0 2px !important;
       }
 
       /* 입력/버튼 정렬 */
-      #allWrap .studentsTable .docBox { display:flex; align-items:center; gap:6px; }
+      #allWrap .studentsTable .sbBox,
+      #allWrap .studentsTable .docBox {
+        display:grid;
+        align-items:center;
+        gap:6px;
+      }
+      #allWrap .studentsTable .sbBox {
+        grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      }
+      #allWrap .studentsTable .subBookInput {
+        width:100% !important;
+        min-width:0 !important;
+        padding-left:8px;
+        padding-right:8px;
+      }
+      #allWrap .studentsTable .docBox {
+        grid-template-columns:minmax(0, 1fr) 36px 36px;
+      }
       /* ✅ 독스 칸 줄이기 */
-      #allWrap .studentsTable .docUrlInput { min-width:140px; max-width:180px; }
+      #allWrap .studentsTable .docUrlInput {
+        width:100% !important;
+        min-width:0 !important;
+        max-width:none !important;
+        padding-left:8px;
+        padding-right:8px;
+      }
+      body.all-page #allWrap .studentsTable :where(th:nth-child(8), td:nth-child(8)) {
+        width:auto !important;
+        min-width:0 !important;
+        max-width:none !important;
+      }
+
+      body.all-page #allWrap .studentsTable :where(th.col-del, td:has(.btn-del-stu)) {
+        width:42px !important;
+        min-width:42px !important;
+        max-width:42px !important;
+        padding-left:4px !important;
+        padding-right:4px !important;
+      }
+
+      body.all-page #allWrap .studentsTable :where(th.col-clone, td.col-clone-cell) {
+        width:54px !important;
+        min-width:54px !important;
+        max-width:54px !important;
+        padding-left:4px !important;
+        padding-right:4px !important;
+      }
+
+      body.all-page #allWrap .studentsTable .btn-clone-stu {
+        width:100% !important;
+        min-width:0 !important;
+        padding:0 6px !important;
+      }
 
       #allWrap .studentsTable .miniProgBtn{
         height:32px; width:36px;
@@ -393,8 +503,14 @@ export function renderTable() {
       <colgroup>
         <col class="col-name" />
         <col class="col-school" />
-        <!-- 나머지 6열: 학년 / 레벨 / 커리 / 요일+시간 / 부교재 / 독스 -->
-        <col /><col /><col /><col /><col /><col />
+        <col class="col-grade" />
+        <col class="col-level" />
+        <col class="col-curriculum" />
+        <col class="col-schedule" />
+        <col class="col-books" />
+        <col class="col-docs" />
+        <col class="col-del" />
+        <col class="col-clone" />
       </colgroup>
       <thead>
         <tr>
@@ -538,6 +654,13 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+document.addEventListener('contextmenu', (e) => {
+  const input = e.target.closest?.('.dayInput');
+  if (!input) return;
+  e.preventDefault();
+  toggleSelfStudyDay(input);
+});
+
 // 독스 열기 버튼: 같은 행의 input 값을 사용
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.docOpen'); if (!btn) return;
@@ -668,6 +791,45 @@ function getVisitTimeFieldForDayField(dayField = '') {
   return match ? `visitTime${match[1]}` : '';
 }
 
+async function renderYoilStatsSafe() {
+  const { renderYoilStats } = await import('./yoilStats.js');
+  renderYoilStats();
+}
+
+async function toggleSelfStudyDay(el) {
+  const sid = el.dataset.id;
+  const field = el.dataset.day;
+  if (!sid || !field) return;
+
+  const value = (el.value || '').trim();
+  if (!value) {
+    alert('요일을 먼저 입력하세요.');
+    return;
+  }
+
+  const stu = state.students.find(s => String(s.id) === String(sid));
+  const prevRaw = stu ? stu[SELF_STUDY_DAYS_FIELD] : undefined;
+  const prevEnabled = stu ? isSelfStudyDayField(stu, field) : el.dataset.selfStudy === '1';
+  const nextEnabled = !prevEnabled;
+  const nextMap = nextSelfStudyDays(stu || {}, field, nextEnabled);
+
+  if (stu) stu[SELF_STUDY_DAYS_FIELD] = nextMap;
+  el.dataset.selfStudy = nextEnabled ? '1' : '0';
+  el.title = nextEnabled ? '자습' : '';
+
+  try {
+    const res = await patchField(sid, SELF_STUDY_DAYS_FIELD, nextMap);
+    if (!ok(res)) throw res;
+    await renderYoilStatsSafe();
+    toast(nextEnabled ? '자습으로 표시됨' : '자습 해제됨');
+  } catch {
+    if (stu) stu[SELF_STUDY_DAYS_FIELD] = prevRaw;
+    el.dataset.selfStudy = prevEnabled ? '1' : '0';
+    el.title = prevEnabled ? '자습' : '';
+    alert('자습 저장 실패');
+  }
+}
+
 async function saveDayInput(el) {
   const sid = el.dataset.id;
   const field = el.dataset.day;
@@ -681,6 +843,11 @@ async function saveDayInput(el) {
   if (stu) {
     stu[field] = value;
     if (timeField) stu[timeField] = autoTime;
+    if (!value && isSelfStudyDayField(stu, field)) {
+      stu[SELF_STUDY_DAYS_FIELD] = nextSelfStudyDays(stu, field, false);
+      el.dataset.selfStudy = '0';
+      el.title = '';
+    }
   }
 
   const timeInput = timeField
@@ -696,10 +863,13 @@ async function saveDayInput(el) {
       const timeRes = await patchField(sid, timeField, autoTime);
       if (!ok(timeRes)) throw timeRes;
     }
+    if (!value && stu) {
+      const selfStudyRes = await patchField(sid, SELF_STUDY_DAYS_FIELD, stu[SELF_STUDY_DAYS_FIELD] || {});
+      if (!ok(selfStudyRes)) throw selfStudyRes;
+    }
 
     toast('요일/등원시간 저장됨');
-    const { renderYoilStats } = await import('./yoilStats.js');
-    renderYoilStats();
+    await renderYoilStatsSafe();
   } catch {
     alert('저장 실패');
   }
