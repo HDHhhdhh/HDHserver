@@ -13,11 +13,14 @@ from typing import List, Optional, Tuple, Dict, Any
 from flask import Blueprint, abort, jsonify, request
 
 from core.paths import (
+    BASE,
     STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH,
     EXTRA_PATH, LOGS_PATH, CLINIC_PATH, TODAY_ORDER_PATH, WEEKEND_SLOTS_PATH,
     WATCH_PATH,
 )
-from core.storage import load, save_atomic, nocache_resp
+from core.log_repository import LogRepository
+from core import log_rules as _log_rules
+from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
 bp_api_basic = Blueprint("api_basic", __name__)
@@ -293,115 +296,23 @@ def _migrate_video_mid_references(prev_videos, next_videos):
 # ─────────────────────────────────────────────
 # ✅ 프로세스 간 파일 락 (JSON 저장 보호용)
 # ─────────────────────────────────────────────
-class _InterProcessFileLock:
-    def __init__(
-        self,
-        lock_path: str,
-        timeout_sec: float = 4.0,
-        poll_sec: float = 0.05,
-        stale_sec: float = 30.0,
-    ):
-        self.lock_path = lock_path
-        self.timeout_sec = timeout_sec
-        self.poll_sec = poll_sec
-        self.stale_sec = stale_sec
-        self._fd = None
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-        except Exception:
-            return False
-
-    def _try_break_stale_lock(self):
-        try:
-            st = os.stat(self.lock_path)
-        except FileNotFoundError:
-            return
-        except Exception:
-            return
-
-        age = time.time() - float(st.st_mtime)
-        if age < self.stale_sec:
-            return
-
-        pid = None
-        try:
-            with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
-                txt = f.read()
-            m = re.search(r"\bpid=(\d+)\b", txt)
-            if m:
-                pid = int(m.group(1))
-        except Exception:
-            pid = None
-
-        # If owner pid is known and still alive, don't break lock even if old.
-        if pid is not None and self._pid_alive(pid):
-            return
-
-        try:
-            os.remove(self.lock_path)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
-
-    def acquire(self):
-        deadline = time.time() + self.timeout_sec
-        while True:
-            try:
-                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                self._fd = fd
-                os.write(fd, f"pid={os.getpid()} time={time.time()}".encode("utf-8"))
-                return
-            except FileExistsError:
-                self._try_break_stale_lock()
-                if time.time() > deadline:
-                    raise TimeoutError(f"lock timeout: {self.lock_path}")
-                time.sleep(self.poll_sec)
-
-    def release(self):
-        try:
-            if self._fd is not None:
-                try:
-                    os.close(self._fd)
-                except Exception:
-                    pass
-            self._fd = None
-            try:
-                os.remove(self.lock_path)
-            except FileNotFoundError:
-                pass
-        except Exception:
-            pass
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *_):
-        self.release()
+class _InterProcessFileLock(InterProcessFileLock):
+    """Backward-compatible alias for modules importing the old route-local lock."""
 
 
 def _logs_lock():
     lp = str(getattr(LOGS_PATH, "__fspath__", lambda: str(LOGS_PATH))())
-    return _InterProcessFileLock(lp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+    return _InterProcessFileLock(lp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _progress_lock():
     pp = str(getattr(PRG_PATH, "__fspath__", lambda: str(PRG_PATH))())
-    return _InterProcessFileLock(pp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+    return _InterProcessFileLock(pp + ".lock", timeout_sec=30.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _updates_lock():
     up = str(getattr(UPD_PATH, "__fspath__", lambda: str(UPD_PATH))())
-    return _InterProcessFileLock(up + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+    return _InterProcessFileLock(up + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _sid_lookup(mapping: dict, sid: str):
@@ -445,7 +356,6 @@ def _normalize_video_assign_list(value) -> list[str]:
         out.append(mid)
         seen.add(mid)
     return out
-
 
 
 def _is_manual_video_assignment(value) -> bool:
@@ -514,6 +424,121 @@ def _assigned_test_label(raw: dict) -> str:
     return " / ".join(str(x).strip() for x in pieces if str(x or "").strip())
 
 
+def _normalized_test_status_map(tests) -> dict:
+    if not isinstance(tests, dict):
+        return {}
+    statuses = {
+        str(label).strip(): _normalize_test_assignment_status(status)
+        for label, status in tests.items()
+    }
+    return {label: status for label, status in statuses.items() if label and status}
+
+
+def _latest_previous_test_statuses(progress_all: dict, date: str, sid: str) -> dict:
+    if not isinstance(progress_all, dict):
+        return {}
+    previous_dates = []
+    for raw_date in progress_all.keys():
+        raw_date_s = str(raw_date or "")
+        if DATE_RE.match(raw_date_s) and raw_date_s < str(date):
+            previous_dates.append(raw_date_s)
+    for prev_date in sorted(previous_dates, reverse=True):
+        prev_day = progress_all.get(prev_date)
+        prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
+        if not isinstance(prev_entry, dict):
+            continue
+        if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
+            break
+        prev_statuses = _normalized_test_status_map(prev_entry.get("tests"))
+        if prev_statuses:
+            return prev_statuses
+    return {}
+
+
+def _normalize_test_answer_round(round_value) -> str:
+    raw = str(round_value or "1").strip()
+    if raw in {"2", "2회", "2회차"}:
+        return "2"
+    if raw in {"3", "3회", "3회차"}:
+        return "3"
+    return "1"
+
+
+def _load_test_answer_link_map() -> dict:
+    try:
+        mtime = TEST_ANSWER_LINK_MAP_PATH.stat().st_mtime
+    except FileNotFoundError:
+        _TEST_ANSWER_LINK_MAP_CACHE.update({"mtime": None, "data": {}})
+        return {}
+    except Exception:
+        return _TEST_ANSWER_LINK_MAP_CACHE.get("data") or {}
+
+    if _TEST_ANSWER_LINK_MAP_CACHE.get("mtime") == mtime:
+        return _TEST_ANSWER_LINK_MAP_CACHE.get("data") or {}
+
+    try:
+        data = json.loads(TEST_ANSWER_LINK_MAP_PATH.read_text("utf-8-sig"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _TEST_ANSWER_LINK_MAP_CACHE.update({"mtime": mtime, "data": data})
+    return data
+
+
+def _answer_url_from_link_entry(entry) -> str:
+    if isinstance(entry, str):
+        return entry.strip()
+    if isinstance(entry, dict):
+        for key in ("answerUrl", "answer_url", "url", "link"):
+            value = str(entry.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _test_assignment_is_unit(item: dict) -> bool:
+    source = " ".join(str(item.get(key) or "") for key in (
+        "category", "categoryKey", "categoryLabel", "label", "type"
+    ))
+    return bool(re.search(r"\bUNIT\b", source, re.I) or "단원평가" in source or "단원" in source)
+
+
+def _test_assignment_answer_url(item: dict) -> str:
+    if not isinstance(item, dict) or not _test_assignment_is_unit(item):
+        return ""
+
+    link_map = _load_test_answer_link_map()
+    if not link_map:
+        return ""
+
+    round_key = _normalize_test_answer_round(item.get("round"))
+    candidates = []
+    for key in ("id", "testId", "sourceId", "source_id"):
+        raw = str(item.get(key) or "").strip()
+        if not raw:
+            continue
+        candidates.append(raw)
+        stripped = re.sub(r"_r[123]$", "", raw)
+        if stripped != raw:
+            candidates.append(stripped)
+
+    seen = set()
+    for test_id in candidates:
+        if not test_id or test_id in seen:
+            continue
+        seen.add(test_id)
+        rounds = link_map.get(test_id)
+        if isinstance(rounds, dict):
+            url = _answer_url_from_link_entry(rounds.get(round_key))
+            if url:
+                return url
+        url = _answer_url_from_link_entry(rounds)
+        if url:
+            return url
+    return ""
+
+
 def _student_assigned_tests_for_date(
     progress_all: dict,
     logs_map: dict,
@@ -528,24 +553,27 @@ def _student_assigned_tests_for_date(
     if not isinstance(progress_tests, dict):
         progress_tests = {}
 
-    def normalized_status_map(tests):
-        if not isinstance(tests, dict):
-            return {}
-        statuses = {
-            str(label).strip(): _normalize_test_assignment_status(status)
-            for label, status in tests.items()
-        }
-        return {label: status for label, status in statuses.items() if label and status}
-
-    status_by_label = normalized_status_map(progress_tests)
+    status_by_label = _normalized_test_status_map(progress_tests)
 
     by_label = {}
     log_labels = []
+    daily_labels = []
 
     def collect_log_items(source_map, source_date=None):
         date_key = str(source_date or date)
         day_logs = source_map.get(date_key) if isinstance(source_map, dict) else {}
         log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+        daily_items = log_entry.get(TEST_ASSIGN_DAILY_ITEMS_KEY) if isinstance(log_entry, dict) else []
+        if isinstance(daily_items, list):
+            for raw in daily_items:
+                if not isinstance(raw, dict):
+                    continue
+                label = _assigned_test_label(raw)
+                if not label:
+                    continue
+                if label not in daily_labels:
+                    daily_labels.append(label)
+                by_label[label] = {**by_label.get(label, {}), **raw, "label": label}
         log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
         if not isinstance(log_items, list):
             return
@@ -572,28 +600,13 @@ def _student_assigned_tests_for_date(
     if not log_labels:
         collect_log_items(fallback_logs_map)
 
-    if not status_by_label and not log_labels and isinstance(progress_all, dict):
-        previous_dates = (
-            d for d in progress_all.keys()
-            if DATE_RE.match(str(d or "")) and str(d) < str(date)
-        )
-        for prev_date in sorted(previous_dates, reverse=True):
-            prev_day = progress_all.get(prev_date)
-            prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
-            if not isinstance(prev_entry, dict):
-                continue
-            if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
-                break
-            prev_statuses = normalized_status_map(prev_entry.get("tests"))
-            if not prev_statuses:
-                continue
-            status_by_label = prev_statuses
-            collect_log_items(fallback_logs_map, prev_date)
-            break
+    previous_statuses = {} if daily_labels else _latest_previous_test_statuses(progress_all, date, sid)
 
-    labels = list(status_by_label.keys())
-    if not labels:
-        labels = list(log_labels)
+    if daily_labels:
+        labels = list(daily_labels)
+    else:
+        active_labels = list(status_by_label.keys()) or list(log_labels)
+        labels = [label for label in active_labels if label not in previous_statuses]
 
     out = []
     for label in labels:
@@ -610,6 +623,9 @@ def _student_assigned_tests_for_date(
         item["label"] = item.get("label") or label
         item["status"] = status
         item["statusLabel"] = _test_assignment_status_label(status)
+        answer_url = _test_assignment_answer_url(item)
+        if answer_url:
+            item["answerUrl"] = answer_url
         out.append(item)
 
     return out
@@ -717,22 +733,6 @@ def _filter_materials_for_assignment(materials, assigned):
 # - "__clear": ["notes", ...] 로 명시 삭제
 # - done=true 는 저장/수정으로 false로 풀리지 않게(명시 해제 기능 없으면 고정)
 # ─────────────────────────────────────────────
-def _is_empty_value(v) -> bool:
-    if v is None:
-        return True
-    if isinstance(v, str) and v.strip() == "":
-        return True
-    if isinstance(v, list) and len(v) == 0:
-        return True
-    if isinstance(v, dict) and len(v) == 0:
-        return True
-    return False
-
-
-def _truthy(v) -> bool:
-    return v is True or v == 1 or v == "1" or v == "true"
-
-
 def _is_question_placeholder(value) -> bool:
     text = re.sub(r"\s+", "", str(value or ""))
     return len(text) >= 2 and set(text) == {"?"}
@@ -883,147 +883,31 @@ def _repair_log_entry_placeholders(entry: dict, sid: str) -> dict:
     return out
 
 
-def _merge_entry_safe(cur: dict, inc: dict) -> dict:
-    if not isinstance(cur, dict):
-        cur = {}
-    if not isinstance(inc, dict):
-        return cur
-
-    out = dict(cur)
-
-    # 명시 삭제
-    clear = inc.get("__clear")
-    if isinstance(clear, list):
-        for k in clear:
-            kk = str(k).strip()
-            if kk:
-                out.pop(kk, None)
-
-    cur_done = _truthy(cur.get("done"))
-
-    for k, v in inc.items():
-        if k == "__clear":
-            continue
-
-        # None은 삭제로 쓰지 말고 __clear로
-        if v is None:
-            continue
-
-        # 빈값이 기존 유효값을 덮는 것 방지
-        if _is_empty_value(v) and not _is_empty_value(out.get(k)):
-            continue
-
-        out[k] = v
-
-    # ✅ inc가 done을 언급하지 않았는데, cur이 done이었다면 유지
-    if cur_done and "done" not in inc:
-        out["done"] = True
-
-    # Safety: if this patch explicitly marks completion, do not keep
-    # stale archived=true unless the patch also explicitly asks to archive.
-    marks_done_now = _truthy(inc.get("done"))
-    marks_leave_now = any(
-        (k in inc) and (not _is_empty_value(inc.get(k)))
-        for k in ("leaveTime", "leaveAt", "doneTime")
-    )
-    done_after_merge = _truthy(out.get("done"))
-    if (marks_done_now or (marks_leave_now and (cur_done or done_after_merge))) and "archived" not in inc:
-        out.pop("archived", None)
-
-    return out
-
-
-def _normalize_hw_rows_for_compare(rows) -> list:
-    if not isinstance(rows, list):
-        return []
-
-    out = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-
-        if "book" in row or "this" in row or "comment" in row or "next" in row:
-            book = str(row.get("book") or "").strip()
-            this_hw = str(row.get("this") or "").strip()
-            pct = row.get("pct")
-            pct_s = "" if pct in ("", None) else str(pct).strip()
-            comment = str(row.get("comment") or "").strip()
-            next_hw = str(row.get("next") or "").strip()
-            deleted = bool(row.get("_deleted") or row.get("_del") or row.get("deleted"))
-        else:
-            book = str(row.get("name") or "").strip()
-            this_hw = str(row.get("unit") or "").strip()
-            pct = row.get("pct")
-            pct_s = "" if pct in ("", None) else str(pct).strip()
-            comment = str(row.get("rem") or "").strip()
-            next_hw = ""
-            deleted = False
-
-        out.append({
-            "book": book,
-            "this": this_hw,
-            "pct": pct_s,
-            "comment": comment,
-            "next": next_hw,
-            "_deleted": deleted,
-        })
-
-    return out
-
-
-def _extract_hw_rows_for_compare(entry: dict) -> list:
-    if not isinstance(entry, dict):
-        return []
-
-    rows = entry.get("homeworkTable")
-    if isinstance(rows, list) and rows:
-        return _normalize_hw_rows_for_compare(rows)
-
-    homework = str(entry.get("homework") or "").strip()
-    if homework:
-        return _normalize_hw_rows_for_compare([{
-            "book": "",
-            "this": "",
-            "pct": "",
-            "comment": homework,
-            "next": "",
-            "_deleted": False,
-        }])
-
-    return []
-
-
-def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
-    if not isinstance(base, dict) or not base:
-        return False
-
-    current = cur if isinstance(cur, dict) else {}
-
-    if "notes" in base:
-        cur_notes = str(current.get("notes") or "").strip()
-        base_notes = str(base.get("notes") or "").strip()
-        if cur_notes != base_notes:
-            return True
-
-    if "homeworkTable" in base:
-        cur_rows = _extract_hw_rows_for_compare(current)
-        base_rows = _normalize_hw_rows_for_compare(base.get("homeworkTable"))
-        if cur_rows != base_rows:
-            return True
-
-    return False
-
-
 # ─────────────────────────────────────────────
 # ✅ progress 1건(date/sid) 안전 merge
 # - inc[mid] = "done" | "interrupted" | "skip" | "none"
 # - "none" is an explicit manual clear marker. It must override older
 #   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
+def get_log_repository() -> LogRepository:
+    return LogRepository(
+        logs_path=LOGS_PATH,
+        repair_entry=_repair_log_entry_placeholders,
+        merge_entry=_log_rules.merge_log_entry_safe,
+        entry_conflicts=_log_rules.log_entry_conflicts_with_base,
+        lock_factory=_logs_lock,
+        truthy=_log_rules.truthy,
+        today_key=_today_kst_iso,
+    )
+
+
 PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
 WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
 PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
 TEST_ASSIGN_CLEAR_META_KEY = "__testsClearedAt"
+TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
+TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
+_TEST_ANSWER_LINK_MAP_CACHE = {"mtime": None, "data": {}}
 
 
 def _merge_progress_day_sid(cur: dict, inc: dict, source: str = "") -> dict:
@@ -1407,6 +1291,14 @@ def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
     ]
     fallback.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
     return fallback
+
+
+def _student_primary_video_mids(stu: dict, videos: list) -> set[str]:
+    return {
+        str(v.get("mid") or "").strip()
+        for v in _student_completion_videos(stu, videos)
+        if isinstance(v, dict) and str(v.get("mid") or "").strip()
+    }
 
 
 def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid: dict) -> bool:
@@ -1862,43 +1754,27 @@ def api_student_bootstrap():
     assigned_videos = _normalize_video_assign_list(assignment)
     assigned_set = set(assigned_videos)
 
-    videos = [
-        v for v in videos_all
-        if isinstance(v, dict) and str(v.get("mid") or "").strip() in assigned_set
-    ]
+    primary_video_mids = _student_primary_video_mids(student, videos_all)
+    videos = []
+    for v in videos_all:
+        if not isinstance(v, dict):
+            continue
+        mid = str(v.get("mid") or "").strip()
+        if mid not in assigned_set:
+            continue
+        item = dict(v)
+        item["isExtraAssignment"] = mid not in primary_video_mids
+        videos.append(item)
 
     assigns = load(ASN_PATH) or {}
     material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
     assigned_materials = _assigned_material_list(material_assignment)
     materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
 
-    logs = {}
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        entry = _db_get_entry(con, date, sid)
-        if isinstance(entry, dict) and entry:
-            logs = {date: {sid: entry}}
-    except Exception:
-        logs = {}
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    if not logs:
-        try:
-            json_logs = load(LOGS_PATH) or {}
-            entry = _sid_lookup((json_logs.get(date) or {}) if isinstance(json_logs, dict) else {}, sid)
-            logs = {date: {sid: entry}} if isinstance(entry, dict) and entry else {date: {}}
-        except Exception:
-            logs = {date: {}}
-
-    try:
-        json_logs_for_assigned = load(LOGS_PATH) or {}
-    except Exception:
-        json_logs_for_assigned = {}
+    log_repo = get_log_repository()
+    log_entry = log_repo.read_entry(date, sid).entry
+    logs = {date: {sid: log_entry}} if isinstance(log_entry, dict) and log_entry else {date: {}}
+    json_logs_for_assigned = log_repo.read_json_map()
 
     assigned_tests = _student_assigned_tests_for_date(
         progress_all,
@@ -2010,121 +1886,12 @@ def api_logs_entry():
     if not date or not sid or not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad query"}), 400
 
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        entry = _db_get_entry(con, date, sid) or {}
-        try:
-            con.close()
-        except Exception:
-            pass
-
-        if isinstance(entry, dict) and entry:
-            return jsonify({"ok": True, "source": "sqlite", "entry": _repair_log_entry_placeholders(entry, sid)})
-    except Exception as e:
-        print("[logs.entry] sqlite failed:", e, flush=True)
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    try:
-        logs = load(LOGS_PATH) or {}
-        entry = (logs.get(date) or {}).get(sid) or {}
-        if not isinstance(entry, dict):
-            entry = {}
-    except Exception:
-        entry = {}
-
-    return jsonify({"ok": True, "source": "json", "entry": _repair_log_entry_placeholders(entry, sid)})
+    result = get_log_repository().read_entry(date, sid)
+    return jsonify({"ok": True, "source": result.source, "entry": result.entry})
 
 
 def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
-    entries: Dict[str, Dict[str, dict]] = {}
-    sqlite_keys = set()
-
-    con = None
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        for row in con.execute("SELECT date, sid FROM logs;").fetchall():
-            sqlite_keys.add((str(row["date"]), str(row["sid"])))
-
-        rows = con.execute(
-            """
-            SELECT date, sid, entry_json
-            FROM logs
-            WHERE json_extract(entry_json, ?) IN (1, 'true')
-              AND COALESCE(json_extract(entry_json, ?), 0) NOT IN (1, 'true');
-            """,
-            ("$.done", "$.archived"),
-        ).fetchall()
-        for row in rows:
-            d = str(row["date"])
-            sid = str(row["sid"])
-            try:
-                entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
-            except Exception:
-                entry = {}
-            if isinstance(entry, dict):
-                entries.setdefault(d, {})[sid] = _repair_log_entry_placeholders(entry, sid)
-    except Exception as e:
-        print("[logs.unarchived-summary] sqlite failed:", e, flush=True)
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    try:
-        json_map = load(LOGS_PATH) or {}
-        if isinstance(json_map, dict):
-            for d, by_sid in json_map.items():
-                if not isinstance(by_sid, dict):
-                    continue
-                d_s = str(d)
-                day = entries.setdefault(str(d), {})
-                for sid, entry in by_sid.items():
-                    sid_s = str(sid)
-                    if (d_s, sid_s) in sqlite_keys or sid_s in day or not isinstance(entry, dict):
-                        continue
-                    if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
-                        continue
-                    day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
-    except Exception:
-        pass
-
-    by_date: Dict[str, int] = {}
-    students = set()
-    total = 0
-    today = _today_kst_iso()
-    for d, by_sid in entries.items():
-        d_s = str(d)
-        if exclude_date and d_s == exclude_date:
-            continue
-        if d_s >= today:
-            continue
-        if not isinstance(by_sid, dict):
-            continue
-        for sid, entry in by_sid.items():
-            if not isinstance(entry, dict):
-                continue
-            if not _truthy(entry.get("done")) or _truthy(entry.get("archived")):
-                continue
-            by_date[d_s] = by_date.get(d_s, 0) + 1
-            students.add(str(sid))
-            total += 1
-
-    return {
-        "ok": True,
-        "excludeDate": exclude_date,
-        "total": total,
-        "students": len(students),
-        "byDate": [
-            {"date": d, "count": by_date[d]}
-            for d in sorted(by_date.keys(), reverse=True)
-        ],
-    }
+    return get_log_repository().summarize_unarchived_done(exclude_date)
 
 
 @bp_api_basic.get("/api/logs/unarchived-summary")
@@ -2152,125 +1919,16 @@ def api_logs():
         sid_filter = str(request.args.get("sid") or "").strip()
         if date_filter and not DATE_RE.match(date_filter):
             return jsonify({"ok": False, "error": "bad date"}), 400
-
-        sqlite_map = {}
-        sqlite_ok = False
-        try:
-            con = _db_connect()
-            _db_ensure_schema(con)
-            if date_filter and sid_filter:
-                sqlite_map = _db_dump_date_sid(con, date_filter, sid_filter)
-            elif date_filter:
-                sqlite_map = _db_dump_date(con, date_filter)
-            elif sid_filter:
-                sqlite_map = _db_dump_sid(con, sid_filter)
-            else:
-                sqlite_map = _db_dump_all(con)
-            sqlite_ok = True
-        except Exception as e:
-            print("[logs] sqlite GET failed:", e, flush=True)
-            sqlite_ok = False
-        finally:
-            try:
-                con.close()
-            except Exception:
-                pass
-
-        json_map = {}
-        try:
-            json_map = load(LOGS_PATH) or {}
-            if not isinstance(json_map, dict):
-                json_map = {}
-            if date_filter or sid_filter:
-                json_map = _filter_logs_map(json_map, date_filter, sid_filter)
-        except Exception:
-            json_map = {}
-
-        if not sqlite_ok:
-            return nocache_resp(json_map)
-
-        out = dict(sqlite_map)
-        for d, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
-            if not isinstance(by_sid, dict):
-                continue
-            day = out.setdefault(d, {})
-            if not isinstance(day, dict):
-                out[d] = {}
-                day = out[d]
-            for sid, entry in by_sid.items():
-                sid_s = str(sid)
-                if sid_s not in day:
-                    if isinstance(entry, dict):
-                        day[sid_s] = _repair_log_entry_placeholders(entry, sid_s)
-        return nocache_resp(out)
+        return nocache_resp(get_log_repository().read_logs(date_filter, sid_filter))
 
     incoming = request.get_json(force=True) or {}
     if not isinstance(incoming, dict):
         incoming = {}
 
-    sqlite_ok = False
-    sqlite_err = None
+    result = get_log_repository().legacy_post(incoming)
 
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        con.execute("BEGIN IMMEDIATE;")
-        for date, by_sid in incoming.items():
-            if not isinstance(by_sid, dict):
-                continue
-            if not DATE_RE.match(str(date)):
-                continue
-            for sid, entry in by_sid.items():
-                if not isinstance(entry, dict):
-                    continue
-                date_s = str(date)
-                sid_s = str(sid)
-                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
-
-                cur = _db_get_entry(con, date_s, sid_s)
-                merged = _merge_entry_safe(cur, safe_entry)
-                _db_upsert_entry(con, date_s, sid_s, merged)
-        con.execute("COMMIT;")
-        sqlite_ok = True
-    except Exception as e:
-        sqlite_err = e
-        try:
-            con.execute("ROLLBACK;")
-        except Exception:
-            pass
-        print("[logs] sqlite legacy POST failed:", e, flush=True)
-        sqlite_ok = False
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    with _logs_lock():
-        current = load(LOGS_PATH) or {}
-        if not isinstance(current, dict):
-            current = {}
-
-        for date, by_sid in incoming.items():
-            if not isinstance(by_sid, dict):
-                continue
-            cur_day = current.setdefault(date, {})
-            if not isinstance(cur_day, dict):
-                current[date] = {}
-                cur_day = current[date]
-
-            for sid, entry in by_sid.items():
-                if not isinstance(entry, dict):
-                    continue
-                sid_s = str(sid)
-                safe_entry = _repair_log_entry_placeholders(entry, sid_s)
-                cur_entry = cur_day.get(sid_s, {})
-                cur_day[sid_s] = _merge_entry_safe(cur_entry, safe_entry)
-
-        save_atomic(LOGS_PATH, current)
-
-    if not sqlite_ok:
-        return jsonify({"ok": False, "sqlite": False, "error": str(sqlite_err) if sqlite_err else "sqlite failed"}), 409
+    if not result.sqlite_ok:
+        return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
     return "", 204
 
@@ -2282,8 +1940,8 @@ def api_logs_patch():
     body:
       {
         "date": "YYYY-MM-DD",
-        "sid": "???334",
-        "entry": { ...????... },
+        "sid": "334",
+        "entry": { ...변경 내용... },
         "__clear": ["notes", ...]
       }
     """
@@ -2306,97 +1964,23 @@ def api_logs_patch():
     entry = _repair_log_entry_placeholders(entry, sid)
     base = _repair_log_entry_placeholders(base, sid)
 
-    merged: dict = {}
+    result = get_log_repository().patch_entry(date, sid, entry, base)
 
-    sqlite_ok = False
-    sqlite_err = None
-    sqlite_base_conflict = False
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        con.execute("BEGIN IMMEDIATE;")
-        cur = _repair_log_entry_placeholders(_db_get_entry(con, date, sid), sid)
-        if _entry_conflicts_with_base(cur, base):
-            con.execute("ROLLBACK;")
-            # SQLite? JSON? ?? ??? ??? ?? ?? ?? ??? JSON ???? ??.
-            sqlite_base_conflict = True
-            sqlite_ok = False
-        else:
-            merged = _merge_entry_safe(cur, entry)
-            _db_upsert_entry(con, date, sid, merged)
-            con.execute("COMMIT;")
-            sqlite_ok = True
-    except Exception as e:
-        sqlite_err = e
-        try:
-            con.execute("ROLLBACK;")
-        except Exception:
-            pass
-        print("[logs] sqlite PATCH failed:", e, flush=True)
-        sqlite_ok = False
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
+    if result.json_conflict_entry is not None:
+        return jsonify({
+            "ok": False,
+            "retryable": False,
+            "error": "다른 화면에서 특이사항/숙제가 먼저 변경되었습니다. 새로고침 후 다시 저장해 주세요.",
+            "entry": result.json_conflict_entry,
+        }), 409
 
-    try:
-        with _logs_lock():
-            current = load(LOGS_PATH) or {}
-            if not isinstance(current, dict):
-                current = {}
-            day = current.setdefault(date, {})
-            if not isinstance(day, dict):
-                current[date] = {}
-                day = current[date]
+    if not result.sqlite_ok:
+        # SQLite 기준 충돌이면 JSON 저장은 완료됐으므로 성공으로 응답한다.
+        if result.sqlite_base_conflict:
+            return jsonify({"ok": True, "sqlite": False, "entry": result.merged, "warning": "sqlite out-of-sync"})
+        return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
-            cur_json = day.get(sid, {})
-            if not isinstance(cur_json, dict):
-                cur_json = {}
-            cur_json = _repair_log_entry_placeholders(cur_json, sid)
-
-            if _entry_conflicts_with_base(cur_json, base):
-                return jsonify({
-                    "ok": False,
-                    "retryable": False,
-                    "error": "?? ???? ????/??? ?? ??????. ?? ?? ?? ?? ??????.",
-                    "entry": cur_json,
-                }), 409
-
-            if not merged:
-                merged = _merge_entry_safe(cur_json, entry)
-            merged = _repair_log_entry_placeholders(merged, sid)
-            day[sid] = merged
-
-            save_atomic(LOGS_PATH, current)
-    except Exception as e:
-        print("[logs] json PATCH failed:", e, flush=True)
-
-    # JSON ?? ?? ? SQLite ????(?? ??/?? ?? ??? ??)
-    if not sqlite_ok:
-        try:
-            con2 = _db_connect()
-            _db_ensure_schema(con2)
-            _db_upsert_entry(con2, date, sid, merged)
-            con2.commit()
-            sqlite_ok = True
-            sqlite_err = None
-        except Exception as e:
-            sqlite_err = e
-            sqlite_ok = False
-        finally:
-            try:
-                con2.close()
-            except Exception:
-                pass
-
-    if not sqlite_ok:
-        # ??? ?? ??? ?? ?? ?? JSON ?? ? 200?? ??
-        if sqlite_base_conflict:
-            return jsonify({"ok": True, "sqlite": False, "entry": merged, "warning": "sqlite out-of-sync"})
-        return jsonify({"ok": False, "sqlite": False, "error": str(sqlite_err) if sqlite_err else "sqlite failed"}), 409
-
-    return jsonify({"ok": True, "sqlite": True, "entry": merged})
+    return jsonify({"ok": True, "sqlite": True, "entry": result.merged})
 
 
 # ─────────────────────────────────────────────

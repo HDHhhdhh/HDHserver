@@ -18,7 +18,7 @@ def _watch_lock():
     from routes.api_basic import _InterProcessFileLock
 
     wp = str(getattr(WATCH_PATH, "__fspath__", lambda: str(WATCH_PATH))())
-    return _InterProcessFileLock(wp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+    return _InterProcessFileLock(wp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _sid_keys(sid: str) -> list[str]:

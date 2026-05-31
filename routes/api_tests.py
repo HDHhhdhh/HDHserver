@@ -28,14 +28,14 @@ def _tests_lock():
     from routes.api_basic import _InterProcessFileLock
 
     tp = str(getattr(TESTS_PATH, "__fspath__", lambda: str(TESTS_PATH))())
-    return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+    return _InterProcessFileLock(tp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _tests_config_lock():
     from routes.api_basic import _InterProcessFileLock
 
     tp = str(getattr(TESTS_CFG_PATH, "__fspath__", lambda: str(TESTS_CFG_PATH))())
-    return _InterProcessFileLock(tp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+    return _InterProcessFileLock(tp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _append_test_record(entry: dict, record: dict) -> dict:
@@ -102,6 +102,15 @@ def _normalize_test_type(raw: str) -> str:
         return "UNIT"
     return ""
 
+def _normalize_test_term(raw: str) -> str:
+    s = str(raw or "").strip()
+    compact = re.sub(r"\s+", "", s)
+    if "기말" in compact or "FINAL" in s.upper():
+        return "기말고사"
+    if "중간" in compact or "MID" in s.upper():
+        return "중간고사"
+    return s
+
 def _build_test_catalog(cfg: dict) -> dict:
     cats = cfg.get("categories") if isinstance(cfg, dict) else None
     if not isinstance(cats, dict):
@@ -131,6 +140,7 @@ def _build_test_catalog(cfg: dict) -> dict:
                 "unit_name": unit_name or canon,
                 "test_level": test_level,
                 "difficulty": str(t.get("difficulty") or "").strip(),
+                "term": _normalize_test_term(t.get("term") or t.get("examTerm") or t.get("examPeriod") or t.get("exam_period") or ""),
                 "round": str(t.get("round") or "").strip(),
                 "source_id": str(t.get("sourceId") or t.get("source_id") or "").strip(),
             }
@@ -151,6 +161,7 @@ def _resolve_test_meta(raw_name: str, test_id: str, catalog: dict) -> dict:
         "test_name": canon,
         "unit_name": unit_name or canon,
         "test_level": test_level,
+        "term": _normalize_test_term(raw_name),
     }
 
     by_id = catalog.get("by_id") if isinstance(catalog, dict) else {}
@@ -187,10 +198,10 @@ def _record_meta(rec: dict, catalog: dict) -> dict:
         return resolved
 
     out = dict(resolved)
-    for key in ("type", "curriculum", "test_name", "unit_name", "test_level", "difficulty", "round", "source_id"):
+    for key in ("type", "curriculum", "test_name", "unit_name", "test_level", "difficulty", "term", "round", "source_id"):
         value = snap.get(key)
         if value is not None and str(value).strip() != "":
-            out[key] = value
+            out[key] = _normalize_test_term(value) if key == "term" else value
     return out
 
 def _meta_matches_target(meta: dict, target: dict | None) -> bool:
@@ -202,9 +213,12 @@ def _meta_matches_target(meta: dict, target: dict | None) -> bool:
     if target_name and meta_name != target_name:
         return False
 
-    for key in ("type", "curriculum", "difficulty", "round"):
+    for key in ("type", "curriculum", "difficulty", "term", "round"):
         meta_value = str(meta.get(key) or "").strip()
         target_value = str(target.get(key) or "").strip()
+        if key == "term":
+            meta_value = _normalize_test_term(meta_value)
+            target_value = _normalize_test_term(target_value)
         if meta_value and target_value and meta_value != target_value:
             return False
 
@@ -215,6 +229,7 @@ def _stats_signature(meta: dict, fallback_name: str = "") -> str:
         str(meta.get("type") or "").strip(),
         str(meta.get("curriculum") or "").strip(),
         _canon_test_name(meta.get("test_name") or fallback_name),
+        _normalize_test_term(meta.get("term") or ""),
         str(meta.get("round") or "").strip(),
     ])
 
@@ -418,6 +433,7 @@ def submit_test():
         "unit_name": meta.get("unit_name") or "",
         "test_level": meta.get("test_level"),
         "difficulty": meta.get("difficulty") or "",
+        "term": _normalize_test_term(meta.get("term") or ""),
         "round": meta.get("round") or str(round_no),
         "source_id": meta.get("source_id") or "",
     }
@@ -437,53 +453,16 @@ def submit_test():
         'unitName': meta_snapshot["unit_name"],
         'testLevel': meta_snapshot["test_level"],
         'difficulty': meta_snapshot["difficulty"],
+        'term': meta_snapshot["term"],
         'sourceId': meta_snapshot["source_id"],
         'testMeta': meta_snapshot,
     }
 
     logs_saved = False
     try:
-        from routes.api_basic import (
-            _db_connect, _db_ensure_schema, _db_get_entry, _db_upsert_entry, _logs_lock
-        )
+        from routes.api_basic import get_log_repository
 
-        merged_entry = {}
-        con = None
-        try:
-            con = _db_connect()
-            _db_ensure_schema(con)
-            con.execute("BEGIN IMMEDIATE;")
-            cur = _db_get_entry(con, today, sid)
-            merged_entry = _append_test_record(cur, record)
-            _db_upsert_entry(con, today, sid, merged_entry)
-            con.execute("COMMIT;")
-        except Exception as e:
-            try:
-                con.execute("ROLLBACK;")
-            except Exception:
-                pass
-            print("[submit-test] sqlite logs save failed:", e, flush=True)
-            merged_entry = {}
-        finally:
-            try:
-                con.close()
-            except Exception:
-                pass
-
-        with _logs_lock():
-            logs = load(LOGS_PATH)
-            if not isinstance(logs, dict):
-                logs = {}
-            day = logs.setdefault(today, {})
-            if not isinstance(day, dict):
-                logs[today] = {}
-                day = logs[today]
-
-            cur_json = day.get(sid, {})
-            day[sid] = merged_entry if isinstance(merged_entry, dict) and merged_entry else _append_test_record(cur_json, record)
-            logs[today] = day
-            save_atomic(LOGS_PATH, logs)
-            logs_saved = True
+        logs_saved = get_log_repository().append_record(today, sid, record, _append_test_record)
     except Exception as e:
         print("[submit-test] json logs save failed:", e, flush=True)
 
@@ -595,6 +574,7 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                         "unit_name": str(rec.get("unitName") or raw_meta.get("unit_name") or raw_meta.get("unitName") or "").strip(),
                         "test_level": rec.get("testLevel") if rec.get("testLevel") is not None else raw_meta.get("test_level") or raw_meta.get("testLevel"),
                         "difficulty": str(rec.get("difficulty") or raw_meta.get("difficulty") or "").strip(),
+                        "term": _normalize_test_term(rec.get("term") or raw_meta.get("term") or raw_meta.get("examTerm") or raw_meta.get("examPeriod") or raw_meta.get("exam_period") or ""),
                         "round": str(raw_meta.get("round") or rec.get("round") or "").strip(),
                         "source_id": str(rec.get("sourceId") or raw_meta.get("source_id") or raw_meta.get("sourceId") or "").strip(),
                     }
@@ -630,7 +610,13 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
     # legacy fallback so old 상담/수업 기록 embedded tests still appear.
     for item in _walk(load(TESTS_PATH)):
         yield item
-    for item in _walk(load(LOGS_PATH)):
+    try:
+        from routes.api_basic import get_log_repository
+
+        legacy_logs = get_log_repository().read_json_map()
+    except Exception:
+        legacy_logs = load(LOGS_PATH)
+    for item in _walk(legacy_logs):
         yield item
 
 @bp_api_tests.get("/api/tests-records")
@@ -641,7 +627,8 @@ def api_tests_records():
     curriculum_q = str(request.args.get("curriculum") or "").strip()
     unit_name_q = str(request.args.get("unit_name") or "").strip()
     test_level_q = str(request.args.get("test_level") or "").strip()
-    if not any([test_id_q, test_q, type_q, curriculum_q, unit_name_q, test_level_q]):
+    term_q = _normalize_test_term(request.args.get("term") or request.args.get("examTerm") or "")
+    if not any([test_id_q, test_q, type_q, curriculum_q, unit_name_q, test_level_q, term_q]):
         return jsonify({"ok": False, "error": "missing filter"}), 400
 
     recent = request.args.get("recent_days")
@@ -704,6 +691,8 @@ def api_tests_records():
             continue
         if test_level_q and str(meta.get("test_level") or "").strip() != test_level_q:
             continue
+        if term_q and _normalize_test_term(meta.get("term") or "") != term_q:
+            continue
 
         correct = int(rec["correct"])
         total = int(rec["total"])
@@ -729,6 +718,7 @@ def api_tests_records():
             "testName": nm,
             "unitName": meta.get("unit_name") or "",
             "testLevel": meta.get("test_level"),
+            "term": _normalize_test_term(meta.get("term") or ""),
         })
 
     recs.sort(key=lambda r: (-float(r.get("pct") or 0), str(r.get("studentName") or ""), str(r.get("createdAt") or "")))
@@ -741,6 +731,7 @@ def api_tests_records():
             "curriculum": curriculum_q,
             "unit_name": unit_name_q,
             "test_level": test_level_q,
+            "term": term_q,
             "band": band_q,
         },
         "total": len(recs),
@@ -853,6 +844,7 @@ def api_tests_stats():
             group_key = (
                 type_key,
                 curriculum,
+                _normalize_test_term(meta.get("term") or ""),
                 key_name,
             )
             ga = series_agg.setdefault(group_key, _make_stats_agg())
@@ -926,13 +918,14 @@ def api_tests_stats():
     series_rows_by_type: dict[str, list[dict]] = {}
     final_rows = []
     hell_rows = []
-    for (type_key, curriculum, test_name), ga in series_agg.items():
+    for (type_key, curriculum, term, test_name), ga in series_agg.items():
         base = _finalize_stats_agg(ga)
         if not base:
             continue
         base.update({
             "type": type_key,
             "curriculum": curriculum,
+            "term": term,
             "test_name": test_name,
         })
         series_rows_by_type.setdefault(type_key, []).append(base)
