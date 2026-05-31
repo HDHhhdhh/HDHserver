@@ -372,25 +372,6 @@ window.todayLocalKey = function () {
         method: 'POST', headers: CT, body: JSON.stringify(payload), keepalive: !!options.keepalive
       });
       if (res1.ok) _lastSent.set(mid, snap);
-
-      const pct = snap.dur > 0 ? (snap.last / snap.dur) : 0;
-      let status = null;
-      if (pct >= 0.90) status = 'done';
-      else if (pct >= 0.05) status = 'interrupted';
-
-      if (status) {
-        const res2 = await fetch('/api/watch-status', {
-          method: 'POST', headers: CT,
-          body: JSON.stringify({
-            date: todayLocalKey(),
-            sid: canonicalSid,
-            mid,
-            status
-          }),
-          keepalive: !!options.keepalive
-        });
-        if (!res2.ok) console.warn('[watch-status] HTTP', res2.status);
-      }
     } catch (e) {
       console.warn('[watch sync] failed', e);
     }

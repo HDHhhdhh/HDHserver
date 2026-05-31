@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
-from core.log_rules import truthy as default_truthy
+from core.log_rules import is_empty_value, truthy as default_truthy
 from core.paths import LOGS_PATH
 from core.storage import load, save_atomic
 
@@ -254,6 +254,26 @@ class LogRepository:
         else:
             mapping[key] = value
 
+    def _json_entry(self, date: str, sid: str) -> dict:
+        logs = self.read_json_map()
+        day = logs.get(date) if isinstance(logs, dict) else None
+        entry = self._sid_lookup(day if isinstance(day, dict) else {}, sid)
+        if not isinstance(entry, dict):
+            entry = {}
+        return self.repair_entry(entry, sid)
+
+    def _merge_json_fallback_fields(self, primary: dict, fallback: dict, sid: str) -> dict:
+        if not isinstance(primary, dict):
+            primary = {}
+        if not isinstance(fallback, dict) or not fallback:
+            return self.repair_entry(primary, sid)
+
+        out = dict(primary)
+        for key, value in fallback.items():
+            if key not in out or (is_empty_value(out.get(key)) and not is_empty_value(value)):
+                out[key] = value
+        return self.repair_entry(out, sid)
+
     def read_entry(self, date: str, sid: str) -> LogEntryResult:
         con = None
         try:
@@ -261,7 +281,8 @@ class LogRepository:
             self._ensure_schema(con)
             entry = self._sqlite_get_entry(con, date, sid) or {}
             if isinstance(entry, dict) and entry:
-                return LogEntryResult("sqlite", self.repair_entry(entry, sid))
+                fallback = self._json_entry(date, sid)
+                return LogEntryResult("sqlite", self._merge_json_fallback_fields(entry, fallback, sid))
         except Exception as exc:
             print("[logs.entry] sqlite failed:", exc, flush=True)
         finally:
@@ -271,11 +292,7 @@ class LogRepository:
             except Exception:
                 pass
 
-        logs = self.read_json_map()
-        entry = (logs.get(date) or {}).get(sid) or {}
-        if not isinstance(entry, dict):
-            entry = {}
-        return LogEntryResult("json", self.repair_entry(entry, sid))
+        return LogEntryResult("json", self._json_entry(date, sid))
 
     def read_logs(self, date_filter: str = "", sid_filter: str = "") -> dict:
         sqlite_map = {}
@@ -319,7 +336,11 @@ class LogRepository:
                 day = out[date]
             for sid, entry in by_sid.items():
                 sid_s = str(sid)
-                if sid_s not in day and isinstance(entry, dict):
+                if not isinstance(entry, dict):
+                    continue
+                if sid_s in day and isinstance(day.get(sid_s), dict):
+                    day[sid_s] = self._merge_json_fallback_fields(day[sid_s], entry, sid_s)
+                elif sid_s not in day:
                     day[sid_s] = self.repair_entry(entry, sid_s)
         return out
 
@@ -457,7 +478,7 @@ class LogRepository:
         except Exception as exc:
             print("[logs] json PATCH failed:", exc, flush=True)
 
-        if not sqlite_ok:
+        if not sqlite_ok and not sqlite_base_conflict and merged:
             con2 = None
             try:
                 con2 = self._connect()

@@ -8,12 +8,16 @@ import py_compile
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 from typing import Iterable
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 PYTHON_FILES = [
     ROOT / "app.py",
@@ -28,6 +32,9 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/today.js",
     ROOT / "static/js/admin/features/today.state.js",
     ROOT / "static/js/admin/features/today.render.js",
+    ROOT / "static/js/admin/features/videoModal.js",
+    ROOT / "static/js/student.js",
+    ROOT / "static/js/shared/api.js",
 ]
 
 CORE_IMPORT_RUNTIME_FILES = [
@@ -171,6 +178,139 @@ def run_js_checks() -> bool:
     return all(run_node_check(path) for path in JS_CHECK_FILES)
 
 
+def _assert_unit(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def run_log_rules_unit_checks() -> None:
+    from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
+
+    current = {
+        "notes": "keep notes",
+        "homeworkTable": [{"book": "A", "this": "1", "next": "2"}],
+        "done": True,
+    }
+    merged = merge_log_entry_safe(current, {"notes": "", "homeworkTable": []})
+    _assert_unit(merged["notes"] == "keep notes", "empty notes must not erase existing notes")
+    _assert_unit(merged["homeworkTable"] == current["homeworkTable"], "empty homeworkTable must not erase rows")
+    _assert_unit(merged["done"] is True, "existing done state must be preserved")
+
+    cleared = merge_log_entry_safe(current, {"__clear": ["notes"]})
+    _assert_unit("notes" not in cleared, "__clear must explicitly remove notes")
+
+    _assert_unit(
+        log_entry_conflicts_with_base({"notes": "newer"}, {"notes": "base"}),
+        "notes mismatch must be a log conflict",
+    )
+
+
+def run_progress_rule_unit_checks() -> None:
+    from routes.api_basic import PROGRESS_MANUAL_META_KEY, _merge_progress_day_sid
+
+    manual = {
+        "m1": "none",
+        "m2": "skip",
+        "m4": "interrupted",
+        PROGRESS_MANUAL_META_KEY: {"m1": True, "m2": True, "m4": True},
+    }
+    merged = _merge_progress_day_sid(manual, {"m1": "done", "m2": "done", "m4": "done"}, source="auto")
+    _assert_unit(merged.get("m1") == "none", "auto watch must not overwrite manual white")
+    _assert_unit(merged.get("m2") == "skip", "auto watch must not overwrite manual skip")
+    _assert_unit(merged.get("m4") == "interrupted", "auto watch must not overwrite manual interrupted")
+
+    legacy_auto = _merge_progress_day_sid({"m3": "interrupted"}, {"m3": "done"}, source="auto")
+    _assert_unit(legacy_auto.get("m3") == "done", "legacy auto interrupted may upgrade to done")
+
+
+def run_log_repository_unit_checks() -> None:
+    from core.log_repository import LogRepository
+    from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
+
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="verify-logrepo-", dir=temp_base) as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        logs_path = tmp / "logs.json"
+        db_path = tmp / "app.sqlite"
+        logs_path.write_text("{}", "utf-8")
+
+        repo = LogRepository(
+            logs_path=logs_path,
+            db_path=str(db_path),
+            merge_entry=merge_log_entry_safe,
+            entry_conflicts=log_entry_conflicts_with_base,
+        )
+
+        date = "2026-06-03"
+        sid = "s1"
+        base = {"notes": "base", "homeworkTable": []}
+        repo.patch_entry(date, sid, base, {})
+
+        con = repo._connect()
+        try:
+            repo._ensure_schema(con)
+            repo._sqlite_upsert_entry(con, date, sid, {"notes": "sqlite changed", "homeworkTable": []})
+        finally:
+            con.close()
+
+        result = repo.patch_entry(date, sid, {"notes": "incoming"}, base)
+        _assert_unit(result.sqlite_base_conflict, "sqlite base conflict must be reported")
+        _assert_unit(not result.sqlite_ok, "sqlite conflict must not be reported as synced")
+        _assert_unit(result.merged.get("notes") == "incoming", "json side should still merge non-conflicting patch")
+
+        con = repo._connect()
+        try:
+            repo._ensure_schema(con)
+            sqlite_after = repo._sqlite_get_entry(con, date, sid)
+        finally:
+            con.close()
+        _assert_unit(sqlite_after.get("notes") == "sqlite changed", "sqlite conflict row must not be overwritten")
+
+        alias_date = "2026-06-04"
+        logs_path.write_text(
+            json.dumps({alias_date: {"7": {"notes": "json alias"}}}, ensure_ascii=False),
+            "utf-8",
+        )
+        alias_entry = repo.read_entry(alias_date, "007")
+        _assert_unit(alias_entry.entry.get("notes") == "json alias", "json fallback must use sid aliases")
+
+        merge_date = "2026-06-05"
+        logs_path.write_text(
+            json.dumps(
+                {merge_date: {sid: {"notes": "json notes", "homeworkTable": [{"book": "B"}]}}},
+                ensure_ascii=False,
+            ),
+            "utf-8",
+        )
+        con = repo._connect()
+        try:
+            repo._ensure_schema(con)
+            repo._sqlite_upsert_entry(con, merge_date, sid, {"done": True})
+        finally:
+            con.close()
+        merged_entry = repo.read_entry(merge_date, sid).entry
+        _assert_unit(merged_entry.get("done") is True, "sqlite field must be preserved on fallback merge")
+        _assert_unit(merged_entry.get("notes") == "json notes", "missing sqlite notes should be filled from json")
+
+
+def run_unit_checks() -> bool:
+    checks = [
+        run_log_rules_unit_checks,
+        run_progress_rule_unit_checks,
+        run_log_repository_unit_checks,
+    ]
+    ok = True
+    for check in checks:
+        try:
+            check()
+            print(f"unit ok: {check.__name__}")
+        except Exception as exc:
+            ok = False
+            print(f"unit failed: {check.__name__}: {exc}", file=sys.stderr)
+    return ok
+
+
 def load_json(name: str, fallback):
     path = ROOT / name
     try:
@@ -305,6 +445,7 @@ def main() -> int:
 
     ok = True
     ok = run_python_compile() and ok
+    ok = run_unit_checks() and ok
     ok = run_js_checks() and ok
     if args.smoke:
         ok = run_smoke_checks() and ok
