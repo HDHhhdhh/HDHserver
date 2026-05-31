@@ -18,6 +18,8 @@ function ensureWindowStateAlias() {
   window.state = window.state || state;
   window.state.absences = state.absences;
   window.state.absentByDate = state.absentByDate;
+  window.state.absentSlotsByDate = state.absentSlotsByDate;
+  window.absentSlotsByDate = state.absentSlotsByDate;
 }
 
 function normalizeAbsentByDateMap(value) {
@@ -42,9 +44,34 @@ function normalizeAbsencesByStudent(value) {
   return out;
 }
 
+function normalizeSlotList(raw) {
+  const values = Array.isArray(raw) ? raw : [raw];
+  const slots = values.flatMap(value => {
+    const matches = String(value ?? '').match(/\d+/g) || [];
+    return matches.map(n => parseInt(n, 10));
+  }).filter(n => n === 1 || n === 2);
+  return Array.from(new Set(slots)).sort((a, b) => a - b);
+}
+
+function normalizeAbsentSlotMap(value) {
+  const out = {};
+  if (!value || typeof value !== 'object') return out;
+  for (const [date, sidMap] of Object.entries(value)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date)) || !sidMap || typeof sidMap !== 'object') continue;
+    const rows = {};
+    for (const [sid, slots] of Object.entries(sidMap)) {
+      const nums = normalizeSlotList(slots);
+      if (String(sid).trim() && nums.length) rows[String(sid)] = nums;
+    }
+    if (Object.keys(rows).length) out[date] = rows;
+  }
+  return out;
+}
+
 function applyAbsentPayload(payload) {
   state.absentByDate = normalizeAbsentByDateMap(payload?.by_date || payload?.absentByDate || {});
   state.absences = normalizeAbsencesByStudent(payload?.by_student || payload?.absences || {});
+  state.absentSlotsByDate = normalizeAbsentSlotMap(payload?.by_slot || payload?.absentSlotsByDate || {});
   ensureWindowStateAlias();
 }
 
@@ -57,6 +84,7 @@ async function loadAbsentPayload() {
     return {
       by_date: state.absentByDate || {},
       by_student: state.absences || {},
+      by_slot: state.absentSlotsByDate || {},
     };
   }
 }
@@ -402,19 +430,23 @@ export function initAbsentRegister() {
       const latest = await loadAbsentPayload();
       const byDate = normalizeAbsentByDateMap(latest?.by_date || {});
       const byStudent = normalizeAbsencesByStudent(latest?.by_student || {});
+      const bySlot = normalizeAbsentSlotMap(latest?.by_slot || {});
       const daySet = new Set((byDate[dateKey] || []).map(String));
 
       selectedIds.forEach(sid => {
         daySet.add(String(sid));
         byStudent[String(sid)] = dateKey;
+        if (bySlot[dateKey]) delete bySlot[dateKey][String(sid)];
       });
       byDate[dateKey] = Array.from(daySet);
+      if (bySlot[dateKey] && !Object.keys(bySlot[dateKey]).length) delete bySlot[dateKey];
 
       const res = await postJSON('/api/absent', {
         by_date: byDate,
         by_student: byStudent,
+        by_slot: bySlot,
       });
-      const saved = await res.json().catch(() => ({ by_date: byDate, by_student: byStudent }));
+      const saved = await res.json().catch(() => ({ by_date: byDate, by_student: byStudent, by_slot: bySlot }));
       applyAbsentPayload(saved);
 
       await clearTodayOrder(dateKey);

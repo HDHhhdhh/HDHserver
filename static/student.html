@@ -10,19 +10,23 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="/css/student.css?v=20260415b">
+  <link rel="stylesheet" href="/css/student.css?v=20260522b">
 
   <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
-  <script defer src="/js/student.js"></script>
+  <script defer src="/js/student.js?v=20260531-test-links"></script>
 </head>
 <body class="student-page">
   <div class="student-shell">
     <header class="topbar student-topbar">
       <div id="clock" class="clock-header"></div>
 
+      <button id="noticeBtn" class="notice-btn" type="button" aria-label="공지 열기">
+        공지
+        <span id="noticeBadge" class="notice-badge" hidden>0</span>
+      </button>
+
       <button id="setBtn" class="settings-btn" type="button" aria-label="설정 열기">
         설정
-        <span id="badge" class="notice-badge">1</span>
       </button>
     </header>
 
@@ -47,7 +51,7 @@
         <h2 id="stuName" class="namebar-title"></h2>
         <p class="namebar-desc">오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.</p>
       </div>
-      <button id="openTestSubmit" class="ts-btn" type="button">테스트 제출</button>
+      <button id="openTestSubmit" class="ts-btn" type="button" hidden>테스트 제출</button>
     </section>
 
     <main class="student-main">
@@ -69,6 +73,13 @@
         </div>
       </section>
 
+      <section class="panel tests-panel" id="assignedTestsPanel" hidden>
+        <h3 class="section-title">오늘 테스트</h3>
+        <ul id="assignedTestList">
+          <li class="muted">테스트를 불러오는 중...</li>
+        </ul>
+      </section>
+
       <section class="panel materials-panel">
         <h3 class="section-title">자료 다운로드</h3>
         <ul id="matList">
@@ -79,20 +90,91 @@
   </div>
 
   <div id="announceModal" class="announce-modal">
-    <div class="announce-card">
-      <h3 id="annTitle"></h3>
-      <div id="annContent"></div>
-
-      <div id="annPoll">
-        <div id="annPollQ"></div>
-        <div id="annPollOpts"></div>
+    <div class="announce-card" role="dialog" aria-modal="true" aria-labelledby="annModalHeading">
+      <div class="announce-head">
+        <h2 id="annModalHeading" class="announce-heading">📢 공지 !!</h2>
       </div>
 
-      <div id="annSurvey"></div>
+      <div class="announce-body">
+        <section class="announce-section announce-title-section" aria-label="공지 제목">
+          <span class="announce-section-label">제목</span>
+          <div class="announce-title-row">
+            <h3 id="annTitle"></h3>
+            <div class="announce-created-card">
+              <span>등록 시간</span>
+              <time id="annCreatedAt"></time>
+            </div>
+          </div>
+        </section>
+        <div class="announce-post-scroll" aria-label="공지 이미지와 내용">
+          <section id="annImageSection" class="announce-section announce-image-section" aria-label="공지 첨부 이미지" hidden>
+            <div class="announce-image-section-head">
+              <span class="announce-section-label">이미지</span>
+              <span id="annImageCounter" class="announce-image-counter" aria-live="polite"></span>
+            </div>
+            <div id="annImageCarousel" class="announce-image-carousel" role="region" aria-roledescription="carousel" tabindex="0">
+              <div id="annImageTrack" class="announce-image-track"></div>
+              <button id="annImagePrev" class="announce-image-nav prev" type="button" aria-label="이전 이미지">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18 9 12l6-6"/></svg>
+              </button>
+              <button id="annImageNext" class="announce-image-nav next" type="button" aria-label="다음 이미지">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <div id="annImageDots" class="announce-image-dots" aria-label="이미지 페이지"></div>
+            </div>
+          </section>
+          <section class="announce-section announce-content-section" aria-label="공지 내용">
+            <span class="announce-section-label">내용</span>
+            <div id="annContent" class="announce-content"></div>
+          </section>
+        </div>
+        <section id="annSurvey" class="announce-section announce-survey" aria-label="설문조사" hidden>
+          <div class="announce-survey-head">
+            <span class="announce-section-label">설문조사</span>
+            <em id="annSurveyMeta">필수 질문을 모두 응답해 주세요.</em>
+          </div>
+          <div id="annSurveyQuestions" class="announce-survey-questions"></div>
+          <div id="annSurveyError" class="announce-survey-error" aria-live="polite"></div>
+          <div class="announce-survey-actions">
+            <button id="annSurveySubmit" type="button">설문 제출</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="announce-reply">
+        <div class="announce-reply-head">
+          <strong>답장</strong>
+          <span>필요하면 선생님께 바로 보낼 수 있어요.</span>
+        </div>
+        <label class="announce-anonymous">
+          <input id="annAnonymous" type="checkbox">
+          익명으로 답장
+        </label>
+        <textarea id="annReply" rows="3" placeholder="답장을 입력하세요."></textarea>
+        <div class="announce-reply-actions">
+          <button id="annSendReply" type="button">보내기</button>
+        </div>
+      </div>
+
+      <div id="annReplyStatus" class="announce-status" aria-live="polite"></div>
 
       <div class="announce-actions">
-        <button id="annSubmit" type="button">제출</button>
-        <button id="annConfirm" type="button">확인</button>
+        <button id="annRead" type="button">읽었습니다.</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="announceHistoryModal" class="announce-modal">
+    <div class="announce-card announce-history-card" role="dialog" aria-modal="true" aria-labelledby="annHistoryTitle">
+      <div class="announce-head row">
+        <div>
+          <p class="announce-label">공지함</p>
+          <h3 id="annHistoryTitle">지난 공지</h3>
+        </div>
+        <button id="annHistoryClose" class="announce-close" type="button" aria-label="공지함 닫기">×</button>
+      </div>
+      <div id="annHistoryList" class="announce-history-list">
+        <div class="muted">공지를 불러오는 중...</div>
       </div>
     </div>
   </div>

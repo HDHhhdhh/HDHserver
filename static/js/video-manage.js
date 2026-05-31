@@ -46,6 +46,30 @@ const $ = id => document.getElementById(id);
     const CT = { "Content-Type": "application/json" };
     const vidTable = $('vidTable');
     const saveVidBtn = $('saveVid');
+    let autoSaveTimer = null;
+    let autoSaveClick = false;
+    let lastSavedVideoBody = '';
+    let saveInFlight = false;
+    let queuedSaveMode = null;
+
+    function scheduleVideoAutoSave(delay = 800) {
+        if (!saveVidBtn) return;
+        if (autoSaveTimer) clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+            autoSaveTimer = null;
+            autoSaveClick = true;
+            saveVidBtn.click();
+        }, delay);
+    }
+
+    if (vidTable) {
+        vidTable.addEventListener('blur', e => {
+            if (e.target?.matches?.('td[contenteditable]')) scheduleVideoAutoSave();
+        }, true);
+        vidTable.addEventListener('click', e => {
+            if (e.target?.closest?.('.delV')) scheduleVideoAutoSave();
+        });
+    }
 
     function extractKollusMid(url) {
         const raw = String(url || '').trim();
@@ -136,6 +160,7 @@ const $ = id => document.getElementById(id);
         fetch('/api/videos').then(r => r.json())
     ]).then(([vids]) => {
         videos = vids;
+        lastSavedVideoBody = JSON.stringify(videos);
         drawVid();
     });
 
@@ -356,11 +381,18 @@ const $ = id => document.getElementById(id);
             drawVid();
         });
     })();
+    document.getElementById('addVid')?.addEventListener('click', () => scheduleVideoAutoSave());
 
 
 
     /* 영상 저장 */
     saveVidBtn.onclick = () => {
+        const isAutoSave = autoSaveClick;
+        autoSaveClick = false;
+        if (!isAutoSave && autoSaveTimer) {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = null;
+        }
         // ① 테이블 행 순회
         document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
             const i = +tr.dataset.idx;
@@ -397,12 +429,39 @@ const $ = id => document.getElementById(id);
         });
 
         // ④ 서버에 저장
+        const body = JSON.stringify(videos);
+        if (body === lastSavedVideoBody) {
+            if (!isAutoSave) toast('변경사항 없음');
+            return;
+        }
+        if (saveInFlight) {
+            queuedSaveMode = isAutoSave ? (queuedSaveMode || 'auto') : 'manual';
+            return;
+        }
+
+        saveInFlight = true;
         fetch('/api/videos', {
             method: 'POST',
             headers: CT,
-            body: JSON.stringify(videos)
+            body
         })
-            .then(() => toast('영상 저장 완료'));
+            .then(res => {
+                if (!res.ok) throw new Error(`video save failed: ${res.status}`);
+                lastSavedVideoBody = body;
+                toast(isAutoSave ? '영상 자동 저장 완료' : '영상 저장 완료');
+            })
+            .catch(err => {
+                console.error('[video-manage] save failed', err);
+                toast('영상 저장 실패');
+            })
+            .finally(() => {
+                saveInFlight = false;
+                if (!queuedSaveMode) return;
+                const mode = queuedSaveMode;
+                queuedSaveMode = null;
+                autoSaveClick = mode === 'auto';
+                saveVidBtn.click();
+            });
     };
 
 })();

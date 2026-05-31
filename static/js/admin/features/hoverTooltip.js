@@ -35,8 +35,8 @@ export function initHoverTooltip() {
     tipEl.style.cssText = `
       position: fixed;
       top: 0; left: 0;
-      background: rgba(17,24,39,.98); color: #fff; border-radius: 14px;
-      padding: 12px 14px; font-size: 13px; box-shadow: 0 10px 28px rgba(0,0,0,.4);
+      background: rgba(17,24,39,.98); color: #fff; border-radius: 18px;
+      padding: 16px 18px; font-size: 15px; box-shadow: 0 18px 42px rgba(0,0,0,.44);
       z-index: 100000; pointer-events: none; display: none;
       max-width: min(1100px, 92vw);
       max-height: min(86vh, 900px);
@@ -145,6 +145,55 @@ export function initHoverTooltip() {
     '"': '&quot;',
     "'": '&#39;',
   }[m]));
+
+  const tipRow = (label, value) => `
+    <div style="display:grid; grid-template-columns:104px minmax(0,1fr); gap:12px; align-items:start;">
+      <div style="opacity:.78; font-weight:800">${escHtml(label)}</div>
+      <div style="font-weight:900; word-break:keep-all">${escHtml(value || '-')}</div>
+    </div>`;
+
+  function levelBadgeHtml(level) {
+    const text = String(level || '').trim();
+    if (!text) return '';
+
+    const palette = (() => {
+      if (text.includes('중상')) return { bg: '#d97706', fg: '#fffbeb', ring: 'rgba(251,191,36,.35)' };
+      if (text.includes('상')) return { bg: '#2563eb', fg: '#eff6ff', ring: 'rgba(96,165,250,.35)' };
+      if (text.includes('중')) return { bg: '#16a34a', fg: '#ecfdf5', ring: 'rgba(74,222,128,.35)' };
+      if (text.includes('하')) return { bg: '#dc2626', fg: '#fff1f2', ring: 'rgba(248,113,113,.35)' };
+      return { bg: '#475569', fg: '#f8fafc', ring: 'rgba(148,163,184,.32)' };
+    })();
+
+    return `
+      <span
+        aria-label="난이도 ${escHtml(text)}"
+        style="
+          display:inline-flex; align-items:center; justify-content:center;
+          min-width:44px; height:38px; padding:0 12px; border-radius:999px;
+          background:${palette.bg}; color:${palette.fg};
+          font-size:19px; font-weight:950; line-height:1;
+          box-shadow:0 0 0 5px ${palette.ring};
+          flex:0 0 auto;
+        "
+      >${escHtml(text)}</span>`;
+  }
+
+  function todayInfoRow(icon, label, value) {
+    return `
+      <div style="display:grid; grid-template-columns:38px 128px minmax(0,1fr); gap:12px; align-items:center;">
+        <span
+          aria-hidden="true"
+          style="
+            width:38px; height:38px; border-radius:12px;
+            display:inline-flex; align-items:center; justify-content:center;
+            background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16);
+            font-size:22px; line-height:1;
+          "
+        >${icon}</span>
+        <span style="opacity:.82; font-size:16px; font-weight:850; word-break:keep-all;">${escHtml(label)}</span>
+        <span style="font-size:19px; font-weight:950; word-break:keep-all;">${escHtml(value || '-')}</span>
+      </div>`;
+  }
 
   function pickTextbook(entry = {}) {
     return String(
@@ -644,6 +693,44 @@ export function initHoverTooltip() {
     return `${mainBlock}${examBlock}${progBlock}`;
   }
 
+  function buildTodayNameTipHtml(stu) {
+    const name = String(stu?.name || '').trim();
+    const level = String(stu?.level || '').trim();
+    const days = Object.keys(stu || {})
+      .filter(k => /^day\d+$/.test(k) && stu[k])
+      .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
+      .map(k => String(stu[k]).trim())
+      .filter(Boolean)
+      .join(' · ');
+
+    const schoolName =
+      stu.school ||
+      stu.highSchool || stu.schoolHigh || stu.high || stu.highschool || stu.high_school || stu['고등학교'] ||
+      stu.middleSchool || stu.schoolMiddle || stu.middle || stu.middleschool || stu.middle_school || stu['중학교'] || '';
+
+    const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
+    const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
+    const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
+    const remain = (scheduleEntries.length ? scheduleEntries : [sc])
+      .map(entry => calcRemainingSessions(entry || {}, stu))
+      .find(value => value != null);
+    const remainText = remain == null ? '-' : `${remain}회`;
+
+    return `
+      <div style="min-width:420px; max-width:min(540px, 86vw); padding:4px 2px 6px;">
+        <div style="display:flex; align-items:center; gap:14px; margin-bottom:20px;">
+          <div style="font-weight:950; font-size:30px; line-height:1.12; letter-spacing:0; word-break:keep-all;">${escHtml(name || '-')}</div>
+          ${levelBadgeHtml(level)}
+        </div>
+        <div style="display:grid; gap:14px; line-height:1.35">
+          ${todayInfoRow('📅', '등원요일', days)}
+          ${todayInfoRow('⏱️', '남은출석횟수', remainText)}
+          ${todayInfoRow('🏫', '학교', schoolName)}
+        </div>
+      </div>
+    `;
+  }
+
   // ───────────────────────────────────────────
   // 핵심: 특정 요소 기준으로 툴팁 표시
   // ───────────────────────────────────────────
@@ -669,7 +756,9 @@ export function initHoverTooltip() {
     const el = ensureTip();
     const useStudentWorkLayout = opts.layout === 'student-work';
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
-    el.innerHTML = buildTipHtml(stu, { includeVideo, includeTests });
+    el.innerHTML = variant === 'today'
+      ? buildTodayNameTipHtml(stu)
+      : buildTipHtml(stu, { includeVideo, includeTests });
     el.style.display = 'block';
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
@@ -710,9 +799,13 @@ export function initHoverTooltip() {
   };
 
   window.showStudentTooltipForSid = function (sid, opts) {
-    const el = document.querySelector(`a.stuName[data-sid="${sid}"]`);
+    const safeSid = window.CSS?.escape ? CSS.escape(String(sid)) : String(sid).replace(/"/g, '\\"');
+    const el =
+      document.querySelector(`a.stuName[data-sid="${safeSid}"]`)
+      || document.querySelector(`tr[data-sid="${safeSid}"] .stuName`);
     if (el) {
       try {
+        if (!el.dataset.sid) el.dataset.sid = String(sid);
         showTooltipForElement(el, null, {
           fixed: !!(opts && opts.fixed),
           variant: opts?.variant || 'default',
@@ -740,8 +833,9 @@ export function initHoverTooltip() {
     if (!(ev.target instanceof Element)) return;
     const a = ev.target.closest('a.stuName');
     if (!a) return;
+    if (!a.closest('#todayWrap')) return;
     if (tipMode === 'fixed') return;
-    showTooltipForElement(a, ev, { fixed: false, variant: 'default' });
+    showTooltipForElement(a, ev, { fixed: false, variant: 'today' });
   }
 
   function onMove(ev) {
@@ -755,10 +849,24 @@ export function initHoverTooltip() {
     if (tipMode !== 'hover') return;
     const from = ev.target.closest('a.stuName');
     const to = (ev.relatedTarget instanceof Element) ? ev.relatedTarget.closest('a.stuName') : null;
+    if (from && !from.closest('#todayWrap')) return;
+    if (to && !to.closest('#todayWrap')) {
+      if (tipEl) tipEl.style.display = 'none';
+      return;
+    }
     if (from && !to && tipEl) tipEl.style.display = 'none';
   }
 
-  document.addEventListener('pointerover', onOver);
-  document.addEventListener('pointermove', onMove);
-  document.addEventListener('pointerout', onOut);
+  function bindTodayTooltipHost() {
+    const todayHost = document.getElementById('todayWrap');
+    if (todayHost && !todayHost._studentTooltipBound) {
+      todayHost._studentTooltipBound = true;
+      todayHost.addEventListener('pointerover', onOver);
+      todayHost.addEventListener('pointermove', onMove);
+      todayHost.addEventListener('pointerout', onOut);
+    }
+  }
+  bindTodayTooltipHost();
+  document.addEventListener('today:rendered', bindTodayTooltipHost);
+  // the fixed 상담 기록 tooltip explicitly through showStudentTooltipForSid().
 }

@@ -5,14 +5,15 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
-import { applySearchPlaceholder, matchesSearchKey, studentSearchKey } from '../../shared/search.js';
-import { buildPendingMakeups, formatMakeupDate, makeupPendingActivationDate } from './makeupPending.js';
+import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { buildMakeupExportRows, buildPendingMakeups, formatMakeupDate, makeupExportRowsToCsv } from './makeupPending.js';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
 
   const CT = { 'Content-Type': 'application/json' };
   const WCHR = '일월화수목금토';
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   const WEEK_START_DAY = 1;
   const MAKEUP_SLOTS = [1, 2];
   const MAIN_WEEK_INDEX = 2;
@@ -301,10 +302,16 @@ export function initCalendar() {
   // 보강/주말타임 맵 캐시
   let EXTRA = {};     // {"YYYY-MM-DD":[sid,...]}
   let WEEKEND = {};   // {"YYYY-MM-DD": {sid: 1|2|3 | [1,2,3]}}
+  let CARRYOVER = {}; // {"by_absence":{"YYYY-MM-DD":{"sid":{state:"carried"}}}}
 
   // 슬롯 버튼 클릭 핸들러 중복 방지 플래그
   let slotClickBound = false;
   let makeupSelection = null;
+  let manualMakeupSelectedSid = '';
+  let manualMakeupSelectedDates = new Set();
+  let manualAbsenceSelection = null;
+  let manualAbsencePointerDate = '';
+  let manualAbsencePointerAt = 0;
 
   // 유틸: 학생이 해당 요일 정규 등원하는지
   function hasWeekday(s, w) {
@@ -318,6 +325,16 @@ export function initCalendar() {
       return matches.map(n => parseInt(n, 10));
     }).filter(n => MAKEUP_SLOTS.includes(n));
     return Array.from(new Set(slots)).sort((a, b) => a - b);
+  }
+
+  function slotGroupLabel(slots) {
+    const nums = (slots || []).filter(slot => MAKEUP_SLOTS.includes(slot));
+    return (nums.length ? nums : [1]).map(slot => `${slot}타임`).join('·');
+  }
+
+  function slotSortValue(slots) {
+    const nums = (slots || []).filter(slot => MAKEUP_SLOTS.includes(slot));
+    return nums.length ? Math.min(...nums) : 99;
   }
 
   function getRegularSlots(stu, dateStr) {
@@ -334,6 +351,169 @@ export function initCalendar() {
     return slots.length ? slots : [1];
   }
 
+  function serializeSlots(slots) {
+    const nums = parseSlotNumbers(slots);
+    if (nums.length <= 1) return nums[0] || 1;
+    return nums;
+  }
+
+  function combinedSlotsForStudent(stu, dateStr, slots = []) {
+    const merged = Array.from(new Set([
+      ...getRegularSlots(stu || {}, dateStr),
+      ...parseSlotNumbers(slots),
+    ])).sort((a, b) => a - b);
+    return merged.length ? merged : [1];
+  }
+
+  function slotsForAttendStudent(stu, dateStr, extras = [], slotMap = {}) {
+    const sid = String(stu?.id || '');
+    const regular = getRegularSlots(stu, dateStr);
+    const extraSlots = extras.includes(sid) ? parseSlotNumbers(slotMap?.[sid]) : [];
+    const merged = Array.from(new Set([...regular, ...extraSlots])).sort((a, b) => a - b);
+    return merged.length ? merged : [1];
+  }
+
+  function getAbsentSlots(dateStr, sid) {
+    return parseSlotNumbers(state.absentSlotsByDate?.[dateStr]?.[String(sid)]);
+  }
+
+  function subtractAbsentSlots(dateStr, sid, slots) {
+    const fullAbsent = new Set((state.absentByDate?.[dateStr] || []).map(String));
+    if (fullAbsent.has(String(sid))) return [];
+    const absentSlots = new Set(getAbsentSlots(dateStr, sid));
+    if (!absentSlots.size) return slots;
+    return (slots || []).filter(slot => !absentSlots.has(slot));
+  }
+
+  function availableSlotsForAttendStudent(stu, dateStr, extras = [], slotMap = {}) {
+    const slots = slotsForAttendStudent(stu, dateStr, extras, slotMap);
+    return subtractAbsentSlots(dateStr, String(stu?.id || ''), slots);
+  }
+
+  function normalizeStudentIdentity(value) {
+    return String(value || '')
+      .trim()
+      .replace(/\s*[\(\[][^()\[\]]+[\)\]]\s*$/u, '')
+      .replace(/\s+/g, '');
+  }
+
+  function studentSchoolLabel(stu) {
+    return String(
+      stu?.school ||
+      stu?.schoolName ||
+      stu?.highSchool ||
+      stu?.middleSchool ||
+      stu?.high ||
+      stu?.middle ||
+      stu?.schoolHigh ||
+      stu?.schoolMiddle ||
+      ''
+    ).trim();
+  }
+
+  function normalizeSchoolIdentity(value) {
+    return normalizeStudentIdentity(value)
+      .replace(/고등학교$/u, '고')
+      .replace(/중학교$/u, '중');
+  }
+
+  function studentCourseLabel(stu) {
+    return [
+      stu?.curriculum || stu?.course || stu?.subject || stu?.className,
+      stu?.subCurriculum,
+    ].map(value => String(value || '').trim()).filter(Boolean).join(' ') || '수업';
+  }
+
+  function selectedMakeupStudentRecords() {
+    if (!makeupSelection) return [];
+    const selectedSid = String(makeupSelection.sid || '').trim();
+    const selectedStudent = makeupSelection.student ||
+      (state.students || []).find(stu => String(stu?.id || '') === selectedSid) ||
+      {};
+    const targetName = normalizeStudentIdentity(selectedStudent?.name || makeupSelection.name);
+    const targetSchool = normalizeSchoolIdentity(studentSchoolLabel(selectedStudent) || makeupSelection.school);
+    const seen = new Set();
+    const records = [];
+
+    (state.students || []).forEach(stu => {
+      const sid = String(stu?.id || '').trim();
+      const sameSid = selectedSid && sid === selectedSid;
+      const sameName = targetName && normalizeStudentIdentity(stu?.name) === targetName;
+      const school = normalizeSchoolIdentity(studentSchoolLabel(stu));
+      const sameSchool = !!targetSchool && !!school && school === targetSchool;
+      if (!sameSid && !(sameName && sameSchool)) return;
+      const key = sid || `${normalizeStudentIdentity(stu?.name)}|${studentCourseLabel(stu)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      records.push(stu);
+    });
+
+    if (!records.length && (selectedSid || targetName)) records.push(selectedStudent);
+    return records;
+  }
+
+  function selectedStudentScheduleLabels(dateStr) {
+    const records = selectedMakeupStudentRecords();
+    if (!records.length) return [];
+    const extras = new Set((EXTRA[dateStr] || []).map(String));
+    const absent = new Set((state.absentByDate?.[dateStr] || []).map(String));
+    const labels = [];
+    const seen = new Set();
+
+    const addLabel = (stu, slot, kind = 'regular', note = '') => {
+      if (!MAKEUP_SLOTS.includes(slot)) return;
+      const course = studentCourseLabel(stu);
+      const label = kind === 'makeup'
+        ? `${course} 보강 ${slot}타임${note}`
+        : `${course} ${slot}타임`;
+      const sid = String(stu?.id || '').trim();
+      const key = `${sid || normalizeStudentIdentity(stu?.name)}|${course}|${kind}|${slot}|${note}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      labels.push(label);
+    };
+
+    records.forEach(stu => {
+      const sid = String(stu?.id || '').trim();
+      const isAbsent = sid && absent.has(sid);
+      const absentSlots = new Set(getAbsentSlots(dateStr, sid));
+      if (!isAbsent) {
+        getRegularSlots(stu, dateStr)
+          .filter(slot => !absentSlots.has(slot))
+          .forEach(slot => addLabel(stu, slot, 'regular'));
+      }
+      if (sid && extras.has(sid)) {
+        getMakeupSlots(dateStr, sid).forEach(slot => {
+          const note = isAbsent || absentSlots.has(slot) ? ' (결석)' : '';
+          addLabel(stu, slot, 'makeup', note);
+        });
+      }
+    });
+
+    return labels;
+  }
+
+  function refreshMakeupConflictHints() {
+    document.querySelectorAll('.makeup-conflict-list').forEach(el => el.remove());
+    document.querySelectorAll('.fc-daygrid-day.has-makeup-conflicts').forEach(cell => {
+      cell.classList.remove('has-makeup-conflicts');
+    });
+    if (!makeupSelection) return;
+
+    document.querySelectorAll('.fc-daygrid-day').forEach(cell => {
+      const dateStr = cell.getAttribute('data-date');
+      if (!dateStr) return;
+      const labels = selectedStudentScheduleLabels(dateStr);
+      if (!labels.length) return;
+      const frame = cell.querySelector('.fc-daygrid-day-frame') || cell;
+      const box = document.createElement('div');
+      box.className = 'makeup-conflict-list';
+      box.innerHTML = labels.map(label => `<span>${escapeHtml(label)}</span>`).join('');
+      frame.appendChild(box);
+      cell.classList.add('has-makeup-conflicts');
+    });
+  }
+
   function addSlotCounts(slotSets, sid, slots, fallbackSlots = []) {
     const validSlots = slots.filter(slot => MAKEUP_SLOTS.includes(slot));
     const finalSlots = validSlots.length
@@ -342,16 +522,14 @@ export function initCalendar() {
     (finalSlots.length ? finalSlots : [1]).forEach(slot => slotSets[slot].add(String(sid)));
   }
 
-  // ✅ 정규 주말 슬롯 추출(학생 스키마에서 요일 숫자 파싱)
-  function getRegularWeekendSlots(stu, dateStr) {
-    const w = yoil(dateStr);
-    if (w !== '토' && w !== '일') return [];
-    return getRegularSlots(stu, dateStr);
-  }
-
   async function preloadExtraWeekend() {
     try { EXTRA = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch { EXTRA = {}; }
     try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
+    try { CARRYOVER = await fetch('/api/makeup-carryover', { cache: 'no-store' }).then(r => r.json()); } catch { CARRYOVER = {}; }
+    try { applyAbsentPayload(await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json())); } catch {}
+    state.extra = EXTRA || {};
+    window.extra = state.extra;
+    CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
   }
 
   function syncCalendarCellRatio() {
@@ -384,6 +562,10 @@ export function initCalendar() {
       (state.absentByDate?.[dateStr] || []).map(String).forEach(id => {
         MAKEUP_SLOTS.forEach(slot => slotSets[slot].delete(id));
       });
+      const slotAbsences = state.absentSlotsByDate?.[dateStr] || {};
+      Object.entries(slotAbsences).forEach(([sid, slotsRaw]) => {
+        parseSlotNumbers(slotsRaw).forEach(slot => slotSets[slot]?.delete(String(sid)));
+      });
 
       countMap[dateStr] = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, slotSets[slot].size]));
     }
@@ -400,6 +582,7 @@ export function initCalendar() {
       const counts = countMap[dateStr] || {};
       badge.textContent = `${counts[1] || 0}명 / ${counts[2] || 0}명`;
     });
+    refreshMakeupConflictHints();
     syncCalendarCellRatio();
   }
 
@@ -417,7 +600,444 @@ export function initCalendar() {
   }
 
   function makeupItemKey(item) {
-    return `${item.sid}|${item.absenceDate}`;
+    return `${item.source || 'absence'}|${item.sid}|${item.absenceDate}|${item.slot || ''}|${item.manualKey || ''}`;
+  }
+
+  function makeupCarryoverKey(item) {
+    const sid = String(item?.sid || '').trim();
+    const slot = parseSlotNumbers(item?.slot)[0];
+    return slot ? `${sid}|${slot}` : sid;
+  }
+
+  function normalizeCarryoverPayload(data) {
+    const byAbsence = data?.by_absence && typeof data.by_absence === 'object' ? data.by_absence : {};
+    const manual = data?.manual && typeof data.manual === 'object' ? data.manual : {};
+    return { by_absence: byAbsence, manual };
+  }
+
+  function normalizeAbsentSlotMap(value) {
+    const out = {};
+    if (!value || typeof value !== 'object') return out;
+    for (const [date, sidMap] of Object.entries(value)) {
+      if (!DATE_RE.test(String(date)) || !sidMap || typeof sidMap !== 'object') continue;
+      const rows = {};
+      for (const [sid, slots] of Object.entries(sidMap)) {
+        const nums = parseSlotNumbers(slots);
+        if (String(sid).trim() && nums.length) rows[String(sid)] = nums;
+      }
+      if (Object.keys(rows).length) out[date] = rows;
+    }
+    return out;
+  }
+
+  function getTodayPlannerSidSet() {
+    return new Set(
+      Array.from(document.querySelectorAll('#todayWrap tr[data-sid]'))
+        .map(tr => String(tr.dataset.sid || '').trim())
+        .filter(Boolean)
+    );
+  }
+
+  function sortPlannerItems(items) {
+    const todaySids = getTodayPlannerSidSet();
+    return [...items].sort((a, b) => {
+      const todayA = todaySids.has(String(a.sid)) ? 0 : 1;
+      const todayB = todaySids.has(String(b.sid)) ? 0 : 1;
+      if (todayA !== todayB) return todayA - todayB;
+      const nameCmp = String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true });
+      if (nameCmp !== 0) return nameCmp;
+      return String(a.absenceDate || '').localeCompare(String(b.absenceDate || '')) ||
+        Number(a.slot || 0) - Number(b.slot || 0) ||
+        String(a.sid).localeCompare(String(b.sid), 'ko', { numeric: true });
+    });
+  }
+
+  function downloadTextFile(filename, contents, type) {
+    const blob = new Blob([contents], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportMakeupRosterCsv() {
+    const rows = buildMakeupExportRows(sortPlannerItems(getPendingMakeups()));
+    if (!rows.length) {
+      toast('내보낼 보강 명단이 없습니다.');
+      return;
+    }
+
+    const dateStr = String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
+    downloadTextFile(`보강명단_${dateStr}.csv`, makeupExportRowsToCsv(rows), 'text/csv;charset=utf-8');
+    toast('보강 명단 CSV 내보내기 완료');
+  }
+
+  function ensureManualMakeupModal() {
+    if (document.getElementById('manualMakeupModal')) return;
+    document.body.insertAdjacentHTML('beforeend', `
+      <div id="manualMakeupModal" class="modal-backdrop manual-makeup-modal" role="dialog" aria-modal="true" aria-labelledby="manualMakeupTitle">
+        <div class="modal-panel narrow column manual-makeup-panel">
+          <div class="manual-makeup-header">
+            <div>
+              <h3 id="manualMakeupTitle">결석 추가</h3>
+              <p>학생/과목을 고른 뒤 운영판 캘린더에서 결석 날짜를 선택합니다.</p>
+            </div>
+            <div class="manual-makeup-actions">
+              <button type="button" id="manualMakeupSave" class="selection-btn primary">날짜 선택</button>
+              <button type="button" id="manualMakeupClose" class="selection-btn">닫기</button>
+            </div>
+          </div>
+          <div class="manual-makeup-flow">
+            <section class="manual-makeup-student-step" aria-labelledby="manualMakeupStudentTitle">
+              <div class="manual-step-title" id="manualMakeupStudentTitle">학생/과목</div>
+              <div class="selection-search-wrap manual-makeup-search">
+                <div class="selection-search-row">
+                  <input id="manualMakeupSearch" type="search" autocomplete="off" placeholder="학생/과목 검색" aria-label="학생/과목 검색">
+                  <button type="button" id="manualMakeupPick" class="selection-btn" disabled>선택</button>
+                </div>
+                <div id="manualMakeupHint" class="selection-search-hint" aria-live="polite"></div>
+              </div>
+              <ul id="manualMakeupList" class="manual-makeup-list"></ul>
+            </section>
+          </div>
+        </div>
+      </div>
+    `);
+
+    const modal = $('manualMakeupModal');
+    const search = $('manualMakeupSearch');
+    applySearchPlaceholder(search, '학생/과목 검색');
+    $('manualMakeupClose')?.addEventListener('click', () => { modal.style.display = 'none'; });
+    modal?.addEventListener('click', (ev) => {
+      if (ev.target === modal) modal.style.display = 'none';
+    });
+    search?.addEventListener('input', applyManualMakeupSearchFilter);
+    search?.addEventListener('search', applyManualMakeupSearchFilter);
+    search?.addEventListener('compositionend', applyManualMakeupSearchFilter);
+    search?.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        pickManualMakeupStudent();
+        return;
+      }
+      if (ev.key !== 'Escape') return;
+      search.value = '';
+      applyManualMakeupSearchFilter();
+    });
+    $('manualMakeupPick')?.addEventListener('click', pickManualMakeupStudent);
+    $('manualMakeupList')?.addEventListener('click', (ev) => {
+      const row = ev.target.closest('li[data-id]');
+      if (!row) return;
+      setManualMakeupRowSelected(row, true);
+    });
+    $('manualMakeupList')?.addEventListener('change', (ev) => {
+      const chk = ev.target.closest('.chk-sid');
+      if (!chk) return;
+      setManualMakeupRowSelected(chk.closest('li[data-id]'), chk.checked);
+    });
+    $('manualMakeupSave')?.addEventListener('click', startManualAbsenceCalendarSelection);
+  }
+
+  function manualMakeupRows() {
+    return Array.from(document.querySelectorAll('#manualMakeupList li[data-id]'));
+  }
+
+  function setManualMakeupRowSelected(row, selected) {
+    if (!row) return;
+    const chk = row.querySelector('.chk-sid');
+    if (!chk) return;
+    manualMakeupRows().forEach(other => {
+      const isSelected = selected && other === row;
+      const otherChk = other.querySelector('.chk-sid');
+      if (otherChk) otherChk.checked = isSelected;
+      other.classList.toggle('selected', isSelected);
+    });
+    manualMakeupSelectedSid = selected ? String(row.dataset.id || '') : '';
+    updateManualMakeupSaveState();
+  }
+
+  function applyManualMakeupSearchFilter() {
+    const input = $('manualMakeupSearch');
+    const hint = $('manualMakeupHint');
+    const pick = $('manualMakeupPick');
+    const queryText = input?.value || '';
+    const needle = normalizeSearch(queryText);
+    let visible = 0;
+    manualMakeupRows().forEach(row => {
+      const matches = matchesSearchKey(row.dataset.searchKey || '', queryText);
+      row.hidden = !matches;
+      row.classList.toggle('is-search-hidden', !matches);
+      row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+      if (matches) visible += 1;
+    });
+    if (pick) pick.disabled = !needle || visible === 0;
+    if (hint) hint.textContent = needle ? (visible ? `${visible}명` : '검색 결과 없음') : '';
+  }
+
+  function pickManualMakeupStudent() {
+    const input = $('manualMakeupSearch');
+    const hint = $('manualMakeupHint');
+    const needle = normalizeSearch(input?.value);
+    if (!needle) return;
+    const rows = manualMakeupRows().filter(row => !row.hidden && !row.classList.contains('is-search-hidden'));
+    const exact = rows.find(row => normalizeSearch(row.querySelector('.student-name')?.textContent) === needle);
+    const row = exact || rows[0];
+    if (!row) return;
+    setManualMakeupRowSelected(row, true);
+    row.scrollIntoView({ block: 'nearest' });
+    const label = row.querySelector('.student-name')?.textContent || '';
+    if (hint) hint.textContent = label ? `${label} 선택됨` : '선택됨';
+  }
+
+  function manualMakeupStudentRow(stu) {
+    const course = studentCourseLabel(stu);
+    const school = studentSchoolLabel(stu);
+    const searchKey = studentSearchKey(stu, [school, course]);
+    return `
+      <li data-id="${escapeAttr(stu.id)}" data-search-key="${escapeAttr(searchKey)}" class="selection-student-row ${String(stu.id) === manualMakeupSelectedSid ? 'selected' : ''}">
+        <label class="selection-student-label">
+          <input type="radio" name="manualMakeupStudent" class="chk-sid" ${String(stu.id) === manualMakeupSelectedSid ? 'checked' : ''}>
+          <span class="student-name">${escapeHtml(stu.name || '')}</span>
+          <small>${escapeHtml([school, course].filter(Boolean).join(' · '))}</small>
+        </label>
+      </li>`;
+  }
+
+  function renderManualMakeupRows() {
+    const list = $('manualMakeupList');
+    if (!list) return;
+    const rows = (state.students || []).slice()
+      .sort((a, b) =>
+        String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }) ||
+        String(studentCourseLabel(a)).localeCompare(String(studentCourseLabel(b)), 'ko', { numeric: true })
+      );
+    list.innerHTML = rows.map(manualMakeupStudentRow).join('');
+    applyManualMakeupSearchFilter();
+    updateManualMakeupSaveState();
+  }
+
+  function manualMakeupSelectedDateList() {
+    return Array.from(manualMakeupSelectedDates).filter(date => DATE_RE.test(date)).sort();
+  }
+
+  function updateManualMakeupSaveState() {
+    const save = $('manualMakeupSave');
+    if (save) save.disabled = !manualMakeupSelectedSid;
+  }
+
+  function selectedManualMakeupRow() {
+    return manualMakeupRows().find(item => item.querySelector('.chk-sid')?.checked) || null;
+  }
+
+  function ensureManualAbsenceFocusGuide() {
+    if (document.getElementById('manualAbsenceCalendarGuide')) return;
+    calendarEl.insertAdjacentHTML('afterbegin', `
+      <div id="manualAbsenceCalendarGuide" class="makeup-calendar-guide manual-absence-calendar-guide" hidden>
+        <strong>운영판 캘린더에서 결석 날짜를 선택하세요</strong>
+        <span id="manualAbsenceCalendarGuideSub"></span>
+        <span id="manualAbsenceCalendarGuideDates"></span>
+        <div class="manual-absence-guide-actions">
+          <button type="button" id="manualAbsenceSave" class="selection-btn primary">선택 날짜 저장</button>
+          <button type="button" id="manualAbsenceCancel" class="selection-btn">취소</button>
+        </div>
+      </div>
+    `);
+    $('manualAbsenceSave')?.addEventListener('click', saveManualAbsenceSelection);
+    $('manualAbsenceCancel')?.addEventListener('click', cancelManualAbsenceSelection);
+  }
+
+  function refreshManualAbsenceDateMarks() {
+    calendarEl.querySelectorAll('.fc-daygrid-day.manual-absence-selected').forEach(cell => {
+      cell.classList.remove('manual-absence-selected');
+      cell.removeAttribute('aria-pressed');
+    });
+    if (!manualAbsenceSelection) return;
+    manualMakeupSelectedDateList().forEach(dateStr => {
+      const cell = calendarEl.querySelector(`.fc-daygrid-day[data-date="${dateStr}"]`);
+      if (!cell) return;
+      cell.classList.add('manual-absence-selected');
+      cell.setAttribute('aria-pressed', 'true');
+    });
+  }
+
+  function updateManualAbsenceFocusUI() {
+    ensureManualAbsenceFocusGuide();
+    const active = !!manualAbsenceSelection;
+    document.body.classList.toggle('manual-absence-selecting', active);
+    calendarEl.classList.toggle('is-manual-absence-selecting', active);
+
+    const guide = $('manualAbsenceCalendarGuide');
+    const sub = $('manualAbsenceCalendarGuideSub');
+    const datesEl = $('manualAbsenceCalendarGuideDates');
+    const save = $('manualAbsenceSave');
+    const dates = manualMakeupSelectedDateList();
+    if (guide) guide.hidden = !active;
+    if (sub) {
+      const student = manualAbsenceSelection?.student || {};
+      sub.textContent = active
+        ? [studentSchoolLabel(student), studentCourseLabel(student), student?.name || manualAbsenceSelection.sid].filter(Boolean).join(' · ')
+        : '';
+    }
+    if (datesEl) {
+      datesEl.textContent = active
+        ? (dates.length ? dates.map(formatMakeupDate).join(', ') : '날짜를 여러 개 선택할 수 있습니다.')
+        : '';
+    }
+    if (save) save.disabled = !active || !dates.length;
+    refreshManualAbsenceDateMarks();
+  }
+
+  function toggleManualAbsenceDate(dateStr) {
+    if (!manualAbsenceSelection || !DATE_RE.test(String(dateStr || ''))) return;
+    if (manualMakeupSelectedDates.has(dateStr)) manualMakeupSelectedDates.delete(dateStr);
+    else manualMakeupSelectedDates.add(dateStr);
+    updateManualAbsenceFocusUI();
+  }
+
+  function manualAbsenceDateFromEvent(ev) {
+    if (!manualAbsenceSelection) return '';
+    const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
+    const dayCell = target?.closest('.fc-daygrid-day[data-date]');
+    if (!dayCell || !calendarEl.contains(dayCell)) return '';
+    return dayCell.getAttribute('data-date') || '';
+  }
+
+  function recentlyHandledManualAbsenceDate(dateStr) {
+    return !!dateStr && manualAbsencePointerDate === dateStr && Date.now() - manualAbsencePointerAt < 700;
+  }
+
+  function stopManualAbsenceCalendarEvent(ev) {
+    ev.preventDefault?.();
+    ev.stopPropagation?.();
+    ev.stopImmediatePropagation?.();
+  }
+
+  function handleManualAbsencePointerDown(ev) {
+    const dateStr = manualAbsenceDateFromEvent(ev);
+    if (!dateStr) return false;
+    stopManualAbsenceCalendarEvent(ev);
+    manualAbsencePointerDate = dateStr;
+    manualAbsencePointerAt = Date.now();
+    toggleManualAbsenceDate(dateStr);
+    return true;
+  }
+
+  function handleManualAbsenceCalendarClick(ev) {
+    const dateStr = manualAbsenceDateFromEvent(ev);
+    if (!dateStr) return false;
+    stopManualAbsenceCalendarEvent(ev);
+    if (!recentlyHandledManualAbsenceDate(dateStr)) toggleManualAbsenceDate(dateStr);
+    return true;
+  }
+
+  function startManualAbsenceCalendarSelection(ev) {
+    ev?.preventDefault?.();
+    const row = selectedManualMakeupRow();
+    const sid = String(row?.dataset.id || '').trim();
+    if (!sid) {
+      toast('결석 추가할 학생/과목을 선택해주세요.');
+      return;
+    }
+
+    const student = (state.students || []).find(item => String(item?.id || '') === sid) || {};
+    manualAbsenceSelection = { sid, student };
+    manualMakeupSelectedSid = sid;
+    manualMakeupSelectedDates = new Set();
+
+    if (makeupSelection) {
+      setMakeupSelection(null);
+      closeMakeupSlotPicker();
+      renderMakeupPlanner();
+    }
+
+    const modal = $('manualMakeupModal');
+    if (modal) modal.style.display = 'none';
+    updateManualAbsenceFocusUI();
+    window.requestAnimationFrame(() => {
+      calendarEl.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+    });
+    toast('운영판 캘린더에서 결석 날짜를 선택하세요.');
+  }
+
+  function cancelManualAbsenceSelection() {
+    manualAbsenceSelection = null;
+    manualMakeupSelectedDates = new Set();
+    updateManualAbsenceFocusUI();
+  }
+
+  async function saveManualAbsenceSelection(ev) {
+    const btn = ev?.currentTarget;
+    const sid = String(manualAbsenceSelection?.sid || '').trim();
+    const dates = manualMakeupSelectedDateList();
+    if (!sid) {
+      toast('결석 추가할 학생/과목을 선택해주세요.');
+      return;
+    }
+    if (!dates.length) {
+      toast('결석 날짜를 선택해주세요.');
+      return;
+    }
+
+    if (btn) btn.disabled = true;
+    try {
+      await preloadExtraWeekend();
+      const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+      const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+      const next = normalizeCarryoverPayload(latest);
+      const now = new Date().toISOString();
+      const stu = (state.students || []).find(item => String(item?.id || '') === sid) || {};
+      const key = `${sid}|date`;
+
+      dates.forEach(dateStr => {
+        next.manual[dateStr] = { ...(next.manual[dateStr] || {}) };
+        const prev = next.manual[dateStr][key] || {};
+        next.manual[dateStr][key] = {
+          ...prev,
+          sid,
+          slots: [],
+          dateOnly: true,
+          state: '',
+          createdAt: prev.createdAt || now,
+          updatedAt: now,
+          note: prev.note || '',
+          course: studentCourseLabel(stu),
+        };
+      });
+
+      const res = await fetch('/api/makeup-carryover', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify(next),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      CARRYOVER = normalizeCarryoverPayload(data || next);
+      cancelManualAbsenceSelection();
+      await refreshMakeupPlanner();
+      toast(`${dates.length}건의 결석분을 보강 잡기 명단에 추가했습니다.`);
+    } catch (err) {
+      console.error(err);
+      alert('결석 추가 실패');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function openManualMakeupAddUI() {
+    ensureManualMakeupModal();
+    const modal = $('manualMakeupModal');
+    const search = $('manualMakeupSearch');
+    cancelManualAbsenceSelection();
+    manualMakeupSelectedSid = '';
+    manualMakeupSelectedDates = new Set();
+    if (search) search.value = '';
+    renderManualMakeupRows();
+    modal.style.display = 'flex';
+    requestAnimationFrame(() => search?.focus());
   }
 
   function ensureMakeupPlanner() {
@@ -426,8 +1046,12 @@ export function initCalendar() {
       <section id="makeupPlanner" class="makeup-planner" aria-label="보강 잡기">
         <div class="makeup-planner-head">
           <div>
-            <h4>보강 잡기</h4>
-            <p id="makeupPlannerHint">운영일 이후 결석으로 보강이 필요한 학생입니다.</p>
+            <div class="makeup-planner-title-row">
+              <h4>보강 잡기</h4>
+              <button id="exportMakeupRoster" class="btn secondary makeup-export-btn" type="button">보강 명단 내보내기</button>
+              <button id="openManualMakeup" class="btn secondary makeup-export-btn makeup-add-btn" type="button">결석 추가</button>
+            </div>
+            <p id="makeupPlannerHint">보강이 잡히기 전까지 유지되는 결석 보강 명단입니다.</p>
           </div>
           <input id="makeupPlannerSearch" type="search" autocomplete="off" placeholder="보강 학생 검색">
         </div>
@@ -437,6 +1061,8 @@ export function initCalendar() {
 
     const search = $('makeupPlannerSearch');
     applySearchPlaceholder(search, '보강 학생 검색');
+    $('exportMakeupRoster')?.addEventListener('click', exportMakeupRosterCsv);
+    $('openManualMakeup')?.addEventListener('click', openManualMakeupAddUI);
     search?.addEventListener('input', renderMakeupPlanner);
     search?.addEventListener('search', renderMakeupPlanner);
     search?.addEventListener('compositionend', renderMakeupPlanner);
@@ -463,7 +1089,15 @@ export function initCalendar() {
       if (btn.dataset.makeupAction === 'remove') {
         removePendingMakeup(item).catch(err => {
           console.error(err);
-          alert('제거 실패');
+          alert('결석 취소 실패');
+        });
+        return;
+      }
+
+      if (btn.dataset.makeupAction === 'carryover') {
+        carryoverPendingMakeup(item).catch(err => {
+          console.error(err);
+          alert('이월 실패');
         });
         return;
       }
@@ -479,8 +1113,11 @@ export function initCalendar() {
     return buildPendingMakeups({
       students: state.students || [],
       absentByDate: state.absentByDate || {},
+      absentSlotsByDate: state.absentSlotsByDate || {},
       extra: EXTRA || state.extra || {},
-      minAbsenceDate: makeupPendingActivationDate(getAdminDate()),
+      weekendSlots: WEEKEND || {},
+      carryover: CARRYOVER || {},
+      manualMakeups: CARRYOVER?.manual || {},
     });
   }
 
@@ -488,15 +1125,19 @@ export function initCalendar() {
     if (!data || typeof data !== 'object') return;
     const byDate = data.by_date || data.absentByDate;
     const byStudent = data.by_student || data.absences;
+    const bySlot = data.by_slot || data.absentSlotsByDate;
 
     if (byDate && typeof byDate === 'object') state.absentByDate = byDate;
     if (byStudent && typeof byStudent === 'object') state.absences = byStudent;
+    if (bySlot && typeof bySlot === 'object') state.absentSlotsByDate = normalizeAbsentSlotMap(bySlot);
 
     window.absentByDate = state.absentByDate;
     window.absences = state.absences;
+    window.absentSlotsByDate = state.absentSlotsByDate;
     if (window.state && typeof window.state === 'object') {
       window.state.absentByDate = state.absentByDate;
       window.state.absences = state.absences;
+      window.state.absentSlotsByDate = state.absentSlotsByDate;
     }
   }
 
@@ -520,16 +1161,20 @@ export function initCalendar() {
     if (!guide) return;
     guide.hidden = !active;
     if (sub) {
+      const slotLabel = makeupSelection?.slot ? ` ${makeupSelection.slot}타임` : '';
       sub.textContent = active
-        ? `${makeupSelection.name || makeupSelection.sid} - ${formatMakeupDate(makeupSelection.absenceDate)}`
+        ? `${makeupSelection.name || makeupSelection.sid} - ${formatMakeupDate(makeupSelection.absenceDate)}${slotLabel}`
         : '';
     }
   }
 
   function setMakeupSelection(item) {
+    if (item && manualAbsenceSelection) cancelManualAbsenceSelection();
     makeupSelection = item || null;
     updateMakeupFocusUI();
+    refreshMakeupConflictHints();
     if (makeupSelection) {
+      preloadExtraWeekend().then(refreshMakeupConflictHints).catch(() => {});
       window.requestAnimationFrame(() => {
         calendarEl.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
       });
@@ -542,17 +1187,71 @@ export function initCalendar() {
     const absenceDate = String(item.absenceDate || '').trim();
     if (!sid || !absenceDate) return;
 
+    if (item.source === 'manual') {
+      const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+      const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+      const next = normalizeCarryoverPayload(latest);
+      const rows = next.manual?.[absenceDate] || {};
+      const manualKey = String(item.manualKey || '').trim();
+      if (manualKey) delete rows[manualKey];
+      else {
+        Object.entries(rows).forEach(([key, row]) => {
+          if (String(row?.sid || '') === sid && parseSlotNumbers(row?.slots).includes(Number(item.slot))) delete rows[key];
+        });
+      }
+      if (Object.keys(rows).length) next.manual[absenceDate] = rows;
+      else delete next.manual[absenceDate];
+
+      const res = await fetch('/api/makeup-carryover', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify(next),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      CARRYOVER = normalizeCarryoverPayload(data || next);
+      if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
+        setMakeupSelection(null);
+        closeMakeupSlotPicker();
+      }
+      await refreshMakeupPlanner();
+      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+      toast('보강 대상을 삭제했습니다.');
+      return;
+    }
+
     const latestRes = await fetch('/api/absent', { cache: 'no-store' });
     const latest = await latestRes.json().catch(() => null);
     if (!latestRes.ok) throw new Error(`/api/absent ${latestRes.status}`);
 
     const byDateSource = latest?.by_date || latest?.absentByDate || state.absentByDate || {};
     const byStudentSource = latest?.by_student || latest?.absences || state.absences || {};
+    const bySlotSource = latest?.by_slot || latest?.absentSlotsByDate || state.absentSlotsByDate || {};
     const byDate = Object.fromEntries(Object.entries(byDateSource).map(([date, ids]) => [
       date,
       Array.isArray(ids) ? ids.map(String) : [],
     ]));
     const byStudent = { ...byStudentSource };
+    const bySlot = normalizeAbsentSlotMap(bySlotSource);
+
+    const removedSlot = parseSlotNumbers(item.slot)[0];
+    if (removedSlot) {
+      const existingSlots = parseSlotNumbers(bySlot?.[absenceDate]?.[sid]);
+      const sourceSlots = existingSlots.length
+        ? existingSlots
+        : (getRegularSlots(item.student || {}, absenceDate).length ? getRegularSlots(item.student || {}, absenceDate) : [removedSlot]);
+      const remainingSlots = sourceSlots.filter(slot => slot !== removedSlot);
+      if (remainingSlots.length) {
+        bySlot[absenceDate] = bySlot[absenceDate] || {};
+        bySlot[absenceDate][sid] = remainingSlots;
+      } else if (bySlot[absenceDate]) {
+        delete bySlot[absenceDate][sid];
+        if (!Object.keys(bySlot[absenceDate]).length) delete bySlot[absenceDate];
+      }
+    } else if (bySlot[absenceDate]) {
+      delete bySlot[absenceDate][sid];
+      if (!Object.keys(bySlot[absenceDate]).length) delete bySlot[absenceDate];
+    }
 
     const nextIds = (byDate[absenceDate] || []).map(String).filter(id => id !== sid);
     if (nextIds.length) byDate[absenceDate] = nextIds;
@@ -562,12 +1261,12 @@ export function initCalendar() {
     const res = await fetch('/api/absent', {
       method: 'POST',
       headers: CT,
-      body: JSON.stringify({ by_date: byDate, by_student: byStudent }),
+      body: JSON.stringify({ by_date: byDate, by_student: byStudent, by_slot: bySlot }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/absent ${res.status}`);
 
-    applyAbsentPayload(data || { by_date: byDate, by_student: byStudent });
+    applyAbsentPayload(data || { by_date: byDate, by_student: byStudent, by_slot: bySlot });
     if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
       setMakeupSelection(null);
       closeMakeupSlotPicker();
@@ -576,7 +1275,62 @@ export function initCalendar() {
     await window.recalcCalendarCounts?.();
     document.dispatchEvent(new CustomEvent('attendance:updated'));
     document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
-    toast('보강 목록에서 제거했습니다.');
+    toast('결석을 취소했습니다.');
+  }
+
+  async function carryoverPendingMakeup(item) {
+    if (!item) return;
+    const sid = String(item.sid || '').trim();
+    const absenceDate = String(item.absenceDate || '').trim();
+    if (!sid || !absenceDate) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    if (item.source === 'manual') {
+      const manualKey = String(item.manualKey || '').trim();
+      next.manual[absenceDate] = next.manual[absenceDate] || {};
+      const prev = manualKey ? (next.manual[absenceDate][manualKey] || {}) : {};
+      if (manualKey) {
+        next.manual[absenceDate][manualKey] = {
+          ...prev,
+          sid,
+          slots: item.dateOnly ? [] : parseSlotNumbers(item.slot),
+          dateOnly: item.dateOnly === true,
+          state: 'carried',
+          updatedAt: new Date().toISOString(),
+          note: '',
+          course: prev.course || item.course || '',
+        };
+      }
+    } else {
+    next.by_absence[absenceDate] = {
+      ...(next.by_absence[absenceDate] || {}),
+      [makeupCarryoverKey(item)]: {
+        state: 'carried',
+        updatedAt: new Date().toISOString(),
+        note: '',
+      },
+    };
+    }
+
+    const res = await fetch('/api/makeup-carryover', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(next),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+
+    CARRYOVER = normalizeCarryoverPayload(data || next);
+    if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
+      setMakeupSelection(null);
+      closeMakeupSlotPicker();
+    }
+    await refreshMakeupPlanner();
+    await window.recalcCalendarCounts?.();
+    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    toast('보강 없이 이월 처리했습니다.');
   }
 
   function renderMakeupPlanner() {
@@ -589,18 +1343,20 @@ export function initCalendar() {
 
     const queryText = search?.value || '';
     const items = getPendingMakeups();
-    const visible = items.filter(item => {
+    const visible = sortPlannerItems(items.filter(item => {
       const key = studentSearchKey(item.student, [
         item.school,
         item.course,
         item.absenceDate,
+        item.slot ? `${item.slot}타임` : '',
+        item.source === 'manual' ? '추가 결석' : '결석',
         formatMakeupDate(item.absenceDate),
       ]);
       return matchesSearchKey(key, queryText);
-    });
+    }));
 
     if (hint) {
-      const suffix = makeupSelection ? ' 날짜 선택 중' : '';
+      const suffix = manualAbsenceSelection ? ' 결석 날짜 선택 중' : (makeupSelection ? ' 날짜 선택 중' : '');
       hint.textContent = queryText.trim()
         ? `${visible.length}/${items.length}명${suffix}`
         : `${items.length}건${suffix}`;
@@ -614,14 +1370,20 @@ export function initCalendar() {
     const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
     list.innerHTML = visible.map(item => {
       const key = makeupItemKey(item);
-      const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}`;
+      const sourceLabel = item.source === 'manual' ? '추가 결석' : '결석';
+      const slotLabel = item.dateOnly
+        ? ` - ${sourceLabel}`
+        : item.slot ? ` - ${sourceLabel} ${item.slot}타임` : '';
+      const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
       const active = key === activeKey ? ' is-active' : '';
+      const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
       return `
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
           <div class="makeup-label">${escapeHtml(label)}</div>
           <div class="makeup-actions">
             <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
-            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">제거</button>
+            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>
+            <button type="button" class="makeup-carryover-btn" data-makeup-action="carryover" data-key="${escapeAttr(key)}">이월</button>
           </div>
         </div>
       `;
@@ -631,6 +1393,7 @@ export function initCalendar() {
   async function refreshMakeupPlanner() {
     await preloadExtraWeekend();
     renderMakeupPlanner();
+    refreshMakeupConflictHints();
   }
 
   function closeMakeupSlotPicker() {
@@ -655,6 +1418,7 @@ export function initCalendar() {
         <div class="makeup-slot-title">${escapeHtml(makeupSelection.name || '')}</div>
         <button type="button" class="makeup-slot-close" data-makeup-action="cancel" aria-label="닫기">×</button>
       </div>
+      <div class="makeup-slot-sub">${escapeHtml(formatMakeupDate(makeupSelection.absenceDate))}${makeupSelection.dateOnly ? ' · 결석분' : makeupSelection.slot ? ` · ${makeupSelection.slot}타임 결석분` : ''}</div>
       <div class="makeup-slot-actions">
         ${MAKEUP_SLOTS.map(slot => `
           <button type="button" data-slot="${slot}">${slot}타임</button>
@@ -685,14 +1449,13 @@ export function initCalendar() {
   async function scheduleSelectedMakeup(dateStr, slot) {
     if (!makeupSelection) return;
     if (!MAKEUP_SLOTS.includes(slot)) return;
-    if (String(dateStr) <= String(makeupSelection.absenceDate)) {
-      alert('결석일 이후 날짜를 선택해주세요.');
-      return;
-    }
 
     await preloadExtraWeekend();
 
     const sid = String(makeupSelection.sid);
+    const stu = makeupSelection.student ||
+      (state.students || []).find(row => String(row?.id || '') === sid) ||
+      {};
     const dayIds = new Set((EXTRA[dateStr] || []).map(String));
     dayIds.add(sid);
     EXTRA[dateStr] = Array.from(dayIds);
@@ -700,7 +1463,9 @@ export function initCalendar() {
     window.extra = state.extra;
 
     const perDaySlots = WEEKEND[dateStr] || {};
-    perDaySlots[sid] = [slot];
+    const existingSlots = parseSlotNumbers(perDaySlots[sid]);
+    const mergedSlots = combinedSlotsForStudent(stu, dateStr, [...existingSlots, slot]);
+    perDaySlots[sid] = serializeSlots(mergedSlots);
     WEEKEND[dateStr] = perDaySlots;
 
     await fetch('/api/extra-attend', {
@@ -719,7 +1484,7 @@ export function initCalendar() {
       body: JSON.stringify({
         date: dateStr,
         sid,
-        value: MAKEUP_ARRIVE_BY_SLOT[slot] || '',
+        value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...mergedSlots)] || '',
       }),
     });
 
@@ -819,6 +1584,10 @@ export function initCalendar() {
       return String(a.title || '').localeCompare(String(b.title || ''), 'ko');
     },
     dateClick: info => {
+      if (manualAbsenceSelection) {
+        if (!recentlyHandledManualAbsenceDate(info.dateStr)) toggleManualAbsenceDate(info.dateStr);
+        return;
+      }
       if (makeupSelection) {
         openMakeupSlotPicker(info.dateStr, info.dayEl);
         return;
@@ -835,25 +1604,21 @@ export function initCalendar() {
       syncCalendarCellRatio();
       bindCenterTodayButton();
       fetchCountsForRange(range.start, range.end).then(refreshCountBadges);
+      refreshManualAbsenceDateMarks();
       refreshMakeupPlanner();
     }
   });
   calendar.render();
   function bindCenterTodayButton() {
-    let btn = calendarEl.querySelector('#calendarTodayButton');
-    if (!btn) {
-      const fcBtn = calendarEl.querySelector('.fc-centerToday-button');
-      if (!fcBtn) return;
-      btn = document.createElement('a');
-      btn.id = 'calendarTodayButton';
-      btn.className = 'fc-button fc-button-primary calendar-today-button';
-      btn.textContent = 'today';
-      btn.setAttribute('title', 'today');
-      btn.setAttribute('role', 'button');
-      btn.href = '/admin?calendar=today';
-      fcBtn.replaceWith(btn);
-    }
-    if (!btn || btn.dataset.centerTodayBound === '1') return;
+    calendarEl.querySelector('#calendarTodayButton')?.remove();
+    const buttons = Array.from(calendarEl.querySelectorAll('.fc-centerToday-button'));
+    buttons.slice(1).forEach(btn => btn.remove());
+    const btn = buttons[0];
+    if (!btn) return;
+    btn.classList.add('calendar-today-button');
+    btn.textContent = 'today';
+    btn.setAttribute('title', 'today');
+    if (btn.dataset.centerTodayBound === '1') return;
     btn.dataset.centerTodayBound = '1';
     const handleTodayButton = (ev) => {
       ev.preventDefault?.();
@@ -870,7 +1635,10 @@ export function initCalendar() {
   refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
 
+  calendarEl.addEventListener('pointerdown', handleManualAbsencePointerDown, true);
+
   calendarEl.addEventListener('click', (ev) => {
+    if (handleManualAbsenceCalendarClick(ev)) return;
     const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
     if (target?.closest('.calendar-today-button')) return;
     if (!target?.closest('.fc-centerToday-button')) return;
@@ -880,9 +1648,10 @@ export function initCalendar() {
   }, true);
 
   document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || !makeupSelection) return;
+    if (ev.key !== 'Escape' || (!makeupSelection && !manualAbsenceSelection)) return;
     ev.preventDefault();
-    cancelMakeupSelection();
+    if (manualAbsenceSelection) cancelManualAbsenceSelection();
+    else cancelMakeupSelection();
   });
 
   let wheelWeekLocked = false;
@@ -963,25 +1732,34 @@ export function initCalendar() {
       const extras = (EXTRA[dateStr] || []).map(String);
       const slotMap = WEEKEND[dateStr] || {};
 
-      // 리스트: 주말이면 “정규+보강” 슬롯 합쳐서 표기(예: 일2·일3)
-      listEl.innerHTML = att.map(s => {
+      const rows = [...att].sort((a, b) => {
+        const slotsA = availableSlotsForAttendStudent(a, dateStr, extras, slotMap);
+        const slotsB = availableSlotsForAttendStudent(b, dateStr, extras, slotMap);
+        const slotCmp = slotSortValue(slotsA) - slotSortValue(slotsB);
+        if (slotCmp !== 0) return slotCmp;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }) ||
+          String(a.id).localeCompare(String(b.id), 'ko', { numeric: true });
+      });
+
+      listEl.innerHTML = rows.map(s => {
         const sid = String(s.id);
         const isExtra = extras.includes(sid);
+        const slots = availableSlotsForAttendStudent(s, dateStr, extras, slotMap);
+        if (!slots.length) return '';
 
         let tail = '';
-        if (isWeekend(dateStr)) {
-          const regular = getRegularWeekendSlots(s, dateStr);               // 정규
+        if (isExtra) {
           const raw = slotMap[sid];                                         // 보강
-          const extraArr = Array.isArray(raw) ? raw.slice() : [Number.isInteger(raw) ? raw : undefined].filter(Boolean);
-          const merged = Array.from(new Set([...regular, ...extraArr])).sort((a, b) => a - b);
-          if (isExtra && merged.length) {
-            const mark = merged.map(n => `${yoil(dateStr)}${n}`).join('·');
+          const extraArr = parseSlotNumbers(raw);
+          if (extraArr.length) {
+            const mark = extraArr.map(n => `${yoil(dateStr)}${n}`).join('·');
             tail = `<span style="color:#2563eb;margin-left:6px">[${mark}]</span>`;
           }
         }
 
-        return `<li data-id="${s.id}" style="margin:4px 0;">
-          ${s.name} (${s.curriculum}${s.subCurriculum ? ' ' + s.subCurriculum : ''}) ${tail}
+        return `<li data-id="${s.id}" class="attend-roster-row">
+          <span class="attend-slot-label">${slotGroupLabel(slots)}</span>
+          <span class="attend-student-label">${s.name} (${s.curriculum}${s.subCurriculum ? ' ' + s.subCurriculum : ''}) ${tail}</span>
         </li>`;
       }).join('');
 
@@ -1005,32 +1783,163 @@ export function initCalendar() {
   $('addExtraBtn')?.addEventListener('click', () => openSelectionUI('extra'));
   $('markAbsentBtn')?.addEventListener('click', () => openSelectionUI('absent'));
 
-  function slotLegend() {
-    return `
-      <div style="display:flex;gap:6px;align-items:center;
-           padding:6px 8px;margin-bottom:8px;border:1px dashed #3b82f6;border-radius:8px;font-size:12px">
-        <b>주말 타임 선택</b>
-        <span>1</span><span>2</span><span>3</span>
-        <small style="opacity:.7">여러 개 클릭 가능(예: 1·3 → 연강)</small>
-      </div>`;
+  function makeupSlotLabel(dateStr, slot) {
+    return `${yoil(dateStr)}${slot}`;
   }
 
-  function studentRow(s, dateStr, preChecked, curSlots) {
-    const weekend = isWeekend(dateStr);
-    const has = new Set((Array.isArray(curSlots) ? curSlots : [curSlots]).filter(n => Number.isInteger(n)));
+  function slotLegend(dateStr) {
     return `
-      <li data-id="${s.id}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0">
-        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+      <li class="selection-slot-legend">
+        <b>타임 선택</b>
+        ${MAKEUP_SLOTS.map(slot => `<span>${makeupSlotLabel(dateStr, slot)}</span>`).join('')}
+        <small style="opacity:.7">여러 개 클릭 가능(예: 1·2 → 연강)</small>
+      </li>`;
+  }
+
+  function ensureSelectionModalChrome() {
+    if (!selectionModal) return;
+    const panel = selectionModal.querySelector('.modal-panel');
+    const title = $('selectionTitle');
+    if (!panel || !title) return;
+    panel.classList.add('selection-panel');
+
+    let header = $('selectionHeader');
+    if (!header) {
+      header = document.createElement('div');
+      header.id = 'selectionHeader';
+      header.className = 'selection-header';
+      const actions = document.createElement('div');
+      actions.className = 'selection-actions selection-actions-top';
+
+      panel.insertAdjacentElement('afterbegin', header);
+      header.appendChild(title);
+      header.appendChild(actions);
+
+      selectionSaveBtn?.classList.add('selection-btn', 'primary');
+      selectionClose?.classList.remove('modal-close');
+      selectionClose?.classList.add('selection-btn');
+      if (selectionSaveBtn) actions.appendChild(selectionSaveBtn);
+      if (selectionClose) actions.appendChild(selectionClose);
+      panel.querySelector('.modal-footer')?.remove();
+    }
+
+    if (selectionSaveBtn) selectionSaveBtn.textContent = '저장';
+    if (selectionClose) selectionClose.textContent = '닫기';
+  }
+
+  function ensureSelectionSearchUI() {
+    ensureSelectionModalChrome();
+    if (!selectionModal || !selectionListEl) return null;
+    let wrap = $('selectionSearchWrap');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'selectionSearchWrap';
+      wrap.className = 'selection-search-wrap';
+      wrap.innerHTML = `
+        <div class="selection-search-row">
+          <input id="selectionSearchInput" type="search" autocomplete="off" placeholder="학생 이름 검색" aria-label="학생 이름 검색">
+          <button type="button" id="selectionSearchPick" class="selection-btn" disabled>선택</button>
+        </div>
+        <div id="selectionSearchHint" class="selection-search-hint" aria-live="polite"></div>
+      `;
+      selectionListEl.insertAdjacentElement('beforebegin', wrap);
+      const input = $('selectionSearchInput');
+      applySearchPlaceholder(input, '학생 이름 검색');
+      input?.addEventListener('input', applySelectionSearchFilter);
+      input?.addEventListener('search', applySelectionSearchFilter);
+      input?.addEventListener('compositionend', applySelectionSearchFilter);
+      input?.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          pickSelectionSearchStudent();
+          return;
+        }
+        if (ev.key !== 'Escape') return;
+        input.value = '';
+        applySelectionSearchFilter();
+      });
+      $('selectionSearchPick')?.addEventListener('click', pickSelectionSearchStudent);
+    }
+    return $('selectionSearchInput');
+  }
+
+  function applySelectionSearchFilter() {
+    const input = $('selectionSearchInput');
+    const hint = $('selectionSearchHint');
+    const pick = $('selectionSearchPick');
+    const rows = Array.from(selectionListEl?.querySelectorAll('li[data-id]') || []);
+    const queryText = input?.value || '';
+    const needle = normalizeSearch(queryText);
+    let visible = 0;
+    rows.forEach(row => {
+      const matches = matchesSearchKey(row.dataset.searchKey || '', queryText);
+      row.hidden = !matches;
+      row.style.display = matches ? '' : 'none';
+      row.classList.toggle('is-search-hidden', !matches);
+      row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+      if (matches) visible += 1;
+    });
+    if (pick) pick.disabled = !needle || visible === 0;
+    if (hint) hint.textContent = needle ? (visible ? `${visible}명` : '검색 결과 없음') : '';
+  }
+
+  function setSelectionRowSelected(row, selected, ensureDefaultSlot = false) {
+    const chk = row?.querySelector('.chk-sid');
+    if (!chk) return;
+    chk.checked = selected;
+    row.classList.toggle('selected', selected);
+
+    if (selected && ensureDefaultSlot && !row.querySelector('.slot-btn.on')) {
+      (row.querySelector('.slot-btn[data-slot="1"]:not([disabled])') ||
+        row.querySelector('.slot-btn:not([disabled])'))?.classList.add('on');
+    }
+  }
+
+  function pickSelectionSearchStudent() {
+    const input = $('selectionSearchInput');
+    const hint = $('selectionSearchHint');
+    const needle = normalizeSearch(input?.value);
+    if (!needle) return;
+
+    const rows = Array.from(selectionListEl?.querySelectorAll('li[data-id]') || []);
+    const visibleRows = rows.filter(row => !row.hidden && !row.classList.contains('is-search-hidden'));
+    const exact = visibleRows.find(row => normalizeSearch(row.querySelector('.student-name')?.textContent) === needle);
+    const row = exact || visibleRows[0];
+    if (!row) return;
+
+    setSelectionRowSelected(row, true, true);
+    row.scrollIntoView({ block: 'nearest' });
+    const name = row.querySelector('.student-name')?.textContent || '';
+    if (hint) hint.textContent = name ? `${name} 선택됨` : '선택됨';
+  }
+
+  function studentRow(s, dateStr, preChecked, curSlots, options = {}) {
+    const showSlots = !!options.showSlots;
+    const slots = parseSlotNumbers(curSlots);
+    const has = new Set((slots.length ? slots : [1]).filter(n => MAKEUP_SLOTS.includes(n)));
+    const allowedSlots = new Set(parseSlotNumbers(options.allowedSlots || MAKEUP_SLOTS));
+    const allSlots = parseSlotNumbers(options.allSlots || curSlots || [1]);
+    const searchKey = studentSearchKey(s, [
+      s?.school,
+      s?.schoolName,
+      s?.curriculum,
+      s?.subCurriculum,
+      slotGroupLabel(Array.from(has)),
+      dateStr,
+    ]);
+    return `
+      <li data-id="${escapeAttr(s.id)}" data-search-key="${escapeAttr(searchKey)}" data-all-slots="${escapeAttr(allSlots.join(','))}" class="selection-student-row ${preChecked ? 'selected' : ''}">
+        <label class="selection-student-label">
           <input type="checkbox" class="chk-sid" ${preChecked ? 'checked' : ''}>
-          <span>${s.name}</span>
-          <small style="opacity:.65">${s.curriculum || ''}${s.subCurriculum ? ' · ' + s.subCurriculum : ''}</small>
+          <span class="student-name">${escapeHtml(s.name || '')}</span>
+          <small>${escapeHtml(s.curriculum || '')}${s.subCurriculum ? ' · ' + escapeHtml(s.subCurriculum) : ''}</small>
         </label>
-        ${weekend ? `
-          <div class="slot-box" style="display:flex;gap:6px">
-            ${[1, 2, 3].map(n => `
+        ${showSlots ? `
+          <div class="slot-box" aria-label="타임 선택">
+            ${MAKEUP_SLOTS.map(n => `
               <button type="button" class="slot-btn ${has.has(n) ? 'on' : ''}" data-slot="${n}"
-                style="min-width:32px;height:28px;border:1px solid #64748b;border-radius:6px;
-                       background:${has.has(n) ? '#3b82f6' : 'transparent'};color:${has.has(n) ? '#fff' : 'inherit'}">${n}</button>
+                ${allowedSlots.has(n) ? '' : 'disabled aria-disabled="true"'}
+                title="${makeupSlotLabel(dateStr, n)}">${makeupSlotLabel(dateStr, n)}</button>
             `).join('')}
           </div>` : ``}
       </li>`;
@@ -1038,6 +1947,7 @@ export function initCalendar() {
 
   function openSelectionUI(mode) {
     const dateStr = $('attendDateTitle').textContent.split(' ')[0]; // "YYYY-MM-DD (요일)" → 날짜만
+    const searchInput = ensureSelectionSearchUI();
     Promise.all([
       fetch(`/api/attend?date=${dateStr}`, { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
@@ -1047,36 +1957,50 @@ export function initCalendar() {
       WEEKEND = weekendMap || {};
 
       // 목록 소스: 결석 처리는 오늘 등원자만, 보강은 전체 학생
-      const listSource = mode === 'absent' ? todayAtt : (state.students || []).slice()
-        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
+      const listSource = mode === 'absent'
+        ? [...todayAtt].filter(stu =>
+          availableSlotsForAttendStudent(stu, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {}).length
+        ).sort((a, b) => {
+          const slotsA = availableSlotsForAttendStudent(a, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {});
+          const slotsB = availableSlotsForAttendStudent(b, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {});
+          const slotCmp = slotSortValue(slotsA) - slotSortValue(slotsB);
+          if (slotCmp !== 0) return slotCmp;
+          return String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true });
+        })
+        : (state.students || []).slice()
+          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }));
 
       const pre = new Set((EXTRA[dateStr] || []).map(String));
       const perDateSlot = WEEKEND[dateStr] || {};
-      const weekend = isWeekend(dateStr);
+      const showSlots = mode === 'extra' || mode === 'absent';
 
       selectionListEl.innerHTML =
-        (mode === 'extra' && weekend ? slotLegend() : '') +
+        (showSlots ? slotLegend(dateStr) : '') +
         listSource.map(s => {
           const sid = String(s.id);
           const checked = mode === 'extra' ? pre.has(sid) : false;
-          // ⚠️ UI의 기본 선택 슬롯은 "보강 슬롯"만 반영(정규는 안내용으로만 쓰고 저장은 따로)
-          const curSlots = weekend ? (perDateSlot[sid] ?? 1) : 0;
-          return studentRow(s, dateStr, checked, curSlots);
+          const allSlots = slotsForAttendStudent(s, dateStr, (EXTRA[dateStr] || []).map(String), perDateSlot);
+          const availableSlots = availableSlotsForAttendStudent(s, dateStr, (EXTRA[dateStr] || []).map(String), perDateSlot);
+          const curSlots = mode === 'extra'
+            ? combinedSlotsForStudent(s, dateStr, parseSlotNumbers(perDateSlot[sid] ?? [1]))
+            : availableSlots;
+          return studentRow(s, dateStr, checked, curSlots, {
+            showSlots,
+            allowedSlots: mode === 'absent' ? availableSlots : MAKEUP_SLOTS,
+            allSlots,
+          });
         }).join('');
+      if (searchInput) searchInput.value = '';
+      applySelectionSearchFilter();
 
       // 행 클릭 시 배경 토글
-      selectionListEl.querySelectorAll('li').forEach(li => {
-        const lab = li.querySelector('label');
-        if (lab) {
-          lab.addEventListener('click', () => {
-            li.classList.toggle('selected', li.querySelector('.chk-sid').checked);
-            li.style.background = li.classList.contains('selected') ? 'rgba(59,130,246,0.15)' : '';
-          });
-          if (li.querySelector('.chk-sid')?.checked) {
-            li.classList.add('selected');
-            li.style.background = 'rgba(59,130,246,0.15)';
-          }
-        }
+      selectionListEl.querySelectorAll('li[data-id]').forEach(li => {
+        const chk = li.querySelector('.chk-sid');
+        chk?.addEventListener('change', () => {
+          const needsSlot = selectionModal.dataset.mode === 'extra' || selectionModal.dataset.mode === 'absent';
+          setSelectionRowSelected(li, chk.checked, needsSlot);
+        });
+        setSelectionRowSelected(li, !!chk?.checked);
       });
 
       // 슬롯 버튼 클릭 핸들러: 한 번만 바인딩(중복 방지)
@@ -1087,6 +2011,7 @@ export function initCalendar() {
 
       selectionModal.dataset.mode = mode;
       selectionModal.dataset.date = dateStr;
+      $('selectionTitle').textContent = mode === 'extra' ? `${dateStr} 보강 추가` : `${dateStr} 결석 처리`;
       selectionModal.style.display = 'flex';
     });
   }
@@ -1095,27 +2020,19 @@ export function initCalendar() {
   function onSlotClick(e) {
     const btn = e.target.closest('.slot-btn');
     if (!btn) return;
+    if (btn.disabled) return;
     const li = btn.closest('li[data-id]');
     if (!li) return;
 
     btn.classList.toggle('on');
-    const on = btn.classList.contains('on');
-    btn.style.background = on ? '#3b82f6' : 'transparent';
-    btn.style.color = on ? '#fff' : 'inherit';
 
     // 자동 체크
-    const chk = li.querySelector('.chk-sid');
-    if (chk && !chk.checked) {
-      chk.checked = true;
-      li.classList.add('selected');
-      li.style.background = 'rgba(59,130,246,0.15)';
-    }
+    if (!li.querySelector('.chk-sid')?.checked) setSelectionRowSelected(li, true);
   }
 
-  // 저장(보강: 체크된 학생만 남기고, 주말 슬롯은 배열로 저장 가능)
+  // 저장(보강: 체크된 학생만 남기고, 선택 타임은 배열로 저장 가능)
   selectionSaveBtn?.addEventListener('click', async () => {
     const mode = selectionModal.dataset.mode, dateStr = selectionModal.dataset.date;
-    const weekend = isWeekend(dateStr);
 
     const items = [...selectionListEl.querySelectorAll('li[data-id]')];
     const selectedIds = items.filter(li => li.querySelector('.chk-sid')?.checked)
@@ -1125,13 +2042,48 @@ export function initCalendar() {
     if (mode === 'absent') {
       state.absences = state.absences && typeof state.absences === 'object' ? state.absences : {};
       state.absentByDate = state.absentByDate && typeof state.absentByDate === 'object' ? state.absentByDate : {};
-      selectedIds.forEach(id => { state.absences[id] = dateStr; });
-      const set = new Set([...(state.absentByDate[dateStr] || []), ...selectedIds]);
-      state.absentByDate[dateStr] = [...set];
+      state.absentSlotsByDate = state.absentSlotsByDate && typeof state.absentSlotsByDate === 'object' ? state.absentSlotsByDate : {};
+
+      const fullDaySet = new Set((state.absentByDate[dateStr] || []).map(String));
+      const slotDay = { ...(state.absentSlotsByDate[dateStr] || {}) };
+
+      for (const li of items.filter(row => selectedIds.includes(String(row.dataset.id)))) {
+        const sid = String(li.dataset.id);
+        const allSlots = parseSlotNumbers(li.dataset.allSlots || []);
+        const selectedSlots = Array.from(li.querySelectorAll('.slot-btn.on:not([disabled])'))
+          .map(btn => parseInt(btn.dataset.slot, 10))
+          .filter(slot => MAKEUP_SLOTS.includes(slot))
+          .sort((a, b) => a - b);
+        const previousSlots = parseSlotNumbers(slotDay[sid]);
+        const nextSlots = Array.from(new Set([...(previousSlots || []), ...(selectedSlots.length ? selectedSlots : allSlots)])).sort((a, b) => a - b);
+        const fullSlots = allSlots.length ? allSlots : nextSlots;
+        const isFullAbsence = fullSlots.length > 0 && fullSlots.every(slot => nextSlots.includes(slot));
+
+        if (isFullAbsence) {
+          fullDaySet.add(sid);
+          state.absences[sid] = dateStr;
+          if (fullSlots.length) slotDay[sid] = fullSlots;
+          else delete slotDay[sid];
+        } else if (nextSlots.length) {
+          fullDaySet.delete(sid);
+          if (String(state.absences[sid] || '') === dateStr) delete state.absences[sid];
+          slotDay[sid] = nextSlots;
+        }
+      }
+
+      if (fullDaySet.size) state.absentByDate[dateStr] = Array.from(fullDaySet);
+      else delete state.absentByDate[dateStr];
+      if (Object.keys(slotDay).length) state.absentSlotsByDate[dateStr] = slotDay;
+      else delete state.absentSlotsByDate[dateStr];
+
       try {
         const res = await fetch('/api/absent', {
           method: 'POST', headers: CT,
-          body: JSON.stringify({ by_date: state.absentByDate, by_student: state.absences })
+          body: JSON.stringify({
+            by_date: state.absentByDate,
+            by_student: state.absences,
+            by_slot: state.absentSlotsByDate,
+          })
         });
         let data = null;
         try { data = await res.json(); } catch { }
@@ -1154,38 +2106,47 @@ export function initCalendar() {
     const nextSet = new Set(selectedIds);
     EXTRA[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
 
-    // 주말 슬롯 저장 (여러 개 가능) — 저장은 "보강 슬롯"만
-    if (weekend) {
-      const perDate = WEEKEND[dateStr] || {};
-      // 먼저, 선택되지 않은 학생의 보강 슬롯 제거
-      for (const sid of Object.keys(perDate)) {
-        if (!nextSet.has(String(sid))) delete perDate[sid];
-      }
-      // 선택된 학생의 보강 슬롯 갱신
-      for (const li of items) {
-        const sid = String(li.dataset.id);
-        if (!nextSet.has(sid)) continue;
-        const sel = [...li.querySelectorAll('.slot-btn.on')].map(b => parseInt(b.dataset.slot, 10)).sort((a, b) => a - b);
-        // 1개면 숫자, 2개 이상이면 배열로 저장(정규와 합치는 건 표시/정렬 시에만 처리)
-        perDate[sid] = sel.length <= 1 ? (sel[0] || 1) : sel;
-      }
-      WEEKEND[dateStr] = perDate;
+    const perDate = WEEKEND[dateStr] || {};
+    for (const sid of Object.keys(perDate)) {
+      if (!nextSet.has(String(sid))) delete perDate[sid];
     }
+    for (const li of items) {
+      const sid = String(li.dataset.id);
+      if (!nextSet.has(sid)) continue;
+      const sel = [...li.querySelectorAll('.slot-btn.on')]
+        .map(b => parseInt(b.dataset.slot, 10))
+        .filter(slot => MAKEUP_SLOTS.includes(slot))
+        .sort((a, b) => a - b);
+      const stu = (state.students || []).find(row => String(row?.id || '') === sid) || {};
+      perDate[sid] = serializeSlots(combinedSlotsForStudent(stu, dateStr, sel.length ? sel : [1]));
+    }
+    WEEKEND[dateStr] = perDate;
 
     try {
       // 보강 맵 전체 저장
       await fetch('/api/extra-attend', { method: 'POST', headers: CT, body: JSON.stringify(EXTRA) });
-      // 주말 슬롯도 전체 맵 저장 (한 날짜만 보내지 말고 전체)
-      if (weekend) {
-        await fetch('/api/weekend-slots', { method: 'POST', headers: CT, body: JSON.stringify(WEEKEND) });
+      await fetch('/api/weekend-slots', { method: 'POST', headers: CT, body: JSON.stringify({ [dateStr]: perDate }) });
+      const arrivePatch = {};
+      for (const sid of selectedIds) {
+        const slots = parseSlotNumbers(perDate[sid]);
+        const first = slots.length ? Math.min(...slots) : 1;
+        arrivePatch[sid] = MAKEUP_ARRIVE_BY_SLOT[first] || '';
+      }
+      if (Object.keys(arrivePatch).length) {
+        await fetch('/arrive-time', {
+          method: 'POST',
+          headers: CT,
+          body: JSON.stringify({ [dateStr]: arrivePatch }),
+        });
       }
       alert('보강 저장 완료');
       selectionModal.style.display = 'none';
       // 모달 상단 리스트/뱃지 갱신
       $('attendModal').style.display = 'none';
       openAttendModal(dateStr);
-      window.recalcCalendarCounts && window.recalcCalendarCounts();
-      refreshMakeupPlanner();
+      document.dispatchEvent(new CustomEvent('attendance:updated'));
+      if (window.recalcCalendarCounts) await window.recalcCalendarCounts();
+      else await refreshMakeupPlanner();
     } catch (e) {
       console.error(e);
       alert('요청에 실패했습니다.');

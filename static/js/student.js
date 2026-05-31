@@ -23,11 +23,31 @@ try {
   if (window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
 } catch {}
 
-const STUDENT_SEARCH_HELP_TEXT = '초성 검색 · 띄어쓰기=AND';
+const STUDENT_SEARCH_HELP_TEXT = '초성/영타 검색 · 띄어쓰기=AND';
 const STUDENT_HANGUL_INITIALS = [
   '\u3131', '\u3132', '\u3134', '\u3137', '\u3138', '\u3139', '\u3141', '\u3142', '\u3143',
   '\u3145', '\u3146', '\u3147', '\u3148', '\u3149', '\u314a', '\u314b', '\u314c', '\u314d', '\u314e',
 ];
+const STUDENT_HANGUL_MEDIALS = [
+  '\u314f', '\u3150', '\u3151', '\u3152', '\u3153', '\u3154', '\u3155',
+  '\u3156', '\u3157', '\u3158', '\u3159', '\u315a', '\u315b', '\u315c',
+  '\u315d', '\u315e', '\u315f', '\u3160', '\u3161', '\u3162', '\u3163',
+];
+const STUDENT_HANGUL_FINALS = [
+  '', '\u3131', '\u3132', '\u3133', '\u3134', '\u3135', '\u3136',
+  '\u3137', '\u3139', '\u313a', '\u313b', '\u313c', '\u313d', '\u313e',
+  '\u313f', '\u3140', '\u3141', '\u3142', '\u3144', '\u3145', '\u3146',
+  '\u3147', '\u3148', '\u314a', '\u314b', '\u314c', '\u314d', '\u314e',
+];
+const STUDENT_DUBEOLSIK_COMPAT_BY_KEY = new Map([
+  ['r', '\u3131'], ['R', '\u3132'], ['s', '\u3134'], ['e', '\u3137'], ['E', '\u3138'],
+  ['f', '\u3139'], ['a', '\u3141'], ['q', '\u3142'], ['Q', '\u3143'], ['t', '\u3145'],
+  ['T', '\u3146'], ['d', '\u3147'], ['w', '\u3148'], ['W', '\u3149'], ['c', '\u314a'],
+  ['z', '\u314b'], ['x', '\u314c'], ['v', '\u314d'], ['g', '\u314e'],
+  ['k', '\u314f'], ['o', '\u3150'], ['i', '\u3151'], ['O', '\u3152'], ['j', '\u3153'],
+  ['p', '\u3154'], ['u', '\u3155'], ['P', '\u3156'], ['h', '\u3157'], ['y', '\u315b'],
+  ['n', '\u315c'], ['b', '\u3160'], ['m', '\u3161'], ['l', '\u3163'],
+]);
 const STUDENT_COMPOUND_INITIALS = new Map([
   ['\u3133', '\u3131\u3145'],
   ['\u3135', '\u3134\u3148'],
@@ -41,6 +61,17 @@ const STUDENT_COMPOUND_INITIALS = new Map([
   ['\u3140', '\u3139\u314e'],
   ['\u3144', '\u3142\u3145'],
 ]);
+const STUDENT_COMPOUND_VOWEL_BY_PAIR = new Map([
+  ['\u3157\u314f', '\u3158'], ['\u3157\u3150', '\u3159'], ['\u3157\u3163', '\u315a'],
+  ['\u315c\u3153', '\u315d'], ['\u315c\u3154', '\u315e'], ['\u315c\u3163', '\u315f'],
+  ['\u3161\u3163', '\u3162'],
+]);
+const STUDENT_COMPOUND_FINAL_BY_PAIR = new Map(
+  Array.from(STUDENT_COMPOUND_INITIALS, ([compound, expanded]) => [expanded, compound])
+);
+const STUDENT_INITIAL_INDEX = new Map(STUDENT_HANGUL_INITIALS.map((ch, index) => [ch, index]));
+const STUDENT_MEDIAL_INDEX = new Map(STUDENT_HANGUL_MEDIALS.map((ch, index) => [ch, index]));
+const STUDENT_FINAL_INDEX = new Map(STUDENT_HANGUL_FINALS.map((ch, index) => [ch, index]));
 
 function studentSearchPlaceholder(label = '검색') {
   return window.SearchUtils?.searchPlaceholder?.(label) || `${label} (${STUDENT_SEARCH_HELP_TEXT})`;
@@ -61,6 +92,86 @@ function studentSearchTerms(value) {
   return String(value || '').trim().split(/\s+/).map(studentNormalizeSearch).filter(Boolean);
 }
 
+function studentIsCompatVowel(ch) {
+  return STUDENT_MEDIAL_INDEX.has(ch);
+}
+
+function studentDubeolsikKeysToCompatJamo(value) {
+  return Array.from(String(value || ''))
+    .map(ch => STUDENT_DUBEOLSIK_COMPAT_BY_KEY.get(ch) || ch)
+    .join('');
+}
+
+function studentComposeCompatJamo(value) {
+  const chars = Array.from(String(value || ''));
+  let out = '';
+
+  for (let i = 0; i < chars.length;) {
+    const initialIndex = STUDENT_INITIAL_INDEX.get(chars[i]);
+    if (initialIndex == null || !studentIsCompatVowel(chars[i + 1])) {
+      out += chars[i] || '';
+      i += 1;
+      continue;
+    }
+
+    let medial = chars[i + 1];
+    let consumed = 2;
+    const compoundVowel = STUDENT_COMPOUND_VOWEL_BY_PAIR.get(`${medial}${chars[i + 2] || ''}`);
+    if (compoundVowel) {
+      medial = compoundVowel;
+      consumed = 3;
+    }
+
+    const medialIndex = STUDENT_MEDIAL_INDEX.get(medial);
+    let finalIndex = 0;
+    const finalOne = chars[i + consumed];
+    if (STUDENT_FINAL_INDEX.has(finalOne)) {
+      const finalTwo = chars[i + consumed + 1];
+      const afterFinalTwo = chars[i + consumed + 2];
+      const compoundFinal = STUDENT_COMPOUND_FINAL_BY_PAIR.get(`${finalOne}${finalTwo || ''}`);
+
+      if (studentIsCompatVowel(finalTwo)) {
+        finalIndex = 0;
+      } else if (compoundFinal && !studentIsCompatVowel(afterFinalTwo)) {
+        finalIndex = STUDENT_FINAL_INDEX.get(compoundFinal) || 0;
+        consumed += 2;
+      } else {
+        finalIndex = STUDENT_FINAL_INDEX.get(finalOne) || 0;
+        consumed += 1;
+      }
+    }
+
+    out += String.fromCharCode(0xac00 + ((initialIndex * 21 + medialIndex) * 28) + finalIndex);
+    i += consumed;
+  }
+
+  return out;
+}
+
+function studentSearchTermVariants(value) {
+  const raw = String(value || '');
+  const variants = [studentNormalizeSearch(raw)];
+  if (/^[A-Za-z]+$/.test(raw) && raw.length >= 2) {
+    const jamo = studentDubeolsikKeysToCompatJamo(raw);
+    const lowerJamo = studentDubeolsikKeysToCompatJamo(raw.toLowerCase());
+    variants.push(
+      studentNormalizeSearch(jamo),
+      studentNormalizeSearch(studentComposeCompatJamo(jamo)),
+      studentNormalizeSearch(lowerJamo),
+      studentNormalizeSearch(studentComposeCompatJamo(lowerJamo)),
+    );
+  }
+  return Array.from(new Set(variants.filter(Boolean)));
+}
+
+function studentSearchTermVariantGroups(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .map(studentSearchTermVariants)
+    .filter(group => group.length);
+}
+
 function studentHangulInitials(value) {
   return Array.from(String(value || '')).map(ch => {
     const code = ch.charCodeAt(0);
@@ -77,10 +188,10 @@ function studentSearchKeyForText(value) {
 
 function studentMatchesSearchKey(key, query) {
   if (window.SearchUtils?.matchesSearchKey) return window.SearchUtils.matchesSearchKey(key, query);
-  const terms = studentSearchTerms(query);
-  if (!terms.length) return true;
+  const termGroups = studentSearchTermVariantGroups(query);
+  if (!termGroups.length) return true;
   const hay = String(key || '');
-  return terms.every(term => hay.includes(term));
+  return termGroups.every(group => group.some(term => hay.includes(term)));
 }
 
 
@@ -123,10 +234,12 @@ window.todayLocalKey = function () {
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
+  let assignedTestsCache = [];
   let courseBlocked = false;
   let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
   let courseVideosCompleted = false;
   const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
+  window.__ASSIGNED_TESTS__ = [];
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -381,6 +494,7 @@ window.todayLocalKey = function () {
             courseBlocked: b.courseBlocked === true,
             blockMessage: b.blockMessage || '',
             courseVideosCompleted: b.courseVideosCompleted === true,
+            assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
           },
         ];
       }
@@ -398,7 +512,7 @@ window.todayLocalKey = function () {
       fetch("/api/absent").then(r => r.json()).catch(() => ({})),
       fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
       watchReq,
-      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false },
+      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false, assignedTests: [] },
     ]);
   }
 
@@ -514,6 +628,153 @@ window.todayLocalKey = function () {
     return [];
   }
 
+  function videoChapterRank(v) {
+    const raw = String(v?.chapter ?? '').trim();
+    const n = Number.parseFloat(raw.replace(/[^0-9.]/g, ''));
+    return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+  }
+
+  function isSupplementVideo(v) {
+    if (v?.isExtraAssignment === true) return true;
+    if (v?.isExtraAssignment === false) return false;
+
+    const stuCur = String(stuCache?.curriculum || '').trim();
+    const stuSub = String(stuCache?.subCurriculum || '').trim();
+    const vidCur = String(v?.curriculum || '').trim();
+    const vidSub = String(v?.subCurriculum || '').trim();
+
+    if (stuCur && vidCur && stuCur !== vidCur) return true;
+    if (stuSub && vidSub && stuSub !== vidSub) return true;
+    return false;
+  }
+
+  function assignedVideoTitle(v) {
+    const prefix = isSupplementVideo(v) ? '(보충) ' : '';
+    const chapter = String(v?.chapter ?? '').trim();
+    const title = String(v?.title || v?.name || '').trim();
+    return `${prefix}${chapter ? `${chapter}. ` : ''}${title || String(v?.mid || '')}`.trim();
+  }
+
+  function normalizeAssignedTestStatus(status) {
+    const s = String(status || '').trim();
+    if (s === 'interrupted' || s === 'skip' || s === 'done' || s === 'assigned') return s;
+    return s ? 'assigned' : '';
+  }
+
+  function assignedTestStatusLabel(status) {
+    const s = normalizeAssignedTestStatus(status);
+    if (s === 'interrupted') return '배부';
+    if (s === 'skip') return '제외';
+    return s ? '배정' : '';
+  }
+
+  function assignedTestDifficultyLabel(item) {
+    const category = `${item?.categoryKey || ''} ${item?.categoryLabel || ''} ${item?.category || ''} ${item?.label || ''}`;
+    const difficulty = String(item?.difficulty || '').trim();
+    if (category.includes('ILSAN') || category.includes('일산')) {
+      return difficulty === '중상' ? '중' : difficulty;
+    }
+    return difficulty;
+  }
+
+  function normalizeAssignedTests(items) {
+    const seen = new Set();
+    return (Array.isArray(items) ? items : []).map(item => {
+      if (!item || typeof item !== 'object') return null;
+      const id = String(item.id || item.testId || '').trim();
+      const label = String(item.label || '').trim();
+      const name = String(item.name || item.testName || label || '').trim();
+      if (!id && !label && !name) return null;
+      const status = normalizeAssignedTestStatus(item.status) || 'assigned';
+      const key = id || label || name;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        ...item,
+        id,
+        label,
+        name,
+        categoryLabel: String(item.categoryLabel || item.category || '').trim(),
+        curriculum: String(item.curriculum || '').trim(),
+        difficulty: assignedTestDifficultyLabel(item),
+        round: String(item.round || '').trim(),
+        status,
+        statusLabel: item.statusLabel || assignedTestStatusLabel(status),
+      };
+    }).filter(Boolean);
+  }
+
+  function renderAssignedTests() {
+    const panel = $('assignedTestsPanel');
+    const list = $('assignedTestList');
+    const openBtn = $('openTestSubmit');
+    const hasTests = assignedTestsCache.length > 0;
+
+    if (openBtn) openBtn.hidden = !hasTests;
+    if (panel) panel.hidden = !hasTests;
+    if (!hasTests || !list) return;
+
+    list.textContent = '';
+    assignedTestsCache.forEach(test => {
+      const li = document.createElement('li');
+      const answerUrl = String(test.answerUrl || test.answer_url || '').trim();
+      const btn = document.createElement(answerUrl ? 'a' : 'button');
+      if (answerUrl) {
+        btn.href = answerUrl;
+        btn.target = '_blank';
+        btn.rel = 'noopener noreferrer';
+      } else {
+        btn.type = 'button';
+      }
+      btn.className = 'assigned-test-btn';
+      btn.dataset.testId = test.id || '';
+      btn.dataset.status = normalizeAssignedTestStatus(test.status) || 'assigned';
+      if (answerUrl) btn.dataset.answerUrl = answerUrl;
+
+      const main = document.createElement('span');
+      main.className = 'assigned-test-main';
+
+      const name = document.createElement('span');
+      name.className = 'assigned-test-name';
+      name.textContent = test.name || test.label || '배정 테스트';
+
+      const meta = document.createElement('span');
+      meta.className = 'assigned-test-meta';
+      meta.textContent = [
+        test.categoryLabel,
+        test.curriculum,
+        test.difficulty,
+        test.round ? (String(test.round).includes('회') ? test.round : `${test.round}회차`) : '',
+      ].filter(Boolean).join(' · ');
+
+      const status = document.createElement('span');
+      status.className = 'assigned-test-status';
+      status.textContent = test.statusLabel || assignedTestStatusLabel(test.status);
+
+      main.append(name, meta);
+      btn.append(main, status);
+      if (!answerUrl) {
+        btn.addEventListener('click', () => {
+          const openSubmit = () => {
+            if (typeof window.openAssignedTestSubmit === 'function') {
+              window.openAssignedTestSubmit(test.id || test.label || '');
+            }
+          };
+          if (typeof window.openAssignedTestAnswerLink === 'function') {
+            Promise.resolve(window.openAssignedTestAnswerLink(test))
+              .then(opened => { if (!opened) openSubmit(); })
+              .catch(() => openSubmit());
+            return;
+          }
+          openSubmit();
+        });
+      }
+
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+  }
+
   async function recoverStudentSid(stuArr, missingSid) {
     const byId = new Map((Array.isArray(stuArr) ? stuArr : []).map(s => [String(s?.id || ""), s]));
     const missing = String(missingSid || "").trim();
@@ -574,6 +835,8 @@ window.todayLocalKey = function () {
     updatesCache = upd || {};
     absentByDateCache = normalizeAbsentByDate(absentRaw);
     logsCache = logsRaw || {};
+    assignedTestsCache = normalizeAssignedTests(bootstrapMeta?.assignedTests);
+    window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
@@ -583,6 +846,7 @@ window.todayLocalKey = function () {
     if (nameEl) nameEl.textContent = `${stu.name} (${stu.curriculum})`;
 
     // 재생 목록 최초 렌더
+    renderAssignedTests();
     renderAssignedList();
 
     const listBox = $('vidList');
@@ -972,8 +1236,14 @@ window.todayLocalKey = function () {
       return;
     }
 
-    // 챕터 순 정렬
-    myVids.sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
+    // 보충 영상은 먼저 보여주고, 각 그룹 안에서는 차시 순서를 유지한다.
+    myVids.sort((a, b) => {
+      const extraDiff = Number(isSupplementVideo(b)) - Number(isSupplementVideo(a));
+      if (extraDiff) return extraDiff;
+      const chapterDiff = videoChapterRank(a) - videoChapterRank(b);
+      if (chapterDiff) return chapterDiff;
+      return String(a.title || a.mid || '').localeCompare(String(b.title || b.mid || ''), 'ko');
+    });
 
     if (listBox) {
       listBox.textContent = '';
@@ -991,7 +1261,7 @@ window.todayLocalKey = function () {
 
         const main = document.createElement('span');
         main.className = 'video-main';
-        main.append(`${v.chapter}. ${v.title}`);
+        main.append(assignedVideoTitle(v));
 
         if (done || pct) {
           const badge = document.createElement('span');
@@ -1047,16 +1317,6 @@ window.todayLocalKey = function () {
       }
     });
   }
-
-  const unreadNoticeCount = 1;
-  const badge = document.getElementById('badge');
-  if (unreadNoticeCount > 0 && badge) {
-    badge.textContent = String(unreadNoticeCount);
-    badge.style.display = 'inline';
-  }
-  document.getElementById('setBtn')?.addEventListener('click', () => {
-    if (badge) badge.style.display = 'none';
-  });
 
   /* ───────────── Kollus 플레이어 교체 + 진행도(옵션) ───────────── */
   function withStartParam(url, seconds) {
@@ -1217,7 +1477,7 @@ window.todayLocalKey = function () {
 })();
 
 /* ────────────────────────────────────────────────────────────────────────────
-   공지 모달(학생 측) – 투표/설문 제출 및 확인
+   공지 팝업 / 공지함
 ──────────────────────────────────────────────────────────────────────────── */
 (() => {
   const CT = { 'Content-Type': 'application/json' };
@@ -1225,276 +1485,845 @@ window.todayLocalKey = function () {
   const SID = window.__STU_SID__ || decodeURIComponent(location.pathname.split('/').pop());
 
   const modal = $('#announceModal');
+  const historyModal = $('#announceHistoryModal');
+  const noticeBtn = $('#noticeBtn');
+  const badge = $('#noticeBadge');
   const annTitle = $('#annTitle');
   const annContent = $('#annContent');
-  const pollBox = $('#annPoll');
-  const pollQ = $('#annPollQ');
-  const pollOptsBox = $('#annPollOpts');
-  const surveyBox = $('#annSurvey');
-  const btnSubmit = $('#annSubmit');
-  const btnConfirm = $('#annConfirm');
+  const annImageSection = $('#annImageSection');
+  const annImageCarousel = $('#annImageCarousel');
+  const annImageTrack = $('#annImageTrack');
+  const annImagePrev = $('#annImagePrev');
+  const annImageNext = $('#annImageNext');
+  const annImageDots = $('#annImageDots');
+  const annImageCounter = $('#annImageCounter');
+  const annCreatedAt = $('#annCreatedAt');
+  const annReply = $('#annReply');
+  const annAnonymous = $('#annAnonymous');
+  const annSendReply = $('#annSendReply');
+  const annReplyStatus = $('#annReplyStatus');
+  const annRead = $('#annRead');
+  const annSurvey = $('#annSurvey');
+  const annSurveyQuestions = $('#annSurveyQuestions');
+  const annSurveyError = $('#annSurveyError');
+  const annSurveySubmit = $('#annSurveySubmit');
+  const annSurveyMeta = $('#annSurveyMeta');
+  const historyList = $('#annHistoryList');
+  const historyClose = $('#annHistoryClose');
+  const ANN_REPLY_LIMIT = 3;
 
-  if (!modal || !annTitle || !annContent || !btnSubmit || !btnConfirm) {
+  if (!modal || !historyModal || !noticeBtn || !annTitle || !annContent || !annRead) {
     console.warn('[announce] required elements not found on this page, skip init');
     return;
   }
 
+  let announcements = [];
+  let statusMap = {};
   let pending = [];
   let active = null;
-  let statusMap = {};
+  let activeFromHistory = false;
+  let loading = false;
+  let imageCarouselIndex = 0;
+  let imagePointerStartX = 0;
+  let imagePointerStartY = 0;
+  let imagePointerMoved = false;
+  let imagePointerActive = false;
 
-  function isAnswered(v) {
-    if (v == null) return false;
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === 'string') return v.trim().length > 0;
-    return true;
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[ch]));
   }
 
-  function fieldName(...parts) {
-    return parts.map(part => String(part ?? '')).join('_');
+  function formatDateTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${mi}`;
   }
 
-  function namedInputs(name) {
-    return Array.from(document.getElementsByName(String(name)));
+  function formatPopupCreatedAt(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const month = d.getMonth() + 1;
+    const date = d.getDate();
+    const hour12 = d.getHours() % 12 || 12;
+    const minute = String(d.getMinutes()).padStart(2, '0');
+    return `${month}월 ${date}일 ${hour12}:${minute}`;
   }
 
-  function appendRequiredBadge(el, required) {
-    if (!required) return;
-    const reqBadge = document.createElement('span');
-    reqBadge.style.color = '#ef4444';
-    reqBadge.style.fontWeight = '600';
-    reqBadge.textContent = ' (필수)';
-    el.appendChild(reqBadge);
+  function timeLeftText(expiresAt) {
+    const end = new Date(expiresAt).getTime();
+    if (!Number.isFinite(end)) return '4시간 동안 표시';
+    const ms = end - Date.now();
+    if (ms <= 0) return '만료됨';
+    const mins = Math.ceil(ms / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h <= 0) return `${m}분 남음`;
+    return `${h}시간 ${m}분 남음`;
   }
 
-  function appendChoice(parent, type, name, value, checked, labelText) {
-    const label = document.createElement('label');
-    label.style.display = 'block';
-    const input = document.createElement('input');
-    input.type = type;
-    input.name = String(name);
-    input.value = String(value);
-    input.checked = !!checked;
-    label.append(input, ` ${labelText ?? ''}`);
-    parent.appendChild(label);
+  function normalizeAnnouncementImage(image) {
+    if (!image || typeof image !== 'object') return null;
+    const url = String(image.originalUrl || image.sourceUrl || image.fullUrl || image.url || '').trim();
+    if (!url) return null;
+    return {
+      url,
+      alt: '',
+    };
   }
 
-  function loadAnnouncements() {
-    Promise.all([
-      fetch('/api/announcements', { cache: 'no-store' }).then(r => r.json()),
-      fetch(`/api/announce-status?sid=${encodeURIComponent(SID)}`, { cache: 'no-store' }).then(r => r.json())
-    ]).then(([anns, stat]) => {
-      statusMap = stat || {};
-
-      const mine = (anns || []).filter(a => {
-        const t = a.targets;
-        return t === 'all' || (Array.isArray(t) && t.includes(SID));
-      });
-
-      pending = mine.filter(a => {
-        const st = statusMap[a.id] || {};
-        const acked = !!st.acked;
-
-        const need = !!a.requireCompletion;
-        const hasPoll = !!a.poll;
-        const hasSurvey = Array.isArray(a.survey) && a.survey.length > 0;
-
-        let done = true;
-
-        if (hasPoll) {
-          const pv = st.poll;
-          const pollDone = Array.isArray(pv) ? pv.length > 0 : pv != null;
-          if (!pollDone) done = false;
-        }
-
-        if (hasSurvey) {
-          const sv = st.survey || {};
-          for (const q of a.survey) {
-            if (q.required) {
-              if (!isAnswered(sv[q.id])) { done = false; break; }
-            }
-          }
-        }
-
-        if (need) {
-          return !done;
-        } else {
-          return !acked;
-        }
-      });
-
-      showNext();
-    }).catch(err => {
-      console.warn('[announce] loadAnnouncements failed:', err);
+  function normalizeAnnouncementImages(ann) {
+    const rawImages = Array.isArray(ann?.images) ? ann.images : [];
+    const images = rawImages.map(normalizeAnnouncementImage).filter(Boolean);
+    if (!images.length) {
+      const image = normalizeAnnouncementImage(ann?.image);
+      if (image) images.push(image);
+    }
+    const seen = new Set();
+    return images.filter((image) => {
+      if (!image.url || seen.has(image.url)) return false;
+      seen.add(image.url);
+      return true;
     });
   }
 
-  function showNext() {
-    if (!pending.length) { modal.style.display = 'none'; active = null; return; }
-    active = pending[0];
-    renderActive(active);
-    modal.style.display = 'flex';
+  function getSurvey(ann) {
+    const survey = ann?.survey;
+    if (!survey || typeof survey !== 'object' || !Array.isArray(survey.questions)) return null;
+    if (survey.status && survey.status !== 'public') return null;
+    return survey;
   }
 
-  function renderActive(a) {
-    annTitle.textContent = a.title || '공지';
-    annContent.textContent = a.content || '';
-
-    if (a.poll && a.poll.question && Array.isArray(a.poll.options)) {
-      pollBox.style.display = '';
-      pollQ.textContent = a.poll.question;
-      const type = a.poll.multiple ? 'checkbox' : 'radio';
-      const name = fieldName('poll', a.id);
-      const st = statusMap[a.id]?.poll;
-
-      pollOptsBox.textContent = '';
-      a.poll.options.forEach((opt, i) => {
-        const checked = Array.isArray(st) ? st.includes(i) : (st === i);
-        const label = document.createElement('label');
-        label.style.display = 'block';
-        label.style.margin = '.25rem 0';
-        const input = document.createElement('input');
-        input.type = type;
-        input.name = name;
-        input.value = String(i);
-        input.checked = checked;
-        label.append(input, ` ${opt ?? ''}`);
-        pollOptsBox.appendChild(label);
-      });
-    } else {
-      pollBox.style.display = 'none';
-      pollOptsBox.innerHTML = '';
-    }
-
-    if (Array.isArray(a.survey) && a.survey.length) {
-      surveyBox.style.display = '';
-      const st = statusMap[a.id]?.survey || {};
-      surveyBox.textContent = '';
-      a.survey.forEach(q => {
-        const val = st[q.id] ?? '';
-        const field = fieldName(a.id, q.id);
-        const wrap = document.createElement('div');
-        wrap.style.margin = '.5rem 0';
-        const label = document.createElement('div');
-        label.style.fontWeight = '600';
-        label.textContent = q.label ?? '';
-        appendRequiredBadge(label, q.required);
-        wrap.appendChild(label);
-
-        if (q.type === 'radio' && Array.isArray(q.options) && q.options.length) {
-          q.options.forEach(op => appendChoice(wrap, 'radio', field, op, val === op, op));
-        } else if (q.type === 'checkbox' && Array.isArray(q.options) && q.options.length) {
-          const arr = Array.isArray(val) ? val : [];
-          q.options.forEach(op => appendChoice(wrap, 'checkbox', field, op, arr.includes(op), op));
-        } else {
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.name = field;
-          input.value = typeof val === 'string' ? val : '';
-          input.style.width = '100%';
-          wrap.appendChild(input);
-        }
-        surveyBox.appendChild(wrap);
-      });
-    } else {
-      surveyBox.style.display = 'none';
-      surveyBox.innerHTML = '';
-    }
+  function isSurveyAnnouncement(ann) {
+    return !!getSurvey(ann);
   }
 
-  btnSubmit.onclick = () => {
-    if (!active) return;
+  function hasSurveySubmission(ann) {
+    const status = statusMap?.[ann?.id] || {};
+    if (status.surveySubmittedAt && status.surveyAnswers && typeof status.surveyAnswers === 'object') return true;
+    return Array.isArray(status.surveyResponses) && status.surveyResponses.some(row => row && typeof row.answers === 'object');
+  }
 
-    let pollAnswer = null;
-    if (active.poll && active.poll.question) {
-      const name = fieldName('poll', active.id);
-      if (active.poll.multiple) {
-        pollAnswer = namedInputs(name).filter(i => i.checked)
-          .map(i => parseInt(i.value, 10));
-      } else {
-        const r = namedInputs(name).find(i => i.checked);
-        pollAnswer = r ? parseInt(r.value, 10) : null;
-      }
+  function replyRowsForStatus(status) {
+    const rows = Array.isArray(status?.replies)
+      ? status.replies.filter(row => row && String(row.reply || '').trim())
+      : [];
+    const legacyReply = String(status?.reply || '').trim();
+    const legacyAt = String(status?.repliedAt || '');
+    if (legacyReply && !rows.some(row => String(row.reply || '').trim() === legacyReply && String(row.repliedAt || '') === legacyAt)) {
+      rows.push({ reply: legacyReply, anonymous: !!status?.anonymous, repliedAt: legacyAt });
     }
+    return rows;
+  }
 
-    let surveyAnswers = null;
-    if (Array.isArray(active.survey) && active.survey.length) {
-      surveyAnswers = {};
-      for (const q of active.survey) {
-        const name = fieldName(active.id, q.id);
-        if (q.type === 'checkbox') {
-          const arr = namedInputs(name).filter(i => i.checked).map(i => i.value);
-          surveyAnswers[q.id] = arr;
-        } else if (q.type === 'radio') {
-          const r = namedInputs(name).find(i => i.checked);
-          surveyAnswers[q.id] = r ? r.value : null;
-        } else {
-          const t = namedInputs(name)[0];
-          surveyAnswers[q.id] = t ? t.value : '';
-        }
-      }
+  function replyCountFor(ann) {
+    return replyRowsForStatus(statusMap?.[ann?.id] || {}).length;
+  }
+
+  function replyLimitMessage(count) {
+    if (count <= 1) return '2번 더 답장 가능!';
+    if (count === 2) return '마지막 답장 남음!';
+    return '이제 쉿!';
+  }
+
+  function syncReplyLimitUi() {
+    if (!active || !annReply || !annSendReply) return;
+    const isMaxed = replyCountFor(active) >= ANN_REPLY_LIMIT;
+    annReply.disabled = isMaxed;
+    annSendReply.disabled = isMaxed;
+    annReply.placeholder = isMaxed ? '답장은 최대 3회까지 가능합니다.' : '답장을 입력하세요.';
+  }
+
+  function isComplete(ann) {
+    const survey = getSurvey(ann);
+    if (survey && ann?.requireCompletion !== false) return hasSurveySubmission(ann);
+    return isAcked(ann);
+  }
+
+  function surveyTypeText(type) {
+    return {
+      single: '하나만 선택',
+      multiple: '복수 선택 가능',
+      short: '짧은 답변',
+      long: '긴 답변',
+    }[type] || '질문';
+  }
+
+  function surveyOptionText(question, value) {
+    const options = Array.isArray(question?.options) ? question.options : [];
+    const found = options.find(option => String(option?.id) === String(value));
+    return found?.text || value || '';
+  }
+
+  function setBadge(count) {
+    if (!badge) return;
+    if (!count) {
+      badge.hidden = true;
+      badge.textContent = '0';
+      return;
     }
+    badge.hidden = false;
+    badge.textContent = String(count);
+  }
 
-    fetch('/api/announce-submit', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({
-        sid: SID,
-        id: active.id,
-        pollAnswer,
-        surveyAnswers
-      })
-    })
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(() => loadAnnouncements())
-      .catch(err => {
-        console.warn('[announce] submit failed:', err);
-        alert('제출 실패');
-      });
-  };
+  function isAcked(ann) {
+    return !!statusMap?.[ann?.id]?.acked;
+  }
 
-  btnConfirm.onclick = () => {
-    if (!active) return;
+  function updatePending() {
+    pending = announcements.filter(ann => !isComplete(ann));
+    setBadge(pending.length);
+  }
 
-    const need = !!active.requireCompletion;
-    const st = statusMap[active.id] || {};
-    const hasPoll = !!active.poll;
-    const hasSurvey = Array.isArray(active.survey) && active.survey.length > 0;
+  function renderSurvey(ann) {
+    if (!annSurvey || !annSurveyQuestions) return;
+    const survey = getSurvey(ann);
+    const status = statusMap?.[ann?.id] || {};
+    const submitted = hasSurveySubmission(ann);
+    modal.classList.toggle('has-survey', !!survey);
 
-    let done = true;
-
-    if (hasPoll) {
-      const pv = st.poll;
-      const pollDone = Array.isArray(pv) ? pv.length > 0 : pv != null;
-      if (!pollDone) done = false;
-    }
-
-    if (hasSurvey) {
-      const sv = st.survey || {};
-      for (const q of active.survey) {
-        if (q.required) {
-          if (!isAnswered(sv[q.id])) { done = false; break; }
-        }
-      }
-    }
-
-    if (need && !done) {
-      modal.style.display = 'none';
+    if (!survey) {
+      annSurvey.hidden = true;
+      annSurveyQuestions.innerHTML = '';
+      if (annSurveyError) annSurveyError.textContent = '';
       return;
     }
 
-    fetch('/api/announce-ack', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({ sid: SID, id: active.id })
-    }).then(() => {
-      modal.style.display = 'none';
-      pending.shift();
-      showNext();
-    }).catch(err => console.warn('[announce] ack failed:', err));
-  };
+    annSurvey.hidden = false;
+    if (annSurveyMeta) {
+      annSurveyMeta.textContent = submitted && !survey.allowMultiple
+        ? '이미 제출한 설문입니다.'
+        : `${survey.anonymous ? '익명 응답' : '실명 응답'} · ${survey.allowMultiple ? '여러 번 제출 가능' : '1회 제출'}`;
+    }
 
-  loadAnnouncements();
+    const latestAnswers = status.surveyAnswers && typeof status.surveyAnswers === 'object'
+      ? status.surveyAnswers
+      : {};
+    const readonly = submitted && !survey.allowMultiple;
+
+    annSurveyQuestions.innerHTML = survey.questions.map((question, qIndex) => {
+      const qid = String(question.id || `q${qIndex + 1}`);
+      const type = question.type || 'single';
+      const required = question.required !== false;
+      const value = latestAnswers[qid];
+      const disabled = readonly ? 'disabled' : '';
+      const requiredMark = required ? '<b>필수</b>' : '<b class="optional">선택</b>';
+
+      if (type === 'single' || type === 'multiple') {
+        const options = Array.isArray(question.options) ? question.options : [];
+        const selected = type === 'multiple'
+          ? new Set(Array.isArray(value) ? value.map(String) : [])
+          : new Set(value ? [String(value)] : []);
+        return `
+          <fieldset class="announce-survey-question" data-survey-qid="${escapeHtml(qid)}" data-survey-type="${escapeHtml(type)}" ${required ? 'data-required="true"' : ''}>
+            <legend>
+              <span>${escapeHtml(question.text || '질문')}</span>
+              <em>${requiredMark}${escapeHtml(surveyTypeText(type))}</em>
+            </legend>
+            <div class="announce-survey-options">
+              ${options.map((option, optIndex) => {
+                const oid = String(option.id || `o${optIndex + 1}`);
+                const inputType = type === 'single' ? 'radio' : 'checkbox';
+                return `
+                  <label class="announce-survey-option">
+                    <input type="${inputType}" name="survey_${escapeHtml(qid)}" value="${escapeHtml(oid)}" ${selected.has(oid) ? 'checked' : ''} ${disabled}>
+                    <span>${escapeHtml(option.text || '')}</span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </fieldset>
+        `;
+      }
+
+      const textValue = typeof value === 'string' ? value : '';
+      return `
+        <fieldset class="announce-survey-question" data-survey-qid="${escapeHtml(qid)}" data-survey-type="${escapeHtml(type)}" ${required ? 'data-required="true"' : ''}>
+          <legend>
+            <span>${escapeHtml(question.text || '질문')}</span>
+            <em>${requiredMark}${escapeHtml(surveyTypeText(type))}</em>
+          </legend>
+          ${type === 'long'
+            ? `<textarea rows="4" placeholder="답변을 입력하세요." ${disabled}>${escapeHtml(textValue)}</textarea>`
+            : `<input type="text" value="${escapeHtml(textValue)}" placeholder="답변을 입력하세요." ${disabled}>`}
+        </fieldset>
+      `;
+    }).join('');
+
+    if (annSurveyError) annSurveyError.textContent = submitted && !survey.allowMultiple ? '제출 완료된 설문입니다.' : '';
+    if (annSurveySubmit) {
+      annSurveySubmit.hidden = readonly;
+      annSurveySubmit.disabled = readonly;
+      annSurveySubmit.textContent = survey.allowMultiple && submitted ? '추가 제출' : '설문 제출';
+    }
+  }
+
+  function updateImageCarousel(nextIndex = imageCarouselIndex) {
+    const slides = Array.from(annImageTrack?.children || []);
+    const total = slides.length;
+    if (!annImageTrack || !total) return;
+
+    imageCarouselIndex = Math.max(0, Math.min(nextIndex, total - 1));
+    annImageTrack.style.transform = `translateX(${-imageCarouselIndex * 100}%)`;
+    slides.forEach((slide, index) => {
+      slide.toggleAttribute('aria-hidden', index !== imageCarouselIndex);
+    });
+
+    const activeSlide = slides[imageCarouselIndex];
+    const ratio = activeSlide?.dataset?.imageRatio || '16 / 9';
+    annImageCarousel?.style.setProperty('--ann-active-image-ratio', ratio);
+
+    if (annImageCounter) {
+      annImageCounter.textContent = total > 1 ? `${imageCarouselIndex + 1} / ${total}` : '';
+    }
+    if (annImagePrev) annImagePrev.hidden = total <= 1;
+    if (annImageNext) annImageNext.hidden = total <= 1;
+    if (annImageDots) {
+      annImageDots.hidden = total <= 1;
+      annImageDots.querySelectorAll('button').forEach((dot, index) => {
+        dot.classList.toggle('is-active', index === imageCarouselIndex);
+        dot.setAttribute('aria-current', index === imageCarouselIndex ? 'true' : 'false');
+      });
+    }
+  }
+
+  function moveImageCarousel(delta) {
+    const total = annImageTrack?.children?.length || 0;
+    if (total <= 1) return;
+    updateImageCarousel((imageCarouselIndex + delta + total) % total);
+  }
+
+  function shouldIgnoreImageGestureTarget(target) {
+    return !!target?.closest?.('.announce-image-nav, .announce-image-dots');
+  }
+
+  function beginImageGesture(clientX, clientY) {
+    imagePointerStartX = clientX;
+    imagePointerStartY = clientY;
+    imagePointerMoved = false;
+  }
+
+  function finishImageGesture(clientX, clientY, ev) {
+    const dx = clientX - imagePointerStartX;
+    const dy = clientY - imagePointerStartY;
+    if (Math.abs(dx) < 42 || Math.abs(dx) < Math.abs(dy) * 1.15) return false;
+    ev?.preventDefault?.();
+    imagePointerMoved = true;
+    moveImageCarousel(dx < 0 ? 1 : -1);
+    return true;
+  }
+
+  function clearImageCarousel() {
+    imageCarouselIndex = 0;
+    if (!annImageSection || !annImageTrack) return;
+    annImageSection.hidden = true;
+    annImageTrack.innerHTML = '';
+    if (annImageDots) annImageDots.innerHTML = '';
+    if (annImageCounter) annImageCounter.textContent = '';
+    if (annImagePrev) annImagePrev.hidden = true;
+    if (annImageNext) annImageNext.hidden = true;
+    if (annImageDots) annImageDots.hidden = true;
+    annImageCarousel?.style.removeProperty('--ann-active-image-ratio');
+  }
+
+  function renderImageCarousel(images, title) {
+    if (!annImageSection || !annImageTrack || !annImageCarousel) return;
+    if (!images.length) {
+      clearImageCarousel();
+      return;
+    }
+
+    imageCarouselIndex = 0;
+    annImageSection.hidden = false;
+    annImageTrack.innerHTML = images.map((image, index) => `
+      <div class="announce-image-slide" data-image-ratio="16 / 9" role="group" aria-label="이미지 ${index + 1} / ${images.length}">
+        <a class="announce-image-frame" href="${escapeHtml(image.url)}" target="_blank" rel="noopener noreferrer">
+          <img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt || title || '공지 이미지')}" draggable="false">
+        </a>
+      </div>
+    `).join('');
+    if (annImageDots) {
+      annImageDots.innerHTML = images.map((_, index) => `
+        <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}></button>
+      `).join('');
+    }
+
+    const removeFailedImage = (img) => {
+      const slide = img.closest('.announce-image-slide');
+      slide?.remove();
+      if (!annImageTrack.children.length) {
+        clearImageCarousel();
+        modal.classList.remove('has-image');
+        return;
+      }
+      Array.from(annImageTrack.children).forEach((item, idx) => {
+        item.setAttribute('aria-label', `이미지 ${idx + 1} / ${annImageTrack.children.length}`);
+      });
+      if (annImageDots) {
+        annImageDots.innerHTML = Array.from(annImageTrack.children).map((_, index) => `
+          <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}></button>
+        `).join('');
+      }
+      updateImageCarousel(Math.min(imageCarouselIndex, annImageTrack.children.length - 1));
+    };
+
+    annImageTrack.querySelectorAll('img').forEach((img, index) => {
+      const syncRatio = () => {
+        if (!img.naturalWidth || !img.naturalHeight) return;
+        const slide = img.closest('.announce-image-slide');
+        if (!slide) return;
+        slide.dataset.imageRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        if (index === imageCarouselIndex) updateImageCarousel(imageCarouselIndex);
+      };
+      img.addEventListener('load', syncRatio, { once: true });
+      img.addEventListener('error', () => removeFailedImage(img), { once: true });
+      if (img.complete && img.naturalWidth) syncRatio();
+      else if (img.complete) removeFailedImage(img);
+    });
+
+    updateImageCarousel(0);
+  }
+
+  function renderActive(ann, options = {}) {
+    active = ann || null;
+    activeFromHistory = !!options.fromHistory;
+    if (!active) return;
+    const images = normalizeAnnouncementImages(active);
+    annTitle.textContent = active.title || '공지';
+    annContent.textContent = active.content || '';
+    modal.classList.toggle('has-image', !!images.length);
+    renderImageCarousel(images, active.title);
+    if (annCreatedAt) annCreatedAt.textContent = formatPopupCreatedAt(active.createdAt);
+    if (annReply) annReply.value = statusMap?.[active.id]?.reply || '';
+    if (annAnonymous) annAnonymous.checked = !!statusMap?.[active.id]?.anonymous;
+    if (annReplyStatus) annReplyStatus.textContent = '';
+    renderSurvey(active);
+    syncReplyLimitUi();
+    if (annRead) annRead.textContent = isSurveyAnnouncement(active) && !hasSurveySubmission(active) ? '설문 제출 필요' : '읽었습니다.';
+    modal.style.display = 'flex';
+  }
+
+  function showNextPending() {
+    updatePending();
+    if (!pending.length) {
+      modal.style.display = 'none';
+      active = null;
+      activeFromHistory = false;
+      return;
+    }
+    renderActive(pending[0]);
+  }
+
+  async function fetchJSON(url, init) {
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      let text = '';
+      try { text = await res.text(); } catch {}
+      throw new Error(text || `${url} ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async function loadAnnouncements({ showPopup = true } = {}) {
+    if (loading) return;
+    loading = true;
+    try {
+      const [anns, stat] = await Promise.all([
+        fetchJSON(`/api/announcements?sid=${encodeURIComponent(SID)}`, { cache: 'no-store' }),
+        fetchJSON(`/api/announce-status?sid=${encodeURIComponent(SID)}`, { cache: 'no-store' }),
+      ]);
+      announcements = Array.isArray(anns) ? anns : [];
+      statusMap = stat && typeof stat === 'object' ? stat : {};
+      updatePending();
+      renderHistory();
+      if (showPopup) showNextPending();
+    } catch (err) {
+      console.warn('[announce] load failed:', err);
+      if (historyList) historyList.innerHTML = '<div class="muted">공지를 불러오지 못했습니다.</div>';
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function ackActive() {
+    if (!active) return;
+    if (isSurveyAnnouncement(active) && active.requireCompletion !== false && !hasSurveySubmission(active)) {
+      if (annReplyStatus) annReplyStatus.textContent = '설문을 먼저 제출해 주세요.';
+      if (annSurveyError) annSurveyError.textContent = '필수 설문은 제출 전까지 닫을 수 없습니다.';
+      annSurvey?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      annSurveyQuestions?.querySelector('input:not(:disabled), textarea:not(:disabled)')?.focus?.();
+      return;
+    }
+    const id = active.id;
+    const shouldContinuePending = !activeFromHistory;
+    try {
+      await fetchJSON('/api/announce-ack', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ sid: SID, id }),
+      });
+      statusMap[id] = { ...(statusMap[id] || {}), acked: true };
+      modal.style.display = 'none';
+      active = null;
+      activeFromHistory = false;
+      updatePending();
+      renderHistory();
+      if (shouldContinuePending) showNextPending();
+    } catch (err) {
+      console.warn('[announce] ack failed:', err);
+      if (annReplyStatus) annReplyStatus.textContent = '읽음 처리에 실패했습니다. 다시 눌러 주세요.';
+    }
+  }
+
+  function collectSurveyAnswers({ focusInvalid = false } = {}) {
+    if (!active || !annSurveyQuestions) return null;
+    const survey = getSurvey(active);
+    if (!survey) return null;
+
+    const answers = {};
+    for (const question of survey.questions) {
+      const qid = String(question.id || '');
+      const type = question.type || 'single';
+      const required = question.required !== false;
+      const field = annSurveyQuestions.querySelector(`[data-survey-qid="${CSS.escape(qid)}"]`);
+      if (!field) continue;
+
+      let value = null;
+      if (type === 'single') {
+        value = field.querySelector('input[type="radio"]:checked')?.value || '';
+      } else if (type === 'multiple') {
+        value = Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+      } else {
+        value = (field.querySelector('textarea, input[type="text"]')?.value || '').trim();
+      }
+
+      const missing = type === 'multiple' ? !value.length : !String(value || '').trim();
+      field.classList.toggle('is-invalid', required && missing);
+      if (required && missing) {
+        if (annSurveyError) annSurveyError.textContent = '필수 질문에 모두 응답해 주세요.';
+        if (focusInvalid) field.querySelector('input, textarea')?.focus?.();
+        return null;
+      }
+
+      if (!missing) answers[qid] = value;
+    }
+
+    if (annSurveyError) annSurveyError.textContent = '';
+    return answers;
+  }
+
+  async function submitSurvey() {
+    if (!active || !annSurveySubmit) return;
+    const survey = getSurvey(active);
+    if (!survey) return;
+    if (hasSurveySubmission(active) && !survey.allowMultiple) {
+      if (annSurveyError) annSurveyError.textContent = '이미 제출한 설문입니다.';
+      return;
+    }
+    const surveyAnswers = collectSurveyAnswers({ focusInvalid: true });
+    if (!surveyAnswers) return;
+
+    annSurveySubmit.disabled = true;
+    try {
+      const saved = await fetchJSON('/api/announce-submit', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({
+          sid: SID,
+          id: active.id,
+          surveyAnswers,
+        }),
+      });
+      const currentStatus = statusMap[active.id] || {};
+      const surveyEntry = saved?.survey || {
+        answers: surveyAnswers,
+        anonymous: !!survey.anonymous,
+        submittedAt: new Date().toISOString(),
+      };
+      const surveyResponses = Array.isArray(currentStatus.surveyResponses) ? currentStatus.surveyResponses.slice() : [];
+      surveyResponses.push(surveyEntry);
+      statusMap[active.id] = {
+        ...currentStatus,
+        acked: true,
+        surveyAnswers,
+        surveyAnonymous: !!survey.anonymous,
+        surveySubmittedAt: surveyEntry.submittedAt,
+        surveyResponses,
+      };
+      renderSurvey(active);
+      updatePending();
+      renderHistory();
+      if (annReplyStatus) annReplyStatus.textContent = '설문을 제출했습니다.';
+      if (!activeFromHistory) {
+        const submittedAnnId = active.id;
+        window.setTimeout(() => {
+          if (active?.id !== submittedAnnId) return;
+          modal.style.display = 'none';
+          active = null;
+          showNextPending();
+        }, 650);
+      }
+    } catch (err) {
+      console.warn('[announce] survey submit failed:', err);
+      if (annSurveyError) annSurveyError.textContent = '설문 제출에 실패했습니다.';
+    } finally {
+      annSurveySubmit.disabled = false;
+    }
+  }
+
+  async function submitReply() {
+    if (!active || !annReply) return;
+    const currentCount = replyCountFor(active);
+    if (currentCount >= ANN_REPLY_LIMIT) {
+      alert('이제 쉿!');
+      syncReplyLimitUi();
+      return;
+    }
+    const reply = annReply.value.trim();
+    if (!reply) {
+      annReply.focus();
+      if (annReplyStatus) annReplyStatus.textContent = '답장을 입력해 주세요.';
+      return;
+    }
+    annSendReply.disabled = true;
+    try {
+      const saved = await fetchJSON('/api/announce-submit', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({
+          sid: SID,
+          id: active.id,
+          reply,
+          anonymous: !!annAnonymous?.checked,
+        }),
+      });
+      const currentStatus = statusMap[active.id] || {};
+      const replyEntry = saved?.reply || {
+        reply,
+        anonymous: !!annAnonymous?.checked,
+        repliedAt: new Date().toISOString(),
+      };
+      const replies = replyRowsForStatus(currentStatus).slice();
+      replies.push(replyEntry);
+      statusMap[active.id] = {
+        ...currentStatus,
+        reply,
+        anonymous: !!annAnonymous?.checked,
+        repliedAt: replyEntry.repliedAt,
+        replies,
+      };
+      annReply.value = '';
+      if (annReplyStatus) annReplyStatus.textContent = '답장을 보냈습니다.';
+      const nextCount = replyCountFor(active);
+      alert(replyLimitMessage(nextCount));
+      syncReplyLimitUi();
+      renderHistory();
+    } catch (err) {
+      console.warn('[announce] reply failed:', err);
+      if (err?.message?.includes('reply limit') || err?.message?.includes('429')) {
+        alert('이제 쉿!');
+        syncReplyLimitUi();
+      }
+      if (annReplyStatus) annReplyStatus.textContent = '전송에 실패했습니다.';
+    } finally {
+      syncReplyLimitUi();
+    }
+  }
+
+  function renderHistory() {
+    if (!historyList) return;
+    if (!announcements.length) {
+      historyList.innerHTML = '<div class="announce-history-empty">최근 4시간 안에 도착한 공지가 없습니다.</div>';
+      return;
+    }
+    historyList.innerHTML = announcements.map(ann => {
+      const status = statusMap[ann.id] || {};
+      const survey = getSurvey(ann);
+      const surveyDone = survey && hasSurveySubmission(ann);
+      const surveyLabel = survey
+        ? `<span class="announce-history-survey-badge">${surveyDone ? '설문 완료' : '설문 대기'}</span>`
+        : '';
+      const answerSummary = survey && status.surveyAnswers && typeof status.surveyAnswers === 'object'
+        ? survey.questions.map(question => {
+            const value = status.surveyAnswers[String(question.id || '')];
+            if (value == null || value === '' || (Array.isArray(value) && !value.length)) return '';
+            const text = Array.isArray(value)
+              ? value.map(item => surveyOptionText(question, item)).filter(Boolean).join(', ')
+              : (question.type === 'single' ? surveyOptionText(question, value) : String(value));
+            return text ? `${question.text}: ${text}` : '';
+          }).filter(Boolean).slice(0, 2).join(' · ')
+        : '';
+      const images = normalizeAnnouncementImages(ann);
+      const imageLabel = images.length
+        ? `<span class="announce-history-image-badge">${images.length > 1 ? `이미지 ${images.length}장` : '이미지 첨부'}</span>`
+        : '';
+      const badges = `${surveyLabel}${imageLabel}`;
+      const replySummary = status.reply
+        ? `<span class="announce-history-note">내 답장: ${escapeHtml(status.reply)}</span>`
+        : '';
+      const surveySummary = answerSummary
+        ? `<span class="announce-history-note">내 설문: ${escapeHtml(answerSummary)}</span>`
+        : '';
+      return `
+        <button class="announce-history-item" type="button" data-ann-history-id="${escapeHtml(ann.id)}">
+          <div class="announce-history-item-head">
+            <div class="announce-history-main">
+              <strong class="announce-history-title">${escapeHtml(ann.title || (survey ? '설문조사' : '공지'))}</strong>
+              <span class="announce-history-meta">${escapeHtml(formatDateTime(ann.createdAt))} · ${escapeHtml(timeLeftText(ann.expiresAt))}</span>
+            </div>
+            ${badges ? `<div class="announce-history-badges">${badges}</div>` : ''}
+          </div>
+          <p class="announce-history-content">${escapeHtml(ann.content || '')}</p>
+          ${surveySummary || replySummary ? `<div class="announce-history-foot">${surveySummary}${replySummary}</div>` : ''}
+        </button>
+      `;
+    }).join('');
+  }
+
+  function openHistoryAnnouncement(id) {
+    const ann = announcements.find(item => String(item?.id) === String(id));
+    if (!ann) return;
+    historyModal.style.display = 'none';
+    renderActive(ann, { fromHistory: true });
+  }
+
+  noticeBtn.addEventListener('click', async () => {
+    await loadAnnouncements({ showPopup: false });
+    historyModal.style.display = 'flex';
+  });
+
+  historyClose?.addEventListener('click', () => {
+    historyModal.style.display = 'none';
+  });
+
+  historyModal.addEventListener('click', (ev) => {
+    if (ev.target === historyModal) historyModal.style.display = 'none';
+  });
+
+  historyList?.addEventListener('click', (ev) => {
+    const item = ev.target.closest('[data-ann-history-id]');
+    if (!item) return;
+    openHistoryAnnouncement(item.dataset.annHistoryId || '');
+  });
+
+  historyList?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const item = ev.target.closest('[data-ann-history-id]');
+    if (!item) return;
+    ev.preventDefault();
+    openHistoryAnnouncement(item.dataset.annHistoryId || '');
+  });
+
+  annImagePrev?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    moveImageCarousel(-1);
+  });
+
+  annImageNext?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    moveImageCarousel(1);
+  });
+
+  annImageDots?.addEventListener('click', (ev) => {
+    const dot = ev.target.closest('button');
+    if (!dot) return;
+    const dots = Array.from(annImageDots.querySelectorAll('button'));
+    const index = dots.indexOf(dot);
+    if (index >= 0) updateImageCarousel(index);
+  });
+
+  annImageCarousel?.addEventListener('pointerdown', (ev) => {
+    if (shouldIgnoreImageGestureTarget(ev.target)) return;
+    ev.preventDefault();
+    imagePointerActive = true;
+    beginImageGesture(ev.clientX, ev.clientY);
+    annImageCarousel.setPointerCapture?.(ev.pointerId);
+  });
+
+  annImageCarousel?.addEventListener('pointerup', (ev) => {
+    if (shouldIgnoreImageGestureTarget(ev.target)) return;
+    annImageCarousel.releasePointerCapture?.(ev.pointerId);
+    finishImageGesture(ev.clientX, ev.clientY, ev);
+    window.setTimeout(() => {
+      imagePointerActive = false;
+    }, 0);
+  });
+
+  annImageCarousel?.addEventListener('mousedown', (ev) => {
+    if (imagePointerActive || shouldIgnoreImageGestureTarget(ev.target)) return;
+    ev.preventDefault();
+    beginImageGesture(ev.clientX, ev.clientY);
+  });
+
+  annImageCarousel?.addEventListener('mouseup', (ev) => {
+    if (imagePointerActive || shouldIgnoreImageGestureTarget(ev.target)) return;
+    finishImageGesture(ev.clientX, ev.clientY, ev);
+  });
+
+  annImageCarousel?.addEventListener('touchstart', (ev) => {
+    if (shouldIgnoreImageGestureTarget(ev.target)) return;
+    const touch = ev.touches?.[0];
+    if (!touch) return;
+    beginImageGesture(touch.clientX, touch.clientY);
+  }, { passive: true });
+
+  annImageCarousel?.addEventListener('touchend', (ev) => {
+    if (shouldIgnoreImageGestureTarget(ev.target)) return;
+    const touch = ev.changedTouches?.[0];
+    if (!touch) return;
+    finishImageGesture(touch.clientX, touch.clientY, ev);
+  });
+
+  annImageCarousel?.addEventListener('click', (ev) => {
+    if (!imagePointerMoved) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    imagePointerMoved = false;
+  }, true);
+
+  annImageCarousel?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    moveImageCarousel(ev.key === 'ArrowLeft' ? -1 : 1);
+  });
+
+  modal.addEventListener('click', (ev) => {
+    if (ev.target === modal) ackActive();
+  });
+
+  annRead.addEventListener('click', ackActive);
+  annSendReply?.addEventListener('click', submitReply);
+  annSurveySubmit?.addEventListener('click', submitSurvey);
+  annSurveyQuestions?.addEventListener('input', () => {
+    if (annSurveyError) annSurveyError.textContent = '';
+    annSurveyQuestions.querySelectorAll('.is-invalid').forEach(field => field.classList.remove('is-invalid'));
+  });
+  annSurveyQuestions?.addEventListener('change', () => {
+    if (annSurveyError) annSurveyError.textContent = '';
+    annSurveyQuestions.querySelectorAll('.is-invalid').forEach(field => field.classList.remove('is-invalid'));
+  });
+  annReply?.addEventListener('keydown', (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+      ev.preventDefault();
+      submitReply();
+    }
+  });
+
+  loadAnnouncements({ showPopup: true });
+  window.setInterval(() => {
+    if (!document.hidden) loadAnnouncements({ showPopup: !active });
+  }, 30000);
 })();
 
 /* ─────────────────────────────────────────────
@@ -1508,6 +2337,17 @@ window.todayLocalKey = function () {
  * ────────────────────────────────────────────*/
 (() => {
   const CT = { 'Content-Type': 'application/json' };
+  const TEST_TYPE_OPTIONS = [
+    { value: 'UNIT', label: '단원평가', keys: ['UNIT', '단원평가'] },
+    { value: 'REVIEW', label: '복습 테스트', keys: ['REVIEW'] },
+    { value: 'SCHOOL_PAST', label: '학군지 기출', keys: ['SCHOOL_PAST'] },
+    { value: 'ILSAN_PAST', label: '일산 기출', keys: ['ILSAN_PAST'] },
+    { value: 'FINAL', label: 'APEX FINAL', keys: ['FINAL'] },
+    { value: 'HELL', label: 'APEX HELL', keys: ['HELL'] },
+  ];
+  let TEST_ANSWER_LINK_MAP = {};
+  let answerLinkMapPromise = null;
+  let answerLinkMapLoaded = false;
 
   // ✅ sid는 이미 위에서 window.__STU_SID__ 세팅해둔 거 우선 사용
   const sid = window.__STU_SID__ || (() => {
@@ -1538,6 +2378,20 @@ window.todayLocalKey = function () {
     return m ? m[1].trim() : '';
   }
 
+  function getAssignedTestsForSubmit() {
+    return Array.isArray(window.__ASSIGNED_TESTS__) ? window.__ASSIGNED_TESTS__ : [];
+  }
+
+  function assignedRound(value) {
+    const raw = String(value || '').trim();
+    const m = raw.match(/(\d{1,2})/);
+    return m ? m[1] : raw;
+  }
+
+  function typeLabel(typeVal) {
+    return TEST_TYPE_OPTIONS.find(opt => opt.value === typeVal || opt.keys.includes(typeVal))?.label || typeVal || '';
+  }
+
   // ───────────── tests-config 로드/정규화 ─────────────
   let TEST_CFG = { categories: {} };
 
@@ -1558,13 +2412,27 @@ window.todayLocalKey = function () {
 
         const problems = Number.isFinite(+t.problems) ? Math.max(1, +t.problems) : 20;
         const curriculum = String(t.curriculum || '').trim() || '';
+        const difficulty = String(t.difficulty || t.level || '').trim() || '';
+        const round = String(t.round || t.session || t.no || '1').trim() || '1';
 
         // ✅ 새 스키마
         const answerKeys = (t.answerKeys && typeof t.answerKeys === 'object') ? t.answerKeys : null;
         // ✅ 구 스키마(혹시 남아있으면 fallback 용)
         const answerKey = t.answerKey ?? t.answers ?? null;
 
-        return { id, name, problems, curriculum, answerKeys, answerKey };
+        return {
+          id,
+          sourceId: String(t.sourceId || t.source_id || '').trim(),
+          name,
+          problems,
+          curriculum,
+          difficulty,
+          round,
+          categoryKey: String(k || '').trim(),
+          categoryLabel: cat.label,
+          answerKeys,
+          answerKey,
+        };
       }).filter(Boolean);
     }
     return cfg;
@@ -1585,12 +2453,17 @@ window.todayLocalKey = function () {
 
   function resolveCategoryKeysByType(typeVal) {
     const hits = [];
+    const option = TEST_TYPE_OPTIONS.find(opt => opt.value === typeVal || opt.keys.includes(typeVal));
     for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
       const label = String(cat.label || '').trim();
       const k = String(key || '').trim().toUpperCase();
       const lv = label.toUpperCase();
 
-      if (typeVal === '단원평가') {
+      if (option) {
+        if (option.keys.some(rawKey => k === String(rawKey).toUpperCase())) hits.push(key);
+        else if (option.keys.some(rawKey => lv.includes(String(rawKey).toUpperCase()))) hits.push(key);
+        else if (option.label && label.includes(option.label.replace('APEX ', ''))) hits.push(key);
+      } else if (typeVal === '단원평가') {
         if (lv.includes('단원') || lv.includes('UNIT') || k === 'UNIT') hits.push(key);
       } else if (typeVal === 'FINAL') {
         if (lv.includes('FINAL') || k === 'FINAL') hits.push(key);
@@ -1599,6 +2472,27 @@ window.todayLocalKey = function () {
       }
     }
     return hits;
+  }
+
+  function assignedMatchesTest(test) {
+    const assigned = getAssignedTestsForSubmit();
+    if (!assigned.length || !test) return false;
+    return assigned.some(item => {
+      const assignedId = String(item.id || item.testId || '').trim();
+      if (assignedId && assignedId === String(test.id || '').trim()) return true;
+
+      const itemName = String(item.name || item.testName || '').trim();
+      const itemLabel = String(item.label || '').trim();
+      const nameOk = itemName
+        ? itemName === String(test.name || '').trim()
+        : (itemLabel && itemLabel.includes(String(test.name || '').trim()));
+      if (!nameOk) return false;
+
+      const roundOk = !item.round || !test.round || assignedRound(item.round) === assignedRound(test.round);
+      const curOk = !item.curriculum || !test.curriculum || String(item.curriculum) === String(test.curriculum);
+      const diffOk = !item.difficulty || !test.difficulty || String(item.difficulty) === String(test.difficulty);
+      return roundOk && curOk && diffOk;
+    });
   }
 
   function listTestsForType(typeVal, myCur) {
@@ -1612,14 +2506,98 @@ window.todayLocalKey = function () {
     // 커리 정보가 있으면 커리 일치하는 시험을 우선 보여주고, 없으면 전체
     if (myCur) {
       const same = out.filter(t => !t.curriculum || t.curriculum === myCur);
-      return same.length ? same : out;
+      const scoped = same.length ? same : out;
+      return scoped.filter(assignedMatchesTest);
     }
-    return out;
+    return out.filter(assignedMatchesTest);
   }
 
   function findTestById(typeVal, testId, myCur) {
     const list = listTestsForType(typeVal, myCur);
     return list.find(t => String(t.id) === String(testId)) || null;
+  }
+
+  function listAssignedConfiguredTests(myCur) {
+    const out = [];
+    TEST_TYPE_OPTIONS.forEach(opt => {
+      listTestsForType(opt.value, myCur).forEach(test => out.push(test));
+    });
+    return out;
+  }
+
+  function typeValueForTest(test) {
+    const key = String(test?.categoryKey || '').trim().toUpperCase();
+    const label = String(test?.categoryLabel || '').trim().toUpperCase();
+    const hit = TEST_TYPE_OPTIONS.find(opt =>
+      opt.keys.some(rawKey => key === String(rawKey).toUpperCase() || label.includes(String(rawKey).toUpperCase())) ||
+      (opt.label && String(test?.categoryLabel || '').includes(opt.label.replace('APEX ', '')))
+    );
+    return hit?.value || 'UNIT';
+  }
+
+  function roundLabel(round) {
+    const r = String(round || '').trim();
+    return r ? (/회/.test(r) ? r : `${r}회차`) : '';
+  }
+
+  function findSiblingTestByRound(typeVal, test, round, myCur) {
+    if (!test) return null;
+    const targetRound = String(round || '').trim();
+    return listTestsForType(typeVal, myCur).find(item =>
+      String(item.name || '') === String(test.name || '') &&
+      String(item.curriculum || '') === String(test.curriculum || '') &&
+      String(item.difficulty || '') === String(test.difficulty || '') &&
+      String(item.round || '') === targetRound
+    ) || null;
+  }
+
+  function allConfiguredTests() {
+    const out = [];
+    Object.values(TEST_CFG.categories || {}).forEach(cat => {
+      (cat?.tests || []).forEach(test => out.push(test));
+    });
+    return out;
+  }
+
+  function unitCategoryLike(item, configuredTest = null) {
+    const source = [
+      item?.categoryKey,
+      item?.category,
+      item?.categoryLabel,
+      item?.label,
+      configuredTest?.categoryKey,
+      configuredTest?.categoryLabel,
+    ].map(v => String(v || '')).join(' ');
+    return /\bUNIT\b/i.test(source) || source.includes('단원평가') || source.includes('단원');
+  }
+
+  function findConfiguredTestForAssignment(item) {
+    if (!item || typeof item !== 'object') return null;
+    const assignedId = String(item.id || item.testId || '').trim();
+    const assignedSourceId = assignedId.replace(/_r[123]$/, '');
+    const itemName = String(item.name || item.testName || '').trim();
+    const itemLabel = String(item.label || '').trim();
+    const round = assignedRound(item.round);
+
+    const tests = allConfiguredTests();
+    if (assignedId) {
+      const byId = tests.find(test =>
+        String(test.id || '') === assignedId ||
+        String(test.sourceId || '') === assignedId ||
+        String(test.sourceId || '') === assignedSourceId
+      );
+      if (byId) return byId;
+    }
+
+    return tests.find(test => {
+      const testName = String(test.name || '').trim();
+      const nameOk = itemName ? itemName === testName : (itemLabel && itemLabel.includes(testName));
+      if (!nameOk) return false;
+      if (round && assignedRound(test.round) !== round) return false;
+      if (item.curriculum && String(item.curriculum) !== String(test.curriculum || '')) return false;
+      if (item.difficulty && String(item.difficulty) !== String(test.difficulty || '')) return false;
+      return true;
+    }) || null;
   }
 
   // ───────────── 답안 파싱/클라 채점(fallback용) ─────────────
@@ -1648,6 +2626,136 @@ window.todayLocalKey = function () {
     if (typeof test?.answerKey === 'string') return parseAnswerSpec(test.answerKey, test.problems);
 
     return null;
+  }
+
+  function normalizeAnswerRound(round) {
+    const r = String(round || '1').trim();
+    return (r === '2' || r === '3') ? r : '1';
+  }
+
+  function getAnswerLinkForRound(testId, round, sourceId = '') {
+    const id = String(testId || '').trim();
+    const r = normalizeAnswerRound(round);
+    const source = String(sourceId || '').trim() || id.replace(/_r[123]$/, '');
+    const entry = TEST_ANSWER_LINK_MAP[id]?.[r] || TEST_ANSWER_LINK_MAP[source]?.[r];
+    const answerUrl = (entry && typeof entry === 'object') ? (entry.answerUrl ?? entry.answer_url ?? entry.url ?? entry.link) : entry;
+    return answerUrl ? String(answerUrl).trim() : null;
+  }
+
+  async function getAssignedAnswerLink(item) {
+    if (!Object.keys(TEST_CFG.categories || {}).length) {
+      await loadTestsConfig();
+    }
+    await loadAnswerLinkMap();
+
+    const configuredTest = findConfiguredTestForAssignment(item);
+    const round = normalizeAnswerRound(item?.round || configuredTest?.round || '1');
+    const candidates = [
+      [item?.id || item?.testId, item?.sourceId || item?.source_id],
+      [configuredTest?.id, configuredTest?.sourceId],
+      [item?.sourceId || item?.source_id, ''],
+    ];
+
+    for (const [testId, sourceId] of candidates) {
+      const url = getAnswerLinkForRound(testId, round, sourceId);
+      if (url) return { url, configuredTest };
+    }
+    return { url: null, configuredTest };
+  }
+
+  window.openAssignedTestAnswerLink = async (item = {}) => {
+    if (!unitCategoryLike(item)) return false;
+
+    const popup = window.open('about:blank', '_blank');
+    if (popup) popup.opener = null;
+
+    try {
+      const { url, configuredTest } = await getAssignedAnswerLink(item);
+      if (!unitCategoryLike(item, configuredTest) || !url) {
+        if (popup) popup.close();
+        return false;
+      }
+      if (popup) {
+        popup.location.replace(url);
+      } else {
+        window.location.assign(url);
+      }
+      return true;
+    } catch (err) {
+      if (popup) popup.close();
+      console.warn('[test answer links] open failed', err);
+      return false;
+    }
+  };
+
+  function normalizeAnswerLinkMap(raw) {
+    const out = {};
+    const put = (testId, round, answerUrl) => {
+      const id = String(testId || '').trim();
+      const r = normalizeAnswerRound(round);
+      const url = String(answerUrl || '').trim();
+      if (!id || !r || !url) return;
+      out[id] = out[id] || {};
+      out[id][r] = url;
+    };
+
+    const putRows = rows => {
+      rows.forEach(item => {
+        if (!item || typeof item !== 'object') return;
+        put(item.testId ?? item.test_id ?? item.id, item.round, item.answerUrl ?? item.answer_url ?? item.url ?? item.link);
+      });
+    };
+
+    if (Array.isArray(raw)) {
+      putRows(raw);
+      return out;
+    }
+
+    if (!raw || typeof raw !== 'object') return out;
+    if (Array.isArray(raw.links)) {
+      putRows(raw.links);
+      return out;
+    }
+    if (Array.isArray(raw.items)) {
+      putRows(raw.items);
+      return out;
+    }
+
+    Object.entries(raw).forEach(([testId, rounds]) => {
+      if (!rounds || typeof rounds !== 'object') return;
+      const roundMap = rounds.rounds || rounds.answers || rounds;
+      if (!roundMap || typeof roundMap !== 'object') return;
+      Object.entries(roundMap).forEach(([round, entry]) => {
+        const answerUrl = (entry && typeof entry === 'object') ? (entry.answerUrl ?? entry.answer_url ?? entry.url ?? entry.link) : entry;
+        put(testId, round, answerUrl);
+      });
+    });
+
+    return out;
+  }
+
+  async function loadAnswerLinkMap() {
+    if (answerLinkMapLoaded) return TEST_ANSWER_LINK_MAP;
+    if (!answerLinkMapPromise) {
+      answerLinkMapPromise = fetch('/js/test_answer_link_map.json', { cache: 'no-store' })
+        .then(res => {
+          if (!res.ok) throw new Error(String(res.status));
+          return res.json();
+        })
+        .then(data => {
+          TEST_ANSWER_LINK_MAP = normalizeAnswerLinkMap(data);
+          return TEST_ANSWER_LINK_MAP;
+        })
+        .catch(err => {
+          console.warn('[test answer links] load failed', err);
+          TEST_ANSWER_LINK_MAP = {};
+          return TEST_ANSWER_LINK_MAP;
+        })
+        .finally(() => {
+          answerLinkMapLoaded = true;
+        });
+    }
+    return answerLinkMapPromise;
   }
 
   function gradeClientSide(answersText, keyArr, problems) {
@@ -1710,6 +2818,11 @@ window.todayLocalKey = function () {
     #testSubmitModal .ts-row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
     @media (max-width:520px){ #testSubmitModal .ts-row3{ grid-template-columns:1fr; } }
     #testSubmitModal .ts-info{ margin-top:6px; font-size:13px; color:var(--ts-muted); white-space:pre-wrap; }
+    #testSubmitModal .ts-answer-link{ display:none; margin-top:8px; font-size:13px; color:var(--ts-muted); }
+    #testSubmitModal .ts-answer-link a{
+      display:inline-flex; align-items:center; justify-content:center; height:38px; padding:0 14px;
+      border-radius:10px; background:var(--ts-primary); color:var(--ts-primary-fg); text-decoration:none; font-weight:800;
+    }
     #testSubmitModal .ts-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
     #testSubmitModal .ts-submit{
       height:38px; padding:0 14px; border:none; border-radius:10px; cursor:pointer; font-weight:800;
@@ -1736,9 +2849,7 @@ window.todayLocalKey = function () {
               <div>
                 <label>종류</label>
                 <select id="tsType">
-                  <option value="단원평가" selected>단원평가</option>
-                  <option value="FINAL">APEX FINAL</option>
-                  <option value="HELL">APEX HELL</option>
+                  <option value="UNIT" selected>단원평가</option>
                 </select>
               </div>
               <div>
@@ -1759,6 +2870,7 @@ window.todayLocalKey = function () {
               <label>답 입력 (공백/쉼표/붙여쓰기 모두 가능)</label>
               <textarea id="tsAnswersText" placeholder="예) 1 3 2 4 5 ... 또는 13245..."></textarea>
               <div id="tsInfo" class="ts-info"></div>
+              <div id="tsAnswerLinkArea" class="ts-answer-link"></div>
             </div>
 
             <div>
@@ -1788,44 +2900,73 @@ window.todayLocalKey = function () {
     const answersTextEl = document.getElementById('tsAnswersText');
     const memoEl = document.getElementById('tsMemo');
     const infoEl = document.getElementById('tsInfo');
+    const answerLinkArea = document.getElementById('tsAnswerLinkArea');
 
-    const myCur = getMyCurriculumFromNamebar();
+    const currentCur = () => getMyCurriculumFromNamebar();
 
     await loadTestsConfig();
 
-    function renderTestOptions() {
+    function renderTypeOptions(preselectType = '') {
+      const myCur = currentCur();
+      const available = TEST_TYPE_OPTIONS.filter(opt => listTestsForType(opt.value, myCur).length);
+      if (!available.length) {
+        selType.innerHTML = `<option value="">(배정 없음)</option>`;
+        return '';
+      }
+
+      selType.innerHTML = available.map(opt =>
+        `<option value="${opt.value}">${opt.label}</option>`
+      ).join('');
+      selType.value = available.some(opt => opt.value === preselectType)
+        ? preselectType
+        : available[0].value;
+      return selType.value;
+    }
+
+    function renderTestOptions(preselectTestId = '') {
+      const myCur = currentCur();
       const type = selType.value;
       const list = listTestsForType(type, myCur);
 
       if (!list.length) {
         selTestId.innerHTML = `<option value="">(시험 없음)</option>`;
-        infoEl.textContent = '등록된 시험이 없습니다. 선생님이 테스트 관리에서 시험/정답을 먼저 등록해야 합니다.';
+        infoEl.textContent = '오늘 배정된 시험이 없습니다.';
         return;
       }
 
       selTestId.innerHTML = list.map(t => {
         const curTag = t.curriculum ? ` (${t.curriculum})` : '';
-        return `<option value="${t.id}">${t.name}${curTag}</option>`;
+        const meta = [t.difficulty, roundLabel(t.round)].filter(Boolean).join(' · ');
+        return `<option value="${t.id}">${t.name}${curTag}${meta ? ` · ${meta}` : ''}</option>`;
       }).join('');
+
+      if (preselectTestId && list.some(t => String(t.id) === String(preselectTestId))) {
+        selTestId.value = String(preselectTestId);
+      }
 
       updateInfo();
     }
 
     function updateInfo(extra) {
+      const myCur = currentCur();
       const type = selType.value;
       const testId = selTestId.value;
-      const round = parseInt(selRound.value, 10) || 1;
       const t = findTestById(type, testId, myCur);
+      const round = parseInt(t?.round || selRound.value, 10) || 1;
 
       if (!t) {
         infoEl.textContent = '시험을 선택하세요.';
         return;
       }
 
+      if (selRound && String(selRound.value || '') !== String(round)) {
+        selRound.value = String(round);
+      }
+
       const key = getKeyForRound(t, round);
       const keyOk = Array.isArray(key) && key.length;
 
-      let msg = `문항 수: ${t.problems}문항\n회차: ${round}회차\n`;
+      let msg = `${typeLabel(type)}\n문항 수: ${t.problems}문항\n회차: ${round}회차\n`;
       msg += keyOk
         ? '정답키 등록됨 → 제출하면 서버가 자동 채점합니다.'
         : '정답키가 아직 등록되지 않았습니다 → 선생님께 말해 주세요.';
@@ -1834,34 +2975,92 @@ window.todayLocalKey = function () {
       infoEl.textContent = msg;
     }
 
-    const open = () => {
-      renderTestOptions();
+    function resetAnswerLink() {
+      if (!answerLinkArea) return;
+      answerLinkArea.style.display = 'none';
+      answerLinkArea.replaceChildren();
+    }
+
+    async function renderAnswerLink(testId, round) {
+      if (!answerLinkArea) return;
+      answerLinkArea.replaceChildren();
+
+      await loadAnswerLinkMap();
+      const answerUrl = getAnswerLinkForRound(testId, round);
+      answerLinkArea.style.display = 'block';
+
+      if (!answerUrl) {
+        answerLinkArea.textContent = '해설지 링크 준비 중';
+        return;
+      }
+
+      const a = document.createElement('a');
+      a.href = answerUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = '해설지 보기';
+      answerLinkArea.appendChild(a);
+    }
+
+    const open = (preselectTestId = '') => {
+      const assigned = getAssignedTestsForSubmit();
+      if (!assigned.length) return;
+      const myCur = currentCur();
+      const fallback = listAssignedConfiguredTests(myCur)[0] || null;
+      const requested = preselectTestId
+        ? listAssignedConfiguredTests(myCur).find(t => String(t.id) === String(preselectTestId)) || fallback
+        : fallback;
+      const nextType = requested ? typeValueForTest(requested) : '';
+
+      renderTypeOptions(nextType);
+      renderTestOptions(requested?.id || preselectTestId);
       answersTextEl.value = '';
       memoEl.value = '';
+      resetAnswerLink();
+      void loadAnswerLinkMap();
       modal.style.display = 'flex';
     };
     const close = () => { modal.style.display = 'none'; };
 
-    btnOpen?.addEventListener('click', open);
+    btnOpen?.addEventListener('click', () => open());
     btnClose?.addEventListener('click', close);
     modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
-    selType.addEventListener('change', renderTestOptions);
-    selTestId.addEventListener('change', updateInfo);
-    selRound.addEventListener('change', updateInfo);
+    selType.addEventListener('change', () => {
+      resetAnswerLink();
+      renderTestOptions();
+    });
+    selTestId.addEventListener('change', () => {
+      resetAnswerLink();
+      const t = findTestById(selType.value, selTestId.value, currentCur());
+      if (t?.round) selRound.value = String(t.round);
+      updateInfo();
+    });
+    selRound.addEventListener('change', () => {
+      resetAnswerLink();
+      const myCur = currentCur();
+      const current = findTestById(selType.value, selTestId.value, myCur);
+      const sibling = findSiblingTestByRound(selType.value, current, selRound.value, myCur);
+      if (sibling) selTestId.value = sibling.id;
+      updateInfo();
+    });
+
+    window.openAssignedTestSubmit = (testId = '') => open(testId);
 
     btnSubmit?.addEventListener('click', async () => {
       const type = selType.value;
       const testId = selTestId.value;
-      const round = parseInt(selRound.value, 10) || 1;
       const answersText = String(answersTextEl.value || '').trim();
       const memo = String(memoEl.value || '').trim();
+      resetAnswerLink();
 
       if (!testId) return alert('시험을 선택해주세요.');
       if (!answersText) return alert('답을 입력해주세요.');
 
-      const t = findTestById(type, testId, myCur);
+      const t = findTestById(type, testId, currentCur());
       if (!t) return alert('시험 정보를 찾지 못했습니다.');
+      const round = parseInt(t.round || selRound.value, 10) || 1;
+      if (selRound) selRound.value = String(round);
 
       // ✅ 1) 서버 자동 채점/저장
       try {
@@ -1889,10 +3088,9 @@ window.todayLocalKey = function () {
         if (pct != null) extra += ` (${pct.toFixed(1)}%)`;
         if (wrong.length) extra += `\n오답: ${wrong.join(', ')}`;
         updateInfo(extra);
+        await renderAnswerLink(testId, round);
 
-        alert('제출 완료ヾ(^▽^*)))');
         try { localStorage.setItem('updPing', Date.now().toString()); } catch { }
-        close();
         return;
       } catch (e) {
         console.warn('[submit-test] server grade failed, fallback to client side', e);
@@ -1907,7 +3105,7 @@ window.todayLocalKey = function () {
 
       const graded = gradeClientSide(answersText, key, t.problems);
       const score = `${graded.correct}/${graded.total}`;
-      const fullName = (type === '단원평가') ? t.name : `${type} / ${t.name}`;
+      const fullName = (type === 'UNIT' || type === '단원평가') ? t.name : `${typeLabel(type)} / ${t.name}`;
 
       // 구버전 서버는 name/score/wrong로 저장되던 방식
       const payload = { sid, name: fullName, score, wrong: graded.wrong, memo };
@@ -1955,14 +3153,18 @@ window.todayLocalKey = function () {
       } catch { }
 
       try { localStorage.setItem('updPing', Date.now().toString()); } catch { }
-      alert('제출 완료ヾ(^▽^*)))');
-      close();
+      let extra = `제출 완료\n점수: ${score}`;
+      if (typeof graded.pct === 'number') extra += ` (${graded.pct.toFixed(1)}%)`;
+      if (graded.wrong.length) extra += `\n오답: ${graded.wrong.join(', ')}`;
+      updateInfo(extra);
+      await renderAnswerLink(testId, round);
     });
   }
 
   // ───────────── init ─────────────
   injectStyles();
   ensureModal();
+  void loadAnswerLinkMap();
   initLogic().catch(err => {
     console.warn('[test submit modal] init failed', err);
   });

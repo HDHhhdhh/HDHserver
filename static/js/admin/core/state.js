@@ -1,17 +1,12 @@
 // 전역 상태 한 군데로 모으기 + 초기 로드
 import { api } from './api.js';
+import { todayLocalKey } from './utils.js';
 
 export const state = {
   students: [], videos: [], materials: {}, updates: {}, assigns: {},
-  extra: {}, logs: {}, absences: {}, absentByDate: {}, progress: {},
+  extra: {}, logs: {}, absences: {}, absentByDate: {}, absentSlotsByDate: {}, progress: {},
   schoolCal: {}, testsConfig: { categories: {} },
 };
-
-function todayLocalKey() {
-  const now = new Date();
-  const tz = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - tz).toISOString().slice(0, 10);
-}
 
 export async function bootstrap() {
   const today = todayLocalKey();
@@ -20,15 +15,15 @@ export async function bootstrap() {
   ] = await Promise.all([
     api.get('/api/students'),
     api.get('/api/videos'),
-    api.get('/api/materials').catch(()=> ({})),
-    api.get('/api/updates').catch(()=> ({})),
-    api.get('/api/mat-assign').catch(()=> ({})),
-    api.get('/api/extra-attend').catch(()=> ({})),
-    api.get(`/api/logs?date=${encodeURIComponent(today)}`).catch(()=> ({})),
-    api.get('/api/absent').catch(()=> ({})),
-    api.get(`/api/progress?date=${encodeURIComponent(today)}`).catch(()=> ({})),
-    api.get('/api/school-calendar').catch(()=> ({})),
-    api.get('/api/tests-config').catch(()=> ({ categories: {} })),
+    api.getOr('/api/materials', {}),
+    api.getOr('/api/updates', {}),
+    api.getOr('/api/mat-assign', {}),
+    api.getOr('/api/extra-attend', {}),
+    api.getOr(`/api/logs?date=${encodeURIComponent(today)}`, {}),
+    api.getOr('/api/absent', {}),
+    api.getOr(`/api/progress?date=${encodeURIComponent(today)}`, {}),
+    api.getOr('/api/school-calendar', {}),
+    api.getOr('/api/tests-config', { categories: {} }),
   ]);
 
   state.students = students;
@@ -43,6 +38,7 @@ export async function bootstrap() {
   const isUnified = abs && (abs.by_date || abs.by_student);
   state.absentByDate = isUnified ? (abs.by_date || {}) : {};
   state.absences    = isUnified ? (abs.by_student || {}) : (abs || {});
+  state.absentSlotsByDate = isUnified ? (abs.by_slot || {}) : {};
 
   state.schoolCal = schoolCal || {};
   state.testsConfig = testsConfig || { categories: {} };
@@ -51,6 +47,7 @@ export async function bootstrap() {
   window.students = state.students;
   window.extra = state.extra;
   window.absentByDate = state.absentByDate;
+  window.absentSlotsByDate = state.absentSlotsByDate;
   window.schoolCal = state.schoolCal;
   window.testsConfig = state.testsConfig;
   window.logs = state.logs;

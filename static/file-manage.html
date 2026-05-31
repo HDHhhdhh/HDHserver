@@ -24,7 +24,12 @@
       min-height: 100vh;
       background: var(--bg);
       color: var(--text);
-      font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-variant-numeric: tabular-nums;
     }
     .shell { max-width: 1440px; margin: 0 auto; padding: 18px; }
     .topbar {
@@ -57,6 +62,12 @@
     }
     .toolbar { margin-bottom: 10px; }
     .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 36px;
+      box-sizing: border-box;
       border: 1px solid var(--line);
       background: #fff;
       color: var(--text);
@@ -64,13 +75,16 @@
       padding: 8px 10px;
       cursor: pointer;
       font-size: 13px;
+      font-family: inherit;
       text-decoration: none;
-      line-height: 1.1;
+      line-height: 1;
+      text-align: center;
+      vertical-align: middle;
     }
     .btn:hover { background: #f1f5f9; }
     .btn.primary, .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
     .btn.danger { background: #fff; border-color: #fecaca; color: var(--danger); }
-    .btn.small { padding: 5px 8px; font-size: 12px; }
+    .btn.small { min-height: 32px; padding: 5px 8px; font-size: 12px; }
     .btn.ghost { background: transparent; }
     input, select {
       border: 1px solid var(--line);
@@ -79,6 +93,14 @@
       min-height: 34px;
       background: #fff;
       color: var(--text);
+      font: inherit;
+    }
+    .ctx-i {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      line-height: 1.2;
     }
     #newFolderName { width: 170px; }
     #drop {

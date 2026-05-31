@@ -4,6 +4,8 @@
    ========================= */
 
 :root {
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
     --bg-light: #f8f9fc;
     --bg-dark: #0d1117;
 
@@ -30,11 +32,36 @@ body {
 }
 
 body {
-    font-family: 'Noto Sans KR', system-ui, sans-serif;
+    font-family: var(--font-ui);
     margin: 0;
     background: var(--bg-light);
     color: var(--text);
-    transition: background .25s, color .25s;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
+    transition: background-color .25s, color .25s;
+}
+
+button,
+input,
+select,
+textarea {
+    font-family: var(--font-ui);
+    letter-spacing: 0;
+}
+
+.btn,
+a.btn,
+button.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    line-height: 1;
+    text-align: center;
+    vertical-align: middle;
 }
 
 body.dark {
@@ -60,7 +87,7 @@ body.dark a:hover {
     color: var(--accent);
 }
 
-:where(input, select, textarea):focus {
+:where(button, input, select, textarea, a):focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
     border-color: var(--accent);

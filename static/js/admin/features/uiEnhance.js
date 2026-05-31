@@ -1,14 +1,6 @@
 import { $ } from '../core/utils.js';
 import { initAttendanceLedgerLink } from './attendanceLedgerLink.js';
 
-const DENSITY_KEY = 'adminDensityMode';
-
-function countRows(wrapId) {
-  const host = $(wrapId);
-  if (!host) return 0;
-  return host.querySelectorAll('tr[data-sid]').length;
-}
-
 function clickById(id) {
   const el = $(id);
   if (!el) return false;
@@ -21,6 +13,80 @@ function scrollToSection(id) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return true;
+}
+
+const OPS_SLOT_BOUNDARY_MINUTES = 18 * 60;
+const OPS_SLOT_START_MINUTES = { 1: 13 * 60, 2: 18 * 60 };
+// KPI target ends ten minutes before the nominal slot close.
+const OPS_SLOT_END_MINUTES = { 1: (16 * 60) + 50, 2: (21 * 60) + 50 };
+const OPS_BREAKS = {
+  1: [{ start: (14 * 60) + 55, end: (15 * 60) + 10 }],
+  2: [{ start: (19 * 60) + 55, end: (20 * 60) + 10 }],
+};
+
+function minutesOfDay(d) {
+  return (d.getHours() * 60) + d.getMinutes() + (d.getSeconds() / 60);
+}
+
+function currentOpsSlot(now = new Date()) {
+  return minutesOfDay(now) < OPS_SLOT_BOUNDARY_MINUTES ? 1 : 2;
+}
+
+function parseHHMM(value) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || '').trim());
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return (hh * 60) + mm;
+}
+
+function slotGroupsFromRow(row) {
+  const fromData = String(row?.dataset?.slotGroup || '')
+    .split(',')
+    .map(n => Number(n))
+    .filter(n => n === 1 || n === 2);
+  if (fromData.length) return new Set(fromData);
+
+  const label = String(row?.querySelector?.('.slotLabel')?.textContent || row?.cells?.[1]?.textContent || '');
+  const compact = label.replace(/\s+/g, '');
+  const groups = new Set();
+  if (/(?:^|[^0-9])1(?:타임|교시)?(?:[^0-9]|$)/.test(compact) || /[월화수목금토일]1/.test(compact)) groups.add(1);
+  if (/(?:^|[^0-9])2(?:타임|교시)?(?:[^0-9]|$)/.test(compact) || /[월화수목금토일]2/.test(compact)) groups.add(2);
+  if (groups.size) return groups;
+
+  const arriveMinutes = parseHHMM(row?.querySelector?.('.arriveLabel')?.textContent);
+  if (arriveMinutes == null) return groups;
+  groups.add(arriveMinutes >= OPS_SLOT_BOUNDARY_MINUTES ? 2 : 1);
+  return groups;
+}
+
+function workMinutesBetween(start, end, breaks = []) {
+  const from = Math.max(0, start);
+  const to = Math.max(from, end);
+  let total = Math.max(0, to - from);
+
+  breaks.forEach((breakTime) => {
+    const overlap = Math.max(0, Math.min(to, breakTime.end) - Math.max(from, breakTime.start));
+    total -= overlap;
+  });
+
+  return Math.max(0, total);
+}
+
+function remainingWorkMinutes(slot, now = new Date()) {
+  const nowMinutes = minutesOfDay(now);
+  const slotStart = OPS_SLOT_START_MINUTES[slot] ?? nowMinutes;
+  const slotEnd = OPS_SLOT_END_MINUTES[slot] ?? nowMinutes;
+  if (nowMinutes >= slotEnd) return 0;
+  return workMinutesBetween(Math.max(nowMinutes, slotStart), slotEnd, OPS_BREAKS[slot] || []);
+}
+
+function currentSlotRows(slot) {
+  return Array.from(document.querySelectorAll('#todayWrap tr[data-sid], #doneWrap tr[data-sid]'))
+    .filter(row => row?.dataset?.selfStudy !== '1')
+    .filter(row => slotGroupsFromRow(row).has(slot));
 }
 
 function renderClock() {
@@ -37,50 +103,36 @@ function renderClock() {
 }
 
 function renderMetrics() {
-  const today = countRows('todayWrap');
-  const done = countRows('doneWrap');
-  const total = today + done;
-  const checked = document.querySelectorAll('#todayWrap .attendChk:checked').length;
-  const attended = Math.min(total, checked + done);
-  const progress = total ? Math.round((done / total) * 100) : 0;
+  const slot = currentOpsSlot();
+  const rows = currentSlotRows(slot);
+  const total = rows.length;
+  const completed = rows.filter(row => {
+    const left = !!row.closest('#doneWrap');
+    const homeworkChecked = row.dataset.hw === '1' || row.querySelector('.hwCheckChk')?.checked;
+    return left || homeworkChecked;
+  }).length;
+  const pending = Math.max(0, total - completed);
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+  const minutesEach = pending ? (remainingWorkMinutes(slot) / pending) : 0;
 
-  const doneEl = $('kpiDone');
-  const attEl = $('kpiAttendance');
+  const pendingEl = $('kpiHomeworkPending') || $('kpiDone');
+  const minutesEl = $('kpiMinutesPerStudent') || $('kpiAttendance');
   const progEl = $('kpiProgress');
   const progBar = $('kpiProgressBar');
   const focusEl = $('opsFocusValue');
   const focusRing = $('opsFocusRing');
+  const title = `${slot}타임 기준`;
 
-  if (doneEl) doneEl.textContent = `${done}명`;
-  if (attEl) attEl.textContent = `${attended}명`;
+  if (pendingEl) pendingEl.textContent = `${pending}명`;
+  if (minutesEl) minutesEl.textContent = `${minutesEach.toFixed(1)}분`;
   if (progEl) progEl.textContent = `${progress}%`;
   if (progBar) progBar.style.width = `${progress}%`;
   if (focusEl) focusEl.textContent = `${progress}%`;
   if (focusRing) focusRing.style.setProperty('--p', String(progress));
-}
 
-function initDensityToggle() {
-  const btn = $('densityToggle');
-  if (!btn) return;
-
-  function apply(mode) {
-    const m = mode === 'compact' ? 'compact' : 'cozy';
-    document.body.dataset.density = m;
-    btn.textContent = m === 'compact' ? '여백 보기' : '컴팩트 보기';
-    try {
-      localStorage.setItem(DENSITY_KEY, m);
-    } catch { /* ignore */ }
-  }
-
-  let initial = 'cozy';
-  try {
-    initial = localStorage.getItem(DENSITY_KEY) || 'cozy';
-  } catch { /* ignore */ }
-  apply(initial);
-
-  btn.addEventListener('click', () => {
-    const next = document.body.dataset.density === 'compact' ? 'cozy' : 'compact';
-    apply(next);
+  [pendingEl, minutesEl, progEl].forEach((el) => {
+    const card = el?.closest?.('.kpi-card');
+    if (card) card.title = title;
   });
 }
 
@@ -135,6 +187,7 @@ function initMetricWatchers() {
   document.addEventListener('change', (ev) => {
     if (ev.target?.closest?.('#todayWrap, #doneWrap')) schedule();
   });
+  setInterval(schedule, 30 * 1000);
 
   schedule();
 }
@@ -143,7 +196,6 @@ export function initAdminUiEnhance() {
   renderClock();
   setInterval(renderClock, 30 * 1000);
 
-  initDensityToggle();
   initRailActions();
   initAttendanceLedgerLink();
   initMetricWatchers();

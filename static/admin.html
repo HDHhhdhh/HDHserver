@@ -6,7 +6,7 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260417a">
+  <link rel="stylesheet" href="/css/admin.css?v=20260527chat">
 
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
@@ -32,7 +32,7 @@
 
       <nav class="rail-nav">
         <button class="rail-btn" type="button" data-ui-action="scroll-today">오늘 학생</button>
-        <button class="rail-btn" type="button" data-ui-action="scroll-done">완료 / 자유석</button>
+        <button class="rail-btn" type="button" data-ui-action="scroll-done">하원</button>
         <button class="rail-btn" type="button" data-ui-action="scroll-calendar">캘린더</button>
       </nav>
 
@@ -52,7 +52,7 @@
         </div>
 
         <div class="topbar-right">
-          <button id="densityToggle" class="btn secondary" type="button">컴팩트 보기</button>
+          <button id="simpleModeToggle" class="btn secondary simple-mode-toggle" type="button" aria-pressed="false">Simple</button>
           <label class="switch" title="다크모드">
             <input type="checkbox" id="darkToggle">
             <span class="slider"></span>
@@ -61,12 +61,13 @@
       </header>
 
       <div class="global-links" aria-label="관리 링크">
-        <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/10cpoU0OxFx7DwGO3VBAFhPJx68kHIX_ugRzOong9IGs/edit?gid=1803596204#gid=1803596204" class="btn secondary" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원 출석부</a>
-        <a href="/video-manage" class="btn secondary" target="_blank" rel="noopener noreferrer">영상관리</a>
-        <a href="/students" class="btn secondary" target="_blank" rel="noopener noreferrer">전체학생</a>
-        <a href="/school-cal" class="btn secondary" target="_blank" rel="noopener noreferrer">학교일정</a>
-        <a href="/tests" class="btn secondary" target="_blank" rel="noopener noreferrer">테스트관리</a>
-        <a href="/file-manage" class="btn secondary" target="_blank" rel="noopener noreferrer">파일관리</a>
+        <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/10cpoU0OxFx7DwGO3VBAFhPJx68kHIX_ugRzOong9IGs/edit?gid=1803596204#gid=1803596204" class="btn secondary link-ledger" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원출석부</a>
+        <a href="/students" class="btn secondary link-students" target="_blank" rel="noopener noreferrer">전체학생</a>
+        <a href="/school-cal" class="btn secondary link-school" target="_blank" rel="noopener noreferrer">학교일정</a>
+        <a href="/video-manage" class="btn secondary link-video" target="_blank" rel="noopener noreferrer">영상관리</a>
+        <a href="/tests" class="btn secondary link-tests" target="_blank" rel="noopener noreferrer">테스트관리</a>
+        <a href="/file-manage" class="btn secondary link-files" target="_blank" rel="noopener noreferrer">파일관리</a>
+        <button id="adminChatOpen" class="btn secondary link-chat admin-chat-open" type="button" aria-controls="adminChatPanel" aria-expanded="false">챗봇</button>
       </div>
 
       <section class="hero-panel">
@@ -80,36 +81,293 @@
           <p id="todaySlotCounts" class="hero-sub muted"></p>
         </div>
 
-        <div class="hero-kpis">
-          <article class="kpi-card">
-            <span class="kpi-label">완료 학생</span>
-            <strong id="kpiDone">0명</strong>
-          </article>
-          <article class="kpi-card">
-            <span class="kpi-label">출석 체크</span>
-            <strong id="kpiAttendance">0명</strong>
-          </article>
-          <article class="kpi-card progress-card">
-            <span class="kpi-label">진행률</span>
-            <strong id="kpiProgress">0%</strong>
-            <div class="kpi-progress-track" aria-hidden="true">
-              <i id="kpiProgressBar"></i>
-            </div>
-          </article>
+        <div class="hero-metrics-grid" aria-label="오늘 운영 지표">
+          <div id="adminDateMount" class="hero-date-mount"></div>
+
+          <div class="hero-kpis">
+            <article class="kpi-card kpi-card--pending">
+              <div class="kpi-card-head">
+                <span class="kpi-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M7 4h10a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path>
+                    <path d="M9 8h6"></path>
+                    <path d="M9 12h5"></path>
+                  </svg>
+                </span>
+                <span class="kpi-label">남은 숙검 수</span>
+              </div>
+              <div class="kpi-value-line">
+                <strong id="kpiHomeworkPending">0명</strong>
+                <span class="kpi-value-note">남음</span>
+              </div>
+            </article>
+            <article class="kpi-card kpi-card--minutes">
+              <div class="kpi-card-head">
+                <span class="kpi-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 7v5l3 2"></path>
+                    <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path>
+                  </svg>
+                </span>
+                <span class="kpi-label">학생 당 숙검 시간</span>
+              </div>
+              <div class="kpi-value-line">
+                <span class="kpi-value-note">학생 당</span>
+                <strong id="kpiMinutesPerStudent">0.0분</strong>
+              </div>
+            </article>
+            <article class="kpi-card kpi-card--progress progress-card">
+              <div class="kpi-card-head">
+                <span class="kpi-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 13a8 8 0 1 1 16 0"></path>
+                    <path d="M12 13l4-4"></path>
+                    <path d="M7 18h10"></path>
+                  </svg>
+                </span>
+                <span class="kpi-label">숙검 진행률</span>
+              </div>
+              <div class="kpi-value-line">
+                <strong id="kpiProgress">0%</strong>
+              </div>
+              <div class="kpi-progress-track" aria-hidden="true">
+                <i id="kpiProgressBar"></i>
+              </div>
+            </article>
+          </div>
         </div>
 
         <div class="hero-actions" aria-label="빠른 작업">
-          <button id="extraBtn" class="btn" type="button">+ 보강 등록</button>
-          <button id="absentRegisterBtn" class="btn danger" type="button">결석 등록</button>
+          <button id="extraBtn" class="btn" type="button">보강등록</button>
+          <button id="absentRegisterBtn" class="btn danger" type="button">결석등록</button>
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
           <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
         </div>
+
+        <article id="announcementSection" class="card announcement-section" aria-labelledby="announcement-title">
+          <div class="card-head between announcement-head">
+            <div>
+              <h3 id="announcement-title">공지</h3>
+              <p class="muted announcement-sub">4시간 동안 대상 학생에게 표시</p>
+            </div>
+            <div class="announcement-head-actions">
+              <button id="annModeToggle" class="btn secondary ann-mode-toggle" type="button" aria-pressed="false">설문조사</button>
+              <button id="annComposeExpand" class="ann-expand-btn ann-compose-expand-btn" type="button" aria-label="공지/설문조사 등록 크게 열기" title="크게 작성">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M8 3H3v5"></path>
+                  <path d="M3 3l7 7"></path>
+                  <path d="M16 3h5v5"></path>
+                  <path d="M21 3l-7 7"></path>
+                  <path d="M8 21H3v-5"></path>
+                  <path d="M3 21l7-7"></path>
+                  <path d="M16 21h5v-5"></path>
+                  <path d="M21 21l-7-7"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="announcement-compose">
+            <label class="announcement-field announcement-field-title">
+              <span>제목</span>
+              <input id="annTitle" type="text" autocomplete="off" placeholder="공지 제목">
+            </label>
+            <label class="announcement-field announcement-field-content">
+              <span>내용</span>
+              <textarea id="annContent" rows="3" placeholder="학생에게 전달할 내용"></textarea>
+            </label>
+
+            <div class="announcement-target">
+              <button id="annTargetBtn" class="btn secondary" type="button">대상</button>
+              <span id="annTargetSummary" class="announcement-target-summary">오늘 학생 · 0명</span>
+              <div class="announcement-image-tools" aria-label="공지 이미지 첨부">
+                <button id="annSurveyBuilderOpen" class="ann-image-btn ann-survey-open" type="button" hidden>질문</button>
+                <div id="annSurveyChip" class="ann-survey-chip" hidden>질문 0개</div>
+                <input id="annImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden>
+                <button id="annImagePick" class="ann-image-btn" type="button">이미지</button>
+                <div id="annImagePreview" class="ann-image-chip" hidden>
+                  <img id="annImageThumb" alt="">
+                  <span id="annImageName"></span>
+                  <button id="annImageRemove" type="button" aria-label="첨부 이미지 제거">×</button>
+                </div>
+              </div>
+              <div id="annTargetMenu" class="announcement-target-menu" hidden>
+                <div class="announcement-target-options" role="group" aria-label="공지 대상">
+                  <button type="button" data-target-mode="slot1">1타임</button>
+                  <button type="button" data-target-mode="slot2">2타임</button>
+                  <button type="button" data-target-mode="today">오늘 학생</button>
+                  <button type="button" data-target-mode="direct">직접 선택</button>
+                </div>
+                <div id="annDirectPicker" class="announcement-direct-picker" hidden>
+                  <input id="annDirectSearch" type="search" autocomplete="off" placeholder="학생 검색">
+                  <div class="announcement-direct-actions">
+                    <button id="annSelectAllVisible" type="button">보이는 학생 선택</button>
+                    <button id="annClearSelected" type="button">선택 해제</button>
+                  </div>
+                  <div id="annDirectList" class="announcement-direct-list"></div>
+                </div>
+              </div>
+            </div>
+
+            <button id="annPublish" class="btn announcement-submit" type="button">등록</button>
+          </div>
+
+          <details id="annBoardShell" class="announcement-board-shell">
+            <summary>발행한 공지 · 답장 확인</summary>
+            <div class="announcement-board">
+              <div class="announcement-list-wrap">
+                <div class="announcement-board-title">발행한 공지</div>
+                <div id="annList" class="announcement-list">
+                  <div class="ann-empty">공지 목록을 불러오는 중...</div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </article>
+
+        <aside id="annReplyDock" class="card announcement-reply-dock" aria-live="polite">
+          <div class="ann-reply-head">
+            <div>
+              <p class="ann-reply-kicker">실시간 답장</p>
+              <h3 id="annReplyTitle">공지 답장</h3>
+              <p id="annReplyMeta" class="muted">발행한 공지를 선택하면 답장이 표시됩니다.</p>
+            </div>
+            <div class="ann-reply-actions-inline">
+              <button id="annReplyExpand" class="ann-expand-btn" type="button" aria-label="실시간 답장 크게 보기" title="크게 보기">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M8 3H3v5"></path>
+                  <path d="M3 3l7 7"></path>
+                  <path d="M16 3h5v5"></path>
+                  <path d="M21 3l-7 7"></path>
+                  <path d="M8 21H3v-5"></path>
+                  <path d="M3 21l7-7"></path>
+                  <path d="M16 21h5v-5"></path>
+                  <path d="M21 21l-7-7"></path>
+                </svg>
+              </button>
+              <button id="annReplyEdit" class="ann-edit-btn" type="button" hidden>수정</button>
+              <button id="annReplyDelete" class="ann-delete-btn" type="button" hidden>삭제</button>
+            </div>
+          </div>
+          <p id="annReplyContent" class="ann-reply-content">아직 선택된 공지가 없습니다.</p>
+          <a id="annReplyImage" class="ann-reply-image" href="#" target="_blank" rel="noopener noreferrer" hidden>
+            <img id="annReplyImagePreview" alt="">
+          </a>
+          <div class="ann-response-head">
+            <strong>답장 피드</strong>
+            <span id="annReplyCount">0건</span>
+          </div>
+          <div id="annLiveReplies" class="ann-live-replies">
+            <div class="ann-empty">공지 목록에서 항목을 선택하세요.</div>
+          </div>
+        </aside>
+
+        <div id="annSurveyModal" class="ann-survey-modal" hidden>
+          <div class="ann-survey-dialog" role="dialog" aria-modal="true" aria-labelledby="annSurveyTitle">
+            <div class="ann-survey-dialog-head">
+              <div>
+                <p class="ann-survey-kicker">SURVEY BUILDER</p>
+                <h3 id="annSurveyTitle">설문조사 만들기</h3>
+                <p>질문 유형과 필수 응답을 정하고, 등록하면 대상 학생에게 팝업으로 표시됩니다.</p>
+              </div>
+              <button id="annSurveyClose" class="ann-survey-icon-btn" type="button" aria-label="설문 편집 닫기">×</button>
+            </div>
+
+            <div class="ann-survey-settings" aria-label="설문 설정">
+              <label>
+                <span>공개 상태</span>
+                <select id="annSurveyStatus">
+                  <option value="public">공개</option>
+                  <option value="draft">작성 중</option>
+                  <option value="closed">마감</option>
+                </select>
+              </label>
+              <label class="ann-survey-check">
+                <input id="annSurveyAnonymous" type="checkbox">
+                익명 응답
+              </label>
+              <label class="ann-survey-check">
+                <input id="annSurveyAllowMultiple" type="checkbox">
+                중복 제출 허용
+              </label>
+            </div>
+
+            <div class="ann-survey-toolbar">
+              <button id="annSurveyAddQuestion" class="btn" type="button">+ 질문 추가</button>
+              <span id="annSurveyBuilderHint">객관식은 선택지가 최소 2개 필요합니다.</span>
+            </div>
+
+            <div id="annSurveyQuestions" class="ann-survey-questions"></div>
+
+            <div class="ann-survey-dialog-actions">
+              <button id="annSurveyReset" class="btn secondary" type="button">초기화</button>
+              <button id="annSurveyApply" class="btn" type="button">설문 반영</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="annComposeExpandModal" class="ann-compose-expand-modal" hidden>
+          <section class="ann-compose-expand-dialog" role="dialog" aria-modal="true" aria-labelledby="annComposeExpandTitle">
+            <div class="ann-compose-expand-head">
+              <div>
+                <p class="ann-reply-kicker">공지/설문조사 등록</p>
+                <h3 id="annComposeExpandTitle">공지 등록</h3>
+                <p id="annComposeExpandMeta" class="muted">대상과 내용을 넓은 화면에서 확인하고 등록합니다.</p>
+              </div>
+              <div class="ann-compose-expand-actions">
+                <button id="annComposeModeToggle" class="btn secondary ann-mode-toggle" type="button" aria-pressed="false">설문조사</button>
+                <button id="annComposeExpandClose" class="ann-reply-expand-close" type="button" aria-label="공지/설문조사 등록 팝업 닫기">×</button>
+              </div>
+            </div>
+            <div id="annComposeExpandMount" class="ann-compose-expand-body"></div>
+          </section>
+        </div>
+
+        <div id="annReplyExpandModal" class="ann-reply-expand-modal" hidden>
+          <section class="ann-reply-expand-dialog" role="dialog" aria-modal="true" aria-labelledby="annReplyExpandTitle">
+            <div class="ann-reply-expand-head">
+              <div class="ann-reply-expand-title">
+                <p id="annReplyExpandKicker" class="ann-reply-kicker">실시간 답장</p>
+                <h3 id="annReplyExpandTitle">공지 답장</h3>
+                <p id="annReplyExpandMeta" class="muted">발행한 공지를 선택하면 답장이 표시됩니다.</p>
+              </div>
+              <div class="ann-reply-expand-actions">
+                <button id="annReplyExpandEdit" class="ann-edit-btn" type="button" hidden>수정</button>
+                <button id="annReplyExpandDelete" class="ann-delete-btn" type="button" hidden>삭제</button>
+                <button id="annReplyExpandClose" class="ann-reply-expand-close" type="button" aria-label="확대 팝업 닫기">×</button>
+              </div>
+            </div>
+            <div class="ann-reply-expand-body">
+              <aside class="ann-reply-expand-list-panel" aria-label="공지 목록">
+                <div class="ann-response-head">
+                  <strong>공지 목록</strong>
+                  <span id="annReplyExpandListCount">0건</span>
+                </div>
+                <div id="annReplyExpandList" class="ann-reply-expand-list">
+                  <div class="ann-empty">발행한 공지가 없습니다.</div>
+                </div>
+              </aside>
+              <div class="ann-reply-expand-detail">
+                <p id="annReplyExpandContent" class="ann-reply-content">아직 선택된 공지가 없습니다.</p>
+                <a id="annReplyExpandImage" class="ann-reply-image" href="#" target="_blank" rel="noopener noreferrer" hidden>
+                  <img id="annReplyExpandImagePreview" alt="">
+                </a>
+                <div class="ann-response-head">
+                  <strong id="annReplyExpandFeedLabel">답장 피드</strong>
+                  <span id="annReplyExpandCount">0건</span>
+                </div>
+                <div id="annReplyExpandFeed" class="ann-live-replies ann-live-replies-expanded">
+                  <div class="ann-empty">공지 목록에서 항목을 선택하세요.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
       </section>
 
       <main class="page" role="main">
         <section class="stack left-stack" aria-label="오늘 운영 보드">
-          <div id="adminDateMount"></div>
-
           <article id="todaySection" class="card" aria-labelledby="today-title">
             <div class="card-head between">
               <h3 id="today-title">오늘 학생</h3>
@@ -120,7 +378,7 @@
 
           <article id="doneSection" class="card">
             <div class="card-head between">
-              <h3>완료 / 자유석 기록</h3>
+              <h3>하원</h3>
               <button id="clearAllBtn" class="btn" type="button">기록 정리</button>
             </div>
             <div id="doneWrap" class="mt-8">Loading...</div>
@@ -142,6 +400,22 @@
       </main>
     </div>
   </div>
+
+  <aside id="adminChatPanel" class="admin-chat-panel" aria-labelledby="adminChatTitle" hidden>
+    <header class="admin-chat-head">
+      <div>
+        <span class="admin-chat-kicker">LOCAL SEARCH</span>
+        <h3 id="adminChatTitle">관리자 챗봇</h3>
+      </div>
+      <button id="adminChatClose" class="admin-chat-icon-btn" type="button" aria-label="챗봇 닫기">×</button>
+    </header>
+    <div id="adminChatMessages" class="admin-chat-messages" aria-live="polite"></div>
+    <div id="adminChatSuggestions" class="admin-chat-suggestions" aria-label="챗봇 추천 질문"></div>
+    <form id="adminChatForm" class="admin-chat-form" autocomplete="off">
+      <textarea id="adminChatInput" rows="2" maxlength="600" placeholder="학생 이름, 날짜, 보강/기능을 입력"></textarea>
+      <button class="btn admin-chat-send" type="submit">전송</button>
+    </form>
+  </aside>
 
   <div id="attendModal" class="modal-backdrop">
     <div class="modal-panel narrow">
@@ -193,6 +467,6 @@
     </div>
   </div>
 
-  <script type="module" src="/js/admin/main.js?v=20260411e"></script>
+  <script type="module" src="/js/admin/main.js?v=20260527chat"></script>
 </body>
 </html>

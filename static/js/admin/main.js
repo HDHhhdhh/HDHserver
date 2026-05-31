@@ -1,5 +1,6 @@
 import { bootstrap, state } from './core/state.js';
 import { initDarkmode } from './core/darkmode.js';
+import { initAdminViewMode } from './core/viewMode.js';
 import { initEscClose } from './features/escClose.js';
 import { initHoverTooltip } from './features/hoverTooltip.js';
 import { initVideoModal } from './features/videoModal.js';
@@ -10,17 +11,19 @@ import { initAbsentRegister } from './features/absentRegister.js';
 import { initAssignModal } from './features/assignModal.js';
 import { initCalendar } from './features/calendar.js';
 import { initExport } from './features/exportLogs.js';
+import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js';
 import { loadTodayAndRender } from './features/today.js';
-import { initTestModal } from './features/testModal.js';
 import { initAbsentRecovery } from './features/absentRecovery.js';
 import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
+import { initAdminChatbot } from './features/adminChatbot.js';
 
 
 // 1) 공통 초기화
 initDarkmode();
+initAdminViewMode();
 initEscClose();
 
 // 2) 데이터 로드
@@ -36,12 +39,13 @@ initAbsentRegister();
 initAssignModal();
 initCalendar();
 initExport();
+initAnnouncements();
 initClearAll();
-initTestModal();
 initAbsentRecovery();
 initTimeGraph();
 initAdminDateBar({ mountId: 'adminDateMount' });
 initAdminUiEnhance();
+initAdminChatbot();
 
 
 // 4) 최초 렌더 + 이벤트로 재렌더

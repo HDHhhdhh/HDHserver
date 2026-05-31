@@ -11,6 +11,7 @@ import {
 (() => {
   const CT = { 'Content-Type': 'application/json' };
   const PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
+  const DEFAULT_EXAM = 'final';
   const SCHEDULE_KEYS = [
     'textbook',
     'semesterStart',
@@ -64,7 +65,7 @@ import {
   let schoolsData = [];
   let editingYear = String(new Date().getFullYear());
   let editingSemester = '1';
-  let viewMode = 'mid';
+  let viewMode = DEFAULT_EXAM;
   let searchQuery = '';
   let autoSaveTimer = null;
   let lastSavedSnapshot = '';
@@ -905,6 +906,38 @@ import {
     }));
   }
 
+  function updateCalendarDocActivePage() {
+    const base = isObject(calendarDoc) ? calendarDoc : {};
+    const years = isObject(base.years) ? { ...base.years } : {};
+    const yearBundle = isObject(years[editingYear]) ? { ...years[editingYear] } : {};
+
+    years[editingYear] = {
+      ...yearBundle,
+      activeSemester: editingSemester,
+      activeExam: viewMode,
+    };
+
+    calendarDoc = {
+      ...base,
+      version: 2,
+      activeYear: editingYear,
+      activeSemester: editingSemester,
+      activeExam: viewMode,
+      years,
+    };
+  }
+
+  async function persistActivePageMetadata() {
+    updateCalendarDocActivePage();
+    try {
+      await fetch('/api/school-calendar', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify(calendarDoc),
+      });
+    } catch {}
+  }
+
   function getAvailableYears() {
     const years = new Set();
     const current = new Date().getFullYear();
@@ -936,6 +969,7 @@ import {
     editingSemester = nextSemester;
     viewMode = nextExam;
     persistPageSelection();
+    void persistActivePageMetadata();
     expandedSchoolIds.clear();
     schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear, editingSemester);
     ensureAtLeastOneSchool();
@@ -1036,7 +1070,7 @@ import {
     const stored = readStoredPage();
     editingYear = String(stored.year || calendarDoc.activeYear || getActiveSchoolCalendarYear(calendarDoc) || new Date().getFullYear());
     editingSemester = coerceSemester(stored.semester || calendarDoc.activeSemester || getYearBundle(calendarDoc, editingYear).activeSemester || '1');
-    viewMode = coerceExam(stored.exam || calendarDoc.activeExam || getYearBundle(calendarDoc, editingYear).activeExam || 'mid');
+    viewMode = coerceExam(stored.exam || calendarDoc.activeExam || getYearBundle(calendarDoc, editingYear).activeExam || DEFAULT_EXAM);
     syncPageSelectors();
     persistPageSelection();
 

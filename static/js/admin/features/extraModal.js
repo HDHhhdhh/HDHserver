@@ -201,6 +201,42 @@ export function initExtraModal() {
   const SLOT_NUMS = [1, 2];
   const ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
 
+  function parseSlotList(raw) {
+    const values = Array.isArray(raw) ? raw : [raw];
+    const slots = values.flatMap(value => {
+      const matches = String(value ?? '').match(/\d+/g) || [];
+      return matches.map(n => parseInt(n, 10));
+    }).filter(n => SLOT_NUMS.includes(n));
+    return Array.from(new Set(slots)).sort((a, b) => a - b);
+  }
+
+  function dayValues(stu) {
+    return Object.keys(stu || {})
+      .filter(k => /^day\d+$/.test(k) && stu[k])
+      .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
+      .map(k => String(stu[k]));
+  }
+
+  function regularSlotsForStudent(stu, dateStr) {
+    const wchr = yoilChar(dateStr);
+    return parseSlotList(dayValues(stu).filter(v => String(v).startsWith(wchr)));
+  }
+
+  function mergedSlotsForStudent(sid, dateStr, slots) {
+    const stu = (state.students || []).find(s => String(s?.id || '') === String(sid)) || {};
+    const merged = Array.from(new Set([
+      ...regularSlotsForStudent(stu, dateStr),
+      ...parseSlotList(slots),
+    ])).sort((a, b) => a - b);
+    return merged.length ? merged : [1];
+  }
+
+  function serializeSlots(slots) {
+    const nums = parseSlotList(slots);
+    if (nums.length <= 1) return nums[0] || 1;
+    return nums;
+  }
+
   // 최신 slots 로드(엔드포인트명은 유지)
   async function loadDaySlots() {
     try { return await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); }
@@ -297,7 +333,8 @@ export function initExtraModal() {
       const isOn = checked.includes(sid);
 
       const raw = perDay[sid];
-      const slots = Array.isArray(raw) ? raw.map(Number) : Number.isInteger(raw) ? [raw] : [];
+      const rawSlots = parseSlotList(raw);
+      const slots = isOn ? mergedSlotsForStudent(sid, today, rawSlots.length ? rawSlots : [1]) : rawSlots;
 
       const slotBox = `
         <div class="slot-box" aria-label="슬롯 선택">
@@ -392,7 +429,7 @@ export function initExtraModal() {
         .map(b => parseInt(b.dataset.n, 10))
         .filter(n => SLOT_NUMS.includes(n))
         .sort((a, b) => a - b);
-      perDay[sid] = nums.length ? nums : [1];
+      perDay[sid] = serializeSlots(mergedSlotsForStudent(sid, today, nums.length ? nums : [1]));
     }
 
     slotMap[today] = perDay;

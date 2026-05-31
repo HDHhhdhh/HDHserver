@@ -13,8 +13,12 @@ let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
+const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
+const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
+const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
 let logOpenSeq = 0;
 let logModalReady = true;
+let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -981,6 +985,138 @@ function stripGeneratedTestAssignmentBlocks(notes) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+function assignmentLabel(item) {
+  if (!item || typeof item !== 'object') return '';
+  const label = String(item.label || '').trim();
+  if (label) return label;
+  return [
+    item.categoryLabel || item.category,
+    item.curriculum,
+    item.difficulty,
+    item.term,
+    item.round,
+    item.name,
+  ].map(v => String(v || '').trim()).filter(Boolean).join(' / ');
+}
+
+function normalizeAssignmentStatus(status) {
+  if (status && typeof status === 'object') status = status.status;
+  const s = String(status || '').trim();
+  if (['assigned', 'done', 'interrupted', 'skip'].includes(s)) return s;
+  return s ? 'assigned' : '';
+}
+
+function mergeAssignmentItemsByLabel(...groups) {
+  const byLabel = new Map();
+  groups.flat().forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const label = assignmentLabel(item);
+    const status = normalizeAssignmentStatus(item.status);
+    if (!label || !status || status === 'skip') return;
+    byLabel.set(label, { ...(byLabel.get(label) || {}), ...item, label, status });
+  });
+  return Array.from(byLabel.values());
+}
+
+function assignmentRoundLabel(round) {
+  const raw = String(round || '').trim();
+  if (!raw) return '';
+  return /회/.test(raw) ? raw : `${raw}회차`;
+}
+
+function buildCarriedAssignmentNote(items) {
+  const noteItems = mergeAssignmentItemsByLabel(items);
+  if (!noteItems.length) return '';
+  const lines = noteItems.map(item => {
+    if (!item.name) return `- ${assignmentLabel(item)}`;
+    const parts = [
+      item.categoryLabel || item.category,
+      item.curriculum,
+      item.difficulty,
+      item.term,
+      assignmentRoundLabel(item.round),
+    ].filter(Boolean);
+    return `- ${parts.join(' / ')}: ${item.name}`;
+  });
+  return `[테스트 배정]\n${lines.join('\n')}`;
+}
+
+function appendCarriedAssignmentNote(notes, block) {
+  const cleanNotes = stripGeneratedTestAssignmentBlocks(notes);
+  const noteBlock = String(block || '').trim();
+  if (!noteBlock) return cleanNotes;
+  return `${cleanNotes ? `${cleanNotes}\n\n` : ''}${noteBlock}`.trim();
+}
+
+function logEntryForSid(dateKey, sid) {
+  const day = state.logs?.[dateKey];
+  if (!day || typeof day !== 'object') return {};
+  const sidKey = String(sid || '');
+  const direct = day[sidKey];
+  if (direct && typeof direct === 'object') return direct;
+  const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
+  const entry = matchedSid ? day[matchedSid] : null;
+  return (entry && typeof entry === 'object') ? entry : {};
+}
+
+function carryoverTestItems(entry) {
+  const carryover = entry?.[TEST_ASSIGN_ABSENCE_CARRYOVER_KEY];
+  const items = carryover?.assignedTests;
+  return Array.isArray(items) ? mergeAssignmentItemsByLabel(items) : [];
+}
+
+function isSidAbsentOn(dateKey, sid) {
+  return new Set((state.absentByDate?.[dateKey] || []).map(String)).has(String(sid));
+}
+
+function carryoverConsumedBefore({ sourceDate, targetDate, sid }) {
+  return Object.keys(state.logs || {})
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date) && date > sourceDate && date < targetDate)
+    .some(date => String(logEntryForSid(date, sid)?.[TEST_ASSIGN_ABSENCE_SOURCE_KEY] || '') === sourceDate);
+}
+
+function findAbsentTestCarryoverForLog(dateKey, sid) {
+  const targetDate = String(dateKey || '');
+  const sidKey = String(sid || '');
+  if (!targetDate || !sidKey) return null;
+
+  const currentEntry = logEntryForSid(targetDate, sidKey);
+  const currentDailyItems = Array.isArray(currentEntry?.[TEST_ASSIGN_DAILY_ITEMS_KEY])
+    ? currentEntry[TEST_ASSIGN_DAILY_ITEMS_KEY]
+    : [];
+  if (currentDailyItems.length && !currentEntry?.[TEST_ASSIGN_ABSENCE_SOURCE_KEY]) return null;
+
+  const dates = Object.keys(state.logs || {})
+    .filter(date =>
+      /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+      date < targetDate &&
+      isSidAbsentOn(date, sidKey)
+    )
+    .sort()
+    .reverse();
+
+  for (const sourceDate of dates) {
+    const items = carryoverTestItems(logEntryForSid(sourceDate, sidKey));
+    if (!items.length) continue;
+    if (carryoverConsumedBefore({ sourceDate, targetDate, sid: sidKey })) continue;
+    return { sourceDate, items };
+  }
+  return null;
+}
+
+function collectChangedProgressPatch() {
+  const changed = {};
+  document.querySelectorAll('#logProgress .progress-cell').forEach(cell => {
+    const st = cell.dataset.state || 'none';
+    const initial = cell.dataset.initial || 'none';
+    const mid = String(cell.dataset.mid);
+
+    if (st !== initial) changed[mid] = st;
+  });
+  return changed;
+}
+
 export function initLogModal() {
   ensureModal();
   initTestModal();
@@ -1157,6 +1293,7 @@ export function initLogModal() {
     logModalReady = false;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalCarriedTestAssignment = null;
     logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     logNotes.value = '불러오는 중...';
     logNotes.disabled = true;
@@ -1211,6 +1348,7 @@ export function initLogModal() {
     const logEntry = (state.logs[today] || {})[sid] || {};
     const todayNotes = cleanHwText(logEntry.notes);
     let seededNotes = todayNotes;
+    logModalCarriedTestAssignment = findAbsentTestCarryoverForLog(today, sid);
 
     // 오늘 특이사항이 비어 있으면, 가장 최근 특이사항을 실제 텍스트로 미리 채운다.
     if (!todayNotes.trim()) {
@@ -1224,6 +1362,11 @@ export function initLogModal() {
           break;
         }
       }
+    }
+
+    const carriedNoteBlock = buildCarriedAssignmentNote(logModalCarriedTestAssignment?.items || []);
+    if (carriedNoteBlock) {
+      seededNotes = appendCarriedAssignmentNote(seededNotes, carriedNoteBlock);
     }
 
     logNotes.value = cleanHwText(seededNotes);
@@ -1384,6 +1527,7 @@ export function initLogModal() {
     logModalReady = false;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalCarriedTestAssignment = null;
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
     if (wasUnified) {
       try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
@@ -1418,14 +1562,7 @@ export function initLogModal() {
     const prevDone =
       prevLog?.done === true || prevLog?.done === 'true' || prevLog?.done === 1 || prevLog?.done === '1';
 
-    const changedProg = {};
-    document.querySelectorAll('#logProgress .progress-cell').forEach(cell => {
-      const st = cell.dataset.state || 'none';
-      const initial = cell.dataset.initial || 'none';
-      const mid = String(cell.dataset.mid);
-
-      if (st !== initial) changedProg[mid] = st;
-    });
+    const changedProg = collectChangedProgressPatch();
 
     if (!state.progress) state.progress = {};
     state.progress[today] = state.progress[today] || {};
@@ -1485,6 +1622,23 @@ export function initLogModal() {
       }
     }
 
+    if (logModalCarriedTestAssignment?.items?.length) {
+      const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
+      const mergedAssignedItems = mergeAssignmentItemsByLabel(
+        Array.isArray(prevLog.assignedTests) ? prevLog.assignedTests : [],
+        carriedItems,
+      );
+      const mergedDailyItems = mergeAssignmentItemsByLabel(
+        Array.isArray(prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
+        carriedItems,
+      );
+      const mergedNoteBlock = buildCarriedAssignmentNote(mergedDailyItems);
+      entry.assignedTests = mergedAssignedItems;
+      entry[TEST_ASSIGN_DAILY_ITEMS_KEY] = mergedDailyItems;
+      if (mergedNoteBlock) entry.testAssignmentNote = mergedNoteBlock;
+      entry[TEST_ASSIGN_ABSENCE_SOURCE_KEY] = logModalCarriedTestAssignment.sourceDate;
+    }
+
     if (summary) entry.topic = summary;
     if (doneFlag) entry.done = true;
 
@@ -1534,6 +1688,51 @@ export function initLogModal() {
 
   window.saveRecordPopup = saveRecordPopupForCurrent;
 
+  async function reapplyCarriedTestAssignmentForCurrent() {
+    if (!logModalCarriedTestAssignment?.items?.length) return;
+    const today = editingLogDate || getAdminDate();
+    const sid = String(editingLogSid || '');
+    if (!today || !sid) return;
+
+    const fallbackEntry = (state.logs?.[today] || {})[sid] || {};
+    const latestEntry = await fetchLogEntryFromServer(today, sid).catch(() => fallbackEntry);
+    const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
+    const mergedAssignedItems = mergeAssignmentItemsByLabel(
+      Array.isArray(latestEntry.assignedTests) ? latestEntry.assignedTests : [],
+      carriedItems,
+    );
+    const mergedDailyItems = mergeAssignmentItemsByLabel(
+      Array.isArray(latestEntry[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? latestEntry[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
+      carriedItems,
+    );
+    const noteBlock = buildCarriedAssignmentNote(mergedDailyItems);
+    const nextNotes = noteBlock ? appendCarriedAssignmentNote(latestEntry.notes || '', noteBlock) : String(latestEntry.notes || '').trim();
+    const prevNotes = String(latestEntry.notes || '').trim();
+    const entry = {
+      assignedTests: mergedAssignedItems,
+      [TEST_ASSIGN_DAILY_ITEMS_KEY]: mergedDailyItems,
+      [TEST_ASSIGN_ABSENCE_SOURCE_KEY]: logModalCarriedTestAssignment.sourceDate,
+      updatedAt: nowISO(),
+    };
+    if (noteBlock) entry.testAssignmentNote = noteBlock;
+    if (nextNotes !== prevNotes) entry.notes = nextNotes;
+
+    const saved = await patchLogEntry(
+      today,
+      sid,
+      entry,
+      [],
+      nextNotes !== prevNotes ? { base: { notes: latestEntry.notes || '' } } : {},
+    );
+
+    if (saved && typeof saved === 'object') {
+      state.logs = state.logs || {};
+      state.logs[today] = state.logs[today] || {};
+      state.logs[today][sid] = saved;
+      window.logs = state.logs;
+    }
+  }
+
   logSave.addEventListener('click', async () => {
     try {
       const saveResult = await saveRecordPopupForCurrent();
@@ -1548,6 +1747,7 @@ export function initLogModal() {
       if (unified && typeof window.saveTestAssignmentPopup === 'function') {
         await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
       }
+      await reapplyCarriedTestAssignmentForCurrent();
       toast('수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
@@ -1575,6 +1775,7 @@ export function initLogModal() {
       if (unified && typeof window.saveTestAssignmentPopup === 'function') {
         await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
       }
+      await reapplyCarriedTestAssignmentForCurrent();
       const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
       toast(`숙제 검사 완료 (${nowHHMM()})`);

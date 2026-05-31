@@ -14,6 +14,7 @@
 
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';
 
 const CT = { 'Content-Type': 'application/json' };
 const WCHR = '일월화수목금토';
@@ -171,6 +172,45 @@ export function isHwChecked(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];
   return !!(e && truthy(e.hwChecked));
 }
+export function isHwCheckRequested(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  if (!e || isHwChecked(dateKey, sid)) return false;
+  return truthy(e.hwCheckRequested);
+}
+export function isSelfStudy(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  if (e && Object.prototype.hasOwnProperty.call(e, 'selfStudy')) {
+    return truthy(e.selfStudy);
+  }
+  return isSelfStudyScheduledForDate(getStudent(sid), dateKey);
+}
+export function hwCheckRequestedAt(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  return String(e?.hwCheckRequestedAt || '').trim();
+}
+export async function setSelfStudyRemote(dateKey, sid, checked) {
+  if (checked) {
+    await patchLog(dateKey, sid, {
+      selfStudy: true,
+      hwCheckRequested: false,
+    }, ['hwCheckRequestedAt']);
+    return;
+  }
+  await patchLog(dateKey, sid, { selfStudy: false });
+}
+export async function setHomeworkCheckRequestedRemote(dateKey, sid, checked) {
+  const on = !!checked;
+  if (on) {
+    await patchLog(dateKey, sid, {
+      hwCheckRequested: true,
+      hwCheckRequestedAt: nowISO(),
+    });
+    return;
+  }
+  await patchLog(dateKey, sid, {
+    hwCheckRequested: false,
+  }, ['hwCheckRequestedAt']);
+}
 export async function setHomeworkCheckedRemote(dateKey, sid, checked) {
   const on = !!checked;
   if (on) {
@@ -180,7 +220,8 @@ export async function setHomeworkCheckedRemote(dateKey, sid, checked) {
       hwCheckedAt: t,
       hwAssigned: true,
       hwAssignedAt: t,
-    });
+      hwCheckRequested: false,
+    }, ['hwCheckRequestedAt']);
     return;
   }
   await patchLog(dateKey, sid, {
@@ -211,9 +252,7 @@ export function parseSlotsFromText(txt) {
   return Array.from(new Set(nums)).filter(n => n === 1 || n === 2).sort((a, b) => a - b);
 }
 
-export function getSlots(dateStr, sid) {
-  const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
-
+function normalizeSlotValue(raw) {
   if (Array.isArray(raw)) {
     return raw
       .map(n => parseInt(n, 10))
@@ -221,8 +260,12 @@ export function getSlots(dateStr, sid) {
       .sort((a, b) => a - b);
   }
   if (Number.isInteger(raw) && (raw === 1 || raw === 2)) return [raw];
+  const parsed = parseInt(String(raw ?? '').trim(), 10);
+  if (Number.isInteger(parsed) && (parsed === 1 || parsed === 2)) return [parsed];
+  return [];
+}
 
-  // fallback: 학생 기본 요일 데이터
+function regularSlotsForStudent(dateStr, sid) {
   const w = yoilOf(dateStr);
   const stu = getStudent(sid);
   if (!stu) return [];
@@ -235,7 +278,35 @@ export function getSlots(dateStr, sid) {
     })
     .filter(n => Number.isInteger(n) && (n === 1 || n === 2));
 
-  if (nums.length) return Array.from(new Set(nums)).sort((a, b) => a - b);
+  return Array.from(new Set(nums)).sort((a, b) => a - b);
+}
+
+export function getSlots(dateStr, sid) {
+  const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
+  const rawSlots = normalizeSlotValue(raw);
+  const regularSlots = regularSlotsForStudent(dateStr, sid);
+  const extraIds = new Set([
+    ...((state.extra?.[dateStr] || []).map?.(String) || []),
+    ...((window.extra?.[dateStr] || []).map?.(String) || []),
+  ]);
+
+  let slots = [];
+  if (rawSlots.length) {
+    if (extraIds.has(String(sid)) && regularSlots.length) {
+      slots = Array.from(new Set([...regularSlots, ...rawSlots])).sort((a, b) => a - b);
+    } else {
+      slots = rawSlots;
+    }
+  } else {
+    slots = regularSlots.length ? regularSlots : [];
+  }
+
+  const absentSlots = normalizeSlotValue(state.absentSlotsByDate?.[dateStr]?.[String(sid)]);
+  if (absentSlots.length) {
+    const absentSet = new Set(absentSlots);
+    return slots.filter(slot => !absentSet.has(slot));
+  }
+  if (slots.length) return slots;
   return [];
 }
 

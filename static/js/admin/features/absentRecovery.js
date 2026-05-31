@@ -4,6 +4,7 @@ import { $, toast, todayLocalKey } from '../core/utils.js';
 import { state } from '../core/state.js';
 
 const CT = { 'Content-Type': 'application/json' };
+let recoverTriggerDelegated = false;
 
 function ensureModal() {
   if (document.getElementById('absentRecoverModal')) return;
@@ -130,9 +131,14 @@ export function initAbsentRecovery() {
     fn();
   };
 
-  wire(trigger, () => {
-    trigger.addEventListener('click', () => openModal(todayLocalKey()));
-  });
+  if (!recoverTriggerDelegated) {
+    recoverTriggerDelegated = true;
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest?.('#absentRecoverBtn')) return;
+      e.preventDefault();
+      openModal(todayLocalKey());
+    });
+  }
 
   const modal = document.getElementById('absentRecoverModal');
   const closeBtn = document.getElementById('arClose');

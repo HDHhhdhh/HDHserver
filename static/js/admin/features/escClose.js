@@ -1,5 +1,29 @@
 // /static/js/admin/features/escClose.js
 export function initEscClose() {
+  const ESC_TARGET_SELECTOR = '[id$="Modal"],[role="dialog"],.modal,.popup,.dialog,#schoolTip,#adminSchoolTip';
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0 || style.position === 'fixed';
+  }
+
+  function hasOpenEscTarget() {
+    return Array.from(document.querySelectorAll(ESC_TARGET_SELECTOR)).some(isVisible);
+  }
+
+  function focusTodaySearch() {
+    const input = document.getElementById('todaySearchInput');
+    if (!input) return;
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    try { input.focus({ preventScroll: true }); }
+    catch { input.focus(); }
+    try { input.select(); } catch {}
+  }
+
   function hide(el) {
     if (el && getComputedStyle(el).display !== 'none') {
       el.style.display = 'none';
@@ -30,6 +54,8 @@ export function initEscClose() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
 
+    const hadOpenTarget = hasOpenEscTarget();
+
     if (typeof window.closeStudentWorkPopups === 'function') {
       const logModal = document.getElementById('logModal');
       const vidModal = document.getElementById('vidModal');
@@ -46,6 +72,11 @@ export function initEscClose() {
       }
     }
 
+    if (!hadOpenTarget) {
+      requestAnimationFrame(focusTodaySearch);
+      return;
+    }
+
     // 학생 툴팁(로그 모달에서 띄운 고정 툴팁 포함) 먼저 닫기
     hideStudentTipHard();
 
@@ -55,7 +86,9 @@ export function initEscClose() {
     // 모달/팝업 계열 전부 닫기
     document
       .querySelectorAll('[id$="Modal"],[role="dialog"],.modal,.popup,.dialog')
-      .forEach(hide);
+      .forEach((el) => {
+        if (isVisible(el)) hide(el);
+      });
 
     [
       'extraModal',

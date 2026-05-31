@@ -50,6 +50,10 @@ body.student-page * {
   box-sizing: border-box;
 }
 
+body.student-page [hidden] {
+  display: none !important;
+}
+
 body.student-page .student-shell {
   display: grid;
   gap: 14px;
@@ -83,7 +87,8 @@ body.student-page.dark .clock-header .time {
   color: var(--stu-text);
 }
 
-body.student-page .settings-btn {
+body.student-page .settings-btn,
+body.student-page .notice-btn {
   position: relative;
   height: 38px;
   padding: 0 14px;
@@ -97,8 +102,17 @@ body.student-page .settings-btn {
   box-shadow: 0 8px 16px rgba(46, 119, 236, 0.24);
 }
 
+body.student-page .notice-btn {
+  margin-left: auto;
+  background: color-mix(in srgb, var(--stu-card) 88%, var(--stu-accent) 12%);
+  color: var(--stu-text);
+  box-shadow: none;
+}
+
 body.student-page .notice-badge {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   position: absolute;
   top: -5px;
   right: -5px;
@@ -334,6 +348,87 @@ body.student-page #vidList .badge-done {
 }
 
 /* =========================================
+   Assigned Tests
+   ========================================= */
+body.student-page #assignedTestList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+body.student-page .assigned-test-btn {
+  width: 100%;
+  height: auto;
+  min-height: 56px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 88%, #ffffff 12%);
+  color: var(--stu-text);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+body.student-page .assigned-test-btn:hover {
+  border-color: var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-card) 74%, var(--stu-accent) 26%);
+}
+
+body.student-page .assigned-test-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+body.student-page .assigned-test-name {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.32;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page .assigned-test-meta {
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page .assigned-test-status {
+  justify-self: end;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: var(--stu-ok);
+  color: #fff;
+}
+
+body.student-page .assigned-test-btn[data-status="interrupted"] .assigned-test-status {
+  background: #f59e0b;
+  color: #111827;
+}
+
+body.student-page .assigned-test-btn[data-status="skip"] .assigned-test-status {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* =========================================
    Materials / File browser
    ========================================= */
 body.student-page .materials-panel .section-title {
@@ -439,7 +534,7 @@ body.student-page #matList a:hover {
 /* =========================================
    Announcement modal
    ========================================= */
-body.student-page #announceModal {
+body.student-page .announce-modal {
   display: none;
   position: fixed;
   inset: 0;
@@ -450,7 +545,7 @@ body.student-page #announceModal {
   padding: 14px;
 }
 
-body.student-page #announceModal .announce-card {
+body.student-page .announce-modal .announce-card {
   width: min(520px, 96vw);
   max-height: 86vh;
   overflow: auto;
@@ -462,28 +557,48 @@ body.student-page #announceModal .announce-card {
   padding: 14px;
 }
 
-body.student-page #annTitle {
+body.student-page .announce-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+body.student-page .announce-label {
+  margin: 0 0 4px;
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+body.student-page #annTitle,
+body.student-page #annHistoryTitle {
   margin-top: 0;
   margin-bottom: 8px;
 }
 
-body.student-page #annContent {
+body.student-page #annContent,
+body.student-page .announce-history-item p {
   white-space: pre-wrap;
   margin-bottom: 8px;
 }
 
-body.student-page #annPoll,
-body.student-page #annSurvey {
-  display: none;
+body.student-page .announce-reply,
+body.student-page .announce-history-item {
   border: 1px solid var(--stu-line);
   border-radius: 10px;
   padding: 8px;
   margin: 8px 0;
 }
 
-body.student-page #annPollQ {
+body.student-page .announce-anonymous {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--stu-muted);
+  font-size: 13px;
   font-weight: 700;
-  margin-bottom: 5px;
 }
 
 body.student-page .announce-actions {
@@ -491,6 +606,106 @@ body.student-page .announce-actions {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 10px;
+}
+
+body.student-page #annSendReply {
+  margin-top: 8px;
+}
+
+body.student-page .announce-status {
+  min-height: 18px;
+  color: var(--stu-muted);
+  font-size: 13px;
+}
+
+body.student-page .announce-close {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  font-size: 18px;
+}
+
+body.student-page .announce-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+body.student-page .announce-history-item {
+  width: 100%;
+  display: block;
+  color: var(--stu-text);
+  text-align: left;
+  cursor: pointer;
+  background: var(--stu-card-soft);
+  transition-property: transform, background-color, border-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page .announce-history-item:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--stu-line) 68%, var(--stu-accent) 32%);
+  background: color-mix(in srgb, var(--stu-card) 84%, var(--stu-accent) 16%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .08);
+}
+
+body.student-page .announce-history-item:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--stu-accent) 34%, transparent);
+  outline-offset: 2px;
+  border-color: var(--stu-accent);
+}
+
+body.student-page .announce-history-item:active {
+  transform: scale(0.99);
+}
+
+body.student-page .announce-history-item strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+body.student-page .announce-history-item span,
+body.student-page .announce-history-item em {
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+body.student-page .announce-history-image-badge,
+body.student-page .announce-history-survey-badge {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  margin: 8px 0 2px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 72%, var(--stu-accent) 28%);
+  background: color-mix(in srgb, var(--stu-card) 78%, var(--stu-accent) 22%);
+  color: var(--stu-accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+body.student-page .announce-history-survey-badge {
+  margin-right: 6px;
+  border-color: color-mix(in srgb, #7c3aed 36%, var(--stu-line) 64%);
+  background: color-mix(in srgb, var(--stu-card) 76%, #ede9fe 24%);
+  color: #6d28d9;
+}
+
+body.student-page .announce-history-item .announce-history-survey-badge,
+body.student-page .announce-history-item .announce-history-image-badge {
+  font-size: 12px;
+  font-weight: 850;
+}
+
+body.student-page .announce-history-item .announce-history-survey-badge {
+  color: #6d28d9;
+}
+
+body.student-page .announce-history-item .announce-history-image-badge {
+  color: var(--stu-accent);
 }
 
 /* =========================================
@@ -542,6 +757,15 @@ body.student-page .muted {
     width: 100%;
   }
 
+  body.student-page .assigned-test-btn {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  body.student-page .assigned-test-status {
+    justify-self: start;
+  }
+
   body.student-page #setPanel {
     right: 8px;
     top: 64px;
@@ -552,4 +776,1893 @@ body.student-page .muted {
     gap: 8px;
     padding: 8px 12px;
   }
+}
+
+/* =========================================
+   Apple clean refresh overrides
+   - Scoped to the student page; JS hooks and DOM structure stay intact.
+   ========================================= */
+body.student-page {
+  --stu-bg-0: #f5f5f7;
+  --stu-bg-1: #ffffff;
+  --stu-card: #ffffff;
+  --stu-card-soft: #fbfbfd;
+  --stu-line: #d2d2d7;
+  --stu-line-strong: #b8b8c0;
+  --stu-text: #1d1d1f;
+  --stu-muted: #6e6e73;
+  --stu-accent: #0071e3;
+  --stu-accent-2: #00a3b5;
+  --stu-ok: #248a3d;
+  --stu-shadow: 0 22px 58px rgba(0, 0, 0, 0.08), 0 2px 10px rgba(0, 0, 0, 0.04);
+  --stu-shadow-soft: 0 12px 34px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.04);
+  --stu-radius-xl: 24px;
+  --stu-radius-lg: 18px;
+  --stu-radius-md: 12px;
+
+  margin: 0 auto;
+  max-width: min(1460px, 100vw);
+  box-sizing: border-box;
+  padding: clamp(10px, 1.6vw, 24px);
+  background: linear-gradient(180deg, #fbfbfd 0%, var(--stu-bg-0) 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+body.student-page.dark {
+  --stu-bg-0: #050507;
+  --stu-bg-1: #111113;
+  --stu-card: #1c1c1e;
+  --stu-card-soft: #242426;
+  --stu-line: #3a3a3c;
+  --stu-line-strong: #48484a;
+  --stu-text: #f5f5f7;
+  --stu-muted: #a1a1a6;
+  --stu-accent: #0a84ff;
+  --stu-accent-2: #64d2ff;
+  --stu-ok: #30d158;
+  --stu-shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
+  --stu-shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.24);
+
+  background: linear-gradient(180deg, #111113 0%, #050507 100%);
+}
+
+body.student-page :where(h1, h2, h3, .namebar-title, .section-title) {
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+body.student-page :where(p, .namebar-desc, .assigned-test-meta, .muted) {
+  text-wrap: pretty;
+}
+
+body.student-page :where(button, a, input, select, textarea, [tabindex]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.student-page :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--stu-accent) 28%, transparent);
+  outline-offset: 2px;
+}
+
+body.student-page .student-shell {
+  gap: 18px;
+}
+
+body.student-page .student-topbar,
+body.student-page .hero-bar,
+body.student-page .panel,
+body.student-page .playlist-wrap,
+body.student-page .mbox,
+body.student-page .announce-modal .announce-card {
+  border: 1px solid color-mix(in srgb, var(--stu-line) 92%, transparent);
+  background: color-mix(in srgb, var(--stu-card) 94%, rgba(255, 255, 255, 0.68) 6%);
+  box-shadow: var(--stu-shadow-soft);
+}
+
+body.student-page .student-topbar {
+  top: clamp(6px, 1.2vw, 14px);
+  min-height: 58px;
+  padding: 11px 14px;
+  border-radius: 18px;
+  backdrop-filter: saturate(130%) blur(18px);
+}
+
+body.student-page .clock-header {
+  border-color: var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 90%, var(--stu-bg-0) 10%);
+  box-shadow: none;
+}
+
+body.student-page .settings-btn,
+body.student-page .notice-btn,
+body.student-page .ts-btn,
+body.student-page #setPanel button,
+body.student-page .mbox .toggle,
+body.student-page .announce-actions button,
+body.student-page #annSendReply,
+body.student-page .announce-close {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 72%, #000 8%);
+  background: var(--stu-accent);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--stu-accent) 20%, transparent);
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 160ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page .settings-btn:hover,
+body.student-page .notice-btn:hover,
+body.student-page .ts-btn:hover,
+body.student-page #setPanel button:hover,
+body.student-page .mbox .toggle:hover,
+body.student-page .announce-actions button:hover,
+body.student-page #annSendReply:hover,
+body.student-page .announce-close:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--stu-accent) 22%, transparent);
+}
+
+body.student-page .settings-btn:active,
+body.student-page .notice-btn:active,
+body.student-page .ts-btn:active,
+body.student-page #setPanel button:active,
+body.student-page .mbox .toggle:active,
+body.student-page .assigned-test-btn:active,
+body.student-page #vidList li:active,
+body.student-page #matList li[data-type="dir"]:active,
+body.student-page .announce-actions button:active,
+body.student-page #annSendReply:active,
+body.student-page .announce-close:active {
+  transform: scale(0.96);
+}
+
+body.student-page .notice-btn {
+  background: color-mix(in srgb, var(--stu-card) 88%, var(--stu-accent) 12%);
+  border-color: color-mix(in srgb, var(--stu-line) 72%, var(--stu-accent) 28%);
+  color: var(--stu-text);
+  box-shadow: none;
+}
+
+body.student-page #setPanel {
+  top: 78px;
+  width: min(340px, calc(100vw - 24px));
+  padding: 16px;
+  border-radius: 18px;
+  border-color: color-mix(in srgb, var(--stu-line) 92%, transparent);
+  background: color-mix(in srgb, var(--stu-card) 96%, var(--stu-bg-0) 4%);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.2);
+}
+
+body.student-page #setPanel textarea,
+body.student-page #setPanel input,
+body.student-page .mbox input[type="search"],
+body.student-page textarea,
+body.student-page select {
+  min-height: 40px;
+  border-radius: 12px;
+  border-color: var(--stu-line);
+  background: color-mix(in srgb, var(--stu-card) 94%, #fff 6%);
+  color: var(--stu-text);
+  font: 14px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  transition-property: border-color, box-shadow, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #setPanel textarea {
+  min-height: 108px;
+}
+
+body.student-page .hero-bar {
+  padding: clamp(18px, 2vw, 28px);
+  border-radius: var(--stu-radius-xl);
+  box-shadow: var(--stu-shadow);
+}
+
+body.student-page .namebar-title {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  font-size: clamp(2rem, 4vw, 3.3rem);
+  font-weight: 760;
+  line-height: 1.05;
+}
+
+body.student-page .namebar-desc {
+  max-width: 780px;
+  color: var(--stu-muted);
+}
+
+body.student-page .panel {
+  padding: clamp(16px, 1.8vw, 22px);
+  border-radius: var(--stu-radius-lg);
+}
+
+body.student-page .section-title {
+  font-size: 19px;
+  font-weight: 760;
+  color: var(--stu-text);
+}
+
+body.student-page #playerBox {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  gap: 16px;
+}
+
+body.student-page .player-card {
+  border-radius: 18px;
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16);
+}
+
+body.student-page #vidList li,
+body.student-page .assigned-test-btn,
+body.student-page #matList li {
+  border-radius: 13px;
+  border-color: color-mix(in srgb, var(--stu-line) 92%, transparent);
+  background: color-mix(in srgb, var(--stu-card) 94%, var(--stu-card-soft) 6%);
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #vidList li:hover,
+body.student-page .assigned-test-btn:hover,
+body.student-page #matList li[data-type="dir"]:hover {
+  background: color-mix(in srgb, var(--stu-card) 84%, var(--stu-accent) 16%);
+  border-color: color-mix(in srgb, var(--stu-line) 70%, var(--stu-accent) 30%);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+}
+
+body.student-page #vidList li.active {
+  background: var(--stu-accent);
+  color: #ffffff !important;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--stu-accent) 24%, transparent);
+}
+
+body.student-page .assigned-test-name {
+  font-size: 15px;
+  font-weight: 760;
+}
+
+body.student-page .assigned-test-status {
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+body.student-page .mbox {
+  padding: 10px;
+  border-radius: 15px;
+}
+
+body.student-page #matList a {
+  color: var(--stu-accent);
+  font-weight: 650;
+}
+
+body.student-page .announce-modal {
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(12px);
+}
+
+body.student-page .announce-modal .announce-card {
+  border-radius: 20px;
+  padding: clamp(16px, 2vw, 22px);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28);
+}
+
+body.student-page .announce-reply,
+body.student-page .announce-history-item {
+  border-color: var(--stu-line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--stu-card) 94%, var(--stu-card-soft) 6%);
+}
+
+/* Student announcement popup: fixed, readable, and scroll-safe. */
+body.student-page #announceModal {
+  padding: clamp(16px, 3vw, 32px);
+  background: rgba(4, 10, 20, 0.56);
+  backdrop-filter: blur(14px);
+  overflow: auto;
+}
+
+body.student-page #announceModal .announce-card {
+  --ann-title-box-height: 58px;
+  --ann-image-box-height: 176px;
+  --ann-content-box-height: 248px;
+  --ann-reply-box-height: 190px;
+  --ann-reply-input-height: 92px;
+
+  width: min(760px, calc(100vw - 28px));
+  height: min(800px, calc(100vh - 20px));
+  min-height: min(720px, calc(100vh - 20px));
+  max-height: calc(100vh - 20px);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  padding: 24px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 86%, transparent);
+  background: color-mix(in srgb, var(--stu-card) 97%, #ffffff 3%);
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.34),
+    0 1px 0 rgba(255, 255, 255, 0.86) inset;
+}
+
+body.student-page #announceModal .announce-head {
+  align-items: flex-start;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--stu-line) 76%, transparent);
+}
+
+body.student-page #announceModal .announce-label {
+  margin: 0 0 5px;
+  color: var(--stu-accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+body.student-page #announceModal .announce-heading {
+  margin: 0;
+  color: var(--stu-text);
+  font-size: clamp(29px, 4vw, 34px);
+  line-height: 1.12;
+  font-weight: 850;
+  text-wrap: balance;
+}
+
+body.student-page #announceModal .announce-body {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  min-height: 0;
+  overflow: visible;
+}
+
+body.student-page #announceModal.has-image .announce-card {
+  --ann-content-box-height: 150px;
+  --ann-reply-box-height: 176px;
+  --ann-reply-input-height: 78px;
+}
+
+body.student-page #announceModal.has-image .announce-body {
+  grid-template-rows: auto auto minmax(74px, auto) auto;
+  overflow: visible;
+  overflow: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+body.student-page #announceModal .announce-section {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+body.student-page #announceModal .announce-section-label {
+  color: color-mix(in srgb, var(--stu-text) 78%, var(--stu-muted) 22%);
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 850;
+}
+
+body.student-page #announceModal .announce-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(132px, 3fr);
+  gap: 10px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+body.student-page #announceModal #annTitle {
+  margin: 0;
+  padding: 14px 16px;
+  height: var(--ann-title-box-height);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 88%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stu-card-soft) 88%, #ffffff 12%) 0%, color-mix(in srgb, var(--stu-card) 90%, var(--stu-card-soft) 10%) 100%);
+  color: var(--stu-text);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 800;
+  overflow: auto;
+  text-wrap: pretty;
+}
+
+body.student-page #announceModal .announce-created-card {
+  height: var(--ann-title-box-height);
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 82%, var(--stu-accent) 18%);
+  background: color-mix(in srgb, var(--stu-card) 86%, var(--stu-accent) 14%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.86) inset;
+}
+
+body.student-page #announceModal .announce-created-card span {
+  color: var(--stu-muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+body.student-page #announceModal .announce-created-card time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--stu-text);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+body.student-page #announceModal .announce-content-section {
+  min-height: 0;
+  gap: 0;
+}
+
+body.student-page #announceModal .announce-image-section[hidden] {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-image-section {
+  min-height: 0;
+}
+
+body.student-page #announceModal .announce-image-frame {
+  width: 100%;
+  height: var(--ann-image-box-height);
+  min-height: var(--ann-image-box-height);
+  max-height: var(--ann-image-box-height);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 82%, var(--stu-accent) 18%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--stu-card-soft) 74%, #ffffff 26%), color-mix(in srgb, var(--stu-card) 92%, var(--stu-accent) 8%));
+  box-shadow:
+    0 14px 30px rgba(15, 23, 42, .08),
+    0 0 0 1px rgba(0, 0, 0, .06) inset;
+}
+
+body.student-page #announceModal .announce-image-frame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--stu-card) 92%, var(--stu-card-soft) 8%);
+}
+
+body.student-page #announceModal #annContent {
+  height: var(--ann-content-box-height);
+  min-height: var(--ann-content-box-height);
+  max-height: var(--ann-content-box-height);
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 88%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stu-card-soft) 84%, #ffffff 16%) 0%, var(--stu-card) 100%);
+  color: var(--stu-text);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+  cursor: default;
+  font-size: 18px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  text-wrap: pretty;
+}
+
+body.student-page #announceModal.has-survey .announce-card {
+  --ann-content-box-height: 132px;
+  --ann-reply-box-height: 168px;
+  --ann-reply-input-height: 72px;
+}
+
+body.student-page #announceModal.has-survey.has-image .announce-card {
+  --ann-image-box-height: 128px;
+  --ann-content-box-height: 96px;
+  --ann-reply-box-height: 150px;
+  --ann-reply-input-height: 62px;
+}
+
+body.student-page #announceModal.has-survey .announce-body {
+  grid-template-rows: auto auto auto;
+  overflow: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+body.student-page #announceModal.has-survey.has-image .announce-body {
+  grid-template-rows: auto auto auto auto;
+}
+
+body.student-page #announceModal .announce-survey[hidden] {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-survey {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 30%, var(--stu-line) 70%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-accent) 7%, #ffffff 93%) 0%, color-mix(in srgb, var(--stu-card) 93%, var(--stu-accent) 7%) 100%);
+  box-shadow:
+    0 12px 28px color-mix(in srgb, var(--stu-accent) 8%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+}
+
+body.student-page #announceModal .announce-survey-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body.student-page #announceModal .announce-survey-head em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+body.student-page #announceModal .announce-survey-questions {
+  display: grid;
+  gap: 10px;
+}
+
+body.student-page #announceModal .announce-survey-question {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 12px;
+  border-radius: 15px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 86%, transparent);
+  background: color-mix(in srgb, var(--stu-card) 94%, #ffffff 6%);
+}
+
+body.student-page #announceModal .announce-survey-question.is-invalid {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, .12);
+}
+
+body.student-page #announceModal .announce-survey-question legend {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+}
+
+body.student-page #announceModal .announce-survey-question legend span {
+  min-width: 0;
+  color: var(--stu-text);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+body.student-page #announceModal .announce-survey-question legend em {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--stu-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+body.student-page #announceModal .announce-survey-question legend b {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stu-accent) 14%, #ffffff 86%);
+  color: var(--stu-accent);
+  font-size: 10px;
+  line-height: 1;
+}
+
+body.student-page #announceModal .announce-survey-question legend b.optional {
+  background: color-mix(in srgb, var(--stu-line) 34%, #ffffff 66%);
+  color: var(--stu-muted);
+}
+
+body.student-page #announceModal .announce-survey-options {
+  display: grid;
+  gap: 8px;
+}
+
+body.student-page #announceModal .announce-survey-option {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 84%, transparent);
+  background: color-mix(in srgb, var(--stu-card-soft) 70%, #ffffff 30%);
+  cursor: pointer;
+}
+
+body.student-page #announceModal .announce-survey-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--stu-accent);
+}
+
+body.student-page #announceModal .announce-survey-option span {
+  min-width: 0;
+  color: var(--stu-text);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+body.student-page #announceModal .announce-survey-question textarea,
+body.student-page #announceModal .announce-survey-question input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 34%, var(--stu-line) 66%);
+  background: #fff;
+  color: var(--stu-text);
+  font-size: 15px;
+  line-height: 1.55;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stu-accent) 8%, transparent);
+}
+
+body.student-page #announceModal .announce-survey-question textarea {
+  height: 112px;
+  min-height: 112px;
+  max-height: 112px;
+  resize: none;
+  overflow: auto;
+}
+
+body.student-page #announceModal .announce-survey-error {
+  min-height: 18px;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+body.student-page #announceModal .announce-survey-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+body.student-page #announceModal #annSurveySubmit {
+  min-width: 106px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 13px;
+  font-weight: 850;
+}
+
+body.student-page #announceModal .announce-reply {
+  position: relative;
+  margin: 0;
+  padding: 14px;
+  height: var(--ann-reply-box-height);
+  min-height: var(--ann-reply-box-height);
+  max-height: var(--ann-reply-box-height);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  border-radius: 17px;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 34%, var(--stu-line) 66%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-accent) 8%, #ffffff 92%) 0%, color-mix(in srgb, var(--stu-card) 92%, var(--stu-accent) 8%) 100%);
+  box-shadow:
+    0 12px 30px color-mix(in srgb, var(--stu-accent) 9%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+body.student-page #announceModal .announce-reply-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body.student-page #announceModal .announce-reply-head strong {
+  color: var(--stu-text);
+  font-size: 17px;
+  font-weight: 850;
+}
+
+body.student-page #announceModal .announce-reply-head span {
+  display: none;
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+body.student-page #announceModal .announce-anonymous {
+  margin: 0;
+  min-height: 24px;
+}
+
+body.student-page #announceModal .announce-anonymous input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--stu-accent);
+}
+
+body.student-page #announceModal #annReply {
+  width: 100%;
+  height: var(--ann-reply-input-height);
+  min-height: var(--ann-reply-input-height);
+  max-height: var(--ann-reply-input-height);
+  resize: none;
+  overflow: auto;
+  display: block;
+  box-sizing: border-box;
+  padding: 14px 15px 48px;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 42%, var(--stu-line) 58%);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--stu-accent) 9%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+body.student-page #announceModal #annReply::placeholder {
+  color: color-mix(in srgb, var(--stu-muted) 78%, #ffffff 22%);
+}
+
+body.student-page #announceModal #annReply:focus {
+  border-color: var(--stu-accent);
+  background: #ffffff;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--stu-accent) 18%, transparent),
+    0 10px 22px color-mix(in srgb, var(--stu-accent) 10%, transparent);
+}
+
+body.student-page #announceModal .announce-reply-actions {
+  display: flex;
+  justify-content: flex-end;
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+}
+
+body.student-page #announceModal #annSendReply {
+  margin-top: 0;
+  min-width: 88px;
+  padding: 0 16px;
+}
+
+body.student-page #announceModal .announce-status {
+  min-height: 20px;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+body.student-page #announceModal .announce-actions {
+  margin-top: 0;
+  padding-top: 4px;
+}
+
+body.student-page #announceModal .announce-actions button {
+  min-width: 128px;
+  min-height: 44px;
+  padding: 0 18px;
+  font-weight: 800;
+}
+
+@media (max-height: 760px) {
+  body.student-page #announceModal {
+    padding: 8px;
+  }
+
+  body.student-page #announceModal .announce-card {
+    --ann-title-box-height: 54px;
+    --ann-image-box-height: 132px;
+    --ann-content-box-height: 220px;
+    --ann-reply-box-height: 176px;
+    --ann-reply-input-height: 84px;
+
+    height: calc(100vh - 16px);
+    min-height: 0;
+    max-height: calc(100vh - 16px);
+    gap: 8px;
+    padding: 22px;
+    grid-template-rows: auto auto auto auto auto;
+  }
+
+  body.student-page #announceModal.has-image .announce-card {
+    --ann-content-box-height: 116px;
+    --ann-reply-box-height: 158px;
+    --ann-reply-input-height: 68px;
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  }
+
+  body.student-page #announceModal.has-survey .announce-card {
+    --ann-content-box-height: 92px;
+    --ann-reply-box-height: 146px;
+    --ann-reply-input-height: 60px;
+  }
+
+  body.student-page #announceModal.has-survey.has-image .announce-card {
+    --ann-image-box-height: 98px;
+    --ann-content-box-height: 72px;
+    --ann-reply-box-height: 132px;
+  }
+
+  body.student-page #announceModal .announce-head {
+    padding-bottom: 8px;
+  }
+
+  body.student-page #announceModal .announce-heading {
+    font-size: clamp(25px, 5vh, 30px);
+  }
+
+  body.student-page #announceModal .announce-body {
+    grid-template-rows: auto auto;
+    gap: 8px;
+  }
+
+  body.student-page #announceModal.has-image .announce-body {
+    grid-template-rows: auto auto auto;
+  }
+
+  body.student-page #announceModal #annTitle {
+    padding: 10px 12px;
+    font-size: 20px;
+  }
+
+  body.student-page #announceModal .announce-created-card {
+    padding: 9px 11px;
+  }
+
+  body.student-page #announceModal #annContent {
+    padding: 12px;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  body.student-page #announceModal .announce-reply {
+    padding: 10px;
+    gap: 6px;
+  }
+
+  body.student-page #announceModal .announce-reply-head strong {
+    font-size: 16px;
+  }
+
+  body.student-page #announceModal #annReply {
+    height: var(--ann-reply-input-height);
+    min-height: var(--ann-reply-input-height);
+    max-height: var(--ann-reply-input-height);
+    padding: 11px 12px;
+  }
+
+  body.student-page #announceModal .announce-status {
+    min-height: 18px;
+  }
+
+  body.student-page #announceModal .announce-actions button {
+    min-height: 40px;
+  }
+}
+
+@media (max-height: 680px) {
+  body.student-page #announceModal .announce-card {
+    --ann-title-box-height: 50px;
+    --ann-image-box-height: 110px;
+    --ann-content-box-height: 150px;
+    --ann-reply-box-height: 158px;
+    --ann-reply-input-height: 72px;
+
+    padding: 18px;
+  }
+
+  body.student-page #announceModal.has-image .announce-card {
+    --ann-content-box-height: 96px;
+    --ann-reply-box-height: 142px;
+    --ann-reply-input-height: 60px;
+  }
+
+  body.student-page #announceModal.has-survey .announce-card {
+    --ann-content-box-height: 74px;
+    --ann-reply-box-height: 132px;
+    --ann-reply-input-height: 52px;
+  }
+
+  body.student-page #announceModal.has-survey.has-image .announce-card {
+    --ann-image-box-height: 82px;
+    --ann-content-box-height: 58px;
+  }
+}
+
+@media (max-height: 600px) {
+  body.student-page #announceModal .announce-card {
+    --ann-title-box-height: 48px;
+    --ann-image-box-height: 96px;
+    --ann-content-box-height: 104px;
+    --ann-reply-box-height: 132px;
+    --ann-reply-input-height: 58px;
+
+    gap: 7px;
+    padding: 16px;
+  }
+
+  body.student-page #announceModal.has-image .announce-card {
+    --ann-content-box-height: 78px;
+    --ann-reply-box-height: 128px;
+    --ann-reply-input-height: 52px;
+  }
+
+  body.student-page #announceModal.has-survey .announce-card {
+    --ann-content-box-height: 62px;
+    --ann-reply-box-height: 116px;
+    --ann-reply-input-height: 48px;
+  }
+
+  body.student-page #announceModal.has-survey.has-image .announce-card {
+    --ann-image-box-height: 72px;
+    --ann-content-box-height: 50px;
+  }
+
+  body.student-page #announceModal .announce-head {
+    padding-bottom: 6px;
+  }
+
+  body.student-page #announceModal .announce-heading {
+    font-size: 25px;
+  }
+
+  body.student-page #announceModal .announce-section-label {
+    font-size: 14px;
+  }
+
+  body.student-page #announceModal .announce-title-row {
+    gap: 8px;
+  }
+
+  body.student-page #announceModal .announce-created-card time {
+    font-size: 13px;
+  }
+
+  body.student-page #announceModal .announce-reply {
+    padding: 9px;
+  }
+
+  body.student-page #announceModal #annReply {
+    padding-bottom: 40px;
+  }
+
+  body.student-page #announceModal .announce-reply-actions {
+    right: 9px;
+    bottom: 9px;
+  }
+
+  body.student-page #announceModal .announce-anonymous {
+    min-height: 20px;
+  }
+
+  body.student-page #announceModal .announce-actions button {
+    min-height: 38px;
+  }
+}
+
+@media (max-height: 520px) {
+  body.student-page #announceModal {
+    align-items: flex-start;
+  }
+
+  body.student-page #announceModal .announce-card {
+    --ann-image-box-height: 84px;
+    --ann-content-box-height: 84px;
+    --ann-reply-box-height: 124px;
+    --ann-reply-input-height: 52px;
+
+    height: 510px;
+    min-height: 510px;
+    max-height: none;
+    margin: 8px 0;
+  }
+
+  body.student-page #announceModal.has-image .announce-card {
+    --ann-content-box-height: 72px;
+    --ann-reply-box-height: 118px;
+  }
+
+  body.student-page #announceModal.has-survey .announce-card {
+    --ann-content-box-height: 58px;
+    --ann-reply-box-height: 112px;
+  }
+}
+
+@media (max-width: 1080px) {
+  body.student-page #playerBox {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  body.student-page #announceModal .announce-title-row {
+    grid-template-columns: minmax(0, 7fr) minmax(108px, 3fr);
+    gap: 8px;
+  }
+
+  body.student-page #announceModal .announce-created-card {
+    height: var(--ann-title-box-height);
+    grid-template-columns: 1fr;
+    align-content: center;
+    align-items: stretch;
+    gap: 2px;
+  }
+}
+
+/* Announcement popup: fluid media layout.
+   The card keeps a stable width, while image + content share one scroll area. */
+body.student-page #announceModal {
+  align-items: center;
+  padding: clamp(12px, 3vw, 32px);
+  overflow: auto;
+}
+
+body.student-page #announceModal .announce-card,
+body.student-page #announceModal.has-image .announce-card,
+body.student-page #announceModal.has-survey .announce-card,
+body.student-page #announceModal.has-survey.has-image .announce-card {
+  width: min(620px, calc(100vw - 28px));
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 28px) !important;
+  max-height: calc(100dvh - 28px) !important;
+  display: flex !important;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  padding: clamp(18px, 2.4vw, 24px);
+  grid-template-rows: none !important;
+}
+
+body.student-page #announceModal .announce-head {
+  flex: 0 0 auto;
+}
+
+body.student-page #announceModal .announce-body,
+body.student-page #announceModal.has-image .announce-body,
+body.student-page #announceModal.has-survey .announce-body,
+body.student-page #announceModal.has-survey.has-image .announce-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: visible;
+  padding-right: 0;
+  grid-template-rows: none !important;
+}
+
+body.student-page #announceModal #annTitle {
+  height: auto !important;
+  min-height: 58px;
+  max-height: 110px;
+  overflow: auto;
+}
+
+body.student-page #announceModal .announce-created-card {
+  height: auto !important;
+  min-height: 58px;
+}
+
+body.student-page #announceModal .announce-post-scroll {
+  flex: 1 1 auto;
+  min-height: 130px;
+  max-height: min(54vh, 520px);
+  max-height: min(54dvh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card-soft) 82%, #ffffff 18%) 0%, color-mix(in srgb, var(--stu-card) 94%, var(--stu-card-soft) 6%) 100%);
+  box-shadow:
+    0 12px 28px rgba(15, 23, 42, .07),
+    0 1px 0 rgba(255, 255, 255, .86) inset;
+}
+
+body.student-page #announceModal.has-survey .announce-post-scroll {
+  max-height: min(34vh, 320px);
+  max-height: min(34dvh, 320px);
+}
+
+body.student-page #announceModal.has-survey.has-image .announce-post-scroll {
+  max-height: min(30vh, 280px);
+  max-height: min(30dvh, 280px);
+}
+
+body.student-page #announceModal .announce-post-scroll .announce-section {
+  flex: 0 0 auto;
+  display: flex !important;
+  flex-direction: column;
+  gap: 7px;
+}
+
+body.student-page #announceModal .announce-post-scroll .announce-image-section[hidden] {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-post-scroll .announce-section-label {
+  display: block;
+  margin-bottom: 0;
+}
+
+body.student-page #announceModal .announce-post-scroll .announce-section-label {
+  font-size: 14px;
+}
+
+body.student-page #announceModal .announce-title-section > .announce-section-label {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-image-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body.student-page #announceModal .announce-image-counter {
+  min-width: 44px;
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 850;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+body.student-page #announceModal .announce-image-section-head {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-image-carousel {
+  --ann-active-image-ratio: 16 / 9;
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card) 94%, var(--stu-card-soft) 6%) 0%, color-mix(in srgb, var(--stu-card-soft) 84%, #ffffff 16%) 100%);
+  box-shadow:
+    0 18px 36px rgba(15, 23, 42, .10),
+    0 0 0 1px color-mix(in srgb, var(--stu-line) 84%, transparent) inset;
+  touch-action: pan-y;
+  outline: none;
+}
+
+body.student-page #announceModal .announce-image-carousel:focus-visible {
+  box-shadow:
+    0 18px 36px rgba(15, 23, 42, .10),
+    0 0 0 1px color-mix(in srgb, var(--stu-accent) 58%, var(--stu-line) 42%) inset,
+    0 0 0 4px color-mix(in srgb, var(--stu-accent) 16%, transparent);
+}
+
+body.student-page #announceModal .announce-image-track {
+  display: flex;
+  transform: translateX(0);
+  transition-property: transform;
+  transition-duration: 260ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #announceModal .announce-image-slide {
+  flex: 0 0 100%;
+  min-width: 100%;
+  aspect-ratio: var(--ann-active-image-ratio);
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--stu-card) 94%, var(--stu-card-soft) 6%);
+}
+
+body.student-page #announceModal .announce-image-frame {
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  display: grid;
+  place-items: center;
+  aspect-ratio: var(--ann-active-image-ratio, 16 / 9);
+  overflow: hidden;
+  line-height: 0;
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .10) inset;
+}
+
+body.student-page #announceModal .announce-image-frame img {
+  width: auto;
+  height: auto !important;
+  max-width: 100%;
+  max-height: min(72vh, 900px);
+  min-height: 0 !important;
+  display: block;
+  object-fit: contain;
+  background: transparent;
+  image-rendering: auto;
+}
+
+body.student-page #announceModal .announce-image-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .88);
+  color: var(--stu-text);
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, .16),
+    0 0 0 1px rgba(0, 0, 0, .08) inset;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition-property: transform, opacity, background-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #announceModal .announce-image-nav:hover {
+  background: #ffffff;
+  box-shadow:
+    0 14px 30px rgba(15, 23, 42, .20),
+    0 0 0 1px rgba(0, 0, 0, .10) inset;
+}
+
+body.student-page #announceModal .announce-image-nav:active {
+  transform: translateY(-50%) scale(0.96);
+}
+
+body.student-page #announceModal .announce-image-nav[hidden],
+body.student-page #announceModal .announce-image-dots[hidden] {
+  display: none !important;
+}
+
+body.student-page #announceModal .announce-image-nav.prev {
+  left: 10px;
+}
+
+body.student-page #announceModal .announce-image-nav.next {
+  right: 10px;
+}
+
+body.student-page #announceModal .announce-image-nav svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.student-page #announceModal .announce-image-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .28);
+  backdrop-filter: blur(8px);
+  transform: translateX(-50%);
+}
+
+body.student-page #announceModal .announce-image-dots button {
+  width: 8px;
+  height: 8px;
+  min-height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .58);
+  cursor: pointer;
+  transition-property: transform, width, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #announceModal .announce-image-dots button.is-active {
+  width: 18px;
+  background: #ffffff;
+}
+
+body.student-page #announceModal .announce-image-dots button:active {
+  transform: scale(0.96);
+}
+
+body.student-page #announceModal #annContent {
+  height: auto !important;
+  min-height: 92px;
+  max-height: none !important;
+  overflow: visible;
+  margin: 0;
+  padding: 3px 2px 1px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 18px;
+  line-height: 1.65 !important;
+}
+
+body.student-page #announceModal .announce-survey {
+  flex: 0 1 auto;
+  max-height: min(32vh, 300px);
+  max-height: min(32dvh, 300px);
+  overflow-y: auto;
+}
+
+body.student-page #announceModal .announce-reply {
+  flex: 0 0 auto;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 12px;
+  gap: 6px;
+  grid-template-rows: auto auto auto;
+}
+
+body.student-page #announceModal #annReply {
+  height: 74px !important;
+  min-height: 74px !important;
+  max-height: 128px !important;
+  padding: 12px 14px;
+}
+
+body.student-page #announceModal .announce-reply-actions {
+  position: static;
+  right: auto;
+  bottom: auto;
+  justify-content: flex-end;
+}
+
+body.student-page #announceModal .announce-status,
+body.student-page #announceModal .announce-actions {
+  flex: 0 0 auto;
+}
+
+body.student-page #announceModal .announce-status:empty {
+  min-height: 0;
+}
+
+body.student-page #announceModal .announce-actions {
+  padding-top: 0;
+}
+
+@media (max-height: 700px) {
+  body.student-page #announceModal {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  body.student-page #announceModal .announce-card,
+  body.student-page #announceModal.has-image .announce-card,
+  body.student-page #announceModal.has-survey .announce-card,
+  body.student-page #announceModal.has-survey.has-image .announce-card {
+    max-height: calc(100vh - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+    gap: 9px;
+    padding: 16px;
+  }
+
+  body.student-page #announceModal .announce-post-scroll {
+    max-height: min(42vh, 360px);
+    max-height: min(42dvh, 360px);
+  }
+
+  body.student-page #announceModal.has-survey .announce-post-scroll,
+  body.student-page #announceModal.has-survey.has-image .announce-post-scroll {
+    max-height: min(28vh, 230px);
+    max-height: min(28dvh, 230px);
+  }
+
+  body.student-page #announceModal #annReply {
+    height: 66px !important;
+    min-height: 66px !important;
+  }
+}
+
+@media (max-width: 560px) {
+  body.student-page #announceModal {
+    align-items: flex-start;
+    padding: 9px;
+  }
+
+  body.student-page #announceModal .announce-card,
+  body.student-page #announceModal.has-image .announce-card,
+  body.student-page #announceModal.has-survey .announce-card,
+  body.student-page #announceModal.has-survey.has-image .announce-card {
+    width: calc(100vw - 18px);
+    max-height: calc(100vh - 18px) !important;
+    max-height: calc(100dvh - 18px) !important;
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  body.student-page #announceModal .announce-title-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.student-page #announceModal #annTitle,
+  body.student-page #announceModal .announce-created-card {
+    min-height: 54px;
+  }
+
+  body.student-page #announceModal .announce-post-scroll {
+    min-height: 170px;
+    max-height: min(46vh, 390px);
+    max-height: min(46dvh, 390px);
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  body.student-page #announceModal.has-survey .announce-post-scroll,
+  body.student-page #announceModal.has-survey.has-image .announce-post-scroll {
+    max-height: min(30vh, 260px);
+    max-height: min(30dvh, 260px);
+  }
+
+  body.student-page #announceModal #annContent {
+    min-height: 86px;
+    font-size: 16px;
+    line-height: 1.6 !important;
+  }
+
+  body.student-page #announceModal .announce-survey {
+    max-height: min(30vh, 260px);
+    max-height: min(30dvh, 260px);
+  }
+
+  body.student-page #announceModal #annReply {
+    height: 82px !important;
+    min-height: 82px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body.student-page {
+    width: 100%;
+    max-width: calc(100vw - 16px);
+    padding: 8px;
+  }
+
+  body.student-page .student-shell {
+    gap: 12px;
+  }
+
+  body.student-page .hero-bar {
+    padding: 18px;
+  }
+
+  body.student-page .namebar-title {
+    font-size: clamp(1.8rem, 11vw, 2.55rem);
+  }
+
+  body.student-page .student-topbar {
+    top: 6px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  body.student-page .student-topbar .clock-header {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  body.student-page .student-topbar .notice-btn,
+  body.student-page .student-topbar .settings-btn {
+    flex: 1 1 calc(50% - 4px);
+    margin-left: 0;
+  }
+
+  body.student-page .student-topbar,
+  body.student-page .hero-bar,
+  body.student-page .student-main,
+  body.student-page .panel {
+    width: calc(100vw - 32px) !important;
+    max-width: calc(100vw - 32px) !important;
+    justify-self: stretch;
+  }
+
+  body.student-page #setPanel {
+    right: 8px;
+    top: 68px;
+  }
+}
+
+/* =========================================
+   Announcement history modal polish
+   ========================================= */
+body.student-page #announceHistoryModal {
+  padding: clamp(16px, 3vw, 34px);
+  background:
+    radial-gradient(circle at 50% 36%, rgba(255, 255, 255, 0.22), transparent 34%),
+    rgba(4, 10, 20, 0.58);
+  backdrop-filter: blur(16px) saturate(120%);
+}
+
+body.student-page #announceHistoryModal .announce-history-card {
+  width: min(680px, calc(100vw - 28px));
+  height: min(640px, calc(100vh - 28px));
+  min-height: min(420px, calc(100vh - 28px));
+  max-height: calc(100vh - 28px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+  padding: clamp(18px, 2.4vw, 24px);
+  border-radius: 26px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 80%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card) 98%, #ffffff 2%) 0%, var(--stu-card) 100%);
+  box-shadow:
+    0 34px 92px rgba(0, 0, 0, 0.34),
+    0 1px 0 rgba(255, 255, 255, 0.84) inset;
+}
+
+body.student-page #announceHistoryModal .announce-head {
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--stu-line) 78%, transparent);
+}
+
+body.student-page #announceHistoryModal .announce-label {
+  margin: 0 0 4px;
+  color: var(--stu-accent);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+body.student-page #announceHistoryModal #annHistoryTitle {
+  margin: 0;
+  color: var(--stu-text);
+  font-size: clamp(22px, 3vw, 28px);
+  line-height: 1.16;
+  font-weight: 850;
+  text-wrap: balance;
+}
+
+body.student-page #announceHistoryModal .announce-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 22px;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--stu-accent) 24%, transparent);
+}
+
+body.student-page #announceHistoryModal .announce-history-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 2px 5px 2px 1px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+body.student-page #announceHistoryModal .announce-history-empty {
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border: 1px dashed color-mix(in srgb, var(--stu-line) 82%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--stu-card-soft) 82%, var(--stu-card) 18%);
+  color: var(--stu-muted);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+
+body.student-page #announceHistoryModal .announce-history-item {
+  width: 100%;
+  height: auto !important;
+  min-height: 172px;
+  font: inherit !important;
+  line-height: 1.35 !important;
+  display: grid !important;
+  grid-template-rows: auto auto auto;
+  gap: 10px !important;
+  align-items: stretch !important;
+  justify-content: stretch !important;
+  padding: 15px 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--stu-line) 84%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card) 98%, var(--stu-card-soft) 2%) 0%, color-mix(in srgb, var(--stu-card-soft) 72%, var(--stu-card) 28%) 100%);
+  color: var(--stu-text);
+  text-align: left;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.055);
+  cursor: pointer;
+  overflow: hidden;
+  transition-property: transform, background-color, border-color, box-shadow;
+  transition-duration: 160ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page #announceHistoryModal .announce-history-item:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--stu-line) 56%, var(--stu-accent) 44%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card) 91%, var(--stu-accent) 9%) 0%, color-mix(in srgb, var(--stu-card-soft) 84%, var(--stu-accent) 16%) 100%);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.105);
+}
+
+body.student-page #announceHistoryModal .announce-history-item:active {
+  transform: scale(0.96);
+}
+
+body.student-page #announceHistoryModal .announce-history-item-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+body.student-page #announceHistoryModal .announce-history-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+body.student-page #announceHistoryModal .announce-history-title {
+  min-width: 0;
+  margin: 0;
+  display: block;
+  overflow: hidden;
+  color: var(--stu-text);
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.28;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.student-page #announceHistoryModal .announce-history-meta {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  color: var(--stu-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.student-page #announceHistoryModal .announce-history-badges {
+  max-width: 260px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+body.student-page #announceHistoryModal .announce-history-image-badge,
+body.student-page #announceHistoryModal .announce-history-survey-badge {
+  min-height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+body.student-page #announceHistoryModal .announce-history-content {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--stu-text) 84%, var(--stu-muted) 16%);
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.5 !important;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: block;
+  max-height: 42px;
+}
+
+body.student-page #announceHistoryModal .announce-history-foot {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+body.student-page #announceHistoryModal .announce-history-note {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  padding: 7px 9px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--stu-card) 88%, var(--stu-accent) 12%);
+  color: color-mix(in srgb, var(--stu-text) 72%, var(--stu-accent) 28%);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35 !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.student-page.dark #announceHistoryModal {
+  background:
+    radial-gradient(circle at 50% 36%, rgba(10, 132, 255, 0.18), transparent 36%),
+    rgba(0, 0, 0, 0.7);
+}
+
+body.student-page.dark #announceHistoryModal .announce-history-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--stu-card) 94%, #2c2c2e 6%) 0%, var(--stu-card) 100%);
+  box-shadow:
+    0 34px 92px rgba(0, 0, 0, 0.52),
+    0 1px 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+body.student-page.dark #announceHistoryModal .announce-history-item {
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+}
+
+@media (max-width: 560px) {
+  body.student-page #announceHistoryModal {
+    padding: 9px;
+    align-items: flex-start;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-card {
+    width: calc(100vw - 18px);
+    height: min(640px, calc(100vh - 18px));
+    min-height: calc(100vh - 18px);
+    max-height: calc(100vh - 18px);
+    gap: 13px;
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  body.student-page #announceHistoryModal .announce-head {
+    padding-bottom: 12px;
+  }
+
+  body.student-page #announceHistoryModal #annHistoryTitle {
+    font-size: 23px;
+  }
+
+  body.student-page #announceHistoryModal .announce-close {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-list {
+    gap: 10px;
+    padding-right: 1px;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-item {
+    min-height: 204px;
+    padding: 13px;
+    border-radius: 16px;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-item-head {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-badges {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  body.student-page #announceHistoryModal .announce-history-title {
+    font-size: 16px;
+  }
+}
+
+/* =========================================
+   Student control alignment normalization
+   ========================================= */
+body.student-page :where(button, input, select, textarea),
+body.student-page :where(#testSubmitModal, #announceModal, #setPanel) {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif !important;
+  letter-spacing: 0 !important;
+}
+
+body.student-page :where(
+  .settings-btn,
+  .notice-btn,
+  .ts-btn,
+  #submitFeedback,
+  #goLogin,
+  #setPanel button,
+  .mbox .toggle,
+  .announce-actions button,
+  #annSendReply,
+  #annRead,
+  .announce-close,
+  #testSubmitModal .ts-submit,
+  #testSubmitModal .ts-close
+) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px;
+  box-sizing: border-box;
+  line-height: 1 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+body.student-page .assigned-test-btn {
+  display: grid !important;
+  align-items: center !important;
+}
+
+body.student-page #testSubmitModal .ts-close {
+  width: 38px !important;
+  min-width: 38px !important;
+  height: 38px !important;
+  padding: 0 !important;
 }

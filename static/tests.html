@@ -1056,6 +1056,11 @@
               <select id="cfgDifficultyFilter"></select>
             </div>
 
+            <div class="toolbar-group" id="cfgTermFilterGroup" hidden>
+              <span class="toolbar-label">고사</span>
+              <select id="cfgTermFilter"></select>
+            </div>
+
             <div class="toolbar-group">
               <span class="toolbar-label">회차</span>
               <select id="cfgRoundFilter"></select>
@@ -1089,6 +1094,12 @@
 
           <div class="field-grid">
             <div class="field-row">
+              <label for="cfgEditType">분류</label>
+              <select id="cfgEditType"></select>
+              <div class="helper">선택한 시험을 저장할 테스트 분류입니다. 분류를 바꾸면 해당 분류 목록으로 이동합니다.</div>
+            </div>
+
+            <div class="field-row">
               <label for="cfgSubject">과목</label>
               <select id="cfgSubject"></select>
               <div class="helper">관리자 테스트 팝업에서 학생 커리큘럼과 매칭되는 기준입니다.</div>
@@ -1097,13 +1108,19 @@
             <div class="field-row">
               <label for="cfgDifficulty">난이도</label>
               <select id="cfgDifficulty"></select>
-              <div class="helper">복습/기출은 상·중상, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+              <div class="helper">복습/학군지 기출은 상·중상, 일산 기출은 상·중, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+            </div>
+
+            <div class="field-row" id="cfgTermRow" hidden>
+              <label for="cfgTerm">고사</label>
+              <select id="cfgTerm"></select>
+              <div class="helper">학군지/일산 기출에서 중간고사와 기말고사를 구분합니다.</div>
             </div>
 
             <div class="field-row">
               <label for="cfgRound">회차</label>
               <input type="number" id="cfgRound" min="1" max="99" step="1">
-              <div class="helper">같은 분류/과목/난이도 안에서 표시되는 회차입니다.</div>
+              <div id="cfgRoundHelp" class="helper">단원평가는 같은 시험의 반복 세트, 복습/기출은 목록 순번입니다.</div>
             </div>
 
             <div class="field-row">

@@ -57,12 +57,35 @@ function isTermCategory(categoryKey) {
   return key === 'SCHOOL_PAST' || key === 'ILSAN_PAST';
 }
 
+function isLockConflictResponse(status, text) {
+  const body = String(text || '').toLowerCase();
+  return status === 409 && (body.includes('lock timeout') || body.includes('.lock'));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function fetchJSONSafe(url, init = {}) {
-  const res = await fetch(url, { cache: 'no-store', ...init });
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`[testModal] ${init.method || 'GET'} ${url} -> ${res.status}\n${txt.slice(0, 200)}`);
-  try { return txt.trim() ? JSON.parse(txt) : {}; }
-  catch (e) { throw new Error(`[testModal] Bad JSON from ${url}: ${e?.message}\n${txt.slice(0, 200)}`); }
+  const {
+    lockRetryDelays = [700, 1300, 2200],
+    ...fetchInit
+  } = init || {};
+
+  for (let attempt = 0; attempt <= lockRetryDelays.length; attempt++) {
+    const res = await fetch(url, { cache: 'no-store', ...fetchInit });
+    const txt = await res.text();
+    if (!res.ok) {
+      if (isLockConflictResponse(res.status, txt) && attempt < lockRetryDelays.length) {
+        await sleep(lockRetryDelays[attempt]);
+        continue;
+      }
+      throw new Error(`[testModal] ${fetchInit.method || 'GET'} ${url} -> ${res.status}\n${txt.slice(0, 200)}`);
+    }
+    try { return txt.trim() ? JSON.parse(txt) : {}; }
+    catch (e) { throw new Error(`[testModal] Bad JSON from ${url}: ${e?.message}\n${txt.slice(0, 200)}`); }
+  }
+  throw new Error(`[testModal] ${fetchInit.method || 'GET'} ${url} failed after lock retries`);
 }
 
 async function fetchJSONCached(url, ttlMs = 2500) {
@@ -342,10 +365,29 @@ function roundOptionsFor(categoryKey, subject, difficulty) {
   return out.length ? out : ROUND_OPTIONS.slice();
 }
 
+function unitTestsForRound(categoryKey, subject, difficulty, round) {
+  if (!isUnitCategory(categoryKey)) return [];
+  const normalizedRound = String(round || '1');
+  return activeCatalog.filter(test =>
+    test.categoryKey === categoryKey &&
+    normalizeSubject(test.curriculum) === normalizeSubject(subject) &&
+    String(test.difficulty || '') === String(difficulty || '') &&
+    normalizeRound(test.round || '') === normalizedRound
+  );
+}
+
+function isUnitRoundFullyColored(categoryKey, subject, difficulty, round) {
+  const tests = unitTestsForRound(categoryKey, subject, difficulty, round);
+  return tests.length > 0 && tests.every(test => isSubmitted(test) || !!statusForKey(test._key));
+}
+
 function defaultRoundFor(categoryKey, subject, difficulty) {
   if (!isUnitCategory(categoryKey)) return '';
   const rounds = roundOptionsFor(categoryKey, subject, difficulty);
-  return rounds.includes('1') ? '1' : (rounds[0] || '1');
+  const firstUncoloredRound = rounds.find(round =>
+    !isUnitRoundFullyColored(categoryKey, subject, difficulty, round)
+  );
+  return firstUncoloredRound || rounds[rounds.length - 1] || '1';
 }
 
 function applyRuleDefaults(categoryKey = activeCategory) {

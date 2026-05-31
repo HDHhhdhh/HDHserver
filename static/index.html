@@ -21,7 +21,12 @@
     body{
       margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
       background:var(--bg); color:var(--text);
-      font-family: system-ui, -apple-system, Segoe UI, Apple SD Gothic Neo, Noto Sans KR, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      letter-spacing:0;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      text-rendering:optimizeLegibility;
+      font-variant-numeric:tabular-nums;
       padding:24px;
     }
     .layout{ width:min(1120px, 96vw); display:flex; gap:40px; align-items:center; justify-content:center; }
@@ -40,14 +45,19 @@
 
     label{ display:block; margin:12px 0 6px; font-size:13px; color:var(--muted); }
     input{
-      width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line); font-size:14px;
+      width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line);
+      font-family:inherit; font-size:14px; line-height:1.35;
     }
     input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
 
     .row{ display:flex; gap:10px; margin-top:16px; }
     button{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:6px;
       flex:1; padding:11px; border-radius:8px; border:1px solid transparent;
-      cursor:pointer; font-weight:600; font-size:14px;
+      cursor:pointer; font-family:inherit; font-weight:600; font-size:14px; line-height:1; text-align:center;
     }
     .btn{ background:var(--accent); color:#fff; }
     .btn:hover{ background:#1d4ed8; }

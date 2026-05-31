@@ -20,6 +20,7 @@ progress.json.*.tmp
 /.codex_drive_download/
 /generated/
 /worktrees/
+/static/js/test_answer_link_map.js
 
 # Python/runtime artifacts
 __pycache__/

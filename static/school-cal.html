@@ -23,7 +23,12 @@
       padding: 14px 0 24px;
       background: var(--sc-bg);
       color: var(--sc-text);
-      font-family: "IBM Plex Sans KR", "Noto Sans KR", "Malgun Gothic", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-variant-numeric: tabular-nums;
     }
 
     body.dark {
@@ -55,7 +60,7 @@
     .title-wrap h1 {
       margin: 0;
       font-size: clamp(1.25rem, 2.4vw, 1.8rem);
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
     }
 
     .title-sub {
@@ -128,6 +133,10 @@
     }
 
     .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       height: 36px;
       padding: 0 12px;
       border-radius: 10px;
@@ -137,6 +146,8 @@
       cursor: pointer;
       font-weight: 700;
       font-size: 13px;
+      line-height: 1;
+      text-align: center;
     }
 
     .btn.primary {
@@ -166,6 +177,9 @@
     }
 
     .seg button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       height: 36px;
       padding: 0 12px;
       border: 0;
@@ -173,6 +187,7 @@
       color: var(--sc-text);
       font-weight: 700;
       cursor: pointer;
+      line-height: 1;
     }
 
     .seg button.active {
