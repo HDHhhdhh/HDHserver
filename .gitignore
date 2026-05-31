@@ -15,6 +15,11 @@ progress.json.*.tmp
 /data/
 /files/
 /instance/
+/.codex/
+/.codex-remote-attachments/
+/.codex_drive_download/
+/generated/
+/worktrees/
 
 # Python/runtime artifacts
 __pycache__/
@@ -30,3 +35,4 @@ Thumbs.db
 # Logs and temporary output
 *.log
 *.out
+*.lock

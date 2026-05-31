@@ -11,7 +11,17 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SKIP_DIRS = {".git", ".pytest_cache", "__pycache__", "venv", "_data_mirror", "_runtime_backups"}
-ROOT_DATA_SUFFIXES = {".json", ".sqlite", ".db", ".csv"}
+ROOT_DATA_SUFFIXES = {
+    ".json",
+    ".sqlite",
+    ".sqlite-wal",
+    ".sqlite-shm",
+    ".db",
+    ".db-wal",
+    ".db-shm",
+    ".csv",
+    ".tmp",
+}
 DATA_DIRS = {"data", "files", "instance"}
 
 
