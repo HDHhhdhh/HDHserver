@@ -19,6 +19,8 @@ from routes.api_fs import bp_api_fs
 from routes.api_kollus import bp_api_kollus
 from routes.api_auth import bp_api_auth
 from routes.api_todaymeta import bp_api_todaymeta
+from routes.api_makeup_carryover import bp_api_makeup_carryover
+from routes.api_admin_chat import bp_api_admin_chat
 
 
 def create_app() -> Flask:
@@ -147,6 +149,8 @@ def create_app() -> Flask:
     app.register_blueprint(bp_api_kollus)
     app.register_blueprint(bp_api_auth)
     app.register_blueprint(bp_api_todaymeta)
+    app.register_blueprint(bp_api_makeup_carryover)
+    app.register_blueprint(bp_api_admin_chat)
     return app
 
 
