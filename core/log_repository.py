@@ -41,6 +41,8 @@ class LogPatchResult:
     sqlite_ok: bool
     sqlite_error: Exception | None = None
     sqlite_base_conflict: bool = False
+    json_ok: bool = False
+    json_error: Exception | None = None
     json_conflict_entry: dict | None = None
 
 
@@ -416,6 +418,8 @@ class LogRepository:
         sqlite_ok = False
         sqlite_err = None
         sqlite_base_conflict = False
+        json_ok = False
+        json_err = None
         con = None
 
         try:
@@ -467,6 +471,8 @@ class LogRepository:
                         sqlite_ok=sqlite_ok,
                         sqlite_error=sqlite_err,
                         sqlite_base_conflict=sqlite_base_conflict,
+                        json_ok=json_ok,
+                        json_error=json_err,
                         json_conflict_entry=cur_json,
                     )
 
@@ -475,7 +481,9 @@ class LogRepository:
                 merged = self.repair_entry(merged, sid)
                 day[sid] = merged
                 save_atomic(self.logs_path, current)
+                json_ok = True
         except Exception as exc:
+            json_err = exc
             print("[logs] json PATCH failed:", exc, flush=True)
 
         if not sqlite_ok and not sqlite_base_conflict and merged:
@@ -502,6 +510,8 @@ class LogRepository:
             sqlite_ok=sqlite_ok,
             sqlite_error=sqlite_err,
             sqlite_base_conflict=sqlite_base_conflict,
+            json_ok=json_ok,
+            json_error=json_err,
         )
 
     def append_record(self, date: str, sid: str, record: dict, append_fn: MergeFn) -> bool:

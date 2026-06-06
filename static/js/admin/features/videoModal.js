@@ -741,11 +741,35 @@ function replaceGeneratedBlock(notes, prevBlock, nextBlock) {
   return newBlock ? (prev ? `${prev}\n\n${newBlock}` : newBlock) : prev;
 }
 
-async function patchExtraVideoLogAssignment(today, sid, selectedMids) {
-  const items = selectedExtraVideoItems(selectedMids);
+async function fetchLatestExtraVideoLogEntry(today, sid) {
   const q = new URLSearchParams({ date: String(today), sid: String(sid) }).toString();
-  const { data } = await getJSON(`/api/logs/entry?${q}`);
-  const entry = (data?.entry && typeof data.entry === 'object') ? data.entry : {};
+  const url = `/api/logs/entry?${q}`;
+  let result;
+  try {
+    result = await getJSON(url);
+  } catch (err) {
+    throw new Error(`/api/logs/entry latest log read failed: ${err?.message || err}`);
+  }
+
+  const { res, data } = result;
+  if (!res.ok) {
+    throw new Error(`/api/logs/entry latest log read failed (${res.status || 'non-ok'})`);
+  }
+  if (!data || typeof data !== 'object') {
+    throw new Error('/api/logs/entry latest log read returned invalid JSON');
+  }
+  if (data.ok === false) {
+    throw new Error(data.error || '/api/logs/entry latest log read failed');
+  }
+  if (data.ok === true) {
+    return (data.entry && typeof data.entry === 'object') ? data.entry : {};
+  }
+  return data;
+}
+
+async function patchExtraVideoLogAssignment(today, sid, selectedMids, latestEntry) {
+  const items = selectedExtraVideoItems(selectedMids);
+  const entry = (latestEntry && typeof latestEntry === 'object') ? latestEntry : await fetchLatestExtraVideoLogEntry(today, sid);
   const prevBlock = String(entry.extraVideoAssignmentNote || '').trim();
   const noteBlock = buildExtraVideoNote(items);
 
@@ -1424,6 +1448,8 @@ export function initVideoModal() {
       ? 'manual'
       : 'auto';
 
+    const latestLogEntry = await fetchLatestExtraVideoLogEntry(today, sid);
+
     state.updates = state.updates || {};
 
     if (selected.length) {
@@ -1445,7 +1471,7 @@ export function initVideoModal() {
     const u = await fetch('/api/updates', { cache: 'no-store' }).then(r => r.json());
     const obj = unwrapOkPayload(u, 'updates') || u;
     if (obj && typeof obj === 'object') state.updates = obj;
-    await patchExtraVideoLogAssignment(today, sid, selected);
+    await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);
     activeAssignmentManual = selected.length > 0 && source === 'manual';
     activeVideoSelectionDirty = false;
     if (showPopup) showSavePopup('저장 완료');

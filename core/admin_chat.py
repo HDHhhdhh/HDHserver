@@ -62,7 +62,8 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "answer": (
             "관리자 운영판은 /admin에서 오늘 학생, 출결, 하원 완료, 보강/결석, "
             "학교 일정, 공지/설문, 로그/숙제/영상/테스트 흐름을 한 화면에서 처리합니다. "
-            "운영 날짜는 관리자 선택 날짜를 기준으로 동작해야 합니다."
+            "운영 날짜는 관리자 선택 날짜를 기준으로 동작해야 합니다. "
+            "관리자 row action은 row의 tr.dataset.date(data-date)를 먼저 쓰고, 없을 때만 getAdminDate()를 fallback으로 씁니다."
         ),
         "sources": ["static/admin.html", "static/js/admin/main.js", "static/js/admin/core/adminDate.js"],
     },
@@ -99,7 +100,8 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["로그", "수업기록", "숙제", "homework", "homeworkTable", "notes", "완료"],
         "answer": (
             "수업 로그는 날짜와 학생 sid별로 notes, homeworkTable, 완료 상태, 숙제 확인/배정 상태를 보관합니다. "
-            "로그 저장은 기존 값을 안전하게 병합해야 하며 빈 값이 의미 있는 기존 데이터를 지우면 안 됩니다."
+            "로그 저장은 기존 값을 안전하게 병합해야 하며 빈 값이 의미 있는 기존 데이터를 지우면 안 됩니다. "
+            "SQLite 저장은 성공했지만 legacy logs.json 동기화가 실패하면 저장 응답에 json:false warning이 붙을 수 있으며, 이는 저장소 동기화 문제로 봐야 합니다."
         ),
         "sources": ["routes/api_basic.py", "core/log_repository.py", "core/log_rules.py", "static/js/admin/features/logModal.js"],
     },
@@ -127,8 +129,9 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["테스트", "성적", "채점", "assignedTests", "tests", "시험", "오답"],
         "answer": (
             "테스트 카탈로그는 tests-config.json, 제출 성적은 tests.json에 저장됩니다. "
-            "학생 bootstrap에서는 progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
-            "학생 화면의 오늘 테스트는 해당 날짜에 새로 배정된 항목만 보여주며, 단원평가는 해설 링크 맵으로 Drive 해설지를 엽니다."
+            "학생 bootstrap에서는 assignedTests는 top-level 배열 shape를 유지해야 하며, progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
+            "학생 화면의 오늘 테스트는 해당 날짜에 새로 배정된 항목만 보여주며, 단원평가/복습 테스트/학군지 기출은 Drive 해설지를 엽니다. "
+            "REVIEW/SCHOOL_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다."
         ),
         "sources": ["routes/api_tests.py", "static/js/tests.js", "static/js/admin/features/testModal.js", "static/js/student.js"],
     },

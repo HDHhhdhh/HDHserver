@@ -479,20 +479,34 @@ export async function clearTodayOrder(dateKey) {
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
   const dateStr = dateKey || getAdminDate();
 
+  const latestRes = await fetch('/api/weekend-slots', { cache: 'no-store' });
+  if (!latestRes.ok) {
+    throw new Error(`/api/weekend-slots load failed: ${latestRes.status}`);
+  }
   let weekend = {};
-  try { weekend = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch {}
+  try { weekend = await latestRes.json(); } catch (e) {
+    throw new Error(`/api/weekend-slots bad JSON: ${e?.message || e}`);
+  }
+  if (!weekend || typeof weekend !== 'object') weekend = {};
 
-  const perDay = weekend[dateStr] || {};
+  const perDay = (weekend[dateStr] && typeof weekend[dateStr] === 'object')
+    ? { ...weekend[dateStr] }
+    : {};
   const slots = parseSlotsFromText(labelText);
 
   if (slots.length) perDay[String(sid)] = slots;
   else delete perDay[String(sid)];
 
-  await fetch('/api/weekend-slots', {
+  const saveRes = await fetch('/api/weekend-slots', {
     method: 'POST',
     headers: CT,
     body: JSON.stringify({ [dateStr]: perDay }),
   });
+  if (!saveRes.ok) {
+    let msg = '';
+    try { msg = await saveRes.text(); } catch {}
+    throw new Error(`/api/weekend-slots save failed: ${saveRes.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
+  }
 
   await clearTodayOrder(dateStr);
   await loadWeekendSlots();

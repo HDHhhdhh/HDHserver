@@ -1752,12 +1752,34 @@ def api_logs_patch():
         }), 409
 
     if not result.sqlite_ok:
-        # SQLite 기준 충돌이면 JSON 저장은 완료됐으므로 성공으로 응답한다.
+        # SQLite 기준 충돌이어도 legacy JSON 저장이 확인된 경우에만 호환 성공으로 응답한다.
         if result.sqlite_base_conflict:
-            return jsonify({"ok": True, "sqlite": False, "entry": result.merged, "warning": "sqlite out-of-sync"})
+            if not result.json_ok:
+                return jsonify({
+                    "ok": False,
+                    "sqlite": False,
+                    "json": False,
+                    "error": "sqlite out-of-sync and legacy logs.json save failed",
+                }), 409
+            return jsonify({
+                "ok": True,
+                "sqlite": False,
+                "json": result.json_ok,
+                "entry": result.merged,
+                "warning": "sqlite out-of-sync",
+            })
         return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
-    return jsonify({"ok": True, "sqlite": True, "entry": result.merged})
+    if not result.json_ok:
+        return jsonify({
+            "ok": True,
+            "sqlite": True,
+            "json": False,
+            "entry": result.merged,
+            "warning": "SQLite save succeeded, but legacy JSON log storage is out of sync.",
+        })
+
+    return jsonify({"ok": True, "sqlite": True, "json": True, "entry": result.merged})
 
 
 # ─────────────────────────────────────────────

@@ -197,6 +197,31 @@ async function fetchLogEntryFromServer(date, sid) {
   }
 }
 
+async function fetchLatestCarriedTestLogEntry(date, sid) {
+  const q = new URLSearchParams({ date: String(date), sid: String(sid) }).toString();
+  let res = null;
+  try {
+    res = await fetch(`/api/logs/entry?${q}`, { cache: 'no-store' });
+  } catch (err) {
+    const detail = err?.message ? `: ${err.message}` : '';
+    throw new Error(`/api/logs/entry 최신 로그 조회 실패${detail}`);
+  }
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`/api/logs/entry 최신 로그 응답 JSON 파싱 실패 (${res.status})`);
+  }
+
+  if (!res.ok || data?.ok !== true) {
+    const detail = data?.error ? `: ${data.error}` : ` (${res.status})`;
+    throw new Error(`/api/logs/entry 최신 로그 조회 실패${detail}`);
+  }
+
+  return (data.entry && typeof data.entry === 'object') ? data.entry : {};
+}
+
 async function fetchJSONCached(url, ttlMs = 2500) {
   const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
   const now = Date.now();
@@ -1694,8 +1719,7 @@ export function initLogModal() {
     const sid = String(editingLogSid || '');
     if (!today || !sid) return;
 
-    const fallbackEntry = (state.logs?.[today] || {})[sid] || {};
-    const latestEntry = await fetchLogEntryFromServer(today, sid).catch(() => fallbackEntry);
+    const latestEntry = await fetchLatestCarriedTestLogEntry(today, sid);
     const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
     const mergedAssignedItems = mergeAssignmentItemsByLabel(
       Array.isArray(latestEntry.assignedTests) ? latestEntry.assignedTests : [],
@@ -1840,7 +1864,8 @@ export function initLogModal() {
     const sid = tr?.dataset?.sid;
     if (!sid) return;
 
-    const raw = await fetchWatchForSid(sid);
+    const date = tr?.dataset?.date || editingLogDate || getAdminDate();
+    const raw = await fetchWatchForSid(sid, date);
 
     const watchByMid = {};
     Object.keys(raw).forEach(k => { watchByMid[String(k)] = raw[k]; });

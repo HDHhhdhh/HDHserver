@@ -1010,7 +1010,8 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     const sid = tr.dataset.sid;
     const dateKey = tr.dataset.date;
 
-    const prevLabel = (el.dataset.orig || '').trim();
+    const prevOrig = el.dataset.orig || '';
+    const prevLabel = prevOrig.trim();
     const oldForcedBase = _forcedArriveTimeBySlotLabel(dateKey, prevLabel) || '';
 
     const txt = (el.textContent || '').trim();
@@ -1020,8 +1021,18 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     const oldBase = plannedTimeBase(dateKey, sid) || '';
     const oldOv = (getArriveOverride(dateKey, sid) || '').trim();
 
+    try {
+      await saveWeekendSlotsFromLabel(sid, cleaned, dateKey);
+    } catch (e) {
+      console.error(e);
+      el.textContent = prevOrig;
+      el.dataset.orig = prevOrig;
+      try { toast('주말 슬롯 저장 실패'); } catch {}
+      alert('주말 슬롯 저장 실패');
+      return;
+    }
+
     el.dataset.orig = cleaned;
-    await saveWeekendSlotsFromLabel(sid, cleaned, dateKey);
     document.dispatchEvent(new CustomEvent('attendance:updated'));
 
     const forcedNewBase = _forcedArriveTimeBySlotLabel(dateKey, cleaned) || '';
@@ -1289,16 +1300,51 @@ export function bindTodayTableEvents(loadTodayAndRender) {
       const sid = tr.dataset.sid;
       const dateKey = tr.dataset.date || getAdminDate();
       const checked = hc.checked;
+      const prevChecked = isHwChecked(dateKey, sid);
+      const prevHw = tr.dataset.hw;
+      const prevHwRequest = tr.dataset.hwRequest;
+      const prevHwRequestAt = tr.dataset.hwRequestAt;
+      const requestInput = tr.querySelector('.hwRequestChk');
+      const requestPill = tr.querySelector('.homework-request-toggle');
+      const requestChecked = requestInput?.checked;
+      const requestDisabled = requestInput?.disabled;
+      const requestPillOn = requestPill?.dataset?.on;
+      const pill = hc.closest('.c');
+      const prevPillOn = pill?.dataset?.on;
+      const restoreDatasetValue = (key, value) => {
+        if (value === undefined) delete tr.dataset[key];
+        else tr.dataset[key] = value;
+      };
 
       try { await setHomeworkCheckedRemote(dateKey, sid, checked); }
-      catch (e) { console.error(e); alert('숙제 체크 저장 실패'); }
+      catch (e) {
+        console.error(e);
+        hc.checked = prevChecked;
+        restoreDatasetValue('hw', prevHw);
+        restoreDatasetValue('hwRequest', prevHwRequest);
+        restoreDatasetValue('hwRequestAt', prevHwRequestAt);
+        if (requestInput) {
+          requestInput.checked = requestChecked;
+          requestInput.disabled = requestDisabled;
+        }
+        if (requestPill) {
+          if (requestPillOn === undefined) delete requestPill.dataset.on;
+          else requestPill.dataset.on = requestPillOn;
+        }
+        if (pill) {
+          if (prevPillOn === undefined) delete pill.dataset.on;
+          else pill.dataset.on = prevPillOn;
+        }
+        syncTodayRowVisual(tr);
+        alert('숙제 체크 저장 실패');
+        await loadTodayAndRender();
+        return;
+      }
 
       tr.dataset.hw = checked ? '1' : '';
       if (checked) {
         tr.dataset.hwRequest = '';
         delete tr.dataset.hwRequestAt;
-        const requestInput = tr.querySelector('.hwRequestChk');
-        const requestPill = tr.querySelector('.homework-request-toggle');
         if (requestInput) {
           requestInput.checked = false;
           requestInput.disabled = true;
@@ -1306,7 +1352,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         if (requestPill) requestPill.dataset.on = '0';
       }
       syncTodayRowVisual(tr);
-      const pill = hc.closest('.c'); if (pill) pill.dataset.on = checked ? '1' : '0';
+      if (pill) pill.dataset.on = checked ? '1' : '0';
       await loadTodayAndRender();
       return;
     }

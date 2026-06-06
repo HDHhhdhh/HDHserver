@@ -1,12 +1,19 @@
 // 전역 상태 한 군데로 모으기 + 초기 로드
 import { api } from './api.js';
 import { todayLocalKey } from './utils.js';
+import { ensureOk } from '../../shared/api.js';
 
 export const state = {
   students: [], videos: [], materials: {}, updates: {}, assigns: {},
   extra: {}, logs: {}, absences: {}, absentByDate: {}, absentSlotsByDate: {}, progress: {},
   schoolCal: {}, testsConfig: { categories: {} },
 };
+
+async function getCriticalJson(url, label) {
+  const response = await fetch(url);
+  await ensureOk(response, label);
+  return await response.json();
+}
 
 export async function bootstrap() {
   const today = todayLocalKey();
@@ -16,12 +23,12 @@ export async function bootstrap() {
     api.get('/api/students'),
     api.get('/api/videos'),
     api.getOr('/api/materials', {}),
-    api.getOr('/api/updates', {}),
+    getCriticalJson('/api/updates', 'admin bootstrap /api/updates'),
     api.getOr('/api/mat-assign', {}),
     api.getOr('/api/extra-attend', {}),
-    api.getOr(`/api/logs?date=${encodeURIComponent(today)}`, {}),
+    getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
     api.getOr('/api/absent', {}),
-    api.getOr(`/api/progress?date=${encodeURIComponent(today)}`, {}),
+    getCriticalJson(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
     api.getOr('/api/school-calendar', {}),
     api.getOr('/api/tests-config', { categories: {} }),
   ]);

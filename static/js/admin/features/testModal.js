@@ -1099,10 +1099,16 @@ function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
   return `${base ? `${base}\n\n` : ''}${replacement}`.trim();
 }
 
-async function patchLogAssignment(items, appendToNotes, newlyAddedItems = []) {
-  const q = new URLSearchParams({ date: editingDate, sid: editingSid }).toString();
-  const latest = await fetchJSONSafe(`/api/logs/entry?${q}`).catch(() => ({}));
-  const entry = latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
+async function fetchLatestLogEntryForAssignment(date, sid) {
+  const q = new URLSearchParams({ date, sid }).toString();
+  const latest = await fetchJSONSafe(`/api/logs/entry?${q}`);
+  return latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
+}
+
+async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], latestEntry = null) {
+  const entry = latestEntry && typeof latestEntry === 'object'
+    ? latestEntry
+    : await fetchLatestLogEntryForAssignment(editingDate, editingSid);
   const clear = [];
   const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
   const currentLabels = new Set(logItems.map(assignmentLabel).filter(Boolean));
@@ -1181,6 +1187,10 @@ async function saveModal(options = {}) {
     }
   });
   const hasAnyTestStatus = Object.values(patchTests).some(status => !!normalizeAssignmentStatus(status));
+  const items = selectedAssignmentObjects();
+  const newlyAddedItems = addedAssignmentNoteItems(items);
+  const appendToNotes = Boolean($('testAppendNotes')?.checked);
+  const latestLogEntry = await fetchLatestLogEntryForAssignment(editingDate, editingSid);
 
   state.progress = state.progress || {};
   state.progress[editingDate] = state.progress[editingDate] || {};
@@ -1204,10 +1214,7 @@ async function saveModal(options = {}) {
     window.progressData = state.progress;
   }
 
-  const items = selectedAssignmentObjects();
-  const newlyAddedItems = addedAssignmentNoteItems(items);
-  const appendToNotes = Boolean($('testAppendNotes')?.checked);
-  await patchLogAssignment(items, appendToNotes, newlyAddedItems);
+  await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
 
   if (options.showPopup !== false) toast('테스트 배정 저장됨');
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
