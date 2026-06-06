@@ -291,6 +291,94 @@ def run_progress_rule_unit_checks() -> None:
     _assert_unit(merged_watch["updatedAt"] == 20, "watch merge must keep newest timestamp")
 
 
+def run_video_completion_unit_checks() -> None:
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"
+    student = {
+        "id": "s1",
+        "curriculum": "ALG",
+        "subCurriculum": "BASE",
+        "autoVideoAssignCount": 2,
+    }
+    videos = [
+        {"mid": "m1", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1"},
+        {"mid": "m2", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "2"},
+    ]
+    completed_progress = {
+        "2026-06-05": {
+            "s1": {
+                "m1": "done",
+                "m2": "skip",
+            },
+        },
+    }
+    latest = api_basic._build_latest_status_by_sid(completed_progress)
+
+    _assert_unit(
+        api_basic._course_videos_completed(videos, "s1", latest),
+        "green done plus red skip video progress must finish the course",
+    )
+
+    updates = {date: {"s1": {"videos": ["m1"], "source": "auto"}}}
+    fixed = api_basic._ensure_today_auto_assign(
+        updates,
+        [student],
+        videos,
+        completed_progress,
+        date_key=date,
+        watch={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(fixed.get(date, {}), "s1") is None,
+        "completed course must clear existing auto video assignment",
+    )
+
+    manual_updates = {date: {"s1": {"videos": ["m1"], "source": "manual"}}}
+    fixed_manual = api_basic._ensure_today_auto_assign(
+        manual_updates,
+        [student],
+        videos,
+        completed_progress,
+        date_key=date,
+        watch={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(fixed_manual.get(date, {}), "s1"),
+        "completed course must preserve explicit manual video assignment",
+    )
+
+
+def run_video_completion_source_checks() -> None:
+    admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
+
+    for path, source in [
+        ("static/js/admin/features/videoModal.js", video_modal_js),
+        ("static/js/admin/features/logModal.js", log_modal_js),
+    ]:
+        _assert_unit(
+            "VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip'])" in source,
+            f"{path} must define green/red finished video progress statuses",
+        )
+        _assert_unit(
+            "function isFinishedVideoProgressStatus" in source,
+            f"{path} must use a named finished progress predicate",
+        )
+
+    _assert_unit(
+        "mids.every(mid => isFinishedVideoProgressStatus(latest[mid]))" in video_modal_js,
+        "video modal course completion must count green done plus red skip",
+    )
+    _assert_unit(
+        "cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state))" in log_modal_js,
+        "log modal cleanup must count green done plus red skip",
+    )
+    _assert_unit(
+        "초록(done) 또는 빨강(skip)" in admin_chat_py and "자동 영상 배정은 멈춥니다" in admin_chat_py,
+        "admin chatbot video-progress knowledge must mention green/red completion and stopped auto assignment",
+    )
 
 
 def run_watch_route_progress_unit_checks() -> None:
@@ -523,6 +611,175 @@ def run_log_repository_unit_checks() -> None:
         _assert_unit("C:" not in error and "runtime" not in error, "conflict json failure error must not expose raw local paths")
 
 
+def run_student_assigned_tests_unit_checks() -> None:
+    from routes.api_basic import _student_assigned_tests_for_date
+
+    sid = "s1"
+    prev_date = "2026-05-30"
+    date = "2026-05-31"
+    old_label = "테스트 / 대수 / 기존"
+    new_label = "테스트 / 대수 / 신규"
+    daily_label = "테스트 / 대수 / 일일메타"
+    stale_daily_label = "테스트 / 대수 / stale-daily"
+    skipped_label = "테스트 / 대수 / 제외"
+
+    progress = {
+        prev_date: {
+            sid: {
+                "tests": {
+                    old_label: "assigned",
+                    new_label: "skip",
+                    skipped_label: "skip",
+                },
+            },
+        },
+        date: {
+            sid: {
+                "tests": {
+                    old_label: "assigned",
+                    new_label: "assigned",
+                    daily_label: "assigned",
+                    skipped_label: "skip",
+                },
+            },
+        },
+    }
+    logs = {
+        date: {
+            sid: {
+                "assignedTests": [
+                    {"label": old_label, "name": "기존", "status": "assigned"},
+                    {"label": new_label, "name": "신규", "status": "assigned"},
+                    {"label": daily_label, "name": "일일메타", "status": "assigned"},
+                    {"label": skipped_label, "name": "제외", "status": "skip"},
+                ],
+                "testAssignmentDailyTests": [
+                    {"label": old_label, "name": "기존", "status": "assigned"},
+                    {"label": daily_label, "name": "일일메타", "status": "assigned"},
+                    {"label": stale_daily_label, "name": "stale-daily", "status": "assigned"},
+                ],
+            },
+        },
+    }
+
+    items = _student_assigned_tests_for_date(progress, logs, date, sid, logs)
+    labels = [item.get("label") for item in items]
+    _assert_unit(daily_label in labels, "daily test metadata must still be shown")
+    _assert_unit(new_label in labels, "new assigned test after previous skip must be shown")
+    _assert_unit(stale_daily_label not in labels, "stale daily metadata absent from current progress must not be shown")
+    _assert_unit(old_label not in labels, "previously active test must not be resurrected as today's test")
+    _assert_unit(skipped_label not in labels, "current skip test must not be shown")
+
+    no_daily_logs = {
+        date: {
+            sid: {
+                "assignedTests": logs[date][sid]["assignedTests"],
+            },
+        },
+    }
+    no_daily_items = _student_assigned_tests_for_date(progress, no_daily_logs, date, sid, no_daily_logs)
+    no_daily_labels = [item.get("label") for item in no_daily_items]
+    _assert_unit(
+        no_daily_labels == [new_label, daily_label],
+        "without daily metadata, only newly active tests should be shown",
+    )
+
+    previous_log_only_label = "테스트 / 대수 / 이전 로그"
+    progress_with_log_history = {
+        date: {
+            sid: {
+                "tests": {
+                    previous_log_only_label: "assigned",
+                    new_label: "assigned",
+                },
+            },
+        },
+    }
+    logs_with_history = {
+        prev_date: {
+            sid: {
+                "assignedTests": [
+                    {"label": previous_log_only_label, "name": "이전 로그", "status": "assigned"},
+                ],
+            },
+        },
+        date: {
+            sid: {
+                "assignedTests": [
+                    {"label": previous_log_only_label, "name": "이전 로그", "status": "assigned"},
+                    {"label": new_label, "name": "신규", "status": "assigned"},
+                ],
+            },
+        },
+    }
+    log_history_items = _student_assigned_tests_for_date(
+        progress_with_log_history,
+        {date: logs_with_history[date]},
+        date,
+        sid,
+        logs_with_history,
+    )
+    log_history_labels = [item.get("label") for item in log_history_items]
+    _assert_unit(
+        log_history_labels == [new_label],
+        "previous log-only assignments must block resurfacing on the student page",
+    )
+
+    completed_label = "REVIEW / ALG / high / 7 / completed"
+    current_reassigned_label = "UNIT / ALG / Lv.5 / 2 / reassigned"
+    progress_with_completed_history = {
+        prev_date: {
+            sid: {
+                "tests": {
+                    completed_label: "done",
+                    current_reassigned_label: "done",
+                },
+            },
+        },
+        date: {
+            sid: {
+                "tests": {
+                    completed_label: "done",
+                    current_reassigned_label: "assigned",
+                },
+            },
+        },
+    }
+    logs_with_completed_history = {
+        prev_date: {
+            sid: {
+                "assignedTests": [
+                    {"label": completed_label, "name": "completed", "status": "done"},
+                    {"label": current_reassigned_label, "name": "reassigned", "status": "done"},
+                ],
+            },
+        },
+        date: {
+            sid: {
+                "assignedTests": [
+                    {"label": completed_label, "name": "completed", "status": "done"},
+                    {"label": current_reassigned_label, "name": "reassigned", "status": "assigned"},
+                ],
+            },
+        },
+    }
+    completed_history_items = _student_assigned_tests_for_date(
+        progress_with_completed_history,
+        {date: logs_with_completed_history[date]},
+        date,
+        sid,
+        logs_with_completed_history,
+    )
+    completed_history_labels = [item.get("label") for item in completed_history_items]
+    _assert_unit(
+        completed_label not in completed_history_labels,
+        "completed tests must not load on the student page",
+    )
+    _assert_unit(
+        current_reassigned_label in completed_history_labels,
+        "today's assigned test must load even when the same label was completed before",
+    )
+
 
 def run_admin_chat_contract_source_checks() -> None:
     admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
@@ -558,6 +815,7 @@ def run_admin_chat_contract_source_checks() -> None:
 
 def run_admin_wave_b_source_checks() -> None:
     state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
+    main_js = (ROOT / "static/js/admin/main.js").read_text("utf-8")
     today_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
 
     _assert_unit(
@@ -596,6 +854,11 @@ def run_admin_wave_b_source_checks() -> None:
     ]:
         _assert_unit(critical_call in state_js, f"critical bootstrap call must be strict: {critical_call}")
 
+    _assert_unit("try {\n  await bootstrap();" in main_js, "main bootstrap failure must be caught explicitly")
+    _assert_unit(
+        "alert('관리자 초기 데이터를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');" in main_js,
+        "main bootstrap failure must be visible to the admin",
+    )
 
     marker = "// Homework completion is the single visible homework flag."
     start = today_js.index(marker)
@@ -1881,8 +2144,11 @@ def run_unit_checks() -> bool:
     checks = [
         run_log_rules_unit_checks,
         run_progress_rule_unit_checks,
+        run_video_completion_unit_checks,
+        run_video_completion_source_checks,
         run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
+        run_student_assigned_tests_unit_checks,
         run_admin_chat_contract_source_checks,
         run_admin_wave_b_source_checks,
         run_admin_wave_b_behavior_checks,

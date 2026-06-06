@@ -107,6 +107,59 @@ function setAbsenceMapsSafely({ byDate, byStudent, bySlot } = {}) {
   ensureWindowStateAlias();
 }
 
+function parseSlotNumbers(raw) {
+  const values = Array.isArray(raw) ? raw : [raw];
+  const slots = values.flatMap(value => {
+    const matches = String(value ?? '').match(/\d+/g) || [];
+    return matches.map(n => parseInt(n, 10));
+  }).filter(n => n === 1 || n === 2);
+  return Array.from(new Set(slots)).sort((a, b) => a - b);
+}
+
+function rowSlotsForAbsence(dateKey, sid, tr) {
+  const weekendSlots =
+    parseSlotNumbers(state.weekendSlots?.[dateKey]?.[String(sid)])
+      .concat(parseSlotNumbers(window.weekendSlots?.[dateKey]?.[String(sid)]));
+  const labelText = tr?.querySelector?.('.slotLabel')?.textContent || labelFor(dateKey, sid);
+  const labelSlots = parseSlotNumbers(labelText);
+  return Array.from(new Set([...weekendSlots, ...labelSlots])).sort((a, b) => a - b);
+}
+
+async function markMakeupDemandOpen(dateKey, sid, slots) {
+  const date = String(dateKey || '').trim();
+  const studentId = String(sid || '').trim();
+  const slotList = parseSlotNumbers(slots);
+  if (!date || !studentId) return;
+
+  const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+  const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+  const next = latest && typeof latest === 'object' ? latest : {};
+  const byAbsence = next.by_absence && typeof next.by_absence === 'object' ? next.by_absence : {};
+  const dateRows = { ...(byAbsence[date] || {}) };
+  const updatedAt = new Date().toISOString();
+
+  (slotList.length ? slotList : ['']).forEach(slot => {
+    const key = slot ? `${studentId}|${slot}` : studentId;
+    const prev = dateRows[key] || {};
+    dateRows[key] = {
+      ...prev,
+      state: 'open',
+      updatedAt,
+      note: prev.note || '',
+    };
+  });
+
+  byAbsence[date] = dateRows;
+  next.by_absence = byAbsence;
+
+  const res = await fetch('/api/makeup-carryover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(next),
+  });
+  if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+}
+
 // Normalize absence maps once at module boot.
 (function bootAbsenceMaps() {
   state.absentByDate = looksLikeAbsentByDateMap(state.absentByDate) ? normalizeAbsentByDateMap(state.absentByDate) : (state.absentByDate || {});
@@ -285,7 +338,7 @@ function attachSortable(dateKey, alphaSortOnly) {
     .self-study-toggle[data-on="1"]{background:rgba(100,116,139,.13);border-color:rgba(100,116,139,.55)}
     body.dark .self-study-toggle{background:rgba(2,6,23,.55);border-color:#334155}
     #todayWrap table.today-table{min-width:1228px;table-layout:fixed;font-size:15px}
-    #doneWrap table.done-table{min-width:712px;table-layout:fixed;font-size:15px}
+    #doneWrap table.done-table{min-width:776px;table-layout:fixed;font-size:15px}
     .today-table th,.today-table td,.done-table th,.done-table td{overflow:hidden;text-overflow:ellipsis}
     .done-table th,.done-table td{text-align:center;vertical-align:middle}
     .today-table th{font-size:14px}
@@ -406,6 +459,7 @@ function _slotGroupsFromLabelAndArrive(labelText, arriveTime) {
 }
 
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
+const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
 const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
 
@@ -427,6 +481,106 @@ function progressEntryForSid(day, sid) {
   const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
   const entry = matchedSid ? day[matchedSid] : null;
   return (entry && typeof entry === 'object') ? entry : {};
+}
+
+function normalizeTestAssignmentStatus(status) {
+  const raw = status && typeof status === 'object' ? status.status : status;
+  const s = String(raw || '').trim();
+  if (!s || s === 'none') return '';
+  if (s === 'assigned' || s === 'done' || s === 'interrupted' || s === 'skip') return s;
+  return 'assigned';
+}
+
+function completeAssignedTestItems(items) {
+  if (!Array.isArray(items)) return { changed: false, items: null };
+  let changed = false;
+  const nextItems = items.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    const status = normalizeTestAssignmentStatus(item.status || 'assigned');
+    if (status !== 'assigned') return item;
+    changed = true;
+    return { ...item, status: 'done', statusLabel: '완료' };
+  });
+  return { changed, items: changed ? nextItems : null };
+}
+
+function assignedTestCompletionPatch(progressEntry) {
+  const tests = progressEntry?.tests;
+  if (!tests || typeof tests !== 'object') return {};
+
+  const patch = {};
+  Object.entries(tests).forEach(([label, status]) => {
+    const labelKey = String(label || '').trim();
+    if (!labelKey || normalizeTestAssignmentStatus(status) !== 'assigned') return;
+    patch[labelKey] = status && typeof status === 'object'
+      ? { ...status, status: 'done' }
+      : 'done';
+  });
+  return patch;
+}
+
+function recordCleanupLogTestPatch(dateKey, sid) {
+  const entry = logEntryForSid(dateKey, sid);
+  const patch = {};
+
+  [TEST_ASSIGN_DAILY_ITEMS_KEY, 'assignedTests'].forEach(key => {
+    const result = completeAssignedTestItems(entry?.[key]);
+    if (result.changed) patch[key] = result.items;
+  });
+
+  return patch;
+}
+
+async function fetchProgressEntryForCleanup(dateKey, sid) {
+  const current = progressEntryForSid(state.progress?.[dateKey], sid);
+  if (Object.keys(current).length) return current;
+
+  const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) return {};
+  const data = await res.json().catch(() => ({}));
+  const day = data?.[dateKey] && typeof data[dateKey] === 'object' ? data[dateKey] : {};
+  const entry = progressEntryForSid(day, sid);
+  if (Object.keys(entry).length) {
+    state.progress = state.progress || {};
+    state.progress[dateKey] = state.progress[dateKey] || {};
+    state.progress[dateKey][String(sid)] = entry;
+    window.progressData = state.progress;
+    ensureWindowStateAlias();
+  }
+  return entry;
+}
+
+async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
+  if (isSidAbsentOn(dateKey, sid)) return {};
+
+  const logPatch = recordCleanupLogTestPatch(dateKey, sid);
+  const progressEntry = await fetchProgressEntryForCleanup(dateKey, sid);
+  const progressTests = assignedTestCompletionPatch(progressEntry);
+
+  if (Object.keys(progressTests).length) {
+    const res = await fetch('/api/progress/patch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: dateKey,
+        sid,
+        progress: { tests: progressTests },
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `/api/progress/patch ${res.status}`);
+    if (data?.progress && typeof data.progress === 'object') {
+      state.progress = state.progress || {};
+      state.progress[dateKey] = state.progress[dateKey] || {};
+      state.progress[dateKey][String(sid)] = data.progress;
+      window.progressData = state.progress;
+      ensureWindowStateAlias();
+    }
+  }
+
+  return logPatch;
 }
 
 function shouldSkipForLow(student, video) {
@@ -574,12 +728,13 @@ function _ensureDoneTableIfMissing() {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:72px"><col style="width:120px"><col style="width:84px">
+        <col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
         <col style="width:112px"><col style="width:268px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
           <th>구분</th>
+          <th title="등원시간">등원</th>
           <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
@@ -690,6 +845,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
 
   const sid = String(tr.dataset.sid || '');
   const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive);
+  const arriveTitle = (tr.dataset.att === '1' || isAttended(dateKey, sid)) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
 
   const newRow = document.createElement('tr');
   newRow.dataset.sid = sid;
@@ -699,6 +855,14 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
   newRow.innerHTML = `
     <td class="today-slot-cell">${label}</td>
+    <td class="att-time done-arrive-cell">
+      <span class="arriveLabel" contenteditable="true" spellcheck="false"
+            data-orig="${escapeAttr(arrive)}"
+            title="${arriveTitle}"
+            style="display:inline-block;min-width:44px;padding:2px 4px;border-radius:6px;border:1px solid transparent">
+        ${escapeAttr(arrive)}
+      </span>
+    </td>
     <td class="today-name-cell">${nameCellHtml}</td>
     <td class="today-school-cell">${school || ''}</td>
     <td class="today-curriculum-cell">${curLabel || ''}</td>
@@ -920,12 +1084,21 @@ export function renderDone(doneEntries) {
     const slotGroup = _slotGroupsFromLabelAndArrive(label, arriveTime);
     const hwChecked = truthy(entry?.hwChecked);
     const selfStudy = truthy(entry?.selfStudy) || isSelfStudy(date, sid);
+    const arriveTitle = isAttended(date, sid) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
 
     return `
       <tr data-sid="${sid}" data-date="${date}" ${slotGroup ? `data-slot-group="${slotGroup}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
         <td class="today-slot-cell">${label}</td>
+        <td class="att-time done-arrive-cell">
+          <span class="arriveLabel" contenteditable="true" spellcheck="false"
+                data-orig="${escapeAttr(arriveTime || '')}"
+                title="${arriveTitle}"
+                style="display:inline-block;min-width:44px;padding:2px 4px;border-radius:6px;border:1px solid transparent">
+            ${escapeAttr(arriveTime || '')}
+          </span>
+        </td>
         <td class="today-name-cell">
-          ${s ? `<a href="/student/${s.id}" target="_blank" class="stuName">${name}</a>`
+          ${s ? `<a href="/student/${s.id}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${name}</a>`
               : `<span class="stuName">${name}</span>`
           }
         </td>
@@ -948,12 +1121,13 @@ export function renderDone(doneEntries) {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:72px"><col style="width:120px"><col style="width:84px">
+        <col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
         <col style="width:112px"><col style="width:268px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
           <th>구분</th>
+          <th title="등원시간">등원</th>
           <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
@@ -1435,6 +1609,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const tr = absentBtn.closest('tr[data-sid][data-date]'); if (!tr) return;
         const sid = String(tr.dataset.sid);
         const dateKey = tr.dataset.date || getAdminDate();
+        const absenceSlots = rowSlotsForAbsence(dateKey, sid, tr);
 
         const prevAttended = isAttended(dateKey, sid);
         const prevContacted = isContacted(dateKey, sid);
@@ -1458,7 +1633,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
           setContacted(dateKey, sid, prevContacted);
           document.dispatchEvent(new CustomEvent('attendance:updated'));
           alert('결석 전에 출석/연락 정리 실패');
-          await loadTodayAndRender();
+          await loadTodayAndRender({ force: true });
           return;
         }
 
@@ -1470,7 +1645,12 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         state.absences[sid] = dateKey;
         const cur = Array.isArray(state.absentByDate[dateKey]) ? state.absentByDate[dateKey].map(String) : [];
         state.absentByDate[dateKey] = Array.from(new Set([...cur, sid]));
-        if (state.absentSlotsByDate[dateKey]) {
+        if (absenceSlots.length) {
+          state.absentSlotsByDate[dateKey] = {
+            ...(state.absentSlotsByDate[dateKey] || {}),
+            [sid]: absenceSlots,
+          };
+        } else if (state.absentSlotsByDate[dateKey]) {
           delete state.absentSlotsByDate[dateKey][sid];
           if (!Object.keys(state.absentSlotsByDate[dateKey]).length) delete state.absentSlotsByDate[dateKey];
         }
@@ -1499,9 +1679,15 @@ export function bindTodayTableEvents(loadTodayAndRender) {
           const bySlot = data?.by_slot || data?.absentSlotsByDate || (data?.ok ? data?.by_slot : null);
 
           setAbsenceMapsSafely({ byDate, byStudent: byStu, bySlot });
+          try {
+            await markMakeupDemandOpen(dateKey, sid, absenceSlots);
+          } catch (openErr) {
+            console.error(openErr);
+            alert('결석은 저장됐지만 보강 잡기 명단 갱신에 실패했습니다.');
+          }
 
           toast('결석 처리됨');
-          await loadTodayAndRender();
+          await loadTodayAndRender({ force: true });
 
           if (typeof window.recalcCalendarCounts === 'function') window.recalcCalendarCounts();
         } catch (e2) {
@@ -1556,7 +1742,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
           // doneWrap이 "archived != true" 전체를 렌더하므로,
           // 수동으로 행을 옮기면 중복이 생길 수 있다.
           // 저장 후 전체 재렌더로 단일 소스를 유지한다.
-          await loadTodayAndRender();
+          await loadTodayAndRender({ force: true });
         } catch (err) {
           console.error(err);
           alert('하원 저장 실패');
@@ -1577,7 +1763,8 @@ export function bindTodayTableEvents(loadTodayAndRender) {
             await patchLog(date, sid, { done: false }, ['archived']);
             toast('하원 취소됨');
           } else {
-            await patchLog(date, sid, { archived: true });
+            const testPatch = await completeAssignedTestsForRecordCleanup(date, sid);
+            await patchLog(date, sid, { ...testPatch, archived: true });
             toast('기록 정리됨');
           }
           await loadTodayAndRender();

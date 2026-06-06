@@ -36,6 +36,7 @@ const MAX_AUTO_ASSIGN_COUNT = 10;
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 const WATCH_DONE_RATIO = 0.90;
 const WATCH_INTERRUPTED_RATIO = 0.05;
+const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
 const STUDENT_POPUP_BASE_DPR = window.__studentPopupBaseDpr || (window.devicePixelRatio || 1);
 window.__studentPopupBaseDpr = STUDENT_POPUP_BASE_DPR;
 
@@ -944,6 +945,10 @@ function watchAutoState(entry) {
   return '';
 }
 
+function isFinishedVideoProgressStatus(status) {
+  return VIDEO_PROGRESS_FINISHED_STATUSES.has(String(status || '').trim());
+}
+
 async function fetchLatestWatchForSid(sid) {
   const key = String(sid || '').trim();
   if (!key) return {};
@@ -1001,7 +1006,7 @@ function isCourseProgressComplete(curVids, sid, maxDate) {
   if (!mids.length) return false;
 
   const latest = latestProgressStatusForSid(sid, maxDate);
-  return mids.every(mid => latest[mid] === 'done');
+  return mids.every(mid => isFinishedVideoProgressStatus(latest[mid]));
 }
 
 function renderAutoAssignControl(stu) {
@@ -1225,7 +1230,7 @@ export function initVideoModal() {
 
       const blocked = {};
       for (const [mid, st] of Object.entries(lastStatus)) {
-        if (st === 'done' || st === 'skip') blocked[mid] = true;
+        if (isFinishedVideoProgressStatus(st)) blocked[mid] = true;
       }
 
       activeBlockedMids = blocked;

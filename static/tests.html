@@ -789,6 +789,39 @@
       outline-offset: 3px;
     }
 
+    body.admin.tests-page .rule-save-toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 1000;
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
+      border: 1px solid color-mix(in oklab, var(--accent) 44%, var(--line) 56%);
+      border-radius: 12px;
+      background: color-mix(in oklab, var(--card) 88%, var(--accent) 12%);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 800;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity .16s ease, transform .16s ease;
+    }
+
+    body.admin.tests-page .rule-save-toast.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    body.admin.tests-page .rule-save-toast[data-kind="error"] {
+      border-color: rgba(239, 68, 68, .38);
+      background: color-mix(in oklab, var(--card) 86%, #ef4444 14%);
+    }
+
     body.admin.tests-page .stat-title {
       display: flex;
       flex-direction: column;
@@ -1160,9 +1193,6 @@
         <div class="card-scroll">
           <div class="card-sub">네 가지 테스트 분류를 각각 별도 표로 관리합니다. 테스트 배정 팝업은 이 기준으로 기본 과목/난이도/회차를 먼저 보여주고, 클릭한 테스트만 배정됩니다.</div>
           <div id="ruleGrid" class="panel-table-wrap"></div>
-          <div class="btn-row" style="margin-top:12px">
-            <button id="btnSaveRules" class="btn" type="button">규칙 저장</button>
-          </div>
         </div>
       </section>
 

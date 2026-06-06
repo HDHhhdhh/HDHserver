@@ -16,10 +16,21 @@ from core.paths import (
     BASE,
     STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH,
     EXTRA_PATH, LOGS_PATH, CLINIC_PATH, TODAY_ORDER_PATH, WEEKEND_SLOTS_PATH,
-    WATCH_PATH,
+    WATCH_PATH, TESTS_CFG_PATH,
+)
+from core.ghost_student import (
+    GHOST_STUDENT_ID,
+    GHOST_STUDENT_WRITE_ERROR,
+    is_ghost_student_sid,
+    mapping_contains_ghost_student_sid,
 )
 from core.log_repository import LogRepository
 from core import log_rules as _log_rules
+from core.network_access import (
+    ACADEMY_ACCESS_MESSAGE,
+    academy_network_allowed,
+    strip_answer_link_fields,
+)
 from core.progress_rules import (
     PROGRESS_ALL_STUDENTS_META_KEY,
     PROGRESS_MANUAL_META_KEY,
@@ -36,6 +47,9 @@ bp_api_basic = Blueprint("api_basic", __name__)
 
 CT = {"Content-Type": "application/json"}
 STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^"
+GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
+GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
+GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
 
 # ─────────────────────────────────────────────
 # 공통 CRUD
@@ -340,11 +354,17 @@ def _normalize_test_assignment_status(value) -> str:
 
 def _test_assignment_status_label(status: str) -> str:
     s = _normalize_test_assignment_status(status)
+    if s == "done":
+        return "완료"
     if s == "interrupted":
         return "배부"
     if s == "skip":
         return "제외"
     return "배정" if s else ""
+
+
+def _is_active_test_assignment_status(status: str) -> bool:
+    return _normalize_test_assignment_status(status) in {"assigned", "interrupted"}
 
 
 def _round_label_for_assignment(value) -> str:
@@ -397,33 +417,102 @@ def _normalized_test_status_map(tests) -> dict:
 
 
 def _latest_previous_test_statuses(progress_all: dict, date: str, sid: str) -> dict:
-    if not isinstance(progress_all, dict):
+    return _latest_previous_test_statuses_from_sources(progress_all, None, date, sid)
+
+
+def _log_test_statuses_for_sid(logs_map: dict | None, date: str, sid: str) -> dict:
+    if not isinstance(logs_map, dict):
         return {}
-    previous_dates = []
-    for raw_date in progress_all.keys():
-        raw_date_s = str(raw_date or "")
-        if DATE_RE.match(raw_date_s) and raw_date_s < str(date):
-            previous_dates.append(raw_date_s)
-    for prev_date in sorted(previous_dates, reverse=True):
-        prev_day = progress_all.get(prev_date)
-        prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
-        if not isinstance(prev_entry, dict):
+    day_logs = logs_map.get(date)
+    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+    if not isinstance(log_entry, dict):
+        return {}
+
+    out = {}
+    for field in (TEST_ASSIGN_DAILY_ITEMS_KEY, "assignedTests"):
+        items = log_entry.get(field)
+        if not isinstance(items, list):
             continue
-        if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
-            break
-        prev_statuses = _normalized_test_status_map(prev_entry.get("tests"))
-        if prev_statuses:
-            return prev_statuses
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            label = _assigned_test_label(raw)
+            status = _normalize_test_assignment_status(raw.get("status") or "assigned")
+            if label and _is_active_test_assignment_status(status):
+                out[label] = status
+    return out
+
+
+def _latest_previous_test_statuses_from_sources(
+    progress_all: dict,
+    logs_map: dict | None,
+    date: str,
+    sid: str,
+) -> dict:
+    previous_date_keys = set()
+    for source in (progress_all, logs_map):
+        if not isinstance(source, dict):
+            continue
+        for raw_date in source.keys():
+            raw_date_s = str(raw_date or "")
+            if DATE_RE.match(raw_date_s) and raw_date_s < str(date):
+                previous_date_keys.add(raw_date_s)
+
+    for prev_date in sorted(previous_date_keys, reverse=True):
+        prev_day = progress_all.get(prev_date) if isinstance(progress_all, dict) else {}
+        prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
+        if isinstance(prev_entry, dict):
+            if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
+                break
+            prev_tests = prev_entry.get("tests")
+            if isinstance(prev_tests, dict) and prev_tests:
+                prev_statuses = _normalized_test_status_map(prev_tests)
+                # Previous skip means inactive/excluded, so it must not hide a
+                # test that became newly assigned on the current date.
+                return {
+                    label: status
+                    for label, status in prev_statuses.items()
+                    if _is_active_test_assignment_status(status)
+                }
+        log_statuses = _log_test_statuses_for_sid(logs_map, prev_date, sid)
+        if log_statuses:
+            return log_statuses
     return {}
 
 
 def _normalize_test_answer_round(round_value) -> str:
     raw = str(round_value or "1").strip()
-    if raw in {"2", "2회", "2회차"}:
-        return "2"
-    if raw in {"3", "3회", "3회차"}:
-        return "3"
+    match = re.search(r"\d+", raw)
+    if match:
+        return match.group(0)
     return "1"
+
+
+def _drive_file_url(file_id: str) -> str:
+    fid = str(file_id or "").strip()
+    return f"https://drive.google.com/file/d/{fid}/view?usp=drivesdk" if fid else ""
+
+
+def _load_tests_config_for_answer_links() -> dict:
+    try:
+        mtime = TESTS_CFG_PATH.stat().st_mtime
+    except FileNotFoundError:
+        _TESTS_CONFIG_CACHE.update({"mtime": None, "data": {}})
+        return {}
+    except Exception:
+        return _TESTS_CONFIG_CACHE.get("data") or {}
+
+    if _TESTS_CONFIG_CACHE.get("mtime") == mtime:
+        return _TESTS_CONFIG_CACHE.get("data") or {}
+
+    try:
+        data = json.loads(TESTS_CFG_PATH.read_text("utf-8-sig"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _TESTS_CONFIG_CACHE.update({"mtime": mtime, "data": data})
+    return data
 
 
 def _load_test_answer_link_map() -> dict:
@@ -452,29 +541,55 @@ def _answer_url_from_link_entry(entry) -> str:
     if isinstance(entry, str):
         return entry.strip()
     if isinstance(entry, dict):
-        for key in ("answerUrl", "answer_url", "url", "link"):
+        for key in ("answerUrl", "answer_url", "solutionUrl", "solution_url", "url", "link"):
             value = str(entry.get(key) or "").strip()
             if value:
                 return value
     return ""
 
 
-def _test_assignment_is_unit(item: dict) -> bool:
+def _test_assignment_category_key(item: dict) -> str:
     source = " ".join(str(item.get(key) or "") for key in (
         "category", "categoryKey", "categoryLabel", "label", "type"
     ))
-    return bool(re.search(r"\bUNIT\b", source, re.I) or "단원평가" in source or "단원" in source)
+    upper = source.upper()
+    compact = re.sub(r"\s+", "", source)
+    if re.search(r"\bUNIT\b", upper) or "\ub2e8\uc6d0\ud3c9\uac00" in source or "\ub2e8\uc6d0" in source:
+        return "UNIT"
+    if "REVIEW" in upper or "\ubcf5\uc2b5" in compact:
+        return "REVIEW"
+    if "SCHOOL_PAST" in upper or "SCHOOL" in upper or "\ud559\uad70\uc9c0" in compact or "\ud559\uad50\ubcc4" in compact:
+        return "SCHOOL_PAST"
+    return ""
 
 
-def _test_assignment_answer_url(item: dict) -> str:
-    if not isinstance(item, dict) or not _test_assignment_is_unit(item):
+def _test_assignment_has_answer_link(item: dict) -> bool:
+    return _test_assignment_category_key(item) in {"UNIT", "REVIEW", "SCHOOL_PAST"}
+
+
+def _test_config_answer_url(test: dict) -> str:
+    if not isinstance(test, dict):
         return ""
+    direct = _answer_url_from_link_entry(test)
+    if direct:
+        return direct
+    source_files = test.get("sourceFiles") or test.get("source_files")
+    if isinstance(source_files, dict):
+        direct = _answer_url_from_link_entry(source_files)
+        if direct:
+            return direct
+        for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
+            url = _drive_file_url(source_files.get(key))
+            if url:
+                return url
+    for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
+        url = _drive_file_url(test.get(key))
+        if url:
+            return url
+    return ""
 
-    link_map = _load_test_answer_link_map()
-    if not link_map:
-        return ""
 
-    round_key = _normalize_test_answer_round(item.get("round"))
+def _candidate_test_ids(item: dict) -> list[str]:
     candidates = []
     for key in ("id", "testId", "sourceId", "source_id"):
         raw = str(item.get(key) or "").strip()
@@ -484,12 +599,78 @@ def _test_assignment_answer_url(item: dict) -> str:
         stripped = re.sub(r"_r[123]$", "", raw)
         if stripped != raw:
             candidates.append(stripped)
-
+    out = []
     seen = set()
-    for test_id in candidates:
-        if not test_id or test_id in seen:
+    for value in candidates:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _find_test_config_for_assignment(item: dict) -> dict:
+    category_key = _test_assignment_category_key(item)
+    if category_key not in {"REVIEW", "SCHOOL_PAST"}:
+        return {}
+
+    config = _load_tests_config_for_answer_links()
+    category = (config.get("categories") or {}).get(category_key) if isinstance(config, dict) else {}
+    tests = category.get("tests") if isinstance(category, dict) else []
+    if not isinstance(tests, list):
+        return {}
+
+    ids = set(_candidate_test_ids(item))
+    if ids:
+        for test in tests:
+            if not isinstance(test, dict):
+                continue
+            test_ids = {
+                str(test.get("id") or "").strip(),
+                str(test.get("sourceId") or test.get("source_id") or "").strip(),
+            }
+            if ids.intersection(x for x in test_ids if x):
+                return test
+
+    item_name = str(item.get("name") or item.get("testName") or "").strip()
+    item_label = str(item.get("label") or "").strip()
+    item_round = _normalize_test_answer_round(item.get("round"))
+    item_cur = str(item.get("curriculum") or "").strip()
+    item_difficulty = str(item.get("difficulty") or "").strip()
+    item_term = str(item.get("term") or "").strip()
+
+    for test in tests:
+        if not isinstance(test, dict):
             continue
-        seen.add(test_id)
+        test_name = str(test.get("name") or "").strip()
+        name_ok = item_name == test_name if item_name else bool(test_name and test_name in item_label)
+        if not name_ok:
+            continue
+        if item_round and _normalize_test_answer_round(test.get("round")) != item_round:
+            continue
+        if item_cur and str(test.get("curriculum") or "").strip() != item_cur:
+            continue
+        if item_difficulty and str(test.get("difficulty") or "").strip() != item_difficulty:
+            continue
+        if item_term and str(test.get("term") or "").strip() != item_term:
+            continue
+        return test
+    return {}
+
+
+def _test_assignment_answer_url(item: dict) -> str:
+    if not isinstance(item, dict) or not _test_assignment_has_answer_link(item):
+        return ""
+
+    config_url = _test_config_answer_url(_find_test_config_for_assignment(item))
+    if config_url:
+        return config_url
+
+    link_map = _load_test_answer_link_map()
+    if not link_map:
+        return ""
+
+    round_key = _normalize_test_answer_round(item.get("round"))
+    for test_id in _candidate_test_ids(item):
         rounds = link_map.get(test_id)
         if isinstance(rounds, dict):
             url = _answer_url_from_link_entry(rounds.get(round_key))
@@ -562,12 +743,41 @@ def _student_assigned_tests_for_date(
     if not log_labels:
         collect_log_items(fallback_logs_map)
 
-    previous_statuses = {} if daily_labels else _latest_previous_test_statuses(progress_all, date, sid)
+    history_logs_map = fallback_logs_map if isinstance(fallback_logs_map, dict) else logs_map
+    previous_statuses = _latest_previous_test_statuses_from_sources(
+        progress_all,
+        history_logs_map,
+        date,
+        sid,
+    )
 
     if daily_labels:
-        labels = list(daily_labels)
+        if status_by_label:
+            labels = [
+                label
+                for label in daily_labels
+                if (
+                    label in status_by_label
+                    and _is_active_test_assignment_status(status_by_label.get(label))
+                    and label not in previous_statuses
+                )
+            ]
+            for label, status in status_by_label.items():
+                if not _is_active_test_assignment_status(status) or label in previous_statuses or label in labels:
+                    continue
+                labels.append(label)
+        else:
+            labels = [
+                label
+                for label in daily_labels
+                if label not in previous_statuses
+            ]
     else:
-        active_labels = list(status_by_label.keys()) or list(log_labels)
+        active_labels = [
+            label
+            for label, status in status_by_label.items()
+            if _is_active_test_assignment_status(status)
+        ] if status_by_label else list(log_labels)
         labels = [label for label in active_labels if label not in previous_statuses]
 
     out = []
@@ -578,7 +788,7 @@ def _student_assigned_tests_for_date(
             or _normalize_test_assignment_status(item.get("status"))
             or "assigned"
         )
-        if status == "skip":
+        if not _is_active_test_assignment_status(status):
             continue
         if not item:
             item = _fallback_assigned_test_from_label(label, status)
@@ -845,6 +1055,144 @@ def _repair_log_entry_placeholders(entry: dict, sid: str) -> dict:
     return out
 
 
+def _student_homework_book_names_from_log(entry: dict) -> list[str]:
+    if not isinstance(entry, dict):
+        return []
+
+    rows = entry.get("homeworkTable")
+    if not isinstance(rows, list):
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("_deleted"):
+            continue
+        book = _clean_placeholder_text(row.get("book"))
+        key = _book_key(book)
+        if not book or not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(book)
+    return out
+
+
+def _academy_restricted_assigned_tests(items: list[dict], academy_allowed: bool) -> list[dict]:
+    if academy_allowed:
+        return items
+
+    out: list[dict] = []
+    for item in items or []:
+        stripped, had_answer_link = strip_answer_link_fields(item)
+        if isinstance(stripped, dict) and had_answer_link:
+            stripped["answerRestricted"] = True
+        out.append(stripped)
+    return out
+
+
+def _academy_restricted_student_videos(items: list[dict], academy_allowed: bool) -> list[dict]:
+    if academy_allowed:
+        return items
+
+    blocked_keys = {
+        "url",
+        "link",
+        "src",
+        "source",
+        "playUrl",
+        "play_url",
+        "streamUrl",
+        "stream_url",
+        "embedUrl",
+        "embed_url",
+    }
+    out: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        for key in blocked_keys:
+            next_item.pop(key, None)
+        next_item["playbackRestricted"] = True
+        out.append(next_item)
+    return out
+
+
+def _is_ghost_student_sid(sid: str) -> bool:
+    return is_ghost_student_sid(sid)
+
+
+def _ghost_student_bootstrap(date: str):
+    ghost_student = {
+        "id": GHOST_STUDENT_ID,
+        "name": "외부접속 테스트",
+        "curriculum": "고스트",
+        "subCurriculum": "외부접속",
+        "level": "중",
+        "school": "",
+        "grade": "",
+        "ghostStudent": True,
+    }
+    ghost_video = {
+        "mid": GHOST_STUDENT_VIDEO_MID,
+        "id": GHOST_STUDENT_VIDEO_MID,
+        "title": "외부접속 테스트 영상",
+        "chapter": "TEST",
+        "curriculum": ghost_student["curriculum"],
+        "subCurriculum": ghost_student["subCurriculum"],
+        "isExtraAssignment": False,
+        "playbackRestricted": True,
+    }
+    ghost_log_entry = {
+        "homeworkTable": [
+            {
+                "book": GHOST_STUDENT_HOMEWORK_BOOK,
+                "this": "",
+                "next": "",
+                "comment": "",
+            }
+        ],
+    }
+    ghost_test = {
+        "id": GHOST_STUDENT_TEST_ID,
+        "testId": GHOST_STUDENT_TEST_ID,
+        "name": "외부접속 테스트 답지",
+        "label": "외부접속 테스트 답지",
+        "categoryKey": "UNIT",
+        "categoryLabel": "단원평가",
+        "curriculum": ghost_student["curriculum"],
+        "round": "1",
+        "status": "assigned",
+        "statusLabel": "배정",
+        "answerRestricted": True,
+        "submissionRestricted": True,
+    }
+
+    # Code-only ghost for outside-Wi-Fi UI checks. It must never enter
+    # students.json, updates.json, logs, progress, or tests data.
+    return nocache_resp({
+        "ok": True,
+        "date": date,
+        "students": [ghost_student],
+        "student": ghost_student,
+        "videos": [ghost_video],
+        "updates": {date: {GHOST_STUDENT_ID: [GHOST_STUDENT_VIDEO_MID]}},
+        "materials": {},
+        "assigns": {GHOST_STUDENT_ID: []},
+        "absent": {"by_date": {date: []}, "by_student": {}},
+        "logs": {date: {GHOST_STUDENT_ID: ghost_log_entry}},
+        "assignedTests": [ghost_test],
+        "homeworkBooks": [GHOST_STUDENT_HOMEWORK_BOOK],
+        "courseVideosCompleted": False,
+        "academyAccessAllowed": False,
+        "outsideAcademyBlocked": True,
+        "networkBlocked": True,
+        "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
+        "ghostStudent": True,
+        "testSubmissionBlocked": True,
+    })
+
+
 # ─────────────────────────────────────────────
 # ✅ progress 1건(date/sid) 안전 merge
 # - inc[mid] = "done" | "interrupted" | "skip" | "none"
@@ -866,6 +1214,7 @@ def get_log_repository() -> LogRepository:
 TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
 TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
 _TEST_ANSWER_LINK_MAP_CACHE = {"mtime": None, "data": {}}
+_TESTS_CONFIG_CACHE = {"mtime": None, "data": {}}
 
 
 # ─────────────────────────────────────────────
@@ -1051,6 +1400,7 @@ AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
 DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
 MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
 MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
+VIDEO_PROGRESS_FINISHED_STATUSES = {"done", "skip"}
 
 
 def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
@@ -1065,6 +1415,10 @@ def _student_auto_video_assign_count(stu: dict) -> int:
     if not isinstance(stu, dict):
         return DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
     return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD))
+
+
+def _is_finished_video_progress_status(status) -> bool:
+    return str(status or "").strip() in VIDEO_PROGRESS_FINISHED_STATUSES
 
 
 def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
@@ -1113,7 +1467,7 @@ def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid
     latest = latest_status_by_sid.get(str(sid), {})
     if not isinstance(latest, dict):
         return False
-    return all(str(latest.get(mid) or "").strip() == "done" for mid in mids)
+    return all(_is_finished_video_progress_status(latest.get(mid)) for mid in mids)
 
 
 def _build_latest_status_by_sid(progress: dict) -> dict:
@@ -1159,7 +1513,7 @@ def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
                         continue
                     st_s = str(st or "").strip()
                     key = (sid_s, mid_s)
-                    if st_s in ("done", "skip"):
+                    if _is_finished_video_progress_status(st_s):
                         blocked.setdefault(sid_s, set()).add(mid_s)
                     elif st_s == "none" and manual_meta.get(mid_s):
                         blocked.setdefault(sid_s, set()).discard(mid_s)
@@ -1387,6 +1741,8 @@ def api_progress_patch():
         return jsonify({"ok": False, "error": "bad payload"}), 400
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     try:
         with _progress_lock():
@@ -1426,6 +1782,8 @@ def api_updates():
         return nocache_resp(_load_updates_with_auto_assign())
 
     incoming = request.get_json(force=True) or {}
+    if mapping_contains_ghost_student_sid(incoming):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
     with _updates_lock():
         current = load(UPD_PATH) or {}
         merged = _merge_updates_payload(current, incoming)
@@ -1442,6 +1800,8 @@ def api_updates_patch():
 
     if not date or not sid or not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad payload"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     if remove:
         incoming = {"remove": True}
@@ -1485,10 +1845,14 @@ def api_student_bootstrap():
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
 
+    if _is_ghost_student_sid(sid):
+        return _ghost_student_bootstrap(date)
+
     students = load(STU_PATH) or []
     student = next((s for s in students if isinstance(s, dict) and str(s.get("id")) == sid), None)
     if not student:
         return jsonify({"ok": False, "error": "student not found"}), 404
+    academy_allowed = academy_network_allowed()
 
     absences = load_absent()
     absent_for_date = {
@@ -1510,8 +1874,13 @@ def api_student_bootstrap():
             "absent": absent_for_date,
             "logs": {date: {}},
             "assignedTests": [],
+            "homeworkBooks": [],
             "courseBlocked": True,
             "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
+            "academyAccessAllowed": academy_allowed,
+            "outsideAcademyBlocked": not academy_allowed,
+            "networkBlocked": not academy_allowed,
+            "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
         })
 
     videos_all = load(VID_PATH) or []
@@ -1542,6 +1911,7 @@ def api_student_bootstrap():
         item = dict(v)
         item["isExtraAssignment"] = mid not in primary_video_mids
         videos.append(item)
+    videos = _academy_restricted_student_videos(videos, academy_allowed)
 
     assigns = load(ASN_PATH) or {}
     material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
@@ -1560,6 +1930,8 @@ def api_student_bootstrap():
         sid,
         json_logs_for_assigned,
     )
+    assigned_tests = _academy_restricted_assigned_tests(assigned_tests, academy_allowed)
+    homework_books = _student_homework_book_names_from_log(log_entry)
 
     return nocache_resp({
         "ok": True,
@@ -1573,7 +1945,12 @@ def api_student_bootstrap():
         "absent": absent_for_date,
         "logs": logs,
         "assignedTests": assigned_tests,
+        "homeworkBooks": homework_books,
         "courseVideosCompleted": course_videos_completed,
+        "academyAccessAllowed": academy_allowed,
+        "outsideAcademyBlocked": not academy_allowed,
+        "networkBlocked": not academy_allowed,
+        "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
     })
 
 
@@ -1737,6 +2114,8 @@ def api_logs_patch():
         return jsonify({"ok": False, "error": "bad payload"}), 400
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     entry = _repair_log_entry_placeholders(entry, sid)
     base = _repair_log_entry_placeholders(base, sid)

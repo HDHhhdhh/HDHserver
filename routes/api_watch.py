@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from flask import Blueprint, jsonify, request
 
+from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
 from core.paths import WATCH_PATH, PRG_PATH
 from core.progress_rules import (
     PROGRESS_MANUAL_META_KEY,
@@ -188,6 +190,12 @@ def api_watch_latest():
 def api_watch():
     if request.method == "GET":
         return nocache_resp(load(WATCH_PATH))
+    if not academy_network_allowed():
+        return jsonify({
+            "ok": False,
+            "error": "academy_network_required",
+            "message": ACADEMY_ACCESS_MESSAGE,
+        }), 403
 
     body = request.get_json(force=True) or {}
     date = str(body.get("date") or "").strip()
@@ -195,6 +203,8 @@ def api_watch():
     mid  = str(body.get("mid")  or "").strip()
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     try:
         last = max(0, int(float(body.get("last", 0))))
@@ -220,6 +230,13 @@ def api_watch():
 
 @bp_api_watch.post("/api/watch-status")
 def api_watch_status():
+    if not academy_network_allowed():
+        return jsonify({
+            "ok": False,
+            "error": "academy_network_required",
+            "message": ACADEMY_ACCESS_MESSAGE,
+        }), 403
+
     body = request.get_json(force=True) or {}
     date = str(body.get("date") or "").strip()
     sid = str(body.get("sid") or "").strip()
@@ -228,6 +245,8 @@ def api_watch_status():
 
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
     if status not in VALID_VIDEO_PROGRESS_STATUSES:
         return jsonify({"ok": False, "error": "bad status"}), 400
 

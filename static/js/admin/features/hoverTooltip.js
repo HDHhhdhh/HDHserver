@@ -829,11 +829,15 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // 기존 hover 모드
   // ───────────────────────────────────────────
+  function getHoverTooltipHost(el) {
+    return el?.closest?.('#todayWrap, #doneWrap') || null;
+  }
+
   function onOver(ev) {
     if (!(ev.target instanceof Element)) return;
     const a = ev.target.closest('a.stuName');
     if (!a) return;
-    if (!a.closest('#todayWrap')) return;
+    if (!getHoverTooltipHost(a)) return;
     if (tipMode === 'fixed') return;
     showTooltipForElement(a, ev, { fixed: false, variant: 'today' });
   }
@@ -848,25 +852,25 @@ export function initHoverTooltip() {
     if (!(ev.target instanceof Element)) return;
     if (tipMode !== 'hover') return;
     const from = ev.target.closest('a.stuName');
+    const fromHost = getHoverTooltipHost(from);
+    if (from && !fromHost) return;
     const to = (ev.relatedTarget instanceof Element) ? ev.relatedTarget.closest('a.stuName') : null;
-    if (from && !from.closest('#todayWrap')) return;
-    if (to && !to.closest('#todayWrap')) {
-      if (tipEl) tipEl.style.display = 'none';
-      return;
-    }
-    if (from && !to && tipEl) tipEl.style.display = 'none';
+    const toHost = getHoverTooltipHost(to);
+    if (from && toHost === fromHost) return;
+    if (from && tipEl) tipEl.style.display = 'none';
   }
 
-  function bindTodayTooltipHost() {
-    const todayHost = document.getElementById('todayWrap');
-    if (todayHost && !todayHost._studentTooltipBound) {
-      todayHost._studentTooltipBound = true;
-      todayHost.addEventListener('pointerover', onOver);
-      todayHost.addEventListener('pointermove', onMove);
-      todayHost.addEventListener('pointerout', onOut);
-    }
+  function bindTooltipHosts() {
+    ['todayWrap', 'doneWrap'].forEach((id) => {
+      const host = document.getElementById(id);
+      if (!host || host._studentTooltipBound) return;
+      host._studentTooltipBound = true;
+      host.addEventListener('pointerover', onOver);
+      host.addEventListener('pointermove', onMove);
+      host.addEventListener('pointerout', onOut);
+    });
   }
-  bindTodayTooltipHost();
-  document.addEventListener('today:rendered', bindTodayTooltipHost);
+  bindTooltipHosts();
+  document.addEventListener('today:rendered', bindTooltipHosts);
   // the fixed 상담 기록 tooltip explicitly through showStudentTooltipForSid().
 }

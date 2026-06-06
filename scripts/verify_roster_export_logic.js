@@ -225,6 +225,58 @@ assertEqual(
 );
 
 assertEqual(
+  'completed tests do not export as roster assignments',
+  labelsFor({
+    logs: {
+      '2026-06-03': {
+        s1: {
+          testAssignmentDailyTests: [
+            { label: unitNew, status: 'assigned', categoryKey: 'UNIT' },
+            { label: reviewOld, status: 'done', categoryKey: 'REVIEW' },
+          ],
+          assignedTests: [
+            { label: unitNew, status: 'assigned', categoryKey: 'UNIT' },
+            { label: reviewOld, status: 'done', categoryKey: 'REVIEW' },
+          ],
+        },
+      },
+    },
+    progress: {
+      '2026-06-03': { s1: { tests: { [unitNew]: 'assigned', [reviewOld]: 'done' } } },
+    },
+    videos: [],
+    updates: {},
+  }, '2026-06-03'),
+  [unitNew],
+);
+
+assertEqual(
+  'previous completed test does not block a current reassignment',
+  labelsFor({
+    logs: {
+      '2026-06-02': {
+        s1: {
+          assignedTests: [{ label: reviewOld, status: 'done', categoryKey: 'REVIEW' }],
+        },
+      },
+      '2026-06-03': {
+        s1: {
+          testAssignmentDailyTests: [{ label: reviewOld, status: 'assigned', categoryKey: 'REVIEW' }],
+          assignedTests: [{ label: reviewOld, status: 'assigned', categoryKey: 'REVIEW' }],
+        },
+      },
+    },
+    progress: {
+      '2026-06-02': { s1: { tests: { [reviewOld]: 'done' } } },
+      '2026-06-03': { s1: { tests: { [reviewOld]: 'assigned' } } },
+    },
+    videos: [],
+    updates: {},
+  }, '2026-06-03'),
+  [reviewOld],
+);
+
+assertEqual(
   'video export uses all videos assigned on the selected date, including repeated auto assignments',
   videoTextFor({
     logs: {},

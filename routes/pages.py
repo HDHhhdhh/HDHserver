@@ -30,7 +30,7 @@ def page_student(sid: str):
 
 @bp_pages.get("/student-test/<sid>")
 def page_student_test(sid: str):
-    return current_app.send_static_file("student copy.html")
+    return current_app.send_static_file("student.html")
 
 @bp_pages.get("/video-manage")
 def page_video_manage():

@@ -1304,14 +1304,14 @@ export function initCalendar() {
         };
       }
     } else {
-    next.by_absence[absenceDate] = {
-      ...(next.by_absence[absenceDate] || {}),
-      [makeupCarryoverKey(item)]: {
-        state: 'carried',
-        updatedAt: new Date().toISOString(),
-        note: '',
-      },
-    };
+      next.by_absence[absenceDate] = {
+        ...(next.by_absence[absenceDate] || {}),
+        [makeupCarryoverKey(item)]: {
+          state: 'carried',
+          updatedAt: new Date().toISOString(),
+          note: '',
+        },
+      };
     }
 
     const res = await fetch('/api/makeup-carryover', {
@@ -1331,6 +1331,162 @@ export function initCalendar() {
     await window.recalcCalendarCounts?.();
     document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
     toast('보강 없이 이월 처리했습니다.');
+  }
+
+  async function resolveManualMakeupDemand(item) {
+    if (!item || item.source !== 'manual') return;
+    const sid = String(item.sid || '').trim();
+    const absenceDate = String(item.absenceDate || '').trim();
+    const manualKey = String(item.manualKey || '').trim();
+    if (!sid || !absenceDate || !manualKey) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    next.manual[absenceDate] = next.manual[absenceDate] || {};
+    const prev = next.manual[absenceDate][manualKey] || {};
+    next.manual[absenceDate][manualKey] = {
+      ...prev,
+      sid,
+      slots: item.dateOnly ? [] : parseSlotNumbers(item.slot),
+      dateOnly: item.dateOnly === true,
+      state: 'carried',
+      createdAt: prev.createdAt || '',
+      updatedAt: new Date().toISOString(),
+      note: prev.note || '',
+      course: prev.course || item.course || studentCourseLabel(item.student || {}) || '',
+    };
+
+    const res = await fetch('/api/makeup-carryover', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(next),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    CARRYOVER = normalizeCarryoverPayload(data || next);
+  }
+
+  async function resolveAbsenceMakeupDemand(item) {
+    if (!item || item.source === 'manual') return;
+    const sid = String(item.sid || '').trim();
+    const absenceDate = String(item.absenceDate || '').trim();
+    if (!sid || !absenceDate) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    const carryKey = makeupCarryoverKey(item);
+    const prev = next.by_absence[absenceDate]?.[carryKey] || {};
+    next.by_absence[absenceDate] = {
+      ...(next.by_absence[absenceDate] || {}),
+      [carryKey]: {
+        ...prev,
+        state: 'carried',
+        updatedAt: new Date().toISOString(),
+        note: prev.note || '',
+      },
+    };
+
+    const res = await fetch('/api/makeup-carryover', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(next),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    CARRYOVER = normalizeCarryoverPayload(data || next);
+  }
+
+  async function resolveScheduledMakeupDemand(item) {
+    if (item?.source === 'manual') {
+      await resolveManualMakeupDemand(item);
+      return;
+    }
+    await resolveAbsenceMakeupDemand(item);
+  }
+
+  async function markAbsenceMakeupOpen(absenceDate, items) {
+    const date = String(absenceDate || '').trim();
+    const rowsToOpen = (items || []).map(item => ({
+      sid: String(item?.sid || '').trim(),
+      slots: parseSlotNumbers(item?.slots ?? item?.slot),
+    })).filter(item => item.sid);
+    if (!date || !rowsToOpen.length) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    const dateRows = { ...(next.by_absence[date] || {}) };
+    const updatedAt = new Date().toISOString();
+
+    rowsToOpen.forEach(({ sid, slots }) => {
+      const slotList = slots.length ? slots : [''];
+      slotList.forEach(slot => {
+        const key = slot ? `${sid}|${slot}` : sid;
+        const prev = dateRows[key] || {};
+        dateRows[key] = {
+          ...prev,
+          state: 'open',
+          updatedAt,
+          note: prev.note || '',
+        };
+      });
+    });
+
+    next.by_absence[date] = dateRows;
+    const res = await fetch('/api/makeup-carryover', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(next),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    CARRYOVER = normalizeCarryoverPayload(data || next);
+  }
+
+  async function resolveFirstOpenMakeupDemandsForSids(sids) {
+    const targets = new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean));
+    if (!targets.size) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    const consumed = new Set();
+    let changed = false;
+    const updatedAt = new Date().toISOString();
+
+    for (const date of Object.keys(next.by_absence || {}).sort()) {
+      const rows = next.by_absence[date];
+      if (!rows || typeof rows !== 'object') continue;
+      for (const key of Object.keys(rows).sort()) {
+        const sid = String(key).split('|')[0];
+        if (!targets.has(sid) || consumed.has(sid)) continue;
+        const row = rows[key];
+        const isOpen = row && typeof row === 'object' && (row.state === 'open' || row.open === true || row.pending === true);
+        if (!isOpen) continue;
+        rows[key] = {
+          ...row,
+          state: 'carried',
+          updatedAt,
+          note: row.note || '',
+        };
+        consumed.add(sid);
+        changed = true;
+        if (consumed.size === targets.size) break;
+      }
+      if (consumed.size === targets.size) break;
+    }
+
+    if (!changed) return;
+    const res = await fetch('/api/makeup-carryover', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(next),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
   function renderMakeupPlanner() {
@@ -1449,11 +1605,12 @@ export function initCalendar() {
   async function scheduleSelectedMakeup(dateStr, slot) {
     if (!makeupSelection) return;
     if (!MAKEUP_SLOTS.includes(slot)) return;
+    const selectedDemand = makeupSelection;
 
     await preloadExtraWeekend();
 
-    const sid = String(makeupSelection.sid);
-    const stu = makeupSelection.student ||
+    const sid = String(selectedDemand.sid);
+    const stu = selectedDemand.student ||
       (state.students || []).find(row => String(row?.id || '') === sid) ||
       {};
     const dayIds = new Set((EXTRA[dateStr] || []).map(String));
@@ -1487,6 +1644,7 @@ export function initCalendar() {
         value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...mergedSlots)] || '',
       }),
     });
+    await resolveScheduledMakeupDemand(selectedDemand);
 
     toast('보강 저장 완료');
     setMakeupSelection(null);
@@ -1498,10 +1656,7 @@ export function initCalendar() {
 
   const calBadge = $('calTodayBadge');
   let schoolExamEvents = buildSchoolExamEvents();
-  const firstExamDate = schoolExamEvents[0]?.start || undefined;
-  const startAtToday = new URLSearchParams(window.location.search).get('calendar') === 'today';
-  let movedToExamMonth = startAtToday || !!firstExamDate;
-  let calendarFocusDate = startAtToday ? new Date() : ((firstExamDate ? toSafeDate(...firstExamDate.split('-')) : null) || new Date());
+  let calendarFocusDate = new Date();
 
   function updateExamBadge(count, source = 'cache') {
     if (!calBadge) return;
@@ -1686,10 +1841,6 @@ export function initCalendar() {
     schoolExamEvents = events;
     calendar.removeAllEvents();
     if (events.length) calendar.addEventSource(events);
-    if (!movedToExamMonth && events[0]?.start) {
-      setCalendarFocusDate(events[0].start);
-      movedToExamMonth = true;
-    }
     updateExamBadge(events.length, source);
   }
 
@@ -2046,6 +2197,7 @@ export function initCalendar() {
 
       const fullDaySet = new Set((state.absentByDate[dateStr] || []).map(String));
       const slotDay = { ...(state.absentSlotsByDate[dateStr] || {}) };
+      const openedDemands = [];
 
       for (const li of items.filter(row => selectedIds.includes(String(row.dataset.id)))) {
         const sid = String(li.dataset.id);
@@ -2054,10 +2206,12 @@ export function initCalendar() {
           .map(btn => parseInt(btn.dataset.slot, 10))
           .filter(slot => MAKEUP_SLOTS.includes(slot))
           .sort((a, b) => a - b);
+        const targetSlots = selectedSlots.length ? selectedSlots : allSlots;
         const previousSlots = parseSlotNumbers(slotDay[sid]);
-        const nextSlots = Array.from(new Set([...(previousSlots || []), ...(selectedSlots.length ? selectedSlots : allSlots)])).sort((a, b) => a - b);
+        const nextSlots = Array.from(new Set([...(previousSlots || []), ...targetSlots])).sort((a, b) => a - b);
         const fullSlots = allSlots.length ? allSlots : nextSlots;
         const isFullAbsence = fullSlots.length > 0 && fullSlots.every(slot => nextSlots.includes(slot));
+        if (targetSlots.length) openedDemands.push({ sid, slots: targetSlots });
 
         if (isFullAbsence) {
           fullDaySet.add(sid);
@@ -2089,6 +2243,7 @@ export function initCalendar() {
         try { data = await res.json(); } catch { }
         if (!res.ok) throw new Error(`/api/absent ${res.status}`);
         applyAbsentPayload(data);
+        await markAbsenceMakeupOpen(dateStr, openedDemands);
         alert('결석 처리 완료');
         selectionModal.style.display = 'none';
         document.dispatchEvent(new CustomEvent('attendance:updated'));
@@ -2103,8 +2258,10 @@ export function initCalendar() {
 
     // ── 보강 추가/해제 ──
     await preloadExtraWeekend(); // 최신화
+    const previousExtraSet = new Set((EXTRA[dateStr] || []).map(String));
     const nextSet = new Set(selectedIds);
     EXTRA[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
+    const newlyAddedExtraIds = selectedIds.filter(sid => !previousExtraSet.has(String(sid)));
 
     const perDate = WEEKEND[dateStr] || {};
     for (const sid of Object.keys(perDate)) {
@@ -2139,6 +2296,7 @@ export function initCalendar() {
           body: JSON.stringify({ [dateStr]: arrivePatch }),
         });
       }
+      await resolveFirstOpenMakeupDemandsForSids(newlyAddedExtraIds);
       alert('보강 저장 완료');
       selectionModal.style.display = 'none';
       // 모달 상단 리스트/뱃지 갱신

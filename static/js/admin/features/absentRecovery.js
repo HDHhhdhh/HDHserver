@@ -1,6 +1,7 @@
 // /js/admin/features/absentRecovery.js
 // 결석 복구(해제) 모달 — 안전 가드(엘리먼트 없으면 패스)
-import { $, toast, todayLocalKey } from '../core/utils.js';
+import { $, toast } from '../core/utils.js';
+import { getAdminDate } from '../core/adminDate.js';
 import { state } from '../core/state.js';
 
 const CT = { 'Content-Type': 'application/json' };
@@ -136,7 +137,7 @@ export function initAbsentRecovery() {
     document.addEventListener('click', (e) => {
       if (!e.target.closest?.('#absentRecoverBtn')) return;
       e.preventDefault();
-      openModal(todayLocalKey());
+      openModal(getAdminDate());
     });
   }
 

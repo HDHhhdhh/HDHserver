@@ -63,9 +63,10 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "관리자 운영판은 /admin에서 오늘 학생, 출결, 하원 완료, 보강/결석, "
             "학교 일정, 공지/설문, 로그/숙제/영상/테스트 흐름을 한 화면에서 처리합니다. "
             "운영 날짜는 관리자 선택 날짜를 기준으로 동작해야 합니다. "
-            "관리자 row action은 row의 tr.dataset.date(data-date)를 먼저 쓰고, 없을 때만 getAdminDate()를 fallback으로 씁니다."
+            "관리자 row action은 row의 tr.dataset.date(data-date)를 먼저 쓰고, 없을 때만 getAdminDate()를 fallback으로 씁니다. "
+            "운영판 캘린더의 기본 보기는 오늘이 포함된 주를 가운데 줄로 둡니다."
         ),
-        "sources": ["static/admin.html", "static/js/admin/main.js", "static/js/admin/core/adminDate.js"],
+        "sources": ["static/admin.html", "static/js/admin/main.js", "static/js/admin/core/adminDate.js", "static/js/admin/features/calendar.js"],
     },
     {
         "title": "학생 명단",
@@ -91,28 +92,32 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "answer": (
             "보강 잡기 명단은 미해결 결석/직접 추가한 결석 수요를 계속 유지하며, 결석일보다 앞선 날짜에도 보강을 잡을 수 있습니다. "
             "결석 추가는 보강 서비스 추가와 구분되는 기능으로, 학생 이름과 과목을 먼저 고른 뒤 기존 관리자 운영판 캘린더에서 여러 결석 날짜를 선택해 날짜 단위 결석분을 명단에 직접 추가합니다. "
+            "결석 복구는 관리자 운영판 상단에서 선택한 날짜를 기준으로 해당 날짜의 결석 학생을 불러옵니다. "
             "같은 날짜 정규수업과 보강/결석이 이어지면 연강으로 표시하고, 연강 결석은 타임별로 분리 처리할 수 있습니다."
         ),
-        "sources": ["routes/api_attend.py", "routes/api_makeup_carryover.py", "static/js/admin/features/calendar.js", "static/js/admin/features/makeupPending.js"],
+        "sources": ["routes/api_attend.py", "routes/api_makeup_carryover.py", "static/js/admin/features/calendar.js", "static/js/admin/features/makeupPending.js", "static/js/admin/features/absentRecovery.js"],
     },
     {
         "title": "수업 로그와 숙제",
         "keywords": ["로그", "수업기록", "숙제", "homework", "homeworkTable", "notes", "완료"],
         "answer": (
             "수업 로그는 날짜와 학생 sid별로 notes, homeworkTable, 완료 상태, 숙제 확인/배정 상태를 보관합니다. "
+            "학생 bootstrap은 오늘 로그의 homeworkTable 교재명을 homeworkBooks top-level 배열로 내려 학생 개인페이지에서 영상 목록 위에 보여줍니다. "
             "로그 저장은 기존 값을 안전하게 병합해야 하며 빈 값이 의미 있는 기존 데이터를 지우면 안 됩니다. "
             "SQLite 저장은 성공했지만 legacy logs.json 동기화가 실패하면 저장 응답에 json:false warning이 붙을 수 있으며, 이는 저장소 동기화 문제로 봐야 합니다."
         ),
-        "sources": ["routes/api_basic.py", "core/log_repository.py", "core/log_rules.py", "static/js/admin/features/logModal.js"],
+        "sources": ["routes/api_basic.py", "core/log_repository.py", "core/log_rules.py", "static/js/admin/features/logModal.js", "static/js/student.js"],
     },
     {
         "title": "영상 배정과 진도",
         "keywords": ["영상", "진도", "progress", "updates", "watch", "자동배정", "수동"],
         "answer": (
             "영상 목록은 videos.json, 날짜별 배정은 updates.json, 시청/진도 상태는 progress.json과 watch.json에 있습니다. "
-            "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다."
+            "학생 개인페이지는 학원 밖에서도 목록을 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
+            "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다. "
+            "정규 커리큘럼 영상이 모두 초록(done) 또는 빨강(skip)이면 진도 완료로 보며, 학생 개인페이지에는 완료 안내를 보여주고 자동 영상 배정은 멈춥니다."
         ),
-        "sources": ["routes/api_basic.py", "routes/api_watch.py", "static/js/admin/features/videoModal.js"],
+        "sources": ["app.py", "core/network_access.py", "routes/api_basic.py", "routes/api_kollus.py", "routes/api_watch.py", "static/js/admin/features/videoModal.js", "static/js/student.js"],
     },
     {
         "title": "Video assignment date safety",
@@ -129,8 +134,10 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["테스트", "성적", "채점", "assignedTests", "tests", "시험", "오답"],
         "answer": (
             "테스트 카탈로그는 tests-config.json, 제출 성적은 tests.json에 저장됩니다. "
-            "학생 bootstrap에서는 assignedTests는 top-level 배열 shape를 유지해야 하며, progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
-            "학생 화면의 오늘 테스트는 해당 날짜에 새로 배정된 항목만 보여주며, 단원평가/복습 테스트/학군지 기출은 Drive 해설지를 엽니다. "
+            "학생 bootstrap에서는 progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
+            "학생 화면의 오늘 테스트와 명단 내보내기는 assigned 상태의 현재 배정만 보여주며, done은 완료 기록으로 남기고 할 일 목록에서는 제외합니다. "
+            "기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸므로, 결석일 carryover 배정은 다음 출석 때 보존됩니다. "
+            "단원평가/복습 테스트/학군지 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
             "REVIEW/SCHOOL_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다."
         ),
         "sources": ["routes/api_tests.py", "static/js/tests.js", "static/js/admin/features/testModal.js", "static/js/student.js"],
@@ -167,9 +174,11 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["학생화면", "student", "로그인", "bootstrap", "auth", "접근", "토큰"],
         "answer": (
             "학생 화면은 /student/<sid>와 /student-test/<sid>에서 동작하고, /api/auth/* 토큰으로 학생 계정을 관리합니다. "
-            "학생 bootstrap 응답 형태는 유지해야 하며 assignedTests는 top-level 배열입니다."
+            "학생 bootstrap 응답 형태는 유지해야 하며 assignedTests는 top-level 배열입니다. "
+            "외부 네트워크에서는 academyAccessAllowed=false와 안내 문구를 내려 목록은 유지하되 영상 재생과 테스트 답지 열람만 막습니다. "
+            "ghost-outside-test는 students.json에 넣지 않는 코드 전용 외부접속 테스트 학생이라 전체 학생 명단과 집계에 포함되지 않으며, 관련 저장 API도 읽기 전용으로 차단됩니다."
         ),
-        "sources": ["routes/api_auth.py", "routes/api_basic.py", "static/js/student.js", "static/js/auth.js"],
+        "sources": ["app.py", "core/ghost_student.py", "core/network_access.py", "routes/api_auth.py", "routes/api_basic.py", "routes/api_kollus.py", "static/js/student.js", "static/js/auth.js"],
     },
     {
         "title": "백업과 런타임 데이터",

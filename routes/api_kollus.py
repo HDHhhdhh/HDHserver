@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import jwt
 from flask import Blueprint, abort, jsonify, request
 
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
 from core.paths import STU_PATH, VID_PATH
 from core.storage import load
 from routes.api_watch import (
@@ -56,6 +57,12 @@ def local_only(f):
 
     @wraps(f)
     def wrapper(*args, **kwargs):
+        if not academy_network_allowed():
+            return jsonify({
+                "ok": False,
+                "error": "academy_network_required",
+                "message": ACADEMY_ACCESS_MESSAGE,
+            }), 403
         return f(*args, **kwargs)
 
     return wrapper

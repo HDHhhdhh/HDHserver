@@ -23,7 +23,7 @@ const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
-  done: '배정',
+  done: '완료',
   interrupted: '배부',
   skip: '제외',
 };
@@ -807,8 +807,8 @@ function ensureStyles() {
     #testModal .test-row:not(:disabled):hover{ border-color:#93c5fd; box-shadow:0 4px 12px rgba(15,23,42,.08); }
     #testModal .test-row:not(:disabled):active{ transform:scale(.997); }
     #testModal .test-row:disabled{ cursor:default; opacity:1; }
-    #testModal .test-row[data-state="assigned"],
-    #testModal .test-row[data-state="done"]{ background:#10b98118; border-color:#10b98170; }
+    #testModal .test-row[data-state="assigned"]{ background:#10b98118; border-color:#10b98170; }
+    #testModal .test-row[data-state="done"]{ background:#2563eb18; border-color:#2563eb70; }
     #testModal .test-row[data-state="interrupted"]{ background:#f59e0b22; border-color:#f59e0b70; }
     #testModal .test-row[data-state="skip"]{ background:#ef444422; border-color:#ef444470; }
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
@@ -836,8 +836,8 @@ function ensureStyles() {
       font-size:11px; font-weight:900; white-space:nowrap;
     }
     body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
-    #testModal .test-row[data-state="assigned"] .test-status,
-    #testModal .test-row[data-state="done"] .test-status{ background:#10b981; color:#fff; }
+    #testModal .test-row[data-state="assigned"] .test-status{ background:#10b981; color:#fff; }
+    #testModal .test-row[data-state="done"] .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-row[data-state="interrupted"] .test-status{ background:#f59e0b; color:#111827; }
     #testModal .test-row[data-state="skip"] .test-status{ background:#ef4444; color:#fff; }
     #testModal .test-row.is-done .test-status{ background:#2563eb; color:#fff; }

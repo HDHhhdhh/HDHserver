@@ -27,7 +27,13 @@ initAdminViewMode();
 initEscClose();
 
 // 2) 데이터 로드
-await bootstrap();
+try {
+  await bootstrap();
+} catch (err) {
+  console.error('[admin] bootstrap failed:', err);
+  alert('관리자 초기 데이터를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');
+  throw err;
+}
 
 // 3) 기능 초기화(순서 중요하지 않은 것들)
 initHoverTooltip();

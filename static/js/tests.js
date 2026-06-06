@@ -33,6 +33,10 @@ const DEFAULT_RULES = {
 let TEST_CFG = { categories: {} };
 let TEST_STATS = null;
 let TEST_STATS_DETAIL = null;
+let ruleSaveTimer = null;
+let ruleSaveInFlight = false;
+let ruleSavePending = false;
+let ruleSaveToastTimer = null;
 const ui = {
   category: 'UNIT',
   subject: '공수1',
@@ -692,6 +696,61 @@ function readRulesFromGrid() {
       });
     });
   });
+}
+
+function ruleSaveToast() {
+  let toast = $('#ruleSaveToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'ruleSaveToast';
+    toast.className = 'rule-save-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+  }
+  return toast;
+}
+
+function showRuleSavePopup(message = '저장됐음', kind = 'success') {
+  const toast = ruleSaveToast();
+  toast.textContent = message;
+  toast.dataset.kind = kind;
+  toast.classList.add('is-visible');
+  if (ruleSaveToastTimer) clearTimeout(ruleSaveToastTimer);
+  ruleSaveToastTimer = setTimeout(() => {
+    toast.classList.remove('is-visible');
+  }, 1800);
+}
+
+async function saveRulesFromGrid() {
+  if (ruleSaveInFlight) {
+    ruleSavePending = true;
+    return;
+  }
+
+  ruleSaveInFlight = true;
+  try {
+    readRulesFromGrid();
+    await saveConfig();
+    showRuleSavePopup();
+  } catch (e) {
+    console.error(e);
+    showRuleSavePopup('규칙 저장 실패', 'error');
+  } finally {
+    ruleSaveInFlight = false;
+    if (ruleSavePending) {
+      ruleSavePending = false;
+      saveRulesFromGrid();
+    }
+  }
+}
+
+function scheduleRulesAutosave() {
+  if (ruleSaveTimer) clearTimeout(ruleSaveTimer);
+  ruleSaveTimer = setTimeout(() => {
+    ruleSaveTimer = null;
+    saveRulesFromGrid();
+  }, 350);
 }
 
 async function saveConfig() {
@@ -1516,15 +1575,9 @@ function bindUI() {
     }
   });
 
-  $('#btnSaveRules')?.addEventListener('click', async () => {
-    try {
-      readRulesFromGrid();
-      await saveConfig();
-      alert('규칙 저장 완료');
-    } catch (e) {
-      console.error(e);
-      alert('규칙 저장에 실패했습니다.');
-    }
+  $('#ruleGrid')?.addEventListener('change', e => {
+    if (!e.target?.matches?.('.rule-check')) return;
+    scheduleRulesAutosave();
   });
 
   $('#btnReloadStats')?.addEventListener('click', () => loadConfigAndStats());

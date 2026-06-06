@@ -98,8 +98,11 @@ def _normalize_payload(raw: Any) -> Dict[str, Any]:
             if value is False or value is None:
                 continue
             row = value if isinstance(value, dict) else {}
+            state = str(row.get("state") or "").strip().lower()
+            if state not in {"open", "carried"}:
+                state = "carried"
             rows[sid] = {
-                "state": "carried",
+                "state": state,
                 "updatedAt": str(row.get("updatedAt") or "").strip(),
                 "note": str(row.get("note") or "").strip(),
             }

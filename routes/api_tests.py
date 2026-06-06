@@ -8,6 +8,12 @@ from typing import Tuple
 
 from flask import Blueprint, jsonify, request
 
+from core.ghost_student import (
+    GHOST_STUDENT_WRITE_ERROR,
+    is_ghost_student_sid,
+    mapping_contains_ghost_student_sid,
+)
+from core.network_access import academy_network_allowed, strip_tests_config_answer_links
 from core.paths import (
     LOGS_PATH, TESTS_PATH, STU_PATH,
     TESTS_CFG_PATH
@@ -392,6 +398,8 @@ def submit_test():
 
     if not sid or (not name and not test_id):
         return jsonify({'ok': False, 'error': 'sid and (name or testId) required'}), 400
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     cfg = _load_tests_cfg()
     tdef = _find_test_def_by_id(cfg, test_id) if test_id else None
@@ -498,6 +506,8 @@ def api_tests():
     if request.method == "GET":
         return nocache_resp(load(TESTS_PATH))
     incoming = request.get_json(force=True) or {}
+    if mapping_contains_ghost_student_sid(incoming):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
     with _tests_lock():
         current = load(TESTS_PATH)
         if not isinstance(current, dict): current = {}
@@ -518,7 +528,10 @@ def api_tests():
 
 @bp_api_tests.get("/api/tests-config")
 def get_tests_config():
-    return nocache_resp(load(TESTS_CFG_PATH))
+    config = load(TESTS_CFG_PATH)
+    if not academy_network_allowed():
+        config = strip_tests_config_answer_links(config)
+    return nocache_resp(config)
 
 @bp_api_tests.post("/api/tests-config")
 def post_tests_config():

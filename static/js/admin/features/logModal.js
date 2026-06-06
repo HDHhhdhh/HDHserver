@@ -16,6 +16,7 @@ const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
 const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
+const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
 let logOpenSeq = 0;
 let logModalReady = true;
 let logModalCarriedTestAssignment = null;
@@ -27,6 +28,10 @@ function nowHHMM() {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 function nowISO() { return new Date().toISOString(); }
+
+function isFinishedVideoProgressStatus(status) {
+  return VIDEO_PROGRESS_FINISHED_STATUSES.has(String(status || '').trim());
+}
 
 /**
  * ✅ PATCH (SQLite/JSON 둘 다 허용)
@@ -1565,7 +1570,7 @@ export function initLogModal() {
 
   function isCurrentLogProgressAllDone() {
     const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
-    return cells.length > 0 && cells.every(cell => String(cell.dataset.state || 'none') === 'done');
+    return cells.length > 0 && cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state));
   }
 
   function clearVideoAssignmentIfAllDone(saveResult) {

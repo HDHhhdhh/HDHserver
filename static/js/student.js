@@ -235,11 +235,38 @@ window.todayLocalKey = function () {
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
   let assignedTestsCache = [];
+  let homeworkBooksCache = [];
   let courseBlocked = false;
   let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
   let courseVideosCompleted = false;
+  let academyAccessAllowed = true;
+  let academyOnlyMessage = "영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.";
+  let academyOnlyInitialNoticeShown = false;
+  let testSubmissionBlocked = false;
   const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
   window.__ASSIGNED_TESTS__ = [];
+  window.__STUDENT_ACCESS__ = {
+    academyAccessAllowed: true,
+    outsideAcademyBlocked: false,
+    testSubmissionBlocked: false,
+    message: academyOnlyMessage,
+  };
+
+  function publishStudentAccess() {
+    window.__STUDENT_ACCESS__ = {
+      academyAccessAllowed,
+      outsideAcademyBlocked: !academyAccessAllowed,
+      testSubmissionBlocked,
+      message: academyOnlyMessage,
+      showNotice: () => showAcademyOnlyNotice(),
+    };
+  }
+
+  function showAcademyOnlyNotice(options = {}) {
+    if (options.once && academyOnlyInitialNoticeShown) return;
+    if (options.once) academyOnlyInitialNoticeShown = true;
+    alert(academyOnlyMessage);
+  }
 
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
@@ -343,6 +370,7 @@ window.todayLocalKey = function () {
   }
 
   async function doSync(mid, options = {}) {
+    if (!academyAccessAllowed) return;
     _syncTimers.delete(mid);
     const prog = getProgress(mid);
     if (!prog) return;
@@ -476,7 +504,10 @@ window.todayLocalKey = function () {
             courseBlocked: b.courseBlocked === true,
             blockMessage: b.blockMessage || '',
             courseVideosCompleted: b.courseVideosCompleted === true,
+            academyAccessAllowed: b.academyAccessAllowed !== false && b.outsideAcademyBlocked !== true && b.networkBlocked !== true,
+            academyOnlyMessage: b.academyOnlyMessage || b.academyOnlyNotice || b.restrictedMessage || '',
             assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
+            homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
           },
         ];
       }
@@ -494,7 +525,15 @@ window.todayLocalKey = function () {
       fetch("/api/absent").then(r => r.json()).catch(() => ({})),
       fetch(`/api/logs?date=${encodeURIComponent(today)}`).then(r => r.json()).catch(() => ({})),
       watchReq,
-      { courseBlocked: false, blockMessage: '', courseVideosCompleted: false, assignedTests: [] },
+      {
+        courseBlocked: false,
+        blockMessage: '',
+        courseVideosCompleted: false,
+        academyAccessAllowed: true,
+        academyOnlyMessage: '',
+        assignedTests: [],
+        homeworkBooks: [],
+      },
     ]);
   }
 
@@ -645,6 +684,7 @@ window.todayLocalKey = function () {
 
   function assignedTestStatusLabel(status) {
     const s = normalizeAssignedTestStatus(status);
+    if (s === 'done') return '완료';
     if (s === 'interrupted') return '배부';
     if (s === 'skip') return '제외';
     return s ? '배정' : '';
@@ -686,13 +726,64 @@ window.todayLocalKey = function () {
     }).filter(Boolean);
   }
 
+  function cleanHomeworkBookName(value) {
+    const text = String(value || '').trim();
+    if (!text || text.includes('\ufffd')) return '';
+    const compact = text.replace(/\s+/g, '');
+    if (compact.length >= 2 && /^\?+$/.test(compact)) return '';
+    return text;
+  }
+
+  function normalizeHomeworkBooks(items) {
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(items) ? items : []).forEach(value => {
+      const book = cleanHomeworkBookName(value);
+      const key = book.replace(/\s+/g, '').toLowerCase();
+      if (!book || seen.has(key)) return;
+      seen.add(key);
+      out.push(book);
+    });
+    return out;
+  }
+
+  function homeworkBooksFromLogs() {
+    const today = todayLocalKey();
+    const logsToday = (logsCache || {})[today] || {};
+    const entry = logsToday[String(sid)] || logsToday[sid] || {};
+    const rows = Array.isArray(entry.homeworkTable) ? entry.homeworkTable : [];
+    return normalizeHomeworkBooks(
+      rows
+        .filter(row => row && typeof row === 'object' && !row._deleted)
+        .map(row => row.book)
+    );
+  }
+
+  function renderHomeworkBooks() {
+    const panel = $('studentHomeworkPanel');
+    const list = $('studentHomeworkBooks');
+    if (!panel || !list) return;
+
+    const books = homeworkBooksCache.length ? homeworkBooksCache : homeworkBooksFromLogs();
+    panel.hidden = books.length === 0;
+    if (!books.length) return;
+
+    list.textContent = '';
+    books.forEach(book => {
+      const li = document.createElement('li');
+      li.textContent = book;
+      list.appendChild(li);
+    });
+  }
+
   function renderAssignedTests() {
     const panel = $('assignedTestsPanel');
     const list = $('assignedTestList');
     const openBtn = $('openTestSubmit');
     const hasTests = assignedTestsCache.length > 0;
+    const submissionBlocked = testSubmissionBlocked || assignedTestsCache.every(test => test?.submissionRestricted === true);
 
-    if (openBtn) openBtn.hidden = !hasTests;
+    if (openBtn) openBtn.hidden = !hasTests || submissionBlocked;
     if (panel) panel.hidden = !hasTests;
     if (!hasTests || !list) return;
 
@@ -700,8 +791,10 @@ window.todayLocalKey = function () {
     assignedTestsCache.forEach(test => {
       const li = document.createElement('li');
       const answerUrl = String(test.answerUrl || test.answer_url || '').trim();
-      const btn = document.createElement(answerUrl ? 'a' : 'button');
-      if (answerUrl) {
+      const answerRestricted = test.answerRestricted === true || (!academyAccessAllowed && !!answerUrl);
+      const canOpenAnswerUrl = academyAccessAllowed && !!answerUrl;
+      const btn = document.createElement(canOpenAnswerUrl ? 'a' : 'button');
+      if (canOpenAnswerUrl) {
         btn.href = answerUrl;
         btn.target = '_blank';
         btn.rel = 'noopener noreferrer';
@@ -712,6 +805,7 @@ window.todayLocalKey = function () {
       btn.dataset.testId = test.id || '';
       btn.dataset.status = normalizeAssignedTestStatus(test.status) || 'assigned';
       if (answerUrl) btn.dataset.answerUrl = answerUrl;
+      if (answerRestricted) btn.dataset.answerRestricted = '1';
 
       const main = document.createElement('span');
       main.className = 'assigned-test-main';
@@ -735,8 +829,12 @@ window.todayLocalKey = function () {
 
       main.append(name, meta);
       btn.append(main, status);
-      if (!answerUrl) {
+      if (!canOpenAnswerUrl) {
         btn.addEventListener('click', () => {
+          if (answerRestricted) {
+            showAcademyOnlyNotice();
+            return;
+          }
           const openSubmit = () => {
             if (typeof window.openAssignedTestSubmit === 'function') {
               window.openAssignedTestSubmit(test.id || test.label || '');
@@ -818,24 +916,37 @@ window.todayLocalKey = function () {
     absentByDateCache = normalizeAbsentByDate(absentRaw);
     logsCache = logsRaw || {};
     assignedTestsCache = normalizeAssignedTests(bootstrapMeta?.assignedTests);
+    homeworkBooksCache = normalizeHomeworkBooks(bootstrapMeta?.homeworkBooks);
     window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
+    academyAccessAllowed = bootstrapMeta?.academyAccessAllowed !== false;
+    academyOnlyMessage = bootstrapMeta?.academyOnlyMessage || academyOnlyMessage;
+    testSubmissionBlocked = bootstrapMeta?.testSubmissionBlocked === true;
+    publishStudentAccess();
     mergeServerWatchIntoLocal((watchRaw && typeof watchRaw.watch === 'object') ? watchRaw.watch : {});
 
     const nameEl = $('stuName');
     if (nameEl) nameEl.textContent = `${stu.name} (${stu.curriculum})`;
 
     // 재생 목록 최초 렌더
+    renderHomeworkBooks();
     renderAssignedTests();
     renderAssignedList();
+    if (!academyAccessAllowed) {
+      setTimeout(() => showAcademyOnlyNotice({ once: true }), 0);
+    }
 
     const listBox = $('vidList');
     if (listBox) {
       listBox.onclick = e => {
         const li = e.target.closest('li[data-mid]');
         if (!li) return;
+        if (!academyAccessAllowed) {
+          showAcademyOnlyNotice();
+          return;
+        }
         listBox.querySelectorAll('li').forEach(x => x.classList.remove('active'));
         li.classList.add('active');
         play(li.dataset.mid);
@@ -1270,6 +1381,11 @@ window.todayLocalKey = function () {
       ? preferMid
       : myVids[0]?.mid;
 
+    if (!academyAccessAllowed) {
+      if (frame) frame.src = "";
+      return;
+    }
+
     if (firstMid && firstMid !== currentMid) {
       const listBox2 = $('vidList');
       if (listBox2) {
@@ -1423,6 +1539,10 @@ window.todayLocalKey = function () {
   });
 
   async function play(mid) {
+    if (!academyAccessAllowed) {
+      showAcademyOnlyNotice();
+      return;
+    }
     if (currentMid && currentMid !== mid) {
       flushSyncQueue();
     }
@@ -1435,7 +1555,12 @@ window.todayLocalKey = function () {
     const resumeAt = prog?.last || 0;
 
     try {
-      let baseUrl = await fetch(`/api/get-url?mid=${encodeURIComponent(mid)}&sid=${encodeURIComponent(sid)}`).then(r => r.text());
+      const res = await fetch(`/api/get-url?mid=${encodeURIComponent(mid)}&sid=${encodeURIComponent(sid)}`);
+      if (!res.ok) {
+        if (res.status === 403) showAcademyOnlyNotice();
+        throw new Error(res.status === 403 ? 'academy-network-required' : `get-url ${res.status}`);
+      }
+      let baseUrl = await res.text();
       console.log('[play] baseUrl from server =', baseUrl);
 
       if (location.protocol === 'https:' && /^http:\/\//i.test(baseUrl)) {
@@ -1453,6 +1578,7 @@ window.todayLocalKey = function () {
       }
     } catch (err) {
       console.error(err);
+      if (err?.message === 'academy-network-required') return;
       alert("영상을 불러오지 못했습니다.");
     }
   }
@@ -2338,6 +2464,29 @@ window.todayLocalKey = function () {
     return q.get("sid") || lastSeg || "";
   })();
 
+  function studentAnswerAccessBlocked() {
+    const access = window.__STUDENT_ACCESS__ || {};
+    return access.academyAccessAllowed === false || access.outsideAcademyBlocked === true;
+  }
+
+  function studentTestSubmissionBlocked() {
+    const access = window.__STUDENT_ACCESS__ || {};
+    return access.testSubmissionBlocked === true;
+  }
+
+  function showStudentTestSubmissionBlockedNotice() {
+    alert('테스트용 학생 페이지에서는 제출 기록을 저장하지 않습니다.');
+  }
+
+  function showStudentAccessNotice() {
+    const access = window.__STUDENT_ACCESS__ || {};
+    if (typeof access.showNotice === 'function') {
+      access.showNotice();
+      return;
+    }
+    alert(access.message || '영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.');
+  }
+
   async function fetchJSONSafe(url, init = {}) {
     const res = await fetch(url, { cache: "no-store", ...init });
     const body = await res.text();
@@ -2414,6 +2563,9 @@ window.todayLocalKey = function () {
           categoryLabel: cat.label,
           answerKeys,
           answerKey,
+          sourceFiles: (t.sourceFiles && typeof t.sourceFiles === 'object') ? t.sourceFiles : null,
+          answerUrl: String(t.answerUrl || t.answer_url || t.solutionUrl || t.solution_url || '').trim(),
+          solutionFileId: String(t.solutionFileId || t.solution_file_id || '').trim(),
         };
       }).filter(Boolean);
     }
@@ -2541,7 +2693,7 @@ window.todayLocalKey = function () {
     return out;
   }
 
-  function unitCategoryLike(item, configuredTest = null) {
+  function answerLinkCategoryLike(item, configuredTest = null) {
     const source = [
       item?.categoryKey,
       item?.category,
@@ -2550,7 +2702,11 @@ window.todayLocalKey = function () {
       configuredTest?.categoryKey,
       configuredTest?.categoryLabel,
     ].map(v => String(v || '')).join(' ');
-    return /\bUNIT\b/i.test(source) || source.includes('단원평가') || source.includes('단원');
+    return (
+      /\bUNIT\b/i.test(source) || source.includes('단원평가') || source.includes('단원') ||
+      /\bREVIEW\b/i.test(source) || source.includes('복습') ||
+      /\bSCHOOL_PAST\b/i.test(source) || /\bSCHOOL\b/i.test(source) || source.includes('학군지') || source.includes('학교별')
+    );
   }
 
   function findConfiguredTestForAssignment(item) {
@@ -2624,13 +2780,40 @@ window.todayLocalKey = function () {
     return answerUrl ? String(answerUrl).trim() : null;
   }
 
+  function driveFileUrl(fileId) {
+    const id = String(fileId || '').trim();
+    return id ? `https://drive.google.com/file/d/${encodeURIComponent(id)}/view?usp=drivesdk` : '';
+  }
+
+  function answerUrlFromConfiguredTest(test) {
+    if (!test || typeof test !== 'object') return '';
+    const direct = String(test.answerUrl || test.answer_url || test.solutionUrl || test.solution_url || '').trim();
+    if (direct) return direct;
+    const sourceFiles = (test.sourceFiles && typeof test.sourceFiles === 'object') ? test.sourceFiles : {};
+    const sourceDirect = String(
+      sourceFiles.answerUrl || sourceFiles.answer_url || sourceFiles.solutionUrl || sourceFiles.solution_url || ''
+    ).trim();
+    if (sourceDirect) return sourceDirect;
+    return driveFileUrl(
+      sourceFiles.solutionFileId || sourceFiles.solution_file_id ||
+      sourceFiles.answerFileId || sourceFiles.answer_file_id ||
+      test.solutionFileId || test.solution_file_id ||
+      test.answerFileId || test.answer_file_id
+    );
+  }
+
   async function getAssignedAnswerLink(item) {
+    const explicit = String(item?.answerUrl || item?.answer_url || item?.solutionUrl || item?.solution_url || '').trim();
+    if (explicit) return { url: explicit, configuredTest: null };
+
     if (!Object.keys(TEST_CFG.categories || {}).length) {
       await loadTestsConfig();
     }
-    await loadAnswerLinkMap();
-
     const configuredTest = findConfiguredTestForAssignment(item);
+    const configUrl = answerUrlFromConfiguredTest(configuredTest);
+    if (configUrl) return { url: configUrl, configuredTest };
+
+    await loadAnswerLinkMap();
     const round = normalizeAnswerRound(item?.round || configuredTest?.round || '1');
     const candidates = [
       [item?.id || item?.testId, item?.sourceId || item?.source_id],
@@ -2646,14 +2829,18 @@ window.todayLocalKey = function () {
   }
 
   window.openAssignedTestAnswerLink = async (item = {}) => {
-    if (!unitCategoryLike(item)) return false;
+    if (!answerLinkCategoryLike(item)) return false;
+    if (studentAnswerAccessBlocked()) {
+      showStudentAccessNotice();
+      return true;
+    }
 
     const popup = window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
 
     try {
       const { url, configuredTest } = await getAssignedAnswerLink(item);
-      if (!unitCategoryLike(item, configuredTest) || !url) {
+      if (!answerLinkCategoryLike(item, configuredTest) || !url) {
         if (popup) popup.close();
         return false;
       }
@@ -2966,10 +3153,19 @@ window.todayLocalKey = function () {
     async function renderAnswerLink(testId, round) {
       if (!answerLinkArea) return;
       answerLinkArea.replaceChildren();
-
-      await loadAnswerLinkMap();
-      const answerUrl = getAnswerLinkForRound(testId, round);
       answerLinkArea.style.display = 'block';
+
+      if (studentAnswerAccessBlocked()) {
+        answerLinkArea.textContent = '해설지는 학원 Wi-Fi에서만 볼 수 있습니다.';
+        return;
+      }
+
+      const configuredTest = findTestById(selType.value, testId, currentCur());
+      let answerUrl = answerUrlFromConfiguredTest(configuredTest);
+      if (!answerUrl) {
+        await loadAnswerLinkMap();
+        answerUrl = getAnswerLinkForRound(testId, round, configuredTest?.sourceId);
+      }
 
       if (!answerUrl) {
         answerLinkArea.textContent = '해설지 링크 준비 중';
@@ -2985,6 +3181,10 @@ window.todayLocalKey = function () {
     }
 
     const open = (preselectTestId = '') => {
+      if (studentTestSubmissionBlocked()) {
+        showStudentTestSubmissionBlockedNotice();
+        return;
+      }
       const assigned = getAssignedTestsForSubmit();
       if (!assigned.length) return;
       const myCur = currentCur();
@@ -3030,6 +3230,10 @@ window.todayLocalKey = function () {
     window.openAssignedTestSubmit = (testId = '') => open(testId);
 
     btnSubmit?.addEventListener('click', async () => {
+      if (studentTestSubmissionBlocked()) {
+        showStudentTestSubmissionBlockedNotice();
+        return;
+      }
       const type = selType.value;
       const testId = selTestId.value;
       const answersText = String(answersTextEl.value || '').trim();

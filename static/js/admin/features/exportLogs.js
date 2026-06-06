@@ -27,7 +27,8 @@ const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
 const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
 const ROSTER_DAILY_TESTS_KEY = 'testAssignmentDailyTests';
 const ROSTER_TEST_CLEAR_KEY = '__testsClearedAt';
-const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned', 'done']);
+const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned']);
+const ROSTER_TEST_STATUS_ACTIVE = new Set(['assigned', 'interrupted']);
 const ROSTER_TEST_CATEGORY_ORDER = ['REVIEW', 'UNIT', 'SCHOOL_PAST', 'ILSAN_PAST'];
 
 /* ─────────────────────────────────────────────
@@ -564,7 +565,7 @@ function rosterHasStudentDayActivity(dateStr, sid) {
   return !!(logEntry && typeof logEntry === 'object' && Object.keys(logEntry).length);
 }
 
-function rosterActiveTestsForDate(dateStr, sid) {
+function rosterActiveTestsForDate(dateStr, sid, statusSet = ROSTER_TEST_STATUS_EXPORT) {
   const { items: logItems } = logTestSnapshotForRoster(dateStr, sid);
   const logByLabel = new Map(logItems.map(item => [item.label, item]));
   const progressTests = rosterProgressTestStatuses(dateStr, sid);
@@ -574,13 +575,13 @@ function rosterActiveTestsForDate(dateStr, sid) {
   Object.entries(progressTests).forEach(([label, status]) => {
     const labelKey = normStr(label);
     const normalized = normalizeRosterTestStatus(status);
-    if (!ROSTER_TEST_STATUS_EXPORT.has(normalized)) return;
+    if (!statusSet.has(normalized)) return;
     items.push(parseRosterTestLabel(labelKey, normalized, logByLabel.get(labelKey) || {}));
   });
 
   if (!items.length && !hasProgressTests) {
     logItems.forEach(item => {
-      if (ROSTER_TEST_STATUS_EXPORT.has(normalizeRosterTestStatus(item.status))) items.push(item);
+      if (statusSet.has(normalizeRosterTestStatus(item.status))) items.push(item);
     });
   }
 
@@ -600,7 +601,7 @@ function previousRosterActiveTests(dateStr, sid) {
   ])).sort().reverse();
   for (const date of dates) {
     if (rosterTestsCleared(date, sid)) return [];
-    const items = rosterActiveTestsForDate(date, sid);
+    const items = rosterActiveTestsForDate(date, sid, ROSTER_TEST_STATUS_ACTIVE);
     if (items.length) return items;
     if (rosterHasStudentDayActivity(date, sid)) return [];
   }
@@ -617,6 +618,22 @@ function rosterAssignmentDeltaForDate(dateStr, sid) {
   const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
   if (!previousLabels.size) return active;
   return active.filter(item => item.label && !previousLabels.has(item.label));
+}
+
+function rosterNewProgressTestsForDate(dateStr, sid, logByLabel, excludeLabels = new Set()) {
+  const progressTests = rosterProgressTestStatuses(dateStr, sid);
+  const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
+  const items = [];
+
+  Object.entries(progressTests).forEach(([label, status]) => {
+    const labelKey = normStr(label);
+    const normalized = normalizeRosterTestStatus(status);
+    if (!labelKey || !ROSTER_TEST_STATUS_EXPORT.has(normalized)) return;
+    if (previousLabels.has(labelKey) || excludeLabels.has(labelKey)) return;
+    items.push(parseRosterTestLabel(labelKey, normalized, logByLabel.get(labelKey) || {}));
+  });
+
+  return items;
 }
 
 function previousRosterAssignedTests(dateStr, sid) {
@@ -638,14 +655,19 @@ function rosterAssignedTests(dateStr, sid) {
   const { hasDaily, items: logItems, dailyLabels } = logTestSnapshotForRoster(dateStr, sid);
   const logByLabel = new Map(logItems.map(item => [item.label, item]));
   const progressTests = rosterProgressTestStatuses(dateStr, sid);
+  const hasProgressTests = Object.keys(progressTests).length > 0;
 
   if (hasDaily) {
     const items = [];
+    const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
     (dailyLabels || new Set()).forEach(label => {
+      if (previousLabels.has(label)) return;
+      if (hasProgressTests && !(label in progressTests)) return;
       const normalized = normalizeRosterTestStatus(progressTests[label] || logByLabel.get(label)?.status || 'assigned');
       if (!ROSTER_TEST_STATUS_EXPORT.has(normalized)) return;
       items.push(parseRosterTestLabel(label, normalized, logByLabel.get(label) || {}));
     });
+    items.push(...rosterNewProgressTestsForDate(dateStr, sid, logByLabel, dailyLabels || new Set()));
     return rosterSortTests(dedupeRosterTests(items));
   }
 

@@ -10,10 +10,10 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="/css/student.css?v=20260522b">
+  <link rel="stylesheet" href="/css/student.css?v=20260603-access-homework">
 
   <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
-  <script defer src="/js/student.js?v=20260531-test-links"></script>
+  <script defer src="/js/student.js?v=20260603-access-homework"></script>
 </head>
 <body class="student-page">
   <div class="student-shell">
@@ -55,6 +55,13 @@
     </section>
 
     <main class="student-main">
+      <section class="panel homework-panel" id="studentHomeworkPanel" hidden>
+        <h2 class="section-title">오늘 숙제</h2>
+        <ul id="studentHomeworkBooks" class="homework-book-list">
+          <li class="muted">숙제를 불러오는 중...</li>
+        </ul>
+      </section>
+
       <section class="panel video-panel">
         <h2 class="section-title">오늘 영상</h2>
 

@@ -1,4 +1,27 @@
-# AGENTS.md
+# PROJECT KNOWLEDGE BASE
+
+**Generated:** 2026-06-05 | **Commit:** bc49f96 | **Branch:** codex/apple-clean-redesign
+
+## Hierarchy
+- `AGENTS.md`: repo-wide runtime-data, workflow, verification, and Git rules.
+- `core/AGENTS.md`: pure rules, storage, repository, chatbot, and network helpers.
+- `routes/AGENTS.md`: Flask API/page blueprint contracts and route-level merge safety.
+- `static/AGENTS.md`: static HTML/CSS shells and frontend asset boundaries.
+- `static/js/AGENTS.md`: shared JavaScript contracts, student/test pages, generated link maps.
+- `static/js/admin/AGENTS.md`: admin module bootstrap, selected-date behavior, shared API wrapper usage.
+- `static/js/admin/features/AGENTS.md`: high-risk admin feature modules and row `data-date` actions.
+- `static/js/all/AGENTS.md`: all-students page modules and API wrapper.
+- `scripts/AGENTS.md`: verification, backup, import, and generated-output scripts.
+
+## Where To Look
+| Task | Location | Notes |
+|---|---|---|
+| App bootstrap | `app.py` | Flask app factory, guards, blueprint registration. |
+| Core log/progress rules | `core/` | Keep pure rules separate from storage/runtime repair. |
+| Backend APIs | `routes/` | `api_basic.py` is the broadest and riskiest surface. |
+| Admin UI | `static/admin.html`, `static/js/admin/` | Use selected admin date and row `data-date` contracts. |
+| Student UI/tests | `static/student.html`, `static/js/student.js`, `static/js/tests.js` | Preserve bootstrap `assignedTests` shape and answer links. |
+| Runtime checks | `scripts/verify_refactor_safety.py` | Main safety suite and smoke checks. |
 
 ## Project Overview
 - This is a local Flask-based academy operations app.
@@ -53,6 +76,7 @@
 - Pure class-log rules belong in `core/log_rules.py`. Keep `merge_log_entry_safe`, `log_entry_conflicts_with_base`, homework-row comparison normalization, and `truthy` semantics centralized there.
 - Keep runtime-data repair and hydration separate from pure rules. For example, `_repair_log_entry_placeholders()` currently stays in `routes/api_basic.py` because homework placeholder repair can read `students.json` through student book lookup.
 - Do not merge watch/progress auto-status rules into log rules. `routes/api_basic.py` and `routes/api_watch.py` still contain duplicated watch/progress transition logic; extract it only with focused tests for manual white/skip preservation and automatic watch-progress behavior.
+- When updating test catalog CSV data from the test management page or related import scripts, keep the student personal-page explanation links in sync. For `REVIEW` and `SCHOOL_PAST`, preserve/update `sourceFiles.solutionFileId` or equivalent solution metadata in `tests-config.json`; for `UNIT`, regenerate/update `static/js/test_answer_link_map.json` from the Drive explanation files. Verify `/api/student/bootstrap` returns `assignedTests[].answerUrl` and the student page renders today-test cards as Drive explanation links.
 
 ## Development Commands
 - Start the local server:

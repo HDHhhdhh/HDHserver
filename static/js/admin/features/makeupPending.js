@@ -167,8 +167,9 @@ function isCarriedRow(row) {
   return false;
 }
 
-function isCarriedOver(carryover, date, sid, slot) {
-  return isCarriedRow(carriedRowValue(carryover, date, sid, slot));
+function isOpenRow(row) {
+  if (!row || typeof row !== 'object') return false;
+  return row.state === 'open' || row.open === true || row.pending === true;
 }
 
 function pushDemand(out, seen, item) {
@@ -327,7 +328,16 @@ export function buildPendingMakeups({
 
   demandRows.forEach(item => {
     if (minDate && item.absenceDate < minDate) return;
-    if (item.source !== 'manual' && isCarriedOver(carryover, item.absenceDate, item.sid, item.slot)) return;
+    if (item.source === 'manual') {
+      pending.push(item);
+      return;
+    }
+    const carryoverRow = carriedRowValue(carryover, item.absenceDate, item.sid, item.slot);
+    if (isCarriedRow(carryoverRow)) return;
+    if (isOpenRow(carryoverRow)) {
+      pending.push(item);
+      return;
+    }
     const sid = String(item.sid);
     const available = supply.get(sid) || 0;
     if (available > 0) {
