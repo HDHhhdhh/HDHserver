@@ -1,0 +1,1140 @@
+{
+  "ok": true,
+  "base": "http://127.0.0.1:8003",
+  "admin": {
+    "targetUrl": "http://127.0.0.1:8003/admin",
+    "selectedDate": "2026-06-06",
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "modals": {
+      "logVisible": true,
+      "videoVisible": true,
+      "testVisible": true
+    },
+    "patches": {
+      "progress": [
+        {
+          "date": "2026-06-06",
+          "sid": "007",
+          "progress": {
+            "m1": "none"
+          }
+        },
+        {
+          "date": "2026-06-06",
+          "sid": "007",
+          "progress": {
+            "tests": {
+              "UNIT-LINK-QA-2026-06-06": "assigned",
+              "단원평가 / 수학 / Lv.3 / 1회차 / 라이브 QA 테스트": "assigned"
+            },
+            "__testsClearedAt": ""
+          }
+        }
+      ],
+      "logs": [
+        {
+          "date": "2026-06-06",
+          "sid": "007",
+          "entry": {
+            "updatedAt": "2026-06-07T17:05:12.209Z",
+            "assignedTests": [
+              {
+                "id": "unit-live",
+                "name": "라이브 QA 테스트",
+                "category": "UNIT",
+                "categoryLabel": "단원평가",
+                "curriculum": "수학",
+                "difficulty": "Lv.3",
+                "term": "",
+                "round": "1",
+                "label": "단원평가 / 수학 / Lv.3 / 1회차 / 라이브 QA 테스트",
+                "status": "assigned",
+                "statusLabel": "배정"
+              },
+              {
+                "label": "UNIT-LINK-QA-2026-06-06",
+                "status": "assigned",
+                "statusLabel": "배정"
+              }
+            ],
+            "testAssignmentDailyTests": [
+              {
+                "id": "unit-live",
+                "sourceId": "unit-live",
+                "name": "라이브 QA 테스트",
+                "category": "UNIT",
+                "categoryLabel": "단원평가",
+                "curriculum": "수학",
+                "difficulty": "기본",
+                "round": "1",
+                "label": "UNIT-LINK-QA-2026-06-06",
+                "status": "assigned",
+                "answerUrl": "https://drive.google.com/file/d/TEST_SOLUTION_FILE_ID_20260606/view"
+              }
+            ],
+            "testAssignmentNote": "[테스트 배정]\n- 단원평가 / 수학 / 기본 / 1회차: 라이브 QA 테스트",
+            "notes": "라이브 QA 메모\n\n[테스트 배정]\n- 단원평가 / 수학 / 기본 / 1회차: 라이브 QA 테스트"
+          },
+          "base": {
+            "notes": "라이브 QA 메모"
+          }
+        }
+      ],
+      "updates": [
+        {
+          "date": "2026-06-06",
+          "sid": "007",
+          "entry": {
+            "videos": [
+              "m1"
+            ],
+            "source": "manual"
+          }
+        },
+        {
+          "date": "2026-06-06",
+          "sid": "007",
+          "entry": {
+            "videos": [],
+            "source": "manual"
+          }
+        }
+      ]
+    },
+    "reloadProof": {
+      "cellState": "none",
+      "notesContainsMojibakePlaceholders": false
+    },
+    "forceEmpty": {
+      "result": [],
+      "patch": {
+        "date": "2026-06-06",
+        "sid": "007",
+        "entry": {
+          "videos": [],
+          "source": "manual"
+        }
+      }
+    },
+    "passFail": "PASS: live /admin opened unified log/video/test modals; save patched manual white progress, manual video source, progress tests, reload/reopen preserved data-state none, and forceEmpty cleared videos with manual source."
+  },
+  "student": {
+    "targetUrl": "http://127.0.0.1:8003/student/007?date=2026-06-06",
+    "selectedDate": "2026-06-06",
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "allowedStatus": {
+      "tagName": "A",
+      "href": "https://drive.google.com/file/d/TEST_SOLUTION_FILE_ID_20260606/view",
+      "dataAnswerUrl": "https://drive.google.com/file/d/TEST_SOLUTION_FILE_ID_20260606/view",
+      "dataRestricted": ""
+    },
+    "restrictedStatus": {
+      "tagName": "BUTTON",
+      "href": "",
+      "dataAnswerUrl": "https://drive.google.com/file/d/TEST_SOLUTION_FILE_ID_20260606/view",
+      "dataRestricted": "1"
+    },
+    "passFail": "PASS: live student route rendered allowed answer link and restricted non-navigating button."
+  },
+  "screenshots": {
+    "adminOpen": ".omo/evidence/f3-live-admin-unified-open.png",
+    "adminSaved": ".omo/evidence/f3-live-admin-unified-saved.png",
+    "adminReloaded": ".omo/evidence/f3-live-admin-unified-reloaded.png",
+    "adminForceEmpty": ".omo/evidence/f3-live-admin-force-empty.png",
+    "studentAllowed": ".omo/evidence/f3-live-student-answer-allowed.png",
+    "studentRestricted": ".omo/evidence/f3-live-student-answer-restricted.png"
+  },
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/admin",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css/main.css",
+      "query": "?v=20260417a"
+    },
+    {
+      "method": "GET",
+      "path": "/css/admin.css",
+      "query": "?v=20260527chat"
+    },
+    {
+      "method": "GET",
+      "path": "/npm/fullcalendar@6.1.8/index.global.min.css",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/npm/fullcalendar@6.1.8/index.global.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/npm/sortablejs@1.15.0/Sortable.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/main.js",
+      "query": "?v=20260527chat"
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/state.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/darkmode.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/viewMode.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/escClose.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/hoverTooltip.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/videoModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/logModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/extraModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/absentRegister.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/assignModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/calendar.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/exportLogs.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/announcements.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/done.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/absentRecovery.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/timeGraph.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/adminDate.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/uiEnhance.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/adminChatbot.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/api.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/utils.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/schoolCalendar.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.state.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/search.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/testModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/makeupPending.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.render.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/attendanceLedgerLink.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/api.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/selfStudy.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/students",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/videos",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/materials",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/mat-assign",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "query": "?date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/school-calendar",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/school-calendar",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/announce-status",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/contact",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/arrive-time",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/makeup-carryover",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/today_order",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/makeup-carryover",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/files/announcements/1780719597465_53a86d30_ChatGPT_Image_2026_6_6_01_19_40.png",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/unarchived-summary",
+      "query": "?exclude_date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/watch/latest",
+      "query": "?sid=007&date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/progress/patch",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/patch",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "POST",
+      "path": "/api/progress/patch",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/logs/patch",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/unarchived-summary",
+      "query": "?exclude_date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/makeup-carryover",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/admin",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css/main.css",
+      "query": "?v=20260417a"
+    },
+    {
+      "method": "GET",
+      "path": "/css/admin.css",
+      "query": "?v=20260527chat"
+    },
+    {
+      "method": "GET",
+      "path": "/npm/fullcalendar@6.1.8/index.global.min.css",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/npm/fullcalendar@6.1.8/index.global.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/npm/sortablejs@1.15.0/Sortable.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/main.js",
+      "query": "?v=20260527chat"
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/state.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/darkmode.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/viewMode.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/escClose.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/hoverTooltip.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/videoModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/logModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/extraModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/absentRegister.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/assignModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/calendar.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/exportLogs.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/announcements.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/done.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/absentRecovery.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/timeGraph.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/adminDate.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/uiEnhance.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/adminChatbot.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/api.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/core/utils.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/schoolCalendar.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.state.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/search.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/testModal.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/makeupPending.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/today.render.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/admin/features/attendanceLedgerLink.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/api.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/js/shared/selfStudy.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/students",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/videos",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/materials",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/mat-assign",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "query": "?date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/school-calendar",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/school-calendar",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/announce-status",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/contact",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/arrive-time",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/makeup-carryover",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/weekend-slots",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/today_order",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/makeup-carryover",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/absent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/files/announcements/1780719597465_53a86d30_ChatGPT_Image_2026_6_6_01_19_40.png",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/unarchived-summary",
+      "query": "?exclude_date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/watch/latest",
+      "query": "?sid=007&date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/progress",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/extra-attend",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/entry",
+      "query": "?date=2026-06-06&sid=007"
+    },
+    {
+      "method": "POST",
+      "path": "/api/updates/patch",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/student/007",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/vgcontroller/vg-controller-client.latest.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css2",
+      "query": "?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap"
+    },
+    {
+      "method": "GET",
+      "path": "/css/style.css",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css/student.css",
+      "query": "?v=20260603-access-homework"
+    },
+    {
+      "method": "GET",
+      "path": "/js/student.js",
+      "query": "?v=20260603-access-homework"
+    },
+    {
+      "method": "GET",
+      "path": "/api/watch/latest",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/student/bootstrap",
+      "query": "?sid=007&date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/announcements",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/announce-status",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/js/test_answer_link_map.json",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/student/007",
+      "query": "?date=2026-06-06"
+    },
+    {
+      "method": "GET",
+      "path": "/vgcontroller/vg-controller-client.latest.min.js",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css2",
+      "query": "?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap"
+    },
+    {
+      "method": "GET",
+      "path": "/css/style.css",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/css/student.css",
+      "query": "?v=20260603-access-homework"
+    },
+    {
+      "method": "GET",
+      "path": "/js/student.js",
+      "query": "?v=20260603-access-homework"
+    },
+    {
+      "method": "GET",
+      "path": "/api/watch/latest",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/student/bootstrap",
+      "query": "?sid=007&date=2026-06-08"
+    },
+    {
+      "method": "GET",
+      "path": "/api/announcements",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/api/announce-status",
+      "query": "?sid=007"
+    },
+    {
+      "method": "GET",
+      "path": "/js/test_answer_link_map.json",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/tests-config",
+      "query": ""
+    }
+  ],
+  "pageErrors": [],
+  "consoleMessages": [
+    {
+      "type": "warning",
+      "text": "[today] SortableJS not loaded"
+    },
+    {
+      "type": "warning",
+      "text": "[today] SortableJS not loaded"
+    },
+    {
+      "type": "warning",
+      "text": "[today] SortableJS not loaded"
+    }
+  ]
+}

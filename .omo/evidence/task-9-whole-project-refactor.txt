@@ -1,0 +1,19 @@
+﻿Task 9 automated verification
+
+Commands already run successfully in this session:
+- node --check static/js/admin/features/testModal.js
+- python -m compileall -q app.py routes core scripts
+- python scripts/verify_refactor_safety.py
+- python scripts/verify_refactor_safety.py --only-test-modal-persistence-bridge-source
+- python -c "from scripts import verify_refactor_safety as v; v.run_student_assigned_tests_unit_checks(); v.run_student_bootstrap_unit_checks(); v.run_admin_test_modal_assignment_source_checks(); v.run_admin_test_modal_persistence_bridge_source_checks(); v.run_admin_test_modal_assignment_behavior_checks(); print('task9-targeted-ok')"
+- node .omo/evidence/task-9-test-modal-qa-runner.cjs
+
+Observed results:
+- Full safety suite exit code: 0
+- Targeted Task 9 checks: task9-targeted-ok
+- Browser QA: task-9 browser QA PASS
+
+Notes:
+- The full suite still prints the expected weekend-slot negative-path stack trace while exiting 0.
+- A later attempt to redirect the full suite output to this file hung; the spawned latest python process was stopped and no runtime data file changes were observed by that action.
+- Cleanup confirmed: removed C:\tmp\task9-playwright-runtime after elevated deletion of the QA-only temp directory.

@@ -1,7 +1,6 @@
 // 전역 상태 한 군데로 모으기 + 초기 로드
 import { api } from './api.js';
 import { todayLocalKey } from './utils.js';
-import { ensureOk } from '../../shared/api.js';
 
 export const state = {
   students: [], videos: [], materials: {}, updates: {}, assigns: {},
@@ -10,9 +9,7 @@ export const state = {
 };
 
 async function getCriticalJson(url, label) {
-  const response = await fetch(url);
-  await ensureOk(response, label);
-  return await response.json();
+  return await api.getStrict(url, label);
 }
 
 export async function bootstrap() {

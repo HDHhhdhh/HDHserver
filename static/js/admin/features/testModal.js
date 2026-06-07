@@ -42,6 +42,7 @@ let catalogByKey = new Map();
 let initialTestMap = {};
 let selectedKeys = new Set();
 let selectedStatuses = new Map();
+let explicitBlankKeys = new Set();
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
@@ -213,7 +214,8 @@ function defaultTermFromSchoolCalendar() {
 }
 
 function normalizeAssignmentStatus(status) {
-  const s = String(status || '').trim();
+  const raw = status && typeof status === 'object' ? status.status : status;
+  const s = String(raw || '').trim();
   if (!s || s === 'none') return '';
   if (s === 'assigned' || s === 'done' || s === 'interrupted' || s === 'skip') return s;
   return 'assigned';
@@ -228,13 +230,18 @@ function testStatusLabel(status, submitted = false) {
 function nextStatusOf(status) {
   const s = normalizeAssignmentStatus(status);
   if (!s) return 'assigned';
-  if (s === 'skip') return 'assigned';
+  if (s === 'skip') return '';
   if (s === 'assigned' || s === 'done') return 'interrupted';
   return '';
 }
 
 function statusForKey(key) {
   return normalizeAssignmentStatus(selectedStatuses.get(key));
+}
+
+function isExplicitBlankTestStatus(status) {
+  if (!status || typeof status !== 'object') return false;
+  return normalizeAssignmentStatus(status) === '' && status.explicitBlank === true;
 }
 
 function setTestStatus(key, status) {
@@ -244,6 +251,7 @@ function setTestStatus(key, status) {
   if (normalized) {
     selectedStatuses.set(k, normalized);
     selectedKeys.add(k);
+    explicitBlankKeys.delete(k);
   } else {
     selectedStatuses.delete(k);
     selectedKeys.delete(k);
@@ -477,6 +485,44 @@ function mergeDateSidMap(target, incoming) {
   });
 }
 
+function entryForDateSid(source, date, sid) {
+  const bySid = source?.[date];
+  if (!bySid || typeof bySid !== 'object') return {};
+  const sidKey = String(sid || '').trim();
+  const direct = bySid[sidKey];
+  if (direct && typeof direct === 'object') return direct;
+  const matchedKey = Object.keys(bySid).find(key => String(key) === sidKey);
+  const matched = matchedKey ? bySid[matchedKey] : null;
+  return matched && typeof matched === 'object' ? matched : {};
+}
+
+function currentProgressEntry() {
+  return entryForDateSid(state.progress, editingDate, editingSid);
+}
+
+function currentLogEntry() {
+  return entryForDateSid(state.logs, editingDate, editingSid);
+}
+
+function logAssignmentStatusMap(entry) {
+  const out = {};
+  [TEST_ASSIGN_DAILY_ITEMS_KEY, 'assignedTests'].forEach(field => {
+    const items = entry?.[field];
+    if (!Array.isArray(items)) return;
+    items.forEach(item => {
+      if (!item || typeof item !== 'object') return;
+      const label = assignmentLabel(item);
+      const status = normalizeAssignmentStatus(item.status || 'assigned');
+      if (label && status) out[label] = status;
+    });
+  });
+  return out;
+}
+
+function hasCurrentTestClearMarker() {
+  return Boolean(currentProgressEntry()?.[TEST_ASSIGN_CLEAR_KEY]);
+}
+
 function pushSubmittedRecord(rec) {
   if (!rec || typeof rec !== 'object') return;
   const id = canonText(rec.testId || rec.id);
@@ -540,13 +586,17 @@ async function hydrateForTestPopup(date, sid) {
 }
 
 function getCurrentProgressTests() {
-  const currentEntry = state.progress?.[editingDate]?.[editingSid];
+  const currentEntry = currentProgressEntry();
   const currentTests = currentEntry?.tests;
+  const currentLogTests = logAssignmentStatusMap(currentLogEntry());
   if (currentTests && typeof currentTests === 'object' && Object.keys(currentTests).length) {
-    return currentTests;
+    return { ...currentLogTests, ...currentTests };
   }
   if (currentEntry && typeof currentEntry === 'object' && currentEntry[TEST_ASSIGN_CLEAR_KEY]) {
     return {};
+  }
+  if (Object.keys(currentLogTests).length) {
+    return currentLogTests;
   }
 
   const sid = String(editingSid || '').trim();
@@ -559,7 +609,7 @@ function getCurrentProgressTests() {
     .reverse();
 
   for (const d of dates) {
-    const entry = state.progress?.[d]?.[sid];
+    const entry = entryForDateSid(state.progress, d, sid);
     if (!entry || typeof entry !== 'object') continue;
     if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
     const tests = entry.tests;
@@ -593,12 +643,25 @@ function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
   selectedKeys = new Set();
   selectedStatuses = new Map();
+  explicitBlankKeys = new Set();
   defaultExclusionsApplied = false;
   Object.entries(initialTestMap).forEach(([key, status]) => {
+    if (isExplicitBlankTestStatus(status)) {
+      explicitBlankKeys.add(key);
+      return;
+    }
     setTestStatus(key, normalizeAssignmentStatus(status));
   });
+  const suppressDefaultExclusions = hasCurrentTestClearMarker();
   activeCatalog.forEach(test => {
-    if (!test?._key || selectedStatuses.has(test._key) || isSubmitted(test) || !shouldDefaultExcludeTest(test)) return;
+    if (
+      suppressDefaultExclusions ||
+      !test?._key ||
+      selectedStatuses.has(test._key) ||
+      explicitBlankKeys.has(test._key) ||
+      isSubmitted(test) ||
+      !shouldDefaultExcludeTest(test)
+    ) return;
     setTestStatus(test._key, 'skip');
     defaultExclusionsApplied = true;
   });
@@ -678,6 +741,11 @@ function applyTestRowStatus(row, status) {
   const key = row.dataset.testKey || '';
   const next = normalizeAssignmentStatus(status);
   setTestStatus(key, next);
+  if (!next && shouldDefaultExcludeTest(catalogByKey.get(key))) {
+    explicitBlankKeys.add(key);
+  } else if (next) {
+    explicitBlankKeys.delete(key);
+  }
   row.dataset.state = next || 'none';
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
@@ -955,6 +1023,7 @@ function closeModal() {
   initialTestMap = {};
   selectedKeys = new Set();
   selectedStatuses = new Map();
+  explicitBlankKeys = new Set();
   testSelectionTouched = false;
   defaultExclusionsApplied = false;
   activeRound = '1';
@@ -1099,6 +1168,19 @@ function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
   return `${base ? `${base}\n\n` : ''}${replacement}`.trim();
 }
 
+function buildLogAssignmentPatchBody(date, sid, patchEntry, clear, entry, notesChanged) {
+  const body = {
+    date,
+    sid,
+    entry: patchEntry,
+  };
+  if (clear.length) body.__clear = clear;
+  if (notesChanged) {
+    body.base = { notes: String(entry.notes || '').trim() };
+  }
+  return body;
+}
+
 async function fetchLatestLogEntryForAssignment(date, sid) {
   const q = new URLSearchParams({ date, sid }).toString();
   const latest = await fetchJSONSafe(`/api/logs/entry?${q}`);
@@ -1144,15 +1226,7 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
     }
   }
 
-  const body = {
-    date: editingDate,
-    sid: editingSid,
-    entry: patchEntry,
-  };
-  if (clear.length) body.__clear = clear;
-  if (notesChanged) {
-    body.base = { notes: String(entry.notes || '').trim() };
-  }
+  const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged);
 
   const saved = await fetchJSONSafe('/api/logs/patch', {
     method: 'POST',
@@ -1168,6 +1242,53 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
   }
 }
 
+function collectTestStatusPatch() {
+  const patchTests = {};
+  const allKeys = new Set([...Object.keys(initialTestMap), ...selectedStatuses.keys(), ...explicitBlankKeys]);
+  allKeys.forEach(key => {
+    const test = catalogByKey.get(key);
+    if (test && isSubmitted(test)) {
+      patchTests[key] = 'done';
+    } else if (explicitBlankKeys.has(key)) {
+      patchTests[key] = { status: 'none', explicitBlank: true };
+    } else {
+      patchTests[key] = statusForKey(key) || '';
+    }
+  });
+  return patchTests;
+}
+
+function hasAnyAssignedTestStatus(patchTests) {
+  return Object.values(patchTests || {}).some(status => !!normalizeAssignmentStatus(status));
+}
+
+function ensureProgressEntryForTestSave(date, sid) {
+  state.progress = state.progress || {};
+  state.progress[date] = state.progress[date] || {};
+  state.progress[date][sid] = state.progress[date][sid] || {};
+  return state.progress[date][sid];
+}
+
+function buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus) {
+  return {
+    date,
+    sid,
+    progress: {
+      tests: patchTests,
+      [TEST_ASSIGN_CLEAR_KEY]: hasAnyTestStatus ? '' : new Date().toISOString(),
+    },
+  };
+}
+
+function applyTestProgressPatchResult(date, sid, progressRes) {
+  if (progressRes?.progress && typeof progressRes.progress === 'object') {
+    state.progress = state.progress || {};
+    state.progress[date] = state.progress[date] || {};
+    state.progress[date][sid] = progressRes.progress;
+    window.progressData = state.progress;
+  }
+}
+
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
   if (!testSelectionTouched && !defaultExclusionsApplied) {
@@ -1176,43 +1297,22 @@ async function saveModal(options = {}) {
     return items;
   }
 
-  const patchTests = {};
-  const allKeys = new Set([...Object.keys(initialTestMap), ...selectedStatuses.keys()]);
-  allKeys.forEach(key => {
-    const test = catalogByKey.get(key);
-    if (test && isSubmitted(test)) {
-      patchTests[key] = 'done';
-    } else {
-      patchTests[key] = statusForKey(key) || '';
-    }
-  });
-  const hasAnyTestStatus = Object.values(patchTests).some(status => !!normalizeAssignmentStatus(status));
+  const patchTests = collectTestStatusPatch();
+  const hasAnyTestStatus = hasAnyAssignedTestStatus(patchTests);
   const items = selectedAssignmentObjects();
   const newlyAddedItems = addedAssignmentNoteItems(items);
   const appendToNotes = Boolean($('testAppendNotes')?.checked);
   const latestLogEntry = await fetchLatestLogEntryForAssignment(editingDate, editingSid);
 
-  state.progress = state.progress || {};
-  state.progress[editingDate] = state.progress[editingDate] || {};
-  state.progress[editingDate][editingSid] = state.progress[editingDate][editingSid] || {};
+  ensureProgressEntryForTestSave(editingDate, editingSid);
 
   const progressRes = await fetchJSONSafe('/api/progress/patch', {
     method: 'POST',
     headers: CT,
-    body: JSON.stringify({
-      date: editingDate,
-      sid: editingSid,
-      progress: {
-        tests: patchTests,
-        [TEST_ASSIGN_CLEAR_KEY]: hasAnyTestStatus ? '' : new Date().toISOString(),
-      },
-    }),
+    body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus)),
   });
 
-  if (progressRes?.progress && typeof progressRes.progress === 'object') {
-    state.progress[editingDate][editingSid] = progressRes.progress;
-    window.progressData = state.progress;
-  }
+  applyTestProgressPatchResult(editingDate, editingSid, progressRes);
 
   await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
 

@@ -1,0 +1,67 @@
+Task 6 - today row data-date action helper containment
+
+Targeted red test before production fix:
+$ python -c "from scripts import verify_refactor_safety as v; v.run_admin_wave_b_behavior_checks(); print('row-date-driver-ok')"
+exit 1
+Error: contact save falls back to selected admin date only when row date is missing
+
+Targeted test after production fix:
+$ python -c "from scripts import verify_refactor_safety as v; v.run_admin_wave_b_behavior_checks(); print('row-date-driver-ok')"
+exit 0
+$ node --input-type=module -e <admin-wave-b-driver>
+row-date-driver-ok
+
+Reviewer fix after initial rejection:
+- Added row helper coverage to the remaining row edit/action paths that still used direct tr.dataset.date reads or strict tr[data-sid][data-date] selectors.
+- Verified no remaining production direct row-date reads/selectors:
+  $ rg -n "tr\[data-sid\]\[data-date\]|tr\.dataset\.date" static/js/admin/features/today.render.js
+  exit 1
+- Assigned-test cleanup behavior at today.render.js around the cleanup label/progress block was pre-existing dirty work before Task 6 and was not introduced or changed by the Task 6 row-date helper work.
+
+Combined targeted checks:
+$ python -c "from scripts import verify_refactor_safety as v; v.run_admin_wave_b_source_checks(); v.run_admin_wave_b_behavior_checks(); print('task6-targeted-ok')"
+exit 0
+$ node --input-type=module -e <admin-wave-b-driver>
+task6-targeted-ok
+
+Reviewer-fix targeted checks:
+$ python -c "from scripts import verify_refactor_safety as v; v.run_admin_wave_b_behavior_checks(); v.run_admin_weekend_slot_behavior_checks(); print('task6-row-date-targeted-ok')"
+exit 0
+Observed expected weekend-slot negative-path stderr from the failure-recovery test.
+
+Syntax and Python compile:
+$ node --check static/js/admin/features/today.render.js
+exit 0
+$ python -m compileall -q app.py routes core scripts
+exit 0
+
+Full safety suite:
+$ python scripts/verify_refactor_safety.py
+exit 0
+Observed expected weekend-slot negative-path stderr; all unit checks and node --check steps passed.
+
+HTTP admin smoke:
+$ curl -s -o .omo/evidence/task-6-admin.html -w "%{http_code}\n" http://127.0.0.1:8003/admin
+exit 0
+200
+
+Real Chrome row-date QA:
+$ TASK6_ADMIN_URL=http://127.0.0.1:8765/admin NODE_PATH=C:\Users\...\npm-cache\_npx\420ff84f11983ee5\node_modules node .omo/evidence/task-6-row-date-runner.cjs
+exit 0
+Artifacts:
+- .omo/evidence/task-6-browser-qa.json
+- .omo/evidence/task-6-whole-project-refactor.png
+- .omo/evidence/task-6-whole-project-refactor-error.png
+Assertions:
+- rowDateRequest date=2026-06-06 sid=s2 value=true
+- fallbackRequest date=2026-06-07 sid=s2 value=true
+
+Whitespace/status:
+$ git diff --check
+exit 0
+Only existing LF->CRLF warnings were printed.
+
+Runtime data status:
+$ git status --short
+exit 0
+No runtime json/sqlite/watch/progress files were changed by Task 6.

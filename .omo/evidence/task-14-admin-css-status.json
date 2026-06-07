@@ -1,0 +1,162 @@
+[
+  {
+    "name": "desktop-light",
+    "bodyClass": "admin",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+    "hasKoreanFont": true,
+    "topbar": {
+      "width": 1394,
+      "height": 66,
+      "top": 23,
+      "left": 23,
+      "right": 1417,
+      "bottom": 89
+    },
+    "todayWrap": {
+      "width": 739,
+      "height": 22,
+      "top": 1609,
+      "left": 42,
+      "right": 781,
+      "bottom": 1632
+    },
+    "logModal": {
+      "width": 1440,
+      "height": 900,
+      "top": 0,
+      "left": 0,
+      "right": 1440,
+      "bottom": 900
+    },
+    "logPanel": {
+      "width": 920,
+      "height": 349,
+      "top": 275,
+      "left": 260,
+      "right": 1180,
+      "bottom": 625
+    },
+    "modalWithinViewport": true,
+    "containsKorean": true
+  },
+  {
+    "name": "desktop-dark",
+    "bodyClass": "admin dark",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+    "hasKoreanFont": true,
+    "topbar": {
+      "width": 1394,
+      "height": 66,
+      "top": 23,
+      "left": 23,
+      "right": 1417,
+      "bottom": 89
+    },
+    "todayWrap": {
+      "width": 739,
+      "height": 22,
+      "top": 1609,
+      "left": 42,
+      "right": 781,
+      "bottom": 1632
+    },
+    "logModal": {
+      "width": 1440,
+      "height": 900,
+      "top": 0,
+      "left": 0,
+      "right": 1440,
+      "bottom": 900
+    },
+    "logPanel": {
+      "width": 920,
+      "height": 349,
+      "top": 275,
+      "left": 260,
+      "right": 1180,
+      "bottom": 625
+    },
+    "modalWithinViewport": true,
+    "containsKorean": true
+  },
+  {
+    "name": "mobile-light",
+    "bodyClass": "admin",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+    "hasKoreanFont": true,
+    "topbar": {
+      "width": 374,
+      "height": 93,
+      "top": 8,
+      "left": 8,
+      "right": 382,
+      "bottom": 101
+    },
+    "todayWrap": {
+      "width": 344,
+      "height": 22,
+      "top": 2037,
+      "left": 23,
+      "right": 367,
+      "bottom": 2059
+    },
+    "logModal": {
+      "width": 390,
+      "height": 844,
+      "top": 0,
+      "left": 0,
+      "right": 390,
+      "bottom": 844
+    },
+    "logPanel": {
+      "width": 358,
+      "height": 337,
+      "top": 253,
+      "left": 16,
+      "right": 374,
+      "bottom": 591
+    },
+    "modalWithinViewport": true,
+    "containsKorean": true
+  },
+  {
+    "name": "mobile-dark",
+    "bodyClass": "admin dark",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+    "hasKoreanFont": true,
+    "topbar": {
+      "width": 374,
+      "height": 93,
+      "top": 8,
+      "left": 8,
+      "right": 382,
+      "bottom": 101
+    },
+    "todayWrap": {
+      "width": 344,
+      "height": 22,
+      "top": 2037,
+      "left": 23,
+      "right": 367,
+      "bottom": 2059
+    },
+    "logModal": {
+      "width": 390,
+      "height": 844,
+      "top": 0,
+      "left": 0,
+      "right": 390,
+      "bottom": 844
+    },
+    "logPanel": {
+      "width": 358,
+      "height": 337,
+      "top": 253,
+      "left": 16,
+      "right": 374,
+      "bottom": 591
+    },
+    "modalWithinViewport": true,
+    "containsKorean": true
+  }
+]

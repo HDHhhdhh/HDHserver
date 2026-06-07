@@ -1,0 +1,27 @@
+Task 7: Split log modal hydrate/save policy
+
+Automated checks:
+- node --check static/js/admin/features/logModal.js -> 0
+- python scripts/verify_refactor_safety.py --only-log-modal-save-policy-source -> 0
+- python scripts/verify_refactor_safety.py --only-log-modal-save-policy-behavior -> 0; logModal save policy PASS
+- python -m compileall -q app.py routes core scripts -> 0
+- python scripts/verify_refactor_safety.py -> 0; known weekend-slot negative-path stack trace printed on stderr, with unit ok: run_admin_weekend_slot_behavior_checks
+- git diff --check -> 0; LF/CRLF warnings only
+- git status --short -> 0; no runtime JSON/SQLite/watch/progress files changed
+
+Browser QA:
+- Temporary Playwright runtime installed under C:\tmp\task7-playwright-runtime and removed after QA.
+- node .omo/evidence/task-7-log-modal-qa-runner.cjs -> 0; task-7 browser QA PASS
+- Evidence JSON: .omo/evidence/task-7-browser-qa.json
+- Screenshot: .omo/evidence/task-7-whole-project-refactor.png
+
+Observed browser result:
+- Saved progress for 2026-06-06/s1/m1 stayed "none".
+- Manual metadata __manualProgressMids.m1 stayed true.
+- After page reload and reopening the modal, the same progress cell stayed data-state="none" and data-explicit-none="1".
+- Browser pageErrors was [].
+
+Cleanup:
+- Removed C:\tmp\task7-playwright-runtime.
+- Removed failed Playwright CLI test-results directory.
+- No server process was started for Task 7.

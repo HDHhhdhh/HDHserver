@@ -27,6 +27,8 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - For test catalog updates, keep student answer links in sync:
   - `REVIEW` and `SCHOOL_PAST`: preserve/update `sourceFiles.solutionFileId` or equivalent metadata.
   - `UNIT`: regenerate/update `static/js/test_answer_link_map.json` from Drive explanation files.
+- Exercise catalog writer scripts with temp `--config`, `--csv`, `--output`, and `--issues` paths during verification.
+- Before running catalog writer scripts against live `tests-config.json` or `static/js/test_answer_link_map.json`, run `python scripts/backup_runtime_data.py` and pass `--backup-confirmed`.
 
 ## Anti-Patterns
 - Do not commit runtime backup archives, generated CSVs, debug screenshots, or local Drive downloads unless explicitly requested.

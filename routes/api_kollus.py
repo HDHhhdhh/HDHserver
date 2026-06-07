@@ -12,10 +12,9 @@ from flask import Blueprint, abort, jsonify, request
 
 from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
 from core.paths import STU_PATH, VID_PATH
+from core.progress_rules import WATCH_DONE_RATIO, WATCH_INTERRUPTED_RATIO
 from core.storage import load
 from routes.api_watch import (
-    WATCH_DONE_RATIO,
-    WATCH_INTERRUPTED_RATIO,
     _save_progress_status,
     _save_watch_entry,
 )

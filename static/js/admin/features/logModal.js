@@ -1147,6 +1147,131 @@ function collectChangedProgressPatch() {
   return changed;
 }
 
+function ensureProgressEntryForSave(date, sid) {
+  if (!state.progress) state.progress = {};
+  state.progress[date] = state.progress[date] || {};
+  if (!state.progress[date][sid] || typeof state.progress[date][sid] !== 'object') {
+    state.progress[date][sid] = {};
+  }
+  return state.progress[date][sid];
+}
+
+async function saveChangedProgressPatch(date, sid, changedProg) {
+  ensureProgressEntryForSave(date, sid);
+  if (!Object.keys(changedProg).length) return;
+
+  const mergedProgress = await patchProgressEntry(date, sid, changedProg);
+  state.progress[date][sid] = mergedProgress || {};
+}
+
+function collectPriorProgressByMid(date, sid) {
+  const oldTotal = {};
+  Object.keys(state.progress || {})
+    .filter(d => d < date)
+    .forEach(d => {
+      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        oldTotal[key] = st;
+      });
+    });
+  return oldTotal;
+}
+
+function videoProgressLabel(mid, st) {
+  if (st === 'none') return null;
+  const video = state.videos.find(v => String(v.mid) === String(mid));
+  if (!video) return null;
+  const base = `${video.chapter}차시`;
+  return st === 'done' ? base : (st === 'interrupted' ? `${base}(중단)` : (st === 'skip' ? `${base}(건너뜀)` : null));
+}
+
+function summarizeProgressPatch(changedProg, oldTotal) {
+  return Object.entries(changedProg)
+    .filter(([mid, st]) => oldTotal[String(mid)] !== st && st !== 'none')
+    .map(([mid, st]) => videoProgressLabel(mid, st))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function buildLogSavePatch({ notesNow, hwRows, prevLog, doneFlag, summary }) {
+  const clearKeys = [];
+  const entry = {};
+  const base = {};
+  let contentChanged = false;
+
+  if (notesNow !== String(logModalSnapshot.notes || '')) {
+    base.notes = String(logModalServerSnapshot.notes || '');
+    contentChanged = true;
+    if (notesNow) entry.notes = notesNow;
+    else clearKeys.push('notes');
+  }
+
+  if (!sameHwRows(hwRows, logModalSnapshot.homeworkTable)) {
+    base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
+    contentChanged = true;
+    if (hwRows.length) {
+      entry.homework = buildHwSummary(hwRows);
+      entry.homeworkTable = hwRows;
+    } else {
+      clearKeys.push('homework', 'homeworkTable');
+    }
+  }
+
+  if (logModalCarriedTestAssignment?.items?.length) {
+    const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
+    const mergedAssignedItems = mergeAssignmentItemsByLabel(
+      Array.isArray(prevLog.assignedTests) ? prevLog.assignedTests : [],
+      carriedItems,
+    );
+    const mergedDailyItems = mergeAssignmentItemsByLabel(
+      Array.isArray(prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
+      carriedItems,
+    );
+    const mergedNoteBlock = buildCarriedAssignmentNote(mergedDailyItems);
+    entry.assignedTests = mergedAssignedItems;
+    entry[TEST_ASSIGN_DAILY_ITEMS_KEY] = mergedDailyItems;
+    if (mergedNoteBlock) entry.testAssignmentNote = mergedNoteBlock;
+    entry[TEST_ASSIGN_ABSENCE_SOURCE_KEY] = logModalCarriedTestAssignment.sourceDate;
+  }
+
+  if (summary) entry.topic = summary;
+  if (doneFlag) {
+    entry.done = true;
+    entry.leaveTime = nowHHMM();
+    entry.leaveAt = nowISO();
+  }
+
+  return { entry, clearKeys, base, contentChanged };
+}
+
+function applyLogSaveResult({ date, sid, entry, clearKeys, returned, doneFlag, prevDone }) {
+  state.logs = state.logs || {};
+  state.logs[date] = state.logs[date] || {};
+  if (returned) {
+    state.logs[date][sid] = returned;
+    return;
+  }
+
+  if (!Object.keys(entry).length && !clearKeys.length) return;
+
+  const next = { ...(state.logs[date][sid] || {}), ...entry };
+  clearKeys.forEach(k => { delete next[String(k)]; });
+  if (!doneFlag && prevDone) next.done = true;
+  state.logs[date][sid] = next;
+}
+
+function setLogModalSnapshots(notes, homeworkTable) {
+  logModalSnapshot = {
+    notes,
+    homeworkTable,
+  };
+  logModalServerSnapshot = {
+    notes,
+    homeworkTable: normalizeHwRowsForCompare(homeworkTable),
+  };
+}
+
 export function initLogModal() {
   ensureModal();
   initTestModal();
@@ -1593,89 +1718,20 @@ export function initLogModal() {
       prevLog?.done === true || prevLog?.done === 'true' || prevLog?.done === 1 || prevLog?.done === '1';
 
     const changedProg = collectChangedProgressPatch();
+    await saveChangedProgressPatch(today, sid, changedProg);
 
-    if (!state.progress) state.progress = {};
-    state.progress[today] = state.progress[today] || {};
-    if (!state.progress[today][sid] || typeof state.progress[today][sid] !== 'object') {
-      state.progress[today][sid] = {};
-    }
-
-    if (Object.keys(changedProg).length) {
-      const mergedProgress = await patchProgressEntry(today, sid, changedProg);
-      state.progress[today][sid] = mergedProgress || {};
-    }
-
-    const oldDates = Object.keys(state.progress).filter(d => d < today);
-    const oldTotal = {};
-    oldDates.forEach(d => {
-      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => {
-        const key = String(mid);
-        if (key.startsWith('__') || key === 'tests') return;
-        oldTotal[key] = st;
-      });
-    });
-    const label = (mid, st) => {
-      if (st === 'none') return null;
-      const v = state.videos.find(v => String(v.mid) === String(mid));
-      if (!v) return null;
-      const base = `${v.chapter}차시`;
-      return st === 'done' ? base : (st === 'interrupted' ? `${base}(중단)` : (st === 'skip' ? `${base}(건너뜀)` : null));
-    };
-    const summary = Object.entries(changedProg)
-      .filter(([mid, st]) => oldTotal[String(mid)] !== st && st !== 'none')
-      .map(([mid, st]) => label(mid, st))
-      .filter(Boolean)
-      .join(', ');
+    const oldTotal = collectPriorProgressByMid(today, sid);
+    const summary = summarizeProgressPatch(changedProg, oldTotal);
 
     const hwRows = collectHwTable();
     const notesNow = cleanHwText(logNotes.value);
-    const clearKeys = [];
-    const entry = {};
-    const base = {};
-    let contentChanged = false;
-
-    if (notesNow !== String(logModalSnapshot.notes || '')) {
-      base.notes = String(logModalServerSnapshot.notes || '');
-      contentChanged = true;
-      if (notesNow) entry.notes = notesNow;
-      else clearKeys.push('notes');
-    }
-
-    if (!sameHwRows(hwRows, logModalSnapshot.homeworkTable)) {
-      base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
-      contentChanged = true;
-      if (hwRows.length) {
-        entry.homework = buildHwSummary(hwRows);
-        entry.homeworkTable = hwRows;
-      } else {
-        clearKeys.push('homework', 'homeworkTable');
-      }
-    }
-
-    if (logModalCarriedTestAssignment?.items?.length) {
-      const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
-      const mergedAssignedItems = mergeAssignmentItemsByLabel(
-        Array.isArray(prevLog.assignedTests) ? prevLog.assignedTests : [],
-        carriedItems,
-      );
-      const mergedDailyItems = mergeAssignmentItemsByLabel(
-        Array.isArray(prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
-        carriedItems,
-      );
-      const mergedNoteBlock = buildCarriedAssignmentNote(mergedDailyItems);
-      entry.assignedTests = mergedAssignedItems;
-      entry[TEST_ASSIGN_DAILY_ITEMS_KEY] = mergedDailyItems;
-      if (mergedNoteBlock) entry.testAssignmentNote = mergedNoteBlock;
-      entry[TEST_ASSIGN_ABSENCE_SOURCE_KEY] = logModalCarriedTestAssignment.sourceDate;
-    }
-
-    if (summary) entry.topic = summary;
-    if (doneFlag) entry.done = true;
-
-    if (doneFlag) {
-      entry.leaveTime = nowHHMM();
-      entry.leaveAt = nowISO();
-    }
+    const { entry, clearKeys, base, contentChanged } = buildLogSavePatch({
+      notesNow,
+      hwRows,
+      prevLog,
+      doneFlag,
+      summary,
+    });
 
     let returned = null;
     if (Object.keys(entry).length || clearKeys.length) {
@@ -1683,30 +1739,14 @@ export function initLogModal() {
       returned = await patchLogEntry(today, sid, entry, clearKeys, contentChanged ? { base } : {});
     }
 
-    state.logs = state.logs || {};
-    state.logs[today] = state.logs[today] || {};
-    if (returned) {
-      state.logs[today][sid] = returned;
-    } else if (Object.keys(entry).length || clearKeys.length) {
-      const next = { ...(state.logs[today][sid] || {}), ...entry };
-      clearKeys.forEach(k => { delete next[String(k)]; });
-      if (!doneFlag && prevDone) next.done = true;
-      state.logs[today][sid] = next;
-    }
+    applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });
 
     const allProgressDone = isCurrentLogProgressAllDone();
     if (allProgressDone) {
       await clearVideoAssignmentForDateSid(today, sid);
     }
 
-    logModalSnapshot = {
-      notes: notesNow,
-      homeworkTable: hwRows,
-    };
-    logModalServerSnapshot = {
-      notes: notesNow,
-      homeworkTable: normalizeHwRowsForCompare(hwRows),
-    };
+    setLogModalSnapshots(notesNow, hwRows);
 
     return { allProgressDone };
   }

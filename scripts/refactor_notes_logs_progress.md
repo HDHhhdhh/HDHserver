@@ -133,6 +133,29 @@ refactors. It is documentation only; do not treat it as a migration plan.
 - `today.js` expects `GET /api/progress?date=YYYY-MM-DD` to return
   `{ date: dayProgress }`.
 
+## Assigned Test and Answer-Link Contract
+
+- Student bootstrap keeps `assignedTests` as a top-level array.
+- For current-day test assignments, `progress[date][sid].tests` is the
+  authority for active, done, skipped, and cleared statuses.
+- Log `assignedTests` and `testAssignmentDailyTests` are metadata/fallbacks;
+  they must not resurrect stale cleared assignments.
+- `assignedTests[].answerUrl` can come from, in order: an assignment item,
+  `tests-config.json` solution metadata such as `sourceFiles.solutionFileId`,
+  or the generated `static/js/test_answer_link_map.json`.
+- When academy network access is restricted, student bootstrap keeps the
+  assigned test visible but strips direct solution file ids and answer URLs.
+
+## Test Catalog Writer Contract
+
+- Catalog writer scripts must be exercised with temp paths during verification:
+  `--config`, `--csv`, `--output`, and `--issues`.
+- Live writes to `tests-config.json` or `static/js/test_answer_link_map.json`
+  require a runtime backup and an explicit `--backup-confirmed` flag.
+- REVIEW and SCHOOL_PAST imports preserve solution metadata such as
+  `sourceFiles.solutionFileId`; UNIT answer links are regenerated into the
+  link map from Drive explanation files.
+
 ## Verification Contract
 
 Safe default checks:

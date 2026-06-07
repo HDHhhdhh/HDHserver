@@ -10,14 +10,11 @@ from core.progress_rules import (
     PROGRESS_MANUAL_META_KEY,
     VALID_VIDEO_PROGRESS_STATUSES,
     WATCH_AUTO_PROGRESS_META_KEY,
-    WATCH_DONE_RATIO,
-    WATCH_INTERRUPTED_RATIO,
-    merge_auto_watch_progress_status,
-    merge_watch_entry as _merge_watch_entry,
-    normalize_watch_entry as _norm_watch_entry,
-    watch_auto_status as _watch_auto_status,
-    watch_rank as _watch_rank,
-    watch_ratio as _watch_ratio,
+    merge_progress_day_sid,
+    merge_watch_entry,
+    normalize_watch_entry,
+    watch_auto_status,
+    watch_rank,
 )
 from core.storage import load, save_atomic, nocache_resp
 
@@ -50,7 +47,7 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
     if not date or not sid or not mid:
         raise ValueError("missing date/sid/mid")
 
-    merged_incoming = _norm_watch_entry(incoming)
+    merged_incoming = normalize_watch_entry(incoming)
     if not merged_incoming["updatedAt"]:
         merged_incoming["updatedAt"] = int(time.time() * 1000)
 
@@ -78,7 +75,7 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
             by_date[sid_key] = by_sid
 
         prev = by_sid.get(mid, {})
-        merged = _merge_watch_entry(prev, merged_incoming)
+        merged = merge_watch_entry(prev, merged_incoming)
         by_sid[mid] = merged
 
         save_atomic(WATCH_PATH, data)
@@ -96,7 +93,7 @@ def _get_watch_entry(date: str, sid: str, mid: str) -> dict:
     for key in _sid_keys(sid):
         by_sid = by_date.get(key)
         if isinstance(by_sid, dict):
-            return _norm_watch_entry(by_sid.get(str(mid or "").strip()))
+            return normalize_watch_entry(by_sid.get(str(mid or "").strip()))
     return {}
 
 
@@ -132,7 +129,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if cur_sid is None:
             cur_sid = {}
 
-        merged = merge_auto_watch_progress_status(cur_sid, mid, status)
+        merged = merge_progress_day_sid(cur_sid, {mid: status}, source="auto")
 
         if merged:
             day[sid_key] = merged
@@ -180,8 +177,8 @@ def api_watch_latest():
                 continue
 
             current = out.get(mid_s)
-            normalized = _norm_watch_entry(entry)
-            if current is None or _watch_rank(normalized) > _watch_rank(current):
+            normalized = normalize_watch_entry(entry)
+            if current is None or watch_rank(normalized) > watch_rank(current):
                 out[mid_s] = normalized
 
     return jsonify({"ok": True, "sid": sid, "date": date, "watch": out})
@@ -222,7 +219,7 @@ def api_watch():
     }
 
     merged = _save_watch_entry(date, sid, mid, incoming)
-    status = _watch_auto_status(merged)
+    status = watch_auto_status(merged)
     progress = _save_progress_status(date, sid, mid, status) if status else {}
 
     return jsonify({"ok": True, "watch": merged, "progress": progress})
@@ -253,7 +250,7 @@ def api_watch_status():
     if status == "interrupted":
         try:
             watch = _get_watch_entry(date, sid, mid)
-            if _watch_auto_status(watch) == "done":
+            if watch_auto_status(watch) == "done":
                 status = "done"
         except Exception:
             pass

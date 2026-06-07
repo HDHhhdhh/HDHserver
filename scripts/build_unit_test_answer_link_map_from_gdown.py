@@ -12,6 +12,8 @@ import gdown
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FOLDER_ID = "1wORo_OsYO5EicLd2Xd044KcRM2wCCyuy"
+DEFAULT_CONFIG_PATH = ROOT / "tests-config.json"
+DEFAULT_OUTPUT_PATH = ROOT / "static/js/test_answer_link_map.json"
 
 SUBJECT_ALIASES = {
     "공통수학1": "공수1",
@@ -39,6 +41,18 @@ ANSWER_NAME_ALIASES = {
 
 def read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def same_path(left: Path, right: Path) -> bool:
+    return left.resolve(strict=False) == right.resolve(strict=False)
+
+
+def require_backup_for_live_output(output_path: Path, backup_confirmed: bool, parser: argparse.ArgumentParser) -> None:
+    if same_path(output_path, DEFAULT_OUTPUT_PATH) and not backup_confirmed:
+        parser.error(
+            "refusing to update live static/js/test_answer_link_map.json without --backup-confirmed; "
+            "run python scripts/backup_runtime_data.py first or pass --output <temp path>"
+        )
 
 
 def clean_text(value: str) -> str:
@@ -188,10 +202,15 @@ def build_link_map(config: dict, folder_id: str) -> tuple[dict, list[dict]]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--folder-id", default=DEFAULT_FOLDER_ID)
-    parser.add_argument("--config", type=Path, default=ROOT / "tests-config.json")
-    parser.add_argument("--output", type=Path, default=ROOT / "static/js/test_answer_link_map.json")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--issues", type=Path, default=None)
+    parser.add_argument("--backup-confirmed", action="store_true", help=(
+        "Required when writing static/js/test_answer_link_map.json after running backup_runtime_data.py."
+    ))
     args = parser.parse_args(argv)
+
+    require_backup_for_live_output(args.output, args.backup_confirmed, parser)
 
     config = read_json(args.config)
     link_map, issues = build_link_map(config, args.folder_id)

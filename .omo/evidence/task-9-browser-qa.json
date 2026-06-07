@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "executablePath": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "progressPatch": {
+    "date": "2026-06-06",
+    "sid": "s1",
+    "progress": {
+      "tests": {
+        "단원평가 / 대수 / Lv.3 / 1회차 / Task9 신규 배정": "assigned"
+      },
+      "__testsClearedAt": ""
+    }
+  },
+  "logPatch": {
+    "date": "2026-06-06",
+    "sid": "s1",
+    "entry": {
+      "updatedAt": "2026-06-07T11:04:55.850Z",
+      "assignedTests": [
+        {
+          "id": "unit-new",
+          "name": "Task9 신규 배정",
+          "category": "UNIT",
+          "categoryLabel": "단원평가",
+          "curriculum": "대수",
+          "difficulty": "Lv.3",
+          "term": "",
+          "round": "1",
+          "label": "단원평가 / 대수 / Lv.3 / 1회차 / Task9 신규 배정",
+          "status": "assigned",
+          "statusLabel": "배정"
+        }
+      ]
+    },
+    "__clear": [
+      "testAssignmentDailyTests",
+      "testAssignmentNote"
+    ]
+  },
+  "selectedAfterClear": 0,
+  "pageErrors": [],
+  "consoleMessages": []
+}

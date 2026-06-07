@@ -1,0 +1,1 @@
+PASS watch auto status thresholds

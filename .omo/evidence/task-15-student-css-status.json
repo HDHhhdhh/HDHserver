@@ -1,0 +1,167 @@
+{
+  "baseUrl": "http://127.0.0.1:8003/student/007?date=2026-06-06",
+  "cases": [
+    {
+      "name": "desktop-assigned",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "state": {
+        "bodyText": "2026.06.07\n(일)\n22:28\n공지\n설정\n김테스트 (국어)\n\n오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.\n\n테스트 제출\n오늘 영상\n재생목록\n오늘 할당된 영상이 없습니다 문의 부탁\n오늘 테스트\nUNIT-LINK-QA-2026-06-06 국어 독해 확인 테스트\n단원평가 · 국어 · 기본 · 1회차\n배정\n자료 다운로드\n/\n폴더 보기\n이 폴더에 항목이 없습니다",
+        "assignedCount": 1,
+        "panelHidden": false,
+        "panelDisplayed": true,
+        "bodyFont": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+        "panel": {
+          "left": 23.03125,
+          "right": 1416.96875,
+          "top": 770.296875,
+          "bottom": 917.03125,
+          "width": 1393.9375,
+          "height": 146.734375,
+          "scrollWidth": 1392,
+          "clientWidth": 1392
+        },
+        "button": {
+          "left": 46.03125,
+          "right": 1393.96875,
+          "top": 830.84375,
+          "bottom": 894.03125,
+          "width": 1347.9375,
+          "height": 63.1875,
+          "scrollWidth": 1346,
+          "clientWidth": 1346
+        },
+        "name": {
+          "left": 59.03125,
+          "right": 1330.875,
+          "top": 841.84375,
+          "bottom": 861.640625,
+          "width": 1271.84375,
+          "height": 19.796875,
+          "scrollWidth": 1272,
+          "clientWidth": 1272
+        },
+        "meta": {
+          "left": 59.03125,
+          "right": 1330.875,
+          "top": 865.640625,
+          "bottom": 883.03125,
+          "width": 1271.84375,
+          "height": 17.390625,
+          "scrollWidth": 1272,
+          "clientWidth": 1272
+        },
+        "status": {
+          "left": 1340.875,
+          "right": 1380.96875,
+          "top": 850.4375,
+          "bottom": 874.4375,
+          "width": 40.09375,
+          "height": 24,
+          "scrollWidth": 40,
+          "clientWidth": 40
+        },
+        "buttonText": "UNIT-LINK-QA-2026-06-06 국어 독해 확인 테스트\n단원평가 · 국어 · 기본 · 1회차\n배정",
+        "viewportWidth": 1440
+      }
+    },
+    {
+      "name": "mobile-assigned",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "state": {
+        "bodyText": "2026.06.07\n(일)\n22:28\n공지\n설정\n김테스트 (국어)\n\n오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.\n\n테스트 제출\n오늘 영상\n재생목록\n오늘 할당된 영상이 없습니다 문의 부탁\n오늘 테스트\nUNIT-LINK-QA-2026-06-06 국어 독해 확인 테스트\n단원평가 · 국어 · 기본 · 1회차\n배정\n자료 다운로드\n/\n폴더 보기\n이 폴더에 항목이 없습니다",
+        "assignedCount": 1,
+        "panelHidden": false,
+        "panelDisplayed": true,
+        "bodyFont": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+        "panel": {
+          "left": 16,
+          "right": 374,
+          "top": 934.546875,
+          "bottom": 1121.078125,
+          "width": 358,
+          "height": 186.53125,
+          "scrollWidth": 356,
+          "clientWidth": 356
+        },
+        "button": {
+          "left": 33,
+          "right": 357,
+          "top": 989.09375,
+          "bottom": 1104.078125,
+          "width": 324,
+          "height": 114.984375,
+          "scrollWidth": 322,
+          "clientWidth": 322
+        },
+        "name": {
+          "left": 46,
+          "right": 344,
+          "top": 1000.09375,
+          "bottom": 1039.6875,
+          "width": 298,
+          "height": 39.59375,
+          "scrollWidth": 298,
+          "clientWidth": 298
+        },
+        "meta": {
+          "left": 46,
+          "right": 344,
+          "top": 1043.6875,
+          "bottom": 1061.078125,
+          "width": 298,
+          "height": 17.390625,
+          "scrollWidth": 298,
+          "clientWidth": 298
+        },
+        "status": {
+          "left": 46,
+          "right": 86.09375,
+          "top": 1069.078125,
+          "bottom": 1093.078125,
+          "width": 40.09375,
+          "height": 24,
+          "scrollWidth": 40,
+          "clientWidth": 40
+        },
+        "buttonText": "UNIT-LINK-QA-2026-06-06 국어 독해 확인 테스트\n단원평가 · 국어 · 기본 · 1회차\n배정",
+        "viewportWidth": 390
+      }
+    },
+    {
+      "name": "mobile-empty",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "state": {
+        "bodyText": "2026.06.07\n(일)\n22:28\n공지\n설정\n김테스트 (국어)\n\n오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.\n\n오늘 영상\n재생목록\n오늘 할당된 영상이 없습니다 문의 부탁\n자료 다운로드\n/\n폴더 보기\n이 폴더에 항목이 없습니다",
+        "assignedCount": 0,
+        "panelHidden": true,
+        "panelDisplayed": false,
+        "bodyFont": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"SF Pro Text\", \"Apple SD Gothic Neo\", \"Noto Sans KR\", \"Malgun Gothic\", sans-serif",
+        "panel": {
+          "left": 0,
+          "right": 0,
+          "top": 0,
+          "bottom": 0,
+          "width": 0,
+          "height": 0,
+          "scrollWidth": 0,
+          "clientWidth": 0
+        },
+        "button": null,
+        "name": null,
+        "meta": null,
+        "status": null,
+        "buttonText": "",
+        "viewportWidth": 390
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+usage: verify_refactor_safety.py [-h] [--config CONFIG] [--csv CSV]
+                                 [--backup-confirmed]
+verify_refactor_safety.py: error: refusing to update live tests-config.json without --backup-confirmed; run python scripts/backup_runtime_data.py first or pass --config <temp path>
+usage: verify_refactor_safety.py [-h] [--config CONFIG] [--csv CSV]
+                                 [--backup-confirmed]
+verify_refactor_safety.py: error: refusing to update live tests-config.json without --backup-confirmed; run python scripts/backup_runtime_data.py first or pass --config <temp path>
+usage: verify_refactor_safety.py [-h] [--folder-id FOLDER_ID]
+                                 [--config CONFIG] [--output OUTPUT]
+                                 [--issues ISSUES] [--backup-confirmed]
+verify_refactor_safety.py: error: refusing to update live static/js/test_answer_link_map.json without --backup-confirmed; run python scripts/backup_runtime_data.py first or pass --output <temp path>
+REVIEW tests added: 1
+REVIEW tests updated: 0
+REVIEW tests preserved: 0
+SCHOOL_PAST tests added: 1
+SCHOOL_PAST tests updated: 0
+SCHOOL_PAST tests preserved: 0
+source_ids=1 linked_rounds=3 issues=0
+output=C:\server\tmp\verify-catalog-safety-3acziwu3\test_answer_link_map.json
+issues=C:\server\tmp\verify-catalog-safety-3acziwu3\issues.json
+unit ok: run_catalog_script_temp_file_behavior_checks
+exit=0

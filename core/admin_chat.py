@@ -136,7 +136,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "테스트 카탈로그는 tests-config.json, 제출 성적은 tests.json에 저장됩니다. "
             "학생 bootstrap에서는 progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
             "학생 화면의 오늘 테스트와 명단 내보내기는 assigned 상태의 현재 배정만 보여주며, done은 완료 기록으로 남기고 할 일 목록에서는 제외합니다. "
-            "기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸므로, 결석일 carryover 배정은 다음 출석 때 보존됩니다. "
+            "기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸며, 테스트 배정 팝업은 done을 파란 완료로 표시하고 선생님이 하얗게 지운 기본 제외값은 다시 강제하지 않습니다. "
             "단원평가/복습 테스트/학군지 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
             "REVIEW/SCHOOL_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다."
         ),

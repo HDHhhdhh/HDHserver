@@ -1,0 +1,10 @@
+REVIEW tests added: 1
+REVIEW tests updated: 0
+REVIEW tests preserved: 0
+SCHOOL_PAST tests added: 1
+SCHOOL_PAST tests updated: 0
+SCHOOL_PAST tests preserved: 0
+source_ids=1 linked_rounds=3 issues=0
+output=C:\server\tmp\verify-catalog-safety-_ys_t6p7\test_answer_link_map.json
+issues=C:\server\tmp\verify-catalog-safety-_ys_t6p7\issues.json
+unit ok: run_catalog_script_temp_file_behavior_checks

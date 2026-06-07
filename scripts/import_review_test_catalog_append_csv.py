@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -171,13 +172,35 @@ def write_json_atomic(path: Path, data: Any) -> None:
     os.replace(tmp_path, path)
 
 
-def main() -> int:
-    if not CSV_PATH.exists():
-        raise FileNotFoundError(f"source CSV not found: {CSV_PATH}")
+def same_path(left: Path, right: Path) -> bool:
+    return left.resolve(strict=False) == right.resolve(strict=False)
 
-    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+
+def require_backup_for_live_config_write(config_path: Path, backup_confirmed: bool, parser: argparse.ArgumentParser) -> None:
+    if same_path(config_path, CONFIG_PATH) and not backup_confirmed:
+        parser.error(
+            "refusing to update live tests-config.json without --backup-confirmed; "
+            "run python scripts/backup_runtime_data.py first or pass --config <temp path>"
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Append REVIEW tests from CSV into tests-config.json.")
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    parser.add_argument("--csv", type=Path, default=CSV_PATH)
+    parser.add_argument("--backup-confirmed", action="store_true", help=(
+        "Required when writing the repo tests-config.json after running backup_runtime_data.py."
+    ))
+    args = parser.parse_args(argv)
+
+    require_backup_for_live_config_write(args.config, args.backup_confirmed, parser)
+
+    if not args.csv.exists():
+        raise FileNotFoundError(f"source CSV not found: {args.csv}")
+
+    cfg = json.loads(args.config.read_text(encoding="utf-8-sig"))
     if not isinstance(cfg, dict):
-        raise ValueError(f"{CONFIG_PATH} must contain a JSON object")
+        raise ValueError(f"{args.config} must contain a JSON object")
 
     categories = ensure_category_scaffolding(cfg)
     review_category = categories["REVIEW"]
@@ -185,11 +208,11 @@ def main() -> int:
     if not isinstance(review_tests, list):
         review_tests = []
 
-    generated = build_generated_tests(CSV_PATH)
+    generated = build_generated_tests(args.csv)
     merged, added, updated, preserved = merge_tests(review_tests, generated)
     review_category["tests"] = merged
 
-    write_json_atomic(CONFIG_PATH, cfg)
+    write_json_atomic(args.config, cfg)
     print(f"REVIEW tests added: {added}")
     print(f"REVIEW tests updated: {updated}")
     print(f"REVIEW tests preserved: {preserved}")

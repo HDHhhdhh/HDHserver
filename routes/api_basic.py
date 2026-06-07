@@ -4,9 +4,7 @@ import datetime as dt
 import random
 import re
 import time
-import os
 import json
-import sqlite3
 from urllib.parse import parse_qs, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
@@ -548,6 +546,20 @@ def _answer_url_from_link_entry(entry) -> str:
     return ""
 
 
+def _assignment_direct_answer_url(item: dict) -> str:
+    direct = _answer_url_from_link_entry(item)
+    if direct:
+        return direct
+
+    source_files = item.get("sourceFiles") or item.get("source_files")
+    if isinstance(source_files, dict):
+        direct = _answer_url_from_link_entry(source_files)
+        if direct:
+            return direct
+
+    return ""
+
+
 def _test_assignment_category_key(item: dict) -> str:
     source = " ".join(str(item.get(key) or "") for key in (
         "category", "categoryKey", "categoryLabel", "label", "type"
@@ -661,6 +673,10 @@ def _test_assignment_answer_url(item: dict) -> str:
     if not isinstance(item, dict) or not _test_assignment_has_answer_link(item):
         return ""
 
+    direct_url = _assignment_direct_answer_url(item)
+    if direct_url:
+        return direct_url
+
     config_url = _test_config_answer_url(_find_test_config_for_assignment(item))
     if config_url:
         return config_url
@@ -680,6 +696,117 @@ def _test_assignment_answer_url(item: dict) -> str:
         if url:
             return url
     return ""
+
+
+def _append_unique_assigned_test_label(labels: list[str], label: str) -> None:
+    if label not in labels:
+        labels.append(label)
+
+
+def _collect_assigned_test_metadata(
+    source_map,
+    date: str,
+    sid: str,
+    by_label: dict,
+    log_labels: list[str],
+    daily_labels: list[str],
+) -> None:
+    day_logs = source_map.get(date) if isinstance(source_map, dict) else {}
+    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+
+    daily_items = log_entry.get(TEST_ASSIGN_DAILY_ITEMS_KEY) if isinstance(log_entry, dict) else []
+    if isinstance(daily_items, list):
+        for raw in daily_items:
+            if not isinstance(raw, dict):
+                continue
+            label = _assigned_test_label(raw)
+            if not label:
+                continue
+            _append_unique_assigned_test_label(daily_labels, label)
+            by_label[label] = {**by_label.get(label, {}), **raw, "label": label}
+
+    log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
+    if not isinstance(log_items, list):
+        return
+
+    for raw in log_items:
+        if not isinstance(raw, dict):
+            continue
+        label = _assigned_test_label(raw)
+        if not label:
+            continue
+        _append_unique_assigned_test_label(log_labels, label)
+        item = dict(raw)
+        if label in by_label:
+            merged = dict(item)
+            merged.update(by_label[label])
+            by_label[label] = merged
+        else:
+            by_label[label] = item
+
+
+def _student_assigned_test_labels(
+    status_by_label: dict,
+    log_labels: list[str],
+    daily_labels: list[str],
+    previous_statuses: dict,
+) -> list[str]:
+    if daily_labels:
+        if status_by_label:
+            labels = [
+                label
+                for label in daily_labels
+                if (
+                    label in status_by_label
+                    and _is_active_test_assignment_status(status_by_label.get(label))
+                    and label not in previous_statuses
+                )
+            ]
+            for label, status in status_by_label.items():
+                if not _is_active_test_assignment_status(status) or label in previous_statuses or label in labels:
+                    continue
+                labels.append(label)
+            return labels
+        return [
+            label
+            for label in daily_labels
+            if label not in previous_statuses
+        ]
+
+    active_labels = [
+        label
+        for label, status in status_by_label.items()
+        if _is_active_test_assignment_status(status)
+    ] if status_by_label else list(log_labels)
+    return [label for label in active_labels if label not in previous_statuses]
+
+
+def _build_student_assigned_test_items(
+    labels: list[str],
+    by_label: dict,
+    status_by_label: dict,
+) -> list[dict]:
+    out = []
+    for label in labels:
+        item = dict(by_label.get(label) or {})
+        status = (
+            status_by_label.get(label)
+            or _normalize_test_assignment_status(item.get("status"))
+            or "assigned"
+        )
+        if not _is_active_test_assignment_status(status):
+            continue
+        if not item:
+            item = _fallback_assigned_test_from_label(label, status)
+        item["label"] = item.get("label") or label
+        item["status"] = status
+        item["statusLabel"] = _test_assignment_status_label(status)
+        answer_url = _test_assignment_answer_url(item)
+        if answer_url:
+            item["answerUrl"] = answer_url
+        out.append(item)
+
+    return out
 
 
 def _student_assigned_tests_for_date(
@@ -702,46 +829,12 @@ def _student_assigned_tests_for_date(
     log_labels = []
     daily_labels = []
 
-    def collect_log_items(source_map, source_date=None):
-        date_key = str(source_date or date)
-        day_logs = source_map.get(date_key) if isinstance(source_map, dict) else {}
-        log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
-        daily_items = log_entry.get(TEST_ASSIGN_DAILY_ITEMS_KEY) if isinstance(log_entry, dict) else []
-        if isinstance(daily_items, list):
-            for raw in daily_items:
-                if not isinstance(raw, dict):
-                    continue
-                label = _assigned_test_label(raw)
-                if not label:
-                    continue
-                if label not in daily_labels:
-                    daily_labels.append(label)
-                by_label[label] = {**by_label.get(label, {}), **raw, "label": label}
-        log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
-        if not isinstance(log_items, list):
-            return
-        for raw in log_items:
-            if not isinstance(raw, dict):
-                continue
-            label = _assigned_test_label(raw)
-            if not label:
-                continue
-            if label not in log_labels:
-                log_labels.append(label)
-            item = dict(raw)
-            if label in by_label:
-                merged = dict(item)
-                merged.update(by_label[label])
-                by_label[label] = merged
-            else:
-                by_label[label] = item
-
     if current_cleared and not status_by_label:
         return []
 
-    collect_log_items(logs_map)
+    _collect_assigned_test_metadata(logs_map, date, sid, by_label, log_labels, daily_labels)
     if not log_labels:
-        collect_log_items(fallback_logs_map)
+        _collect_assigned_test_metadata(fallback_logs_map, date, sid, by_label, log_labels, daily_labels)
 
     history_logs_map = fallback_logs_map if isinstance(fallback_logs_map, dict) else logs_map
     previous_statuses = _latest_previous_test_statuses_from_sources(
@@ -751,56 +844,13 @@ def _student_assigned_tests_for_date(
         sid,
     )
 
-    if daily_labels:
-        if status_by_label:
-            labels = [
-                label
-                for label in daily_labels
-                if (
-                    label in status_by_label
-                    and _is_active_test_assignment_status(status_by_label.get(label))
-                    and label not in previous_statuses
-                )
-            ]
-            for label, status in status_by_label.items():
-                if not _is_active_test_assignment_status(status) or label in previous_statuses or label in labels:
-                    continue
-                labels.append(label)
-        else:
-            labels = [
-                label
-                for label in daily_labels
-                if label not in previous_statuses
-            ]
-    else:
-        active_labels = [
-            label
-            for label, status in status_by_label.items()
-            if _is_active_test_assignment_status(status)
-        ] if status_by_label else list(log_labels)
-        labels = [label for label in active_labels if label not in previous_statuses]
-
-    out = []
-    for label in labels:
-        item = dict(by_label.get(label) or {})
-        status = (
-            status_by_label.get(label)
-            or _normalize_test_assignment_status(item.get("status"))
-            or "assigned"
-        )
-        if not _is_active_test_assignment_status(status):
-            continue
-        if not item:
-            item = _fallback_assigned_test_from_label(label, status)
-        item["label"] = item.get("label") or label
-        item["status"] = status
-        item["statusLabel"] = _test_assignment_status_label(status)
-        answer_url = _test_assignment_answer_url(item)
-        if answer_url:
-            item["answerUrl"] = answer_url
-        out.append(item)
-
-    return out
+    labels = _student_assigned_test_labels(
+        status_by_label,
+        log_labels,
+        daily_labels,
+        previous_statuses,
+    )
+    return _build_student_assigned_test_items(labels, by_label, status_by_label)
 
 
 def _merge_update_assignment(current, incoming):
@@ -1217,162 +1267,7 @@ _TEST_ANSWER_LINK_MAP_CACHE = {"mtime": None, "data": {}}
 _TESTS_CONFIG_CACHE = {"mtime": None, "data": {}}
 
 
-# ─────────────────────────────────────────────
-# ✅ SQLite (logs 테이블) — dual-write용
-# logs(date TEXT, sid TEXT, entry_json TEXT, updated_at TEXT, PRIMARY KEY(date,sid))
-# ─────────────────────────────────────────────
 KST = dt.timezone(dt.timedelta(hours=9))
-
-
-def _now_kst_iso() -> str:
-    return dt.datetime.now(KST).isoformat(timespec="seconds")
-
-
-def _default_db_path() -> str:
-    p = os.environ.get("DB_PATH")
-    if p:
-        return p
-    logs_json = str(getattr(LOGS_PATH, "__fspath__", lambda: str(LOGS_PATH))())
-    base_dir = os.path.dirname(os.path.abspath(logs_json))
-    return os.path.join(base_dir, "app.sqlite")
-
-
-def _db_connect() -> sqlite3.Connection:
-    db_path = _default_db_path()
-    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-
-    con = sqlite3.connect(
-        db_path,
-        timeout=30.0,
-        isolation_level=None,
-        check_same_thread=False
-    )
-    con.row_factory = sqlite3.Row
-
-    con.execute("PRAGMA busy_timeout=30000;")
-    con.execute("PRAGMA journal_mode=WAL;")
-    con.execute("PRAGMA synchronous=NORMAL;")
-    return con
-
-
-def _db_ensure_schema(con: sqlite3.Connection):
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-      date TEXT NOT NULL,
-      sid TEXT NOT NULL,
-      entry_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY(date, sid)
-    );
-    """)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_logs_sid ON logs(sid);")
-
-
-def _db_get_entry(con: sqlite3.Connection, date: str, sid: str) -> dict:
-    row = con.execute("SELECT entry_json FROM logs WHERE date=? AND sid=?;", (date, sid)).fetchone()
-    if not row:
-        return {}
-    try:
-        return json.loads(row["entry_json"]) if row["entry_json"] else {}
-    except Exception:
-        return {}
-
-
-def _db_upsert_entry(con: sqlite3.Connection, date: str, sid: str, entry: dict):
-    safe_entry = _repair_log_entry_placeholders(entry or {}, sid)
-    ej = json.dumps(safe_entry, ensure_ascii=False)
-    ua = _now_kst_iso()
-    con.execute(
-        """
-        INSERT INTO logs(date, sid, entry_json, updated_at)
-        VALUES(?,?,?,?)
-        ON CONFLICT(date, sid) DO UPDATE SET
-          entry_json=excluded.entry_json,
-          updated_at=excluded.updated_at;
-        """,
-        (date, sid, ej, ua),
-    )
-
-
-def _db_dump_all(con: sqlite3.Connection) -> dict:
-    out: Dict[str, Dict[str, dict]] = {}
-    rows = con.execute("SELECT date, sid, entry_json FROM logs;").fetchall()
-    for r in rows:
-        d = str(r["date"])
-        s = str(r["sid"])
-        try:
-            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
-        except Exception:
-            e = {}
-        out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
-    return out
-
-
-def _db_dump_date(con: sqlite3.Connection, date: str) -> dict:
-    out: Dict[str, Dict[str, dict]] = {date: {}}
-    rows = con.execute("SELECT sid, entry_json FROM logs WHERE date=?;", (date,)).fetchall()
-    for r in rows:
-        s = str(r["sid"])
-        try:
-            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
-        except Exception:
-            e = {}
-        out[date][s] = _repair_log_entry_placeholders(e, s)
-    return out
-
-
-def _db_dump_sid(con: sqlite3.Connection, sid: str) -> dict:
-    out: Dict[str, Dict[str, dict]] = {}
-    rows = con.execute("SELECT date, sid, entry_json FROM logs WHERE sid=?;", (sid,)).fetchall()
-    for r in rows:
-        d = str(r["date"])
-        s = str(r["sid"])
-        try:
-            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
-        except Exception:
-            e = {}
-        if isinstance(e, dict) and e:
-            out.setdefault(d, {})[s] = _repair_log_entry_placeholders(e, s)
-    return out
-
-
-def _db_dump_date_sid(con: sqlite3.Connection, date: str, sid: str) -> dict:
-    out: Dict[str, Dict[str, dict]] = {date: {}}
-    entry = _db_get_entry(con, date, sid)
-    if isinstance(entry, dict) and entry:
-        out[date][sid] = _repair_log_entry_placeholders(entry, sid)
-    return out
-
-
-def _filter_logs_map(data: dict, date_filter: str = "", sid_filter: str = "") -> dict:
-    if not isinstance(data, dict):
-        return {}
-
-    dates = [date_filter] if date_filter else sorted(data.keys())
-    out: Dict[str, Dict[str, dict]] = {}
-
-    for d in dates:
-        by_sid = data.get(d) if isinstance(data, dict) else None
-        if not isinstance(by_sid, dict):
-            if date_filter:
-                out.setdefault(str(d), {})
-            continue
-
-        if sid_filter:
-            entry = _sid_lookup(by_sid, sid_filter)
-            if isinstance(entry, dict) and entry:
-                out.setdefault(str(d), {})[str(sid_filter)] = _repair_log_entry_placeholders(entry, sid_filter)
-            elif date_filter:
-                out.setdefault(str(d), {})
-            continue
-
-        out[str(d)] = {
-            str(sid): _repair_log_entry_placeholders(entry, str(sid))
-            for sid, entry in by_sid.items()
-            if isinstance(entry, dict)
-        }
-
-    return out
 
 
 # ─────────────────────────────────────────────

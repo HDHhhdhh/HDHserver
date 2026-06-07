@@ -1,0 +1,8 @@
+Blank notes merge rule QA:
+- Command: python -c "from core.log_rules import merge_log_entry_safe; print(merge_log_entry_safe({'notes':'keep'}, {'notes':''}).get('notes'))"
+- Result: 0
+- stdout: keep
+
+Expected stderr during full safety suite:
+- The weekend-slot behavior driver intentionally exercises a failed save path and prints "Error: weekend slot save failed" to stderr.
+- The same run reports unit ok: run_admin_weekend_slot_behavior_checks and exits 0.

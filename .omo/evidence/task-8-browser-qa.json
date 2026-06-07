@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "firstOpenChecked": true,
+  "manualPatch": {
+    "date": "2026-06-06",
+    "sid": "007",
+    "entry": {
+      "videos": [
+        "m1"
+      ],
+      "source": "manual"
+    }
+  },
+  "forcePatch": {
+    "date": "2026-06-06",
+    "sid": "007",
+    "entry": {
+      "videos": [],
+      "source": "manual"
+    }
+  },
+  "backendUpdates": {
+    "2026-06-06": {
+      "007": {
+        "videos": [],
+        "source": "manual"
+      }
+    }
+  },
+  "toasts": [],
+  "pageErrors": [],
+  "consoleMessages": []
+}

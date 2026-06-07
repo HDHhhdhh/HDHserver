@@ -276,6 +276,29 @@ class LogRepository:
                 out[key] = value
         return self.repair_entry(out, sid)
 
+    def _merge_json_fallback_day(self, day: dict, by_sid: dict) -> None:
+        for sid, entry in by_sid.items():
+            sid_s = str(sid)
+            if not isinstance(entry, dict):
+                continue
+            existing = day.get(sid_s)
+            if isinstance(existing, dict):
+                day[sid_s] = self._merge_json_fallback_fields(existing, entry, sid_s)
+            elif sid_s not in day:
+                day[sid_s] = self.repair_entry(entry, sid_s)
+
+    def _merge_json_fallback_map(self, sqlite_map: dict, json_map: dict) -> dict:
+        out = dict(sqlite_map)
+        for date, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
+            if not isinstance(by_sid, dict):
+                continue
+            day = out.setdefault(date, {})
+            if not isinstance(day, dict):
+                out[date] = {}
+                day = out[date]
+            self._merge_json_fallback_day(day, by_sid)
+        return out
+
     def read_entry(self, date: str, sid: str) -> LogEntryResult:
         con = None
         try:
@@ -328,23 +351,7 @@ class LogRepository:
         if not sqlite_ok:
             return json_map
 
-        out = dict(sqlite_map)
-        for date, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
-            if not isinstance(by_sid, dict):
-                continue
-            day = out.setdefault(date, {})
-            if not isinstance(day, dict):
-                out[date] = {}
-                day = out[date]
-            for sid, entry in by_sid.items():
-                sid_s = str(sid)
-                if not isinstance(entry, dict):
-                    continue
-                if sid_s in day and isinstance(day.get(sid_s), dict):
-                    day[sid_s] = self._merge_json_fallback_fields(day[sid_s], entry, sid_s)
-                elif sid_s not in day:
-                    day[sid_s] = self.repair_entry(entry, sid_s)
-        return out
+        return self._merge_json_fallback_map(sqlite_map, json_map)
 
     def legacy_post(self, incoming: dict) -> LogPostResult:
         sqlite_ok = False

@@ -42,6 +42,12 @@ export async function fetchJson(url, init = {}) {
   return await response.json();
 }
 
+export async function fetchJsonChecked(url, label = 'request', init = {}) {
+  const response = await fetch(url, init);
+  await ensureOk(response, label);
+  return await response.json();
+}
+
 export async function fetchJsonOr(url, fallback, init = {}) {
   try {
     return await fetchJson(url, init);

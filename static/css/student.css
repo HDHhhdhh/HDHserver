@@ -386,6 +386,11 @@ body.student-page #vidList .badge-done {
 /* =========================================
    Assigned Tests
    ========================================= */
+body.student-page #assignedTestsPanel {
+  min-width: 0;
+  overflow: hidden;
+}
+
 body.student-page #assignedTestList {
   margin: 0;
   padding: 0;

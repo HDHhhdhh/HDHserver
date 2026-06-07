@@ -1,0 +1,17 @@
+{
+  "accepted_at": "2026-06-08T02:37:35+09:00",
+  "accepted_by": "project owner in current Codex thread",
+  "scope": "F4 scope-fidelity review exception for Task 2 runtime probe cleanup",
+  "owner_acceptance_summary": "The app is not in active service operation right now, so touching runtime data during verification is acceptable as long as no final modification remains.",
+  "recorded_probe": {
+    "date": "2026-99-99",
+    "sid": "s1",
+    "evidence": ".omo/evidence/task-2-accidental-runtime-cleanup.json",
+    "ledger_line": ".omo/start-work/ledger.jsonl:4"
+  },
+  "cleanup_condition": {
+    "lasting_runtime_modification_allowed": false,
+    "current_runtime_status": "clean; git status --short over runtime JSON/SQLite/catalog paths produced no output before this evidence was written"
+  },
+  "reviewer_block_addressed": "F4 requested either restore/fingerprint evidence or explicit owner acceptance that the recorded Task 2 runtime mutation and cleanup is an allowed exception. This file records that owner acceptance with the no-lasting-modification condition."
+}

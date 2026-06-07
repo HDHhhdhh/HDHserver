@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "rowDateRequest": {
+    "date": "2026-06-06",
+    "sid": "s2",
+    "value": true
+  },
+  "fallbackRequest": {
+    "date": "2026-06-07",
+    "sid": "s2",
+    "value": true
+  },
+  "calls": [
+    {
+      "date": "2026-06-06",
+      "sid": "s2",
+      "value": true
+    },
+    {
+      "date": "2026-06-06",
+      "sid": "s2",
+      "value": true
+    },
+    {
+      "date": "2026-06-07",
+      "sid": "s2",
+      "value": true
+    },
+    {
+      "date": "2026-06-07",
+      "sid": "s2",
+      "value": true
+    }
+  ],
+  "errors": [
+    "console: Failed to load resource: net::ERR_NETWORK_ACCESS_DENIED",
+    "console: Failed to load resource: net::ERR_NETWORK_ACCESS_DENIED",
+    "console: Failed to load resource: net::ERR_NETWORK_ACCESS_DENIED",
+    "console: [Window error] Uncaught ReferenceError: FullCalendar is not defined ReferenceError: FullCalendar is not defined\n    at initCalendar (http://127.0.0.1:8765/js/admin/features/calendar.js:1701:3)\n    at http://127.0.0.1:8765/js/admin/main.js?v=20260527chat:46:1",
+    "pageerror: FullCalendar is not defined"
+  ],
+  "screenshots": [
+    ".omo/evidence/task-6-whole-project-refactor.png",
+    ".omo/evidence/task-6-whole-project-refactor-error.png"
+  ],
+  "adminUrl": "http://127.0.0.1:8765/admin"
+}

@@ -125,6 +125,18 @@ function rowSlotsForAbsence(dateKey, sid, tr) {
   return Array.from(new Set([...weekendSlots, ...labelSlots])).sort((a, b) => a - b);
 }
 
+function closestTodayRow(el) {
+  return el?.closest?.('tr[data-sid]') || null;
+}
+
+function rowSid(tr) {
+  return String(tr?.dataset?.sid || '').trim();
+}
+
+function rowDateKey(tr) {
+  return String(tr?.dataset?.date || getAdminDate() || '').trim();
+}
+
 async function markMakeupDemandOpen(dateKey, sid, slots) {
   const date = String(dateKey || '').trim();
   const studentId = String(sid || '').trim();
@@ -239,9 +251,12 @@ function handleArriveWheel(ev) {
   if (!el) return;
   if (document.activeElement !== el) return;
 
-  const tr = el.closest('tr[data-sid][data-date]');
+  const tr = closestTodayRow(el);
   if (!tr) return;
-  if (tr.dataset.att === '1' || isAttended(tr.dataset.date, tr.dataset.sid)) return;
+  const sid = rowSid(tr);
+  const dateKey = rowDateKey(tr);
+  if (!sid || !dateKey) return;
+  if (tr.dataset.att === '1' || isAttended(dateKey, sid)) return;
 
   const next = shiftHHMM(el.textContent, ev.deltaY < 0 ? ARRIVE_WHEEL_STEP_MINUTES : -ARRIVE_WHEEL_STEP_MINUTES);
   if (!next) return;
@@ -249,7 +264,7 @@ function handleArriveWheel(ev) {
   ev.preventDefault();
   el.textContent = next;
 
-  setArriveOverride(tr.dataset.date, tr.dataset.sid, next);
+  setArriveOverride(dateKey, sid, next);
   document.dispatchEvent(new CustomEvent('attendance:updated'));
 }
 
@@ -491,6 +506,20 @@ function normalizeTestAssignmentStatus(status) {
   return 'assigned';
 }
 
+function assignedTestItemLabel(item) {
+  const label = String(item?.label || '').trim();
+  if (label) return label;
+  const round = String(item?.round || '').trim();
+  const pieces = [
+    item?.categoryLabel,
+    item?.curriculum,
+    item?.difficulty,
+    round && /회/.test(round) ? round : (round ? `${round}회차` : ''),
+    item?.name,
+  ].map(value => String(value || '').trim()).filter(Boolean);
+  return pieces.join(' / ');
+}
+
 function completeAssignedTestItems(items) {
   if (!Array.isArray(items)) return { changed: false, items: null };
   let changed = false;
@@ -531,6 +560,20 @@ function recordCleanupLogTestPatch(dateKey, sid) {
   return patch;
 }
 
+function completedTestLabelsFromLogPatch(logPatch) {
+  const labels = new Set();
+  [TEST_ASSIGN_DAILY_ITEMS_KEY, 'assignedTests'].forEach(key => {
+    const items = logPatch?.[key];
+    if (!Array.isArray(items)) return;
+    items.forEach(item => {
+      if (normalizeTestAssignmentStatus(item?.status) !== 'done') return;
+      const label = assignedTestItemLabel(item);
+      if (label) labels.add(label);
+    });
+  });
+  return labels;
+}
+
 async function fetchProgressEntryForCleanup(dateKey, sid) {
   const current = progressEntryForSid(state.progress?.[dateKey], sid);
   if (Object.keys(current).length) return current;
@@ -558,6 +601,14 @@ async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
   const logPatch = recordCleanupLogTestPatch(dateKey, sid);
   const progressEntry = await fetchProgressEntryForCleanup(dateKey, sid);
   const progressTests = assignedTestCompletionPatch(progressEntry);
+  const currentProgressTests = progressEntry?.tests && typeof progressEntry.tests === 'object'
+    ? progressEntry.tests
+    : {};
+  completedTestLabelsFromLogPatch(logPatch).forEach(label => {
+    if (!normalizeTestAssignmentStatus(currentProgressTests[label])) {
+      progressTests[label] = 'done';
+    }
+  });
 
   if (Object.keys(progressTests).length) {
     const res = await fetch('/api/progress/patch', {
@@ -779,9 +830,10 @@ function _bindDoneWrapInlineEditOnce() {
     el.style.borderColor = 'transparent';
     el.style.background = 'transparent';
 
-    const tr = el.closest('tr[data-sid][data-date]'); if (!tr) return;
-    const sid = tr.dataset.sid;
-    const date = tr.dataset.date;
+    const tr = closestTodayRow(el); if (!tr) return;
+    const sid = rowSid(tr);
+    const date = rowDateKey(tr);
+    if (!sid || !date) return;
 
     const prev = (el.dataset.orig || '').trim();
     const txt = (el.textContent || '').trim();
@@ -806,9 +858,10 @@ function _bindDoneWrapInlineEditOnce() {
     el.style.borderColor = 'transparent';
     el.style.background = 'transparent';
 
-    const tr = el.closest('tr[data-sid][data-date]'); if (!tr) return;
-    const sid = tr.dataset.sid;
-    const date = tr.dataset.date;
+    const tr = closestTodayRow(el); if (!tr) return;
+    const sid = rowSid(tr);
+    const date = rowDateKey(tr);
+    if (!sid || !date) return;
 
     const txt = (el.textContent || '').trim();
     el.dataset.orig = txt;
@@ -1178,11 +1231,12 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     el.style.borderColor = 'transparent';
     el.style.background = 'transparent';
 
-    const tr = el.closest('tr[data-sid][data-date]');
+    const tr = closestTodayRow(el);
     if (!tr) return;
 
-    const sid = tr.dataset.sid;
-    const dateKey = tr.dataset.date;
+    const sid = rowSid(tr);
+    const dateKey = rowDateKey(tr);
+    if (!sid || !dateKey) return;
 
     const prevOrig = el.dataset.orig || '';
     const prevLabel = prevOrig.trim();
@@ -1249,11 +1303,12 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     el.style.borderColor = 'transparent';
     el.style.background = 'transparent';
 
-    const tr = el.closest('tr[data-sid][data-date]');
+    const tr = closestTodayRow(el);
     if (!tr) return;
 
-    const sid = tr.dataset.sid;
-    const dateKey = tr.dataset.date;
+    const sid = rowSid(tr);
+    const dateKey = rowDateKey(tr);
+    if (!sid || !dateKey) return;
     const prev = (el.dataset.orig || '').trim();
     const txt = (el.textContent || '').trim();
 
@@ -1280,11 +1335,12 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     el.style.borderColor = 'transparent';
     el.style.background = 'transparent';
 
-    const tr = el.closest('tr[data-sid][data-date]');
+    const tr = closestTodayRow(el);
     if (!tr) return;
 
-    const sid = tr.dataset.sid;
-    const dateKey = tr.dataset.date;
+    const sid = rowSid(tr);
+    const dateKey = rowDateKey(tr);
+    if (!sid || !dateKey) return;
     const txt = (el.textContent || '').trim();
 
     el.dataset.orig = txt;
@@ -1298,9 +1354,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // Attendance
     const att = ev.target.closest?.('.attendChk');
     if (att) {
-      const tr = att.closest('tr[data-sid][data-date]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const dateKey = tr.dataset.date || getAdminDate();
+      const tr = closestTodayRow(att); if (!tr) return;
+      const sid = rowSid(tr);
+      const dateKey = rowDateKey(tr);
+      if (!sid || !dateKey) return;
       const prevChecked = isAttended(dateKey, sid);
       const checked = att.checked;
 
@@ -1355,9 +1412,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // Contact
     const ct = ev.target.closest?.('.contactChk');
     if (ct) {
-      const tr = ct.closest('tr[data-sid][data-date]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const dateKey = tr.dataset.date || getAdminDate();
+      const tr = closestTodayRow(ct); if (!tr) return;
+      const sid = rowSid(tr);
+      const dateKey = rowDateKey(tr);
+      if (!sid || !dateKey) return;
       const prevChecked = isContacted(dateKey, sid);
       const checked = ct.checked;
 
@@ -1385,9 +1443,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // Self-study excludes the row from homework-check operation metrics.
     const ss = ev.target.closest?.('.selfStudyChk');
     if (ss) {
-      const tr = ss.closest('tr[data-sid][data-date]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const dateKey = tr.dataset.date || getAdminDate();
+      const tr = closestTodayRow(ss); if (!tr) return;
+      const sid = rowSid(tr);
+      const dateKey = rowDateKey(tr);
+      if (!sid || !dateKey) return;
       const prevChecked = isSelfStudy(dateKey, sid);
       const checked = ss.checked;
       const pill = ss.closest('.self-study-toggle');
@@ -1432,9 +1491,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // Homework check request.
     const hr = ev.target.closest?.('.hwRequestChk');
     if (hr) {
-      const tr = hr.closest('tr[data-sid][data-date]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const dateKey = tr.dataset.date || getAdminDate();
+      const tr = closestTodayRow(hr); if (!tr) return;
+      const sid = rowSid(tr);
+      const dateKey = rowDateKey(tr);
+      if (!sid || !dateKey) return;
       if (isSelfStudy(dateKey, sid)) {
         hr.checked = false;
         return;
@@ -1470,9 +1530,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // Homework completion is the single visible homework flag.
     const hc = ev.target.closest?.('.hwCheckChk');
     if (hc) {
-      const tr = hc.closest('tr[data-sid][data-date]'); if (!tr) return;
-      const sid = tr.dataset.sid;
-      const dateKey = tr.dataset.date || getAdminDate();
+      const tr = closestTodayRow(hc); if (!tr) return;
+      const sid = rowSid(tr);
+      const dateKey = rowDateKey(tr);
+      if (!sid || !dateKey) return;
       const checked = hc.checked;
       const prevChecked = isHwChecked(dateKey, sid);
       const prevHw = tr.dataset.hw;
@@ -1538,13 +1599,13 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     document.addEventListener('click', async (e) => {
       const homeworkLeaveBtn = e.target.closest('#homeworkLeaveBtn');
       if (homeworkLeaveBtn) {
-        const rows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid][data-date][data-hw="1"]:not([data-self-study="1"])'));
+        const rows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid][data-hw="1"]:not([data-self-study="1"])'));
         const seen = new Set();
         const targets = [];
 
         for (const tr of rows) {
-          const sid = String(tr.dataset.sid || '').trim();
-          const dateKey = String(tr.dataset.date || getAdminDate() || '').trim();
+          const sid = rowSid(tr);
+          const dateKey = rowDateKey(tr);
           if (!sid || !dateKey) continue;
           const key = `${dateKey}\u0000${sid}`;
           if (seen.has(key)) continue;
@@ -1606,9 +1667,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
 
       const absentBtn = e.target.closest('.markAbsent');
       if (absentBtn) {
-        const tr = absentBtn.closest('tr[data-sid][data-date]'); if (!tr) return;
-        const sid = String(tr.dataset.sid);
-        const dateKey = tr.dataset.date || getAdminDate();
+        const tr = closestTodayRow(absentBtn); if (!tr) return;
+        const sid = rowSid(tr);
+        const dateKey = rowDateKey(tr);
+        if (!sid || !dateKey) return;
         const absenceSlots = rowSlotsForAbsence(dateKey, sid, tr);
 
         const prevAttended = isAttended(dateKey, sid);
@@ -1720,10 +1782,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
 
       const leaveBtn = e.target.closest('.markLeave');
       if (leaveBtn) {
-        const tr = leaveBtn.closest('tr[data-sid]'); if (!tr) return;
-        const sid = String(tr.dataset.sid);
-
-        const dateKey = tr.dataset.date || getAdminDate();
+        const tr = closestTodayRow(leaveBtn); if (!tr) return;
+        const sid = rowSid(tr);
+        const dateKey = rowDateKey(tr);
+        if (!sid || !dateKey) return;
         const t = nowHHMM();
 
         try {
@@ -1753,10 +1815,11 @@ export function bindTodayTableEvents(loadTodayAndRender) {
       const undoBtn = e.target.closest('.undoDone');
       const clearBtn = e.target.closest('.clearDone');
       if (undoBtn || clearBtn) {
-        const tr = e.target.closest('tr[data-sid][data-date]');
+        const tr = closestTodayRow(e.target);
         if (!tr) return;
-        const sid = String(tr.dataset.sid);
-        const date = tr.dataset.date;
+        const sid = rowSid(tr);
+        const date = rowDateKey(tr);
+        if (!sid || !date) return;
 
         try {
           if (undoBtn) {

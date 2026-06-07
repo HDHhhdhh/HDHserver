@@ -776,6 +776,30 @@ window.todayLocalKey = function () {
     });
   }
 
+  function assignedTestAnswerUrl(test) {
+    return String(test?.answerUrl || test?.answer_url || test?.solutionUrl || test?.solution_url || '').trim();
+  }
+
+  function isAssignedTestAnswerRestricted(test, answerUrl) {
+    return test?.answerRestricted === true || (!academyAccessAllowed && !!answerUrl);
+  }
+
+  function canOpenAssignedTestAnswer(answerUrl) {
+    return academyAccessAllowed && !!answerUrl;
+  }
+
+  function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl) {
+    const btn = document.createElement(canOpenAnswerUrl ? 'a' : 'button');
+    if (canOpenAnswerUrl) {
+      btn.href = answerUrl;
+      btn.target = '_blank';
+      btn.rel = 'noopener noreferrer';
+    } else {
+      btn.type = 'button';
+    }
+    return btn;
+  }
+
   function renderAssignedTests() {
     const panel = $('assignedTestsPanel');
     const list = $('assignedTestList');
@@ -790,17 +814,10 @@ window.todayLocalKey = function () {
     list.textContent = '';
     assignedTestsCache.forEach(test => {
       const li = document.createElement('li');
-      const answerUrl = String(test.answerUrl || test.answer_url || '').trim();
-      const answerRestricted = test.answerRestricted === true || (!academyAccessAllowed && !!answerUrl);
-      const canOpenAnswerUrl = academyAccessAllowed && !!answerUrl;
-      const btn = document.createElement(canOpenAnswerUrl ? 'a' : 'button');
-      if (canOpenAnswerUrl) {
-        btn.href = answerUrl;
-        btn.target = '_blank';
-        btn.rel = 'noopener noreferrer';
-      } else {
-        btn.type = 'button';
-      }
+      const answerUrl = assignedTestAnswerUrl(test);
+      const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);
+      const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);
+      const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);
       btn.className = 'assigned-test-btn';
       btn.dataset.testId = test.id || '';
       btn.dataset.status = normalizeAssignedTestStatus(test.status) || 'assigned';

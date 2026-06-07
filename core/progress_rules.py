@@ -12,6 +12,39 @@ WATCH_INTERRUPTED_RATIO = 0.05
 WATCH_DONE_RATIO = 0.90
 
 VALID_VIDEO_PROGRESS_STATUSES = frozenset({"", "done", "interrupted", "none", "skip"})
+AUTO_OWNED_PROGRESS_STATUSES = frozenset({"done", "interrupted", "skip"})
+AUTO_EMPTY_PRESERVED_STATUSES = frozenset({"done", "interrupted", "skip", "none"})
+
+
+def _is_watch_auto_owned_status(mid: str, status: str, watch_auto_meta: dict) -> bool:
+    return (
+        status in AUTO_OWNED_PROGRESS_STATUSES
+        and str(watch_auto_meta.get(mid) or "").strip() == status
+    )
+
+
+def _has_manual_progress_override(mid: str, manual_meta: dict) -> bool:
+    return bool(manual_meta.get(mid))
+
+
+def _auto_empty_update_should_clear(prev_status: str, prev_auto: bool) -> bool:
+    return (prev_auto and prev_status != "done") or prev_status not in AUTO_EMPTY_PRESERVED_STATUSES
+
+
+def _auto_interrupted_should_apply(prev_status: str, prev_auto: bool) -> bool:
+    return prev_status == "" or (prev_auto and prev_status != "done")
+
+
+def _auto_done_should_apply(prev_status: str, prev_auto: bool, manual_override: bool) -> bool:
+    return (
+        prev_status == ""
+        or prev_auto
+        or (prev_status == "interrupted" and not manual_override)
+    )
+
+
+def _auto_skip_should_apply(prev_status: str) -> bool:
+    return prev_status == ""
 
 
 def _copy_meta(entry: dict, key: str) -> dict:
@@ -179,38 +212,32 @@ def merge_progress_day_sid(
         status_s = str(status).strip()
         if source_s == "auto":
             prev_s = str(out.get(mid_s) or "").strip()
-            prev_auto = (
-                prev_s in ("done", "interrupted", "skip")
-                and str(watch_auto_meta.get(mid_s) or "").strip() == prev_s
-            )
-            manual_override = bool(manual_meta.get(mid_s))
+            prev_auto = _is_watch_auto_owned_status(mid_s, prev_s, watch_auto_meta)
+            manual_override = _has_manual_progress_override(mid_s, manual_meta)
 
             all_page_meta.pop(mid_s, None)
             if status_s in ("", "none"):
-                if prev_auto and prev_s != "done":
-                    out.pop(mid_s, None)
-                    watch_auto_meta.pop(mid_s, None)
-                elif prev_s not in ("done", "interrupted", "skip", "none"):
+                if _auto_empty_update_should_clear(prev_s, prev_auto):
                     out.pop(mid_s, None)
                     watch_auto_meta.pop(mid_s, None)
                 continue
 
             if status_s == "interrupted":
-                if prev_s == "" or (prev_auto and prev_s != "done"):
+                if _auto_interrupted_should_apply(prev_s, prev_auto):
                     out[mid_s] = "interrupted"
                     watch_auto_meta[mid_s] = "interrupted"
                     manual_meta.pop(mid_s, None)
                 continue
 
             if status_s == "done":
-                if prev_s == "" or prev_auto or (prev_s == "interrupted" and not manual_override):
+                if _auto_done_should_apply(prev_s, prev_auto, manual_override):
                     out[mid_s] = "done"
                     watch_auto_meta[mid_s] = "done"
                     manual_meta.pop(mid_s, None)
                 continue
 
             if status_s == "skip":
-                if prev_s == "":
+                if _auto_skip_should_apply(prev_s):
                     out[mid_s] = "skip"
                     watch_auto_meta[mid_s] = "skip"
                     manual_meta.pop(mid_s, None)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import pathlib
 import py_compile
@@ -10,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-from typing import Callable, Iterable
+from typing import Callable, Final, Iterable
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -37,6 +39,165 @@ JS_CHECK_FILES = [
     ROOT / "static/js/student.js",
     ROOT / "static/js/shared/api.js",
 ]
+
+REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...]] = (
+    (
+        1,
+        "log repository fallback fills only missing JSON entries",
+        ("run_log_repository_unit_checks",),
+        (
+            "sqlite field must be preserved on fallback merge",
+            "json fallback must not overwrite existing sqlite homeworkTable",
+            "read_logs json fallback must fill missing date/sid entries",
+        ),
+    ),
+    (
+        2,
+        "log routes delegate to LogRepository without path leaks",
+        ("run_log_repository_unit_checks",),
+        (
+            "log entry route must return 200 for a missing sid",
+            "bad log patch date must return bad date error",
+            "warning must not expose raw local paths",
+        ),
+    ),
+    (
+        3,
+        "manual and auto progress merge predicates stay explicit",
+        ("run_progress_rule_unit_checks",),
+        (
+            "auto watch must not overwrite manual white",
+            "auto watch must not overwrite manual skip",
+            "auto watch must not overwrite manual interrupted",
+            "auto done should mark its own done status",
+        ),
+    ),
+    (
+        4,
+        "watch routes use progress rules and preserve manual state",
+        ("run_watch_route_progress_unit_checks",),
+        (
+            "watch route must not overwrite manual white",
+            "watch-status route should reject bad status",
+            "watch-status route should promote interrupted to done when watch is done",
+        ),
+    ),
+    (
+        5,
+        "student bootstrap assignedTests contract and chatbot docs stay aligned",
+        ("run_student_bootstrap_unit_checks", "run_admin_chat_contract_source_checks"),
+        (
+            "assignedTests bootstrap authority contract must keep assignedTests as a top-level array",
+            "student bootstrap must not resurrect previous assigned tests",
+            "student bootstrap missing sid must return missing sid",
+            "assignedTests bootstrap authority contract",
+        ),
+    ),
+    (
+        6,
+        "admin today row actions prefer row data-date before selected date",
+        ("run_admin_wave_b_source_checks", "run_admin_wave_b_behavior_checks", "run_admin_chat_contract_source_checks"),
+        (
+            "homework save uses row date",
+            "contact save uses row date before selected admin date",
+            "contact save falls back to selected admin date only when row date is missing",
+            "row data-date fallback contract",
+        ),
+    ),
+    (
+        7,
+        "log modal latest-entry and save policy remain merge safe",
+        (
+            "run_admin_log_modal_carried_reapply_source_checks",
+            "run_admin_log_modal_carried_reapply_happy_behavior_checks",
+            "run_admin_log_modal_save_policy_source_checks",
+            "run_admin_log_modal_save_policy_behavior_checks",
+        ),
+        (
+            "carried reapply latest log read must not silently fall back to stale state.logs",
+            "notes do not use stale local fallback",
+            "manual white is persisted as none",
+            "returned manual white progress updates local state",
+        ),
+    ),
+    (
+        8,
+        "video modal assignment policy preserves manual source and row date",
+        ("run_admin_video_modal_preflight_source_checks", "run_admin_video_modal_assignment_policy_behavior_checks"),
+        (
+            "activeAssignmentManual = source === 'manual';",
+            "manual assignment remains checked when course progress is complete",
+            "manual save preserves manual source",
+            "force-empty save records a manual clear so auto assignment does not resurrect it",
+        ),
+    ),
+    (
+        9,
+        "test modal persistence bridge keeps progress tests authoritative",
+        ("run_admin_test_modal_persistence_bridge_source_checks", "run_admin_test_modal_assignment_behavior_checks"),
+        (
+            "test modal save must build /api/progress/patch body through the persistence bridge",
+            "progress patch preserves existing test authority",
+            "assignedTests remain in log patch",
+            "daily metadata is not cleared on success",
+        ),
+    ),
+    (
+        10,
+        "admin JSON wrapper keeps strict critical loads and optional fallbacks",
+        ("run_admin_api_wrapper_usage_source_checks", "run_admin_wave_b_behavior_checks"),
+        (
+            "admin bootstrap critical helper must delegate to api.getStrict",
+            "strict bootstrap error keeps label",
+            "optional materials failure keeps fallback",
+        ),
+    ),
+    (
+        11,
+        "answer-link precedence stays direct, config, then generated map",
+        ("run_student_answer_link_precedence_unit_checks", "run_student_bootstrap_unit_checks"),
+        (
+            "assignment direct answerUrl must win over config and generated map",
+            "config sourceFiles.solutionFileId must resolve to a Drive answerUrl before generated map",
+            "generated answer-link map must remain the fallback for UNIT assignments",
+        ),
+    ),
+    (
+        12,
+        "student page preserves assigned-test answer rendering and access gating",
+        ("run_student_answer_link_render_source_checks", "run_student_bootstrap_unit_checks"),
+        (
+            "student assigned-test render block must preserve answer-link behavior",
+            "restricted student bootstrap must strip answerUrl",
+            "restricted student bootstrap must mark answerRestricted",
+        ),
+    ),
+    (
+        13,
+        "catalog scripts use temp outputs and guard live files",
+        ("run_catalog_script_safety_source_checks", "run_catalog_script_temp_file_behavior_checks"),
+        (
+            "review temp import must preserve solutionFileId metadata",
+            "unit answer-link temp output must contain Drive answerUrl",
+            "catalog safety temp checks must not modify live file",
+        ),
+    ),
+)
+
+SMOKE_GUARD_SNIPPETS: Final[tuple[str, ...]] = (
+    "before = runtime_fingerprints()",
+    "after = runtime_fingerprints()",
+    "runtime_diff_keys(before, after)",
+    "all(is_sqlite_transient_sidecar(key) for key in changed)",
+    "Skipped GET /api/logs/entry because it may touch SQLite WAL/schema state.",
+    "Skipped GET /api/logs because it may touch SQLite WAL/schema state.",
+    "Skipped GET /api/updates because it can auto-write updates.json.",
+    "Skipped today's /api/student/bootstrap because it can auto-write updates.json.",
+)
+
+FRONTEND_EVIDENCE_TASKS: Final[tuple[int, ...]] = (6, 7, 8, 9, 12, 14, 15, 16)
+FRONTEND_EVIDENCE_INVENTORY = ROOT / ".omo/evidence/task-18-frontend-evidence-inventory.json"
+FRONTEND_EVIDENCE_SERVER_STOP = ROOT / ".omo/evidence/task-18-server-stop.txt"
 
 CORE_IMPORT_RUNTIME_FILES = [
     "students.json",
@@ -184,6 +345,17 @@ def _assert_unit(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def run_app_import_smoke_checks() -> None:
+    import importlib
+
+    if not import_smoke_is_safe(report=False):
+        print("app import smoke skipped because importing app could create runtime files")
+        return
+
+    app_module = importlib.import_module("app")
+    _assert_unit(hasattr(app_module, "create_app"), "app import must expose create_app")
+
+
 def run_log_rules_unit_checks() -> None:
     from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
 
@@ -243,6 +415,17 @@ def run_progress_rule_unit_checks() -> None:
         auto_done.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m5") == "done",
         "auto watch should advance its marker to done",
     )
+
+    auto_done_created = merge_progress_day_sid({}, {"m7": "done"}, source="auto")
+    _assert_unit(auto_done_created.get("m7") == "done", "auto done should create done progress")
+    _assert_unit(
+        auto_done_created.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m7") == "done",
+        "auto done should mark its own done status",
+    )
+
+    manual_none = {"m8": "none", PROGRESS_MANUAL_META_KEY: {"m8": True}}
+    auto_done_manual_none = merge_progress_day_sid(manual_none, {"m8": "done"}, source="auto")
+    _assert_unit(auto_done_manual_none.get("m8") == "none", "auto done must not overwrite manual none")
 
     auto_clear = merge_progress_day_sid(auto_started, {"m5": ""}, source="auto")
     _assert_unit("m5" not in auto_clear, "auto empty update should clear non-done auto progress")
@@ -383,6 +566,7 @@ def run_video_completion_source_checks() -> None:
 
 def run_watch_route_progress_unit_checks() -> None:
     from core.progress_rules import PROGRESS_MANUAL_META_KEY, WATCH_AUTO_PROGRESS_META_KEY
+    from flask import Flask
     import routes.api_basic as api_basic
     import routes.api_watch as api_watch
 
@@ -390,13 +574,18 @@ def run_watch_route_progress_unit_checks() -> None:
     temp_base.mkdir(exist_ok=True)
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
+    old_watch_path = api_watch.WATCH_PATH
+    old_network_allowed = api_watch.academy_network_allowed
 
     with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
+        watch_path = pathlib.Path(tmpdir) / "watch.json"
         progress_path.write_text("{}", "utf-8")
+        watch_path.write_text("{}", "utf-8")
 
         api_basic.PRG_PATH = progress_path
         api_watch.PRG_PATH = progress_path
+        api_watch.WATCH_PATH = watch_path
         try:
             merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "interrupted")
             _assert_unit(merged.get("m1") == "interrupted", "watch route should save auto interrupted")
@@ -417,9 +606,78 @@ def run_watch_route_progress_unit_checks() -> None:
 
             merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
             _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
+
+            app = Flask("verify_watch_status")
+            app.register_blueprint(api_watch.bp_api_watch)
+            client = app.test_client()
+
+            api_watch.academy_network_allowed = lambda: True
+            res = client.post(
+                "/api/watch-status",
+                json={"date": "2026-06-06", "sid": "007", "mid": "m2", "status": "done"},
+            )
+            _assert_unit(res.status_code == 200, "watch-status route should accept valid auto status")
+            body = res.get_json() or {}
+            _assert_unit(
+                body.get("progress", {}).get("m2") == "none",
+                "watch-status route must not overwrite manual white",
+            )
+
+            res = client.post(
+                "/api/watch-status",
+                json={"date": "2026-06-06", "sid": "007", "mid": "m9", "status": "bogus"},
+            )
+            _assert_unit(res.status_code == 400, "watch-status route should reject bad status")
+            _assert_unit(
+                (res.get_json() or {}).get("error") == "bad status",
+                "bad status error should be stable",
+            )
+
+            api_watch.academy_network_allowed = lambda: False
+            res = client.post(
+                "/api/watch-status",
+                json={"date": "2026-06-06", "sid": "007", "mid": "m9", "status": "done"},
+            )
+            _assert_unit(res.status_code == 403, "watch-status route should reject disallowed networks")
+            _assert_unit(
+                (res.get_json() or {}).get("error") == "academy_network_required",
+                "watch-status network error should be stable",
+            )
+
+            api_watch.academy_network_allowed = lambda: True
+            watch_path.write_text(
+                json.dumps(
+                    {
+                        "2026-06-06": {
+                            "007": {
+                                "m3": {
+                                    "last": 95,
+                                    "dur": 100,
+                                    "completed": False,
+                                    "updatedAt": 1,
+                                }
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "utf-8",
+            )
+            res = client.post(
+                "/api/watch-status",
+                json={"date": "2026-06-06", "sid": "007", "mid": "m3", "status": "interrupted"},
+            )
+            _assert_unit(res.status_code == 200, "watch-status route should accept interrupted status")
+            body = res.get_json() or {}
+            _assert_unit(
+                body.get("progress", {}).get("m3") == "done",
+                "watch-status route should promote interrupted to done when watch is done",
+            )
         finally:
             api_basic.PRG_PATH = old_basic_progress
             api_watch.PRG_PATH = old_watch_progress
+            api_watch.WATCH_PATH = old_watch_path
+            api_watch.academy_network_allowed = old_network_allowed
 
 
 def run_log_repository_unit_checks() -> None:
@@ -477,7 +735,12 @@ def run_log_repository_unit_checks() -> None:
         merge_date = "2026-06-05"
         logs_path.write_text(
             json.dumps(
-                {merge_date: {sid: {"notes": "json notes", "homeworkTable": [{"book": "B"}]}}},
+                {
+                    merge_date: {
+                        sid: {"notes": "json notes", "homeworkTable": [{"book": "B"}]},
+                        "s2": {"notes": "json only"},
+                    },
+                },
                 ensure_ascii=False,
             ),
             "utf-8",
@@ -485,12 +748,31 @@ def run_log_repository_unit_checks() -> None:
         con = repo._connect()
         try:
             repo._ensure_schema(con)
-            repo._sqlite_upsert_entry(con, merge_date, sid, {"done": True})
+            repo._sqlite_upsert_entry(
+                con,
+                merge_date,
+                sid,
+                {"done": True, "homeworkTable": [{"book": "sqlite"}]},
+            )
         finally:
             con.close()
         merged_entry = repo.read_entry(merge_date, sid).entry
         _assert_unit(merged_entry.get("done") is True, "sqlite field must be preserved on fallback merge")
         _assert_unit(merged_entry.get("notes") == "json notes", "missing sqlite notes should be filled from json")
+        _assert_unit(
+            merged_entry.get("homeworkTable") == [{"book": "sqlite"}],
+            "json fallback must not overwrite existing sqlite homeworkTable",
+        )
+        merged_logs = repo.read_logs(merge_date, "")
+        merged_log_entry = merged_logs[merge_date][sid]
+        _assert_unit(
+            merged_log_entry.get("homeworkTable") == [{"book": "sqlite"}],
+            "read_logs json fallback must not overwrite existing sqlite homeworkTable",
+        )
+        _assert_unit(
+            merged_logs[merge_date]["s2"].get("notes") == "json only",
+            "read_logs json fallback must fill missing date/sid entries",
+        )
 
         import core.log_repository as log_repository_module
 
@@ -538,6 +820,37 @@ def run_log_repository_unit_checks() -> None:
         from routes import api_basic
         from types import SimpleNamespace
 
+        class FakeReadLogRepository:
+            def read_entry(self, _date, _sid):
+                return SimpleNamespace(source="json", entry={})
+
+        route_app = Flask("verify-log-entry-route")
+        route_app.register_blueprint(api_basic.bp_api_basic)
+        route_client = route_app.test_client()
+
+        original_get_log_repository = api_basic.get_log_repository
+        api_basic.get_log_repository = lambda: FakeReadLogRepository()
+        try:
+            response = route_client.get("/api/logs/entry?date=2026-06-06&sid=__missing__")
+        finally:
+            api_basic.get_log_repository = original_get_log_repository
+
+        payload = response.get_json()
+        response_text = response.get_data(as_text=True)
+        _assert_unit(response.status_code == 200, "log entry route must return 200 for a missing sid")
+        _assert_unit(payload.get("ok") is True, "log entry route must keep ok:true")
+        _assert_unit(isinstance(payload.get("entry"), dict), "log entry route must return an object entry")
+        _assert_unit("C:" not in response_text and str(ROOT) not in response_text, "log entry route must not expose raw local paths")
+
+        response = route_client.post(
+            "/api/logs/patch",
+            json={"date": "bad-date", "sid": sid, "entry": {"notes": "bad date"}},
+        )
+        payload = response.get_json()
+        _assert_unit(response.status_code == 400, "bad log patch date must return HTTP 400")
+        _assert_unit(payload.get("ok") is False, "bad log patch date must return ok:false")
+        _assert_unit(payload.get("error") == "bad date", "bad log patch date must return bad date error")
+
         class FakeLogRepository:
             def patch_entry(self, _date, _sid, _entry, _base):
                 return SimpleNamespace(
@@ -550,7 +863,6 @@ def run_log_repository_unit_checks() -> None:
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
                 )
 
-        original_get_log_repository = api_basic.get_log_repository
         api_basic.get_log_repository = lambda: FakeLogRepository()
         try:
             app = Flask("verify-logrepo-json-warning")
@@ -781,8 +1093,735 @@ def run_student_assigned_tests_unit_checks() -> None:
     )
 
 
+def run_student_answer_link_precedence_unit_checks() -> None:
+    import routes.api_basic as api_basic
+
+    direct_url = "https://direct.example/assignment"
+    map_url = "https://map.example/unit-round-2"
+    config_file_id = "CONFIG_SOLUTION_FILE_ID"
+    config_drive_url = f"https://drive.google.com/file/d/{config_file_id}/view?usp=drivesdk"
+
+    config = {
+        "categories": {
+            "REVIEW": {
+                "tests": [
+                    {
+                        "id": "review-direct",
+                        "name": "Direct precedence",
+                        "round": "1",
+                        "sourceFiles": {"solutionFileId": config_file_id},
+                    },
+                    {
+                        "id": "review-config",
+                        "name": "Config file id",
+                        "round": "1",
+                        "sourceFiles": {"solutionFileId": config_file_id},
+                    },
+                ],
+            },
+        },
+    }
+    link_map = {
+        "review-direct": {"1": {"answerUrl": "https://map.example/should-not-win"}},
+        "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}},
+        "unit-map": {"2": {"answerUrl": map_url}},
+    }
+
+    original_config_loader = api_basic._load_tests_config_for_answer_links
+    original_map_loader = api_basic._load_test_answer_link_map
+    try:
+        api_basic._load_tests_config_for_answer_links = lambda: config
+        api_basic._load_test_answer_link_map = lambda: link_map
+
+        direct_item = {
+            "id": "review-direct",
+            "category": "REVIEW",
+            "name": "Direct precedence",
+            "round": "1",
+            "answerUrl": direct_url,
+        }
+        _assert_unit(
+            api_basic._test_assignment_answer_url(direct_item) == direct_url,
+            "assignment direct answerUrl must win over config and generated map",
+        )
+
+        config_item = {
+            "id": "review-config",
+            "category": "REVIEW",
+            "name": "Config file id",
+            "round": "1",
+        }
+        _assert_unit(
+            api_basic._test_assignment_answer_url(config_item) == config_drive_url,
+            "config sourceFiles.solutionFileId must resolve to a Drive answerUrl before generated map",
+        )
+
+        map_item = {
+            "id": "unit-map_r2",
+            "category": "UNIT",
+            "name": "Generated map",
+            "round": "2",
+        }
+        _assert_unit(
+            api_basic._test_assignment_answer_url(map_item) == map_url,
+            "generated answer-link map must remain the fallback for UNIT assignments",
+        )
+
+        missing_item = {
+            "id": "unit-missing",
+            "category": "UNIT",
+            "name": "Missing metadata",
+            "round": "1",
+        }
+        _assert_unit(
+            api_basic._test_assignment_answer_url(missing_item) == "",
+            "missing answer metadata must leave answerUrl absent",
+        )
+
+        restricted = api_basic._academy_restricted_assigned_tests(
+            [{
+                "label": "T",
+                "answerUrl": direct_url,
+                "sourceFiles": {"solutionFileId": "x", "other": "kept"},
+            }],
+            academy_allowed=False,
+        )
+        _assert_unit(len(restricted) == 1, "restricted assigned test must remain visible")
+        _assert_unit("answerUrl" not in restricted[0], "restricted assigned test must strip answerUrl")
+        _assert_unit(restricted[0].get("answerRestricted") is True, "restricted assigned test must mark answerRestricted")
+        _assert_unit(
+            restricted[0].get("sourceFiles") == {"other": "kept"},
+            "restricted assigned test must strip sourceFiles solution ids while preserving unrelated metadata",
+        )
+    finally:
+        api_basic._load_tests_config_for_answer_links = original_config_loader
+        api_basic._load_test_answer_link_map = original_map_loader
+
+
+def run_student_bootstrap_unit_checks() -> None:
+    from flask import Flask
+    from types import SimpleNamespace
+    import routes.api_basic as api_basic
+
+    run_student_assigned_tests_unit_checks()
+
+    sid = "s1"
+    prev_date = "2026-05-30"
+    date = "2026-05-31"
+    old_label = "테스트 / 대수 / 기존"
+    new_label = "테스트 / 대수 / 신규"
+    skipped_label = "테스트 / 대수 / 제외"
+    stale_daily_label = "테스트 / 대수 / stale-daily"
+    config_file_id = "BOOTSTRAP_SOLUTION_FILE_ID"
+    config_drive_url = f"https://drive.google.com/file/d/{config_file_id}/view?usp=drivesdk"
+    answer_link_test_meta = {
+        "id": "review-config",
+        "category": "REVIEW",
+        "round": "1",
+        "sourceFiles": {"solutionFileId": config_file_id},
+    }
+    log_entry = {
+        "assignedTests": [
+            {"label": old_label, "name": "기존", "status": "assigned"},
+            {"label": new_label, "name": "신규", "status": "assigned"},
+            {"label": skipped_label, "name": "제외", "status": "skip"},
+        ],
+        "testAssignmentDailyTests": [
+            {"label": old_label, "name": "기존", "status": "assigned"},
+            {"label": new_label, "name": "신규", "status": "assigned"},
+            {"label": stale_daily_label, "name": "stale-daily", "status": "assigned"},
+        ],
+    }
+    log_entry["assignedTests"][1].update(answer_link_test_meta)
+    log_entry["testAssignmentDailyTests"][1].update(answer_link_test_meta)
+    tests_config = {
+        "categories": {
+            "REVIEW": {
+                "tests": [
+                    {
+                        "id": "review-config",
+                        "name": new_label,
+                        "round": "1",
+                        "sourceFiles": {"solutionFileId": config_file_id},
+                    },
+                ],
+            },
+        },
+    }
+    logs_all = {
+        prev_date: {
+            sid: {
+                "assignedTests": [
+                    {"label": old_label, "name": "기존", "status": "assigned"},
+                ],
+            },
+        },
+        date: {sid: log_entry},
+    }
+    progress = {
+        prev_date: {
+            sid: {
+                "tests": {
+                    old_label: "assigned",
+                },
+            },
+        },
+        date: {
+            sid: {
+                "tests": {
+                    old_label: "assigned",
+                    new_label: "assigned",
+                    skipped_label: "skip",
+                },
+            },
+        },
+    }
+
+    class FakeLogRepository:
+        def read_entry(self, _date, _sid):
+            return SimpleNamespace(entry=log_entry)
+
+        def read_json_map(self):
+            return logs_all
+
+    def fake_load(path):
+        if path == api_basic.STU_PATH:
+            return [{"id": sid, "name": "학생1", "day1": "일 13:00"}]
+        if path == api_basic.PRG_PATH:
+            return progress
+        if path == api_basic.VID_PATH:
+            return []
+        if path == api_basic.UPD_PATH:
+            return {}
+        if path == api_basic.ASN_PATH:
+            return {}
+        if path == api_basic.MAT_PATH:
+            return {}
+        return {}
+
+    original_load = api_basic.load
+    original_load_absent = api_basic.load_absent
+    original_get_log_repository = api_basic.get_log_repository
+    original_academy_network_allowed = api_basic.academy_network_allowed
+    original_student_is_registered_on_date = api_basic._student_is_registered_on_date
+    original_config_loader = api_basic._load_tests_config_for_answer_links
+    original_map_loader = api_basic._load_test_answer_link_map
+
+    api_basic.load = fake_load
+    api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
+    api_basic.get_log_repository = lambda: FakeLogRepository()
+    api_basic.academy_network_allowed = lambda: True
+    api_basic._student_is_registered_on_date = lambda _student, _sid, _date: True
+    api_basic._load_tests_config_for_answer_links = lambda: tests_config
+    api_basic._load_test_answer_link_map = lambda: {
+        "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}}
+    }
+    try:
+        app = Flask("verify-student-bootstrap-assigned-tests")
+        app.register_blueprint(api_basic.bp_api_basic)
+        client = app.test_client()
+
+        response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
+        payload = response.get_json() or {}
+        response_text = response.get_data(as_text=True)
+
+        _assert_unit(response.status_code == 200, "student bootstrap fixture route must return 200")
+        _assert_unit(payload.get("ok") is True, "student bootstrap fixture route must return ok:true")
+        _assert_unit(
+            isinstance(payload.get("assignedTests"), list),
+            "assignedTests bootstrap authority contract must keep assignedTests as a top-level array",
+        )
+        labels = [item.get("label") for item in payload.get("assignedTests") or []]
+        _assert_unit(labels == [new_label], "student bootstrap must expose only current active assigned tests")
+        _assert_unit(old_label not in labels, "student bootstrap must not resurrect previous assigned tests")
+        _assert_unit(skipped_label not in labels, "student bootstrap must not expose current skipped tests")
+        _assert_unit(stale_daily_label not in labels, "student bootstrap must suppress stale daily metadata")
+        _assert_unit(
+            payload["assignedTests"][0].get("answerUrl") == config_drive_url,
+            "student bootstrap must resolve Drive answerUrl from config sourceFiles.solutionFileId",
+        )
+        _assert_unit("C:" not in response_text and str(ROOT) not in response_text, "student bootstrap must not expose raw local paths")
+
+        api_basic.academy_network_allowed = lambda: False
+        restricted_response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
+        restricted_payload = restricted_response.get_json() or {}
+        restricted_items = restricted_payload.get("assignedTests") or []
+        _assert_unit(restricted_response.status_code == 200, "restricted student bootstrap fixture route must return 200")
+        _assert_unit(restricted_payload.get("ok") is True, "restricted student bootstrap fixture route must return ok:true")
+        _assert_unit(len(restricted_items) == 1, "restricted student bootstrap must keep assigned test visible")
+        _assert_unit("answerUrl" not in restricted_items[0], "restricted student bootstrap must strip answerUrl")
+        _assert_unit(restricted_items[0].get("answerRestricted") is True, "restricted student bootstrap must mark answerRestricted")
+        _assert_unit(
+            "solutionFileId" not in (restricted_items[0].get("sourceFiles") or {}),
+            "restricted student bootstrap must strip nested solution file ids",
+        )
+
+        missing_response = client.get(f"/api/student/bootstrap?date={date}")
+        missing_payload = missing_response.get_json() or {}
+        _assert_unit(missing_response.status_code == 400, "student bootstrap missing sid must return HTTP 400")
+        _assert_unit(missing_payload.get("error") == "missing sid", "student bootstrap missing sid must return missing sid")
+    finally:
+        api_basic.load = original_load
+        api_basic.load_absent = original_load_absent
+        api_basic.get_log_repository = original_get_log_repository
+        api_basic.academy_network_allowed = original_academy_network_allowed
+        api_basic._student_is_registered_on_date = original_student_is_registered_on_date
+        api_basic._load_tests_config_for_answer_links = original_config_loader
+        api_basic._load_test_answer_link_map = original_map_loader
+
+
+def run_student_answer_link_render_source_checks() -> None:
+    student_js = (ROOT / "static/js/student.js").read_text("utf-8")
+    render_start = student_js.index("function renderAssignedTests()")
+    render_end = student_js.index("async function recoverStudentSid", render_start)
+    render_block = student_js[render_start:render_end]
+
+    for snippet in [
+        "function assignedTestAnswerUrl(test)",
+        "function isAssignedTestAnswerRestricted(test, answerUrl)",
+        "function canOpenAssignedTestAnswer(answerUrl)",
+        "function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl)",
+    ]:
+        _assert_unit(snippet in student_js, f"student assigned-test answer rendering must keep helper seam: {snippet}")
+
+    for snippet in [
+        "const answerUrl = assignedTestAnswerUrl(test);",
+        "const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);",
+        "const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);",
+        "const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);",
+        "if (answerUrl) btn.dataset.answerUrl = answerUrl;",
+        "if (answerRestricted) btn.dataset.answerRestricted = '1';",
+        "showAcademyOnlyNotice();",
+    ]:
+        _assert_unit(snippet in render_block, f"student assigned-test render block must preserve answer-link behavior: {snippet}")
+
+
+def run_catalog_script_safety_source_checks() -> None:
+    link_map_py = (ROOT / "scripts/build_unit_test_answer_link_map_from_gdown.py").read_text("utf-8")
+    review_py = (ROOT / "scripts/import_review_test_catalog_append_csv.py").read_text("utf-8")
+    school_py = (ROOT / "scripts/import_school_past_test_catalog_append_csv.py").read_text("utf-8")
+
+    for label, source in (("review", review_py), ("school-past", school_py)):
+        for snippet in [
+            "argparse.ArgumentParser",
+            'parser.add_argument("--config"',
+            'parser.add_argument("--csv"',
+            'parser.add_argument("--backup-confirmed"',
+            "def require_backup_for_live_config_write(",
+            "def main(argv: list[str] | None = None)",
+        ]:
+            _assert_unit(snippet in source, f"{label} import script must keep safe temp/live-write CLI seam: {snippet}")
+
+    for snippet in [
+        'parser.add_argument("--backup-confirmed"',
+        "def require_backup_for_live_output(",
+        "require_backup_for_live_output(args.output, args.backup_confirmed, parser)",
+    ]:
+        _assert_unit(snippet in link_map_py, f"unit answer-link map script must guard live output writes: {snippet}")
+
+
+def _assert_cli_exits_with_code(command, argv: list[str], expected_code: int, label: str) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            command(argv)
+    except SystemExit as exc:
+        _assert_unit(exc.code == expected_code, f"{label} must exit {expected_code}; got {exc.code}")
+        _assert_unit(stderr.getvalue(), f"{label} must explain the CLI rejection on stderr")
+        return
+    raise AssertionError(f"{label} must reject the command")
+
+
+def run_catalog_script_temp_file_behavior_checks() -> None:
+    import scripts.build_unit_test_answer_link_map_from_gdown as unit_links
+    import scripts.import_review_test_catalog_append_csv as review_import
+    import scripts.import_school_past_test_catalog_append_csv as school_import
+
+    def fingerprint(path: pathlib.Path) -> bytes | None:
+        return path.read_bytes() if path.exists() else None
+
+    live_config = ROOT / "tests-config.json"
+    live_map = ROOT / "static/js/test_answer_link_map.json"
+    live_before = {
+        live_config: fingerprint(live_config),
+        live_map: fingerprint(live_map),
+    }
+
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-", dir=temp_base) as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        config_path = tmp / "tests-config.json"
+        config_path.write_text(json.dumps({"categories": {}}, ensure_ascii=False), encoding="utf-8")
+
+        review_csv = tmp / "review.csv"
+        review_csv.write_text(
+            "\n".join([
+                "id,subject,difficulty,round,name,problems,answers,source_order,problem_file_id,solution_file_id",
+                "review-temp,MATH,중,1,Review Temp,2,A B,7,PROBLEM_REVIEW,SOLUTION_REVIEW",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        _assert_unit(
+            review_import.main(["--config", str(config_path), "--csv", str(review_csv)]) == 0,
+            "review import must support temp config/csv without live backup flag",
+        )
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        review_tests = cfg.get("categories", {}).get("REVIEW", {}).get("tests", [])
+        _assert_unit(len(review_tests) == 1, "review temp import must add one REVIEW test")
+        _assert_unit(
+            review_tests[0].get("sourceFiles", {}).get("solutionFileId") == "SOLUTION_REVIEW",
+            "review temp import must preserve solutionFileId metadata",
+        )
+
+        school_csv = tmp / "school.csv"
+        school_csv.write_text(
+            "\n".join([
+                "id,subject,difficulty,term,examTerm,round,name,problems,source_order,answers,problem_file_id,solution_file_id",
+                "school-temp,MATH,중,2026-1,midterm,1,School Temp,2,9,A B,PROBLEM_SCHOOL,SOLUTION_SCHOOL",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        _assert_unit(
+            school_import.main(["--config", str(config_path), "--csv", str(school_csv)]) == 0,
+            "school-past import must support temp config/csv without live backup flag",
+        )
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        school_tests = cfg.get("categories", {}).get("SCHOOL_PAST", {}).get("tests", [])
+        _assert_unit(len(school_tests) == 1, "school temp import must add one SCHOOL_PAST test")
+        _assert_unit(
+            school_tests[0].get("sourceFiles", {}).get("solutionFileId") == "SOLUTION_SCHOOL",
+            "school temp import must preserve solutionFileId metadata",
+        )
+        _assert_unit(not config_path.with_name(config_path.name + ".tmp").exists(), "temp config atomic sidecar must be cleaned")
+
+        unit_config = tmp / "unit-config.json"
+        unit_config.write_text(
+            json.dumps(
+                {
+                    "categories": {
+                        "UNIT": {
+                            "tests": [
+                                {
+                                    "id": "unit-source_r1",
+                                    "sourceId": "unit-source",
+                                    "curriculum": "MATH",
+                                    "difficulty": "Lv.3",
+                                    "name": "Algebra",
+                                }
+                            ]
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        output_path = tmp / "test_answer_link_map.json"
+        issues_path = tmp / "issues.json"
+        original_iter = unit_links.iter_drive_answer_files
+        try:
+            unit_links.iter_drive_answer_files = lambda _folder_id: [
+                {"subject": "MATH", "level": "Lv.3", "round": "1", "name": "Algebra", "title": "Algebra 1", "fileId": "FILE1"},
+                {"subject": "MATH", "level": "Lv.3", "round": "2", "name": "Algebra", "title": "Algebra 2", "fileId": "FILE2"},
+                {"subject": "MATH", "level": "Lv.3", "round": "3", "name": "Algebra", "title": "Algebra 3", "fileId": "FILE3"},
+            ]
+            _assert_unit(
+                unit_links.main([
+                    "--folder-id",
+                    "fake-folder",
+                    "--config",
+                    str(unit_config),
+                    "--output",
+                    str(output_path),
+                    "--issues",
+                    str(issues_path),
+                ]) == 0,
+                "unit answer-link map script must support temp config/output without live backup flag",
+            )
+        finally:
+            unit_links.iter_drive_answer_files = original_iter
+
+        link_map = json.loads(output_path.read_text(encoding="utf-8"))
+        _assert_unit(
+            link_map.get("unit-source", {}).get("1", {}).get("answerUrl")
+            == "https://drive.google.com/file/d/FILE1/view?usp=drivesdk",
+            "unit answer-link temp output must contain Drive answerUrl",
+        )
+        _assert_unit(issues_path.exists(), "unit answer-link temp issues file must be written when requested")
+
+        for func, label in ((review_import.main, "review"), (school_import.main, "school-past")):
+            _assert_cli_exits_with_code(
+                func,
+                [],
+                2,
+                f"{label} live import guard without backup confirmation",
+            )
+
+        _assert_cli_exits_with_code(
+            unit_links.main,
+            ["--folder-id", "fake-folder", "--config", str(unit_config)],
+            2,
+            "unit link-map live output guard without backup confirmation",
+        )
+
+    for path, before in live_before.items():
+        _assert_unit(fingerprint(path) == before, f"catalog safety temp checks must not modify live file: {path}")
+
+
+def _strip_css_comments_preserve_lines(source: str) -> str:
+    return re.sub(r"/\*.*?\*/", lambda match: "\n" * match.group(0).count("\n"), source, flags=re.S)
+
+
+def _split_css_selector_list(selector: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(selector):
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(selector[start:index].strip())
+            start = index + 1
+    parts.append(selector[start:].strip())
+    return [part for part in parts if part]
+
+
+def _iter_css_selectors(source: str) -> Iterable[tuple[int, str]]:
+    css = _strip_css_comments_preserve_lines(source)
+    for match in re.finditer(r"([^{}]+)\{", css):
+        selector_group = match.group(1).strip()
+        if not selector_group or selector_group.startswith("@"):
+            continue
+        line_no = css.count("\n", 0, match.start(1)) + 1
+        for selector in _split_css_selector_list(selector_group):
+            if selector and not selector.startswith("@"):
+                yield line_no, " ".join(selector.split())
+
+
+def _admin_css_selector_is_scoped(selector: str) -> bool:
+    stable_roots = (
+        "body.admin",
+        "html body.admin",
+        ".admin-shell",
+        ".admin-workspace",
+        "#adminChatPanel",
+        "#logModal",
+        "#vidModal",
+        "#testModal",
+        "#extraModal",
+        "#selectionModal",
+        "#absentRegisterModal",
+        "#manualMakeupModal",
+    )
+    return selector.startswith(stable_roots)
+
+
+def _student_css_selector_is_scoped(selector: str) -> bool:
+    stable_roots = (
+        "body.student-page",
+        "html body.student-page",
+        ".student-shell",
+        "#assignedTestsPanel",
+        "#announceModal",
+        "#announceHistoryModal",
+        "#testSubmitModal",
+    )
+    return selector.startswith(stable_roots)
+
+
+def run_admin_css_scope_source_checks() -> None:
+    admin_css = (ROOT / "static/css/admin.css").read_text(encoding="utf-8")
+    _assert_unit(
+        any(font in admin_css for font in ("Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic")),
+        "admin.css must preserve Korean-capable font stack",
+    )
+    _assert_unit("body.admin body.admin" not in admin_css, "admin.css must not contain duplicate body.admin scope")
+    _assert_unit("body.admin /*" not in admin_css, "admin.css must not place section comments inside selectors")
+    offenders = [
+        f"{line_no}: {selector}"
+        for line_no, selector in _iter_css_selectors(admin_css)
+        if not _admin_css_selector_is_scoped(selector)
+    ]
+    _assert_unit(
+        not offenders,
+        "admin.css has unscoped selectors:\n" + "\n".join(offenders[:80]),
+    )
+
+
+def run_student_css_scope_source_checks() -> None:
+    student_css = (ROOT / "static/css/student.css").read_text(encoding="utf-8")
+    _assert_unit(
+        any(font in student_css for font in ("Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic")),
+        "student.css must preserve Korean-capable font stack",
+    )
+    _assert_unit(
+        "body.student-page body.student-page" not in student_css,
+        "student.css must not contain duplicate body.student-page scope",
+    )
+    _assert_unit(
+        "body.student-page /*" not in student_css,
+        "student.css must not place section comments inside selectors",
+    )
+    _assert_unit(
+        "body.student-page #assignedTestsPanel" in student_css,
+        "student.css must explicitly scope the assigned tests panel",
+    )
+    _assert_unit(
+        "body.student-page #announceModal" in student_css,
+        "student.css must explicitly scope the announcement modal",
+    )
+    _assert_unit(
+        "body.student-page #announceHistoryModal" in student_css,
+        "student.css must explicitly scope the announcement history modal",
+    )
+    offenders = [
+        f"{line_no}: {selector}"
+        for line_no, selector in _iter_css_selectors(student_css)
+        if not _student_css_selector_is_scoped(selector)
+    ]
+    _assert_unit(
+        not offenders,
+        "student.css has unscoped selectors:\n" + "\n".join(offenders[:80]),
+    )
+
+
+def run_shared_css_scope_source_checks() -> None:
+    main_css = (ROOT / "static/css/main.css").read_text(encoding="utf-8")
+    style_css = (ROOT / "static/css/style.css").read_text(encoding="utf-8")
+    combined = main_css + "\n" + style_css
+    _assert_unit(
+        any(font in main_css for font in ("Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic")),
+        "main.css must preserve Korean-capable font stack",
+    )
+    _assert_unit(
+        any(font in style_css for font in ("Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic")),
+        "style.css must preserve Korean-capable font stack",
+    )
+    _assert_unit(
+        all(font in combined for font in ("--font-ui:", "--font-display:")),
+        "shared CSS must expose shared font tokens",
+    )
+    first_root_end = style_css.index("}\n\n/* ========== body")
+    first_root = style_css[:first_root_end]
+    _assert_unit("--font-ui:" in first_root, "style.css must keep shared font tokens in the first root block")
+    _assert_unit("--font-display:" in first_root, "style.css must keep shared display font token in the first root block")
+    _assert_unit(
+        style_css.count("--font-ui:") == 1,
+        "style.css must not redeclare --font-ui in a later root block",
+    )
+    _assert_unit(
+        style_css.count("--font-display:") == 1,
+        "style.css must not redeclare --font-display in a later root block",
+    )
+    _assert_unit("font-family: var(--font-ui)" in style_css, "style.css body/control fonts must use --font-ui")
+    _assert_unit("body.all-page" in style_css, "style.css must keep all-page scoped containment")
+    _assert_unit("body.all-page #allWrap" in style_css, "style.css must keep all-students table containment")
+    _assert_unit("body.all-page #yoilModal" in style_css, "style.css must keep all-page modal containment")
+
+
+def run_refactor_contract_evidence_source_checks() -> None:
+    script_source = (ROOT / "scripts/verify_refactor_safety.py").read_text("utf-8")
+    unit_start = script_source.rfind("def run_unit_checks()")
+    selected_start = script_source.rfind("def run_selected_checks")
+    unit_block = script_source[unit_start:selected_start]
+    smoke_start = script_source.rfind("def run_smoke_checks()")
+    main_start = script_source.rfind("def main()")
+    smoke_block = script_source[smoke_start:main_start]
+
+    task_numbers = [task for task, _label, _helpers, _snippets in REFACTOR_CONTRACT_EVIDENCE]
+    _assert_unit(
+        task_numbers == list(range(1, 14)),
+        "refactor contract evidence registry must cover Tasks 1-13 exactly once and in order",
+    )
+
+    for task, label, helper_names, assertion_snippets in REFACTOR_CONTRACT_EVIDENCE:
+        _assert_unit(helper_names, f"Task {task} {label} must name at least one evidence helper")
+        _assert_unit(assertion_snippets, f"Task {task} {label} must name at least one assertion snippet")
+        for helper_name in helper_names:
+            _assert_unit(
+                f"def {helper_name}(" in script_source,
+                f"Task {task} {label} helper must be defined: {helper_name}",
+            )
+            _assert_unit(
+                f"        {helper_name}," in unit_block,
+                f"Task {task} {label} helper must run in the full safety suite: {helper_name}",
+            )
+        for snippet in assertion_snippets:
+            _assert_unit(
+                snippet in script_source,
+                f"Task {task} {label} must keep named assertion/evidence snippet: {snippet}",
+            )
+
+    for snippet in SMOKE_GUARD_SNIPPETS:
+        _assert_unit(
+            snippet in smoke_block,
+            f"smoke fingerprinting and safe-skip guard must remain intact: {snippet}",
+        )
+
+
+def run_frontend_evidence_inventory_checks() -> None:
+    evidence_dir = ROOT / ".omo/evidence"
+    _assert_unit(evidence_dir.exists(), "frontend evidence directory must exist")
+
+    for task in FRONTEND_EVIDENCE_TASKS:
+        files = sorted(evidence_dir.glob(f"task-{task}-*"))
+        _assert_unit(files, f"frontend Task {task} must have at least one evidence artifact")
+        _assert_unit(
+            any(path.suffix.lower() == ".png" and path.stat().st_size > 0 for path in files),
+            f"frontend Task {task} must have a nonblank screenshot artifact",
+        )
+
+    _assert_unit(
+        FRONTEND_EVIDENCE_INVENTORY.exists(),
+        "Task 18 must write a frontend evidence inventory with URL, viewport, date, and pass/fail observations",
+    )
+    _assert_unit(
+        FRONTEND_EVIDENCE_SERVER_STOP.exists(),
+        "Task 18 must write a server cleanup receipt",
+    )
+
+    inventory = json.loads(FRONTEND_EVIDENCE_INVENTORY.read_text(encoding="utf-8-sig"))
+    _assert_unit(inventory.get("ok") is True, "frontend evidence inventory must mark ok:true")
+    tasks = inventory.get("tasks")
+    _assert_unit(isinstance(tasks, list), "frontend evidence inventory must contain a tasks list")
+    seen_tasks: set[int] = set()
+    for entry in tasks:
+        _assert_unit(isinstance(entry, dict), "frontend evidence task entry must be an object")
+        task_id = entry.get("task")
+        _assert_unit(isinstance(task_id, int), "frontend evidence task entry must name an integer task")
+        seen_tasks.add(task_id)
+        _assert_unit(entry.get("targetUrl") or entry.get("targetUrls"), f"Task {task_id} evidence must record target URL")
+        _assert_unit(entry.get("viewports"), f"Task {task_id} evidence must record viewport data")
+        _assert_unit(entry.get("passFail"), f"Task {task_id} evidence must record pass/fail observation")
+        if task_id in {6, 7, 8, 9, 12, 15, 16}:
+            _assert_unit(entry.get("selectedDate"), f"Task {task_id} evidence must record selected date")
+        screenshots = entry.get("screenshots")
+        _assert_unit(isinstance(screenshots, list) and screenshots, f"Task {task_id} evidence must list screenshots")
+        for screenshot in screenshots:
+            _assert_unit(isinstance(screenshot, str), f"Task {task_id} screenshot path must be a string")
+            screenshot_path = ROOT / screenshot
+            _assert_unit(screenshot_path.exists(), f"Task {task_id} screenshot must exist: {screenshot}")
+            _assert_unit(screenshot_path.stat().st_size > 0, f"Task {task_id} screenshot must be nonblank: {screenshot}")
+
+    _assert_unit(
+        seen_tasks == set(FRONTEND_EVIDENCE_TASKS),
+        "frontend evidence inventory must cover tasks 6, 7, 8, 9, 12, 14, 15, and 16 exactly",
+    )
+
+    cleanup_receipt = FRONTEND_EVIDENCE_SERVER_STOP.read_text(encoding="utf-8-sig").lower()
+    for snippet in ("port", "pid", "no listen"):
+        _assert_unit(snippet in cleanup_receipt, f"server cleanup receipt must record {snippet}")
+
+
 def run_admin_chat_contract_source_checks() -> None:
     admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
+    refactor_notes_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
 
     required_groups = [
         (
@@ -812,6 +1851,25 @@ def run_admin_chat_contract_source_checks() -> None:
         missing = [snippet for snippet in snippets if snippet not in admin_chat_py]
         _assert_unit(not missing, f"admin chat docs must describe {label}; missing: {', '.join(missing)}")
 
+    required_note_groups = [
+        (
+            "assigned test answer-link notes",
+            [
+                "progress[date][sid].tests",
+                "assignedTests[].answerUrl",
+                "sourceFiles.solutionFileId",
+                "static/js/test_answer_link_map.json",
+            ],
+        ),
+        (
+            "catalog writer safety notes",
+            ["--backup-confirmed", "--config", "--csv", "--output", "--issues"],
+        ),
+    ]
+    for label, snippets in required_note_groups:
+        missing = [snippet for snippet in snippets if snippet not in refactor_notes_md]
+        _assert_unit(not missing, f"refactor notes must describe {label}; missing: {', '.join(missing)}")
+
 
 def run_admin_wave_b_source_checks() -> None:
     state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
@@ -819,8 +1877,8 @@ def run_admin_wave_b_source_checks() -> None:
     today_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
 
     _assert_unit(
-        "import { ensureOk } from '../../shared/api.js';" in state_js,
-        "admin bootstrap strict helper must reuse shared ensureOk",
+        "return await api.getStrict(url, label);" in state_js,
+        "admin bootstrap strict helper must use the admin API wrapper",
     )
     _assert_unit(
         "async function getCriticalJson(url, label)" in state_js,
@@ -889,6 +1947,55 @@ def run_admin_wave_b_source_checks() -> None:
     reload_index = homework_block.index("await loadTodayAndRender();", catch_index)
     _assert_unit(catch_index < reload_index < return_index < mutation_index, "homework failure path must reload and return before success mutation")
 
+    for snippet in [
+        "const dateKey = rowDateKey(tr);",
+        "await patchArriveTimeRemote(dateKey, sid, txt);",
+        "await setLeaveTimeRemote(dateKey, sid, txt);",
+        "await patchFlagRemote('att', dateKey, sid, checked);",
+        "await patchFlagRemote('contact', dateKey, sid, checked);",
+        "targets.push({ dateKey, sid });",
+        "await patchLog(target.dateKey, target.sid, {",
+        "const absenceSlots = rowSlotsForAbsence(dateKey, sid, tr);",
+        "setAttended(dateKey, sid, false);",
+        "setContacted(dateKey, sid, false);",
+    ]:
+        _assert_unit(snippet in today_js, f"today row-date action path must preserve row date source: {snippet}")
+
+
+def run_admin_api_wrapper_usage_source_checks() -> None:
+    shared_api_js = (ROOT / "static/js/shared/api.js").read_text("utf-8")
+    admin_api_js = (ROOT / "static/js/admin/core/api.js").read_text("utf-8")
+    state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
+
+    _assert_unit(
+        "export async function fetchJsonChecked(url, label = 'request', init = {})" in shared_api_js,
+        "shared API helper must expose strict JSON fetch with request labels",
+    )
+    _assert_unit(
+        "await ensureOk(response, label);" in shared_api_js,
+        "strict shared JSON helper must preserve ensureOk error labels",
+    )
+    _assert_unit(
+        "import { fetchJson, fetchJsonChecked, fetchJsonOr, sendJson } from '../../shared/api.js';" in admin_api_js,
+        "admin API wrapper must import the strict JSON helper",
+    )
+    _assert_unit(
+        "getStrict: (url, label, init) => fetchJsonChecked(url, label, init)," in admin_api_js,
+        "admin API wrapper must expose api.getStrict",
+    )
+    _assert_unit(
+        "import { ensureOk } from '../../shared/api.js';" not in state_js,
+        "admin bootstrap should consume strict JSON through core/api.js, not direct shared imports",
+    )
+    _assert_unit(
+        "const response = await fetch(url);" not in state_js,
+        "admin bootstrap should not open-code critical JSON fetch",
+    )
+    _assert_unit(
+        "return await api.getStrict(url, label);" in state_js,
+        "admin bootstrap critical helper must delegate to api.getStrict",
+    )
+
 
 def run_admin_wave_b_behavior_checks() -> None:
     driver = r"""
@@ -929,8 +2036,20 @@ const payloadFor = (url) => {
 globalThis.window = globalThis;
 window.addEventListener = () => {};
 globalThis.sessionStorage = {
-  getItem: () => null,
+  getItem: (key) => key === 'adminSelectedDate' ? '2026-06-07' : null,
   setItem: () => {},
+};
+globalThis.localStorage = {
+  _values: new Map(),
+  getItem(key) {
+    return this._values.has(key) ? this._values.get(key) : null;
+  },
+  setItem(key, value) {
+    this._values.set(key, String(value));
+  },
+  removeItem(key) {
+    this._values.delete(key);
+  },
 };
 
 const stateModule = await import(moduleUrl('static/js/admin/core/state.js', 'bootstrap'));
@@ -1031,6 +2150,7 @@ const hc = {
   checked: true,
   closest(selector) {
     if (selector === '.hwCheckChk') return this;
+    if (selector === 'tr[data-sid]') return tr;
     if (selector === 'tr[data-sid][data-date]') return tr;
     if (selector === '.c') return completionPill;
     return null;
@@ -1062,6 +2182,46 @@ ok(alerts.some((message) => message.includes('숙제 체크 저장 실패')), 'f
 ok(reloads === 1, 'failure path reloads once');
 ok(toggledClasses.length > 0, 'row visuals resynced');
 ok(loggedErrors.length > 0, 'failure path logs the remote error');
+
+const contactCalls = [];
+const makeRow = (dataset) => ({
+  dataset: { ...dataset },
+  classList: { toggle: () => {} },
+  querySelector: () => null,
+});
+const makeContactToggle = (row) => ({
+  checked: true,
+  closest(selector) {
+    if (selector === '.contactChk') return this;
+    if (selector === 'tr[data-sid]') return row;
+    if (selector === 'tr[data-sid][data-date]') {
+      return Object.prototype.hasOwnProperty.call(row.dataset, 'date') ? row : null;
+    }
+    if (selector === '.c') return { dataset: {} };
+    return null;
+  },
+});
+globalThis.fetch = async (url, init = {}) => {
+  if (String(url) === '/api/contact/patch') {
+    contactCalls.push(JSON.parse(String(init.body || '{}')));
+    return response({ ok: true });
+  }
+  return response(payloadFor(url));
+};
+
+await host._listeners.change({
+  target: makeContactToggle(makeRow({ sid: 's2', date: '2026-06-05', contact: '' })),
+});
+let lastContactCall = contactCalls[contactCalls.length - 1];
+ok(lastContactCall?.date === '2026-06-05', 'contact save uses row date before selected admin date');
+ok(lastContactCall?.sid === 's2', 'contact save uses row sid');
+
+await host._listeners.change({
+  target: makeContactToggle(makeRow({ sid: 's3', contact: '' })),
+});
+lastContactCall = contactCalls[contactCalls.length - 1];
+ok(lastContactCall?.date === '2026-06-07', 'contact save falls back to selected admin date only when row date is missing');
+ok(lastContactCall?.sid === 's3', 'contact fallback save still uses row sid');
 """
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-wave-b-driver>")
@@ -1100,11 +2260,52 @@ def run_admin_test_modal_assignment_source_checks() -> None:
     )
 
 
+def run_admin_test_modal_persistence_bridge_source_checks() -> None:
+    test_modal_js = (ROOT / "static/js/admin/features/testModal.js").read_text("utf-8")
+    bridge_start = test_modal_js.find("function buildLogAssignmentPatchBody")
+    _assert_unit(
+        bridge_start >= 0,
+        "test modal save must define a persistence bridge before saveModal",
+    )
+    bridge_end = test_modal_js.index("function bindEventsOnce", bridge_start)
+    bridge_block = test_modal_js[bridge_start:bridge_end]
+    save_start = test_modal_js.index("async function saveModal")
+    save_end = test_modal_js.index("function bindEventsOnce", save_start)
+    save_block = test_modal_js[save_start:save_end]
+
+    required_helpers = [
+        "function collectTestStatusPatch",
+        "function hasAnyAssignedTestStatus",
+        "function ensureProgressEntryForTestSave",
+        "function buildTestProgressPatchBody",
+        "function applyTestProgressPatchResult",
+        "function buildLogAssignmentPatchBody",
+    ]
+    for helper in required_helpers:
+        _assert_unit(helper in bridge_block, f"test modal persistence bridge must define {helper}")
+
+    _assert_unit(
+        "body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus))"
+        in save_block,
+        "test modal save must build /api/progress/patch body through the persistence bridge",
+    )
+    _assert_unit(
+        "const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged)"
+        in bridge_block,
+        "test modal log metadata patch must use a dedicated payload bridge",
+    )
+    _assert_unit(
+        "applyTestProgressPatchResult(editingDate, editingSid, progressRes)" in save_block,
+        "test modal save must apply progress patch results through the persistence bridge",
+    )
+
+
 def run_admin_test_modal_assignment_behavior_checks() -> None:
     driver = r"""
-import { pathToFileURL } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
+
+Error.stackTraceLimit = 0;
 
 const ok = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -1236,12 +2437,19 @@ mod.__setHarnessState({
 await mod.__saveModal({ showPopup: false, refresh: false });
 const entryIndex = calls.findIndex(call => call.url.startsWith('/api/logs/entry?'));
 const progressIndex = calls.findIndex(call => call.url === '/api/progress/patch');
+const progressPatch = calls.find(call => call.url === '/api/progress/patch');
 const logPatch = calls.find(call => call.url === '/api/logs/patch');
 ok(entryIndex >= 0 && progressIndex >= 0 && entryIndex < progressIndex, 'latest log read precedes progress patch');
+ok(progressPatch.body?.date === '2026-06-05', 'progress patch keeps date payload');
+ok(progressPatch.body?.sid === 's1', 'progress patch keeps sid payload');
+ok(progressPatch.body?.progress?.tests?.[existingLabel] === 'assigned', 'progress patch preserves existing test authority');
+ok(progressPatch.body?.progress?.tests?.[newLabel] === 'assigned', 'progress patch writes new test authority');
+ok(progressPatch.body?.progress?.__testsClearedAt === '', 'active progress patch does not set clear marker');
 ok(logPatch, '/api/logs/patch is called after successful latest log read');
 ok(logPatch.body?.date === '2026-06-05', 'log patch keeps date payload');
 ok(logPatch.body?.sid === 's1', 'log patch keeps sid payload');
 ok(Array.isArray(logPatch.body?.entry?.assignedTests) && logPatch.body.entry.assignedTests.length === 2, 'assignedTests remain in log patch');
+ok(!Object.prototype.hasOwnProperty.call(logPatch.body?.entry || {}, 'tests'), 'log patch does not write authoritative tests');
 const dailyItems = logPatch.body?.entry?.testAssignmentDailyTests || [];
 ok(Array.isArray(dailyItems) && dailyItems.length === 1, 'daily assignment metadata from latest entry is preserved');
 ok(dailyItems.some(item => item.label === existingLabel && item.source === 'latest-entry'), 'existing daily metadata comes from latest entry');
@@ -1297,13 +2505,25 @@ def run_admin_video_modal_preflight_source_checks() -> None:
     )
     for snippet in [
         "fetch('/api/updates/patch'",
-        "body: JSON.stringify(selected.length",
-        "? { date: today, sid, entry: { videos: selected, source } }",
-        ": { date: today, sid, remove: true })",
+        "body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))",
         "fetch('/api/updates', { cache: 'no-store' })",
         "body.base = { notes: prevNotes.trim() };",
     ]:
         _assert_unit(snippet in save_block or snippet in patch_block, f"video assignment source shape must remain: {snippet}")
+    for snippet in [
+        "function latestAutoAssignStatusForSid",
+        "function applyWatchStatusForAutoAssign",
+        "function blockedMidsForAutoAssign",
+        "function shouldClearCompletedAutoAssignment",
+        "function resolveVideoAssignmentSaveSource",
+        "options.forceEmpty === true",
+        "function applyVideoAssignmentState",
+        "function buildVideoAssignmentPatchBody",
+        "return { date: day, sid, entry: { videos: selected, source } };",
+        "return { date: day, sid, remove: true };",
+        "activeAssignmentManual = source === 'manual';",
+    ]:
+        _assert_unit(snippet in video_modal_js, f"video assignment policy helper must remain: {snippet}")
 
 
 def _run_admin_video_modal_preflight_driver(scenario: str) -> None:
@@ -1562,6 +2782,305 @@ def run_admin_video_modal_preflight_failure_behavior_checks() -> None:
 
 def run_admin_video_modal_preflight_happy_behavior_checks() -> None:
     _run_admin_video_modal_preflight_driver("happy")
+
+
+def run_admin_video_modal_assignment_policy_behavior_checks() -> None:
+    driver = r"""
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+Error.stackTraceLimit = 0;
+
+const ok = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const response = (payload, status = 200, options = {}) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  statusText: status === 200 ? 'OK' : 'ERROR',
+  json: async () => {
+    if (options.badJson) throw new Error('bad json');
+    return payload;
+  },
+  text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
+});
+const callRecord = (url, init = {}) => ({
+  url: String(url),
+  method: init.method || 'GET',
+  cache: init.cache || '',
+  body: init.body ? JSON.parse(String(init.body)) : null,
+});
+const makeClassList = () => ({
+  add: () => {},
+  remove: () => {},
+  toggle: () => false,
+  contains: () => false,
+});
+const makeElement = (id) => ({
+  id,
+  style: {},
+  dataset: {},
+  textContent: '',
+  innerHTML: '',
+  disabled: false,
+  scrollTop: 0,
+  classList: makeClassList(),
+  listeners: {},
+  addEventListener(type, callback) {
+    this.listeners[type] = callback;
+  },
+  appendChild: () => {},
+  remove: () => {},
+  focus: () => {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  closest: () => null,
+  getBoundingClientRect: () => ({ top: 0, height: 100 }),
+});
+const ensureElement = (id) => globalThis.__elements[id] || (globalThis.__elements[id] = makeElement(id));
+const installVideoElements = () => {
+  for (const id of ['vidModal', 'mTitle', 'chkZone', 'mSave', 'vidSavePopup', 'autoAssignCountToggle', 'autoAssignCountLabel']) {
+    ensureElement(id);
+  }
+};
+const makeRow = (sid = '007', date = '2026-06-06') => ({
+  dataset: { sid, date },
+  closest(selector) {
+    return selector === 'tr[data-sid]' ? this : null;
+  },
+});
+const selectedCheckboxes = () => globalThis.__checkboxes.filter((checkbox) => checkbox.checked);
+
+globalThis.window = globalThis;
+window.addEventListener = () => {};
+window.visualViewport = { addEventListener: () => {} };
+window.devicePixelRatio = 1;
+window.innerWidth = 1280;
+window.innerHeight = 900;
+window.setTimeout = () => 1;
+window.clearTimeout = () => {};
+globalThis.requestAnimationFrame = (callback) => callback();
+globalThis.alert = (message) => globalThis.__alerts.push(String(message));
+globalThis.__adminDate = '2026-06-07';
+globalThis.__alerts = [];
+globalThis.__toasts = [];
+globalThis.__dispatches = [];
+globalThis.__checkboxes = [];
+globalThis.__elements = {};
+globalThis.__state = {
+  students: [],
+  videos: [],
+  updates: {},
+  logs: {},
+  progress: {},
+  extra: {},
+  absentByDate: {},
+};
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+globalThis.document = {
+  documentElement: { style: { setProperty: () => {} } },
+  head: {
+    appendChild(el) {
+      if (el?.id) globalThis.__elements[el.id] = el;
+    },
+  },
+  body: {
+    appendChild(el) {
+      if (el?.id) globalThis.__elements[el.id] = el;
+    },
+    insertAdjacentHTML: () => installVideoElements(),
+    addEventListener: () => {},
+  },
+  createElement: (tag) => ({ ...makeElement(tag), tagName: String(tag).toUpperCase() }),
+  getElementById: (id) => globalThis.__elements[id] || null,
+  querySelector: (selector) => {
+    if (selector === '#chkZone input[type="checkbox"]:checked') return selectedCheckboxes()[0] || null;
+    if (selector === '#chkZone') return globalThis.__elements.chkZone || null;
+    return null;
+  },
+  querySelectorAll: (selector) => {
+    if (selector === '#chkZone input[type="checkbox"]:checked') return selectedCheckboxes();
+    if (selector === '#chkZone input[type="checkbox"]') return globalThis.__checkboxes;
+    return [];
+  },
+  addEventListener: () => {},
+  dispatchEvent: (event) => globalThis.__dispatches.push(event.type),
+};
+installVideoElements();
+
+const sourcePath = path.join(process.cwd(), 'static/js/admin/features/videoModal.js');
+let source = fs.readFileSync(sourcePath, 'utf8')
+  .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+  .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
+  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-07';")
+  .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();");
+const harness = `
+export function __initHarness() {
+  initVideoModal();
+}
+export function __setHarnessState(input) {
+  editingSid = input.sid || '007';
+  editingVideoDate = input.date || '2026-06-06';
+  activeVideoSelectionDirty = input.dirty === true;
+  activeAssignmentManual = input.assignmentManual === true;
+  activePrimaryVideoMids = new Set((input.primaryVideoMids || []).map(String));
+  activeVideoList = input.activeVideoList || [];
+  activeBlockedMids = input.activeBlockedMids || {};
+  activeAllowAutoAssign = input.allowAutoAssign === true;
+  activeAutoGenerated = input.autoGenerated === true;
+  activeExtraVideoSearchOpen = false;
+  activeExtraSubject = '';
+  activeExtraSubCurriculum = '';
+  activeExtraQuery = '';
+  activeVideoNoteHtml = '';
+  state.students = input.students || [];
+  state.videos = input.videos || [];
+  state.updates = input.updates || {};
+  state.logs = input.logs || {};
+  state.progress = input.progress || {};
+  state.extra = input.extra || {};
+  state.absentByDate = input.absentByDate || {};
+}
+export async function __openHarness(row) {
+  if (typeof window.openVideoAssignmentPopupForRow !== 'function') throw new Error('open harness not installed');
+  return window.openVideoAssignmentPopupForRow(row);
+}
+export async function __saveHarness(options = {}) {
+  if (typeof window.saveVideoAssignmentPopup !== 'function') throw new Error('save harness not installed');
+  return window.saveVideoAssignmentPopup(options);
+}
+`;
+const moduleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'video-modal-assignment-policy-'));
+const modulePath = path.join(moduleDir, 'videoModal-harness.mjs');
+fs.writeFileSync(modulePath, `${source}\n${harness}`, 'utf8');
+let mod;
+try {
+  mod = await import(pathToFileURL(modulePath).href);
+} finally {
+  try { fs.rmSync(moduleDir, { recursive: true, force: true }); } catch {}
+}
+mod.__initHarness();
+
+const students = [{ id: '007', name: '학생7', curriculum: 'ALG', subCurriculum: 'BASE', day1: '토 13:00' }];
+const videos = [
+  { mid: 'm1', title: '일차함수', chapter: '1', curriculum: 'ALG', subCurriculum: 'BASE' },
+  { mid: 'm2', title: '이차함수', chapter: '2', curriculum: 'ALG', subCurriculum: 'BASE' },
+  { mid: 'extra-1', title: '확장 영상', chapter: '7', curriculum: 'ALG', subCurriculum: 'EXTRA' },
+];
+
+let calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates') {
+    return response({ ok: true, updates: { '2026-06-06': { '007': { videos: ['m1'], source: 'manual' } } } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-06': [] } });
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: { m2: { last: 100, dur: 100, completed: true } } });
+  if (value === '/api/updates/patch') return response({ ok: true });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: '007',
+  date: '2026-06-06',
+  students,
+  videos,
+  updates: {},
+  progress: { '2026-06-06': { '007': { m1: 'done', m2: 'skip' } } },
+});
+await mod.__openHarness(makeRow());
+const openHtml = globalThis.__elements.chkZone.innerHTML;
+ok(openHtml.includes('value="m1" checked'), 'manual assignment remains checked when course progress is complete');
+ok(!calls.some((call) => call.url === '/api/updates/patch'), 'manual completed assignment open must not auto-overwrite updates');
+
+calls = [];
+globalThis.__checkboxes = [{ value: 'extra-1', checked: true }];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) {
+    return response({ ok: true, entry: { notes: '상담 유지', extraVideoAssignmentNote: '', assignedExtraVideos: [] } });
+  }
+  if (value === '/api/updates/patch') return response({ ok: true });
+  if (value === '/api/updates') {
+    return response({ ok: true, updates: { '2026-06-06': { '007': { videos: ['extra-1'], source: 'manual' } } } });
+  }
+  if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: '007',
+  date: '2026-06-06',
+  dirty: false,
+  assignmentManual: true,
+  primaryVideoMids: ['m1', 'm2'],
+  students,
+  videos,
+});
+await mod.__saveHarness({ showPopup: false, refresh: false });
+let latestRead = calls.find((call) => call.url.startsWith('/api/logs/entry?'));
+let latestParams = new URLSearchParams(latestRead.url.split('?')[1]);
+let updatesPatch = calls.find((call) => call.url === '/api/updates/patch');
+ok(latestParams.get('date') === '2026-06-06', 'latest log preflight uses editingVideoDate before selected admin date');
+ok(latestParams.get('sid') === '007', 'latest log preflight uses editing sid');
+ok(updatesPatch.body?.date === '2026-06-06', 'manual save uses editingVideoDate before selected admin date');
+ok(updatesPatch.body?.sid === '007', 'manual save keeps sid');
+ok(updatesPatch.body?.entry?.source === 'manual', 'manual save preserves manual source');
+ok(updatesPatch.body?.entry?.videos?.[0] === 'extra-1', 'manual save keeps selected video');
+
+calls = [];
+globalThis.__checkboxes = [{ value: 'm1', checked: true }];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/updates/patch') return response({ ok: true });
+  if (value === '/api/updates') {
+    return response({ ok: true, updates: { '2026-06-06': { '007': { videos: [], source: 'manual' } } } });
+  }
+  if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: '007',
+  date: '2026-06-06',
+  dirty: false,
+  assignmentManual: false,
+  primaryVideoMids: ['m1', 'm2'],
+  students,
+  videos,
+  updates: { '2026-06-06': { '007': { videos: ['m1'], source: 'auto' } } },
+});
+await mod.__saveHarness({ showPopup: false, refresh: false, forceEmpty: true });
+updatesPatch = calls.find((call) => call.url === '/api/updates/patch');
+ok(updatesPatch.body?.date === '2026-06-06', 'force-empty save uses editingVideoDate');
+ok(updatesPatch.body?.sid === '007', 'force-empty save keeps sid');
+ok(Array.isArray(updatesPatch.body?.entry?.videos), 'force-empty save sends an explicit videos array');
+ok(updatesPatch.body.entry.videos.length === 0, 'force-empty save sends an empty videos array');
+ok(updatesPatch.body.entry.source === 'manual', 'force-empty save records a manual clear so auto assignment does not resurrect it');
+ok(!Object.prototype.hasOwnProperty.call(updatesPatch.body, 'remove'), 'force-empty save must not use remove:true');
+
+console.log('videoModal assignment policy PASS');
+"""
+    cmd = ["node", "--input-type=module", "-e", driver]
+    print("$ node --input-type=module -e <admin-video-modal-assignment-policy-driver>")
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin video modal assignment policy driver failed")
 
 
 def run_admin_log_modal_carried_reapply_source_checks() -> None:
@@ -1886,6 +3405,287 @@ def run_admin_log_modal_carried_reapply_happy_behavior_checks() -> None:
     _run_admin_log_modal_carried_reapply_driver("happy")
 
 
+def run_admin_log_modal_save_policy_source_checks() -> None:
+    log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
+    save_start = log_modal_js.index("async function saveBase")
+    save_end = log_modal_js.index("async function saveRecordPopupForCurrent", save_start)
+    save_block = log_modal_js[save_start:save_end]
+
+    save_snippets = [
+        "const changedProg = collectChangedProgressPatch();",
+        "await saveChangedProgressPatch(today, sid, changedProg);",
+        "const oldTotal = collectPriorProgressByMid(today, sid);",
+        "const summary = summarizeProgressPatch(changedProg, oldTotal);",
+        "const { entry, clearKeys, base, contentChanged } = buildLogSavePatch",
+        "contentChanged ? { base } : {}",
+        "await patchLogEntry(today, sid, entry, clearKeys",
+        "applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });",
+        "setLogModalSnapshots(notesNow, hwRows);",
+    ]
+    for snippet in save_snippets:
+        _assert_unit(snippet in save_block, f"logModal save policy must keep merge-safe step: {snippet}")
+
+    for snippet in [
+        "async function saveChangedProgressPatch(date, sid, changedProg)",
+        "await patchProgressEntry(date, sid, changedProg)",
+        "function buildLogSavePatch",
+        "clearKeys.push('notes')",
+        "clearKeys.push('homework', 'homeworkTable')",
+        "function applyLogSaveResult",
+        "if (!doneFlag && prevDone) next.done = true",
+        "function setLogModalSnapshots",
+    ]:
+        _assert_unit(snippet in log_modal_js, f"logModal helper policy must keep merge-safe step: {snippet}")
+
+
+def run_admin_log_modal_save_policy_behavior_checks() -> None:
+    driver = r"""
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+Error.stackTraceLimit = 0;
+
+const ok = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const response = (payload, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => payload,
+  text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
+});
+const callRecord = (url, init = {}) => ({
+  url: String(url),
+  method: init.method || 'GET',
+  cache: init.cache || '',
+  body: init.body ? JSON.parse(String(init.body)) : null,
+});
+const makeClassList = () => ({
+  add: () => {},
+  remove: () => {},
+  toggle: () => false,
+  contains: () => false,
+});
+const makeElement = (id) => ({
+  id,
+  style: {},
+  dataset: {},
+  value: '',
+  textContent: '',
+  innerHTML: '',
+  disabled: false,
+  scrollTop: 0,
+  classList: makeClassList(),
+  listeners: {},
+  addEventListener(type, callback) {
+    this.listeners[type] = callback;
+  },
+  append: () => {},
+  appendChild: () => {},
+  remove: () => {},
+  insertAdjacentHTML: () => {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  closest: () => null,
+});
+const ensureElement = (id) => globalThis.__elements[id] || (globalThis.__elements[id] = makeElement(id));
+const installModalElements = () => {
+  for (const id of ['logModal', 'logTitle', 'logNotes', 'logSave', 'logClose', 'logProgress', 'logCompleteBtn', 'hwBody', 'hwAddRow']) {
+    ensureElement(id);
+  }
+  globalThis.__elements.hwBody.querySelectorAll = (selector) => selector === '.hwItem' ? globalThis.__hwItems : [];
+};
+globalThis.__installModalElements = installModalElements;
+
+globalThis.window = globalThis;
+window.addEventListener = () => {};
+window.hideStudentTooltip = () => {};
+window.hideStudentPopupBackdrop = () => {};
+globalThis.__elements = {};
+globalThis.__toasts = [];
+globalThis.__alerts = [];
+globalThis.__dispatches = [];
+globalThis.__progressCells = [];
+globalThis.__hwItems = [];
+globalThis.__adminDate = '2026-06-06';
+globalThis.__state = {
+  students: [],
+  videos: [],
+  logs: {},
+  progress: {},
+  absentByDate: {},
+};
+globalThis.alert = (message) => globalThis.__alerts.push(String(message));
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+globalThis.requestAnimationFrame = (callback) => callback();
+globalThis.setTimeout = () => 1;
+globalThis.clearTimeout = () => {};
+globalThis.document = {
+  documentElement: { style: { setProperty: () => {} } },
+  head: { appendChild: () => {} },
+  body: {
+    appendChild: () => {},
+    addEventListener: () => {},
+    insertAdjacentHTML: () => installModalElements(),
+  },
+  createElement: (tag) => ({ ...makeElement(tag), tagName: String(tag).toUpperCase() }),
+  getElementById: (id) => globalThis.__elements[id] || null,
+  querySelector: () => null,
+  querySelectorAll: (selector) => {
+    if (selector === '#logProgress .progress-cell[data-mid]') return globalThis.__progressCells;
+    if (selector === '#logProgress .progress-cell') return globalThis.__progressCells;
+    if (selector === '#hwBody .hwBook') return [];
+    return [];
+  },
+  addEventListener: () => {},
+  dispatchEvent: (event) => globalThis.__dispatches.push(event.type),
+};
+
+const makeProgressCell = ({ mid, initial, state, explicitNone = '', cleared = '' }) => ({
+  dataset: {
+    mid: String(mid),
+    initial: String(initial),
+    state: String(state),
+    explicitNone,
+    cleared,
+  },
+});
+
+const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.js');
+let source = fs.readFileSync(sourcePath, 'utf8')
+  .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
+  .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
+  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
+  .replace("import { initTestModal } from './testModal.js';", "const initTestModal = () => {};");
+const harness = `
+export function __initHarness() {
+  globalThis.__installModalElements();
+  initLogModal();
+}
+export function __setHarnessState(input) {
+  editingLogDate = input.date || '2026-06-06';
+  editingLogSid = input.sid || 's1';
+  logModalReady = true;
+  logModalCarriedTestAssignment = input.carried || null;
+  logModalSnapshot = input.snapshot || { notes: '', homeworkTable: [] };
+  logModalServerSnapshot = input.serverSnapshot || { notes: '', homeworkTable: [] };
+  state.logs = input.logs || {};
+  state.progress = input.progress || {};
+  state.videos = input.videos || [];
+  globalThis.__progressCells = input.progressCells || [];
+  globalThis.__hwItems = input.hwItems || [];
+  if ($('logNotes')) $('logNotes').value = input.notesValue || '';
+}
+export async function __saveHarness() {
+  if (typeof window.saveRecordPopup !== 'function') throw new Error('save harness not installed');
+  return await window.saveRecordPopup();
+}
+`;
+const moduleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'log-modal-save-policy-'));
+const modulePath = path.join(moduleDir, 'logModal-harness.mjs');
+fs.writeFileSync(modulePath, `${source}\n${harness}`, 'utf8');
+let mod;
+try {
+  mod = await import(pathToFileURL(modulePath).href);
+} catch (err) {
+  console.error(`module import threw: ${err?.message || err}`);
+  throw err;
+} finally {
+  try { fs.rmSync(moduleDir, { recursive: true, force: true }); } catch {}
+}
+mod.__initHarness();
+
+let calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/progress/patch') {
+    return response({ ok: true, progress: { m1: 'none', __manualProgressMids: { m1: true } } });
+  }
+  if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
+  if (value === '/api/updates/patch') return response({ ok: true });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  date: '2026-06-06',
+  sid: 's1',
+  notesValue: 'keep notes',
+  snapshot: { notes: 'keep notes', homeworkTable: [] },
+  serverSnapshot: { notes: 'keep notes', homeworkTable: [] },
+  progress: { '2026-06-06': { s1: { m1: 'done' } } },
+  videos: [{ mid: 'm1', chapter: 1 }],
+  progressCells: [makeProgressCell({ mid: 'm1', initial: 'done', state: 'none', explicitNone: '1', cleared: '1' })],
+});
+try {
+  await mod.__saveHarness();
+} catch (err) {
+  console.error(`manual-white save threw: ${err?.message || err}`);
+  process.exit(1);
+}
+const progressPatch = calls.find((call) => call.url === '/api/progress/patch');
+ok(progressPatch, 'manual white save must call /api/progress/patch');
+ok(progressPatch.body?.date === '2026-06-06', 'progress patch keeps date');
+ok(progressPatch.body?.sid === 's1', 'progress patch keeps sid');
+ok(progressPatch.body?.progress?.m1 === 'none', 'manual white is persisted as none');
+ok(!calls.some((call) => call.url === '/api/logs/patch'), 'unchanged notes/homework do not call /api/logs/patch');
+ok(globalThis.__state.progress['2026-06-06'].s1.m1 === 'none', 'returned manual white progress updates local state');
+ok(globalThis.__state.progress['2026-06-06'].s1.__manualProgressMids?.m1 === true, 'returned manual meta is preserved locally');
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
+  if (value === '/api/progress/patch') return response({ ok: true, progress: {} });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  date: '2026-06-06',
+  sid: 's1',
+  notesValue: '',
+  snapshot: { notes: 'server keep', homeworkTable: [] },
+  serverSnapshot: { notes: 'server keep', homeworkTable: [] },
+  progress: { '2026-06-06': { s1: {} } },
+  videos: [],
+  progressCells: [],
+});
+try {
+  await mod.__saveHarness();
+} catch (err) {
+  console.error(`blank-notes save threw: ${err?.message || err}`);
+  process.exit(1);
+}
+const logPatch = calls.find((call) => call.url === '/api/logs/patch');
+ok(logPatch, 'blank changed notes must call /api/logs/patch');
+ok(logPatch.body?.date === '2026-06-06', 'log patch keeps date');
+ok(logPatch.body?.sid === 's1', 'log patch keeps sid');
+ok(Array.isArray(logPatch.body?.__clear), 'blank changed notes use explicit __clear');
+ok(logPatch.body.__clear.includes('notes'), 'blank changed notes explicitly clear notes');
+ok(!Object.prototype.hasOwnProperty.call(logPatch.body?.entry || {}, 'notes'), 'blank changed notes do not send notes empty string');
+ok(logPatch.body?.base?.notes === 'server keep', 'blank changed notes include latest server base');
+
+console.log('logModal save policy PASS');
+"""
+    cmd = ["node", "--input-type=module", "-e", driver]
+    print("$ node --input-type=module -e <admin-log-modal-save-policy-driver>")
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin log modal save policy driver failed")
+
+
 def run_admin_weekend_slot_behavior_checks() -> None:
     driver = r"""
 import fs from 'node:fs';
@@ -2104,6 +3904,7 @@ const slotLabel = {
   style: {},
   closest(selector) {
     if (selector === '.slotLabel') return this;
+    if (selector === 'tr[data-sid]') return tr;
     if (selector === 'tr[data-sid][data-date]') return tr;
     return null;
   },
@@ -2133,33 +3934,53 @@ ok(reloads === 0, 'slot label failed save does not reload today table');
         proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
     except FileNotFoundError:
         raise AssertionError("node not found")
+    if proc.returncode != 0:
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin weekend slot behavior driver failed")
     if proc.stdout:
         print(proc.stdout, end="")
     if proc.stderr:
-        print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "admin weekend slot behavior driver failed")
+        print("admin weekend slot behavior driver captured expected negative-path stderr")
 
 
 def run_unit_checks() -> bool:
     checks = [
+        run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_progress_rule_unit_checks,
         run_video_completion_unit_checks,
         run_video_completion_source_checks,
         run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
-        run_student_assigned_tests_unit_checks,
+        run_student_answer_link_precedence_unit_checks,
+        run_student_bootstrap_unit_checks,
+        run_student_answer_link_render_source_checks,
+        run_catalog_script_safety_source_checks,
+        run_catalog_script_temp_file_behavior_checks,
+        run_admin_css_scope_source_checks,
+        run_student_css_scope_source_checks,
+        run_shared_css_scope_source_checks,
+        run_refactor_contract_evidence_source_checks,
+        run_frontend_evidence_inventory_checks,
         run_admin_chat_contract_source_checks,
         run_admin_wave_b_source_checks,
+        run_admin_api_wrapper_usage_source_checks,
         run_admin_wave_b_behavior_checks,
         run_admin_test_modal_assignment_source_checks,
+        run_admin_test_modal_persistence_bridge_source_checks,
         run_admin_test_modal_assignment_behavior_checks,
         run_admin_video_modal_preflight_source_checks,
         run_admin_video_modal_preflight_failure_behavior_checks,
         run_admin_video_modal_preflight_happy_behavior_checks,
+        run_admin_video_modal_assignment_policy_behavior_checks,
         run_admin_log_modal_carried_reapply_source_checks,
         run_admin_log_modal_carried_reapply_failure_behavior_checks,
         run_admin_log_modal_carried_reapply_happy_behavior_checks,
+        run_admin_log_modal_save_policy_source_checks,
+        run_admin_log_modal_save_policy_behavior_checks,
         run_admin_weekend_slot_behavior_checks,
     ]
     ok = True
@@ -2245,15 +4066,17 @@ def smoke_candidate() -> tuple[str, str]:
     return date, first_student_sid()
 
 
-def import_smoke_is_safe() -> bool:
+def import_smoke_is_safe(*, report: bool = True) -> bool:
     missing = [name for name in CORE_IMPORT_RUNTIME_FILES if not (ROOT / name).exists()]
     if missing:
-        print("Skipping smoke: importing app could create missing runtime JSON files:", file=sys.stderr)
-        for name in missing:
-            print(f"  - {name}", file=sys.stderr)
+        if report:
+            print("Skipping smoke: importing app could create missing runtime JSON files:", file=sys.stderr)
+            for name in missing:
+                print(f"  - {name}", file=sys.stderr)
         return False
     if not (ROOT / "data").exists():
-        print("Skipping smoke: importing api_todaymeta could create data/.", file=sys.stderr)
+        if report:
+            print("Skipping smoke: importing api_todaymeta could create data/.", file=sys.stderr)
         return False
     return True
 
@@ -2331,6 +4154,66 @@ def main() -> int:
         help="Run only video modal latest-entry happy behavior checks.",
     )
     parser.add_argument(
+        "--only-video-modal-assignment-policy",
+        action="store_true",
+        help="Run only video modal assignment policy behavior checks.",
+    )
+    parser.add_argument(
+        "--only-test-modal-persistence-bridge-source",
+        action="store_true",
+        help="Run only test modal persistence bridge source checks.",
+    )
+    parser.add_argument(
+        "--only-admin-api-wrapper-usage-source",
+        action="store_true",
+        help="Run only admin API wrapper usage source checks.",
+    )
+    parser.add_argument(
+        "--only-student-answer-link-precedence",
+        action="store_true",
+        help="Run only student assigned-test answer-link precedence checks.",
+    )
+    parser.add_argument(
+        "--only-student-answer-link-render-source",
+        action="store_true",
+        help="Run only student assigned-test answer-link render source checks.",
+    )
+    parser.add_argument(
+        "--only-catalog-script-safety-source",
+        action="store_true",
+        help="Run only test catalog script safety source checks.",
+    )
+    parser.add_argument(
+        "--only-catalog-script-temp-behavior",
+        action="store_true",
+        help="Run only test catalog script temp-file behavior checks.",
+    )
+    parser.add_argument(
+        "--only-admin-css-scope",
+        action="store_true",
+        help="Run only admin stylesheet scope source checks.",
+    )
+    parser.add_argument(
+        "--only-student-css-scope",
+        action="store_true",
+        help="Run only student stylesheet scope source checks.",
+    )
+    parser.add_argument(
+        "--only-shared-css-scope",
+        action="store_true",
+        help="Run only shared legacy stylesheet scope source checks.",
+    )
+    parser.add_argument(
+        "--only-refactor-contract-evidence",
+        action="store_true",
+        help="Run only refactor contract evidence registry source checks.",
+    )
+    parser.add_argument(
+        "--only-frontend-evidence-inventory",
+        action="store_true",
+        help="Run only frontend browser evidence inventory checks.",
+    )
+    parser.add_argument(
         "--only-log-modal-carried-reapply-source",
         action="store_true",
         help="Run only log modal carried reapply source checks.",
@@ -2344,6 +4227,16 @@ def main() -> int:
         "--only-log-modal-carried-reapply-happy",
         action="store_true",
         help="Run only log modal carried reapply happy behavior checks.",
+    )
+    parser.add_argument(
+        "--only-log-modal-save-policy-source",
+        action="store_true",
+        help="Run only log modal save policy source checks.",
+    )
+    parser.add_argument(
+        "--only-log-modal-save-policy-behavior",
+        action="store_true",
+        help="Run only log modal save policy behavior checks.",
     )
     parser.add_argument(
         "--only-admin-chat-contract-docs",
@@ -2361,12 +4254,40 @@ def main() -> int:
         selected_checks.append(run_admin_video_modal_preflight_failure_behavior_checks)
     if args.only_video_modal_preflight_happy:
         selected_checks.append(run_admin_video_modal_preflight_happy_behavior_checks)
+    if args.only_video_modal_assignment_policy:
+        selected_checks.append(run_admin_video_modal_assignment_policy_behavior_checks)
+    if args.only_test_modal_persistence_bridge_source:
+        selected_checks.append(run_admin_test_modal_persistence_bridge_source_checks)
+    if args.only_admin_api_wrapper_usage_source:
+        selected_checks.append(run_admin_api_wrapper_usage_source_checks)
+    if args.only_student_answer_link_precedence:
+        selected_checks.append(run_student_answer_link_precedence_unit_checks)
+    if args.only_student_answer_link_render_source:
+        selected_checks.append(run_student_answer_link_render_source_checks)
+    if args.only_catalog_script_safety_source:
+        selected_checks.append(run_catalog_script_safety_source_checks)
+    if args.only_catalog_script_temp_behavior:
+        selected_checks.append(run_catalog_script_temp_file_behavior_checks)
+    if args.only_admin_css_scope:
+        selected_checks.append(run_admin_css_scope_source_checks)
+    if args.only_student_css_scope:
+        selected_checks.append(run_student_css_scope_source_checks)
+    if args.only_shared_css_scope:
+        selected_checks.append(run_shared_css_scope_source_checks)
+    if args.only_refactor_contract_evidence:
+        selected_checks.append(run_refactor_contract_evidence_source_checks)
+    if args.only_frontend_evidence_inventory:
+        selected_checks.append(run_frontend_evidence_inventory_checks)
     if args.only_log_modal_carried_reapply_source:
         selected_checks.append(run_admin_log_modal_carried_reapply_source_checks)
     if args.only_log_modal_carried_reapply_failures:
         selected_checks.append(run_admin_log_modal_carried_reapply_failure_behavior_checks)
     if args.only_log_modal_carried_reapply_happy:
         selected_checks.append(run_admin_log_modal_carried_reapply_happy_behavior_checks)
+    if args.only_log_modal_save_policy_source:
+        selected_checks.append(run_admin_log_modal_save_policy_source_checks)
+    if args.only_log_modal_save_policy_behavior:
+        selected_checks.append(run_admin_log_modal_save_policy_behavior_checks)
     if selected_checks:
         return 0 if run_selected_checks(selected_checks) else 1
 

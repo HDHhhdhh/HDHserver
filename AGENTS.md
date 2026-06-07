@@ -1,12 +1,13 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-05 | **Commit:** bc49f96 | **Branch:** codex/apple-clean-redesign
+**Generated:** 2026-06-07 | **Commit:** 05e5310 | **Branch:** codex/apple-clean-redesign
 
 ## Hierarchy
 - `AGENTS.md`: repo-wide runtime-data, workflow, verification, and Git rules.
 - `core/AGENTS.md`: pure rules, storage, repository, chatbot, and network helpers.
 - `routes/AGENTS.md`: Flask API/page blueprint contracts and route-level merge safety.
 - `static/AGENTS.md`: static HTML/CSS shells and frontend asset boundaries.
+- `static/css/AGENTS.md`: broad stylesheet cascade, responsive, modal, and Korean font rules.
 - `static/js/AGENTS.md`: shared JavaScript contracts, student/test pages, generated link maps.
 - `static/js/admin/AGENTS.md`: admin module bootstrap, selected-date behavior, shared API wrapper usage.
 - `static/js/admin/features/AGENTS.md`: high-risk admin feature modules and row `data-date` actions.
@@ -20,6 +21,7 @@
 | Core log/progress rules | `core/` | Keep pure rules separate from storage/runtime repair. |
 | Backend APIs | `routes/` | `api_basic.py` is the broadest and riskiest surface. |
 | Admin UI | `static/admin.html`, `static/js/admin/` | Use selected admin date and row `data-date` contracts. |
+| Styling/cascade | `static/css/` | `admin.css`, `student.css`, and `style.css` are broad shared surfaces. |
 | Student UI/tests | `static/student.html`, `static/js/student.js`, `static/js/tests.js` | Preserve bootstrap `assignedTests` shape and answer links. |
 | Runtime checks | `scripts/verify_refactor_safety.py` | Main safety suite and smoke checks. |
 

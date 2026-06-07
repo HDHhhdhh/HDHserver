@@ -1,5 +1,7 @@
 /* ========== 색 · 폰트 ========== */
 :root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
   --bg-light: #f8f9fc;
   --bg-dark: #0d1117;
   --card-light: #ffffff;
@@ -38,7 +40,7 @@
 
 /* ========== body & 헤더 ========== */
 body {
-  font-family: 'Noto Sans KR', system-ui, sans-serif;
+  font-family: var(--font-ui);
   margin: 2rem auto;
   max-width: 1280px;
   background: var(--bg-light);
@@ -82,7 +84,7 @@ input[type="text"],
 input[type="number"],
 select,
 button {
-  font: 15px/1.4 'Noto Sans KR', system-ui, sans-serif;
+  font: 15px/1.4 var(--font-ui);
   padding: 6px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -1734,7 +1736,7 @@ body.dark {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  font-family: var(--font-ui);
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -1974,11 +1976,6 @@ body.all-page #allWrap .studentsTable .timeInputRow input.timeInput {
 /* =========================================
    Shared service font and control alignment
    ========================================= */
-:root {
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
-}
-
 body :where(button, input, select, textarea),
 body :where(#progModal, #yoilModal, #miniProgModal, #ctx) {
   font-family: var(--font-ui) !important;

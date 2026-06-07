@@ -1,0 +1,1 @@
+unit ok: run_admin_chat_contract_source_checks

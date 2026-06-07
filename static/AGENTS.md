@@ -29,6 +29,7 @@ static/
 - Keep Korean UI text readable as UTF-8.
 - Do not remove ids/classes that feature modules query unless you update every caller.
 - Prefer scoped CSS changes. `admin.css` is broad and selector collisions are easy.
+- Follow `css/AGENTS.md` for stylesheet-specific cascade, modal, responsive, and font rules.
 - Generated screenshots and QA artifacts belong under `generated/`, not `static/`, unless the app serves them intentionally.
 
 ## Anti-Patterns

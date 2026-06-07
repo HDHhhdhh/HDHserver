@@ -1,0 +1,100 @@
+py_compile ok: app.py
+py_compile ok: routes/__init__.py
+py_compile ok: routes/api_admin_chat.py
+py_compile ok: routes/api_announcements.py
+py_compile ok: routes/api_arrive_time.py
+py_compile ok: routes/api_attend.py
+py_compile ok: routes/api_auth.py
+py_compile ok: routes/api_basic.py
+py_compile ok: routes/api_fs.py
+py_compile ok: routes/api_kollus.py
+py_compile ok: routes/api_makeup_carryover.py
+py_compile ok: routes/api_tests.py
+py_compile ok: routes/api_todaymeta.py
+py_compile ok: routes/api_watch.py
+py_compile ok: routes/pages.py
+py_compile ok: core/__init__.py
+py_compile ok: core/absent.py
+py_compile ok: core/admin_chat.py
+py_compile ok: core/ghost_student.py
+py_compile ok: core/log_repository.py
+py_compile ok: core/log_rules.py
+py_compile ok: core/logs_sqlite.py
+py_compile ok: core/network_access.py
+py_compile ok: core/paths.py
+py_compile ok: core/progress_rules.py
+py_compile ok: core/storage.py
+py_compile ok: scripts/verify_refactor_safety.py
+unit ok: run_app_import_smoke_checks
+unit ok: run_log_rules_unit_checks
+unit ok: run_progress_rule_unit_checks
+unit ok: run_video_completion_unit_checks
+unit ok: run_video_completion_source_checks
+unit ok: run_watch_route_progress_unit_checks
+[logs] json PATCH failed: C:\runtime\logs.json write failed
+unit ok: run_log_repository_unit_checks
+unit ok: run_student_answer_link_precedence_unit_checks
+unit ok: run_student_bootstrap_unit_checks
+unit ok: run_student_answer_link_render_source_checks
+unit ok: run_catalog_script_safety_source_checks
+REVIEW tests added: 1
+REVIEW tests updated: 0
+REVIEW tests preserved: 0
+SCHOOL_PAST tests added: 1
+SCHOOL_PAST tests updated: 0
+SCHOOL_PAST tests preserved: 0
+source_ids=1 linked_rounds=3 issues=0
+output=C:\server\tmp\verify-catalog-safety-3ljs5rda\test_answer_link_map.json
+issues=C:\server\tmp\verify-catalog-safety-3ljs5rda\issues.json
+unit ok: run_catalog_script_temp_file_behavior_checks
+unit ok: run_admin_css_scope_source_checks
+unit ok: run_student_css_scope_source_checks
+unit ok: run_shared_css_scope_source_checks
+unit ok: run_refactor_contract_evidence_source_checks
+unit ok: run_frontend_evidence_inventory_checks
+unit ok: run_admin_chat_contract_source_checks
+unit ok: run_admin_wave_b_source_checks
+unit ok: run_admin_api_wrapper_usage_source_checks
+$ node --input-type=module -e <admin-wave-b-driver>
+unit ok: run_admin_wave_b_behavior_checks
+unit ok: run_admin_test_modal_assignment_source_checks
+unit ok: run_admin_test_modal_persistence_bridge_source_checks
+$ node --input-type=module -e <admin-test-modal-assignment-driver>
+unit ok: run_admin_test_modal_assignment_behavior_checks
+unit ok: run_admin_video_modal_preflight_source_checks
+$ node --input-type=module -e <admin-video-modal-preflight-failures-driver>
+videoModal preflight failures PASS
+unit ok: run_admin_video_modal_preflight_failure_behavior_checks
+$ node --input-type=module -e <admin-video-modal-preflight-happy-driver>
+videoModal preflight happy PASS
+unit ok: run_admin_video_modal_preflight_happy_behavior_checks
+$ node --input-type=module -e <admin-video-modal-assignment-policy-driver>
+videoModal assignment policy PASS
+unit ok: run_admin_video_modal_assignment_policy_behavior_checks
+unit ok: run_admin_log_modal_carried_reapply_source_checks
+$ node --input-type=module -e <admin-log-modal-carried-reapply-failures-driver>
+[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)
+logModal carried reapply failures PASS
+unit ok: run_admin_log_modal_carried_reapply_failure_behavior_checks
+$ node --input-type=module -e <admin-log-modal-carried-reapply-happy-driver>
+[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)
+logModal carried reapply happy PASS
+unit ok: run_admin_log_modal_carried_reapply_happy_behavior_checks
+unit ok: run_admin_log_modal_save_policy_source_checks
+$ node --input-type=module -e <admin-log-modal-save-policy-driver>
+[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)
+logModal save policy PASS
+unit ok: run_admin_log_modal_save_policy_behavior_checks
+$ node --input-type=module -e <admin-weekend-slot-driver>
+admin weekend slot behavior driver captured expected negative-path stderr
+unit ok: run_admin_weekend_slot_behavior_checks
+$ node --check static/js/admin/main.js
+$ node --check static/js/admin/features/logModal.js
+$ node --check static/js/admin/features/today.js
+$ node --check static/js/admin/features/today.state.js
+$ node --check static/js/admin/features/today.render.js
+$ node --check static/js/admin/features/testModal.js
+$ node --check static/js/admin/features/videoModal.js
+$ node --check static/js/student.js
+$ node --check static/js/shared/api.js
+exit_code=0
