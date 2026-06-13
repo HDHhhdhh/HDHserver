@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-12 | **Commit:** 4c0c974 | **Branch:** codex/apple-clean-redesign
+**Generated:** 2026-06-13 | **Commit:** a6bbd25 | **Branch:** codex/apple-clean-redesign
 
 ## Hierarchy
 - `AGENTS.md`: repo-wide runtime-data, workflow, verification, and Git rules.
@@ -22,7 +22,7 @@
 |---|---|---|
 | App bootstrap | `app.py` | Flask app factory, guards, blueprint registration. |
 | Core log/progress rules | `core/` | Keep pure rules separate from storage/runtime repair. |
-| Backend APIs | `routes/` | `api_basic.py` is the broadest and riskiest surface. |
+| Backend APIs | `routes/` | `api_basic.py` is broadest; announcements, auth, tests, files, attendance, watch, and today metadata each have own blueprints. |
 | Admin UI | `static/admin.html`, `static/js/admin/` | Use selected admin date and row `data-date` contracts. |
 | Styling/cascade | `static/css/` | `admin.css`, `student.css`, and `style.css` are broad shared surfaces. |
 | Student UI/tests | `static/student.html`, `static/js/student.js`, `static/js/tests.js` | Preserve bootstrap `assignedTests` shape and answer links. |
@@ -39,6 +39,7 @@
 - `app.py`: Flask app factory, middleware, blueprint registration.
 - `routes/api_basic.py`: students, videos, logs, progress, assignments, and core JSON APIs.
 - `routes/api_attend.py`: today list, attendance, contact, absence APIs.
+- `routes/api_announcements.py`, `routes/api_auth.py`, `routes/api_fs.py`: announcements/surveys, auth accounts/JWT, and material/file management.
 - `routes/api_watch.py`: video watch/progress callbacks.
 - `core/log_repository.py`: class log repository for SQLite + `logs.json` dual-read/dual-write behavior.
 - `core/log_rules.py`: pure class-log merge/conflict rules with no file, SQLite, Flask, or runtime-data access.
@@ -64,17 +65,17 @@
 
 ## Agent Workflow
 - Read this `AGENTS.md` first, then run `git status --short` before edits. Record pre-existing dirty, staged, and untracked files separately from files changed by the current task.
-- Use subagents actively for broad or risky work when they can inspect independent areas in parallel. Keep subagents read-only unless a task explicitly gives them an edit scope.
+- Use subagents for broad or risky work only when the current tool policy and user request allow delegated agents. Keep subagents read-only unless a task explicitly gives them an edit scope.
 - The main agent owns final synthesis, file edits, verification, and user-facing conclusions.
 - Before the final response, clean up any open subagents by waiting for useful results or closing them, then report how subagents were used.
 - After completing work, run the relevant verification commands, check `git status --short`, and separate code changes from runtime-data changes.
 - When the user asks for git registration/staging after completion, stage only the verified files in scope. Do not stage, unstage, revert, or normalize unrelated existing changes.
 
 ## Reusable Skills and Subagents
-- Use `academy-runtime-safety` for any change that can touch runtime data, backups, migrations, smoke checks, Git versioning, or code/data separation.
-- Use `academy-log-progress-guardian` for class logs, homework tables, video progress, watch callbacks, assigned tests, student bootstrap, SQLite/JSON fallback behavior, and mojibake-sensitive note fields.
-- Use `admin-ui-date-verifier` for `/admin` UI work, selected-date behavior, row actions with `data-date`, today list/calendar/attendance/absence/contact/homework flows, Browser checks, and Korean rendering regressions.
-- No persistent custom subagent registry is configured in this environment. When subagents are available, implement the custom-subagent behavior by spawning a read-only explorer with the prompt pattern from the relevant skill before editing broad or risky surfaces.
+- Installed Codex skills most relevant here: `omo:init-deep`, `omo:git-master`, `omo:programming`, `omo:debugging`, `omo:visual-qa`, `browser:control-in-app-browser`, `build-web-apps:frontend-testing-debugging`.
+- Project-only prompt-pattern names not installed as Codex skills in this session: `academy-runtime-safety`, `academy-log-progress-guardian`, `admin-ui-date-verifier`.
+- Treat those project-only names as read-only explorer prompt patterns when delegated agents are explicitly allowed; they are not callable skill names.
+- Use the three prompt patterns for runtime data/backups/Git separation, log-homework-progress/bootstrap safety, and `/admin` selected-date plus Korean rendering checks.
 - The repeated user priorities from prior sessions are: protect real local data, preserve merge-safe log/progress contracts, verify admin selected-date behavior, keep Korean text readable, use Browser/UI checks after frontend changes, and keep GitHub versioning code-only unless data backup is explicitly requested.
 
 ## Current Refactor Boundaries
