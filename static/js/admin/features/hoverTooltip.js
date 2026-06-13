@@ -661,6 +661,7 @@ export function initHoverTooltip() {
         : '';
 
       const phase = String(entry?.phase || '').trim();
+      const examSubject = phase || '수학';
       const rowGrade = String(entry?.grade || stu.grade || '').trim();
       const rowLabel = phase
         ? (rowGrade ? `${rowGrade} · ${phase}` : phase)
@@ -671,7 +672,7 @@ export function initHoverTooltip() {
           ${rowLabel ? `<div style="margin-bottom:6px; font-size:11.5px; font-weight:800; opacity:.86">${rowLabel}</div>` : ''}
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:0; max-width:100%">
             ${pill(exam.label, exam.date || '-')}
-            ${pill('수학시험일', exam.math || '-', { big: true })}
+            ${pill(`${examSubject} 시험일`, exam.math || '-', { big: true })}
             ${remainInline}
           </div>
           <div style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:12px; min-height:${examDetailMinHeight}">

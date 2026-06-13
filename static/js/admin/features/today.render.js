@@ -1630,7 +1630,9 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         try {
           for (const target of targets) {
             try {
+              const testPatch = await completeAssignedTestsForRecordCleanup(target.dateKey, target.sid);
               await patchLog(target.dateKey, target.sid, {
+                ...testPatch,
                 done: true,
                 leaveTime: t,
                 leaveAt,
@@ -1789,7 +1791,9 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const t = nowHHMM();
 
         try {
+          const testPatch = await completeAssignedTestsForRecordCleanup(dateKey, sid);
           await patchLog(dateKey, sid, {
+            ...testPatch,
             done: true,
             leaveTime: t,
             leaveAt: nowISO(),

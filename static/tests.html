@@ -74,7 +74,9 @@
       inset: 0;
       border-radius: 9999px;
       background: #cbd5e1;
-      transition: .25s;
+      transition-property: background-color, border-color;
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
     }
 
     body.admin.tests-page .slider::before {
@@ -86,7 +88,9 @@
       height: 18px;
       border-radius: 50%;
       background: #fff;
-      transition: .25s;
+      transition-property: transform, background-color;
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
     }
 
     body.admin.tests-page .switch input:checked + .slider {
@@ -922,6 +926,106 @@
       line-height: 1.6;
     }
 
+    body.admin.tests-page #statsDetail {
+      display: none;
+    }
+
+    body.admin.tests-page .stats-detail-modal[hidden] {
+      display: none !important;
+    }
+
+    body.admin.tests-page .stats-detail-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    body.admin.tests-page .stats-detail-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, .42);
+      backdrop-filter: blur(3px);
+    }
+
+    body.admin.tests-page .stats-detail-dialog {
+      position: relative;
+      z-index: 1;
+      width: min(980px, calc(100vw - 48px));
+      max-height: min(820px, calc(100vh - 48px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
+      overflow: hidden;
+      outline: none;
+    }
+
+    body.admin.tests-page .stats-detail-dialog-head {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 96%, var(--accent) 4%);
+    }
+
+    body.admin.tests-page .stats-detail-dialog-kicker {
+      margin: 0 0 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    body.admin.tests-page #statsDetailModalTitle {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      text-wrap: balance;
+    }
+
+    body.admin.tests-page .stats-detail-close {
+      width: 42px;
+      min-width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--fg);
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      transition-property: transform, background-color, border-color;
+      transition-duration: 150ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+    }
+
+    body.admin.tests-page .stats-detail-close:active {
+      transform: scale(.96);
+    }
+
+    body.admin.tests-page .stats-detail-modal-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 18px;
+    }
+
+    body.admin.tests-page .stats-detail-modal-body .stats-detail-panel,
+    body.admin.tests-page .stats-detail-modal-body .stats-detail-empty {
+      margin-top: 0;
+    }
+
+    body.admin.tests-page.stats-modal-open {
+      overflow: hidden;
+    }
+
     body.admin.tests-page .detail-metrics {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -1252,6 +1356,19 @@
           <div id="statsDetail" class="stats-detail"></div>
         </div>
       </section>
+      <div id="statsDetailModal" class="stats-detail-modal" role="dialog" aria-modal="true" aria-labelledby="statsDetailModalTitle" aria-hidden="true" hidden>
+        <div class="stats-detail-modal-backdrop" data-stats-detail-close></div>
+        <section class="stats-detail-dialog" tabindex="-1">
+          <div class="stats-detail-dialog-head">
+            <div>
+              <p class="stats-detail-dialog-kicker">TEST DETAIL</p>
+              <h2 id="statsDetailModalTitle">테스트 통계</h2>
+            </div>
+            <button class="stats-detail-close" type="button" aria-label="테스트 통계 닫기" data-stats-detail-close>&times;</button>
+          </div>
+          <div id="statsDetailModalBody" class="stats-detail-modal-body"></div>
+        </section>
+      </div>
     </section>
   </main>
 

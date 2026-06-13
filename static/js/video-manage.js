@@ -13,26 +13,6 @@ const toast = msg => {
 
 const $ = id => document.getElementById(id);
 
-(function setupDarkMode() {
-    const b = $('darkToggle');
-    if (!b) return;
-    // 초기 상태 적용
-    if (localStorage.theme === 'dark') {
-        document.body.classList.add('dark');
-        b.checked = true;
-    }
-    // 토글 이벤트
-    b.addEventListener('change', () => {
-        if (b.checked) {
-            document.body.classList.add('dark');
-            localStorage.theme = 'dark';
-        } else {
-            document.body.classList.remove('dark');
-            localStorage.theme = 'light';
-        }
-    });
-})();
-
 (() => {
     const CUR = ['공수1', '공수2', '미적분1', '미적분2', '대수', '기하', '확통'];
     const SUB = {
@@ -294,20 +274,26 @@ const $ = id => document.getElementById(id);
         'APEX'
     ];
     const filterDiv = document.createElement('div');
-    filterDiv.style.margin = '0.5rem 0';
+    filterDiv.className = 'video-filter-row';
     filterDiv.innerHTML = `
-  <input id="videoSearch" type="search" autocomplete="off" placeholder="영상 검색" style="min-width:240px;margin-right:1rem;">
-  <label style="margin-right:0.5rem;">커리큘럼:</label>
-  <select id="curriculumFilter" style="margin-right:1rem;">
-   <option value="">전체</option>
-   ${maincurricula.map(m => `<option value="${m}">${m}</option>`).join('')}
-  </select>
-
-  <label style="margin-right:0.5rem;">세부:</label>
-  <select id="subCurriculumFilter">
-   <option value="">전체</option>
-   ${subCurricula.map(s => `<option value="${s}">${s}</option>`).join('')}
-  </select>
+  <label class="video-filter-control">
+    <span>커리큘럼 선택</span>
+    <select id="curriculumFilter">
+      <option value="">전체</option>
+      ${maincurricula.map(m => `<option value="${m}">${m}</option>`).join('')}
+    </select>
+  </label>
+  <label class="video-filter-control">
+    <span>세부 선택</span>
+    <select id="subCurriculumFilter">
+      <option value="">전체</option>
+      ${subCurricula.map(s => `<option value="${s}">${s}</option>`).join('')}
+    </select>
+  </label>
+  <label class="video-filter-control video-search-control">
+    <span>검색</span>
+    <input id="videoSearch" type="search" autocomplete="off" placeholder="영상 검색 (초성/영타 검색 · 띄어쓰기=AND)">
+  </label>
 `;
     videoSection.prepend(filterDiv);
     const videoSearch = document.getElementById('videoSearch');

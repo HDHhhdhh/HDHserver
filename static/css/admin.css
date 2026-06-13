@@ -6961,3 +6961,818 @@ body.admin.admin-simple #todayWrap .today-table td {
     grid-column: 1 / -1;
   }
 }
+
+body.admin {
+  --bg-0: #f4f6f8;
+  --bg-1: #eef2f5;
+  --card: #ffffff;
+  --card-soft: #f7f9fb;
+  --line: #d9dee7;
+  --line-strong: #c4ccd8;
+  --ink: #20242c;
+  --ink-soft: #5d6878;
+  --brand: #1769aa;
+  --brand-soft: #e7f1f8;
+  --ok: #16835d;
+  --danger: #b42318;
+  --radius-xl: 8px;
+  --radius-lg: 8px;
+  --radius-md: 8px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, .05), 0 8px 18px rgba(15, 23, 42, .06);
+  background: linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+}
+
+body.admin.dark {
+  --bg-0: #0d1219;
+  --bg-1: #111a25;
+  --card: #151d28;
+  --card-soft: #1b2633;
+  --line: #2a3848;
+  --line-strong: #394b60;
+  --ink: #edf3fa;
+  --ink-soft: #a8b7c8;
+  --brand: #62b0ed;
+  --brand-soft: rgba(98, 176, 237, .16);
+  --ok: #41c38a;
+  --danger: #ff7b72;
+}
+
+body.admin .admin-shell {
+  gap: 12px;
+  padding: clamp(10px, 1.25vw, 18px);
+}
+
+body.admin .admin-workspace {
+  gap: 12px;
+}
+
+body.admin .topbar,
+body.admin .global-links,
+body.admin .hero-panel,
+body.admin .card,
+body.admin .modal-panel,
+body.admin .admin-chat-panel,
+body.admin .kpi-card,
+body.admin #todayWrap,
+body.admin #doneWrap,
+body.admin #calendar,
+body.admin #timeGraphWrap {
+  border-radius: 8px;
+  border-color: var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+body.admin .topbar {
+  min-height: 50px;
+  padding: 9px 12px;
+}
+
+body.admin .global-links {
+  padding: 8px;
+}
+
+body.admin .global-links .btn,
+body.admin .hero-actions .btn,
+body.admin .btn,
+body.admin button.btn,
+body.admin a.btn {
+  min-height: 40px;
+  border-radius: 8px !important;
+  font-weight: 750;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.admin .global-links .btn:active,
+body.admin .hero-actions .btn:active,
+body.admin .btn:active,
+body.admin button.btn:active,
+body.admin a.btn:active {
+  transform: scale(.96);
+}
+
+body.admin .hero-panel {
+  --admin-ann-reply-width: clamp(240px, 14vw, 300px);
+  --admin-ann-compose-width: calc(var(--admin-ann-reply-width) * 2);
+  --admin-hero-command-height: clamp(342px, 18.5vw, 360px);
+  width: 100%;
+  max-width: 100%;
+  height: var(--admin-hero-command-height);
+  min-height: var(--admin-hero-command-height);
+  grid-template-columns:
+    minmax(210px, 240px)
+    minmax(300px, 420px)
+    minmax(0, 1fr)
+    minmax(420px, var(--admin-ann-compose-width))
+    var(--admin-ann-reply-width);
+  grid-template-rows: auto auto;
+  align-items: stretch;
+  justify-content: start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--card);
+}
+
+body.admin .hero-main {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+body.admin .hero-main h2 {
+  font-size: clamp(22px, 1.65vw, 28px);
+  font-weight: 800;
+}
+
+body.admin #todayCount {
+  font-size: clamp(46px, 4vw, 58px);
+  line-height: .94;
+}
+
+body.admin .count-unit {
+  font-size: 18px;
+}
+
+body.admin .hero-actions {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: clamp(188px, 10.7vw, 214px);
+}
+
+body.admin .hero-metrics-grid {
+  --hero-metric-size: auto;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-self: stretch;
+  justify-self: stretch;
+}
+
+body.admin .hero-panel > .hero-metrics-grid {
+  align-self: stretch;
+}
+
+body.admin .hero-panel > .hero-metrics-grid :where(.hero-date-mount, .kpi-card) {
+  height: 100%;
+  min-height: 0;
+}
+
+body.admin .hero-panel > .hero-metrics-grid .kpi-card {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+}
+
+body.admin .hero-panel > .hero-metrics-grid .kpi-card-head {
+  align-self: start;
+}
+
+body.admin .hero-panel > .hero-metrics-grid .kpi-value-line {
+  align-self: center;
+}
+
+body.admin .hero-date-mount {
+  width: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+body.admin #adminDateMount .adb-wrap {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+body.admin #adminDateMount .adb-nav-row {
+  grid-template-columns: 36px minmax(48px, 1fr) 36px;
+}
+
+body.admin #adminDateMount .adb-btn {
+  height: 36px;
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+body.admin #adminDateMount .adb-today-btn {
+  font-size: 14px;
+}
+
+body.admin #adminDateMount .adb-date-display {
+  font-size: 21px;
+}
+
+body.admin .kpi-card {
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  padding: 10px;
+  gap: 7px;
+  grid-template-rows: auto 1fr auto;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin .kpi-card-head {
+  gap: 7px;
+  padding-bottom: 7px;
+}
+
+body.admin .kpi-icon {
+  width: 20px;
+  height: 20px;
+}
+
+body.admin .kpi-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+body.admin .kpi-card strong {
+  font-size: clamp(25px, 2.2vw, 34px);
+  font-weight: 820;
+}
+
+body.admin .kpi-value-note {
+  font-size: 12px;
+}
+
+body.admin .progress-card .kpi-progress-track {
+  height: 5px;
+}
+
+body.admin .announcement-section {
+  grid-column: 4;
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  height: 100%;
+  max-height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+body.admin .announcement-reply-dock {
+  grid-column: 5;
+  grid-row: 1 / span 2;
+  padding: 10px;
+}
+
+body.admin .announcement-compose {
+  gap: 7px;
+}
+
+body.admin .announcement-field textarea {
+  min-height: 48px;
+  max-height: 76px;
+}
+
+body.admin .announcement-submit,
+body.admin .announcement-target .btn,
+body.admin .ann-image-btn {
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+body.admin .ann-reply-content,
+body.admin .ann-reply-image,
+body.admin .ann-chat-message,
+body.admin .ann-empty,
+body.admin .announcement-board-shell summary,
+body.admin .announcement-target-menu,
+body.admin .announcement-expiry,
+body.admin .ann-survey-dialog,
+body.admin .ann-compose-expand-dialog,
+body.admin .ann-reply-expand-dialog {
+  border-radius: 8px;
+}
+
+body.admin .page {
+  gap: 12px;
+}
+
+body.admin .card {
+  padding: 13px;
+}
+
+body.admin .card-head {
+  gap: 8px;
+}
+
+body.admin .card h3 {
+  font-size: 17px;
+}
+
+body.admin table {
+  font-size: 13px;
+}
+
+body.admin thead th {
+  padding: 9px 8px;
+  line-height: 1.25;
+}
+
+body.admin tbody td {
+  padding: 8px;
+  line-height: 1.35;
+}
+
+body.admin .btn-doc,
+body.admin .editVid,
+body.admin .editLog,
+body.admin .openStudentPopups,
+body.admin .openTestProgress,
+body.admin .markAbsent,
+body.admin .markLeave,
+body.admin .undoDone,
+body.admin .clearDone {
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+body.admin input[type="text"],
+body.admin input[type="number"],
+body.admin input[type="date"],
+body.admin input[type="time"],
+body.admin input[type="search"],
+body.admin input[type="email"],
+body.admin input[type="url"],
+body.admin input[type="password"],
+body.admin input:not([type]),
+body.admin textarea,
+body.admin select {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+body.admin .modal-panel {
+  border-radius: 8px;
+}
+
+body.admin .modal-close,
+body.admin .admin-chat-icon-btn,
+body.admin .ann-survey-icon-btn,
+body.admin .ann-reply-expand-close {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+body.admin.tests-page .hero-card,
+body.admin.tests-page .card,
+body.admin.tests-page .toolbar-group,
+body.admin.tests-page .test-list,
+body.admin.tests-page .summary-card,
+body.admin.tests-page .stats-table-wrap,
+body.admin.tests-page .panel-table-wrap,
+body.admin.tests-page .personal-panel,
+body.admin.tests-page .stats-detail-panel,
+body.admin.tests-page .stats-detail-empty {
+  border-radius: 8px !important;
+}
+
+body.admin.tests-page .hero-card {
+  padding: 16px !important;
+}
+
+body.admin.tests-page .hero-title {
+  font-size: clamp(22px, 2vw, 30px) !important;
+}
+
+body.admin.tests-page .test-list button,
+body.admin.tests-page .summary-card,
+body.admin.tests-page .toolbar-group :where(button, input, select),
+body.admin.tests-page .btn {
+  min-height: 40px;
+  border-radius: 8px !important;
+}
+
+body.admin.tests-page .stats-table :where(th, td),
+body.admin.tests-page .rule-section table :where(th, td) {
+  line-height: 1.35;
+}
+
+body.admin.admin-simple .hero-panel,
+body.admin.admin-simple #todaySection,
+body.admin.admin-simple #todayWrap,
+body.admin.admin-simple .kpi-card,
+body.admin.admin-simple .hero-actions .btn {
+  border-radius: 8px;
+}
+
+@media (max-width: 1500px) {
+  body.admin .hero-panel {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(210px, 260px) minmax(300px, 1fr);
+  }
+
+  body.admin .hero-actions {
+    grid-row: 2;
+    margin-top: 0;
+  }
+
+  body.admin .announcement-section,
+  body.admin .announcement-reply-dock {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    height: auto;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  body.admin .admin-shell {
+    padding: 8px;
+  }
+
+  body.admin .hero-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin .hero-main,
+  body.admin .hero-actions,
+  body.admin .hero-metrics-grid,
+  body.admin .announcement-section,
+  body.admin .announcement-reply-dock {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  body.admin .hero-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin .announcement-reply-dock {
+    max-height: 360px;
+  }
+}
+
+body.admin.admin-simple .hero-panel {
+  display: grid !important;
+  grid-template-columns: minmax(190px, 250px) minmax(0, 1fr) minmax(150px, 178px) !important;
+  grid-template-rows: auto !important;
+  align-items: stretch;
+  gap: 10px;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 10px;
+}
+
+body.admin.admin-simple .hero-main {
+  display: block !important;
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  align-self: center;
+  min-width: 0;
+}
+
+body.admin.admin-simple .hero-main h2 {
+  font-size: 19px;
+  line-height: 1.12;
+}
+
+body.admin.admin-simple #todayCount {
+  font-size: 42px;
+  line-height: .95;
+}
+
+body.admin.admin-simple .count-unit {
+  font-size: 14px;
+}
+
+body.admin.admin-simple .hero-sub {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+body.admin.admin-simple .announcement-section,
+body.admin.admin-simple .announcement-reply-dock {
+  display: none !important;
+}
+
+body.admin.admin-simple .hero-metrics-grid {
+  --hero-metric-size: auto;
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  width: 100%;
+  min-width: 0;
+  height: auto !important;
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(118px, 1fr)) !important;
+  grid-template-rows: minmax(86px, 1fr) !important;
+  align-self: stretch;
+  align-items: stretch;
+  gap: 8px;
+}
+
+body.admin.admin-simple .hero-date-mount {
+  order: 0;
+  display: flex !important;
+  position: static !important;
+  grid-column: auto !important;
+  grid-row: auto !important;
+  align-self: stretch;
+  width: auto !important;
+  height: auto !important;
+  min-height: 86px !important;
+}
+
+body.admin.admin-simple #adminDateMount .adb-wrap {
+  height: 100%;
+  min-height: 86px;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+body.admin.admin-simple .hero-kpis {
+  display: contents;
+}
+
+body.admin.admin-simple .kpi-card {
+  width: auto !important;
+  height: auto !important;
+  min-height: 86px !important;
+  aspect-ratio: auto;
+  grid-column: auto !important;
+  grid-row: auto !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+body.admin.admin-simple .kpi-card--progress {
+  order: 1;
+}
+
+body.admin.admin-simple .kpi-card--minutes {
+  order: 2;
+}
+
+body.admin.admin-simple .kpi-card--pending {
+  order: 3;
+}
+
+body.admin.admin-simple .kpi-card-head {
+  gap: 6px;
+  align-self: start;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+
+body.admin.admin-simple .kpi-label {
+  font-size: 14px;
+  line-height: 1.15;
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+body.admin.admin-simple .kpi-value-line {
+  align-self: center;
+  justify-self: end;
+  gap: 4px;
+}
+
+body.admin.admin-simple .kpi-card strong {
+  font-size: clamp(28px, 2.1vw, 36px);
+  line-height: 1;
+}
+
+body.admin.admin-simple .progress-card .kpi-progress-track {
+  position: static;
+  height: 4px;
+}
+
+body.admin.admin-simple .hero-actions {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 0 !important;
+  min-width: 0;
+}
+
+body.admin.admin-simple .hero-actions #exportLogs,
+body.admin.admin-simple .hero-actions #exportRoster {
+  display: none !important;
+}
+
+body.admin.admin-simple .hero-actions .btn {
+  width: 100%;
+  height: auto !important;
+  min-height: 42px !important;
+  border-radius: 8px !important;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+@media (max-width: 980px) {
+  body.admin.admin-simple .hero-panel {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body.admin.admin-simple .hero-main,
+  body.admin.admin-simple .hero-metrics-grid,
+  body.admin.admin-simple .hero-actions {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+  }
+
+  body.admin.admin-simple .hero-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+body.admin :where(
+  #attendModal .modal-panel,
+  #selectionModal .modal-panel,
+  #logModal .modal-panel,
+  #yoilModal .modal-panel,
+  #extraModal .modal-panel,
+  #absentRegisterModal .modal-panel,
+  #vidModal .modal-panel,
+  #testModal .modal-panel,
+  #logModal .log-card,
+  #absentRecoverModal > div,
+  #extraModal .extra-panel,
+  #absentRegisterModal .absent-panel,
+  #vidModal .vid-card,
+  #testModal .test-card,
+  #manualMakeupModal .manual-makeup-panel,
+  .admin-chat-panel,
+  .ann-survey-dialog,
+  .ann-compose-expand-dialog,
+  .ann-reply-expand-dialog
+) {
+  border-radius: 8px !important;
+  border-color: var(--line) !important;
+  background: var(--card) !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .22) !important;
+}
+
+body.admin.dark :where(
+  #attendModal .modal-panel,
+  #selectionModal .modal-panel,
+  #logModal .modal-panel,
+  #yoilModal .modal-panel,
+  #extraModal .modal-panel,
+  #absentRegisterModal .modal-panel,
+  #vidModal .modal-panel,
+  #testModal .modal-panel,
+  #logModal .log-card,
+  #absentRecoverModal > div,
+  #extraModal .extra-panel,
+  #absentRegisterModal .absent-panel,
+  #vidModal .vid-card,
+  #testModal .test-card,
+  #manualMakeupModal .manual-makeup-panel,
+  .admin-chat-panel,
+  .ann-survey-dialog,
+  .ann-compose-expand-dialog,
+  .ann-reply-expand-dialog
+) {
+  box-shadow: 0 28px 72px rgba(0, 0, 0, .46) !important;
+}
+
+body.admin :where(
+  #selectionList .selection-student-row,
+  #manualMakeupList .selection-student-row,
+  #extraModal .ex-row,
+  #absentRegisterModal .absent-row,
+  #logModal .hw-row,
+  #vidModal .vid-extra-row,
+  #testModal .test-card,
+  #testModal .test-row,
+  #vidModal .vid-row,
+  #extraModal .extra-student-row,
+  #absentRegisterModal .absent-student-row,
+  #manualMakeupList .slot-btn,
+  #absentRecoverModal #arList,
+  .ann-chat-message,
+  .ann-reply-content,
+  .ann-reply-image,
+  .ann-survey-result-card,
+  .ann-survey-result-summary,
+  .ann-survey-latest,
+  .ann-student-preview-card
+) {
+  border-radius: 8px !important;
+}
+
+body.admin :where(
+  .modal-close,
+  .admin-chat-icon-btn,
+  .ann-survey-icon-btn,
+  .ann-reply-expand-close,
+  #calendar .makeup-slot-close,
+  #logModal .hw-del-btn
+) {
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  border-radius: 8px !important;
+}
+
+body.admin :where(
+  #selectionModal .selection-btn,
+  #manualMakeupModal .selection-btn,
+  #extraModal .ex-btn,
+  #exZone .slot-btn,
+  #absentRegisterModal .absent-btn,
+  #absentRecoverModal #arRestore,
+  #absentRecoverModal #arClose,
+  #absentZone .slot-btn,
+  #logModal .actions button,
+  #logModal .hw-actions button,
+  #vidModal .vid-save-btn,
+  #vidModal .vid-extra-add,
+  #vidModal .auto-count-btn,
+  #testModal .test-save-btn,
+  #testModal .test-tab,
+  #testModal .test-mini-actions button,
+  #extraModal .ex-close,
+  #absentRegisterModal .absent-close,
+  .ann-mode-toggle,
+  .ann-expand-btn,
+  .ann-edit-btn,
+  .ann-delete-btn,
+  .ann-survey-dialog-actions button,
+  .announcement-target-options button,
+  .announcement-direct-actions button,
+  .announcement-expiry-modes button
+) {
+  min-height: 40px !important;
+  border-radius: 8px !important;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.admin :where(
+  #selectionModal .selection-btn,
+  #manualMakeupModal .selection-btn,
+  #extraModal .ex-btn,
+  #exZone .slot-btn,
+  #absentRegisterModal .absent-btn,
+  #absentRecoverModal #arRestore,
+  #absentRecoverModal #arClose,
+  #absentZone .slot-btn,
+  #logModal .actions button,
+  #logModal .hw-actions button,
+  #vidModal .vid-save-btn,
+  #vidModal .vid-extra-add,
+  #vidModal .auto-count-btn,
+  #testModal .test-save-btn,
+  #testModal .test-tab,
+  #testModal .test-mini-actions button,
+  #extraModal .ex-close,
+  #absentRegisterModal .absent-close,
+  .ann-mode-toggle,
+  .ann-expand-btn,
+  .ann-edit-btn,
+  .ann-delete-btn,
+  .ann-survey-dialog-actions button,
+  .announcement-target-options button,
+  .announcement-direct-actions button,
+  .announcement-expiry-modes button
+):active {
+  transform: scale(.96);
+}
+
+body.admin :where(
+  #logModal textarea,
+  #vidModal input,
+  #vidModal select,
+  #testModal input,
+  #testModal select,
+  #testModal textarea,
+  #extraModal input,
+  #extraModal select,
+  #absentRegisterModal input,
+  #absentRegisterModal select,
+  #absentRecoverModal input,
+  #selectionModal input,
+  .admin-chat-form textarea,
+  .ann-survey-dialog input,
+  .ann-survey-dialog select,
+  .ann-survey-dialog textarea,
+  .ann-compose-expand-dialog input,
+  .ann-compose-expand-dialog textarea
+) {
+  border-radius: 8px !important;
+}

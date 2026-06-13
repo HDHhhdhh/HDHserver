@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-07 | **Commit:** 05e5310 | **Branch:** codex/apple-clean-redesign
+**Generated:** 2026-06-12 | **Commit:** 4c0c974 | **Branch:** codex/apple-clean-redesign
 
 ## Hierarchy
 - `AGENTS.md`: repo-wide runtime-data, workflow, verification, and Git rules.
@@ -9,9 +9,12 @@
 - `static/AGENTS.md`: static HTML/CSS shells and frontend asset boundaries.
 - `static/css/AGENTS.md`: broad stylesheet cascade, responsive, modal, and Korean font rules.
 - `static/js/AGENTS.md`: shared JavaScript contracts, student/test pages, generated link maps.
+- `static/js/shared/AGENTS.md`: shared fetch, search, calendar, and self-study helpers.
 - `static/js/admin/AGENTS.md`: admin module bootstrap, selected-date behavior, shared API wrapper usage.
+- `static/js/admin/core/AGENTS.md`: admin date, API, state, theme, and view-mode helpers.
 - `static/js/admin/features/AGENTS.md`: high-risk admin feature modules and row `data-date` actions.
 - `static/js/all/AGENTS.md`: all-students page modules and API wrapper.
+- `static/js/all/features/AGENTS.md`: all-students table, mutation buttons, roster export, and progress modal.
 - `scripts/AGENTS.md`: verification, backup, import, and generated-output scripts.
 
 ## Where To Look
@@ -40,15 +43,18 @@
 - `core/log_repository.py`: class log repository for SQLite + `logs.json` dual-read/dual-write behavior.
 - `core/log_rules.py`: pure class-log merge/conflict rules with no file, SQLite, Flask, or runtime-data access.
 - `static/js/shared/api.js`: shared frontend fetch/API helper for JSON requests and standardized API errors.
+- `static/js/shared/search.js`: Hangul initial, keyboard-layout, and AND-term search helpers.
 - `static/js/admin/main.js`: admin frontend entrypoint.
+- `static/js/admin/core/adminDate.js`: admin selected-date storage and `admin:date-change` broadcast.
 - `static/js/admin/features/logModal.js`: class log, homework, and video progress modal.
 - `static/js/admin/features/today*.js`: today list state and rendering.
+- `static/js/all/features/table.js`: all-students roster renderer and inline edit surface.
 - `scripts/backup_runtime_data.py`: zip backup for runtime data.
 
 ## Runtime Data Safety
 - Do not overwrite or reset runtime data files unless the user explicitly asks.
 - Important data files include `students.json`, `videos.json`, `updates.json`, `progress.json`, `logs.json`, `app.sqlite`, `watch.json`, `attendance.json`, `contact.json`, `arrive_time.json`, `extra_attend.json`, `absent.json`, `weekend_slots.json`, `today_order.json`, `school_calendar.json`, and `tests.json`.
-- Treat SQLite sidecars such as `app.sqlite-wal`, `app.sqlite-shm`, `*.db-wal`, `*.db-shm`, root `*.tmp` files, `data/*.json`, `files/`, `instance/`, and generated/downloaded operational outputs as runtime/local data when present.
+- Treat SQLite sidecars such as `app.sqlite-wal`, `app.sqlite-shm`, `*.db-wal`, `*.db-shm`, root `*.tmp` files, `data/*.json`, `files/`, `instance/`, `_data_mirror/`, `_runtime_backups/`, `.codex_drive_download/`, `generated/`, and generated/downloaded operational outputs as runtime/local data when present.
 - Before data migrations or bulk repair, create a backup:
   `python scripts/backup_runtime_data.py`
 - Prefer PATCH-style updates over full-file rewrites.
@@ -81,25 +87,16 @@
 - When updating test catalog CSV data from the test management page or related import scripts, keep the student personal-page explanation links in sync. For `REVIEW` and `SCHOOL_PAST`, preserve/update `sourceFiles.solutionFileId` or equivalent solution metadata in `tests-config.json`; for `UNIT`, regenerate/update `static/js/test_answer_link_map.json` from the Drive explanation files. Verify `/api/student/bootstrap` returns `assignedTests[].answerUrl` and the student page renders today-test cards as Drive explanation links.
 
 ## Development Commands
-- Start the local server:
-  `python app.py`
-- Compile Python after backend edits:
-  `python -m compileall -q app.py routes core scripts`
-- Run the lightweight safety suite:
-  `python scripts/verify_refactor_safety.py`
-- Run safe smoke checks:
-  `python scripts/verify_refactor_safety.py --smoke`
-- Check edited JavaScript files:
-  `node --check static/js/admin/features/logModal.js`
-- Check edited shared API helper/wrappers when touched:
-  `node --check static/js/shared/api.js`
+- Start local server: `python app.py`
+- Compile backend edits: `python -m compileall -q app.py routes core scripts`
+- Lightweight safety suite: `python scripts/verify_refactor_safety.py`
+- Safe smoke checks: `python scripts/verify_refactor_safety.py --smoke`
+- JavaScript syntax checks: `node --check <edited-file.js>`
 - Use targeted API smoke checks with Flask `app.test_client()` or `Invoke-RestMethod` before browser testing.
 
 ## Verification Checklist
 - For admin UI changes, verify `/admin` loads and the target modal/table renders.
-- For log/homework/progress changes, verify both:
-  `/api/logs/entry?date=YYYY-MM-DD&sid=<sid>`
-  and `/api/logs?date=YYYY-MM-DD&sid=<sid>`.
+- For log/homework/progress changes, verify both `/api/logs/entry?date=YYYY-MM-DD&sid=<sid>` and `/api/logs?date=YYYY-MM-DD&sid=<sid>`.
 - After any patch that can affect class logs, always run a regression check for the admin log modal:
   1. Open a known student/date with existing `notes`, video progress, and `homeworkTable`.
   2. Confirm special notes load as readable Korean or are blank when the source is unrecoverable mojibake; never show `???`/`????`.

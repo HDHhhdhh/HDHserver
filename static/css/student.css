@@ -2707,3 +2707,188 @@ body.student-page #testSubmitModal .ts-close {
   height: 38px !important;
   padding: 0 !important;
 }
+
+body.student-page {
+  --stu-bg-0: #f5f7fa;
+  --stu-bg-1: #eef2f6;
+  --stu-card: #ffffff;
+  --stu-card-soft: #f7f9fb;
+  --stu-line: #d9dee7;
+  --stu-line-strong: #c4ccd8;
+  --stu-text: #20242c;
+  --stu-muted: #5d6878;
+  --stu-accent: #1769aa;
+  --stu-accent-2: #16835d;
+  --stu-ok: #16835d;
+  --stu-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
+  --stu-shadow-soft: 0 1px 2px rgba(15, 23, 42, .05), 0 8px 18px rgba(15, 23, 42, .06);
+  --stu-radius-xl: 8px;
+  --stu-radius-lg: 8px;
+  --stu-radius-md: 8px;
+  max-width: min(1440px, calc(100vw - 20px));
+  background: linear-gradient(180deg, var(--stu-bg-0) 0%, var(--stu-bg-1) 100%);
+}
+
+body.student-page.dark {
+  --stu-bg-0: #0d1219;
+  --stu-bg-1: #111a25;
+  --stu-card: #151d28;
+  --stu-card-soft: #1b2633;
+  --stu-line: #2a3848;
+  --stu-line-strong: #394b60;
+  --stu-text: #edf3fa;
+  --stu-muted: #a8b7c8;
+  --stu-accent: #62b0ed;
+  --stu-accent-2: #41c38a;
+  background: linear-gradient(180deg, var(--stu-bg-0) 0%, var(--stu-bg-1) 100%);
+}
+
+body.student-page .student-shell {
+  gap: 12px;
+}
+
+body.student-page .student-topbar,
+body.student-page .hero-bar,
+body.student-page .panel,
+body.student-page .playlist-wrap,
+body.student-page .mbox,
+body.student-page #setPanel,
+body.student-page .announce-modal .announce-card,
+body.student-page #announceHistoryModal .announce-history-card,
+body.student-page #testSubmitModal :where(.ts-card, .ts-panel, .ts-dialog, .modal-panel) {
+  border-radius: 8px !important;
+  box-shadow: var(--stu-shadow-soft);
+}
+
+body.student-page .student-topbar {
+  min-height: 52px;
+  padding: 9px 12px;
+  top: 8px;
+}
+
+body.student-page .clock-header {
+  border-radius: 8px;
+  min-height: 38px;
+}
+
+body.student-page :where(
+  .settings-btn,
+  .notice-btn,
+  .ts-btn,
+  #setPanel button,
+  .mbox .toggle,
+  .announce-actions button,
+  #annSendReply,
+  #annRead,
+  .announce-close,
+  #testSubmitModal .ts-submit,
+  #testSubmitModal .ts-close
+) {
+  min-height: 40px;
+  border-radius: 8px !important;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.student-page .hero-bar {
+  padding: clamp(14px, 1.7vw, 20px);
+  align-items: center;
+}
+
+body.student-page .namebar-title {
+  font-size: clamp(1.8rem, 3.2vw, 2.7rem);
+  line-height: 1.08;
+}
+
+body.student-page .namebar-desc {
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+body.student-page .student-main {
+  gap: 10px;
+}
+
+body.student-page .panel {
+  padding: clamp(13px, 1.4vw, 18px);
+}
+
+body.student-page .section-title {
+  margin-bottom: 9px;
+  font-size: 18px;
+}
+
+body.student-page #playerBox {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: 12px;
+}
+
+body.student-page .player-card,
+body.student-page .playlist-wrap,
+body.student-page #vidList li,
+body.student-page .homework-book-list li,
+body.student-page .assigned-test-btn,
+body.student-page #matList li,
+body.student-page .announce-section,
+body.student-page .announce-created-card,
+body.student-page .announce-content,
+body.student-page .announce-reply,
+body.student-page .announce-history-item,
+body.student-page .announce-history-note,
+body.student-page #testSubmitModal :where(input, textarea, select, button, .ts-question, .ts-answer-row) {
+  border-radius: 8px !important;
+}
+
+body.student-page #vidList li,
+body.student-page .assigned-test-btn,
+body.student-page #matList li[data-type="dir"],
+body.student-page .announce-history-item {
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.student-page .assigned-test-status,
+body.student-page .notice-badge,
+body.student-page .announce-section-label,
+body.student-page .announce-history-image-badge,
+body.student-page .announce-history-survey-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+body.student-page #setPanel textarea,
+body.student-page #setPanel input,
+body.student-page .mbox input[type="search"],
+body.student-page textarea,
+body.student-page select {
+  border-radius: 8px;
+}
+
+body.student-page .announce-modal {
+  padding: clamp(12px, 2vw, 24px);
+}
+
+body.student-page #announceHistoryModal .announce-close {
+  border-radius: 8px;
+}
+
+@media (max-width: 760px) {
+  body.student-page {
+    max-width: calc(100vw - 12px);
+    margin-top: 6px;
+  }
+
+  body.student-page .hero-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  body.student-page #playerBox {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.student-page .playlist-wrap {
+    max-height: none;
+  }
+}

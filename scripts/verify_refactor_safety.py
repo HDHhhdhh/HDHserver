@@ -1871,6 +1871,56 @@ def run_admin_chat_contract_source_checks() -> None:
         _assert_unit(not missing, f"refactor notes must describe {label}; missing: {', '.join(missing)}")
 
 
+def run_admin_calendar_test_completion_source_checks() -> None:
+    calendar_js = (ROOT / "static/js/admin/features/calendar.js").read_text("utf-8-sig")
+    hover_tooltip_js = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8")
+    today_render_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
+    admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
+
+    for snippet in [
+        "const examSubjectForRow = (row) => String(",
+        "subject: subjectName,",
+        "const key = `${row.kind}|${row.school}|${row.subject}|${row.start}|${row.end}`;",
+        "const subject = String(row.subject || '').trim() || '수학';",
+        "const title = `${shortSchool}${gradeToken ? gradeToken : ''} ${subject}`;",
+    ]:
+        _assert_unit(snippet in calendar_js, f"calendar exam events must preserve row subject: {snippet}")
+
+    _assert_unit(
+        "const examSubject = phase || '수학';" in hover_tooltip_js
+        and "pill(`${examSubject} 시험일`, exam.math || '-', { big: true })" in hover_tooltip_js,
+        "admin hover tooltip must label exam dates with the row phase subject",
+    )
+
+    homework_start = today_render_js.index("if (homeworkLeaveBtn)")
+    homework_end = today_render_js.index("const docBtn = e.target.closest('.btn-doc');", homework_start)
+    homework_block = today_render_js[homework_start:homework_end]
+    _assert_unit(
+        "const testPatch = await completeAssignedTestsForRecordCleanup(target.dateKey, target.sid);" in homework_block,
+        "숙검하원 must complete assigned tests before marking the log done",
+    )
+    _assert_unit(
+        "...testPatch," in homework_block and "done: true," in homework_block,
+        "숙검하원 log patch must include completed assigned-test metadata",
+    )
+
+    leave_start = today_render_js.index("const leaveBtn = e.target.closest('.markLeave');")
+    leave_end = today_render_js.index("const undoBtn = e.target.closest('.undoDone');", leave_start)
+    leave_block = today_render_js[leave_start:leave_end]
+    _assert_unit(
+        "const testPatch = await completeAssignedTestsForRecordCleanup(dateKey, sid);" in leave_block,
+        "하원 must complete assigned tests before marking the log done",
+    )
+    _assert_unit(
+        "...testPatch," in leave_block and "done: true," in leave_block,
+        "하원 log patch must include completed assigned-test metadata",
+    )
+    _assert_unit(
+        "하원/숙검하원/기록 정리" in admin_chat_py,
+        "admin chatbot docs must describe assigned-test completion on 하원 and 숙검하원",
+    )
+
+
 def run_admin_wave_b_source_checks() -> None:
     state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
     main_js = (ROOT / "static/js/admin/main.js").read_text("utf-8")
@@ -3966,6 +4016,7 @@ def run_unit_checks() -> bool:
         run_refactor_contract_evidence_source_checks,
         run_frontend_evidence_inventory_checks,
         run_admin_chat_contract_source_checks,
+        run_admin_calendar_test_completion_source_checks,
         run_admin_wave_b_source_checks,
         run_admin_api_wrapper_usage_source_checks,
         run_admin_wave_b_behavior_checks,
@@ -4214,6 +4265,11 @@ def main() -> int:
         help="Run only frontend browser evidence inventory checks.",
     )
     parser.add_argument(
+        "--only-admin-calendar-test-completion-source",
+        action="store_true",
+        help="Run only admin calendar subject and test completion source checks.",
+    )
+    parser.add_argument(
         "--only-log-modal-carried-reapply-source",
         action="store_true",
         help="Run only log modal carried reapply source checks.",
@@ -4248,6 +4304,8 @@ def main() -> int:
     selected_checks = []
     if args.only_admin_chat_contract_docs:
         selected_checks.append(run_admin_chat_contract_source_checks)
+    if args.only_admin_calendar_test_completion_source:
+        selected_checks.append(run_admin_calendar_test_completion_source_checks)
     if args.only_video_modal_preflight_source:
         selected_checks.append(run_admin_video_modal_preflight_source_checks)
     if args.only_video_modal_preflight_failures:

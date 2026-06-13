@@ -7,16 +7,16 @@
   <title>파일 관리</title>
   <style>
     :root {
-      --bg: #f6f7fb;
+      --bg: #f4f6f8;
       --card-light: #ffffff;
       --card-dark: #111827;
-      --text: #111827;
+      --text: #20242c;
       --text-dark: #e5e7eb;
-      --muted: #6b7280;
-      --line: #d9e0ea;
-      --accent: #2563eb;
-      --danger: #dc2626;
-      --ok: #059669;
+      --muted: #5d6878;
+      --line: #d9dee7;
+      --accent: #1769aa;
+      --danger: #b42318;
+      --ok: #16835d;
     }
     * { box-sizing: border-box; }
     body {
@@ -31,13 +31,18 @@
       text-rendering: optimizeLegibility;
       font-variant-numeric: tabular-nums;
     }
-    .shell { max-width: 1440px; margin: 0 auto; padding: 18px; }
+    .shell { max-width: 1440px; margin: 0 auto; padding: 14px; }
     .topbar {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card-light);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 10px 24px rgba(15, 23, 42, .07);
+      padding: 12px;
     }
     h1 { margin: 0; font-size: 22px; }
     .links { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -66,12 +71,12 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      min-height: 36px;
+      min-height: 40px;
       box-sizing: border-box;
       border: 1px solid var(--line);
       background: #fff;
       color: var(--text);
-      border-radius: 7px;
+      border-radius: 8px;
       padding: 8px 10px;
       cursor: pointer;
       font-size: 13px;
@@ -80,20 +85,28 @@
       line-height: 1;
       text-align: center;
       vertical-align: middle;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1), color 150ms cubic-bezier(.2, 0, 0, 1);
     }
+    .btn:active { transform: scale(.96); }
     .btn:hover { background: #f1f5f9; }
     .btn.primary, .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
     .btn.danger { background: #fff; border-color: #fecaca; color: var(--danger); }
-    .btn.small { min-height: 32px; padding: 5px 8px; font-size: 12px; }
+    .btn.small { min-height: 36px; padding: 5px 8px; font-size: 12px; }
     .btn.ghost { background: transparent; }
     input, select {
       border: 1px solid var(--line);
-      border-radius: 7px;
+      border-radius: 8px;
       padding: 8px 9px;
-      min-height: 34px;
+      min-height: 40px;
       background: #fff;
       color: var(--text);
       font: inherit;
+      transition: border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1);
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(23, 105, 170, .16);
     }
     .ctx-i {
       display: flex;
@@ -126,7 +139,7 @@
       background: #fff;
     }
     .tree { padding: 8px; }
-    .tree-row { border-radius: 6px; padding: 2px 4px; }
+    .tree-row { border-radius: 8px; padding: 3px 5px; }
     .tree-row:hover { background: #eef2ff; }
     .pathbar { display: flex; gap: 6px; align-items: center; color: var(--muted); margin-bottom: 8px; }
     #curPath { color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
@@ -156,7 +169,7 @@
       overflow: auto;
     }
     #amStuList, #amCurList { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-    .assign-stu { border: 1px solid var(--line); border-radius: 7px; padding: 7px; background: #fff; }
+    .assign-stu { border: 1px solid var(--line); border-radius: 8px; padding: 7px; background: #fff; }
     .muted { color: var(--muted); }
     @media (max-width: 1080px) {
       .layout { grid-template-columns: 1fr; }

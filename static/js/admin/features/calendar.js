@@ -149,11 +149,20 @@ export function initCalendar() {
     });
 
     const rawEvents = [];
-    const pushRawEvent = ({ kind, label, school, grade, span, range, note, sourceText }) => {
+    const examSubjectForRow = (row) => String(
+      row?.phase ||
+      row?.subject ||
+      row?.curriculum ||
+      row?.course ||
+      '수학'
+    ).trim() || '수학';
+    const pushRawEvent = ({ kind, subject, label, school, grade, span, range, note, sourceText }) => {
       if (!school || !span?.start || !span?.end) return;
+      const subjectName = String(subject || '').trim() || '수학';
       rawEvents.push({
         kind,
-        label,
+        subject: subjectName,
+        label: label || `${subjectName} 시험일`,
         school,
         grade: String(grade || '').trim(),
         start: span.start,
@@ -170,11 +179,13 @@ export function initCalendar() {
 
       const grade = String(row?.grade || '').trim();
       if (!grade && schoolHasGradeRows.get(school)) return; // avoid common+grade duplicates
+      const subject = examSubjectForRow(row);
 
       parseDateSpans(row?.midtermMath, activeYear, false).forEach((span) => {
         pushRawEvent({
           kind: 'math',
-          label: '수학 시험일',
+          subject,
+          label: `${subject} 시험일`,
           school,
           grade,
           span,
@@ -185,7 +196,8 @@ export function initCalendar() {
       parseDateSpans(row?.finalMath, activeYear, false).forEach((span) => {
         pushRawEvent({
           kind: 'math',
-          label: '수학 시험일',
+          subject,
+          label: `${subject} 시험일`,
           school,
           grade,
           span,
@@ -196,11 +208,12 @@ export function initCalendar() {
 
     const grouped = new Map();
     for (const row of rawEvents) {
-      const key = `${row.kind}|${row.school}|${row.start}|${row.end}`;
+      const key = `${row.kind}|${row.school}|${row.subject}|${row.start}|${row.end}`;
       let bucket = grouped.get(key);
       if (!bucket) {
         bucket = {
           kind: row.kind,
+          subject: row.subject,
           label: row.label,
           school: row.school,
           start: row.start,
@@ -243,11 +256,7 @@ export function initCalendar() {
       return grades.join('·');
     }
 
-    // 수학 시험일만 노출
     const order = { math: 1 };
-    const subjectLabel = {
-      math: '수학',
-    };
     const palette = {
       math: { bg: '#0284c7', border: '#0369a1' },
     };
@@ -258,12 +267,15 @@ export function initCalendar() {
         if (dateCmp !== 0) return dateCmp;
         const typeCmp = (order[a.kind] || 99) - (order[b.kind] || 99);
         if (typeCmp !== 0) return typeCmp;
+        const subjectCmp = String(a.subject || '').localeCompare(String(b.subject || ''), 'ko');
+        if (subjectCmp !== 0) return subjectCmp;
         return String(a.school).localeCompare(String(b.school), 'ko');
       })
       .map((row) => {
         const gradeToken = compactGradeToken(row.grades);
         const shortSchool = shortSchoolName(row.school);
-        const title = `${shortSchool}${gradeToken ? gradeToken : ''} ${subjectLabel[row.kind] || row.label}`;
+        const subject = String(row.subject || '').trim() || '수학';
+        const title = `${shortSchool}${gradeToken ? gradeToken : ''} ${subject}`;
 
         const gradeList = [...row.grades].sort((a, b) => String(a).localeCompare(String(b), 'ko')).join(', ');
         const headline = gradeList
@@ -291,6 +303,7 @@ export function initCalendar() {
           textColor: '#ffffff',
           extendedProps: {
             kind: row.kind,
+            subject,
             order: order[row.kind] || 99,
             tooltip: tooltipParts.join('\n'),
           },

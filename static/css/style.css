@@ -45,7 +45,9 @@ body {
   max-width: 1280px;
   background: var(--bg-light);
   color: var(--text);
-  transition: .25s;
+  transition-property: background-color, color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
 }
 
 body.dark {
@@ -130,7 +132,9 @@ body.dark select:focus {
   inset: 0;
   border-radius: 9999px;
   background: #cbd5e1;
-  transition: .25s
+  transition-property: background-color, border-color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1)
 }
 
 .slider:before {
@@ -142,7 +146,9 @@ body.dark select:focus {
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  transition: .25s
+  transition-property: transform, box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1)
 }
 
 input:checked+.slider {
@@ -2099,5 +2105,273 @@ body :where(.btn-toggle) {
 
   #vidTable {
     min-width: 640px;
+  }
+}
+
+:root {
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 10px 24px rgba(15, 23, 42, .07);
+  --accent: #1769aa;
+  --accent-dark: #5fb3f3;
+  --accent-opaque: rgba(23, 105, 170, .12);
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 8px;
+  --ds-radius-xl: 8px;
+}
+
+body {
+  transition-property: background-color, color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+:where(h1, h2, h3) {
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+:where(p, li, .muted) {
+  text-wrap: pretty;
+}
+
+:where(button, .btn, a.btn, input, select, textarea) {
+  border-radius: 8px;
+}
+
+:where(button, .btn, a.btn) {
+  min-height: 40px;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+:where(button, .btn, a.btn):active {
+  transform: scale(.96);
+}
+
+:where(input, select, textarea) {
+  min-height: 40px;
+  transition-property: border-color, box-shadow, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.all-page {
+  background:
+    linear-gradient(180deg, #f7f8fa 0%, #eef2f6 100%) !important;
+  color: #20242c;
+}
+
+body.all-page.dark {
+  background: #0e131b !important;
+}
+
+body.all-page .topbar {
+  top: 10px !important;
+  border: 1px solid rgba(148, 163, 184, .32) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow) !important;
+}
+
+body.all-page .topbar a {
+  min-height: 40px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border-radius: 8px !important;
+  transition-property: transform, background-color, border-color, color !important;
+  transition-duration: 150ms !important;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
+}
+
+body.all-page #allPageShell > :where(div, section),
+body.all-page #newStuMount > :where(div, section, form),
+body.all-page #yoilStats > :where(div, section),
+body.all-page #allWrap > :where(div, section, table) {
+  border-radius: 8px;
+}
+
+body.all-page :where(table, .studentsTable) {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+body.all-page :where(th) {
+  background: color-mix(in srgb, var(--ds-surface) 88%, var(--ds-primary-soft) 12%);
+  color: var(--ds-text);
+}
+
+body.all-page :where(th, td) {
+  line-height: 1.35;
+}
+
+body.all-page :where(#yoilModal, #progModal) > div {
+  border-radius: 8px !important;
+  border: 1px solid var(--ds-border) !important;
+  background: var(--ds-surface) !important;
+  color: var(--ds-text) !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
+}
+
+body.all-page :where(#yoilClose, #progSave, #progClose) {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+body.video-manage-page {
+  max-width: min(1680px, calc(100vw - 28px));
+  margin: 14px auto 28px;
+  background:
+    linear-gradient(180deg, #f7f8fa 0%, #eef2f6 100%);
+}
+
+body.video-manage-page > header,
+body.video-manage-page #videoSection {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+body.video-manage-page > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+body.video-manage-page > header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+body.video-manage-page > header p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+body.video-manage-page > header label {
+  margin: 0 !important;
+}
+
+body.video-manage-page #videoSection {
+  padding: 14px;
+  overflow: auto;
+}
+
+body.video-manage-page .video-filter-row {
+  display: grid;
+  grid-template-columns: 180px 180px minmax(320px, 1fr);
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+body.video-manage-page .video-filter-control {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+body.video-manage-page .video-filter-control span {
+  color: #5d6878;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+body.video-manage-page .video-filter-row :where(input, select),
+body.video-manage-page .form-row :where(input, select, button) {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+body.video-manage-page .form-row {
+  display: grid;
+  grid-template-columns:
+    180px
+    180px
+    repeat(3, minmax(54px, .28fr))
+    minmax(64px, .36fr)
+    minmax(160px, 1.15fr)
+    minmax(240px, 1.8fr)
+    minmax(92px, .42fr)
+    minmax(92px, .42fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+body.video-manage-page #vTitle,
+body.video-manage-page #vUrl {
+  grid-column: auto;
+}
+
+body.video-manage-page #exNumHigh,
+body.video-manage-page #exNumMid,
+body.video-manage-page #exNumLow,
+body.video-manage-page #vChap,
+body.video-manage-page #vTitle,
+body.video-manage-page #vUrl {
+  width: 100%;
+}
+
+body.video-manage-page #addVid,
+body.video-manage-page #saveVid {
+  font-weight: 850;
+}
+
+body.video-manage-page #vidTable {
+  min-width: 980px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #ffffff;
+}
+
+body.video-manage-page #vidTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+}
+
+body.video-manage-page #vidTable :where(th, td) {
+  padding: 9px 8px;
+  border-bottom: 1px solid #d8dee8;
+  line-height: 1.35;
+}
+
+body.video-manage-page.dark > header,
+body.video-manage-page.dark #videoSection,
+body.video-manage-page.dark #vidTable {
+  background: #151f2e;
+  border-color: #2a3b55;
+}
+
+body.video-manage-page.dark #vidTable th {
+  background: #1d2a3d;
+}
+
+@media (max-width: 900px) {
+  body.video-manage-page {
+    max-width: calc(100vw - 16px);
+    margin-top: 8px;
+  }
+
+  body.video-manage-page .form-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.video-manage-page .video-filter-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.video-manage-page #vTitle,
+  body.video-manage-page #vUrl {
+    grid-column: 1 / -1;
   }
 }

@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     :root {
-      --sc-bg: #eef4fb;
+      --sc-bg: #f4f6f8;
       --sc-surface: #ffffff;
-      --sc-line: #d6e1ef;
-      --sc-line-strong: #bdcfe5;
-      --sc-text: #1c2a3b;
-      --sc-muted: #59708c;
-      --sc-accent: #2e78ec;
-      --sc-shadow: 0 14px 28px rgba(17, 40, 70, 0.12);
+      --sc-line: #d9dee7;
+      --sc-line-strong: #c4ccd8;
+      --sc-text: #20242c;
+      --sc-muted: #5d6878;
+      --sc-accent: #1769aa;
+      --sc-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
     }
 
     body {
@@ -45,7 +45,7 @@
     .cal-shell {
       background: var(--sc-surface);
       border: 1px solid var(--sc-line);
-      border-radius: 18px;
+      border-radius: 8px;
       box-shadow: var(--sc-shadow);
       padding: 14px;
     }
@@ -118,7 +118,7 @@
     .select-field,
     .search-field {
       height: 36px;
-      border-radius: 10px;
+      border-radius: 8px;
       border: 1px solid var(--sc-line-strong);
       background: var(--sc-surface);
       color: var(--sc-text);
@@ -137,9 +137,9 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      height: 36px;
+      height: 40px;
       padding: 0 12px;
-      border-radius: 10px;
+      border-radius: 8px;
       border: 1px solid var(--sc-line-strong);
       background: var(--sc-surface);
       color: var(--sc-text);
@@ -148,7 +148,10 @@
       font-size: 13px;
       line-height: 1;
       text-align: center;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1);
     }
+
+    .btn:active { transform: scale(.96); }
 
     .btn.primary {
       background: color-mix(in srgb, var(--sc-accent) 86%, #ffffff 14%);
@@ -171,7 +174,7 @@
     .seg {
       display: inline-flex;
       border: 1px solid var(--sc-line-strong);
-      border-radius: 10px;
+      border-radius: 8px;
       overflow: hidden;
       background: var(--sc-surface);
     }
@@ -180,7 +183,7 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 36px;
+      height: 40px;
       padding: 0 12px;
       border: 0;
       background: transparent;
@@ -188,7 +191,10 @@
       font-weight: 700;
       cursor: pointer;
       line-height: 1;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), color 150ms cubic-bezier(.2, 0, 0, 1);
     }
+
+    .seg button:active { transform: scale(.96); }
 
     .seg button.active {
       background: color-mix(in srgb, var(--sc-accent) 85%, #ffffff 15%);
@@ -198,7 +204,7 @@
     .table-card {
       margin-top: 12px;
       border: 1px solid var(--sc-line);
-      border-radius: 14px;
+      border-radius: 8px;
       background: color-mix(in srgb, var(--sc-surface) 90%, #ffffff 10%);
       padding: 10px;
     }
@@ -212,7 +218,7 @@
 
     #wrap {
       overflow: auto;
-      border-radius: 10px;
+      border-radius: 8px;
     }
 
     .tbl {
@@ -248,7 +254,7 @@
 
       .cal-shell {
         padding: 10px;
-        border-radius: 14px;
+        border-radius: 8px;
       }
 
       .tool-row {

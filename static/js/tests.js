@@ -1252,6 +1252,7 @@ function renderStatsTable() {
       const row = rows.find(item => item.id === testId);
       ui.statsTestId = testId;
       TEST_STATS_DETAIL = null;
+      openStatsDetailModal(row);
       renderStatsTable();
       renderStatsDetail(row, true);
     });
@@ -1274,17 +1275,49 @@ function detailMetric(label, value) {
   `;
 }
 
+function statsDetailHost() {
+  return $('#statsDetailModalBody') || $('#statsDetail');
+}
+
+function openStatsDetailModal(test) {
+  const modal = $('#statsDetailModal');
+  if (!modal) return;
+  const title = $('#statsDetailModalTitle');
+  if (title) title.textContent = test?.name || '테스트 통계';
+  modal.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('stats-modal-open');
+  requestAnimationFrame(() => modal.querySelector('.stats-detail-dialog')?.focus());
+}
+
+function closeStatsDetailModal() {
+  const modal = $('#statsDetailModal');
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('stats-modal-open');
+}
+
+function initStatsDetailModal() {
+  const modal = $('#statsDetailModal');
+  if (!modal) return;
+  modal.addEventListener('click', event => {
+    if (!event.target?.closest?.('[data-stats-detail-close]')) return;
+    closeStatsDetailModal();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || modal.hidden) return;
+    closeStatsDetailModal();
+  });
+}
+
 function renderStatsDetail(test = null, fetchDetail = false) {
-  const host = $('#statsDetail');
+  const host = statsDetailHost();
   if (!host) return;
 
   const selected = test || getCategoryTests(ui.statsCategory).find(item => item.id === ui.statsTestId);
   if (!selected) {
-    host.innerHTML = `
-      <div class="stats-detail-empty">
-        통계 표에서 시험을 선택하면 평균, 표준편차, 최고/최저/중앙값과 학생별 점수를 볼 수 있습니다.
-      </div>
-    `;
+    host.innerHTML = '';
     return;
   }
 
@@ -1414,6 +1447,7 @@ function bindUI() {
     ui.statsSearch = String(e.target.value || '').trim();
     ui.statsTestId = '';
     TEST_STATS_DETAIL = null;
+    closeStatsDetailModal();
     renderStatsTable();
     renderStatsDetail();
   });
@@ -1586,6 +1620,7 @@ function bindUI() {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindUI();
+  initStatsDetailModal();
   loadConfigAndStats().catch(err => {
     console.error(err);
     alert('테스트 설정/통계 로드에 실패했습니다.');
