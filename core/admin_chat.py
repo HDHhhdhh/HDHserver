@@ -115,6 +115,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "영상 목록은 videos.json, 날짜별 배정은 updates.json, 시청/진도 상태는 progress.json과 watch.json에 있습니다. "
             "학생 개인페이지는 학원 밖에서도 목록을 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
             "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다. "
+            "관리자 오늘 목록과 명단 내보내기는 필요한 학생의 progress 이력만 묶음으로 조회해 전체 progress.json 다운로드를 피합니다. "
             "정규 커리큘럼 영상이 모두 초록(done) 또는 빨강(skip)이면 진도 완료로 보며, 학생 개인페이지에는 완료 안내를 보여주고 자동 영상 배정은 멈춥니다."
         ),
         "sources": ["app.py", "core/network_access.py", "routes/api_basic.py", "routes/api_kollus.py", "routes/api_watch.py", "static/js/admin/features/videoModal.js", "static/js/student.js"],
@@ -131,14 +132,17 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
     },
     {
         "title": "테스트 관리",
-        "keywords": ["테스트", "성적", "채점", "assignedTests", "tests", "시험", "오답"],
+        "keywords": ["테스트", "성적", "채점", "assignedTests", "tests", "시험", "오답", "OCR", "ocr", "답안지"],
         "answer": (
             "테스트 카탈로그는 tests-config.json, 제출 성적은 tests.json에 저장됩니다. "
             "학생 bootstrap에서는 progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
-            "학생 화면의 오늘 테스트와 명단 내보내기는 assigned 상태의 현재 배정만 보여주며, done은 완료 기록으로 남기고 할 일 목록에서는 제외합니다. "
-            "하원/숙검하원/기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸며, 테스트 배정 팝업은 done을 파란 완료로 표시하고 선생님이 하얗게 지운 기본 제외값은 다시 강제하지 않습니다. "
-            "단원평가/복습 테스트/학군지 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
-            "REVIEW/SCHOOL_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다."
+            "학생 화면의 오늘 테스트는 assigned(배정)와 interrupted(배부) 상태를 날짜/신규 여부와 무관하게 보여주며, 명단 내보내기는 assigned(배정) 상태를 계속 출력합니다. "
+            "하원/숙검하원/기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸며, 결석 처리는 assigned 테스트를 interrupted(배부)로 바꿉니다. "
+            "테스트 배정 팝업은 좌클릭/드래그로 없음→배정→배부→완료를 순환하고, 우클릭/드래그로 없음↔제외를 토글합니다. "
+            "일산 기출은 학생 레벨과 무관하게 대수 전체 시험지를 중, 중상, 그래프 포함 순서로 보여주며 기존 상 난이도는 중상으로 취급합니다. "
+            "단원평가/복습 테스트/학군지 기출/일산 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
+            "REVIEW/SCHOOL_PAST/ILSAN_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다. "
+            "학생 답안지 OCR은 기본 OFF이며 학생 페이지 URL의 ?ocr=1에서만 촬영 UI를 켭니다. /api/ocr-test-sheet는 answersText와 score/wrong/pct 채점 미리보기만 반환하고 저장하지 않으며, 최종 /api/submit-test 저장은 학생이 확인 후 제출 버튼을 눌렀을 때만 진행합니다."
         ),
         "sources": ["routes/api_tests.py", "static/js/tests.js", "static/js/admin/features/testModal.js", "static/js/student.js"],
     },
@@ -153,12 +157,14 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
     },
     {
         "title": "학교 일정",
-        "keywords": ["학교", "일정", "내신", "중간", "기말", "교과서", "school-calendar"],
+        "keywords": ["학교", "일정", "내신", "중간", "기말", "교과서", "수학시험", "school-calendar"],
         "answer": (
             "학교 일정은 school_calendar.json에 연도/학기/시험 구분별로 저장됩니다. "
-            "학교별 공통 시험 기간과 학년/과목별 교과서, 시험 범위, 비고를 관리합니다."
+            "학교별 공통 시험 기간과 학년/과목별 교과서, 시험 범위, 비고를 관리합니다. "
+            "관리자 캘린더의 수학시험 표시는 전체학생 등록정보에 해당 학교/학년/과목 학생이 있을 때만 보이며, "
+            "하루 3개 이상이면 첫 시험과 외 N개로 요약하고 클릭하면 당일 시험별 학생 명단 팝업을 엽니다."
         ),
-        "sources": ["school_calendar.json", "static/school-cal.html", "static/js/school-cal.js"],
+        "sources": ["school_calendar.json", "static/school-cal.html", "static/js/school-cal.js", "static/js/admin/features/calendar.js"],
     },
     {
         "title": "파일과 자료",

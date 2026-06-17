@@ -5,12 +5,14 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import pathlib
 import py_compile
 import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from typing import Callable, Final, Iterable
 
@@ -30,6 +32,7 @@ PYTHON_FILES = [
 
 JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
+    ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/logModal.js",
     ROOT / "static/js/admin/features/today.js",
     ROOT / "static/js/admin/features/today.state.js",
@@ -472,6 +475,140 @@ def run_progress_rule_unit_checks() -> None:
     _assert_unit(merged_watch["last"] == 80, "watch merge must keep furthest position")
     _assert_unit(merged_watch["dur"] == 120, "watch merge must keep longest duration")
     _assert_unit(merged_watch["updatedAt"] == 20, "watch merge must keep newest timestamp")
+
+
+def run_progress_batch_sids_unit_checks() -> None:
+    from flask import Flask
+    import routes.api_basic as api_basic
+
+    progress_fixture = {
+        "2026-06-01": {
+            "s1": {"m1": "done"},
+            "s2": {"m2": "interrupted"},
+            "s3": {"m3": "skip"},
+        },
+        "2026-06-02": {
+            "s2": {"m4": "done"},
+            "s4": {"m5": "done"},
+        },
+    }
+
+    original_loader = api_basic._load_progress_strict
+    api_basic._load_progress_strict = lambda: progress_fixture
+    try:
+        app = Flask("verify-progress-batch-sids")
+        app.register_blueprint(api_basic.bp_api_basic)
+        client = app.test_client()
+
+        response = client.get("/api/progress?sids=s1,s2")
+        payload = response.get_json() or {}
+        _assert_unit(response.status_code == 200, "batch progress fixture route must return 200")
+        _assert_unit(
+            payload == {
+                "2026-06-01": {
+                    "s1": {"m1": "done"},
+                    "s2": {"m2": "interrupted"},
+                },
+                "2026-06-02": {
+                    "s2": {"m4": "done"},
+                },
+            },
+            "batch progress sids must return only requested students across history",
+        )
+
+        repeated_sids = client.get("/api/progress?sids=s1&sids=s2")
+        _assert_unit(
+            repeated_sids.get_json() == payload,
+            "batch progress must accept repeated sids query keys",
+        )
+
+        repeated_sid = client.get("/api/progress?sid=s1&sid=s2")
+        _assert_unit(
+            repeated_sid.get_json() == payload,
+            "batch progress must accept repeated sid query keys",
+        )
+
+        dated = client.get("/api/progress?date=2026-06-01&sids=s1,s3")
+        dated_payload = dated.get_json() or {}
+        _assert_unit(
+            dated_payload == {
+                "2026-06-01": {
+                    "s1": {"m1": "done"},
+                    "s3": {"m3": "skip"},
+                },
+            },
+            "batch progress sids must compose with date filtering",
+        )
+
+        dated_repeated_sid = client.get("/api/progress?date=2026-06-01&sid=s1&sid=s3")
+        _assert_unit(
+            dated_repeated_sid.get_json() == dated_payload,
+            "batch progress repeated sid keys must compose with date filtering",
+        )
+
+        single = client.get("/api/progress?date=2026-06-01&sid=s1")
+        single_payload = single.get_json() or {}
+        _assert_unit(
+            single_payload == {"2026-06-01": {"s1": {"m1": "done"}}},
+            "existing date+sid progress shape must stay unchanged",
+        )
+
+        single_history = client.get("/api/progress?sid=s2")
+        _assert_unit(
+            single_history.get_json() == {
+                "2026-06-01": {"s2": {"m2": "interrupted"}},
+                "2026-06-02": {"s2": {"m4": "done"}},
+            },
+            "existing single sid progress shape must stay unchanged",
+        )
+
+        full = client.get("/api/progress")
+        _assert_unit(full.get_json() == progress_fixture, "no-query progress route must still return the full map")
+
+        invalid = client.get("/api/progress?date=bad&sids=s1,s2")
+        invalid_payload = invalid.get_json() or {}
+        _assert_unit(invalid.status_code == 400, "batch progress must preserve invalid date rejection")
+        _assert_unit(invalid_payload.get("error") == "bad date", "invalid date error message must stay stable")
+    finally:
+        api_basic._load_progress_strict = original_loader
+
+
+def run_progress_read_cache_unit_checks() -> None:
+    import routes.api_basic as api_basic
+
+    original_path = api_basic.PRG_PATH
+    original_signature = api_basic._PROGRESS_CACHE_SIGNATURE
+    original_data = api_basic._PROGRESS_CACHE_DATA
+
+    with tempfile.TemporaryDirectory(prefix="verify-progress-cache-") as tmp:
+        progress_path = pathlib.Path(tmp) / "progress.json"
+        progress_path.write_text('{"2026-06-01":{"s1":{"m1":"done"}}}', encoding="utf-8")
+        try:
+            api_basic.PRG_PATH = progress_path
+            api_basic._PROGRESS_CACHE_SIGNATURE = None
+            api_basic._PROGRESS_CACHE_DATA = None
+
+            first = api_basic._load_progress_strict()
+            second = api_basic._load_progress_strict()
+            _assert_unit(first is second, "progress read cache must reuse data while file signature is unchanged")
+
+            progress_path.write_text(
+                '{"2026-06-02":{"s2":{"m2":"interrupted"},"s3":{"m3":"skip"}}}',
+                encoding="utf-8",
+            )
+            now_ns = time.time_ns()
+            os.utime(progress_path, ns=(now_ns, now_ns))
+
+            third = api_basic._load_progress_strict()
+            _assert_unit(third is not first, "progress read cache must reload after progress.json changes")
+            _assert_unit(
+                third == {"2026-06-02": {"s2": {"m2": "interrupted"}, "s3": {"m3": "skip"}}},
+                "progress read cache must return the new file contents after reload",
+            )
+        finally:
+            api_basic.PRG_PATH = original_path
+            api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
+            api_basic._PROGRESS_CACHE_DATA = original_data
 
 
 def run_video_completion_unit_checks() -> None:
@@ -979,7 +1116,7 @@ def run_student_assigned_tests_unit_checks() -> None:
     _assert_unit(daily_label in labels, "daily test metadata must still be shown")
     _assert_unit(new_label in labels, "new assigned test after previous skip must be shown")
     _assert_unit(stale_daily_label not in labels, "stale daily metadata absent from current progress must not be shown")
-    _assert_unit(old_label not in labels, "previously active test must not be resurrected as today's test")
+    _assert_unit(old_label in labels, "current assigned test must show even when it was active before today")
     _assert_unit(skipped_label not in labels, "current skip test must not be shown")
 
     no_daily_logs = {
@@ -992,8 +1129,8 @@ def run_student_assigned_tests_unit_checks() -> None:
     no_daily_items = _student_assigned_tests_for_date(progress, no_daily_logs, date, sid, no_daily_logs)
     no_daily_labels = [item.get("label") for item in no_daily_items]
     _assert_unit(
-        no_daily_labels == [new_label, daily_label],
-        "without daily metadata, only newly active tests should be shown",
+        no_daily_labels == [old_label, new_label, daily_label],
+        "without daily metadata, all current active assigned tests should be shown",
     )
 
     previous_log_only_label = "테스트 / 대수 / 이전 로그"
@@ -1033,8 +1170,8 @@ def run_student_assigned_tests_unit_checks() -> None:
     )
     log_history_labels = [item.get("label") for item in log_history_items]
     _assert_unit(
-        log_history_labels == [new_label],
-        "previous log-only assignments must block resurfacing on the student page",
+        log_history_labels == [previous_log_only_label, new_label],
+        "current assigned tests must show even when prior log metadata had the same label",
     )
 
     completed_label = "REVIEW / ALG / high / 7 / completed"
@@ -1091,6 +1228,61 @@ def run_student_assigned_tests_unit_checks() -> None:
         current_reassigned_label in completed_history_labels,
         "today's assigned test must load even when the same label was completed before",
     )
+
+
+def run_absence_test_assignment_transition_unit_checks() -> None:
+    import routes.api_attend as api_attend
+
+    sid = "s1"
+    date = "2026-06-07"
+    assigned_label = "단원평가 / 대수 / Lv.3 / 1회차 / 결석전배정"
+    distributed_label = "학군지 기출 / 대수 / 상 / 기말고사 / 2회차 / 압구정고"
+    completed_label = "복습 테스트 / 대수 / 상 / 3회차 / 완료"
+    skipped_label = "단원평가 / 대수 / Lv.3 / 2회차 / 제외"
+
+    _assert_unit(
+        api_attend._absence_test_status_value("assigned") == "interrupted",
+        "absence must turn assigned tests into 배부/interrupted",
+    )
+    _assert_unit(
+        api_attend._absence_test_status_value({"status": "assigned", "memo": "keep"}) == {
+            "status": "interrupted",
+            "memo": "keep",
+        },
+        "absence must preserve dict test status metadata while changing assigned to 배부",
+    )
+    _assert_unit(
+        api_attend._absence_test_status_value("interrupted") == "interrupted",
+        "absence must keep existing 배부/interrupted tests",
+    )
+    _assert_unit(api_attend._absence_test_status_value("done") == "done", "absence must preserve completed tests")
+    _assert_unit(api_attend._absence_test_status_value("skip") == "skip", "absence must preserve excluded tests")
+
+    entry = {
+        "notes": "상담 메모\n\n[테스트 배정]\n- 기존 블록",
+        "testAssignmentNote": "[테스트 배정]\n- 기존 블록",
+        "testAssignmentDailyTests": [
+            {"label": assigned_label, "name": "결석전배정", "status": "assigned"},
+            {"label": distributed_label, "name": "압구정고", "status": "interrupted"},
+            {"label": completed_label, "name": "완료", "status": "done"},
+            {"label": skipped_label, "name": "제외", "status": "skip"},
+        ],
+        "assignedTests": [
+            {"label": assigned_label, "name": "결석전배정", "status": "assigned"},
+            {"label": completed_label, "name": "완료", "status": "done"},
+        ],
+    }
+    next_entry, changed = api_attend._cleared_assignment_log_entry(entry, sid)
+    _assert_unit(changed, "absence log transition should report a change")
+    next_daily = {item["label"]: item["status"] for item in next_entry["testAssignmentDailyTests"]}
+    next_assigned = {item["label"]: item["status"] for item in next_entry["assignedTests"]}
+    _assert_unit(next_daily[assigned_label] == "interrupted", "absence must turn daily assigned log tests into 배부")
+    _assert_unit(next_daily[distributed_label] == "interrupted", "absence must preserve daily 배부 log tests")
+    _assert_unit(next_daily[completed_label] == "done", "absence must preserve daily completed log tests")
+    _assert_unit(next_daily[skipped_label] == "skip", "absence must preserve daily excluded log tests")
+    _assert_unit(next_assigned[assigned_label] == "interrupted", "absence must turn cumulative assigned log tests into 배부")
+    _assert_unit(next_assigned[completed_label] == "done", "absence must preserve cumulative completed log tests")
+    _assert_unit("[테스트 배정]" not in str(next_entry.get("notes") or ""), "absence must still remove generated note blocks")
 
 
 def run_student_answer_link_precedence_unit_checks() -> None:
@@ -1332,12 +1524,14 @@ def run_student_bootstrap_unit_checks() -> None:
             "assignedTests bootstrap authority contract must keep assignedTests as a top-level array",
         )
         labels = [item.get("label") for item in payload.get("assignedTests") or []]
-        _assert_unit(labels == [new_label], "student bootstrap must expose only current active assigned tests")
-        _assert_unit(old_label not in labels, "student bootstrap must not resurrect previous assigned tests")
+        _assert_unit(
+            labels == [old_label, new_label],
+            "student bootstrap must expose all current active assigned tests, even if active before today",
+        )
         _assert_unit(skipped_label not in labels, "student bootstrap must not expose current skipped tests")
         _assert_unit(stale_daily_label not in labels, "student bootstrap must suppress stale daily metadata")
         _assert_unit(
-            payload["assignedTests"][0].get("answerUrl") == config_drive_url,
+            payload["assignedTests"][1].get("answerUrl") == config_drive_url,
             "student bootstrap must resolve Drive answerUrl from config sourceFiles.solutionFileId",
         )
         _assert_unit("C:" not in response_text and str(ROOT) not in response_text, "student bootstrap must not expose raw local paths")
@@ -1348,11 +1542,12 @@ def run_student_bootstrap_unit_checks() -> None:
         restricted_items = restricted_payload.get("assignedTests") or []
         _assert_unit(restricted_response.status_code == 200, "restricted student bootstrap fixture route must return 200")
         _assert_unit(restricted_payload.get("ok") is True, "restricted student bootstrap fixture route must return ok:true")
-        _assert_unit(len(restricted_items) == 1, "restricted student bootstrap must keep assigned test visible")
-        _assert_unit("answerUrl" not in restricted_items[0], "restricted student bootstrap must strip answerUrl")
-        _assert_unit(restricted_items[0].get("answerRestricted") is True, "restricted student bootstrap must mark answerRestricted")
+        _assert_unit(len(restricted_items) == 2, "restricted student bootstrap must keep all active assigned tests visible")
+        restricted_new_item = next((item for item in restricted_items if item.get("label") == new_label), {})
+        _assert_unit("answerUrl" not in restricted_new_item, "restricted student bootstrap must strip answerUrl")
+        _assert_unit(restricted_new_item.get("answerRestricted") is True, "restricted student bootstrap must mark answerRestricted")
         _assert_unit(
-            "solutionFileId" not in (restricted_items[0].get("sourceFiles") or {}),
+            "solutionFileId" not in (restricted_new_item.get("sourceFiles") or {}),
             "restricted student bootstrap must strip nested solution file ids",
         )
 
@@ -2047,6 +2242,94 @@ def run_admin_api_wrapper_usage_source_checks() -> None:
     )
 
 
+def run_admin_progress_batch_source_checks() -> None:
+    today_js = (ROOT / "static/js/admin/features/today.js").read_text("utf-8")
+    export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
+
+    batch_start = today_js.index("async function loadProgressHistoryForSidBatch")
+    batch_end = today_js.index("async function ensureProgressHistoryForSids", batch_start)
+    today_batch_block = today_js[batch_start:batch_end]
+    _assert_unit(
+        "new URLSearchParams({ sids: chunk.join(',') })" in today_batch_block,
+        "today progress history batch loader must request /api/progress with sids",
+    )
+    _assert_unit(
+        "mergeDateSidMap(state.progress, data);" in today_batch_block,
+        "today progress history batch loader must merge date/sid maps without replacing all progress",
+    )
+
+    ensure_start = today_js.index("async function ensureProgressHistoryForSids")
+    ensure_end = today_js.index("async function refreshStudentsIfNeeded", ensure_start)
+    ensure_block = today_js[ensure_start:ensure_end]
+    _assert_unit(
+        "const loadedBatch = await loadProgressHistoryForSidBatch(pending);" in ensure_block,
+        "today progress history must try batch loading before full-history fallback",
+    )
+    _assert_unit(
+        ensure_block.index("loadProgressHistoryForSidBatch(pending)") < ensure_block.index("loadAllProgressHistoryOnce"),
+        "today progress history full-load fallback must remain after the batch attempt",
+    )
+
+    roster_start = export_logs_js.index("async function ensureRosterProgressHistory")
+    roster_end = export_logs_js.index("async function exportRosterCsv", roster_start)
+    roster_block = export_logs_js[roster_start:roster_end]
+    _assert_unit(
+        "new URLSearchParams({ sids: chunk.join(',') })" in roster_block,
+        "roster export progress history must use batch sids loading",
+    )
+    _assert_unit(
+        "fetch(`/api/progress?sid=${encodeURIComponent(sid)}`" in roster_block,
+        "roster export progress history must preserve single-sid fallback on batch failure",
+    )
+
+
+def run_all_page_progress_lazy_source_checks() -> None:
+    state_js = (ROOT / "static/js/all/core/state.js").read_text("utf-8")
+    table_js = (ROOT / "static/js/all/features/table.js").read_text("utf-8")
+    hover_js = (ROOT / "static/js/all/features/hoverTooltip.js").read_text("utf-8")
+
+    load_all_start = state_js.index("export async function loadAll()")
+    load_all_end = state_js.index("export async function ensureProgressForSid", load_all_start)
+    load_all_block = state_js[load_all_start:load_all_end]
+    _assert_unit(
+        "/api/progress" not in load_all_block,
+        "all-students bootstrap must not download full progress history",
+    )
+    _assert_unit(
+        "getJSONOr('/api/progress'" not in state_js and 'getJSONOr("/api/progress"' not in state_js,
+        "all-students state must not keep a full-progress fallback",
+    )
+    _assert_unit(
+        "export async function ensureProgressForSid" in state_js,
+        "all-students state must expose lazy per-student progress loading",
+    )
+    _assert_unit(
+        "new URLSearchParams({ sid: key })" in state_js,
+        "lazy all-students progress loading must request one sid",
+    )
+    _assert_unit(
+        "mergeDateSidMap(state.progress || {}, progress)" in state_js,
+        "lazy all-students progress loading must merge without replacing existing progress",
+    )
+
+    _assert_unit(
+        "import { ensureProgressForSid, state } from '../core/state.js';" in table_js,
+        "all-students mini progress popup must import lazy progress loading",
+    )
+    _assert_unit(
+        "await ensureProgressForSid(sid);" in table_js,
+        "all-students mini progress popup must load progress for the selected sid",
+    )
+    _assert_unit(
+        "import { ensureProgressForSid } from '../core/state.js';" in hover_js,
+        "all-students hover tooltip must import lazy progress loading",
+    )
+    _assert_unit(
+        "await ensureProgressForSid(stu.id);" in hover_js,
+        "all-students hover tooltip must load progress for the hovered student",
+    )
+
+
 def run_admin_wave_b_behavior_checks() -> None:
     driver = r"""
 import { pathToFileURL } from 'node:url';
@@ -2308,6 +2591,18 @@ def run_admin_test_modal_assignment_source_checks() -> None:
         save_block.index("fetchJSONSafe('/api/progress/patch'"),
         "latest log preflight must happen before /api/progress/patch",
     )
+    _assert_unit(
+        "function nextExcludedStatusOf" in test_modal_js,
+        "test assignment modal must define a right-click none/제외 toggle helper",
+    )
+    _assert_unit(
+        "dragTarget = dragButton === 2 ? nextExcludedStatusOf(startStatus) : nextStatusOf(startStatus);" in test_modal_js,
+        "right-drag must toggle rows between none and 제외 instead of forcing 제외",
+    )
+    _assert_unit(
+        "applyTestRowStatus(row, nextExcludedStatusOf(statusForKey(key)))" in test_modal_js,
+        "right-click must toggle 제외 back to none",
+    )
 
 
 def run_admin_test_modal_persistence_bridge_source_checks() -> None:
@@ -2388,8 +2683,13 @@ export function __setHarnessState(input) {
   testSelectionTouched = input.testSelectionTouched !== false;
   defaultExclusionsApplied = !!input.defaultExclusionsApplied;
 }
-export { patchLogAssignment as __patchLogAssignment, saveModal as __saveModal };
-`;
+export {
+  patchLogAssignment as __patchLogAssignment,
+  saveModal as __saveModal,
+  nextStatusOf as __nextStatusOf,
+  nextExcludedStatusOf as __nextExcludedStatusOf,
+};
+	`;
 const moduleSource = `${source}\n${harness}\n//# sourceURL=logModalCarriedReapplyHarness.js`;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`;
 
@@ -2411,8 +2711,16 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 
-const mod = await import(moduleUrl);
-const existingLabel = '단원평가 / 대수 / Lv.3 / 1회 / 기존';
+	const mod = await import(moduleUrl);
+	ok(mod.__nextStatusOf('') === 'assigned', 'left-click none becomes 배정/assigned');
+	ok(mod.__nextStatusOf('assigned') === 'interrupted', 'left-click 배정/assigned becomes 배부/interrupted');
+	ok(mod.__nextStatusOf('interrupted') === 'done', 'left-click 배부/interrupted becomes 완료/done');
+	ok(mod.__nextStatusOf('done') === '', 'left-click 완료/done becomes none');
+	ok(mod.__nextStatusOf('skip') === 'assigned', 'left-click 제외/skip returns to the normal 배정 cycle');
+	ok(mod.__nextExcludedStatusOf('') === 'skip', 'right-click none becomes 제외/skip');
+	ok(mod.__nextExcludedStatusOf('skip') === '', 'right-click 제외/skip becomes none');
+	ok(mod.__nextExcludedStatusOf('assigned') === 'skip', 'right-click assigned enters 제외/skip');
+	const existingLabel = '단원평가 / 대수 / Lv.3 / 1회 / 기존';
 const newLabel = '단원평가 / 대수 / Lv.3 / 1회 / 신규';
 const existingTest = {
   id: 'existing-id',
@@ -4001,12 +4309,15 @@ def run_unit_checks() -> bool:
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_progress_rule_unit_checks,
+        run_progress_batch_sids_unit_checks,
+        run_progress_read_cache_unit_checks,
         run_video_completion_unit_checks,
         run_video_completion_source_checks,
         run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
         run_student_answer_link_precedence_unit_checks,
         run_student_bootstrap_unit_checks,
+        run_absence_test_assignment_transition_unit_checks,
         run_student_answer_link_render_source_checks,
         run_catalog_script_safety_source_checks,
         run_catalog_script_temp_file_behavior_checks,
@@ -4019,6 +4330,8 @@ def run_unit_checks() -> bool:
         run_admin_calendar_test_completion_source_checks,
         run_admin_wave_b_source_checks,
         run_admin_api_wrapper_usage_source_checks,
+        run_admin_progress_batch_source_checks,
+        run_all_page_progress_lazy_source_checks,
         run_admin_wave_b_behavior_checks,
         run_admin_test_modal_assignment_source_checks,
         run_admin_test_modal_persistence_bridge_source_checks,

@@ -194,9 +194,65 @@ def _normalize_assignment_status(value: Any) -> str:
     if isinstance(value, dict):
         value = value.get("status")
     status = str(value or "").strip()
+    if status == "none":
+        return ""
     if status in {"assigned", "done", "interrupted", "skip"}:
         return status
     return "assigned" if status else ""
+
+
+def _assignment_status_label(status: str) -> str:
+    normalized = _normalize_assignment_status(status)
+    if normalized == "done":
+        return "완료"
+    if normalized == "interrupted":
+        return "배부"
+    if normalized == "skip":
+        return "제외"
+    return "배정" if normalized else ""
+
+
+def _absence_test_status_value(value: Any) -> Any:
+    status = _normalize_assignment_status(value)
+    if status == "assigned":
+        status = "interrupted"
+    if not status:
+        return value
+    if isinstance(value, dict):
+        return {**value, "status": status}
+    return status
+
+
+def _absence_test_item(raw: dict) -> tuple[dict, bool]:
+    item = dict(raw)
+    before = _normalize_assignment_status(item.get("status"))
+    after = "interrupted" if before == "assigned" else before
+    if not after:
+        return item, False
+    changed = False
+    if item.get("status") != after:
+        item["status"] = after
+        changed = True
+    label = _assignment_status_label(after)
+    if label and item.get("statusLabel") != label:
+        item["statusLabel"] = label
+        changed = True
+    return item, changed
+
+
+def _absence_test_items(items: Any) -> tuple[list[Any] | None, bool]:
+    if not isinstance(items, list):
+        return None, False
+    changed = False
+    out: list[Any] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            out.append(raw)
+            continue
+        item, item_changed = _absence_test_item(raw)
+        out.append(item)
+        changed = changed or item_changed
+    return out, changed
 
 
 def _merge_assignment_items(*groups: list[dict]) -> list[dict]:
@@ -297,7 +353,15 @@ def _cleared_assignment_log_entry(entry: dict, sid: str, carryover: dict | None 
         notes, note_changed = _remove_generated_note_block(notes, next_entry.get(note_key))
         changed = changed or note_changed
 
+    for field in (TEST_ASSIGN_DAILY_ITEMS_KEY, "assignedTests"):
+        items, items_changed = _absence_test_items(next_entry.get(field))
+        if items_changed and items is not None:
+            next_entry[field] = items
+            changed = True
+
     for field in ASSIGNMENT_LOG_CLEAR_FIELDS:
+        if field == "assignedTests":
+            continue
         if field in next_entry:
             next_entry.pop(field, None)
             changed = True
@@ -356,8 +420,21 @@ def _clear_absence_progress_tests(pairs: set[tuple[str, str]]) -> None:
             entry = _sid_lookup(day, sid)
             if not isinstance(entry, dict) or "tests" not in entry:
                 continue
+            tests = entry.get("tests")
+            if not isinstance(tests, dict):
+                continue
+            next_tests = {
+                str(label): _absence_test_status_value(status)
+                for label, status in tests.items()
+                if str(label).strip()
+            }
+            if next_tests == tests:
+                continue
             next_entry = dict(entry)
-            next_entry.pop("tests", None)
+            if next_tests:
+                next_entry["tests"] = next_tests
+            else:
+                next_entry.pop("tests", None)
             _write_sid_mapping(day, sid, next_entry if next_entry else None)
             if not day:
                 progress.pop(date_key, None)

@@ -133,6 +133,67 @@ export function initCalendar() {
     });
   }
 
+  function normalizeExamSubject(value) {
+    const compact = normalizeStudentIdentity(value)
+      .replace(/공통수학1/u, '공수1')
+      .replace(/공통수학I/iu, '공수1')
+      .replace(/미적분I/iu, '미적분1')
+      .replace(/확률과통계/u, '확통');
+    if (compact === '미적분') return '미적분1';
+    return compact;
+  }
+
+  function studentGradeLabel(stu) {
+    return String(
+      stu?.grade ??
+      stu?.gradeLevel ??
+      stu?.studentGrade ??
+      stu?.학년 ??
+      ''
+    ).trim();
+  }
+
+  function normalizeGradeLabelForExam(value) {
+    const compact = normalizeStudentIdentity(value);
+    const match = compact.match(/[1-3]/);
+    return match ? `${match[0]}학년` : '';
+  }
+
+  function matchingStudentsForExam({ school, grade, subject }) {
+    const targetSchool = normalizeSchoolIdentity(school);
+    const targetGrade = normalizeGradeLabelForExam(grade);
+    const targetSubject = normalizeExamSubject(subject);
+    if (!targetSchool) return [];
+
+    const seen = new Set();
+    return (state.students || [])
+      .filter((stu) => {
+        const studentSchool = normalizeSchoolIdentity(studentSchoolLabel(stu));
+        if (!studentSchool || studentSchool !== targetSchool) return false;
+
+        const studentGrade = normalizeGradeLabelForExam(studentGradeLabel(stu));
+        if (targetGrade && studentGrade && studentGrade !== targetGrade) return false;
+
+        if (!targetSubject || targetSubject === '수학') return true;
+        const course = normalizeExamSubject(studentCourseLabel(stu));
+        return !!course && (course === targetSubject || course.includes(targetSubject));
+      })
+      .filter((stu) => {
+        const key = String(stu?.id || '').trim() ||
+          `${normalizeStudentIdentity(stu?.name)}|${normalizeSchoolIdentity(studentSchoolLabel(stu))}|${normalizeExamSubject(studentCourseLabel(stu))}`;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ko', { numeric: true }));
+  }
+
+  function studentNamesForExam(students) {
+    return (students || [])
+      .map((stu) => String(stu?.name || '').trim())
+      .filter(Boolean);
+  }
+
   function buildSchoolExamEvents(payload = state.schoolCal) {
     const activeYearRaw = getActiveSchoolCalendarYear(payload) || new Date().getFullYear();
     const activeYear = Number.parseInt(String(activeYearRaw), 10) || new Date().getFullYear();
@@ -159,6 +220,8 @@ export function initCalendar() {
     const pushRawEvent = ({ kind, subject, label, school, grade, span, range, note, sourceText }) => {
       if (!school || !span?.start || !span?.end) return;
       const subjectName = String(subject || '').trim() || '수학';
+      const students = matchingStudentsForExam({ school, grade, subject: subjectName });
+      if (!students.length) return;
       rawEvents.push({
         kind,
         subject: subjectName,
@@ -170,6 +233,7 @@ export function initCalendar() {
         range: String(range || '').trim(),
         note: String(note || '').trim(),
         sourceText: String(sourceText || '').trim(),
+        students,
       });
     };
 
@@ -222,6 +286,7 @@ export function initCalendar() {
           ranges: new Set(),
           notes: new Set(),
           sourceTexts: new Set(),
+          students: [],
         };
         grouped.set(key, bucket);
       }
@@ -230,6 +295,7 @@ export function initCalendar() {
       if (row.range) bucket.ranges.add(row.range);
       if (row.note) bucket.notes.add(row.note);
       if (row.sourceText) bucket.sourceTexts.add(row.sourceText);
+      bucket.students.push(...(row.students || []));
     }
 
     function shortSchoolName(name) {
@@ -261,7 +327,30 @@ export function initCalendar() {
       math: { bg: '#0284c7', border: '#0369a1' },
     };
 
-    return [...grouped.values()]
+    function examEntryForRow(row, title) {
+      const gradeList = [...row.grades].sort((a, b) => String(a).localeCompare(String(b), 'ko')).join(', ');
+      const studentNames = studentNamesForExam(row.students);
+      return {
+        title,
+        school: row.school,
+        grade: gradeList,
+        subject: row.subject,
+        sourceText: [...row.sourceTexts].join(' / '),
+        range: [...row.ranges].join(' / '),
+        note: [...row.notes].join(' / '),
+        studentNames,
+      };
+    }
+
+    function eventTooltipForEntries(entries) {
+      return (entries || []).map((entry) => {
+        const heading = [entry.school, entry.grade, entry.subject].filter(Boolean).join(' ');
+        const students = entry.studentNames?.length ? entry.studentNames.join(', ') : '학생 없음';
+        return `${heading}\n학생: ${students}`;
+      }).join('\n\n');
+    }
+
+    const displayEvents = [...grouped.values()]
       .sort((a, b) => {
         const dateCmp = String(a.start).localeCompare(String(b.start));
         if (dateCmp !== 0) return dateCmp;
@@ -292,6 +381,7 @@ export function initCalendar() {
         if (row.sourceTexts.size === 1) tooltipParts.push(`일정: ${[...row.sourceTexts][0]}`);
 
         const color = palette[row.kind] || { bg: '#64748b', border: '#475569' };
+        const examEntry = examEntryForRow(row, title);
         return {
           title,
           start: row.start,
@@ -306,9 +396,50 @@ export function initCalendar() {
             subject,
             order: order[row.kind] || 99,
             tooltip: tooltipParts.join('\n'),
+            examEntries: [examEntry],
           },
         };
       });
+
+    const byDate = new Map();
+    displayEvents.forEach((event) => {
+      const key = `${event.start}|${event.end}`;
+      const bucket = byDate.get(key) || [];
+      bucket.push(event);
+      byDate.set(key, bucket);
+    });
+
+    const collapsed = [];
+    byDate.forEach((bucket) => {
+      const examEntries = bucket.flatMap((event) => event.extendedProps?.examEntries || []);
+      if (bucket.length >= 3) {
+        const first = bucket[0];
+        collapsed.push({
+          ...first,
+          title: `${first.title} 외 ${bucket.length - 1}개`,
+          classNames: [...(first.classNames || []), 'school-exam-summary'],
+          extendedProps: {
+            ...(first.extendedProps || {}),
+            tooltip: eventTooltipForEntries(examEntries),
+            examEntries,
+            summaryCount: bucket.length,
+          },
+        });
+        return;
+      }
+
+      bucket.forEach((event) => {
+        collapsed.push({
+          ...event,
+          extendedProps: {
+            ...(event.extendedProps || {}),
+            examEntries,
+          },
+        });
+      });
+    });
+
+    return collapsed;
   }
 
   let countMap = {};
@@ -415,7 +546,13 @@ export function initCalendar() {
       stu?.school ||
       stu?.schoolName ||
       stu?.highSchool ||
+      stu?.highschool ||
+      stu?.high_school ||
+      stu?.고등학교 ||
       stu?.middleSchool ||
+      stu?.middleschool ||
+      stu?.middle_school ||
+      stu?.중학교 ||
       stu?.high ||
       stu?.middle ||
       stu?.schoolHigh ||
@@ -1685,6 +1822,131 @@ export function initCalendar() {
     calBadge.title = source === 'api' ? '학교일정 API 재조회 반영' : '초기 로드 반영';
   }
 
+  function ensureSchoolExamInfoPopup() {
+    let popup = document.getElementById('schoolExamInfoPopup');
+    if (popup) return popup;
+    document.body.insertAdjacentHTML('beforeend', `
+      <div id="schoolExamInfoPopup" class="modal-backdrop" data-school-exam-popup="1" style="display:none;align-items:flex-start;overflow-y:auto;padding:18px 16px">
+        <div class="modal-panel wide school-exam-info-panel" role="dialog" aria-modal="true" aria-labelledby="schoolExamInfoTitle" style="position:relative;display:flex;flex-direction:column;max-height:calc(100vh - 36px);overflow:hidden;margin:0 auto">
+          <button type="button" class="modal-close" data-school-exam-close aria-label="닫기">X</button>
+          <h3 id="schoolExamInfoTitle">시험 정보</h3>
+          <p id="schoolExamInfoSub" class="muted"></p>
+          <div id="schoolExamInfoBody" style="flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px"></div>
+        </div>
+      </div>
+    `);
+    popup = document.getElementById('schoolExamInfoPopup');
+    popup?.addEventListener('click', (ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      if (target === popup || target?.closest('[data-school-exam-close]')) {
+        closeSchoolExamInfoPopup();
+      }
+    });
+    return popup;
+  }
+
+  function closeSchoolExamInfoPopup() {
+    const popup = document.getElementById('schoolExamInfoPopup');
+    if (!popup) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && popup.contains(active)) {
+      active.blur();
+    }
+    popup.setAttribute('aria-hidden', 'true');
+    popup.remove();
+  }
+
+  const SCHOOL_EXAM_POPUP_THEMES = [
+    { accent: '#0369a1', soft: 'rgba(3,105,161,.09)', border: 'rgba(3,105,161,.32)', chipBg: '#e0f2fe', chipText: '#075985' },
+    { accent: '#047857', soft: 'rgba(4,120,87,.10)', border: 'rgba(4,120,87,.32)', chipBg: '#d1fae5', chipText: '#065f46' },
+    { accent: '#b45309', soft: 'rgba(180,83,9,.11)', border: 'rgba(180,83,9,.34)', chipBg: '#fef3c7', chipText: '#92400e' },
+    { accent: '#be123c', soft: 'rgba(190,18,60,.09)', border: 'rgba(190,18,60,.30)', chipBg: '#ffe4e6', chipText: '#9f1239' },
+    { accent: '#0f766e', soft: 'rgba(15,118,110,.09)', border: 'rgba(15,118,110,.32)', chipBg: '#ccfbf1', chipText: '#115e59' },
+    { accent: '#4338ca', soft: 'rgba(67,56,202,.08)', border: 'rgba(67,56,202,.30)', chipBg: '#e0e7ff', chipText: '#3730a3' },
+  ];
+
+  function schoolExamPopupTheme(entry, index) {
+    const subject = normalizeExamSubject(entry?.subject);
+    const bySubject = {
+      공수1: 0,
+      대수: 1,
+      기하: 2,
+      미적분1: 3,
+      확통: 4,
+    };
+    const subjectIndex = bySubject[subject];
+    return SCHOOL_EXAM_POPUP_THEMES[
+      Number.isInteger(subjectIndex) ? subjectIndex : index % SCHOOL_EXAM_POPUP_THEMES.length
+    ];
+  }
+
+  function schoolExamPopupStudentTotal(entries) {
+    return (entries || []).reduce((total, entry) => {
+      const names = Array.isArray(entry?.studentNames) ? entry.studentNames.filter(Boolean) : [];
+      return total + names.length;
+    }, 0);
+  }
+
+  function openSchoolExamInfoPopup(event) {
+    const entries = Array.isArray(event?.extendedProps?.examEntries)
+      ? event.extendedProps.examEntries
+      : [];
+    if (!entries.length) return;
+
+    const popup = ensureSchoolExamInfoPopup();
+    const sub = document.getElementById('schoolExamInfoSub');
+    const body = document.getElementById('schoolExamInfoBody');
+    const dateText = String(event?.startStr || event?.start || '').slice(0, 10);
+    const totalStudents = schoolExamPopupStudentTotal(entries);
+    if (sub) {
+      sub.innerHTML = `
+        <span>${escapeHtml(dateText)}</span>
+        <strong style="display:inline-flex;align-items:center;margin-left:8px;padding:3px 9px;border-radius:999px;background:#0f172a;color:#fff;font-size:12px">총 ${escapeHtml(String(totalStudents))}명</strong>
+        <span style="margin-left:6px">${escapeHtml(String(entries.length))}개 시험</span>
+      `;
+    }
+    if (body) {
+      body.innerHTML = `
+        <div class="school-exam-info-list" style="display:grid;gap:12px;margin-top:12px">
+          ${entries.map((entry, index) => {
+            const theme = schoolExamPopupTheme(entry, index);
+            const title = [entry.school, entry.grade, entry.subject].filter(Boolean).join(' ');
+            const names = Array.isArray(entry.studentNames) ? entry.studentNames.filter(Boolean) : [];
+            return `
+              <section class="school-exam-info-item" style="position:relative;overflow:hidden;border:1px solid ${theme.border};border-left:7px solid ${theme.accent};border-radius:8px;padding:12px 14px;background:linear-gradient(90deg,${theme.soft},color-mix(in srgb,var(--card) 92%,#fff 8%));box-shadow:0 1px 3px rgba(15,23,42,.08)">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:9px">
+                  <div style="min-width:0">
+                    <div style="font-weight:900;margin-bottom:6px;color:#0f172a">${escapeHtml(entry.school || title)}</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                      ${entry.grade ? `<span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:${theme.chipBg};color:${theme.chipText};font-size:12px;font-weight:800">${escapeHtml(entry.grade)}</span>` : ''}
+                      <span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:${theme.accent};color:#fff;font-size:12px;font-weight:900">${escapeHtml(entry.subject || '수학')}</span>
+                    </div>
+                  </div>
+                  <div style="flex:0 0 auto;min-width:58px;text-align:center;border:1px solid ${theme.border};border-radius:8px;background:rgba(255,255,255,.72);padding:5px 8px;color:${theme.chipText}">
+                    <div style="font-size:18px;font-weight:950;line-height:1">${escapeHtml(String(names.length))}</div>
+                    <div style="font-size:11px;font-weight:800;margin-top:2px">명</div>
+                  </div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:5px;line-height:1.5">
+                  ${names.length ? names.map((name) => `<span style="display:inline-flex;align-items:center;padding:3px 7px;border-radius:7px;background:rgba(255,255,255,.76);border:1px solid ${theme.border};font-weight:700;color:#1f2937">${escapeHtml(name)}</span>`).join('') : '<span class="muted">등록 학생 없음</span>'}
+                </div>
+                ${entry.range ? `<div class="muted" style="margin-top:8px;font-size:12px">범위: ${escapeHtml(entry.range)}</div>` : ''}
+                ${entry.note ? `<div class="muted" style="margin-top:3px;font-size:12px">비고: ${escapeHtml(entry.note)}</div>` : ''}
+              </section>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+    if (popup) {
+      popup.style.display = 'flex';
+      popup.setAttribute('aria-hidden', 'false');
+      popup.scrollTop = 0;
+      if (body) body.scrollTop = 0;
+      popup.querySelector('[data-school-exam-close]')?.focus?.();
+    }
+  }
+
   let calendar = null;
   function currentVisibleRange() {
     return rollingFiveWeekRange(calendarFocusDate || new Date());
@@ -1762,6 +2024,13 @@ export function initCalendar() {
       }
       openAttendModal(info.dateStr);
     },
+    eventClick: (info) => {
+      const entries = info.event?.extendedProps?.examEntries;
+      if (!Array.isArray(entries) || !entries.length) return;
+      info.jsEvent?.preventDefault?.();
+      info.jsEvent?.stopPropagation?.();
+      openSchoolExamInfoPopup(info.event);
+    },
     eventDidMount: (info) => {
       const tooltip = String(info.event?.extendedProps?.tooltip || info.event?.title || '').trim();
       if (tooltip) info.el.setAttribute('title', tooltip);
@@ -1816,7 +2085,14 @@ export function initCalendar() {
   }, true);
 
   document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || (!makeupSelection && !manualAbsenceSelection)) return;
+    if (ev.key !== 'Escape') return;
+    const examPopup = document.getElementById('schoolExamInfoPopup');
+    if (examPopup && examPopup.style.display !== 'none') {
+      ev.preventDefault();
+      closeSchoolExamInfoPopup();
+      return;
+    }
+    if (!makeupSelection && !manualAbsenceSelection) return;
     ev.preventDefault();
     if (manualAbsenceSelection) cancelManualAbsenceSelection();
     else cancelMakeupSelection();
