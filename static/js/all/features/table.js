@@ -9,7 +9,7 @@
 
 import { $, toast } from '../core/utils.js';
 import { patchField } from '../core/api.js';
-import { state } from '../core/state.js';
+import { ensureProgressForSid, state } from '../core/state.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 import { SELF_STUDY_DAYS_FIELD, isSelfStudyDayField, nextSelfStudyDays } from '../../shared/selfStudy.js';
 
@@ -1200,11 +1200,12 @@ function buildLatestProgEntryForSid(sid) {
   return out;
 }
 
-function openMiniProgressForSid(sid) {
+async function openMiniProgressForSid(sid) {
   ensureMiniProgModal();
 
   const stu = state.students.find(x => String(x.id) === String(sid));
   if (!stu) { alert('학생 없음'); return; }
+  await ensureProgressForSid(sid);
 
   const modal = document.getElementById('miniProgModal');
   const title = document.getElementById('miniProgTitle');
@@ -1299,10 +1300,10 @@ async function saveMiniProgress() {
 }
 
 // 🎬 버튼 핸들러
-document.addEventListener('click', (e) => {
+document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.miniProgBtn');
   if (!btn) return;
   const sid = btn.dataset.id;
   if (!sid) return;
-  openMiniProgressForSid(String(sid));
+  await openMiniProgressForSid(String(sid));
 });

@@ -1,5 +1,6 @@
 ﻿// /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
+import { ensureProgressForSid } from '../core/state.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
 
 let tipEl = null;
@@ -345,7 +346,7 @@ export function initHoverTooltip() {
     tipEl.style.top  = `${top}px`;
   }
 
-  function onOver(ev) {
+  async function onOver(ev) {
     if (mode !== 'hover') return;
     if (!(ev.target instanceof Element)) return;
     const a = ev.target.closest('a.stuName');
@@ -359,9 +360,16 @@ export function initHoverTooltip() {
     if (!stu) return;
 
     const el = ensureTip();
-    el.innerHTML = buildTooltipHTML(stu, { includeProgress: true });
+    el.innerHTML = buildTooltipHTML(stu, { includeProgress: false });
     el.style.display = 'block';
 
+    requestAnimationFrame(() => {
+      placeTooltipFollowCursor(ev);
+    });
+
+    await ensureProgressForSid(stu.id);
+    if (mode !== 'hover' || tipEl !== el || el.style.display === 'none') return;
+    el.innerHTML = buildTooltipHTML(stu, { includeProgress: true });
     requestAnimationFrame(() => {
       placeTooltipFollowCursor(ev);
     });

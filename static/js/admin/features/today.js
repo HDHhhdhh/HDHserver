@@ -152,6 +152,26 @@ async function loadAllProgressHistoryOnce(force = false) {
   }
 }
 
+async function loadProgressHistoryForSidBatch(sids) {
+  const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
+  if (!keys.length) return true;
+
+  const batchSize = 60;
+  for (let i = 0; i < keys.length; i += batchSize) {
+    const chunk = keys.slice(i, i + batchSize);
+    const q = new URLSearchParams({ sids: chunk.join(',') }).toString();
+    const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data || typeof data !== 'object') return false;
+    state.progress = state.progress || {};
+    mergeDateSidMap(state.progress, data);
+    window.progressData = state.progress;
+    chunk.forEach(sid => progressHistoryLoadedSids.add(sid));
+  }
+  return true;
+}
+
 async function ensureProgressHistoryForSids(sids, options = {}) {
   const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
   if (!keys.length) return;
@@ -164,6 +184,9 @@ async function ensureProgressHistoryForSids(sids, options = {}) {
   if (!pending.length) return;
 
   if (pending.length >= 4) {
+    const loadedBatch = await loadProgressHistoryForSidBatch(pending);
+    if (loadedBatch) return;
+
     const loaded = await loadAllProgressHistoryOnce(!!options.forceHistory);
     if (loaded) {
       pending.forEach(sid => progressHistoryLoadedSids.add(sid));

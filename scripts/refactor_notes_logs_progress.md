@@ -86,6 +86,9 @@ refactors. It is documentation only; do not treat it as a migration plan.
   - `?date=YYYY-MM-DD` returns `{ date: dayMap }`.
   - `?date=YYYY-MM-DD&sid=<sid>` returns `{ date: { sid: entry } }`.
   - `?sid=<sid>` scans all dates and returns only non-empty entries.
+  - `?sids=<sid1>,<sid2>` and repeated `?sid=<sid1>&sid=<sid2>`
+    return the same date-keyed shape filtered to the requested students.
+  - `?date=YYYY-MM-DD&sids=<sid1>,<sid2>` returns `{ date: filteredDayMap }`.
   - GET sid lookup accepts exact and integer-normalized sid aliases.
 - `POST /api/progress/patch`
   - Body shape is `{ date, sid, progress, source? }`.
@@ -132,6 +135,9 @@ refactors. It is documentation only; do not treat it as a migration plan.
   `{ date: dayLogs }`.
 - `today.js` expects `GET /api/progress?date=YYYY-MM-DD` to return
   `{ date: dayProgress }`.
+- `today.js` and roster export may request progress history with
+  `GET /api/progress?sids=<sid1>,<sid2>` so refresh/export paths do not
+  download the full progress history map when only visible students are needed.
 
 ## Assigned Test and Answer-Link Contract
 

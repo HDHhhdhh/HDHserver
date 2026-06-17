@@ -1,5 +1,5 @@
 ﻿import { toast } from '../core/utils.js';
-import { state } from '../core/state.js';
+import { ensureProgressForSid, state } from '../core/state.js';
 
 let editingSid = null;
 
@@ -22,11 +22,12 @@ const modal = document.getElementById('progModal');
 const title = document.getElementById('progTitle');
 const zone  = document.getElementById('progZone');
 
-document.addEventListener('click', (e)=>{
+document.addEventListener('click', async (e)=>{
   const btn = e.target.closest('button.showProg');
   if (!btn) return;
 
   editingSid = btn.dataset.id;
+  await ensureProgressForSid(editingSid);
   const tr = btn.closest('tr');
   const cur = (tr?.dataset.curriculum||'').trim();
   const sub = (tr?.dataset.subcurriculum||'').trim();

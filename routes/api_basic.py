@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import random
 import re
+import threading
 import time
 import json
 from urllib.parse import parse_qs, urlparse
@@ -48,6 +49,9 @@ STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님�
 GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
 GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
 GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
+_PROGRESS_CACHE_LOCK = threading.Lock()
+_PROGRESS_CACHE_SIGNATURE: tuple[int, int] | None = None
+_PROGRESS_CACHE_DATA: dict | None = None
 
 # ─────────────────────────────────────────────
 # 공통 CRUD
@@ -60,16 +64,33 @@ def crud(path):
     return "", 204
 
 
-def _load_progress_strict() -> dict:
+def _progress_file_signature() -> tuple[int, int] | None:
     try:
-        data = json.loads(PRG_PATH.read_text("utf-8-sig"))
+        stat = PRG_PATH.stat()
     except FileNotFoundError:
-        return {}
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _load_progress_strict() -> dict:
+    global _PROGRESS_CACHE_DATA, _PROGRESS_CACHE_SIGNATURE
+
+    signature = _progress_file_signature()
+    with _PROGRESS_CACHE_LOCK:
+        if _PROGRESS_CACHE_SIGNATURE == signature and _PROGRESS_CACHE_DATA is not None:
+            return _PROGRESS_CACHE_DATA
+
+    try:
+        data = {} if signature is None else json.loads(PRG_PATH.read_text("utf-8-sig"))
     except Exception as e:
         raise RuntimeError(f"progress.json read failed: {e}") from e
 
     if not isinstance(data, dict):
         raise RuntimeError("progress.json must be an object")
+
+    with _PROGRESS_CACHE_LOCK:
+        _PROGRESS_CACHE_SIGNATURE = signature
+        _PROGRESS_CACHE_DATA = data
     return data
 
 
@@ -572,11 +593,25 @@ def _test_assignment_category_key(item: dict) -> str:
         return "REVIEW"
     if "SCHOOL_PAST" in upper or "SCHOOL" in upper or "\ud559\uad70\uc9c0" in compact or "\ud559\uad50\ubcc4" in compact:
         return "SCHOOL_PAST"
+    if "ILSAN_PAST" in upper or "ILSAN" in upper or "\uc77c\uc0b0" in compact:
+        return "ILSAN_PAST"
     return ""
 
 
+def _normalize_test_assignment_difficulty(category_key: str, value) -> str:
+    text = str(value or "").strip()
+    if category_key == "ILSAN_PAST":
+        if "\uadf8\ub798\ud504" in text:
+            return "\uadf8\ub798\ud504 \ud3ec\ud568"
+        if text == "\uc0c1" or "\uc911\uc0c1" in text:
+            return "\uc911\uc0c1"
+        if "\uc911" in text:
+            return "\uc911"
+    return text
+
+
 def _test_assignment_has_answer_link(item: dict) -> bool:
-    return _test_assignment_category_key(item) in {"UNIT", "REVIEW", "SCHOOL_PAST"}
+    return _test_assignment_category_key(item) in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}
 
 
 def _test_config_answer_url(test: dict) -> str:
@@ -622,7 +657,7 @@ def _candidate_test_ids(item: dict) -> list[str]:
 
 def _find_test_config_for_assignment(item: dict) -> dict:
     category_key = _test_assignment_category_key(item)
-    if category_key not in {"REVIEW", "SCHOOL_PAST"}:
+    if category_key not in {"REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}:
         return {}
 
     config = _load_tests_config_for_answer_links()
@@ -647,7 +682,10 @@ def _find_test_config_for_assignment(item: dict) -> dict:
     item_label = str(item.get("label") or "").strip()
     item_round = _normalize_test_answer_round(item.get("round"))
     item_cur = str(item.get("curriculum") or "").strip()
-    item_difficulty = str(item.get("difficulty") or "").strip()
+    item_difficulty = _normalize_test_assignment_difficulty(
+        category_key,
+        item.get("difficulty"),
+    )
     item_term = str(item.get("term") or "").strip()
 
     for test in tests:
@@ -661,7 +699,11 @@ def _find_test_config_for_assignment(item: dict) -> dict:
             continue
         if item_cur and str(test.get("curriculum") or "").strip() != item_cur:
             continue
-        if item_difficulty and str(test.get("difficulty") or "").strip() != item_difficulty:
+        test_difficulty = _normalize_test_assignment_difficulty(
+            category_key,
+            test.get("difficulty"),
+        )
+        if item_difficulty and test_difficulty != item_difficulty:
             continue
         if item_term and str(test.get("term") or "").strip() != item_term:
             continue
@@ -749,7 +791,6 @@ def _student_assigned_test_labels(
     status_by_label: dict,
     log_labels: list[str],
     daily_labels: list[str],
-    previous_statuses: dict,
 ) -> list[str]:
     if daily_labels:
         if status_by_label:
@@ -759,18 +800,16 @@ def _student_assigned_test_labels(
                 if (
                     label in status_by_label
                     and _is_active_test_assignment_status(status_by_label.get(label))
-                    and label not in previous_statuses
                 )
             ]
             for label, status in status_by_label.items():
-                if not _is_active_test_assignment_status(status) or label in previous_statuses or label in labels:
+                if not _is_active_test_assignment_status(status) or label in labels:
                     continue
                 labels.append(label)
             return labels
         return [
             label
             for label in daily_labels
-            if label not in previous_statuses
         ]
 
     active_labels = [
@@ -778,7 +817,7 @@ def _student_assigned_test_labels(
         for label, status in status_by_label.items()
         if _is_active_test_assignment_status(status)
     ] if status_by_label else list(log_labels)
-    return [label for label in active_labels if label not in previous_statuses]
+    return active_labels
 
 
 def _build_student_assigned_test_items(
@@ -836,19 +875,10 @@ def _student_assigned_tests_for_date(
     if not log_labels:
         _collect_assigned_test_metadata(fallback_logs_map, date, sid, by_label, log_labels, daily_labels)
 
-    history_logs_map = fallback_logs_map if isinstance(fallback_logs_map, dict) else logs_map
-    previous_statuses = _latest_previous_test_statuses_from_sources(
-        progress_all,
-        history_logs_map,
-        date,
-        sid,
-    )
-
     labels = _student_assigned_test_labels(
         status_by_label,
         log_labels,
         daily_labels,
-        previous_statuses,
     )
     return _build_student_assigned_test_items(labels, by_label, status_by_label)
 
@@ -1564,6 +1594,44 @@ def _load_updates_with_auto_assign(students=None, videos=None, date_key: str | N
         return fixed
 
 
+def _progress_sids_from_query() -> list[str]:
+    sid_values = request.args.getlist("sid")
+    raw_values = list(request.args.getlist("sids"))
+    if raw_values:
+        raw_values.extend(sid_values)
+    elif len(sid_values) > 1:
+        raw_values.extend(sid_values)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        for part in str(raw or "").split(","):
+            sid = part.strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(sid)
+    return out
+
+
+def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
+    out = {}
+    days = [(date, data.get(date) if isinstance(data, dict) else {})] if date else (data.items() if isinstance(data, dict) else [])
+    for day_key, day in days:
+        if not isinstance(day, dict):
+            continue
+        filtered = {}
+        for sid in sids:
+            entry = _sid_lookup(day, sid)
+            if isinstance(entry, dict) and entry:
+                filtered[str(sid)] = entry
+        if filtered:
+            out[str(day_key)] = filtered
+    if date and date not in out:
+        out[date] = {}
+    return out
+
+
 # ─────────────────────────────────────────────
 # 기본 API
 # ─────────────────────────────────────────────
@@ -1589,15 +1657,21 @@ def api_progress():
     data = _load_progress_strict()
     date = str(request.args.get("date") or "").strip()
     sid = str(request.args.get("sid") or "").strip()
+    sids = _progress_sids_from_query()
 
     if date:
         if not DATE_RE.match(date):
             return jsonify({"ok": False, "error": "bad date"}), 400
         day = data.get(date) if isinstance(data, dict) else {}
+        if sids:
+            return jsonify(_progress_for_sids(data, sids, date=date))
         if sid:
             entry = _sid_lookup(day if isinstance(day, dict) else {}, sid) or {}
             return jsonify({date: {str(sid): entry}})
         return jsonify({date: day if isinstance(day, dict) else {}})
+
+    if sids:
+        return jsonify(_progress_for_sids(data, sids))
 
     if sid:
         out = {}
