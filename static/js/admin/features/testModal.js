@@ -6,15 +6,18 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 
+const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
+const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
 const CATEGORY_DEFS = [
   { key: 'REVIEW', label: '복습 테스트', short: '복습', difficulties: ['상', '중상'] },
   { key: 'UNIT', label: '단원평가', short: '단원', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', short: '학군지', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['상', '중'] },
+  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
 ];
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
 const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
 const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
+const STUDENT_LEVELS = ['하', '중', '중상', '상'];
 const ROUND_OPTIONS = ['1', '2', '3'];
 const TERM_OPTIONS = ['중간고사', '기말고사'];
 const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
@@ -144,17 +147,25 @@ function canonicalCategoryKey(key, label = '') {
   return String(key || '').trim();
 }
 
+function isIlsanGraphDifficultyText(source) {
+  const text = String(source || '');
+  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes('그래프');
+}
+
 function normalizeDifficulty(categoryKey, raw, name = '') {
   const text = String(raw || '').trim();
-  if (categoryKey === 'ILSAN_PAST' && text === '중상') return '중';
+  const source = `${text} ${name}`;
+  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
   const def = CATEGORY_BY_KEY[categoryKey];
   if (def?.difficulties.includes(text)) return text;
 
-  const source = `${text} ${name}`;
   const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return categoryKey === 'ILSAN_PAST' ? '중' : '중상';
-  if (source.includes('상')) return '상';
+  if (source.includes('중상')) return '중상';
+  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
 
   return def?.difficulties?.[0] || '';
 }
@@ -224,15 +235,19 @@ function normalizeAssignmentStatus(status) {
 function testStatusLabel(status, submitted = false) {
   if (submitted) return '완료';
   const s = normalizeAssignmentStatus(status);
-  return s ? (TEST_STATUS_LABELS[s] || '배정') : '미배정';
+  return s ? (TEST_STATUS_LABELS[s] || '배정') : '';
 }
 
 function nextStatusOf(status) {
   const s = normalizeAssignmentStatus(status);
-  if (!s) return 'assigned';
-  if (s === 'skip') return '';
-  if (s === 'assigned' || s === 'done') return 'interrupted';
+  if (!s || s === 'skip') return 'assigned';
+  if (s === 'assigned') return 'interrupted';
+  if (s === 'interrupted') return 'done';
   return '';
+}
+
+function nextExcludedStatusOf(status) {
+  return normalizeAssignmentStatus(status) === 'skip' ? '' : 'skip';
 }
 
 function statusForKey(key) {
@@ -284,10 +299,21 @@ function normalizeConfig(cfg) {
   const ilsanRules = out.autoAssignRules?.ILSAN_PAST;
   if (ilsanRules && typeof ilsanRules === 'object') {
     Object.values(ilsanRules).forEach(subjectRules => {
-      if (!subjectRules || typeof subjectRules !== 'object' || !Array.isArray(subjectRules['중상'])) return;
-      const current = Array.isArray(subjectRules['중']) ? subjectRules['중'] : [];
-      subjectRules['중'] = Array.from(new Set([...current, ...subjectRules['중상']].map(String)));
-      delete subjectRules['중상'];
+      if (!subjectRules || typeof subjectRules !== 'object') return;
+      const mergeLevels = (target, ...sources) => {
+        const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
+        const next = [...current];
+        sources.forEach(sourceKey => {
+          if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
+          if (sourceKey !== target) delete subjectRules[sourceKey];
+        });
+        subjectRules[target] = Array.from(new Set(next.map(String)));
+      };
+      mergeLevels('중상', '상');
+      mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
+      CATEGORY_BY_KEY.ILSAN_PAST.difficulties.forEach(difficulty => {
+        subjectRules[difficulty] = STUDENT_LEVELS.slice();
+      });
     });
   }
 
@@ -317,6 +343,7 @@ function autoAssignRuleAllowsDifficulty(categoryKey, subject, difficulty, studen
 function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) {
   const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
   const difficulties = def?.difficulties || [];
+  if (categoryKey === 'ILSAN_PAST') return difficulties.slice();
   const level = canonText(student?.level);
   const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
   if (level && rules && typeof rules === 'object') {
@@ -329,6 +356,9 @@ function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) 
 }
 
 function visibleDifficultyValues() {
+  if (activeCategory === 'ILSAN_PAST') {
+    return (CATEGORY_BY_KEY.ILSAN_PAST?.difficulties || []).slice();
+  }
   const assignedDifficulties = ruleDefaultDifficulties(activeCategory, activeSubject, activeStudent);
   if (
     !isUnitCategory(activeCategory) &&
@@ -348,6 +378,7 @@ function difficultyBadgeTone(categoryKey, difficulty) {
 
 function shouldDefaultExcludeTest(test) {
   if (!test) return false;
+  if (test.categoryKey === 'ILSAN_PAST') return false;
   const subject = normalizeSubject(test.curriculum);
   const allowed = autoAssignRuleAllowsDifficulty(test.categoryKey, subject, test.difficulty, activeStudent);
   return allowed === false;
@@ -453,9 +484,12 @@ function collectCatalog(cfg) {
   };
 
   out.sort((a, b) => {
+    const aDifficulties = CATEGORY_BY_KEY[a.categoryKey]?.difficulties || [];
+    const bDifficulties = CATEGORY_BY_KEY[b.categoryKey]?.difficulties || [];
     const base =
       rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
       rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
+      rankIn(aDifficulties, a.difficulty) - rankIn(bDifficulties, b.difficulty) ||
       String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
     if (base) return base;
     if (isUnitCategory(a.categoryKey) && isUnitCategory(b.categoryKey)) {
@@ -908,6 +942,7 @@ function ensureStyles() {
     #testModal .test-row[data-state="done"] .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-row[data-state="interrupted"] .test-status{ background:#f59e0b; color:#111827; }
     #testModal .test-row[data-state="skip"] .test-status{ background:#ef4444; color:#fff; }
+    #testModal .test-row[data-state="none"] .test-status{ display:none; }
     #testModal .test-row.is-done .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-note-option{
       display:flex; align-items:center; gap:7px; padding:9px 10px; border:1px solid #e5e7eb;
@@ -1335,6 +1370,7 @@ function bindEventsOnce() {
   let startStatus = '';
   let startIndex = -1;
   let suppressClickOnce = false;
+  let suppressContextOnce = false;
   let dragRows = [];
   let dragInitialStatuses = [];
 
@@ -1365,7 +1401,7 @@ function bindEventsOnce() {
 
     if (!dragActive) {
       dragActive = true;
-      dragTarget = dragButton === 2 ? 'skip' : nextStatusOf(startStatus);
+      dragTarget = dragButton === 2 ? nextExcludedStatusOf(startStatus) : nextStatusOf(startStatus);
     }
     applyDragRange(row);
     testSelectionTouched = true;
@@ -1451,7 +1487,12 @@ function bindEventsOnce() {
     const row = testRowFromTarget(e.target);
     if (!row || row.disabled) return;
     e.preventDefault();
-    applyTestRowStatus(row, 'skip');
+    if (suppressContextOnce) {
+      suppressContextOnce = false;
+      return;
+    }
+    const key = row.dataset.testKey || '';
+    applyTestRowStatus(row, nextExcludedStatusOf(statusForKey(key)));
     testSelectionTouched = true;
   });
 
@@ -1459,6 +1500,7 @@ function bindEventsOnce() {
     if (!pointerDown) return;
     pointerDown = false;
     if (dragActive && dragButton === 0) suppressClickOnce = true;
+    if (dragActive && dragButton === 2) suppressContextOnce = true;
 
     dragActive = false;
     dragTarget = null;

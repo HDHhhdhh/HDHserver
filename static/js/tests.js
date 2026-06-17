@@ -6,12 +6,14 @@ import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './sh
 
 const $ = (sel) => document.querySelector(sel);
 const CT = { 'Content-Type': 'application/json' };
+const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
+const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
 
 const CATEGORY_DEFS = [
   { key: 'REVIEW', label: '복습 테스트', difficulties: ['상', '중상'] },
   { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['상', '중'] },
+  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
 ];
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
 const STATS_TYPE_LABELS = {
@@ -84,9 +86,11 @@ function defaultTwoBandRules() {
 function defaultIlsanRules() {
   const out = {};
   SUBJECTS.forEach(subject => {
+    const allLevels = STUDENT_LEVELS.slice();
     out[subject] = {
-      '상': ['상', '중상'],
-      '중': ['중', '하'],
+      '중': allLevels.slice(),
+      '중상': allLevels.slice(),
+      [ILSAN_GRAPH_DIFFICULTY]: allLevels.slice(),
     };
   });
   return out;
@@ -161,17 +165,25 @@ function categoryKeyFrom(rawKey, label = '') {
   return String(rawKey || '').trim();
 }
 
+function isIlsanGraphDifficultyText(source) {
+  const text = String(source || '');
+  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes('그래프');
+}
+
 function normalizeDifficulty(categoryKey, raw, name = '') {
   const text = String(raw || '').trim();
-  if (categoryKey === 'ILSAN_PAST' && text === '중상') return '중';
+  const source = `${text} ${name}`;
+  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
   const def = CATEGORY_BY_KEY[categoryKey];
   if (def?.difficulties.includes(text)) return text;
 
-  const source = `${text} ${name}`;
   const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return categoryKey === 'ILSAN_PAST' ? '중' : '중상';
-  if (source.includes('상')) return '상';
+  if (source.includes('중상')) return '중상';
+  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
   return def?.difficulties?.[0] || '';
 }
 
@@ -222,17 +234,25 @@ function ensureConfig(raw) {
       if (!cfg.autoAssignRules[def.key][subject] || typeof cfg.autoAssignRules[def.key][subject] !== 'object') {
         cfg.autoAssignRules[def.key][subject] = {};
       }
-      if (def.key === 'ILSAN_PAST' && Array.isArray(cfg.autoAssignRules[def.key][subject]['중상'])) {
-        const prev = cfg.autoAssignRules[def.key][subject]['중상'];
-        const current = Array.isArray(cfg.autoAssignRules[def.key][subject]['중'])
-          ? cfg.autoAssignRules[def.key][subject]['중']
-          : [];
-        cfg.autoAssignRules[def.key][subject]['중'] = Array.from(new Set([...current, ...prev].map(String)));
-        delete cfg.autoAssignRules[def.key][subject]['중상'];
+      if (def.key === 'ILSAN_PAST') {
+        const subjectRules = cfg.autoAssignRules[def.key][subject];
+        const mergeLevels = (target, ...sources) => {
+          const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
+          const next = [...current];
+          sources.forEach(sourceKey => {
+            if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
+            if (sourceKey !== target) delete subjectRules[sourceKey];
+          });
+          subjectRules[target] = Array.from(new Set(next.map(String)));
+        };
+        mergeLevels('중상', '상');
+        mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
       }
       const defaults = DEFAULT_RULES[def.key]?.[subject] || {};
       Object.entries(defaults).forEach(([difficulty, levels]) => {
-        if (!Array.isArray(cfg.autoAssignRules[def.key][subject][difficulty])) {
+        if (def.key === 'ILSAN_PAST') {
+          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
+        } else if (!Array.isArray(cfg.autoAssignRules[def.key][subject][difficulty])) {
           cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
         }
       });
@@ -774,6 +794,7 @@ function downloadCsvTemplate() {
     ['단원평가', '공수1', 'Lv.4', '', '1', '원의 방정식 Lv.4', '20', '', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
     ['학군지 기출', '공수1', '상', '중간고사', '1', '학군지 기출 공수1 중간고사 상 1회차', '20', '1 2 3 4', '', '', ''],
     ['일산 기출', '대수', '중', '기말고사', '1', '일산 기출 대수 기말고사 중 1회차', '20', '1 2 3 4', '', '', ''],
+    ['일산 기출', '대수', ILSAN_GRAPH_DIFFICULTY, '기말고사', '2', '그래프 포함 일산 기출 대수 기말고사 2회차', '20', '1 2 3 4', '', '', ''],
   ];
   const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });

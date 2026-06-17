@@ -6,7 +6,7 @@ import re
 import time
 from typing import Tuple
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from core.ghost_student import (
     GHOST_STUDENT_WRITE_ERROR,
@@ -22,6 +22,7 @@ from core.storage import load, save_atomic, nocache_resp, utc_now_isoz
 
 bp_api_tests = Blueprint("api_tests", __name__)
 TEST_TYPE_ORDER = ("REVIEW", "UNIT", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
+OCR_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 TEST_LEVEL_RE = re.compile(r"""
   (?:\(|\[)?\s*
@@ -293,12 +294,30 @@ def _finalize_stats_agg(agg: dict) -> dict | None:
         "pct_hist": dict(agg["pct_hist"]),
     }
 
+def _strip_answer_line_number(line: str) -> tuple[int | None, str]:
+    match = re.match(r"^\s*(\d{1,3})\s*[\.\):：\-]\s*(.+?)\s*$", line)
+    if not match:
+        return None, line.strip()
+    return int(match.group(1)), match.group(2).strip()
+
+
 def _parse_answer_spec(text: str, problems: int) -> list[str]:
     s = str(text or "").strip()
     if not s:
         return [""] * problems
 
-    if re.search(r"[\s,]", s):
+    lines = [line.strip() for line in s.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+    numbered_rows = [_strip_answer_line_number(line) for line in lines]
+    if numbered_rows and any(no is not None for no, _answer in numbered_rows):
+        arr = [""] * problems
+        for no, answer in numbered_rows:
+            if no is None or no < 1 or no > problems:
+                continue
+            arr[no - 1] = answer
+        return arr
+    if len(lines) > 1:
+        arr = [answer for _no, answer in numbered_rows]
+    elif re.search(r"[\s,]", s):
         arr = [v.strip() for v in re.split(r"[\s,]+", s) if v.strip()]
     else:
         arr = [ch.strip() for ch in list(s) if ch.strip()]
@@ -374,6 +393,104 @@ def _grade_answers(answers: list[str], key: list[str]) -> tuple[int, int, list[i
             wrong.append(i+1)
     pct = round((correct / total) * 100.0, 2) if total > 0 else 0.0
     return correct, total, wrong, pct
+
+
+def _ocr_preview_items(raw_items, answers: list[str], problems: int) -> list[dict[str, str | int | float]]:
+    source_items = raw_items if isinstance(raw_items, list) else []
+    out = []
+    for idx in range(problems):
+        item = {"no": idx + 1, "answer": answers[idx] if idx < len(answers) else ""}
+        if idx < len(source_items) and isinstance(source_items[idx], dict):
+            confidence = source_items[idx].get("confidence")
+            if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+                item["confidence"] = round(float(confidence), 4)
+        out.append(item)
+    return out
+
+
+@bp_api_tests.post("/api/ocr-test-sheet")
+def ocr_test_sheet():
+    try:
+        from core.ocr_test_sheet import (
+            OcrConfigError,
+            OcrInputError,
+            OcrRemoteError,
+            extract_test_sheet_answers,
+        )
+    except ImportError:
+        return jsonify({"ok": False, "error": "OCR 모듈을 불러오지 못했습니다.", "warnings": []}), 503
+
+    sid = str(request.form.get("sid") or "").strip()
+    test_id = str(request.form.get("testId") or "").strip()
+    round_raw = str(request.form.get("round") or "1").strip()
+    image_file = request.files.get("image")
+
+    if not sid:
+        return jsonify({"ok": False, "error": "sid required", "warnings": []}), 400
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR, "warnings": []}), 403
+    if not test_id:
+        return jsonify({"ok": False, "error": "testId required", "warnings": []}), 400
+    try:
+        round_no = int(round_raw or "1")
+    except ValueError:
+        return jsonify({"ok": False, "error": "round must be 1, 2, or 3", "warnings": []}), 400
+    if round_no not in (1, 2, 3):
+        return jsonify({"ok": False, "error": "round must be 1, 2, or 3", "warnings": []}), 400
+    if image_file is None:
+        return jsonify({"ok": False, "error": "image required", "warnings": []}), 400
+
+    cfg = _load_tests_cfg()
+    test_def = _find_test_def_by_id(cfg, test_id)
+    if not isinstance(test_def, dict):
+        return jsonify({"ok": False, "error": "cannot grade: missing test definition (testId)", "warnings": []}), 400
+
+    try:
+        problems = int(test_def.get("problems") or 0)
+    except (TypeError, ValueError):
+        problems = 0
+    if problems <= 0:
+        return jsonify({"ok": False, "error": "cannot grade: missing test definition (testId)", "warnings": []}), 400
+
+    key = _get_answer_key_for_round(test_def, problems, round_no)
+    if not key:
+        return jsonify({"ok": False, "error": "cannot grade: missing answer key", "warnings": []}), 400
+
+    filename = str(image_file.filename or "")
+    image_bytes = image_file.read(OCR_MAX_IMAGE_BYTES + 1)
+    try:
+        result = extract_test_sheet_answers(
+            image_bytes=image_bytes,
+            filename=filename,
+            mime_type=str(image_file.mimetype or ""),
+        )
+    except OcrInputError as exc:
+        return jsonify({"ok": False, "error": str(exc), "warnings": list(getattr(exc, "warnings", []))}), 400
+    except OcrConfigError as exc:
+        return jsonify({"ok": False, "error": str(exc), "warnings": list(getattr(exc, "warnings", []))}), 503
+    except OcrRemoteError as exc:
+        return jsonify({"ok": False, "error": str(exc), "warnings": list(getattr(exc, "warnings", []))}), 500
+    except Exception as exc:
+        current_app.logger.exception("ocr-test-sheet failed")
+        return jsonify({"ok": False, "error": "OCR 처리 중 오류가 발생했습니다.", "warnings": []}), 500
+
+    answers_text = str(result.answers_text or "").strip()
+    if not answers_text:
+        return jsonify({"ok": False, "error": "OCR 결과에서 답안을 찾지 못했습니다.", "warnings": result.warnings}), 422
+
+    answers = _parse_answer_spec(answers_text, problems)
+    correct, total, wrong, pct = _grade_answers(answers, key)
+
+    return jsonify({
+        "ok": True,
+        "answersText": answers_text,
+        "score": f"{correct}/{total}",
+        "wrong": wrong,
+        "pct": pct,
+        "items": _ocr_preview_items(result.items, answers, total),
+        "warnings": list(result.warnings),
+    })
+
 
 @bp_api_tests.post('/api/submit-test')
 def submit_test():

@@ -2865,6 +2865,22 @@ body.student-page select {
   border-radius: 8px;
 }
 
+body.student-page #setPanel .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.student-page #setPanel input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--stu-accent);
+}
+
 body.student-page .announce-modal {
   padding: clamp(12px, 2vw, 24px);
 }
@@ -2877,6 +2893,15 @@ body.student-page #announceHistoryModal .announce-close {
   body.student-page {
     max-width: calc(100vw - 12px);
     margin-top: 6px;
+  }
+
+  body.student-page #setPanel {
+    left: 8px;
+    top: 128px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100vh - 144px);
+    overflow-y: auto;
   }
 
   body.student-page .hero-bar {
