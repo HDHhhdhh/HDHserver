@@ -16,9 +16,12 @@ progress.json.*.tmp
 /files/
 /instance/
 /.codex/
+/.codex-backups/
 /.codex-remote-attachments/
 /.codex_drive_download/
 /generated/
+/.omo/evidence/
+/.omo/plans/
 /.omo/ulw-loop/
 /worktrees/
 /static/js/test_answer_link_map.js
