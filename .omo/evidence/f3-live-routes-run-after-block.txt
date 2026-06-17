@@ -1,2 +1,0 @@
-f3-live-routes-qa-ok
-exit_code=0

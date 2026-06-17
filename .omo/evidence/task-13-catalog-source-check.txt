@@ -1,2 +1,0 @@
-unit ok: run_catalog_script_safety_source_checks
-exit=0

@@ -1,4 +1,0 @@
-stopped_pid=32796
-checked_at=2026-06-08T01:55:41+09:00
-netstat_listening:
-no LISTENING entries

@@ -1,2 +1,0 @@
-400
-{'error': 'missing sid', 'ok': False}

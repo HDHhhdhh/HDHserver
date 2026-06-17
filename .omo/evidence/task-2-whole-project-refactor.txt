@@ -1,2 +1,0 @@
-[]
-PASS log entry route delegates safely

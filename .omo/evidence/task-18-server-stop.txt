@@ -1,9 +1,0 @@
-Task 18 server cleanup receipt
-No new server was started for Task 18 inventory verification.
-pid: none required for Task 18
-port 5000: no listen
-port 8003: no listen
-port 8765: no listen
-port 8788: no listen
-port 19009: no listen
-cleanup result: no listen on checked QA ports

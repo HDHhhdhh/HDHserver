@@ -1,5 +1,0 @@
-status 400
-payload {'error': 'bad date', 'ok': False}
-runtime_diff []
-task2-date-contract-ok
-exit_code=0

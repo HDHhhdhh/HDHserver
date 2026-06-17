@@ -1,2 +1,0 @@
-font-ok
-exit=0

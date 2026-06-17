@@ -1,2 +1,0 @@
-unit ok: run_admin_css_scope_source_checks
-exit=0

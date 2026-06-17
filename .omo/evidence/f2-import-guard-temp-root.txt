@@ -1,2 +1,0 @@
-app import smoke skipped because importing app could create runtime files
-import-guard-temp-root-ok
