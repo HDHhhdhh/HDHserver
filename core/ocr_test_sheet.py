@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,9 @@ MISSING_OCR_RUNTIME: Final[str] = "missing_ocr_runtime"
 MISSING_LOCAL_OCR_ENGINE: Final[str] = "missing_local_ocr_engine"
 MANUAL_REVIEW_REQUIRED: Final[str] = "manual_review_required"
 OCR_RUNTIME_TIMEOUT_SECONDS: Final[float] = 60.0
+OCR_RUNTIME_CACHE_DIR_ENV: Final[str] = "OCR_RUNTIME_CACHE_DIR"
+PADDLE_CACHE_HOME_ENV: Final[str] = "PADDLE_PDX_CACHE_HOME"
+PADDLE_DISABLE_MODEL_SOURCE_CHECK_ENV: Final[str] = "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"
 
 
 class OcrError(RuntimeError):
@@ -137,6 +141,7 @@ def _recognize_validated_image(image_bytes: bytes, *, suffix: str) -> OcrResult:
 def _run_worker(image_path: Path) -> WorkerResponse:
     paths = _runtime_paths()
     _ensure_runtime_ready(paths)
+    env = _worker_environment(paths)
     command = [str(paths.python_exe), str(paths.worker_script), "--image", str(image_path)]
     try:
         completed = subprocess.run(
@@ -147,6 +152,7 @@ def _run_worker(image_path: Path) -> WorkerResponse:
             text=True,
             timeout=OCR_RUNTIME_TIMEOUT_SECONDS,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise OcrRemoteError("OCR 처리 시간이 초과되었습니다.", [MANUAL_REVIEW_REQUIRED]) from exc
@@ -162,6 +168,19 @@ def _run_worker(image_path: Path) -> WorkerResponse:
     if completed.returncode != 0 and response.ok:
         raise OcrRemoteError("OCR worker 종료 코드가 올바르지 않습니다.", [MANUAL_REVIEW_REQUIRED])
     return response
+
+
+def _worker_environment(paths: OcrRuntimePaths) -> Mapping[str, str]:
+    cache_home = Path(os.environ.get(OCR_RUNTIME_CACHE_DIR_ENV, str(paths.worker_script.parent / "paddlex-cache")))
+    try:
+        cache_home.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OcrConfigError("OCR 모델 캐시 디렉터리를 만들지 못했습니다.", [MISSING_OCR_RUNTIME]) from exc
+
+    env = os.environ.copy()
+    env[PADDLE_CACHE_HOME_ENV] = str(cache_home)
+    env.setdefault(PADDLE_DISABLE_MODEL_SOURCE_CHECK_ENV, "True")
+    return env
 
 
 def _runtime_paths() -> OcrRuntimePaths:

@@ -440,22 +440,6 @@ def ocr_test_sheet():
     if image_file is None:
         return jsonify({"ok": False, "error": "image required", "warnings": []}), 400
 
-    cfg = _load_tests_cfg()
-    test_def = _find_test_def_by_id(cfg, test_id)
-    if not isinstance(test_def, dict):
-        return jsonify({"ok": False, "error": "cannot grade: missing test definition (testId)", "warnings": []}), 400
-
-    try:
-        problems = int(test_def.get("problems") or 0)
-    except (TypeError, ValueError):
-        problems = 0
-    if problems <= 0:
-        return jsonify({"ok": False, "error": "cannot grade: missing test definition (testId)", "warnings": []}), 400
-
-    key = _get_answer_key_for_round(test_def, problems, round_no)
-    if not key:
-        return jsonify({"ok": False, "error": "cannot grade: missing answer key", "warnings": []}), 400
-
     filename = str(image_file.filename or "")
     image_bytes = image_file.read(OCR_MAX_IMAGE_BYTES + 1)
     try:
@@ -478,16 +462,10 @@ def ocr_test_sheet():
     if not answers_text:
         return jsonify({"ok": False, "error": "OCR 결과에서 답안을 찾지 못했습니다.", "warnings": result.warnings}), 422
 
-    answers = _parse_answer_spec(answers_text, problems)
-    correct, total, wrong, pct = _grade_answers(answers, key)
-
     return jsonify({
         "ok": True,
         "answersText": answers_text,
-        "score": f"{correct}/{total}",
-        "wrong": wrong,
-        "pct": pct,
-        "items": _ocr_preview_items(result.items, answers, total),
+        "items": list(result.items),
         "warnings": list(result.warnings),
     })
 

@@ -15,6 +15,10 @@ _ANSWER_LABEL_RE: Final[re.Pattern[str]] = re.compile(
     r"^(?:답|정답|answer|ans)\s*[:：]?\s*",
     re.IGNORECASE,
 )
+_NON_ANSWER_LINE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:synthetic\s+ocr\s+answer\s+sheet|ocr\s+answer\s+sheet|answer\s+sheet|답안|답안지)\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,13 +29,15 @@ class OcrLine:
 
 def extract_answers_text_from_ocr_lines(lines: Sequence[OcrLine]) -> str:
     answers: list[str] = []
+    seen_answers: set[str] = set()
     for line in lines:
         text = normalize_ocr_text(line.text)
-        if not text:
+        if not text or _is_non_answer_line(text):
             continue
         for part in _split_inline_numbered_answers(text):
             answer = _strip_answer_prefix(part)
-            if answer:
+            if answer and answer not in seen_answers and not _is_non_answer_line(answer):
+                seen_answers.add(answer)
                 answers.append(answer)
     return "\n".join(answers)
 
@@ -68,3 +74,7 @@ def _strip_answer_prefix(text: str) -> str:
     cleaned = _NUMBER_PREFIX_RE.sub("", cleaned)
     cleaned = cleaned.strip(" \t:：")
     return cleaned
+
+
+def _is_non_answer_line(text: str) -> bool:
+    return bool(_NON_ANSWER_LINE_RE.fullmatch(text.strip()))
