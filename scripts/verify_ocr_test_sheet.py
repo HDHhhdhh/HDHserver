@@ -109,19 +109,13 @@ def assert_route_fails_without_writes() -> None:
     assert "missing_ocr_runtime" in payload["warnings"]
 
 
-def assert_route_returns_grade_preview_without_writes() -> None:
+def assert_route_returns_answer_preview_without_writes() -> None:
     before = TESTS_PATH.read_bytes() if TESTS_PATH.exists() else b""
     app = create_app()
     client = app.test_client()
     test_id, round_no, key = first_gradeable_test()
-    answers = list(key)
-    wrong_index = next(index for index, answer in enumerate(answers) if str(answer or "").strip())
-    answers[wrong_index] = "__ocr_wrong__"
-    answers_text = "\n".join(f"{index + 1}. {answer}" for index, answer in enumerate(answers))
-    expected_correct, expected_total, expected_wrong, expected_pct = api_tests._grade_answers(
-        api_tests._parse_answer_spec(answers_text, len(key)),
-        key,
-    )
+    answers_text = "\n".join(f"{index + 1}. {answer}" for index, answer in enumerate(key))
+    preview_items = [{"number": 1, "answer": str(key[0] or "").strip(), "raw": f"1. {key[0]}"}]
 
     original_extract = ocr_module.extract_test_sheet_answers
 
@@ -129,7 +123,7 @@ def assert_route_returns_grade_preview_without_writes() -> None:
         assert image_bytes
         assert filename
         assert mime_type
-        return OcrResult(answers_text=answers_text, items=[], warnings=["테스트 경고"])
+        return OcrResult(answers_text=answers_text, items=preview_items, warnings=["테스트 경고"])
 
     ocr_module.extract_test_sheet_answers = fake_extract_test_sheet_answers
     try:
@@ -152,15 +146,15 @@ def assert_route_returns_grade_preview_without_writes() -> None:
     payload = response.get_json()
     assert payload["ok"] is True
     assert payload["answersText"] == answers_text
-    assert payload["score"] == f"{expected_correct}/{expected_total}"
-    assert payload["wrong"] == expected_wrong
-    assert payload["pct"] == expected_pct
-    assert payload["items"][wrong_index]["answer"] == "__ocr_wrong__"
+    assert payload["items"] == preview_items
+    assert "score" not in payload
+    assert "wrong" not in payload
+    assert "pct" not in payload
     assert "테스트 경고" in payload["warnings"]
 
 
 if __name__ == "__main__":
     assert_config_error()
     assert_route_fails_without_writes()
-    assert_route_returns_grade_preview_without_writes()
+    assert_route_returns_answer_preview_without_writes()
     print("verify_ocr_test_sheet: ok")
