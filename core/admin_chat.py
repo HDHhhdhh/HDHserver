@@ -139,6 +139,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "학생 화면의 오늘 테스트는 assigned(배정)와 interrupted(배부) 상태를 날짜/신규 여부와 무관하게 보여주며, 명단 내보내기는 assigned(배정) 상태를 계속 출력합니다. "
             "하원/숙검하원/기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸며, 결석 처리는 assigned 테스트를 interrupted(배부)로 바꿉니다. "
             "테스트 배정 팝업은 좌클릭/드래그로 없음→배정→배부→완료를 순환하고, 우클릭/드래그로 없음↔제외를 토글합니다. "
+            "상담 기록 자동 블록은 당일 배부/완료 테스트를 한 줄씩 남기며, 완료는 오늘 assigned(초록)에서 done(파랑)으로 바뀐 경우만 표시합니다. "
             "일산 기출은 학생 레벨과 무관하게 대수 전체 시험지를 중, 중상, 그래프 포함 순서로 보여주며 기존 상 난이도는 중상으로 취급합니다. "
             "단원평가/복습 테스트/학군지 기출/일산 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
             "REVIEW/SCHOOL_PAST/ILSAN_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다. "
@@ -224,7 +225,13 @@ DOC_SOURCES = [
 ]
 
 
-def answer_admin_chat(message: str, *, now: dt.datetime | None = None) -> dict[str, Any]:
+def answer_admin_chat(
+    message: str,
+    *,
+    now: dt.datetime | None = None,
+    context: Any = None,
+    history: Any = None,
+) -> dict[str, Any]:
     query = _clean_text(message)[:MAX_QUERY_LEN]
     today = _resolve_query_date(query, now=now)
 
@@ -234,6 +241,24 @@ def answer_admin_chat(message: str, *, now: dt.datetime | None = None) -> dict[s
             cards=[_overview_card(today)],
             suggestions=_default_suggestions(today),
             sources=["students.json", "videos.json", "AGENTS.md"],
+        )
+
+    demo_tokens = ("demo", "체험판", "/demo/rh3123", "/dh1130")
+    if any(token in _norm(query) for token in demo_tokens):
+        return _payload(
+            "관리자 체험판은 /demo/rh3123에서 시작하며, 실제 /admin과 연계 페이지를 브라우저 안의 격리된 더미 데이터로 실행합니다.",
+            cards=[
+                {
+                    "title": "관리자 체험판",
+                    "lines": [
+                        "/dh1130은 운영 관리자 화면 alias이고, /demo/rh3123, /demo/rh3123/students, /demo/rh3123/school-cal, /demo/rh3123/video-manage, /demo/rh3123/tests는 기존 UI를 그대로 쓰는 조교 교육용 체험판입니다.",
+                        "체험판 API와 챗봇 요청은 demo fetch 계층에서 더미 학생, 학교일정, 영상, 로그, 테스트 데이터로 응답하며 운영 JSON이나 SQLite 데이터를 읽거나 노출하지 않아야 합니다.",
+                        "이 백엔드 답변은 유지보수용 안내만 제공하고 실제 demo 모드의 /api/admin/chat 요청은 브라우저 fetch 인터셉터가 처리합니다.",
+                    ],
+                }
+            ],
+            suggestions=_default_suggestions(today),
+            sources=["routes/pages.py", "static/js/admin/demo/bootstrap.js", "static/js/admin/demo/fetch.js", "static/js/admin/demo/tutorial.js", "static/js/admin/demo/store.js"],
         )
 
     students = _as_list(_safe_load(STU_PATH, []))

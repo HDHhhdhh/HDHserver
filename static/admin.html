@@ -404,16 +404,17 @@
   <aside id="adminChatPanel" class="admin-chat-panel" aria-labelledby="adminChatTitle" hidden>
     <header class="admin-chat-head">
       <div>
-        <span class="admin-chat-kicker">LOCAL SEARCH</span>
-        <h3 id="adminChatTitle">관리자 챗봇</h3>
+        <span class="admin-chat-kicker">LOCAL HYBRID</span>
+        <h3 id="adminChatTitle">운영 AI 어시스턴트</h3>
+        <p class="admin-chat-subtitle">선택 날짜와 최근 대화를 참고해 답합니다.</p>
       </div>
       <button id="adminChatClose" class="admin-chat-icon-btn" type="button" aria-label="챗봇 닫기">×</button>
     </header>
     <div id="adminChatMessages" class="admin-chat-messages" aria-live="polite"></div>
     <div id="adminChatSuggestions" class="admin-chat-suggestions" aria-label="챗봇 추천 질문"></div>
     <form id="adminChatForm" class="admin-chat-form" autocomplete="off">
-      <textarea id="adminChatInput" rows="2" maxlength="600" placeholder="학생 이름, 날짜, 보강/기능을 입력"></textarea>
-      <button class="btn admin-chat-send" type="submit">전송</button>
+      <textarea id="adminChatInput" rows="2" maxlength="600" placeholder="학생, 날짜, 기능, 운영 질문을 자연스럽게 입력"></textarea>
+      <button class="btn admin-chat-send" type="submit">보내기</button>
     </form>
   </aside>
 
@@ -467,6 +468,7 @@
     </div>
   </div>
 
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
   <script type="module" src="/js/admin/main.js?v=20260527chat"></script>
 </body>
 </html>

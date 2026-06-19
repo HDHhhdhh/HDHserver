@@ -54,9 +54,23 @@ const $ = id => document.getElementById(id);
     function extractKollusMid(url) {
         const raw = String(url || '').trim();
         if (!raw) return '';
+        if (window.__adminDemo?.enabled) {
+            const demoAsset = raw.match(/\/demo-assets\/videos\/([^/?#]+?)(?:\.[A-Za-z0-9]+)?(?:[?#].*)?$/i);
+            if (demoAsset && /^[A-Za-z0-9_-]+$/.test(demoAsset[1])) return demoAsset[1];
+            if (/^demo-[A-Za-z0-9_-]+$/.test(raw)) return raw;
+        }
 
         try {
             const u = new URL(raw, location.origin);
+            if (window.__adminDemo?.enabled && u.hostname === 'demo.invalid') {
+                for (const key of ['mid', 'm', 'media_content_key', 'content_key']) {
+                    const cand = String(u.searchParams.get(key) || '').trim();
+                    if (/^[A-Za-z0-9_-]+$/.test(cand)) return cand;
+                }
+                const parts = u.pathname.split('/').filter(Boolean);
+                const cand = String(parts[parts.length - 1] || '').replace(/\.[A-Za-z0-9]+$/, '');
+                if (/^[A-Za-z0-9_-]+$/.test(cand)) return cand;
+            }
             if (!/kollus\.com$/i.test(u.hostname) && !/\.kollus\.com$/i.test(u.hostname)) return '';
 
             for (const key of ['mid', 'm', 'media_content_key', 'MEDIA_CONTENT_KEY', 'content_key']) {
