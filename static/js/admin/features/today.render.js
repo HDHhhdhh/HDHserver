@@ -520,6 +520,118 @@ function assignedTestItemLabel(item) {
   return pieces.join(' / ');
 }
 
+const TEST_ASSIGN_ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
+const TEST_ASSIGN_LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
+const TEST_ASSIGN_CATEGORY_LABELS = {
+  REVIEW: '복습 테스트',
+  UNIT: '단원평가',
+  SCHOOL_PAST: '학군지 기출',
+  ILSAN_PAST: '일산 기출',
+};
+
+function testAssignmentCategoryLabel(key) {
+  return TEST_ASSIGN_CATEGORY_LABELS[String(key || '').trim()] || String(key || '').trim();
+}
+
+function testAssignmentRoundLabel(value) {
+  const r = String(value || '').trim();
+  if (!r) return '';
+  return /회/.test(r) ? r : `${r}회차`;
+}
+
+function testAssignmentLabel(item) {
+  return String(item?.label || '').trim();
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isIlsanGraphAssignmentItem(item) {
+  const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  const source = `${item?.difficulty || ''} ${item?.name || ''} ${item?.label || ''}`;
+  return categoryKey === 'ILSAN_PAST' && (
+    source.includes(TEST_ASSIGN_ILSAN_GRAPH_DIFFICULTY) ||
+    source.includes(TEST_ASSIGN_LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
+    source.includes('그래프')
+  );
+}
+
+function testAssignmentRecordPrefix(item) {
+  if (isIlsanGraphAssignmentItem(item)) return '일산기출(그래프부터)';
+  const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  const prefix = String(item?.categoryLabel || testAssignmentCategoryLabel(categoryKey) || '')
+    .replace(/\s+/g, '') || categoryKey;
+  const difficulty = String(item?.difficulty || '').trim();
+  return prefix && difficulty ? `${prefix}(${difficulty})` : prefix;
+}
+
+function testAssignmentRecordName(item) {
+  const label = testAssignmentLabel(item);
+  let name = String(item?.name || '').trim();
+  if (!name && label) {
+    name = label.split('/').map(part => part.trim()).filter(Boolean).pop() || label;
+  }
+  if (isIlsanGraphAssignmentItem(item)) {
+    name = name.replace(/^삼각함수\s*그래프\s*포함\s*/u, '').trim();
+  }
+
+  const round = testAssignmentRoundLabel(item?.round);
+  if (round) {
+    name = name.replace(new RegExp(`^${escapeRegExp(round)}\\s*`, 'u'), '').trim();
+  }
+  const rawRound = String(item?.round || '').trim();
+  if (rawRound && rawRound !== round) {
+    name = name.replace(new RegExp(`^${escapeRegExp(rawRound)}\\s*회차\\s*`, 'u'), '').trim();
+  }
+  return name;
+}
+
+function testAssignmentRecordStatusLabel(status) {
+  const normalized = normalizeTestAssignmentStatus(status) || 'assigned';
+  if (normalized === 'done') return '완료';
+  if (normalized === 'assigned' || normalized === 'interrupted') return '배부';
+  return '';
+}
+
+function buildAssignmentNote(items) {
+  const lines = (items || []).map(item => {
+    const status = testAssignmentRecordStatusLabel(item?.status);
+    if (!status) return '';
+    const parts = [
+      testAssignmentRecordPrefix(item),
+      testAssignmentRoundLabel(item?.round),
+      testAssignmentRecordName(item),
+    ].filter(Boolean);
+    const body = parts.length ? parts.join(' ') : testAssignmentLabel(item);
+    return body ? `${body} (${status})` : '';
+  }).filter(Boolean);
+  return lines.join('\n');
+}
+
+function stripAssignmentNoteBlocks(notes) {
+  return String(notes || '')
+    .replace(/(?:^|\n+)\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
+  const current = String(notes || '').trimEnd();
+  const previous = String(previousBlock || '').trim();
+  const replacement = String(nextBlock || '').trim();
+  if (!current) return replacement;
+
+  let base = current;
+  if (previous) {
+    base = base.split(previous).join('');
+  }
+  base = stripAssignmentNoteBlocks(base);
+  if (!replacement) return base;
+  return `${base ? `${base}\n\n` : ''}${replacement}`.trim();
+}
+
 function completeAssignedTestItems(items) {
   if (!Array.isArray(items)) return { changed: false, items: null };
   let changed = false;
@@ -556,6 +668,18 @@ function recordCleanupLogTestPatch(dateKey, sid) {
     const result = completeAssignedTestItems(entry?.[key]);
     if (result.changed) patch[key] = result.items;
   });
+
+  const dailyItems = Array.isArray(patch[TEST_ASSIGN_DAILY_ITEMS_KEY])
+    ? patch[TEST_ASSIGN_DAILY_ITEMS_KEY]
+    : (Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? entry[TEST_ASSIGN_DAILY_ITEMS_KEY] : []);
+  const noteBlock = buildAssignmentNote(dailyItems);
+  if (noteBlock) {
+    patch.testAssignmentNote = noteBlock;
+    const prevNotes = String(entry?.notes || '').trimEnd();
+    const prevBlock = String(entry?.testAssignmentNote || '').trim();
+    const nextNotes = replaceAssignmentNoteBlock(prevNotes, prevBlock, noteBlock);
+    if (nextNotes.trim() !== prevNotes.trim()) patch.notes = nextNotes.trim();
+  }
 
   return patch;
 }

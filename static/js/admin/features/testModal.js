@@ -1138,13 +1138,69 @@ function selectedAssignmentObjects() {
   });
 }
 
-function shouldIncludeInAssignmentNote(item) {
-  const status = normalizeAssignmentStatus(item?.status) || 'assigned';
-  return status === 'assigned' || status === 'done';
+function isAssignmentNoteStatus(status) {
+  const normalized = normalizeAssignmentStatus(status);
+  return normalized === 'assigned' || normalized === 'interrupted' || normalized === 'done';
 }
 
-function assignmentLabel(item) {
+export function shouldIncludeInAssignmentNote(item) {
+  const rawStatus = item && Object.prototype.hasOwnProperty.call(item, 'status') ? item.status : 'assigned';
+  const status = normalizeAssignmentStatus(rawStatus);
+  return status === 'assigned' || status === 'interrupted' || status === 'done';
+}
+
+export function assignmentLabel(item) {
   return String(item?.label || '').trim();
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compactAssignmentCategoryLabel(item) {
+  const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  const label = String(item?.categoryLabel || categoryLabel(categoryKey) || '').replace(/\s+/g, '');
+  return label || categoryKey;
+}
+
+function isIlsanGraphAssignmentItem(item) {
+  const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  return categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(`${item?.difficulty || ''} ${item?.name || ''} ${item?.label || ''}`);
+}
+
+function assignmentRecordPrefix(item) {
+  if (isIlsanGraphAssignmentItem(item)) return '일산기출(그래프부터)';
+  const prefix = compactAssignmentCategoryLabel(item);
+  const difficulty = String(item?.difficulty || '').trim();
+  return prefix && difficulty ? `${prefix}(${difficulty})` : prefix;
+}
+
+function assignmentRecordName(item) {
+  const label = assignmentLabel(item);
+  let name = String(item?.name || '').trim();
+  if (!name && label) {
+    name = label.split('/').map(part => part.trim()).filter(Boolean).pop() || label;
+  }
+  if (isIlsanGraphAssignmentItem(item)) {
+    name = name.replace(/^삼각함수\s*그래프\s*포함\s*/u, '').trim();
+  }
+
+  const round = roundLabel(item?.round);
+  if (round) {
+    name = name.replace(new RegExp(`^${escapeRegExp(round)}\\s*`, 'u'), '').trim();
+  }
+  const rawRound = String(item?.round || '').trim();
+  if (rawRound && rawRound !== round) {
+    name = name.replace(new RegExp(`^${escapeRegExp(rawRound)}\\s*회차\\s*`, 'u'), '').trim();
+  }
+  return name;
+}
+
+function assignmentRecordStatusLabel(status) {
+  const normalized = normalizeAssignmentStatus(status) || 'assigned';
+  if (normalized === 'done') return '완료';
+  if (normalized === 'assigned' || normalized === 'interrupted') return '배부';
+  return '';
 }
 
 function mergeAssignmentItemsByLabel(...groups) {
@@ -1158,29 +1214,35 @@ function mergeAssignmentItemsByLabel(...groups) {
   return Array.from(byLabel.values());
 }
 
-function addedAssignmentNoteItems(items) {
+export function dailyAssignmentNoteItems(items, initialStatusMap = {}) {
   return (items || []).filter(item => {
-    if (!shouldIncludeInAssignmentNote(item)) return false;
-    const previous = normalizeAssignmentStatus(initialTestMap?.[assignmentLabel(item)]);
-    return !shouldIncludeInAssignmentNote({ status: previous });
+    const current = normalizeAssignmentStatus(item?.status) || 'assigned';
+    if (!isAssignmentNoteStatus(current)) return false;
+    const previous = normalizeAssignmentStatus(initialStatusMap?.[assignmentLabel(item)]);
+    if (current === 'done') return previous === 'assigned';
+    return !isAssignmentNoteStatus(previous);
   });
 }
 
-function buildAssignmentNote(items) {
+export function buildAssignmentNote(items) {
   const noteItems = (items || []).filter(shouldIncludeInAssignmentNote);
   if (!noteItems.length) return '';
   const lines = noteItems.map(item => {
-    if (!item || !item.name) return `- ${item.label}`;
-    const status = item.status && item.status !== 'assigned' ? ` (${item.statusLabel || testStatusLabel(item.status)})` : '';
-    const parts = [item.categoryLabel, item.curriculum, item.difficulty];
-    if (item.term) parts.push(item.term);
-    if (item.round) parts.push(roundLabel(item.round));
-    return `- ${parts.filter(Boolean).join(' / ')}: ${item.name}${status}`;
-  });
-  return `[테스트 배정]\n${lines.join('\n')}`;
+    if (!item) return '';
+    const status = assignmentRecordStatusLabel(item.status);
+    if (!status) return '';
+    const parts = [
+      assignmentRecordPrefix(item),
+      roundLabel(item.round),
+      assignmentRecordName(item),
+    ].filter(Boolean);
+    const body = parts.length ? parts.join(' ') : assignmentLabel(item);
+    return body ? `${body} (${status})` : '';
+  }).filter(Boolean);
+  return lines.join('\n');
 }
 
-function stripAssignmentNoteBlocks(notes) {
+export function stripAssignmentNoteBlocks(notes) {
   return String(notes || '')
     .replace(/(?:^|\n+)\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
@@ -1188,7 +1250,7 @@ function stripAssignmentNoteBlocks(notes) {
     .trim();
 }
 
-function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
+export function replaceAssignmentNoteBlock(notes, previousBlock, nextBlock) {
   const current = String(notes || '').trimEnd();
   const previous = String(previousBlock || '').trim();
   const replacement = String(nextBlock || '').trim();
@@ -1335,7 +1397,7 @@ async function saveModal(options = {}) {
   const patchTests = collectTestStatusPatch();
   const hasAnyTestStatus = hasAnyAssignedTestStatus(patchTests);
   const items = selectedAssignmentObjects();
-  const newlyAddedItems = addedAssignmentNoteItems(items);
+  const newlyAddedItems = dailyAssignmentNoteItems(items, initialTestMap);
   const appendToNotes = Boolean($('testAppendNotes')?.checked);
   const latestLogEntry = await fetchLatestLogEntryForAssignment(editingDate, editingSid);
 

@@ -347,15 +347,15 @@ const schoolPastText = taskTextFor({
             name: '운정',
           },
           {
-            label: '일산 기출 / 대수 / 삼각함수 그래프 포함 / 기말고사 / 3회차 / 가좌',
+            label: '일산 기출 / 대수 / 삼각함수 그래프 포함 / 기말고사 / 1회차 / 삼각함수 그래프 포함 1회차 24 가좌',
             status: 'assigned',
             categoryKey: 'ILSAN_PAST',
             categoryLabel: '일산 기출',
             curriculum: '대수',
             difficulty: '삼각함수 그래프 포함',
             term: '기말고사',
-            round: '3',
-            name: '가좌',
+            round: '1',
+            name: '삼각함수 그래프 포함 1회차 24 가좌',
           },
         ],
       },
@@ -369,7 +369,7 @@ const schoolPastText = taskTextFor({
           '학군지 기출 / 대수 / 상 / 기말고사 / 2회차 / 세화여고': 'assigned',
           '일산 기출 / 대수 / 중 / 기말고사 / 1회차 / 저동고': 'assigned',
           '일산 기출 / 대수 / 상 / 기말고사 / 2회차 / 운정': 'assigned',
-          '일산 기출 / 대수 / 삼각함수 그래프 포함 / 기말고사 / 3회차 / 가좌': 'assigned',
+          '일산 기출 / 대수 / 삼각함수 그래프 포함 / 기말고사 / 1회차 / 삼각함수 그래프 포함 1회차 24 가좌': 'assigned',
         },
       },
     },
@@ -393,13 +393,13 @@ if (!schoolPastText.includes('일산기출(중상)(50분) :\n2회차 운정')) {
   console.error(schoolPastText);
   process.exit(1);
 }
-if (!schoolPastText.includes('일산기출(그래프 포함)(50분) :\n3회차 가좌')) {
-  console.error('FAIL ilsan-past export maps legacy graph label');
+if (!schoolPastText.includes('일산기출(그래프부터)(50분) :\n1회차 24 가좌')) {
+  console.error('FAIL ilsan-past export shortens graph label and strips duplicated prefix');
   console.error(schoolPastText);
   process.exit(1);
 }
 if (schoolPastText.indexOf('일산기출(중)(50분)') > schoolPastText.indexOf('일산기출(중상)(50분)') ||
-  schoolPastText.indexOf('일산기출(중상)(50분)') > schoolPastText.indexOf('일산기출(그래프 포함)(50분)')) {
+  schoolPastText.indexOf('일산기출(중상)(50분)') > schoolPastText.indexOf('일산기출(그래프부터)(50분)')) {
   console.error('FAIL ilsan-past export difficulty order');
   console.error(schoolPastText);
   process.exit(1);

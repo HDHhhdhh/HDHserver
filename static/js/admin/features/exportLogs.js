@@ -570,6 +570,24 @@ function stripRosterUnitLevel(name, level) {
   return out;
 }
 
+function rosterPastDifficultyLabel(categoryKey, difficulty) {
+  if (categoryKey === 'ILSAN_PAST' && difficulty === '그래프 포함') return '그래프부터';
+  return difficulty;
+}
+
+function rosterPastRowLabel(item) {
+  const round = cleanRosterRound(item.round);
+  let name = normStr(item.name);
+  if (item.categoryKey === 'ILSAN_PAST' && item.difficulty === '그래프 포함') {
+    name = name.replace(/^삼각함수\s*그래프\s*포함\s*/u, '').trim();
+  }
+  if (round) {
+    name = name.replace(new RegExp(`^${round}\\s*회차\\s*`, 'u'), '').trim();
+  }
+  if (!round && !name) return '';
+  return `${round ? `${round}회차` : ''}${name ? ` ${name}` : ''}`.trim();
+}
+
 function parseRosterTestLabel(label, status = 'assigned', meta = {}) {
   const parts = String(label || '').split('/').map(part => part.trim()).filter(Boolean);
   const categoryLabel = normStr(meta.categoryLabel ?? meta.category ?? parts[0] ?? '');
@@ -857,14 +875,9 @@ function appendRosterTestSections(lines, tests) {
       })
       .forEach(([difficulty, items]) => {
         const rows = rosterSortTests(items)
-          .map(item => {
-            const round = cleanRosterRound(item.round);
-            const school = normStr(item.name);
-            if (!round && !school) return '';
-            return `${round ? `${round}회차` : ''}${school ? ` ${school}` : ''}`.trim();
-          })
+          .map(rosterPastRowLabel)
           .filter(Boolean);
-        lines.push('', `${title}(${difficulty})(50분) :`);
+        lines.push('', `${title}(${rosterPastDifficultyLabel(categoryKey, difficulty)})(50분) :`);
         Array.from(new Set(rows)).forEach(row => lines.push(row));
       });
   };
