@@ -13,6 +13,7 @@ from core.storage import nocache_resp
 bp_api_admin_chat = Blueprint("api_admin_chat", __name__, url_prefix="/api/admin")
 MAX_CHAT_PAYLOAD_BYTES = 32 * 1024
 MAX_CHAT_CONTEXT_CHARS = 8 * 1024
+ADMIN_CHAT_REFERER_PATHS = {"/admin", "/dh1130"}
 
 
 def _admin_page_referrer_ok() -> bool:
@@ -27,7 +28,7 @@ def _admin_page_referrer_ok() -> bool:
     host = (request.host or "").lower()
     if parsed.netloc and parsed.netloc.lower() != host:
         return False
-    return parsed.path.rstrip("/") == "/admin"
+    return (parsed.path.rstrip("/") or "/") in ADMIN_CHAT_REFERER_PATHS
 
 
 def _optional_token_ok() -> bool:
@@ -63,7 +64,7 @@ def require_admin_surface():
     # The app does not have admin login yet. This keeps the endpoint bound to
     # the admin page browser context, and allows an optional env token later.
     if not _admin_page_referrer_ok() or not _optional_token_ok():
-        return jsonify({"ok": False, "error": "admin chat is only available from /admin"}), 403
+        return jsonify({"ok": False, "error": "admin chat is only available from /admin or /dh1130"}), 403
 
 
 @bp_api_admin_chat.post("/chat")
