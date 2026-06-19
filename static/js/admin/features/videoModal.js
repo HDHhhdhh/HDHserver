@@ -48,6 +48,27 @@ const STUDENT_POPUP_LAYOUT = {
   tip: 435,
   height: 1188,
 };
+const STUDENT_POPUP_MAX_SCALE = 2;
+
+function positiveFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function zoomedOutViewportScale() {
+  const innerWidth = positiveFiniteNumber(window.innerWidth);
+  if (!innerWidth) return 1;
+
+  // Chrome zoom-out grows innerWidth while outer/screen widths stay near the physical window.
+  const referenceWidth = Math.max(
+    positiveFiniteNumber(window.outerWidth),
+    positiveFiniteNumber(window.screen?.availWidth),
+    positiveFiniteNumber(window.screen?.width)
+  );
+  if (!referenceWidth) return 1;
+
+  return Math.max(1, Math.min(STUDENT_POPUP_MAX_SCALE, innerWidth / referenceWidth));
+}
 
 function clampAutoAssignCount(value, fallback = DEFAULT_AUTO_ASSIGN_COUNT) {
   const n = Number(value);
@@ -374,6 +395,7 @@ function syncStudentPopupLayoutVars() {
   const root = document.documentElement;
   const currentDpr = window.devicePixelRatio || STUDENT_POPUP_BASE_DPR || 1;
   const dprScale = STUDENT_POPUP_BASE_DPR / currentDpr;
+  const zoomOutScale = zoomedOutViewportScale();
   const baseTotal =
     STUDENT_POPUP_LAYOUT.side +
     STUDENT_POPUP_LAYOUT.log +
@@ -381,7 +403,7 @@ function syncStudentPopupLayoutVars() {
     STUDENT_POPUP_LAYOUT.tip +
     (STUDENT_POPUP_LAYOUT.gap * 3);
   const widthScale = (Math.max(640, window.innerWidth) - 24) / baseTotal;
-  const zoomLock = Math.max(0.35, Math.min(1.8, dprScale, widthScale));
+  const zoomLock = Math.max(0.35, Math.min(STUDENT_POPUP_MAX_SCALE, Math.max(dprScale, zoomOutScale), widthScale));
   const usableHeight = Math.max(420, window.innerHeight - 28);
   const height = Math.min(Math.round(STUDENT_POPUP_LAYOUT.height * zoomLock), usableHeight);
   const next = {

@@ -1,13 +1,16 @@
 import { api } from '../core/api.js';
+import { getAdminDate } from '../core/adminDate.js';
 
 const DEFAULT_SUGGESTIONS = [
-  '보강 잡기 기능 설명',
+  '로컬 LLM 꼭 필요해?',
+  '오늘 운영 요약',
   '학생 이름 정보',
   '학생 이름 오늘 숙제 진도',
   '학교명 기말 일정',
   '영상 배정 기능 설명',
-  '테스트 관리 기능 설명',
 ];
+
+const MAX_TURNS = 8;
 
 function $(id) {
   return document.getElementById(id);
@@ -31,12 +34,47 @@ function scrollMessages(messages) {
   });
 }
 
+function trimHistory(history) {
+  return history.slice(Math.max(0, history.length - MAX_TURNS));
+}
+
+function collectContext() {
+  return {
+    page: 'admin',
+    selectedDate: getAdminDate(),
+    title: document.title || 'admin',
+  };
+}
+
 function appendMessage(messages, role, text) {
   const msg = makeEl('article', `admin-chat-msg ${role}`);
   msg.appendChild(makeEl('p', '', text));
   messages.appendChild(msg);
   scrollMessages(messages);
   return msg;
+}
+
+function appendPending(messages) {
+  const msg = makeEl('article', 'admin-chat-msg bot pending');
+  msg.appendChild(makeEl('p', 'admin-chat-pending-text', '답변 정리 중'));
+  const dots = makeEl('span', 'admin-chat-typing');
+  for (let i = 0; i < 3; i += 1) dots.appendChild(makeEl('i', '', ''));
+  msg.appendChild(dots);
+  messages.appendChild(msg);
+  scrollMessages(messages);
+  return msg;
+}
+
+function renderMeta(host, data) {
+  const bits = [];
+  const ctx = data?.context || {};
+  if (data?.mode) bits.push(data.mode);
+  if (ctx.selectedDate) bits.push(`기준 ${ctx.selectedDate}`);
+  if (ctx.historyCount) bits.push(`대화 ${ctx.historyCount}턴 참고`);
+  if (!bits.length) return;
+  const wrap = makeEl('div', 'admin-chat-meta');
+  bits.forEach((bit) => wrap.appendChild(makeEl('span', '', bit)));
+  host.appendChild(wrap);
 }
 
 function renderCards(host, cards = []) {
@@ -65,6 +103,7 @@ function renderSources(host, sources = []) {
 function appendBotResponse(messages, data) {
   const msg = makeEl('article', 'admin-chat-msg bot');
   msg.appendChild(makeEl('p', '', data?.answer || '확인된 답변이 없습니다.'));
+  renderMeta(msg, data || {});
   renderCards(msg, Array.isArray(data?.cards) ? data.cards : []);
   renderSources(msg, Array.isArray(data?.sources) ? data.sources : []);
   messages.appendChild(msg);
@@ -73,6 +112,8 @@ function appendBotResponse(messages, data) {
 
 function renderSuggestions(host, suggestions, onPick) {
   host.textContent = '';
+  const label = makeEl('span', 'admin-chat-suggestions-label', '다음 질문');
+  host.appendChild(label);
   (suggestions && suggestions.length ? suggestions : DEFAULT_SUGGESTIONS).slice(0, 6).forEach((text) => {
     const btn = makeEl('button', 'admin-chat-chip', text);
     btn.type = 'button';
@@ -94,6 +135,7 @@ export function initAdminChatbot() {
 
   let busy = false;
   let greeted = false;
+  let history = [];
 
   function openPanel() {
     panel.hidden = false;
@@ -101,7 +143,7 @@ export function initAdminChatbot() {
     panel.classList.add('is-open');
     openBtn.setAttribute('aria-expanded', 'true');
     if (!greeted) {
-      appendMessage(messages, 'bot', '내부 자료에서 학생, 출결·보강, 학교 일정, 운영 기능을 찾아볼게요.');
+      appendMessage(messages, 'bot', '운영 날짜와 최근 대화를 참고해서 학생, 출결·보강, 학교 일정, 기능 질문을 같이 볼게요.');
       renderSuggestions(suggestions, DEFAULT_SUGGESTIONS, submitQuestion);
       greeted = true;
     }
@@ -123,10 +165,14 @@ export function initAdminChatbot() {
     busy = true;
     input.value = '';
     appendMessage(messages, 'user', message);
-    const pending = appendMessage(messages, 'bot pending', '찾는 중...');
+    const pending = appendPending(messages);
 
     try {
-      const res = await api.post('/api/admin/chat', { message }, {
+      const res = await api.post('/api/admin/chat', {
+        message,
+        context: collectContext(),
+        history: trimHistory(history),
+      }, {
         cache: 'no-store',
         headers: tokenHeaders(),
       });
@@ -136,6 +182,11 @@ export function initAdminChatbot() {
         throw new Error(data?.error || `요청 실패 (${res.status})`);
       }
       appendBotResponse(messages, data);
+      history = trimHistory([
+        ...history,
+        { role: 'user', text: message },
+        { role: 'assistant', text: data?.answer || '' },
+      ]);
       renderSuggestions(suggestions, data.suggestions, submitQuestion);
     } catch (err) {
       pending.remove();

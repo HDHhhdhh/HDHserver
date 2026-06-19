@@ -2011,9 +2011,9 @@ body.admin .admin-chat-head {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 14px 12px;
+  padding: 16px 16px 14px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--card-soft) 82%, var(--brand-soft) 18%);
+  background: color-mix(in srgb, var(--card-soft) 76%, #ecfdf5 24%);
 }
 
 body.admin .admin-chat-kicker {
@@ -2022,13 +2022,21 @@ body.admin .admin-chat-kicker {
   font-size: 11px;
   font-weight: 800;
   color: var(--ink-soft);
-  letter-spacing: .08em;
+  letter-spacing: 0;
 }
 
 body.admin .admin-chat-head h3 {
   margin: 0;
   font-size: 18px;
   line-height: 1.2;
+}
+
+body.admin .admin-chat-subtitle {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: keep-all;
 }
 
 body.admin .admin-chat-icon-btn {
@@ -2047,17 +2055,21 @@ body.admin .admin-chat-icon-btn {
 body.admin .admin-chat-messages {
   min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--card-soft) 64%, transparent), transparent 34%),
+    radial-gradient(circle at 16px 18px, color-mix(in srgb, var(--brand-soft) 54%, transparent) 0 2px, transparent 3px);
+  background-size: auto, 22px 22px;
 }
 
 body.admin .admin-chat-msg {
   max-width: 92%;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 11px;
+  border-radius: 12px;
+  padding: 11px 12px;
   background: color-mix(in srgb, var(--card-soft) 90%, #ffffff 10%);
   box-shadow: 0 8px 18px rgba(15, 23, 42, .06);
 }
@@ -2065,7 +2077,8 @@ body.admin .admin-chat-msg {
 body.admin .admin-chat-msg.user {
   align-self: flex-end;
   border-color: color-mix(in srgb, var(--brand) 62%, var(--line) 38%);
-  background: linear-gradient(135deg, var(--brand) 0%, color-mix(in srgb, var(--brand) 72%, #38bdf8 28%) 100%);
+  border-bottom-right-radius: 5px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 86%, #0f766e 14%) 0%, color-mix(in srgb, var(--brand) 68%, #22c55e 32%) 100%);
   color: #fff;
 }
 
@@ -2073,6 +2086,7 @@ body.admin .admin-chat-msg.bot,
 body.admin .admin-chat-msg.pending,
 body.admin .admin-chat-msg.error {
   align-self: flex-start;
+  border-bottom-left-radius: 5px;
 }
 
 body.admin .admin-chat-msg.error {
@@ -2094,6 +2108,22 @@ body.admin .admin-chat-result {
   border-radius: 8px;
   padding: 8px;
   background: color-mix(in srgb, var(--card) 88%, var(--card-soft) 12%);
+}
+
+body.admin .admin-chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+body.admin .admin-chat-meta span {
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 body.admin .admin-chat-result h4 {
@@ -2137,9 +2167,16 @@ body.admin .admin-chat-sources span {
 body.admin .admin-chat-suggestions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   padding: 10px 14px 0;
   border-top: 1px solid var(--line);
+}
+
+body.admin .admin-chat-suggestions-label {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 body.admin .admin-chat-chip {
@@ -2153,6 +2190,20 @@ body.admin .admin-chat-chip {
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
+}
+
+body.admin .admin-chat-typing {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+body.admin .admin-chat-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 74%, #22c55e 26%);
+  opacity: .72;
 }
 
 body.admin .admin-chat-form {
@@ -7775,4 +7826,26 @@ body.admin :where(
   .ann-compose-expand-dialog textarea
 ) {
   border-radius: 8px !important;
+}
+
+body.admin .admin-chat-panel {
+  border-radius: 14px !important;
+  background: color-mix(in srgb, var(--card) 92%, #ecfdf5 8%) !important;
+  box-shadow: 0 28px 72px rgba(15, 23, 42, .26) !important;
+}
+
+body.admin.dark .admin-chat-panel {
+  background: color-mix(in srgb, var(--card) 92%, #0f766e 8%) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .48) !important;
+}
+
+body.admin .admin-chat-icon-btn {
+  width: 38px !important;
+  min-width: 38px !important;
+  height: 38px !important;
+  border-radius: 10px !important;
+}
+
+body.admin .admin-chat-form textarea {
+  border-radius: 10px !important;
 }
