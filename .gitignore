@@ -23,8 +23,13 @@ progress.json.*.tmp
 /.omo/evidence/
 /.omo/plans/
 /.omo/ulw-loop/
+/.omo/boulder.json
+/.omo/start-work/
+/.omo/drafts/
+/.omo/ultraresearch/
 /worktrees/
 /static/js/test_answer_link_map.js
+/.debug-journal.md
 
 # Python/runtime artifacts
 __pycache__/
