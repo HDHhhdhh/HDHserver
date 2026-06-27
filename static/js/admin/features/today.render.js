@@ -488,6 +488,15 @@ function escapeAttr(value) {
   }[ch]));
 }
 
+function renderEditableSlotLabel(labelText) {
+  const label = String(labelText || '').trim();
+  return `<span class="slotLabel" contenteditable="true" spellcheck="false"
+          data-orig="${escapeAttr(label)}"
+          style="display:inline-block;min-width:48px;padding:2px 6px;border-radius:6px;border:1px solid transparent">
+    ${escapeAttr(label)}
+  </span>`;
+}
+
 function progressEntryForSid(day, sid) {
   if (!day || typeof day !== 'object') return {};
   const sidKey = String(sid || '');
@@ -933,17 +942,86 @@ function _bindDoneWrapInlineEditOnce() {
   wrap.addEventListener('wheel', handleArriveWheel, { passive: false });
 
   wrap.addEventListener('keydown', (ev) => {
-    const el = ev.target.closest?.('.arriveLabel,.leaveLabel');
+    const el = ev.target.closest?.('.slotLabel,.arriveLabel,.leaveLabel');
     if (!el) return;
     if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
     if (ev.key === 'Escape') { el.textContent = el.dataset.orig || ''; el.blur(); }
   });
 
   wrap.addEventListener('focusin', (ev) => {
-    const el = ev.target.closest?.('.arriveLabel,.leaveLabel');
+    const el = ev.target.closest?.('.slotLabel,.arriveLabel,.leaveLabel');
     if (!el) return;
     el.style.borderColor = '#cbd5e1';
     el.style.background = 'rgba(148,163,184,.12)';
+  });
+
+  wrap.addEventListener('focusout', async (ev) => {
+    const el = ev.target.closest?.('.slotLabel');
+    if (!el) return;
+
+    el.style.borderColor = 'transparent';
+    el.style.background = 'transparent';
+
+    const tr = closestTodayRow(el); if (!tr) return;
+    const sid = rowSid(tr);
+    const date = rowDateKey(tr);
+    if (!sid || !date) return;
+
+    const prevOrig = el.dataset.orig || '';
+    const prevLabel = prevOrig.trim();
+    const oldForcedBase = _forcedArriveTimeBySlotLabel(date, prevLabel) || '';
+    const txt = (el.textContent || '').trim();
+    const cleaned = txt.replace(/\(보강\)/g, '').trim();
+    el.textContent = cleaned;
+
+    const oldBase = plannedTimeBase(date, sid) || '';
+    const oldOv = (getArriveOverride(date, sid) || '').trim();
+
+    try {
+      await saveWeekendSlotsFromLabel(sid, cleaned, date);
+    } catch (e) {
+      console.error(e);
+      el.textContent = prevOrig;
+      el.dataset.orig = prevOrig;
+      try { toast('주말 슬롯 저장 실패'); } catch {}
+      alert('주말 슬롯 저장 실패');
+      return;
+    }
+
+    el.dataset.orig = cleaned;
+
+    const arriveEl = tr.querySelector('.arriveLabel');
+    const slotGroup = _slotGroupsFromLabelAndArrive(cleaned, arriveEl?.textContent || '');
+    if (slotGroup) tr.dataset.slotGroup = slotGroup;
+    else delete tr.dataset.slotGroup;
+
+    document.dispatchEvent(new CustomEvent('attendance:updated'));
+
+    const forcedNewBase = _forcedArriveTimeBySlotLabel(date, cleaned) || '';
+    const shouldAuto =
+      (!oldOv) ||
+      (oldForcedBase && oldOv === oldForcedBase) ||
+      (oldOv === oldBase);
+
+    if (shouldAuto && forcedNewBase) {
+      setArriveOverride(date, sid, forcedNewBase);
+      if (arriveEl) {
+        arriveEl.textContent = forcedNewBase;
+        arriveEl.dataset.orig = forcedNewBase;
+      }
+
+      try {
+        await patchArriveTimeRemote(date, sid, forcedNewBase);
+      } catch (e) {
+        console.error(e);
+        setArriveOverride(date, sid, oldOv);
+        if (arriveEl) {
+          arriveEl.textContent = oldOv;
+          arriveEl.dataset.orig = oldOv;
+        }
+        alert('도착시간 저장 실패');
+      }
+    }
   });
 
   // doneWrap edits only update the local override value.
@@ -1031,7 +1109,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   if (tr.dataset.hw === '1') newRow.dataset.hw = '1';
   if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
   newRow.innerHTML = `
-    <td class="today-slot-cell">${label}</td>
+    <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
     <td class="att-time done-arrive-cell">
       <span class="arriveLabel" contenteditable="true" spellcheck="false"
             data-orig="${escapeAttr(arrive)}"
@@ -1133,13 +1211,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           ${hwRequestAt ? `data-hw-request-at="${hwRequestAt}"` : ''}>
         <td class="drag-handle today-drag-cell" style="cursor:${alphaSortOnly ? 'default' : 'grab'};text-align:center">::</td>
 
-        <td class="today-slot-cell">
-          <span class="slotLabel" contenteditable="true" spellcheck="false"
-                data-orig="${labelText}"
-                style="display:inline-block;min-width:48px;padding:2px 6px;border-radius:6px;border:1px solid transparent">
-            ${labelText}
-          </span>
-        </td>
+        <td class="today-slot-cell">${renderEditableSlotLabel(labelText)}</td>
 
         <td class="today-name-cell">
           <a href="/student/${s.id}" target="_blank" class="stuName" data-sid="${s.id}">
@@ -1265,7 +1337,7 @@ export function renderDone(doneEntries) {
 
     return `
       <tr data-sid="${sid}" data-date="${date}" ${slotGroup ? `data-slot-group="${slotGroup}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
-        <td class="today-slot-cell">${label}</td>
+        <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
         <td class="att-time done-arrive-cell">
           <span class="arriveLabel" contenteditable="true" spellcheck="false"
                 data-orig="${escapeAttr(arriveTime || '')}"

@@ -254,6 +254,16 @@ function statusForKey(key) {
   return normalizeAssignmentStatus(selectedStatuses.get(key));
 }
 
+function isInProgressTestStatus(status) {
+  const normalized = normalizeAssignmentStatus(status);
+  return normalized === 'assigned' || normalized === 'interrupted';
+}
+
+function isResolvedTestStatus(status) {
+  const normalized = normalizeAssignmentStatus(status);
+  return normalized === 'done' || normalized === 'skip';
+}
+
 function isExplicitBlankTestStatus(status) {
   if (!status || typeof status !== 'object') return false;
   return normalizeAssignmentStatus(status) === '' && status.explicitBlank === true;
@@ -415,24 +425,37 @@ function unitTestsForRound(categoryKey, subject, difficulty, round) {
   );
 }
 
-function isUnitRoundFullyColored(categoryKey, subject, difficulty, round) {
+function isUnitRoundFullyResolved(categoryKey, subject, difficulty, round) {
   const tests = unitTestsForRound(categoryKey, subject, difficulty, round);
-  return tests.length > 0 && tests.every(test => isSubmitted(test) || !!statusForKey(test._key));
+  return tests.length > 0 && tests.every(test => isSubmitted(test) || isResolvedTestStatus(statusForKey(test._key)));
+}
+
+function hasInProgressUnitRoundStatus(categoryKey, subject, difficulty, round) {
+  return unitTestsForRound(categoryKey, subject, difficulty, round)
+    .some(test => !isSubmitted(test) && isInProgressTestStatus(statusForKey(test._key)));
 }
 
 function defaultRoundFor(categoryKey, subject, difficulty) {
   if (!isUnitCategory(categoryKey)) return '';
   const rounds = roundOptionsFor(categoryKey, subject, difficulty);
-  const firstUncoloredRound = rounds.find(round =>
-    !isUnitRoundFullyColored(categoryKey, subject, difficulty, round)
+  const activeRound = rounds.find(round =>
+    hasInProgressUnitRoundStatus(categoryKey, subject, difficulty, round)
   );
-  return firstUncoloredRound || rounds[rounds.length - 1] || '1';
+  if (activeRound) return activeRound;
+  const firstUnresolvedRound = rounds.find(round =>
+    !isUnitRoundFullyResolved(categoryKey, subject, difficulty, round)
+  );
+  return firstUnresolvedRound || rounds[rounds.length - 1] || '1';
 }
 
 function applyRuleDefaults(categoryKey = activeCategory) {
+  const activeTest = firstInProgressAssignmentTest(categoryKey);
   activeDifficulty = ruleDefaultDifficulty(categoryKey, activeSubject, activeStudent);
+  if (activeTest?.difficulty) activeDifficulty = activeTest.difficulty;
+  if (isTermCategory(categoryKey)) {
+    activeTerm = activeTest?.term || (TERM_OPTIONS.includes(activeTerm) ? activeTerm : defaultTermFromSchoolCalendar());
+  }
   activeRound = defaultRoundFor(categoryKey, activeSubject, activeDifficulty);
-  if (isTermCategory(categoryKey) && !TERM_OPTIONS.includes(activeTerm)) activeTerm = defaultTermFromSchoolCalendar();
 }
 
 function collectCatalog(cfg) {
@@ -1068,7 +1091,19 @@ function closeModal() {
   }
 }
 
+function firstInProgressAssignmentTest(categoryKey = '') {
+  const targetCategory = String(categoryKey || '').trim();
+  return activeCatalog.find(test =>
+    (!targetCategory || test.categoryKey === targetCategory) &&
+    normalizeSubject(test.curriculum) === normalizeSubject(activeSubject) &&
+    !isSubmitted(test) &&
+    isInProgressTestStatus(statusForKey(test._key))
+  ) || null;
+}
+
 function chooseInitialCategory() {
+  const activeTest = firstInProgressAssignmentTest();
+  if (activeTest?.categoryKey) return activeTest.categoryKey;
   const hasUnit = activeCatalog.some(t => t.categoryKey === 'UNIT' && t.curriculum === activeSubject);
   if (hasUnit) return 'UNIT';
   const hit = CATEGORY_KEYS.find(key => activeCatalog.some(t => t.categoryKey === key && t.curriculum === activeSubject));
@@ -1140,13 +1175,13 @@ function selectedAssignmentObjects() {
 
 function isAssignmentNoteStatus(status) {
   const normalized = normalizeAssignmentStatus(status);
-  return normalized === 'assigned' || normalized === 'interrupted' || normalized === 'done';
+  return normalized === 'interrupted' || normalized === 'done';
 }
 
 export function shouldIncludeInAssignmentNote(item) {
   const rawStatus = item && Object.prototype.hasOwnProperty.call(item, 'status') ? item.status : 'assigned';
   const status = normalizeAssignmentStatus(rawStatus);
-  return status === 'assigned' || status === 'interrupted' || status === 'done';
+  return status === 'interrupted' || status === 'done';
 }
 
 export function assignmentLabel(item) {
@@ -1290,9 +1325,16 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
     : await fetchLatestLogEntryForAssignment(editingDate, editingSid);
   const clear = [];
   const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
-  const currentLabels = new Set(logItems.map(assignmentLabel).filter(Boolean));
+  const currentItemsByLabel = new Map(logItems.map(item => [assignmentLabel(item), item]).filter(([label]) => label));
+  const currentLabels = new Set(currentItemsByLabel.keys());
   const previousDailyItems = Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY])
-    ? entry[TEST_ASSIGN_DAILY_ITEMS_KEY].filter(item => currentLabels.has(assignmentLabel(item)))
+    ? entry[TEST_ASSIGN_DAILY_ITEMS_KEY].map(item => {
+      const label = assignmentLabel(item);
+      const currentItem = currentItemsByLabel.get(label);
+      const currentStatus = normalizeAssignmentStatus(currentItem?.status) || 'assigned';
+      if (!currentItem || !isAssignmentNoteStatus(currentStatus)) return null;
+      return { ...item, ...currentItem, label, status: currentStatus, statusLabel: testStatusLabel(currentStatus) };
+    }).filter(Boolean)
     : [];
   const dailyItems = mergeAssignmentItemsByLabel(previousDailyItems, newlyAddedItems)
     .filter(item => currentLabels.has(assignmentLabel(item)))

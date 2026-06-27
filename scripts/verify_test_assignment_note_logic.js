@@ -3,11 +3,28 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const sourcePath = path.join(root, 'static/js/admin/features/testModal.js');
+const sourcePath = process.env.TEST_MODAL_SOURCE
+  ? path.resolve(root, process.env.TEST_MODAL_SOURCE)
+  : path.join(root, 'static/js/admin/features/testModal.js');
 
 let source = fs.readFileSync(sourcePath, 'utf8');
 source = source.replace(/import[\s\S]*?from '\.\.\/core\/adminDate\.js';\s*/m, '');
 source = source.replace(/\bexport\s+/g, '');
+source += `
+function __setVerifierState(next) {
+  if (Object.prototype.hasOwnProperty.call(next, 'activeCatalog')) activeCatalog = next.activeCatalog;
+  if (Object.prototype.hasOwnProperty.call(next, 'catalogByKey')) catalogByKey = next.catalogByKey;
+  if (Object.prototype.hasOwnProperty.call(next, 'activeCategory')) activeCategory = next.activeCategory;
+  if (Object.prototype.hasOwnProperty.call(next, 'activeSubject')) activeSubject = next.activeSubject;
+  if (Object.prototype.hasOwnProperty.call(next, 'activeDifficulty')) activeDifficulty = next.activeDifficulty;
+  if (Object.prototype.hasOwnProperty.call(next, 'activeStudent')) activeStudent = next.activeStudent;
+  if (Object.prototype.hasOwnProperty.call(next, 'editingDate')) editingDate = next.editingDate;
+  if (Object.prototype.hasOwnProperty.call(next, 'editingSid')) editingSid = next.editingSid;
+  if (Object.prototype.hasOwnProperty.call(next, 'selectedStatuses')) selectedStatuses = next.selectedStatuses;
+  if (Object.prototype.hasOwnProperty.call(next, 'submittedIds')) submittedIds = next.submittedIds;
+  if (Object.prototype.hasOwnProperty.call(next, 'submittedNames')) submittedNames = next.submittedNames;
+}
+`;
 
 const context = {
   window: {},
@@ -59,8 +76,8 @@ const graphRound2 = {
   round: '2',
   name: '삼각함수 그래프 포함 2회차 22 대화',
   label: '일산 기출 / 대수 / 그래프 포함 / 기말고사 / 2회차 / 삼각함수 그래프 포함 2회차 22 대화',
-  status: 'assigned',
-  statusLabel: '배정',
+  status: 'interrupted',
+  statusLabel: '배부',
 };
 
 assertEqual(
@@ -79,8 +96,20 @@ assertEqual(
 );
 
 assertEqual(
-  'new assigned test counts as same-day distribution',
+  'plain assigned test is excluded from counseling note',
+  JSON.stringify(context.dailyAssignmentNoteItems([{ ...graphRound2, status: 'assigned', statusLabel: '배정' }], {})),
+  JSON.stringify([])
+);
+
+assertEqual(
+  'distributed test remains in counseling note',
   JSON.stringify(context.dailyAssignmentNoteItems([graphRound2], {})),
+  JSON.stringify([graphRound2])
+);
+
+assertEqual(
+  'assigned to distributed counts as same-day distribution',
+  JSON.stringify(context.dailyAssignmentNoteItems([graphRound2], { [graphRound2.label]: 'assigned' })),
   JSON.stringify([graphRound2])
 );
 
@@ -89,3 +118,134 @@ assertEqual(
   JSON.stringify(context.dailyAssignmentNoteItems([graphRound1], { [graphRound1.label]: 'done' })),
   JSON.stringify([])
 );
+
+const unitRound1 = {
+  categoryKey: 'UNIT',
+  categoryLabel: '단원평가',
+  curriculum: '공수1',
+  difficulty: 'Lv.3',
+  round: '1',
+  name: '집합 1',
+};
+unitRound1._key = context.testKey(unitRound1);
+
+const unitRound2 = {
+  ...unitRound1,
+  round: '2',
+  name: '집합 2',
+};
+unitRound2._key = context.testKey(unitRound2);
+
+context.__setVerifierState({
+  activeCatalog: [unitRound1, unitRound2],
+  catalogByKey: new Map([unitRound1, unitRound2].map(test => [test._key, test])),
+  activeCategory: 'UNIT',
+  activeSubject: '공수1',
+  activeDifficulty: 'Lv.3',
+  activeStudent: { level: '중' },
+  selectedStatuses: new Map([
+    [unitRound1._key, 'assigned'],
+  ]),
+  submittedIds: new Set(),
+  submittedNames: new Set(),
+});
+
+assertEqual(
+  'assigned unit round remains the default visible round',
+  context.defaultRoundFor('UNIT', '공수1', 'Lv.3'),
+  '1'
+);
+
+context.__setVerifierState({
+  selectedStatuses: new Map([
+    [unitRound1._key, 'interrupted'],
+  ]),
+});
+
+assertEqual(
+  'distributed unit round remains the default visible round',
+  context.defaultRoundFor('UNIT', '공수1', 'Lv.3'),
+  '1'
+);
+
+context.__setVerifierState({
+  selectedStatuses: new Map([
+    [unitRound1._key, 'skip'],
+  ]),
+});
+
+assertEqual(
+  'all excluded unit round advances to next round',
+  context.defaultRoundFor('UNIT', '공수1', 'Lv.3'),
+  '2'
+);
+
+async function capturePatchLogAssignment(currentItems, latestEntry) {
+  const requests = [];
+  context.fetch = async (url, init = {}) => {
+    requests.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ entry: {} }),
+    };
+  };
+  context.__setVerifierState({ editingDate: '2026-06-19', editingSid: 'student-1' });
+  await context.patchLogAssignment(currentItems, true, [], latestEntry);
+  if (requests.length !== 1) {
+    console.error(`FAIL expected one log patch request, got ${requests.length}`);
+    process.exit(1);
+  }
+  return JSON.parse(requests[0].init.body);
+}
+
+(async () => {
+  const previousDistributed = {
+    ...graphRound2,
+    status: 'interrupted',
+    statusLabel: '배부',
+  };
+  const latestEntry = {
+    notes: `[테스트 배정]\n${context.buildAssignmentNote([previousDistributed])}`,
+    testAssignmentNote: context.buildAssignmentNote([previousDistributed]),
+    testAssignmentDailyTests: [previousDistributed],
+  };
+
+  const completedBody = await capturePatchLogAssignment([
+    { ...graphRound2, status: 'done', statusLabel: '완료' },
+  ], latestEntry);
+  assertEqual(
+    'carried distributed note updates to completion when current status is done',
+    completedBody.entry.testAssignmentDailyTests[0].status,
+    'done'
+  );
+  assertEqual(
+    'carried distributed note no longer renders as distribution after completion',
+    completedBody.entry.testAssignmentNote.includes('(배부)'),
+    false
+  );
+
+  const assignedBody = await capturePatchLogAssignment([
+    { ...graphRound2, status: 'assigned', statusLabel: '배정' },
+  ], latestEntry);
+  assertEqual(
+    'carried distributed note clears when current status is assigned',
+    Array.isArray(assignedBody.entry.testAssignmentDailyTests),
+    false
+  );
+  assertEqual(
+    'assigned current status clears stale daily note fields',
+    assignedBody.__clear.includes('testAssignmentDailyTests') && assignedBody.__clear.includes('testAssignmentNote'),
+    true
+  );
+
+  const removedBody = await capturePatchLogAssignment([], latestEntry);
+  assertEqual(
+    'carried distributed note clears when assignment is removed',
+    removedBody.__clear.includes('assignedTests') && removedBody.__clear.includes('testAssignmentDailyTests'),
+    true
+  );
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

@@ -313,7 +313,7 @@ export function getSlots(dateStr, sid) {
 export function labelFor(dateStr, sid) {
   const w = yoilOf(dateStr);
   const slots = getSlots(dateStr, sid);
-  if (slots.length) return slots.map(n => `${w}${n}`).join('·');
+  if (slots.length) return slots.map(n => `${w}${n}`).join(' ');
 
   const stu = getStudent(sid);
   if (!stu) return w;
@@ -330,7 +330,7 @@ export function labelFor(dateStr, sid) {
 
   if (!nums.length) return w;
   const uniq = Array.from(new Set(nums)).sort((a, b) => a - b);
-  return uniq.map(n => `${w}${n}`).join('·');
+  return uniq.map(n => `${w}${n}`).join(' ');
 }
 
 export function sortKeyFor(dateStr, sid) {
