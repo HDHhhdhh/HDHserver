@@ -15,6 +15,7 @@ progress.json.*.tmp
 /data/
 /files/
 /instance/
+/.codex_tk_runtime/
 /.codex/
 /.codex-backups/
 /.codex-remote-attachments/
@@ -38,6 +39,7 @@ __pycache__/
 /venv/
 
 # Local editor and OS files
+/.env
 /.vscode/
 .DS_Store
 Thumbs.db
