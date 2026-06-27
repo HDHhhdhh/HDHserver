@@ -1,6 +1,7 @@
 # app.py — Flask 2.x / Python 3.10+
 from __future__ import annotations
 
+import os
 from urllib.parse import urlparse
 
 from flask import Flask, request, abort, render_template_string
@@ -27,7 +28,14 @@ from routes.api_admin_chat import bp_api_admin_chat
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+    trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if trust_proxy_headers:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     @app.before_request
     def block_cross_origin_writes():

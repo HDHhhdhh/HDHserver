@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import jwt
 from flask import Blueprint, abort, jsonify, request
 
-from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, client_ip_from_request
 from core.paths import STU_PATH, VID_PATH
 from core.progress_rules import WATCH_DONE_RATIO, WATCH_INTERRUPTED_RATIO
 from core.storage import load
@@ -43,12 +43,7 @@ def kollus_signed_url(mid: str, client_ip: str, sid: str = "") -> str:
 
 
 def get_real_client_ip() -> str:
-    return (
-        request.headers.get("CF-Connecting-IP")
-        or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        or request.remote_addr
-        or ""
-    )
+    return client_ip_from_request()
 
 
 def local_only(f):

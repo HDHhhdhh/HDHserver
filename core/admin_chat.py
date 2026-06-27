@@ -113,7 +113,9 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["영상", "진도", "progress", "updates", "watch", "자동배정", "수동"],
         "answer": (
             "영상 목록은 videos.json, 날짜별 배정은 updates.json, 시청/진도 상태는 progress.json과 watch.json에 있습니다. "
-            "학생 개인페이지는 학원 밖에서도 목록을 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
+            "학생 개인페이지는 학원 밖에서도 목록과 자료 다운로드를 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
+            "로컬/Cloudflare 프록시 뒤에서는 loopback 프록시가 전달한 실제 학생 IP만 학원 네트워크 판정에 사용하며, Cloudflare의 CF-Connecting-IP가 있으면 X-Forwarded-For 체인보다 우선합니다. "
+            "외부 직접 접속의 forwarded IP 위조는 신뢰하지 않습니다. "
             "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다. "
             "관리자 오늘 목록과 명단 내보내기는 필요한 학생의 progress 이력만 묶음으로 조회해 전체 progress.json 다운로드를 피합니다. "
             "정규 커리큘럼 영상이 모두 초록(done) 또는 빨강(skip)이면 진도 완료로 보며, 학생 개인페이지에는 완료 안내를 보여주고 자동 영상 배정은 멈춥니다."
@@ -140,6 +142,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "하원/숙검하원/기록 정리는 결석 학생을 제외하고 assigned 테스트를 done으로 바꾸며, 결석 처리는 assigned 테스트를 interrupted(배부)로 바꿉니다. "
             "테스트 배정 팝업은 좌클릭/드래그로 없음→배정→배부→완료를 순환하고, 우클릭/드래그로 없음↔제외를 토글합니다. "
             "상담 기록 자동 블록은 당일 배부/완료 테스트를 한 줄씩 남기며, 완료는 오늘 assigned(초록)에서 done(파랑)으로 바뀐 경우만 표시합니다. "
+            "단원평가 회차는 모두 완료 또는 제외일 때만 다음 회차로 넘어가고, 배정/배부가 남은 회차를 우선 표시합니다. "
             "일산 기출은 학생 레벨과 무관하게 대수 전체 시험지를 중, 중상, 그래프 포함 순서로 보여주며 기존 상 난이도는 중상으로 취급합니다. "
             "단원평가/복습 테스트/학군지 기출/일산 기출은 학원 Wi-Fi에서만 Drive 해설지를 엽니다. "
             "REVIEW/SCHOOL_PAST/ILSAN_PAST는 tests-config.json의 sourceFiles.solutionFileId 또는 동등한 해설 메타데이터를 보존하고, UNIT은 Drive explanation 파일 기준으로 static/js/test_answer_link_map.json을 갱신해 /api/student/bootstrap assignedTests[].answerUrl과 학생 오늘-test 카드의 Drive explanation 링크를 확인해야 합니다. "
@@ -172,6 +175,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["파일", "자료", "업로드", "다운로드", "materials", "file"],
         "answer": (
             "파일관리는 /file-manage와 /api/fs/*에서 폴더, 업로드, 이동, 이름 변경, 삭제, 페이지별 폴더 설정을 다룹니다. "
+            "학생 개인페이지의 자료 다운로드는 학원 Wi-Fi 제한 대상이 아니며, 제한 안내는 영상 재생과 테스트 답지 열람 시점에만 보여야 합니다. "
             "운영 자료 파일과 런타임 파일은 실제 데이터로 취급해야 합니다."
         ),
         "sources": ["routes/api_fs.py", "static/file-manage.html", "static/js/file-manage.js"],
@@ -182,7 +186,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "answer": (
             "학생 화면은 /student/<sid>와 /student-test/<sid>에서 동작하고, /api/auth/* 토큰으로 학생 계정을 관리합니다. "
             "학생 bootstrap 응답 형태는 유지해야 하며 assignedTests는 top-level 배열입니다. "
-            "외부 네트워크에서는 academyAccessAllowed=false와 안내 문구를 내려 목록은 유지하되 영상 재생과 테스트 답지 열람만 막습니다. "
+            "외부 네트워크에서는 academyAccessAllowed=false와 안내 문구를 내려 목록과 자료 다운로드는 유지하되 영상 재생과 테스트 답지 열람만 막습니다. "
             "ghost-outside-test는 students.json에 넣지 않는 코드 전용 외부접속 테스트 학생이라 전체 학생 명단과 집계에 포함되지 않으며, 관련 저장 API도 읽기 전용으로 차단됩니다."
         ),
         "sources": ["app.py", "core/ghost_student.py", "core/network_access.py", "routes/api_auth.py", "routes/api_basic.py", "routes/api_kollus.py", "static/js/student.js", "static/js/auth.js"],
@@ -253,6 +257,7 @@ def answer_admin_chat(
                     "lines": [
                         "/dh1130은 운영 관리자 화면 alias이고, /demo/rh3123, /demo/rh3123/students, /demo/rh3123/school-cal, /demo/rh3123/video-manage, /demo/rh3123/tests는 기존 UI를 그대로 쓰는 조교 교육용 체험판입니다.",
                         "체험판 API와 챗봇 요청은 demo fetch 계층에서 더미 학생, 학교일정, 영상, 로그, 테스트 데이터로 응답하며 운영 JSON이나 SQLite 데이터를 읽거나 노출하지 않아야 합니다.",
+                        "데모 기능 설명은 별도 튜토리얼 모드가 아니라 각 버튼이나 입력 영역을 처음 눌렀을 때 한 번만 뜨는 도움말 팝업으로 제공됩니다.",
                         "이 백엔드 답변은 유지보수용 안내만 제공하고 실제 demo 모드의 /api/admin/chat 요청은 브라우저 fetch 인터셉터가 처리합니다.",
                     ],
                 }

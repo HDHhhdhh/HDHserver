@@ -41,6 +41,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student.js",
     ROOT / "static/js/shared/api.js",
+    ROOT / "scripts/verify_student_material_access_scope.js",
 ]
 
 REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...]] = (
@@ -341,6 +342,31 @@ def run_node_check(path: pathlib.Path) -> bool:
 
 def run_js_checks() -> bool:
     return all(run_node_check(path) for path in JS_CHECK_FILES)
+
+
+def run_student_material_access_scope_checks() -> None:
+    cmd = ["node", "scripts/verify_student_material_access_scope.js"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student material access scope contract failed")
+
+
+def run_academy_proxy_network_access_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_academy_proxy_network_access.py"]
+    print("$ " + " ".join(cmd))
+    proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "academy proxy network access contract failed")
 
 
 def _assert_unit(condition: bool, message: str) -> None:
@@ -2772,16 +2798,16 @@ const latestEntry = {
   notes: '상담 시작\n\n이전 배정 블록',
   testAssignmentNote: '이전 배정 블록',
   testAssignmentDailyTests: [
-    { label: existingLabel, name: '기존', status: 'assigned', source: 'latest-entry' },
+    { label: existingLabel, name: '기존', status: 'interrupted', source: 'latest-entry' },
   ],
   assignedTests: [
-    { label: existingLabel, name: '기존', status: 'assigned' },
+    { label: existingLabel, name: '기존', status: 'interrupted' },
   ],
 };
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url).startsWith('/api/logs/entry?')) return response({ ok: true, entry: latestEntry });
-  if (String(url) === '/api/progress/patch') return response({ progress: { tests: { [existingLabel]: 'assigned', [newLabel]: 'assigned' } } });
+  if (String(url) === '/api/progress/patch') return response({ progress: { tests: { [existingLabel]: 'interrupted', [newLabel]: 'interrupted' } } });
   if (String(url) === '/api/logs/patch') return response({ entry: { saved: true } });
   return response({});
 };
@@ -2789,8 +2815,8 @@ mod.__setHarnessState({
   editingDate: '2026-06-05',
   editingSid: 's1',
   activeCatalog: [existingTest, newTest],
-  initialTestMap: { [existingLabel]: 'assigned' },
-  selectedStatuses: [[existingLabel, 'assigned'], [newLabel, 'assigned']],
+  initialTestMap: { [existingLabel]: 'interrupted' },
+  selectedStatuses: [[existingLabel, 'interrupted'], [newLabel, 'interrupted']],
 });
 await mod.__saveModal({ showPopup: false, refresh: false });
 const entryIndex = calls.findIndex(call => call.url.startsWith('/api/logs/entry?'));
@@ -2800,8 +2826,8 @@ const logPatch = calls.find(call => call.url === '/api/logs/patch');
 ok(entryIndex >= 0 && progressIndex >= 0 && entryIndex < progressIndex, 'latest log read precedes progress patch');
 ok(progressPatch.body?.date === '2026-06-05', 'progress patch keeps date payload');
 ok(progressPatch.body?.sid === 's1', 'progress patch keeps sid payload');
-ok(progressPatch.body?.progress?.tests?.[existingLabel] === 'assigned', 'progress patch preserves existing test authority');
-ok(progressPatch.body?.progress?.tests?.[newLabel] === 'assigned', 'progress patch writes new test authority');
+ok(progressPatch.body?.progress?.tests?.[existingLabel] === 'interrupted', 'progress patch preserves existing test authority');
+ok(progressPatch.body?.progress?.tests?.[newLabel] === 'interrupted', 'progress patch writes new test authority');
 ok(progressPatch.body?.progress?.__testsClearedAt === '', 'active progress patch does not set clear marker');
 ok(logPatch, '/api/logs/patch is called after successful latest log read');
 ok(logPatch.body?.date === '2026-06-05', 'log patch keeps date payload');
@@ -2809,9 +2835,9 @@ ok(logPatch.body?.sid === 's1', 'log patch keeps sid payload');
 ok(Array.isArray(logPatch.body?.entry?.assignedTests) && logPatch.body.entry.assignedTests.length === 2, 'assignedTests remain in log patch');
 ok(!Object.prototype.hasOwnProperty.call(logPatch.body?.entry || {}, 'tests'), 'log patch does not write authoritative tests');
 const dailyItems = logPatch.body?.entry?.testAssignmentDailyTests || [];
-ok(Array.isArray(dailyItems) && dailyItems.length === 2, 'daily assignment metadata keeps latest entry and new assignment');
+ok(Array.isArray(dailyItems) && dailyItems.length === 2, 'daily assignment metadata keeps latest entry and new distribution');
 ok(dailyItems.some(item => item.label === existingLabel && item.source === 'latest-entry'), 'existing daily metadata comes from latest entry');
-ok(dailyItems.some(item => item.label === newLabel), 'new daily assignment metadata is appended');
+ok(dailyItems.some(item => item.label === newLabel), 'new daily distribution metadata is appended');
 ok(String(logPatch.body?.entry?.testAssignmentNote || '').includes('기존'), 'assignment note includes existing item');
 ok(String(logPatch.body?.entry?.testAssignmentNote || '').includes('신규'), 'assignment note includes new item');
 ok(String(logPatch.body?.entry?.notes || '').includes('상담 시작'), 'notes are rebuilt from latest entry');
@@ -4178,10 +4204,14 @@ const orderIndex = calls.findIndex(call => call.url === '/api/today_order');
 const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
 ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
 
+globalThis.__state.students = [{ id: 's1', day1: '토1', day2: '토2' }];
+const stateLabelSpace = await loadStateModule('weekend-label-space');
+ok(stateLabelSpace.labelFor('2026-06-06', 's1') === '토1 토2', 'combined slot label uses user-facing space separator');
+
 const loadRenderModule = async () => {
   const sourcePath = path.join(process.cwd(), 'static/js/admin/features/today.render.js');
   const source = fs.readFileSync(sourcePath, 'utf8')
-    .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => id === 'todayWrap' ? globalThis.__host : null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+    .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
     .replace("import { getAdminDate, getRealToday } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-06'; const getRealToday = () => '2026-06-06';")
     .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
     .replace(/import \{[\s\S]*?\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
@@ -4242,6 +4272,7 @@ const host = {
     (this._listeners[type] ||= []).push(callback);
   },
 };
+globalThis.__elements = { todayWrap: host };
 globalThis.__host = host;
 globalThis.__saveWeekendSlotsCalls = [];
 globalThis.__saveWeekendSlotsFromLabel = async (...args) => {
@@ -4287,6 +4318,51 @@ ok(slotLabel.dataset.orig === '토1', 'slot label dataset.orig rolls back on fai
 ok(alerts.length + globalThis.__toasts.length > 0, 'slot label save failure is visible');
 ok(dispatches.length === 0, 'slot label failed save does not dispatch attendance update');
 ok(reloads === 0, 'slot label failed save does not reload today table');
+
+const doneHost = {
+  _listeners: {},
+  _html: '',
+  set innerHTML(value) { this._html = String(value); },
+  get innerHTML() { return this._html; },
+  addEventListener(type, callback) {
+    (this._listeners[type] ||= []).push(callback);
+  },
+};
+globalThis.__elements.doneWrap = doneHost;
+globalThis.__state.students = [
+  { id: 's1', name: '김주말', curriculum: '공통수학', subCurriculum: '', school: '토요고' },
+];
+globalThis.__saveWeekendSlotsCalls = [];
+globalThis.__saveWeekendSlotsFromLabel = async (...args) => {
+  globalThis.__saveWeekendSlotsCalls.push(args);
+};
+renderModule.renderDone([['s1', { done: true }, '2026-06-06']]);
+ok(doneHost.innerHTML.includes('class="slotLabel"'), 'done slot label renders with editable marker');
+ok(doneHost.innerHTML.includes('contenteditable="true"'), 'done slot label is contenteditable');
+ok(Array.isArray(doneHost._listeners.focusout) && doneHost._listeners.focusout.length > 0, 'done focusout handler was bound');
+const doneTr = {
+  dataset: { sid: 's1', date: '2026-06-06' },
+  querySelector: () => null,
+};
+const doneSlotLabel = {
+  textContent: '토1 토2',
+  dataset: { orig: '토1' },
+  style: {},
+  closest(selector) {
+    if (selector === '.slotLabel') return this;
+    if (selector === 'tr[data-sid]') return doneTr;
+    if (selector === 'tr[data-sid][data-date]') return doneTr;
+    return null;
+  },
+};
+for (const listener of doneHost._listeners.focusout) {
+  await listener({ target: doneSlotLabel });
+}
+ok(globalThis.__saveWeekendSlotsCalls.length === 1, 'done slot label attempts exactly one weekend slot save');
+ok(globalThis.__saveWeekendSlotsCalls[0][0] === 's1', 'done slot label save uses row sid');
+ok(globalThis.__saveWeekendSlotsCalls[0][1] === '토1 토2', 'done slot label save keeps user-entered combined slots');
+ok(globalThis.__saveWeekendSlotsCalls[0][2] === '2026-06-06', 'done slot label save uses row date');
+ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig updates after save');
 """
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-weekend-slot-driver>")
@@ -4319,6 +4395,8 @@ def run_unit_checks() -> bool:
         run_log_repository_unit_checks,
         run_student_answer_link_precedence_unit_checks,
         run_student_bootstrap_unit_checks,
+        run_student_material_access_scope_checks,
+        run_academy_proxy_network_access_checks,
         run_absence_test_assignment_transition_unit_checks,
         run_student_answer_link_render_source_checks,
         run_catalog_script_safety_source_checks,
@@ -4505,6 +4583,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe refactor verification checks.")
     parser.add_argument("--smoke", action="store_true", help="Run safe GET smoke checks with runtime fingerprints.")
     parser.add_argument(
+        "--only-admin-weekend-slot-behavior",
+        action="store_true",
+        help="Run only admin weekend slot label behavior checks.",
+    )
+    parser.add_argument(
         "--only-video-modal-preflight-source",
         action="store_true",
         help="Run only video modal latest-entry preflight source checks.",
@@ -4617,6 +4700,8 @@ def main() -> int:
     args = parser.parse_args()
 
     selected_checks = []
+    if args.only_admin_weekend_slot_behavior:
+        selected_checks.append(run_admin_weekend_slot_behavior_checks)
     if args.only_admin_chat_contract_docs:
         selected_checks.append(run_admin_chat_contract_source_checks)
     if args.only_admin_calendar_test_completion_source:

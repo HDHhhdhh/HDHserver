@@ -979,9 +979,6 @@ window.todayLocalKey = function () {
     renderHomeworkBooks();
     renderAssignedTests();
     renderAssignedList();
-    if (!academyAccessAllowed) {
-      setTimeout(() => showAcademyOnlyNotice({ once: true }), 0);
-    }
 
     const listBox = $('vidList');
     if (listBox) {
