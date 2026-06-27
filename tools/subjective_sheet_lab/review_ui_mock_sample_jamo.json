@@ -1,0 +1,43 @@
+{
+  "source": "jamo_choice_confusion_sample",
+  "test_id": "mock_jamo",
+  "round": "1",
+  "mock_retake_results": {
+    "6": {
+      "question_no": 6,
+      "status": "safe_auto_grade",
+      "recognized": "\u3134,\u3139",
+      "final_answer": "\u3134,\u3139",
+      "warnings": [],
+      "source_note": "mock_retake_recognition"
+    }
+  },
+  "items": [
+    {
+      "question": 4,
+      "status": "review_required",
+      "expected": "\u3131,\u3137",
+      "canonical_answer": "\u3131,\u3137",
+      "accepted_answers": ["\u3131,\u3137"],
+      "recognized": "7,C",
+      "candidates": ["\u3131,\u3137", "7,C", "\u3131,C"],
+      "warnings": ["jamo_choice_confusion"],
+      "review_reasons": ["Korean choices can be misread as numbers or Latin letters."],
+      "review_required": true,
+      "needs_review": true
+    },
+    {
+      "question": 6,
+      "status": "review_required",
+      "expected": "\u3134,\u3139",
+      "canonical_answer": "\u3134,\u3139",
+      "accepted_answers": ["\u3134,\u3139"],
+      "recognized": "4,2",
+      "candidates": ["\u3134,\u3139", "4,2", "\u3134,2"],
+      "warnings": ["jamo_choice_confusion"],
+      "review_reasons": ["Korean choices may be confused with 4/2 on handwritten crops."],
+      "review_required": true,
+      "needs_review": true
+    }
+  ]
+}
