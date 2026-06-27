@@ -579,7 +579,8 @@ function injectDemoControls() {
 
   const guideButton = document.createElement('button');
   guideButton.type = 'button';
-  guideButton.textContent = '가이드';
+  guideButton.dataset.adminDemoAction = 'help';
+  guideButton.textContent = '도움말';
   guideButton.style.cssText = resetButton.style.cssText;
   guideButton.addEventListener('click', () => {
     window.dispatchEvent(new CustomEvent('admin-demo:tutorial-open'));
