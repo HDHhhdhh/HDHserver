@@ -2117,28 +2117,38 @@ def run_admin_calendar_test_completion_source_checks() -> None:
     homework_end = today_render_js.index("const docBtn = e.target.closest('.btn-doc');", homework_start)
     homework_block = today_render_js[homework_start:homework_end]
     _assert_unit(
-        "const testPatch = await completeAssignedTestsForRecordCleanup(target.dateKey, target.sid);" in homework_block,
-        "숙검하원 must complete assigned tests before marking the log done",
+        "completeAssignedTestsForRecordCleanup" not in homework_block,
+        "숙검하원 must preserve assigned tests until record cleanup",
     )
     _assert_unit(
-        "...testPatch," in homework_block and "done: true," in homework_block,
-        "숙검하원 log patch must include completed assigned-test metadata",
+        "done: true," in homework_block and "leaveTime: t," in homework_block and "leaveAt," in homework_block,
+        "숙검하원 log patch must still mark the leave without test-completion metadata",
     )
 
     leave_start = today_render_js.index("const leaveBtn = e.target.closest('.markLeave');")
     leave_end = today_render_js.index("const undoBtn = e.target.closest('.undoDone');", leave_start)
     leave_block = today_render_js[leave_start:leave_end]
     _assert_unit(
-        "const testPatch = await completeAssignedTestsForRecordCleanup(dateKey, sid);" in leave_block,
-        "하원 must complete assigned tests before marking the log done",
+        "completeAssignedTestsForRecordCleanup" not in leave_block,
+        "하원 must preserve assigned tests until record cleanup",
     )
     _assert_unit(
-        "...testPatch," in leave_block and "done: true," in leave_block,
-        "하원 log patch must include completed assigned-test metadata",
+        "done: true," in leave_block and "leaveTime: t," in leave_block and "leaveAt: nowISO()," in leave_block,
+        "하원 log patch must still mark the leave without test-completion metadata",
+    )
+
+    record_cleanup_start = today_render_js.index("const undoBtn = e.target.closest('.undoDone');")
+    record_cleanup_end = today_render_js.index("    });", record_cleanup_start)
+    record_cleanup_block = today_render_js[record_cleanup_start:record_cleanup_end]
+    _assert_unit(
+        "const testPatch = await completeAssignedTestsForRecordCleanup(date, sid);" in record_cleanup_block
+        and "await patchLog(date, sid, { ...testPatch, archived: true });" in record_cleanup_block,
+        "기록 정리 must remain the path that completes assigned tests",
     )
     _assert_unit(
-        "하원/숙검하원/기록 정리" in admin_chat_py,
-        "admin chatbot docs must describe assigned-test completion on 하원 and 숙검하원",
+        "하원/숙검하원은 테스트 배정 상태를 유지" in admin_chat_py
+        and "기록 정리만 결석 학생을 제외한 assigned 테스트를 done" in admin_chat_py,
+        "admin chatbot docs must describe assigned-test completion only on record cleanup",
     )
 
 
@@ -4204,9 +4214,60 @@ const orderIndex = calls.findIndex(call => call.url === '/api/today_order');
 const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
 ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
 
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/weekend-slots' && !init.method) return response({});
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
+  if (String(url) === '/api/today_order' && !init.method) return response({});
+  if (String(url) === '/api/today_order' && init.method === 'POST') return response({ ok: true });
+  return response({});
+};
+const stateSlot3Save = await loadStateModule('weekend-slot3-save');
+await stateSlot3Save.saveWeekendSlotsFromLabel('s1', '토3', '2026-06-06');
+const weekendPost3 = calls.find(call => call.url === '/api/weekend-slots' && call.method === 'POST');
+ok(weekendPost3.body['2026-06-06'].s1[0] === 3, 'weekend slot label save keeps slot 3');
+
 globalThis.__state.students = [{ id: 's1', day1: '토1', day2: '토2' }];
 const stateLabelSpace = await loadStateModule('weekend-label-space');
 ok(stateLabelSpace.labelFor('2026-06-06', 's1') === '토1 토2', 'combined slot label uses user-facing space separator');
+
+calls = [];
+globalThis.__state = {
+  students: [{ id: 's1', day1: '토' }],
+  extra: {},
+  logs: {},
+  absentSlotsByDate: {},
+};
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { s1: [3] } });
+  return response({});
+};
+const stateSlot3Label = await loadStateModule('weekend-slot3-label');
+await stateSlot3Label.loadWeekendSlots();
+ok(stateSlot3Label.labelFor('2026-06-06', 's1') === '토3', 'weekend slot 3 remains visible in labels');
+ok(globalThis.__state.weekendSlots?.['2026-06-06']?.s1?.[0] === 3, 'loadWeekendSlots publishes state.weekendSlots');
+ok(globalThis.window.weekendSlots?.['2026-06-06']?.s1?.[0] === 3, 'loadWeekendSlots publishes window.weekendSlots');
+
+calls = [];
+globalThis.__state = {
+  students: [{ id: 's1', day1: '토' }],
+  extra: { '2026-06-06': ['s1'] },
+  logs: {},
+  absentSlotsByDate: { '2026-06-06': { s1: [1, 2] } },
+};
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { s1: [1] } });
+  return response({});
+};
+const stateExtraAbsentSlot = await loadStateModule('weekend-extra-absent-visible');
+await stateExtraAbsentSlot.loadWeekendSlots();
+ok(
+  stateExtraAbsentSlot.labelFor('2026-06-06', 's1') === '토1',
+  'extra attendance saved slot label remains visible despite same-day absent slots',
+);
 
 const loadRenderModule = async () => {
   const sourcePath = path.join(process.cwd(), 'static/js/admin/features/today.render.js');
@@ -4220,6 +4281,7 @@ const plannedTimeFor = () => '';
 const plannedTimeBase = () => '13:00';
 const getArriveOverride = () => '';
 const setArriveOverride = (...args) => globalThis.__arriveOverrides.push(args);
+const parseSlotsFromText = (txt) => Array.from(new Set((String(txt || '').match(/[1-3]/g) || []).map(n => parseInt(n, 10))));
 const isAttended = () => false;
 const setAttended = () => {};
 const isContacted = () => false;

@@ -2824,6 +2824,10 @@ body.student-page #playerBox {
   gap: 12px;
 }
 
+body.student-page #playerBox.is-player-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 body.student-page .player-card,
 body.student-page .playlist-wrap,
 body.student-page #vidList li,

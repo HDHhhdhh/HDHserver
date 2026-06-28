@@ -108,11 +108,11 @@ def test_cf_connecting_ip_takes_precedence_over_forwarded_for() -> None:
         raise AssertionError("trusted CF-Connecting-IP must allow academy access")
 
 
-def test_trusted_loopback_proxy_uses_rightmost_forwarded_for_client() -> None:
+def test_trusted_loopback_proxy_uses_leftmost_forwarded_for_client() -> None:
     # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
-        headers={"X-Forwarded-For": "198.51.100.23, 192.168.0.44"},
+        headers={"X-Forwarded-For": "192.168.0.44, 198.51.100.23"},
     )
 
     # When
@@ -121,7 +121,7 @@ def test_trusted_loopback_proxy_uses_rightmost_forwarded_for_client() -> None:
 
     # Then
     if client_ip != "192.168.0.44":
-        raise AssertionError(f"expected right-most forwarded client, got {client_ip!r}")
+        raise AssertionError(f"expected left-most forwarded client, got {client_ip!r}")
     if not allowed:
         raise AssertionError("trusted local proxy must allow academy forwarded clients")
 
@@ -244,6 +244,130 @@ def test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain() -> N
         raise AssertionError(f"get-url used the wrong client IP: {body!r}")
 
 
+def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> None:
+    # Given
+    import routes.api_kollus as api_kollus
+
+    old_known_mid = api_kollus._known_mid
+    old_known_sid = api_kollus._known_sid
+    old_signed_url = api_kollus.kollus_signed_url
+    old_trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS")
+    os.environ["TRUST_PROXY_HEADERS"] = "1"
+    api_kollus._known_mid = lambda _mid: True
+    api_kollus._known_sid = lambda _sid: True
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    client = create_app().test_client()
+
+    try:
+        # When
+        response = client.get(
+            "/api/get-url?mid=abcd1234&sid=student1",
+            headers={
+                "CF-Connecting-IP": "110.14.147.14",
+                "X-Forwarded-For": "110.14.147.14, 172.71.0.10",
+                "X-Forwarded-Proto": "https",
+            },
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        body = response.get_data(as_text=True)
+    finally:
+        api_kollus._known_mid = old_known_mid
+        api_kollus._known_sid = old_known_sid
+        api_kollus.kollus_signed_url = old_signed_url
+        if old_trust_proxy_headers is None:
+            os.environ.pop("TRUST_PROXY_HEADERS", None)
+        else:
+            os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
+
+    # Then
+    if response.status_code != 200:
+        raise AssertionError(f"ProxyFix trusted CF get-url request failed: {response.status_code} {body}")
+    if body != "signed:110.14.147.14:student1":
+        raise AssertionError(f"ProxyFix get-url used the wrong client IP: {body!r}")
+
+
+def test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header() -> None:
+    # Given
+    import routes.api_kollus as api_kollus
+
+    old_known_mid = api_kollus._known_mid
+    old_known_sid = api_kollus._known_sid
+    old_signed_url = api_kollus.kollus_signed_url
+    old_trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS")
+    os.environ["TRUST_PROXY_HEADERS"] = "1"
+    api_kollus._known_mid = lambda _mid: True
+    api_kollus._known_sid = lambda _sid: True
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    client = create_app().test_client()
+
+    try:
+        # When
+        response = client.get(
+            "/api/get-url?mid=abcd1234&sid=student1",
+            headers={
+                "X-Forwarded-For": "110.14.147.14, 172.71.0.10",
+                "X-Forwarded-Proto": "https",
+            },
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        body = response.get_data(as_text=True)
+    finally:
+        api_kollus._known_mid = old_known_mid
+        api_kollus._known_sid = old_known_sid
+        api_kollus.kollus_signed_url = old_signed_url
+        if old_trust_proxy_headers is None:
+            os.environ.pop("TRUST_PROXY_HEADERS", None)
+        else:
+            os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
+
+    # Then
+    if response.status_code != 200:
+        raise AssertionError(f"Forwarded-For academy get-url request failed: {response.status_code} {body}")
+    if body != "signed:110.14.147.14:student1":
+        raise AssertionError(f"Forwarded-For get-url used the wrong client IP: {body!r}")
+
+
+def test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header() -> None:
+    # Given
+    import routes.api_kollus as api_kollus
+
+    old_known_mid = api_kollus._known_mid
+    old_known_sid = api_kollus._known_sid
+    old_signed_url = api_kollus.kollus_signed_url
+    old_trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS")
+    os.environ["TRUST_PROXY_HEADERS"] = "1"
+    api_kollus._known_mid = lambda _mid: True
+    api_kollus._known_sid = lambda _sid: True
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    client = create_app().test_client()
+
+    try:
+        # When
+        response = client.get(
+            "/api/get-url?mid=abcd1234&sid=student1",
+            headers={
+                "X-Forwarded-For": "198.51.100.23, 172.71.0.10",
+                "X-Forwarded-Proto": "https",
+            },
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        body = response.get_json(silent=True) or {}
+    finally:
+        api_kollus._known_mid = old_known_mid
+        api_kollus._known_sid = old_known_sid
+        api_kollus.kollus_signed_url = old_signed_url
+        if old_trust_proxy_headers is None:
+            os.environ.pop("TRUST_PROXY_HEADERS", None)
+        else:
+            os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
+
+    # Then
+    if response.status_code != 403:
+        raise AssertionError(f"Forwarded-For external get-url request should be blocked, got {response.status_code}")
+    if body.get("error") != "academy_network_required":
+        raise AssertionError(f"external block returned wrong body: {body!r}")
+
+
 def test_answer_map_allows_trusted_cf_when_forwarded_for_has_public_peer() -> None:
     # Given
     client = create_app().test_client()
@@ -331,13 +455,16 @@ def main() -> None:
             test_trusted_loopback_proxy_uses_cf_connecting_ip,
             test_trusted_cloudflare_header_is_authoritative_with_forwarded_for_chain,
             test_cf_connecting_ip_takes_precedence_over_forwarded_for,
-            test_trusted_loopback_proxy_uses_rightmost_forwarded_for_client,
+            test_trusted_loopback_proxy_uses_leftmost_forwarded_for_client,
             test_trusted_loopback_proxy_uses_real_ip_without_forwarded_for,
             test_forwarded_for_takes_precedence_over_real_ip,
             test_direct_public_client_cannot_spoof_forwarded_for,
             test_direct_public_client_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
             test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain,
+            test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,
+            test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header,
+            test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header,
             test_answer_map_allows_trusted_cf_when_forwarded_for_has_public_peer,
             test_answer_map_blocks_direct_public_spoofed_cf_connecting_ip,
             test_file_download_route_is_not_academy_network_gated,

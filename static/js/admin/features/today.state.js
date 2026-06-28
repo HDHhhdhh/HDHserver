@@ -23,8 +23,8 @@ const WCHR = '일월화수목금토';
 // 기본 예정 등원시간 매핑
 // ─────────────────────────────────────────────
 export const ARRIVE_TIME_MAP = {
-  '토1': '13:00', '토2': '18:00',
-  '일1': '13:00', '일2': '18:00',
+  '토1': '13:00', '토2': '18:00', '토3': '18:00',
+  '일1': '13:00', '일2': '18:00', '일3': '18:00',
   '월1': '13:00', '월2': '18:00',
   '화1': '13:00', '화2': '18:00',
   '수1': '13:00', '수2': '18:00',
@@ -238,6 +238,25 @@ export async function setLogFlagRemote(dateKey, sid, field, checked) {
 // ─────────────────────────────────────────────
 export let WEEKEND_SLOTS = {}; // { "YYYY-MM-DD": { sid: [1,2] | 1 } }
 
+function isWeekendDate(dateStr) {
+  const w = yoilOf(dateStr);
+  return w === '토' || w === '일';
+}
+
+function isAllowedSlotNumber(n, dateStr = '') {
+  if (n === 1 || n === 2) return true;
+  if (n === 3) return !dateStr || isWeekendDate(dateStr);
+  return false;
+}
+
+function publishWeekendSlots() {
+  state.weekendSlots = WEEKEND_SLOTS;
+  window.weekendSlots = WEEKEND_SLOTS;
+  if (window.state && typeof window.state === 'object') {
+    window.state.weekendSlots = WEEKEND_SLOTS;
+  }
+}
+
 export async function loadWeekendSlots() {
   try {
     WEEKEND_SLOTS = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json());
@@ -245,23 +264,26 @@ export async function loadWeekendSlots() {
   } catch {
     WEEKEND_SLOTS = {};
   }
+  publishWeekendSlots();
 }
 
-export function parseSlotsFromText(txt) {
-  const nums = (String(txt || '').match(/[1-2]/g) || []).map(n => parseInt(n, 10));
-  return Array.from(new Set(nums)).filter(n => n === 1 || n === 2).sort((a, b) => a - b);
+export function parseSlotsFromText(txt, dateStr = '') {
+  const nums = (String(txt || '').match(/[1-3]/g) || []).map(n => parseInt(n, 10));
+  return Array.from(new Set(nums))
+    .filter(n => isAllowedSlotNumber(n, dateStr))
+    .sort((a, b) => a - b);
 }
 
-function normalizeSlotValue(raw) {
+function normalizeSlotValue(raw, dateStr = '') {
   if (Array.isArray(raw)) {
     return raw
       .map(n => parseInt(n, 10))
-      .filter(n => Number.isInteger(n) && (n === 1 || n === 2))
+      .filter(n => Number.isInteger(n) && isAllowedSlotNumber(n, dateStr))
       .sort((a, b) => a - b);
   }
-  if (Number.isInteger(raw) && (raw === 1 || raw === 2)) return [raw];
+  if (Number.isInteger(raw) && isAllowedSlotNumber(raw, dateStr)) return [raw];
   const parsed = parseInt(String(raw ?? '').trim(), 10);
-  if (Number.isInteger(parsed) && (parsed === 1 || parsed === 2)) return [parsed];
+  if (Number.isInteger(parsed) && isAllowedSlotNumber(parsed, dateStr)) return [parsed];
   return [];
 }
 
@@ -276,23 +298,24 @@ function regularSlotsForStudent(dateStr, sid) {
       const m = String(v).match(/\d+/);
       return m ? parseInt(m[0], 10) : null;
     })
-    .filter(n => Number.isInteger(n) && (n === 1 || n === 2));
+    .filter(n => Number.isInteger(n) && isAllowedSlotNumber(n, dateStr));
 
   return Array.from(new Set(nums)).sort((a, b) => a - b);
 }
 
 export function getSlots(dateStr, sid) {
   const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
-  const rawSlots = normalizeSlotValue(raw);
+  const rawSlots = normalizeSlotValue(raw, dateStr);
   const regularSlots = regularSlotsForStudent(dateStr, sid);
   const extraIds = new Set([
     ...((state.extra?.[dateStr] || []).map?.(String) || []),
     ...((window.extra?.[dateStr] || []).map?.(String) || []),
   ]);
+  const isExtraAttendance = extraIds.has(String(sid));
 
   let slots = [];
   if (rawSlots.length) {
-    if (extraIds.has(String(sid)) && regularSlots.length) {
+    if (isExtraAttendance && regularSlots.length) {
       slots = Array.from(new Set([...regularSlots, ...rawSlots])).sort((a, b) => a - b);
     } else {
       slots = rawSlots;
@@ -301,8 +324,8 @@ export function getSlots(dateStr, sid) {
     slots = regularSlots.length ? regularSlots : [];
   }
 
-  const absentSlots = normalizeSlotValue(state.absentSlotsByDate?.[dateStr]?.[String(sid)]);
-  if (absentSlots.length) {
+  const absentSlots = normalizeSlotValue(state.absentSlotsByDate?.[dateStr]?.[String(sid)], dateStr);
+  if (absentSlots.length && !(isExtraAttendance && rawSlots.length)) {
     const absentSet = new Set(absentSlots);
     return slots.filter(slot => !absentSet.has(slot));
   }
@@ -421,7 +444,7 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
   const w = yoilOf(dateStr);
 
   // 라벨에서 1/2 슬롯 추출 (예: "월2" / "월1·월2" / "월1월2" / "2" 다 됨)
-  const slots = parseSlotsFromText(labelText);
+  const slots = parseSlotsFromText(labelText, dateStr);
   if (slots.length) {
     const key = `${w}${Math.min(...slots)}`;
     return ARRIVE_TIME_MAP[key] || '';
@@ -492,7 +515,7 @@ export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
   const perDay = (weekend[dateStr] && typeof weekend[dateStr] === 'object')
     ? { ...weekend[dateStr] }
     : {};
-  const slots = parseSlotsFromText(labelText);
+  const slots = parseSlotsFromText(labelText, dateStr);
 
   if (slots.length) perDay[String(sid)] = slots;
   else delete perDay[String(sid)];

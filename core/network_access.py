@@ -64,6 +64,16 @@ class RequestLike(Protocol):
     headers: HeaderGetter
 
 
+def _proxy_fix_original_remote_addr(req: RequestLike) -> str:
+    environ = getattr(req, "environ", None)
+    if not isinstance(environ, dict):
+        return ""
+    original = environ.get("werkzeug.proxy_fix.orig")
+    if not isinstance(original, dict):
+        return ""
+    return clean_client_ip(original.get("REMOTE_ADDR") or "")
+
+
 def clean_client_ip(value: str) -> str:
     text = str(value or "").strip().strip(".")
     text = re.sub(r"%[0-9A-Za-z_.-]+$", "", text)
@@ -85,7 +95,8 @@ def _parse_ip(value: str) -> IPAddress | None:
 def client_ip_from_request(req: RequestLike | None = None) -> str:
     req = req or request
     remote_addr = clean_client_ip(req.remote_addr or "")
-    remote_ip = _parse_ip(remote_addr)
+    trust_addr = _proxy_fix_original_remote_addr(req) or remote_addr
+    remote_ip = _parse_ip(trust_addr)
     if remote_ip is None or not any(remote_ip in net for net in TRUSTED_PROXY_NETWORKS):
         return remote_addr
 
@@ -95,7 +106,7 @@ def client_ip_from_request(req: RequestLike | None = None) -> str:
 
     forwarded_for = req.headers.get("X-Forwarded-For") or ""
     if forwarded_for.strip():
-        for candidate in reversed(forwarded_for.split(",")):
+        for candidate in forwarded_for.split(","):
             client_ip = clean_client_ip(candidate)
             if _parse_ip(client_ip) is not None:
                 return client_ip

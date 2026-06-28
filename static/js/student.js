@@ -269,6 +269,31 @@ window.todayLocalKey = function () {
     alert(academyOnlyMessage);
   }
 
+  function setPlayerEmptyState(message = '') {
+    const frame = $('player');
+    const card = frame?.closest?.('.player-card');
+    const box = $('playerBox');
+    if (frame) {
+      frame.src = "";
+      frame.hidden = true;
+      frame.title = message || '재생할 영상이 없습니다.';
+    }
+    if (card) card.hidden = true;
+    if (box) box.classList.add('is-player-empty');
+  }
+
+  function setPlayerReadyState() {
+    const frame = $('player');
+    const card = frame?.closest?.('.player-card');
+    const box = $('playerBox');
+    if (frame) {
+      frame.hidden = false;
+      frame.title = '';
+    }
+    if (card) card.hidden = false;
+    if (box) box.classList.remove('is-player-empty');
+  }
+
   /* ───────────── 진행도 저장/복구(로컬) ───────────── */
   const LSKeys = {
     lastMid: (sid) => `stu:${sid}:last_video_mid`,
@@ -800,12 +825,30 @@ window.todayLocalKey = function () {
     return academyAccessAllowed && !!answerUrl;
   }
 
+  function shouldOpenAssignedTestAnswerInSameTab() {
+    const width = Number(window.innerWidth || 0);
+    const viewportLooksMobileOrTablet = width > 0 && width <= 1024;
+    const nav = window.navigator || {};
+    const touchPoints = Number(nav.maxTouchPoints || nav.msMaxTouchPoints || 0);
+    let coarsePointer = false;
+    if (typeof window.matchMedia === 'function') {
+      try {
+        coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+      } catch (_) {
+        coarsePointer = false;
+      }
+    }
+    return viewportLooksMobileOrTablet || coarsePointer || touchPoints > 0;
+  }
+
   function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl) {
     const btn = document.createElement(canOpenAnswerUrl ? 'a' : 'button');
     if (canOpenAnswerUrl) {
       btn.href = answerUrl;
-      btn.target = '_blank';
-      btn.rel = 'noopener noreferrer';
+      if (!shouldOpenAssignedTestAnswerInSameTab()) {
+        btn.target = '_blank';
+        btn.rel = 'noopener noreferrer';
+      }
     } else {
       btn.type = 'button';
     }
@@ -1299,7 +1342,7 @@ window.todayLocalKey = function () {
         li.textContent = courseBlockMessage;
         listBox.appendChild(li);
       }
-      if (frame) frame.src = "";
+      setPlayerEmptyState(courseBlockMessage);
       return;
     }
 
@@ -1309,7 +1352,7 @@ window.todayLocalKey = function () {
       const absSet = new Set(absList.map(String));
       if (absSet.has(String(sid))) {
         if (listBox) listBox.innerHTML = "<li style='opacity:.65'>오늘 결석 처리되었습니다</li>";
-        if (frame) frame.src = "";
+        setPlayerEmptyState('오늘 결석 처리되었습니다');
         return;
       }
     }
@@ -1321,7 +1364,7 @@ window.todayLocalKey = function () {
       const archived = entry.archived === true || entry.archived === 'true';
       if (archived) {
         if (listBox) listBox.innerHTML = "<li style='opacity:.65'>오늘 영상이 없습니다</li>";
-        if (frame) frame.src = "";
+        setPlayerEmptyState('오늘 영상이 없습니다');
         return;
       }
     }
@@ -1344,7 +1387,7 @@ window.todayLocalKey = function () {
           : "오늘 할당된 영상이 없습니다 문의 부탁";
         listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
-      if (frame) frame.src = "";
+      setPlayerEmptyState(msg);
       return;
     }
 
@@ -1367,7 +1410,7 @@ window.todayLocalKey = function () {
           : "오늘 할당된 영상이 없습니다 문의 부탁";
         listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
-      if (frame) frame.src = "";
+      setPlayerEmptyState('오늘 할당된 영상이 없습니다');
       return;
     }
 
@@ -1424,9 +1467,11 @@ window.todayLocalKey = function () {
       : myVids[0]?.mid;
 
     if (!academyAccessAllowed) {
-      if (frame) frame.src = "";
+      setPlayerEmptyState(academyOnlyMessage);
       return;
     }
+
+    if (firstMid) setPlayerReadyState();
 
     if (firstMid && firstMid !== currentMid) {
       const listBox2 = $('vidList');
@@ -2918,7 +2963,8 @@ window.todayLocalKey = function () {
       return true;
     }
 
-    const popup = window.open('about:blank', '_blank');
+    const openInSameTab = shouldOpenAssignedTestAnswerInSameTab();
+    const popup = openInSameTab ? null : window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
 
     try {
@@ -2927,7 +2973,9 @@ window.todayLocalKey = function () {
         if (popup) popup.close();
         return false;
       }
-      if (popup) {
+      if (openInSameTab) {
+        window.location.assign(url);
+      } else if (popup) {
         popup.location.replace(url);
       } else {
         window.location.assign(url);
@@ -2988,6 +3036,11 @@ window.todayLocalKey = function () {
 
   async function loadAnswerLinkMap() {
     if (answerLinkMapLoaded) return TEST_ANSWER_LINK_MAP;
+    if (studentAnswerAccessBlocked()) {
+      TEST_ANSWER_LINK_MAP = {};
+      answerLinkMapLoaded = true;
+      return TEST_ANSWER_LINK_MAP;
+    }
     if (!answerLinkMapPromise) {
       answerLinkMapPromise = fetch('/js/test_answer_link_map.json', { cache: 'no-store' })
         .then(res => {
@@ -3467,7 +3520,7 @@ window.todayLocalKey = function () {
       memoEl.value = '';
       ocrTestSheetResetControls();
       resetAnswerLink();
-      void loadAnswerLinkMap();
+      if (!studentAnswerAccessBlocked()) void loadAnswerLinkMap();
       modal.style.display = 'flex';
       void testsConfigReady.then(() => {
         if (modal.style.display === 'none') return;
@@ -3656,7 +3709,6 @@ window.todayLocalKey = function () {
   // ───────────── init ─────────────
   injectStyles();
   ensureModal();
-  void loadAnswerLinkMap();
   initLogic().catch(err => {
     console.warn('[test submit modal] init failed', err);
   });

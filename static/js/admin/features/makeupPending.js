@@ -134,7 +134,7 @@ function parseSlotNumbers(raw) {
   const slots = values.flatMap(value => {
     const matches = String(value ?? '').match(/\d+/g) || [];
     return matches.map(n => parseInt(n, 10));
-  }).filter(n => n === 1 || n === 2);
+  }).filter(n => n === 1 || n === 2 || n === 3);
   return Array.from(new Set(slots)).sort((a, b) => a - b);
 }
 

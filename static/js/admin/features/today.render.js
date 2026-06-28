@@ -14,6 +14,7 @@ import { state } from '../core/state.js';
 import {
   yoilOf,
   labelFor,
+  parseSlotsFromText,
   plannedTimeFor,
   plannedTimeBase,
   getArriveOverride,
@@ -109,10 +110,7 @@ function setAbsenceMapsSafely({ byDate, byStudent, bySlot } = {}) {
 
 function parseSlotNumbers(raw) {
   const values = Array.isArray(raw) ? raw : [raw];
-  const slots = values.flatMap(value => {
-    const matches = String(value ?? '').match(/\d+/g) || [];
-    return matches.map(n => parseInt(n, 10));
-  }).filter(n => n === 1 || n === 2);
+  const slots = values.flatMap(value => parseSlotsFromText(value));
   return Array.from(new Set(slots)).sort((a, b) => a - b);
 }
 
@@ -424,45 +422,23 @@ function attachSortable(dateKey, alphaSortOnly) {
 // - slot 1 => 13:00
 // - slot 2 => 18:00
 // - mixed slots use the earliest slot
-function _parseSlotNumsFromLabel(txt) {
-  const s = String(txt || '').trim();
-
-  // 요일+교시: 월1, 토2, 토1/토2 같은 문자열에서 교시 번호 추출
-  const hits = s.match(/[일월화수목금토]\s*[-]?\s*[12]/g);
-  if (hits && hits.length) {
-    const nums = hits
-      .map(x => x.match(/[12]/)?.[0])
-      .filter(Boolean)
-      .map(n => parseInt(n, 10));
-    return Array.from(new Set(nums)).sort((a, b) => a - b);
-  }
-
-  // "1교시", "2교시" 형태도 허용
-  const hits2 = s.match(/[12]\s*교시/g);
-  if (hits2 && hits2.length) {
-    const nums = hits2
-      .map(x => x.match(/[12]/)?.[0])
-      .filter(Boolean)
-      .map(n => parseInt(n, 10));
-    return Array.from(new Set(nums)).sort((a, b) => a - b);
-  }
-
-  return [];
+function _parseSlotNumsFromLabel(txt, dateKey = '') {
+  return parseSlotsFromText(txt, dateKey);
 }
 
 function _forcedArriveTimeBySlotLabel(dateKey, labelText) {
-  const nums = _parseSlotNumsFromLabel(labelText);
+  const nums = _parseSlotNumsFromLabel(labelText, dateKey);
   if (!nums.length) return '';
   const minSlot = Math.min(...nums);
   if (minSlot === 1) return '13:00';
-  if (minSlot === 2) return '18:00';
+  if (minSlot === 2 || minSlot === 3) return '18:00';
   return '';
 }
 
-function _slotGroupsFromLabelAndArrive(labelText, arriveTime) {
-  let nums = _parseSlotNumsFromLabel(labelText)
+function _slotGroupsFromLabelAndArrive(labelText, arriveTime, dateKey = '') {
+  let nums = _parseSlotNumsFromLabel(labelText, dateKey)
     .map(Number)
-    .filter(n => n === 1 || n === 2);
+    .filter(n => n === 1 || n === 2 || n === 3);
 
   if (!nums.length) {
     const t = String(arriveTime || '').trim();
@@ -669,8 +645,32 @@ function assignedTestCompletionPatch(progressEntry) {
   return patch;
 }
 
-function recordCleanupLogTestPatch(dateKey, sid) {
-  const entry = logEntryForSid(dateKey, sid);
+function hasCleanupAssignmentItems(entry) {
+  return Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY]) || Array.isArray(entry?.assignedTests);
+}
+
+async function fetchLogEntryForCleanup(dateKey, sid) {
+  const current = logEntryForSid(dateKey, sid);
+  if (hasCleanupAssignmentItems(current)) return current;
+
+  const res = await fetch(`/api/logs/entry?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) return current;
+  const data = await res.json().catch(() => ({}));
+  const entry = data?.entry && typeof data.entry === 'object' ? data.entry : {};
+  if (Object.keys(entry).length) {
+    state.logs = state.logs || {};
+    state.logs[dateKey] = state.logs[dateKey] || {};
+    state.logs[dateKey][String(sid)] = entry;
+    window.logs = state.logs;
+    ensureWindowStateAlias();
+    return entry;
+  }
+  return current;
+}
+
+function recordCleanupLogTestPatch(entry) {
   const patch = {};
 
   [TEST_ASSIGN_DAILY_ITEMS_KEY, 'assignedTests'].forEach(key => {
@@ -707,9 +707,14 @@ function completedTestLabelsFromLogPatch(logPatch) {
   return labels;
 }
 
+function hasProgressTestStatuses(entry) {
+  const tests = entry?.tests;
+  return !!(tests && typeof tests === 'object' && Object.keys(tests).some(label => String(label || '').trim()));
+}
+
 async function fetchProgressEntryForCleanup(dateKey, sid) {
   const current = progressEntryForSid(state.progress?.[dateKey], sid);
-  if (Object.keys(current).length) return current;
+  if (hasProgressTestStatuses(current)) return current;
 
   const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
     cache: 'no-store',
@@ -731,7 +736,8 @@ async function fetchProgressEntryForCleanup(dateKey, sid) {
 async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
   if (isSidAbsentOn(dateKey, sid)) return {};
 
-  const logPatch = recordCleanupLogTestPatch(dateKey, sid);
+  const logEntry = await fetchLogEntryForCleanup(dateKey, sid);
+  const logPatch = recordCleanupLogTestPatch(logEntry);
   const progressEntry = await fetchProgressEntryForCleanup(dateKey, sid);
   const progressTests = assignedTestCompletionPatch(progressEntry);
   const currentProgressTests = progressEntry?.tests && typeof progressEntry.tests === 'object'
@@ -991,7 +997,7 @@ function _bindDoneWrapInlineEditOnce() {
     el.dataset.orig = cleaned;
 
     const arriveEl = tr.querySelector('.arriveLabel');
-    const slotGroup = _slotGroupsFromLabelAndArrive(cleaned, arriveEl?.textContent || '');
+    const slotGroup = _slotGroupsFromLabelAndArrive(cleaned, arriveEl?.textContent || '', date);
     if (slotGroup) tr.dataset.slotGroup = slotGroup;
     else delete tr.dataset.slotGroup;
 
@@ -1099,7 +1105,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   const docUrl = docBtn?.dataset?.docUrl || '';
 
   const sid = String(tr.dataset.sid || '');
-  const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive);
+  const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive, dateKey);
   const arriveTitle = (tr.dataset.att === '1' || isAttended(dateKey, sid)) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
 
   const newRow = document.createElement('tr');
@@ -1191,7 +1197,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
       ? `<span class="today-progress-marker is-test-carryover" title="${escapeAttr(`${absentTestCarryover.sourceDate} 결석일 테스트 배부됨`)}">T</span>`
       : (progressReady ? '<span class="today-progress-marker">T</span>' : '');
     const arriveTitle = attended ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
-    const slotGroup = _slotGroupsFromLabelAndArrive(labelText, arriveTime);
+    const slotGroup = _slotGroupsFromLabelAndArrive(labelText, arriveTime, dateKey);
     const rowClass = selfStudy
       ? 'is-self-study-row'
       : hwChecked
@@ -1330,7 +1336,7 @@ export function renderDone(doneEntries) {
 
     const arriveTime = plannedTimeFor(date, sid);
     const label = labelFor(date, sid);
-    const slotGroup = _slotGroupsFromLabelAndArrive(label, arriveTime);
+    const slotGroup = _slotGroupsFromLabelAndArrive(label, arriveTime, date);
     const hwChecked = truthy(entry?.hwChecked);
     const selfStudy = truthy(entry?.selfStudy) || isSelfStudy(date, sid);
     const arriveTitle = isAttended(date, sid) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
@@ -1826,9 +1832,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         try {
           for (const target of targets) {
             try {
-              const testPatch = await completeAssignedTestsForRecordCleanup(target.dateKey, target.sid);
               await patchLog(target.dateKey, target.sid, {
-                ...testPatch,
                 done: true,
                 leaveTime: t,
                 leaveAt,
@@ -1987,9 +1991,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const t = nowHHMM();
 
         try {
-          const testPatch = await completeAssignedTestsForRecordCleanup(dateKey, sid);
           await patchLog(dateKey, sid, {
-            ...testPatch,
             done: true,
             leaveTime: t,
             leaveAt: nowISO(),

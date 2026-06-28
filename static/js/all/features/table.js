@@ -572,7 +572,7 @@ function applyAllStudentSearch() {
     row.style.display = show ? '' : 'none';
     if (show) visible += 1;
   });
-  if (hint) hint.textContent = queryText.trim() ? `${visible}/${rows.length}명` : '';
+  if (hint) hint.textContent = queryText.trim() ? `${visible}/${rows.length} 수업행` : '';
 }
 
 /* ─────────────────────────────────────────

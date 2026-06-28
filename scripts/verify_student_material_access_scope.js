@@ -9,6 +9,7 @@ const source = fs.readFileSync(sourcePath, 'utf8');
 const BLOCK_MESSAGE = '영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.';
 const SID = 'browser-qa-student';
 const MATERIAL_URL = '/files/browser-qa/material.pdf';
+const TODAY = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 class ClassList {
   constructor(owner) {
@@ -384,15 +385,15 @@ async function main() {
   };
   const bootstrap = {
     ok: true,
-    date: '2026-06-27',
+    date: TODAY,
     students: [{ id: SID, name: '브라우저검증', curriculum: '대수', level: '중', day1: '토1' }],
     student: { id: SID, name: '브라우저검증', curriculum: '대수', level: '중', day1: '토1' },
     videos: [{ mid: 'qa-video-1', title: '제한 영상', curriculum: '대수', chapter: 1 }],
-    updates: { '2026-06-27': { [SID]: ['qa-video-1'] } },
+    updates: { [TODAY]: { [SID]: ['qa-video-1'] } },
     materials: { 'mat-1': { title: '모바일 다운로드 확인.pdf', url: MATERIAL_URL } },
     assigns: { [SID]: ['mat-1'] },
-    absent: { by_date: { '2026-06-27': [] }, by_student: {} },
-    logs: { '2026-06-27': {} },
+    absent: { by_date: { [TODAY]: [] }, by_student: {} },
+    logs: { [TODAY]: {} },
     assignedTests: [{
       id: 'qa-test-1',
       name: '제한 테스트',
@@ -408,6 +409,7 @@ async function main() {
     academyOnlyMessage: BLOCK_MESSAGE,
   };
 
+  const fetchCalls = [];
   const context = {
     window: {},
     document,
@@ -422,9 +424,11 @@ async function main() {
     alert: message => alerts.push(String(message)),
     fetch: async url => {
       const text = String(url);
+      fetchCalls.push(text);
       if (text.startsWith('/api/student/bootstrap')) return makeResponse(bootstrap);
       if (text.startsWith('/api/watch/latest')) return makeResponse({ ok: true, watch: {} });
       if (text.startsWith('/api/get-url')) return makeResponse('academy network required', 403);
+      if (text.startsWith('/js/test_answer_link_map')) return makeResponse('academy network required', 403);
       return makeResponse({});
     },
     console,
@@ -484,6 +488,11 @@ async function main() {
 
   const videoRow = document.getElementById('vidList').querySelector('li[data-mid]');
   if (!videoRow) throw new Error('restricted video row did not render');
+  const player = document.getElementById('player');
+  if (!player?.hidden) throw new Error('restricted student page should hide the empty video player');
+  if (fetchCalls.some(url => String(url).startsWith('/js/test_answer_link_map'))) {
+    throw new Error('restricted student page should not preload blocked answer-link map');
+  }
   videoRow.click();
   if (!alerts.includes(BLOCK_MESSAGE)) {
     throw new Error(`restricted video click did not show academy alert: ${JSON.stringify(alerts)}`);
