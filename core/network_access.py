@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import os
 import re
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from flask import request
 
@@ -19,11 +20,13 @@ ACADEMY_ALLOWED_NETWORKS = (
     ipaddress.ip_network("fc00::/7"),
 )
 
-# Only loopback reverse proxies may supply client IP headers. Public clients
+# Only configured reverse proxies may supply client IP headers. Public clients
 # can send the same headers, but their remote_addr must remain authoritative.
 # Cloudflare-authored CF-Connecting-IP is the client identity when present;
 # X-Forwarded-For can contain an appended proxy chain.
-TRUSTED_PROXY_NETWORKS = (
+TRUSTED_PROXY_CIDRS_ENV: Final = "TRUSTED_PROXY_CIDRS"
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+TRUSTED_PROXY_NETWORKS: Final[tuple[IPNetwork, ...]] = (
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
 )
@@ -92,12 +95,30 @@ def _parse_ip(value: str) -> IPAddress | None:
         return None
 
 
+def _configured_trusted_proxy_networks() -> tuple[IPNetwork, ...]:
+    raw_value = os.environ.get(TRUSTED_PROXY_CIDRS_ENV, "")
+    networks: list[IPNetwork] = []
+    for raw_item in re.split(r"[\s,;]+", raw_value):
+        item = clean_client_ip(raw_item)
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+def trusted_proxy_networks() -> tuple[IPNetwork, ...]:
+    return TRUSTED_PROXY_NETWORKS + _configured_trusted_proxy_networks()
+
+
 def client_ip_from_request(req: RequestLike | None = None) -> str:
     req = req or request
     remote_addr = clean_client_ip(req.remote_addr or "")
     trust_addr = _proxy_fix_original_remote_addr(req) or remote_addr
     remote_ip = _parse_ip(trust_addr)
-    if remote_ip is None or not any(remote_ip in net for net in TRUSTED_PROXY_NETWORKS):
+    if remote_ip is None or not any(remote_ip in net for net in trusted_proxy_networks()):
         return remote_addr
 
     cf_connecting_ip = clean_client_ip(req.headers.get("CF-Connecting-IP") or "")

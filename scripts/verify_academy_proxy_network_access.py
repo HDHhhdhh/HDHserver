@@ -11,9 +11,10 @@ import os
 import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Iterator
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -21,11 +22,26 @@ sys.path.insert(0, str(ROOT))
 from app import create_app  # noqa: E402
 from core.network_access import academy_network_allowed, client_ip_from_request  # noqa: E402
 
+TRUSTED_PROXY_CIDRS_ENV: Final = "TRUSTED_PROXY_CIDRS"
+
 
 @dataclass(frozen=True, slots=True)
 class RequestStub:
     remote_addr: str
     headers: Mapping[str, str]
+
+
+@contextmanager
+def trusted_proxy_cidrs(value: str) -> Iterator[None]:
+    old_value = os.environ.get(TRUSTED_PROXY_CIDRS_ENV)
+    os.environ[TRUSTED_PROXY_CIDRS_ENV] = value
+    try:
+        yield
+    finally:
+        if old_value is None:
+            os.environ.pop(TRUSTED_PROXY_CIDRS_ENV, None)
+        else:
+            os.environ[TRUSTED_PROXY_CIDRS_ENV] = old_value
 
 
 def test_direct_academy_client_is_allowed() -> None:
@@ -192,6 +208,44 @@ def test_direct_public_client_cannot_spoof_cf_connecting_ip() -> None:
         raise AssertionError("direct public clients must not spoof academy access with CF-Connecting-IP")
 
 
+def test_configured_public_proxy_uses_cf_connecting_ip() -> None:
+    # Given
+    req = RequestStub(
+        remote_addr="203.0.113.10",
+        headers={"CF-Connecting-IP": "110.14.147.14"},
+    )
+
+    with trusted_proxy_cidrs("203.0.113.10/32"):
+        # When
+        client_ip = client_ip_from_request(req)
+        allowed = academy_network_allowed(req)
+
+    # Then
+    if client_ip != "110.14.147.14":
+        raise AssertionError(f"configured public proxy should use CF client IP, got {client_ip!r}")
+    if not allowed:
+        raise AssertionError("configured public proxy must allow academy CF client IP")
+
+
+def test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip() -> None:
+    # Given
+    req = RequestStub(
+        remote_addr="203.0.113.11",
+        headers={"CF-Connecting-IP": "110.14.147.14"},
+    )
+
+    with trusted_proxy_cidrs("203.0.113.10/32"):
+        # When
+        client_ip = client_ip_from_request(req)
+        allowed = academy_network_allowed(req)
+
+    # Then
+    if client_ip != "203.0.113.11":
+        raise AssertionError(f"unconfigured public proxy must stay authoritative, got {client_ip!r}")
+    if allowed:
+        raise AssertionError("unconfigured public proxy must not gain academy access from CF-Connecting-IP")
+
+
 def test_answer_map_allows_trusted_cf_connecting_ip() -> None:
     # Given
     client = create_app().test_client()
@@ -242,6 +296,43 @@ def test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain() -> N
         raise AssertionError(f"trusted Cloudflare get-url request failed: {response.status_code} {body}")
     if body != "signed:110.14.147.14:student1":
         raise AssertionError(f"get-url used the wrong client IP: {body!r}")
+
+
+def test_get_url_allows_configured_public_proxy_cf_connecting_ip() -> None:
+    # Given
+    import routes.api_kollus as api_kollus
+
+    old_known_mid = api_kollus._known_mid
+    old_known_sid = api_kollus._known_sid
+    old_signed_url = api_kollus.kollus_signed_url
+    api_kollus._known_mid = lambda _mid: True
+    api_kollus._known_sid = lambda _sid: True
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    client = create_app().test_client()
+
+    try:
+        with trusted_proxy_cidrs("203.0.113.10/32"):
+            # When
+            response = client.get(
+                "/api/get-url?mid=abcd1234&sid=student1",
+                headers={
+                    "CF-Connecting-IP": "110.14.147.14",
+                    "X-Forwarded-For": "110.14.147.14, 172.71.0.10",
+                    "User-Agent": "Mozilla/5.0 KAKAOTALK 10.0",
+                },
+                environ_overrides={"REMOTE_ADDR": "203.0.113.10"},
+            )
+            body = response.get_data(as_text=True)
+    finally:
+        api_kollus._known_mid = old_known_mid
+        api_kollus._known_sid = old_known_sid
+        api_kollus.kollus_signed_url = old_signed_url
+
+    # Then
+    if response.status_code != 200:
+        raise AssertionError(f"configured public proxy get-url request failed: {response.status_code} {body}")
+    if body != "signed:110.14.147.14:student1":
+        raise AssertionError(f"configured public proxy get-url used the wrong client IP: {body!r}")
 
 
 def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> None:
@@ -460,8 +551,11 @@ def main() -> None:
             test_forwarded_for_takes_precedence_over_real_ip,
             test_direct_public_client_cannot_spoof_forwarded_for,
             test_direct_public_client_cannot_spoof_cf_connecting_ip,
+            test_configured_public_proxy_uses_cf_connecting_ip,
+            test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
             test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain,
+            test_get_url_allows_configured_public_proxy_cf_connecting_ip,
             test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,
             test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header,
             test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header,

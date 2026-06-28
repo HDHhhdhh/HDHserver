@@ -116,7 +116,7 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "영상 목록은 videos.json, 날짜별 배정은 updates.json, 시청/진도 상태는 progress.json과 watch.json에 있습니다. "
             "학생 개인페이지는 학원 밖에서도 목록과 자료 다운로드를 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
             "수업일이 아니거나 재생이 제한된 학생 화면은 빈 검은 플레이어 대신 재생목록 안내를 중심으로 보여줍니다. "
-            "로컬/Cloudflare 프록시 뒤에서는 loopback 프록시가 전달한 실제 학생 IP만 학원 네트워크 판정에 사용하며, Cloudflare의 CF-Connecting-IP가 있으면 X-Forwarded-For 체인보다 우선합니다. "
+            "로컬/Cloudflare 프록시 뒤에서는 loopback 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시가 전달한 실제 학생 IP만 학원 네트워크 판정에 사용하며, Cloudflare의 CF-Connecting-IP가 있으면 X-Forwarded-For 체인보다 우선합니다. "
             "외부 직접 접속의 forwarded IP 위조는 신뢰하지 않습니다. "
             "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다. "
             "관리자 오늘 목록과 명단 내보내기는 필요한 학생의 progress 이력만 묶음으로 조회해 전체 progress.json 다운로드를 피합니다. "
@@ -133,6 +133,16 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "Automatic watch/progress transitions are centralized in core/progress_rules.py so manual white/skip progress stays authoritative."
         ),
         "sources": ["core/progress_rules.py", "static/js/admin/features/videoModal.js", "static/js/student.js", "routes/api_watch.py"],
+    },
+    {
+        "title": "학원 Wi-Fi 접근 제한",
+        "keywords": ["Wi-Fi", "wifi", "프록시", "proxy", "TRUSTED_PROXY_CIDRS", "CF-Connecting-IP", "X-Forwarded-For", "academyAccessAllowed"],
+        "answer": (
+            "영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
+            "기본적으로 loopback 프록시만 forwarded header를 신뢰하며, 운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
+            "등록된 프록시에서 온 요청만 CF-Connecting-IP 또는 X-Forwarded-For의 실제 학생 IP를 학원 네트워크 판정에 사용하고, 직접 접속자가 보낸 header 위조는 무시합니다."
+        ),
+        "sources": ["core/network_access.py", "routes/api_kollus.py", "routes/api_basic.py", "static/js/student.js"],
     },
     {
         "title": "테스트 관리",
@@ -190,7 +200,8 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "학생 화면은 /student/<sid>와 /student-test/<sid>에서 동작하고, /api/auth/* 토큰으로 학생 계정을 관리합니다. "
             "학생 bootstrap 응답 형태는 유지해야 하며 assignedTests는 top-level 배열입니다. "
             "외부 네트워크에서는 academyAccessAllowed=false와 안내 문구를 내려 목록과 자료 다운로드는 유지하되 영상 재생과 테스트 답지 열람만 막습니다. "
-            "TRUST_PROXY_HEADERS/ProxyFix 배포에서는 원래 REMOTE_ADDR이 신뢰 프록시일 때만 CF-Connecting-IP를 우선하고, 없으면 X-Forwarded-For의 첫 IP를 영상 URL 판정에 사용합니다. "
+            "TRUST_PROXY_HEADERS/ProxyFix 배포에서는 원래 REMOTE_ADDR이 loopback 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시일 때만 CF-Connecting-IP를 우선하고, 없으면 X-Forwarded-For의 첫 IP를 영상 URL 판정에 사용합니다. "
+            "운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
             "ghost-outside-test는 students.json에 넣지 않는 코드 전용 외부접속 테스트 학생이라 전체 학생 명단과 집계에 포함되지 않으며, 관련 저장 API도 읽기 전용으로 차단됩니다."
         ),
         "sources": ["app.py", "core/ghost_student.py", "core/network_access.py", "routes/api_auth.py", "routes/api_basic.py", "routes/api_kollus.py", "static/js/student.js", "static/js/auth.js"],
