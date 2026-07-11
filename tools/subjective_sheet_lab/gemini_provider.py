@@ -13,9 +13,15 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, TypeAlias
+from typing import Final, TypeAlias, assert_never
+
+from tools.subjective_sheet_lab.gemini_provider_response import ResponseShapeFailure, ResponseText, response_text_result
+from tools.subjective_sheet_lab.ocr_answer_mode_policy import answer_mode_for_question
+
+# noqa: SIZE_OK - legacy lab CLI provider; response shape parsing is split out for new work.
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
 
 DEFAULT_MODEL: Final[str] = "gemini-2.5-flash-lite"
 GEMINI_ENDPOINT: Final[str] = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -27,6 +33,9 @@ JSON_BLOCK_RE: Final[re.Pattern[str]] = re.compile(r"```(?:json)?\s*(\{.*?\})\s*
 MAX_RETRY_ATTEMPTS: Final[int] = 2
 RETRY_BACKOFF_SECONDS: Final[float] = 4.0
 CACHE_FILE_NAME: Final[str] = "gemini_provider_cache.json"
+CACHE_STATUS_KEY: Final[str] = "cache_status"
+CACHE_STATUS_RECOGNIZED: Final[str] = "completed_recognized"
+CACHE_STATUS_UNRESOLVED: Final[str] = "completed_unresolved"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +61,11 @@ class RecognizedItem:
 
 
 class GeminiProviderError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, reason: str = "provider_error", diagnostic: JsonObject | None = None) -> None:
         super().__init__(message)
         self.message = message
+        self.reason = reason
+        self.diagnostic = {} if diagnostic is None else dict(diagnostic)
 
 
 def main() -> int:
@@ -92,6 +103,7 @@ class CliConfig:
     model: str
     resume: bool
     max_calls: int | None
+    test_id: str | None = None
 
 
 def parse_args() -> CliConfig:
@@ -104,6 +116,7 @@ def parse_args() -> CliConfig:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-calls", type=int)
+    parser.add_argument("--test-id", default=None)
     args = parser.parse_args()
     if args.max_calls is not None and int(args.max_calls) < 1:
         parser.error("--max-calls must be 1 or greater")
@@ -115,6 +128,7 @@ def parse_args() -> CliConfig:
         model=str(args.model),
         resume=bool(args.resume),
         max_calls=int(args.max_calls) if args.max_calls is not None else None,
+        test_id=str(args.test_id) if args.test_id else None,
     )
 
 
@@ -234,6 +248,9 @@ def prompt_text(crops: list[CropImage]) -> str:
         "Ignore boxes, borders, printed labels, and file names. "
         "Do not solve, correct, infer, or normalize beyond transcription. "
         "If an answer is unclear, return ?. "
+        "If erased, crossed-out, or overwritten traces exist but one visible digit or number is clearly final, return that digit or number. "
+        "Do not return ? only because old strokes, smudges, or crossed-out marks are nearby when a final digit is clearly readable. "
+        "If multiple similarly visible final candidates remain, return ?. "
         "Preserve Korean choices \u3131, \u3134, \u3137, \u3139. Preserve +, -, \u00b1, <, <=, >, >=. "
         "Use fractions like 1/2, roots like sqrt(2), and exponents like x^2. "
         f"Return JSON only for questions: {questions}. "
@@ -282,28 +299,29 @@ def questions_from_contact_path(path: Path) -> tuple[int, ...]:
 def recognize_contact_sheets(contacts: list[ContactImage], api_key: str, config: CliConfig) -> list[RecognizedItem]:
     cached = load_cached_items(config) if config.resume else {}
     recognized_by_question = dict(cached)
-    calls_made = 0
+    pending_contacts = contacts_pending_recognition(contacts, recognized_by_question, config.resume)
+    if not pending_contacts:
+        return items_for_contacts(contacts, recognized_by_question)
+    if config.max_calls is not None and config.max_calls < 1:
+        return items_for_contacts(contacts, recognized_by_question)
 
-    for contact in contacts:
-        questions = contact.questions
-        if config.resume and questions and all(question in recognized_by_question for question in questions):
-            continue
-        if config.max_calls is not None and calls_made >= config.max_calls:
-            break
-
-        payload = build_contact_payload([contact])
-        response = post_gemini(payload, api_key, config.model)
-        text = extract_response_text(response)
-        for item in parse_contact_items(text, [contact]):
-            recognized_by_question[item.question] = item.recognized
-        calls_made += 1
-        write_contact_cache(config, contacts, recognized_by_question)
-
+    payload = build_contact_payload(pending_contacts, config.test_id)
+    response = post_gemini(payload, api_key, config.model)
+    text = extract_response_text(response)
+    for item in parse_contact_items(text, pending_contacts):
+        recognized_by_question[item.question] = item.recognized
+    write_contact_cache(config, contacts, recognized_by_question)
     return items_for_contacts(contacts, recognized_by_question)
 
 
-def build_contact_payload(contacts: list[ContactImage]) -> dict[str, JsonValue]:
-    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts)}]
+def contacts_pending_recognition(contacts: list[ContactImage], recognized_by_question: dict[int, str], resume: bool) -> list[ContactImage]:
+    if not resume:
+        return contacts
+    return [contact for contact in contacts if not contact.questions or not all(question in recognized_by_question for question in contact.questions)]
+
+
+def build_contact_payload(contacts: list[ContactImage], test_id: str | None = None) -> dict[str, JsonValue]:
+    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts, test_id)}]
     for contact in contacts:
         label = question_label(contact.questions)
         parts.append({"text": f"contact_sheet={contact.path.name}, questions={label}"})
@@ -317,13 +335,17 @@ def build_contact_payload(contacts: list[ContactImage]) -> dict[str, JsonValue]:
     }
 
 
-def contact_prompt_text(contacts: list[ContactImage]) -> str:
+def contact_prompt_text(contacts: list[ContactImage], test_id: str | None = None) -> str:
     questions = question_label(known_contact_questions(contacts))
+    mode_guidance = answer_mode_prompt_guidance(known_contact_questions(contacts), test_id)
     return (
         "Read only the handwritten math answers in these contact sheet images. "
-        "Each row is one question and may show original and enhanced versions of the same answer; use both views together. "
+        "Each row is one question. The large original crop is the primary evidence; a smaller enhanced crop may be present only as secondary reference. "
         "Ignore borders, boxes, printed labels, filenames, and crop artifacts. "
         "Do not solve, correct, infer, normalize, or guess. If ambiguous, recognized must be ?. "
+        "If erased, crossed-out, or overwritten traces exist but one visible digit or number is clearly final, recognized must be that digit or number. "
+        "Do not set recognized to ? only because old strokes, smudges, or crossed-out marks are nearby when a final digit is clearly readable. "
+        "If multiple similarly visible final candidates remain, recognized must be ?. "
         "Preserve +, -, \u00b1, <, <=, >, >= exactly. Distinguish 0/O and 1/7. "
         "Korean choices \u3131, \u3134, \u3137, \u3139 are valid answers; do not convert them to 7, C, 4, 2, L, or Latin letters. "
         "Do not confuse x and n; if x/n is ambiguous, recognized must be ?. "
@@ -331,6 +353,7 @@ def contact_prompt_text(contacts: list[ContactImage]) -> str:
         "Use the original crop as the primary evidence; the enhanced crop is only a secondary reference. "
         "The enhanced crop may distort strokes or make gaps look closed or open. "
         "If original and enhanced disagree, do not guess; recognized must be ?. "
+        f"{mode_guidance}"
         "Do not infer an equals sign from an arrow-like stroke. "
         "Read = only when two short parallel horizontal strokes are clearly visible. "
         "If an answer contains a variable and equals sign, such as x=2, preserve the variable and equals sign. "
@@ -341,6 +364,25 @@ def contact_prompt_text(contacts: list[ContactImage]) -> str:
         f"Return JSON only for questions: {questions}. "
         "The JSON schema must be exactly: "
         "{\"items\":[{\"question\":1,\"recognized\":\"...\"}]}"
+    )
+
+
+def answer_mode_prompt_guidance(questions: tuple[int, ...], test_id: str | None) -> str:
+    if test_id is None:
+        return (
+            "For choice-number answers, return 1, 2, 3, 4, or 5 only when a single choice number is clearly written. "
+            "For answer-value answers, return the final visible number, fraction, sign, root, or expression only; do not include work. "
+        )
+    choice_questions = tuple(question for question in questions if answer_mode_for_question(test_id, question) == "choice_number")
+    value_questions = tuple(question for question in questions if answer_mode_for_question(test_id, question) == "answer_value")
+    if not choice_questions and not value_questions:
+        return (
+            "The test-specific answer modes are not verified. Return only clear final visible handwriting and use ? for uncertainty. "
+        )
+    return (
+        f"Question mode hints for {test_id}: choice_number questions are {question_label(choice_questions)}; answer_value questions are {question_label(value_questions)}. "
+        "For choice_number questions, return 1, 2, 3, 4, or 5 only when exactly one choice number is clearly written; do not guess a valid number from letters, equations, or expressions. "
+        "For answer_value questions, return the final visible numeric value, fraction, sign, root, or expression only; do not include work or multiple candidates. "
     )
 
 
@@ -361,14 +403,14 @@ def parse_contact_items(text: str, contacts: list[ContactImage]) -> list[Recogni
     payload = parse_json_text(text)
     items_value = payload.get("items")
     if not isinstance(items_value, list):
-        raise GeminiProviderError("Gemini JSON did not include items list")
+        raise GeminiProviderError("Gemini JSON did not include items list", reason="provider_malformed_items")
     recognized_by_question: dict[int, str] = {}
     for value in items_value:
         item = parse_item(value)
         recognized_by_question[item.question] = item.recognized
     questions = known_contact_questions(contacts)
     if questions:
-        return [RecognizedItem(question=question, recognized=recognized_by_question.get(question, "?")) for question in questions]
+        return [RecognizedItem(question=question, recognized=recognized_by_question[question]) for question in questions if question in recognized_by_question]
     return [RecognizedItem(question=question, recognized=recognized_by_question[question]) for question in sorted(recognized_by_question)]
 
 
@@ -387,6 +429,8 @@ def load_cached_items(config: CliConfig) -> dict[int, str]:
         item = parse_item(value)
         if item.recognized and item.recognized != "?":
             cached[item.question] = item.recognized
+        elif item.recognized == "?" and cache_item_status(value) == CACHE_STATUS_UNRESOLVED:
+            cached[item.question] = item.recognized
     return cached
 
 
@@ -398,12 +442,34 @@ def write_contact_cache(config: CliConfig, contacts: list[ContactImage], recogni
         "timestamp": datetime.now(UTC).isoformat(),
         "input_files": [str(contact.path) for contact in contacts],
         "items": [
-            {"question": item.question, "recognized": item.recognized}
-            for item in items_for_contacts(contacts, recognized_by_question)
-            if item.recognized and item.recognized != "?"
+            {
+                "question": question,
+                "recognized": completed_recognized_text(recognized),
+                CACHE_STATUS_KEY: completed_cache_status(recognized),
+            }
+            for question, recognized in sorted(recognized_by_question.items())
         ],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def cache_item_status(value: JsonValue) -> str:
+    if not isinstance(value, dict):
+        return ""
+    status = value.get(CACHE_STATUS_KEY)
+    return status if isinstance(status, str) else ""
+
+
+def completed_recognized_text(recognized: str) -> str:
+    text = recognized.strip()
+    return text if text else "?"
+
+
+def completed_cache_status(recognized: str) -> str:
+    text = completed_recognized_text(recognized)
+    if text != "?":
+        return CACHE_STATUS_RECOGNIZED
+    return CACHE_STATUS_UNRESOLVED
 
 
 def contact_cache_path(config: CliConfig) -> Path:
@@ -445,34 +511,21 @@ def post_gemini(payload: dict[str, JsonValue], api_key: str, model: str) -> dict
 
 
 def extract_response_text(response: dict[str, JsonValue]) -> str:
-    candidates = response.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        raise GeminiProviderError("Gemini API response did not include candidates")
-    first = candidates[0]
-    if not isinstance(first, dict):
-        raise GeminiProviderError("Gemini API candidate was not an object")
-    content = first.get("content")
-    if not isinstance(content, dict):
-        raise GeminiProviderError("Gemini API candidate did not include content")
-    parts = content.get("parts")
-    if not isinstance(parts, list):
-        raise GeminiProviderError("Gemini API content did not include parts")
-    texts: list[str] = []
-    for part in parts:
-        if isinstance(part, dict):
-            value = part.get("text")
-            if isinstance(value, str):
-                texts.append(value)
-    if not texts:
-        raise GeminiProviderError("Gemini API response did not include text")
-    return "\n".join(texts)
+    result = response_text_result(response)
+    match result:
+        case ResponseText(text=text):
+            return text
+        case ResponseShapeFailure(reason=reason, message=message, diagnostic=diagnostic):
+            raise GeminiProviderError(message, reason=reason, diagnostic=diagnostic)
+        case unreachable:
+            assert_never(unreachable)
 
 
 def parse_recognized_items(text: str, crops: list[CropImage]) -> list[RecognizedItem]:
     payload = parse_json_text(text)
     items_value = payload.get("items")
     if not isinstance(items_value, list):
-        raise GeminiProviderError("Gemini JSON did not include items list")
+        raise GeminiProviderError("Gemini JSON did not include items list", reason="provider_malformed_items")
     recognized_by_question: dict[int, str] = {}
     for value in items_value:
         item = parse_item(value)
@@ -487,21 +540,21 @@ def parse_json_text(text: str) -> dict[str, JsonValue]:
     try:
         decoded = json.loads(candidate)
     except json.JSONDecodeError as exc:
-        raise GeminiProviderError(f"Gemini text was not valid JSON: {exc}") from exc
+        raise GeminiProviderError(f"Gemini text was not valid JSON: {exc}", reason="provider_invalid_json") from exc
     if not isinstance(decoded, dict):
-        raise GeminiProviderError("Gemini JSON root was not an object")
+        raise GeminiProviderError("Gemini JSON root was not an object", reason="provider_malformed_items")
     return decoded
 
 
 def parse_item(value: JsonValue) -> RecognizedItem:
     if not isinstance(value, dict):
-        raise GeminiProviderError("Gemini item was not an object")
+        raise GeminiProviderError("Gemini item was not an object", reason="provider_malformed_items")
     question_value = value.get("question")
     recognized_value = value.get("recognized")
     if not isinstance(question_value, int):
-        raise GeminiProviderError("Gemini item question was not an integer")
+        raise GeminiProviderError("Gemini item question was not an integer", reason="provider_malformed_items")
     if not isinstance(recognized_value, str):
-        raise GeminiProviderError("Gemini item recognized value was not a string")
+        raise GeminiProviderError("Gemini item recognized value was not a string", reason="provider_malformed_items")
     return RecognizedItem(question=question_value, recognized=recognized_value.strip())
 
 

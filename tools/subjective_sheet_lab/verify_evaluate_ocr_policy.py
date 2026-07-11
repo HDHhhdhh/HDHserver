@@ -59,6 +59,11 @@ def cases() -> tuple[PolicyCase, ...]:
         PolicyCase("possible_mismatch_blocks_safe", expected_item(3, "x=2"), recognized_item(3, "x=2", ("possible_answer_key_or_crop_mismatch",)), "data_check_required", ("possible_answer_key_or_crop_mismatch",), True),
         PolicyCase("jamo_confusion_review", expected_item(4, "ㄱ,ㄷ"), recognized_item(4, "7,C"), "review_required", ("jamo_choice_confusion",), False),
         PolicyCase("equation_part_missing_review", expected_item(16, "y=3"), recognized_item(16, "y"), "review_required", ("equation_part_missing",), False),
+        PolicyCase("arrow_equal_ascii_review", expected_item(16, "y=3"), recognized_item(16, "y->3"), "review_required", ("arrow_equal_confusion", "relation_symbol_confusion", "expression_operator_confusion"), False),
+        PolicyCase("arrow_equal_unicode_review", expected_item(16, "y=3"), recognized_item(16, "y\u21923"), "review_required", ("arrow_equal_confusion", "relation_symbol_confusion", "expression_operator_confusion"), False),
+        PolicyCase("inclusive_inequality_review", expected_item(15, "1<x<5"), recognized_item(15, "1<=x<=5"), "review_required", ("relation_symbol_confusion", "expression_operator_confusion"), False),
+        PolicyCase("fraction_digit_mismatch_review", expected_item(18, "129/2"), recognized_item(18, "139/2"), "review_required", ("mismatch",), False),
+        PolicyCase("accepted_relation_warning_blocks_safe", expected_item(16, "y=3"), recognized_item(16, "y=3", ("arrow_equal_confusion",)), "review_required", ("arrow_equal_confusion",), True),
     )
 
 

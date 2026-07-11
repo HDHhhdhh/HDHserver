@@ -7,14 +7,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
+from ocr_relation_ambiguity import ARROW_TOKENS, RELATION_OPERATOR_WARNING_NAMES, relation_ambiguity_warnings
+
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 JAMO_CHOICES: Final[frozenset[str]] = frozenset({"ㄱ", "ㄴ", "ㄷ", "ㄹ"})
 JAMO_CONFUSERS: Final[frozenset[str]] = frozenset({"7", "4", "C", "c", "2", "L", "l"})
-ARROW_STROKES: Final[tuple[str, ...]] = ("→", "->", "=>", "↦")
 DATA_CHECK_WARNINGS: Final[frozenset[str]] = frozenset({"possible_answer_key_or_crop_mismatch"})
 REVIEW_WARNINGS: Final[frozenset[str]] = frozenset(
     {
+        *RELATION_OPERATOR_WARNING_NAMES,
         "digit_confusion_0_6",
         "variable_confusion_x_n",
         "jamo_choice_confusion",
@@ -195,7 +197,8 @@ def derived_warnings(expected: str, recognized: str, accepted_match: bool) -> tu
         warnings.append("jamo_choice_confusion")
     if "=" in expected_compact and "=" not in recognized_compact:
         warnings.append("equation_part_missing")
-    if any(stroke in recognized for stroke in ARROW_STROKES) and "=" in expected_compact:
+    warnings.extend(relation_ambiguity_warnings(expected, recognized))
+    if has_x_n_confusion(expected_compact, recognized_compact) and any(stroke in recognized for stroke in ARROW_TOKENS) and "=" in expected_compact:
         warnings.append("possible_answer_key_or_crop_mismatch")
     if not accepted_match and not warnings:
         warnings.append("mismatch")

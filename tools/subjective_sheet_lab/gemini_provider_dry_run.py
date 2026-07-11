@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
+
+ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from gemini_provider import ContactImage, build_contact_payload, contact_image_from_path
 
@@ -14,6 +19,7 @@ PROVIDER_PHRASES: Final[tuple[str, ...]] = (
     "original crop as the primary evidence",
     "enhanced crop is only a secondary reference",
     "If original and enhanced disagree",
+    "one visible digit or number is clearly final",
     "Do not infer an equals sign from an arrow-like stroke",
     "Do not confuse x and n",
     "Do not confuse 6 and 0",
@@ -24,6 +30,7 @@ ASSET_PHRASES: Final[tuple[str, ...]] = (
     "original crop is the primary evidence",
     "soft enhanced crop is secondary",
     "If original and enhanced disagree, do not guess",
+    "one visible digit or number is clearly final",
     "Do not confuse x and n",
     "Do not confuse 0 and 6",
     "do not convert them to 7, 4, C, 2, L",
