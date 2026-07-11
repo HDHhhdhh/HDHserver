@@ -6,7 +6,12 @@ import { getAdminDate } from '../core/adminDate.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
-import { buildMakeupExportRows, buildPendingMakeups, formatMakeupDate, makeupExportRowsToCsv } from './makeupPending.js';
+import {
+  buildPendingMakeups,
+  buildScheduledMakeupRows,
+  formatMakeupDate,
+  makeupOriginalAbsenceId,
+} from './makeupPending.js';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
@@ -451,6 +456,8 @@ export function initCalendar() {
   // 슬롯 버튼 클릭 핸들러 중복 방지 플래그
   let slotClickBound = false;
   let makeupSelection = null;
+  let attendanceCheckMode = false;
+  let attendanceCheckSelection = null;
   let manualMakeupSelectedSid = '';
   let manualMakeupSelectedDates = new Set();
   let manualAbsenceSelection = null;
@@ -575,13 +582,14 @@ export function initCalendar() {
   }
 
   function selectedMakeupStudentRecords() {
-    if (!makeupSelection) return [];
-    const selectedSid = String(makeupSelection.sid || '').trim();
-    const selectedStudent = makeupSelection.student ||
+    const selection = makeupSelection || attendanceCheckSelection;
+    if (!selection) return [];
+    const selectedSid = String(selection.sid || '').trim();
+    const selectedStudent = selection.student ||
       (state.students || []).find(stu => String(stu?.id || '') === selectedSid) ||
       {};
-    const targetName = normalizeStudentIdentity(selectedStudent?.name || makeupSelection.name);
-    const targetSchool = normalizeSchoolIdentity(studentSchoolLabel(selectedStudent) || makeupSelection.school);
+    const targetName = normalizeStudentIdentity(selectedStudent?.name || selection.name);
+    const targetSchool = normalizeSchoolIdentity(studentSchoolLabel(selectedStudent) || selection.school);
     const seen = new Set();
     const records = [];
 
@@ -613,9 +621,7 @@ export function initCalendar() {
     const addLabel = (stu, slot, kind = 'regular', note = '') => {
       if (!MAKEUP_SLOTS.includes(slot)) return;
       const course = studentCourseLabel(stu);
-      const label = kind === 'makeup'
-        ? `${course} 보강 ${slot}타임${note}`
-        : `${course} ${slot}타임`;
+      const label = `${course} - ${kind === 'makeup' ? '보강' : '정규'} - ${slot}타임${note}`;
       const sid = String(stu?.id || '').trim();
       const key = `${sid || normalizeStudentIdentity(stu?.name)}|${course}|${kind}|${slot}|${note}`;
       if (seen.has(key)) return;
@@ -648,7 +654,7 @@ export function initCalendar() {
     document.querySelectorAll('.fc-daygrid-day.has-makeup-conflicts').forEach(cell => {
       cell.classList.remove('has-makeup-conflicts');
     });
-    if (!makeupSelection) return;
+    if (!makeupSelection && !attendanceCheckSelection) return;
 
     document.querySelectorAll('.fc-daygrid-day').forEach(cell => {
       const dateStr = cell.getAttribute('data-date');
@@ -765,6 +771,42 @@ export function initCalendar() {
     return { by_absence: byAbsence, manual };
   }
 
+  function clonePlainMap(value) {
+    try {
+      return JSON.parse(JSON.stringify(value || {}));
+    } catch {
+      return {};
+    }
+  }
+
+  async function postJson(url, payload) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text().catch(() => '');
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new Error(`${url} ${res.status}`);
+    return data;
+  }
+
+  function getScheduledMakeups(carryover = CARRYOVER) {
+    return buildScheduledMakeupRows({
+      students: state.students || [],
+      carryover: normalizeCarryoverPayload(carryover || {}),
+    });
+  }
+
+  function getScheduledMakeupForItem(item, carryover = CARRYOVER) {
+    if (item?.scheduledMakeup?.status === 'scheduled') return item.scheduledMakeup;
+    const originalAbsenceId = item?.originalAbsenceId || makeupOriginalAbsenceId(item);
+    if (!originalAbsenceId) return null;
+    return getScheduledMakeups(carryover)
+      .find(row => row.originalAbsenceId === originalAbsenceId)
+      ?.scheduledMakeup || null;
+  }
+
   function normalizeAbsentSlotMap(value) {
     const out = {};
     if (!value || typeof value !== 'object') return out;
@@ -800,30 +842,6 @@ export function initCalendar() {
         Number(a.slot || 0) - Number(b.slot || 0) ||
         String(a.sid).localeCompare(String(b.sid), 'ko', { numeric: true });
     });
-  }
-
-  function downloadTextFile(filename, contents, type) {
-    const blob = new Blob([contents], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  function exportMakeupRosterCsv() {
-    const rows = buildMakeupExportRows(sortPlannerItems(getPendingMakeups()));
-    if (!rows.length) {
-      toast('내보낼 보강 명단이 없습니다.');
-      return;
-    }
-
-    const dateStr = String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
-    downloadTextFile(`보강명단_${dateStr}.csv`, makeupExportRowsToCsv(rows), 'text/csv;charset=utf-8');
-    toast('보강 명단 CSV 내보내기 완료');
   }
 
   function ensureManualMakeupModal() {
@@ -1193,13 +1211,16 @@ export function initCalendar() {
   function ensureMakeupPlanner() {
     if (document.getElementById('makeupPlanner')) return;
     calendarEl.insertAdjacentHTML('afterend', `
+      <div class="makeup-panel-stack">
       <section id="makeupPlanner" class="makeup-planner" aria-label="보강 잡기">
         <div class="makeup-planner-head">
           <div>
             <div class="makeup-planner-title-row">
               <h4>보강 잡기</h4>
-              <button id="exportMakeupRoster" class="btn secondary makeup-export-btn" type="button">보강 명단 내보내기</button>
-              <button id="openManualMakeup" class="btn secondary makeup-export-btn makeup-add-btn" type="button">결석 추가</button>
+              <div class="makeup-planner-control-group">
+                <button id="attendanceCheckToggle" class="btn secondary makeup-export-btn" type="button">등원일 확인</button>
+                <button id="openManualMakeup" class="btn secondary makeup-export-btn makeup-add-btn" type="button">결석 추가</button>
+              </div>
             </div>
             <p id="makeupPlannerHint">보강이 잡히기 전까지 유지되는 결석 보강 명단입니다.</p>
           </div>
@@ -1207,15 +1228,31 @@ export function initCalendar() {
         </div>
         <div id="makeupPlannerList" class="makeup-planner-list"></div>
       </section>
+      <section id="makeupStatus" class="makeup-planner" aria-label="보강 현황">
+        <div class="makeup-planner-head">
+          <div><h4>보강 현황</h4><p id="makeupStatusHint">배정 완료된 보강입니다.</p></div>
+          <input id="makeupStatusSearch" type="search" autocomplete="off" placeholder="보강 현황 검색">
+        </div>
+        <div id="makeupStatusList" class="makeup-planner-list"></div>
+      </section>
+      </div>
     `);
 
     const search = $('makeupPlannerSearch');
     applySearchPlaceholder(search, '보강 학생 검색');
-    $('exportMakeupRoster')?.addEventListener('click', exportMakeupRosterCsv);
+    $('attendanceCheckToggle')?.addEventListener('click', () => {
+      attendanceCheckMode = true;
+      attendanceCheckSelection = null;
+      cancelMakeupSelection();
+      renderMakeupPlanner();
+      $('makeupPlannerSearch')?.focus();
+    });
     $('openManualMakeup')?.addEventListener('click', openManualMakeupAddUI);
-    search?.addEventListener('input', renderMakeupPlanner);
-    search?.addEventListener('search', renderMakeupPlanner);
-    search?.addEventListener('compositionend', renderMakeupPlanner);
+    [search, $('makeupStatusSearch')].forEach(input => {
+      input?.addEventListener('input', renderMakeupPlanner);
+      input?.addEventListener('search', renderMakeupPlanner);
+      input?.addEventListener('compositionend', renderMakeupPlanner);
+    });
     search?.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Escape') return;
       if (makeupSelection) {
@@ -1233,6 +1270,14 @@ export function initCalendar() {
       const btn = ev.target.closest('[data-makeup-action]');
       if (!btn) return;
       const key = btn.dataset.key || '';
+      if (attendanceCheckMode) {
+        const student = (state.students || []).find(row => String(row?.id || '') === key);
+        if (!student) return;
+        attendanceCheckSelection = { sid: key, student, name: student.name, school: studentSchoolLabel(student) };
+        refreshMakeupConflictHints();
+        renderMakeupPlanner();
+        return;
+      }
       const item = getPendingMakeups().find(row => makeupItemKey(row) === key);
       if (!item) return;
 
@@ -1252,6 +1297,23 @@ export function initCalendar() {
         return;
       }
 
+      setMakeupSelection(item);
+      closeMakeupSlotPicker();
+      renderMakeupPlanner();
+      toast('캘린더에서 보강 날짜를 클릭하세요.');
+    });
+
+    $('makeupStatusList')?.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-makeup-action]');
+      if (!btn) return;
+      const item = getScheduledMakeups().find(row => makeupItemKey(row) === (btn.dataset.key || ''));
+      if (!item) return;
+      if (btn.dataset.makeupAction === 'carryover-scheduled') {
+        carryoverScheduledMakeup(item).catch(err => { console.error(err); alert('이월 실패'); });
+        return;
+      }
+      attendanceCheckMode = false;
+      attendanceCheckSelection = null;
       setMakeupSelection(item);
       closeMakeupSlotPicker();
       renderMakeupPlanner();
@@ -1556,6 +1618,236 @@ export function initCalendar() {
     await resolveAbsenceMakeupDemand(item);
   }
 
+  function scheduledSlots(schedule) {
+    return parseSlotNumbers(schedule?.makeupTimes || schedule?.makeup_times || schedule?.slots || schedule?.slot);
+  }
+
+  function scheduledOwnedSlots(schedule) {
+    return parseSlotNumbers(schedule?.ownedSlots || schedule?.owned_slots);
+  }
+
+  function scheduledSlotsToRelease(schedule) {
+    const ownsSlots = Object.prototype.hasOwnProperty.call(schedule || {}, 'ownedSlots') ||
+      Object.prototype.hasOwnProperty.call(schedule || {}, 'owned_slots');
+    if (ownsSlots) return scheduledOwnedSlots(schedule);
+    return schedule?.createdBy === 'makeup-planner' ? scheduledSlots(schedule) : [];
+  }
+
+  function applyScheduledAttendance(extraMap, weekendMap, item, dateStr, slot, previousSchedule = null) {
+    const sid = String(item?.sid || '').trim();
+    const stu = item?.student ||
+      (state.students || []).find(row => String(row?.id || '') === sid) ||
+      {};
+    const dayIds = new Set((extraMap[dateStr] || []).map(String));
+    const previousSameDate = previousSchedule?.makeupDate === dateStr;
+    const ownedExtra = (previousSameDate && previousSchedule?.ownedExtra === true) || !dayIds.has(sid);
+    dayIds.add(sid);
+    extraMap[dateStr] = Array.from(dayIds);
+
+    const perDaySlots = { ...(weekendMap[dateStr] || {}) };
+    const existingSlots = parseSlotNumbers(perDaySlots[sid]);
+    const previousOwnedSlots = previousSameDate ? scheduledOwnedSlots(previousSchedule) : [];
+    const ownedSlots = (!existingSlots.includes(slot) || previousOwnedSlots.includes(slot)) ? [slot] : [];
+    const mergedSlots = combinedSlotsForStudent(stu, dateStr, [...existingSlots, slot]);
+    perDaySlots[sid] = serializeSlots(mergedSlots);
+    weekendMap[dateStr] = perDaySlots;
+
+    return { ownedExtra, ownedSlots, weekendPatch: { [dateStr]: { [sid]: perDaySlots[sid] } } };
+  }
+
+  function releaseScheduledAttendance(extraMap, weekendMap, item, previousSchedule, carryoverAfter) {
+    const sid = String(item?.sid || previousSchedule?.studentId || '').trim();
+    const dateStr = String(previousSchedule?.makeupDate || '').trim();
+    if (!sid || !dateStr) return {};
+
+    const stu = item?.student ||
+      (state.students || []).find(row => String(row?.id || '') === sid) ||
+      {};
+    const remaining = getScheduledMakeups(carryoverAfter)
+      .filter(row => String(row.sid) === sid && row.scheduledMakeup?.makeupDate === dateStr);
+    const remainingSlots = Array.from(new Set(
+      remaining.flatMap(row => scheduledSlots(row.scheduledMakeup))
+    )).sort((a, b) => a - b);
+    const patch = { [dateStr]: {} };
+
+    if (remaining.length) {
+      const ids = new Set((extraMap[dateStr] || []).map(String));
+      ids.add(sid);
+      extraMap[dateStr] = Array.from(ids);
+      const perDaySlots = { ...(weekendMap[dateStr] || {}) };
+      const slotsToRemove = scheduledSlotsToRelease(previousSchedule);
+      const preservedSlots = parseSlotNumbers(perDaySlots[sid]).filter(slot => !slotsToRemove.includes(slot));
+      const finalSlots = Array.from(new Set([...preservedSlots, ...remainingSlots])).sort((a, b) => a - b);
+      perDaySlots[sid] = serializeSlots(combinedSlotsForStudent(stu, dateStr, finalSlots));
+      weekendMap[dateStr] = perDaySlots;
+      patch[dateStr][sid] = perDaySlots[sid];
+      return patch;
+    }
+
+    const slotsToRemove = scheduledSlotsToRelease(previousSchedule);
+    if (slotsToRemove.length) {
+      const perDaySlots = { ...(weekendMap[dateStr] || {}) };
+      const nextSlots = parseSlotNumbers(perDaySlots[sid]).filter(slot => !slotsToRemove.includes(slot));
+      if (nextSlots.length) {
+        perDaySlots[sid] = serializeSlots(nextSlots);
+        patch[dateStr][sid] = perDaySlots[sid];
+      } else {
+        delete perDaySlots[sid];
+        patch[dateStr][sid] = [];
+      }
+      if (Object.keys(perDaySlots).length) weekendMap[dateStr] = perDaySlots;
+      else delete weekendMap[dateStr];
+    }
+
+    if (previousSchedule?.ownedExtra === true) {
+      const ids = (extraMap[dateStr] || []).map(String).filter(id => id !== sid);
+      if (ids.length) extraMap[dateStr] = ids;
+      else delete extraMap[dateStr];
+    }
+
+    return Object.keys(patch[dateStr]).length ? patch : {};
+  }
+
+  async function postWeekendPatch(patch) {
+    if (!patch || !Object.keys(patch).length) return;
+    await postJson('/api/weekend-slots', patch);
+  }
+
+  function mergeWeekendPatches(...patches) {
+    const out = {};
+    patches.forEach(patch => {
+      Object.entries(patch || {}).forEach(([date, mapping]) => {
+        if (!mapping || typeof mapping !== 'object') return;
+        out[date] = { ...(out[date] || {}), ...mapping };
+      });
+    });
+    return out;
+  }
+
+  async function saveScheduledMakeupDemand(item, makeupDate, slot, ownership = {}) {
+    const sid = String(item?.sid || '').trim();
+    const absenceDate = String(item?.absenceDate || '').trim();
+    if (!sid || !absenceDate || !DATE_RE.test(makeupDate) || !MAKEUP_SLOTS.includes(slot)) {
+      throw new Error('Invalid makeup schedule');
+    }
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    const now = new Date().toISOString();
+    const originalAbsenceId = item.originalAbsenceId || makeupOriginalAbsenceId(item);
+    const previousSchedule = getScheduledMakeupForItem(item, next) || item.scheduledMakeup || {};
+    const schedule = {
+      originalAbsenceId,
+      studentId: sid,
+      makeupDate,
+      makeupTimes: [slot],
+      status: 'scheduled',
+      createdAt: previousSchedule.createdAt || now,
+      updatedAt: now,
+      createdBy: 'makeup-planner',
+      ownedExtra: ownership.ownedExtra === true,
+      ownedSlots: parseSlotNumbers(ownership.ownedSlots),
+    };
+
+    if (item.source === 'manual') {
+      const manualKey = String(item.manualKey || '').trim();
+      if (!manualKey) throw new Error('Missing manual makeup key');
+      next.manual[absenceDate] = next.manual[absenceDate] || {};
+      const prev = next.manual[absenceDate][manualKey] || {};
+      next.manual[absenceDate][manualKey] = {
+        ...prev,
+        sid,
+        slots: item.dateOnly ? [] : parseSlotNumbers(item.slot),
+        dateOnly: item.dateOnly === true,
+        state: 'carried',
+        createdAt: prev.createdAt || now,
+        updatedAt: now,
+        note: prev.note || '',
+        course: prev.course || item.course || studentCourseLabel(item.student || {}) || '',
+        scheduledMakeup: schedule,
+      };
+    } else {
+      const carryKey = makeupCarryoverKey(item);
+      const prev = next.by_absence[absenceDate]?.[carryKey] || {};
+      next.by_absence[absenceDate] = {
+        ...(next.by_absence[absenceDate] || {}),
+        [carryKey]: {
+          ...prev,
+          state: 'carried',
+          updatedAt: now,
+          note: prev.note || '',
+          scheduledMakeup: schedule,
+        },
+      };
+    }
+
+    const data = await postJson('/api/makeup-carryover', next);
+    CARRYOVER = normalizeCarryoverPayload(data || next);
+    return CARRYOVER;
+  }
+
+  async function carryoverScheduledMakeup(item) {
+    if (!item) return;
+    await preloadExtraWeekend();
+    const previousSchedule = getScheduledMakeupForItem(item);
+    if (!previousSchedule) return;
+
+    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const next = normalizeCarryoverPayload(latest);
+    const absenceDate = String(item.absenceDate || '').trim();
+    const now = new Date().toISOString();
+
+    if (item.source === 'manual') {
+      const manualKey = String(item.manualKey || '').trim();
+      const prev = next.manual?.[absenceDate]?.[manualKey] || {};
+      if (manualKey && next.manual?.[absenceDate]) {
+        next.manual[absenceDate][manualKey] = {
+          ...prev,
+          state: 'carried',
+          updatedAt: now,
+          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now },
+        };
+      }
+    } else {
+      const carryKey = makeupCarryoverKey(item);
+      const prev = next.by_absence?.[absenceDate]?.[carryKey] || {};
+      next.by_absence[absenceDate] = {
+        ...(next.by_absence[absenceDate] || {}),
+        [carryKey]: {
+          ...prev,
+          state: 'carried',
+          updatedAt: now,
+          note: prev.note || '',
+          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now },
+        },
+      };
+    }
+
+    const data = await postJson('/api/makeup-carryover', next);
+    const nextCarryover = normalizeCarryoverPayload(data || next);
+    const nextExtra = clonePlainMap(EXTRA);
+    const nextWeekend = clonePlainMap(WEEKEND);
+    const weekendPatch = releaseScheduledAttendance(nextExtra, nextWeekend, item, previousSchedule, nextCarryover);
+    await postJson('/api/extra-attend', nextExtra);
+    await postWeekendPatch(weekendPatch);
+
+    CARRYOVER = nextCarryover;
+    EXTRA = nextExtra;
+    WEEKEND = nextWeekend;
+    state.extra = EXTRA;
+    window.extra = state.extra;
+    if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
+      setMakeupSelection(null);
+      closeMakeupSlotPicker();
+    }
+    await refreshMakeupPlanner();
+    await window.recalcCalendarCounts?.();
+    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    toast('보강 없이 이월 처리했습니다.');
+  }
+
   async function markAbsenceMakeupOpen(absenceDate, items) {
     const date = String(absenceDate || '').trim();
     const rowsToOpen = (items || []).map(item => ({
@@ -1645,36 +1937,56 @@ export function initCalendar() {
     const list = $('makeupPlannerList');
     const hint = $('makeupPlannerHint');
     const search = $('makeupPlannerSearch');
-    if (!list) return;
+    const statusList = $('makeupStatusList');
+    const statusSearch = $('makeupStatusSearch');
+    if (!list || !statusList) return;
 
-    const queryText = search?.value || '';
-    const items = getPendingMakeups();
-    const visible = sortPlannerItems(items.filter(item => {
+    const filterRows = (items, queryText) => sortPlannerItems(items.filter(item => {
       const key = studentSearchKey(item.student, [
         item.school,
         item.course,
         item.absenceDate,
+        item.scheduledMakeup?.makeupDate,
         item.slot ? `${item.slot}타임` : '',
+        item.scheduled ? '보강 예정' : '',
         item.source === 'manual' ? '추가 결석' : '결석',
         formatMakeupDate(item.absenceDate),
+        formatMakeupDate(item.scheduledMakeup?.makeupDate),
       ]);
       return matchesSearchKey(key, queryText);
     }));
 
+    const queryText = search?.value || '';
+    const pending = getPendingMakeups();
+    const scheduled = getScheduledMakeups();
+    const visible = filterRows(pending, queryText);
+    const statusVisible = filterRows(scheduled, statusSearch?.value || '');
+    const checkToggle = $('attendanceCheckToggle');
+    if (checkToggle) checkToggle.hidden = attendanceCheckMode;
+    if (search) applySearchPlaceholder(search, attendanceCheckMode ? '학생 이름 검색' : '보강 학생 검색');
+
     if (hint) {
       const suffix = manualAbsenceSelection ? ' 결석 날짜 선택 중' : (makeupSelection ? ' 날짜 선택 중' : '');
       hint.textContent = queryText.trim()
-        ? `${visible.length}/${items.length}명${suffix}`
-        : `${items.length}건${suffix}`;
+        ? `${visible.length}/${pending.length}${suffix}`
+        : `${pending.length}건${suffix}`;
     }
 
-    if (!visible.length) {
+    if (attendanceCheckMode) {
+      const studentRows = (state.students || []).filter(student => matchesSearchKey(studentSearchKey(student), queryText));
+      if (hint) hint.textContent = queryText.trim()
+        ? `${studentRows.length}명 · 등원일 확인 중 · ESC를 누르면 확인 모드가 종료됩니다.`
+        : '학생 이름을 검색하세요. ESC를 누르면 확인 모드가 종료됩니다.';
+      list.innerHTML = studentRows.length ? studentRows.map(student => {
+        const key = String(student.id || '');
+        const selected = attendanceCheckSelection?.sid === key ? ' is-active' : '';
+        return `<div class="makeup-row${selected}" data-key="${escapeAttr(key)}"><div class="makeup-label"><span>${escapeHtml(student.name || '')} - ${escapeHtml(studentSchoolLabel(student))} - ${escapeHtml(studentCourseLabel(student))}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="check" data-key="${escapeAttr(key)}">확인</button></div></div>`;
+      }).join('') : `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '학생 이름을 검색하세요.'}</div>`;
+    } else if (!visible.length) {
       list.innerHTML = `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
-      return;
-    }
-
-    const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
-    list.innerHTML = visible.map(item => {
+    } else {
+      const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
+      list.innerHTML = visible.map(item => {
       const key = makeupItemKey(item);
       const sourceLabel = item.source === 'manual' ? '추가 결석' : '결석';
       const slotLabel = item.dateOnly
@@ -1683,17 +1995,36 @@ export function initCalendar() {
       const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
       const active = key === activeKey ? ' is-active' : '';
       const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
-      return `
-        <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
-          <div class="makeup-label">${escapeHtml(label)}</div>
-          <div class="makeup-actions">
-            <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+      const secondaryActions = `
             <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>
             <button type="button" class="makeup-carryover-btn" data-makeup-action="carryover" data-key="${escapeAttr(key)}">이월</button>
+          `;
+      return `
+        <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
+          <div class="makeup-label">
+            <span>${escapeHtml(label)}</span>
+          </div>
+          <div class="makeup-actions">
+            <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
+            ${secondaryActions}
           </div>
         </div>
       `;
-    }).join('');
+      }).join('');
+    }
+
+    if (!statusVisible.length) {
+      statusList.innerHTML = `<div class="makeup-empty">${statusSearch?.value.trim() ? '검색 결과가 없습니다.' : '보강 예정이 없습니다.'}</div>`;
+    } else {
+      statusList.innerHTML = statusVisible.map(item => {
+        const key = makeupItemKey(item);
+        const slotLabel = item.dateOnly ? '결석' : `${item.slot || 1}타임 결석`;
+        const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)} - ${slotLabel}`;
+        return `<div class="makeup-row" data-key="${escapeAttr(key)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(formatMakeupDate(item.scheduledMakeup?.makeupDate))}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
+      }).join('');
+    }
+    const statusHint = $('makeupStatusHint');
+    if (statusHint) statusHint.textContent = `${statusVisible.length}/${scheduled.length}건`;
   }
 
   async function refreshMakeupPlanner() {
@@ -1763,40 +2094,45 @@ export function initCalendar() {
     const stu = selectedDemand.student ||
       (state.students || []).find(row => String(row?.id || '') === sid) ||
       {};
-    const dayIds = new Set((EXTRA[dateStr] || []).map(String));
-    dayIds.add(sid);
-    EXTRA[dateStr] = Array.from(dayIds);
+    const previousSchedule = getScheduledMakeupForItem(selectedDemand);
+    const carryoverBeforeSave = CARRYOVER;
+    const nextExtra = clonePlainMap(EXTRA);
+    const nextWeekend = clonePlainMap(WEEKEND);
+    let nextCarryover = null;
+    try {
+      const { ownedExtra, ownedSlots, weekendPatch } = applyScheduledAttendance(
+        nextExtra,
+        nextWeekend,
+        selectedDemand,
+        dateStr,
+        slot,
+        previousSchedule
+      );
+      nextCarryover = await saveScheduledMakeupDemand(selectedDemand, dateStr, slot, { ownedExtra, ownedSlots });
+      const releasePatch = previousSchedule
+        ? releaseScheduledAttendance(nextExtra, nextWeekend, selectedDemand, previousSchedule, nextCarryover)
+        : {};
+      const mergedWeekendPatch = mergeWeekendPatches(weekendPatch, releasePatch);
+      await postJson('/api/extra-attend', nextExtra);
+      await postWeekendPatch(mergedWeekendPatch);
+      const storedSlots = parseSlotNumbers(nextWeekend?.[dateStr]?.[sid]);
+      await postJson('/arrive-time/patch', {
+        date: dateStr,
+        sid,
+        value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...(storedSlots.length ? storedSlots : [slot]))] || '',
+      });
+    } catch (err) {
+      CARRYOVER = carryoverBeforeSave;
+      throw err;
+    }
+
+    EXTRA = nextExtra;
+    WEEKEND = nextWeekend;
+    CARRYOVER = nextCarryover;
     state.extra = EXTRA;
     window.extra = state.extra;
 
-    const perDaySlots = WEEKEND[dateStr] || {};
-    const existingSlots = parseSlotNumbers(perDaySlots[sid]);
-    const mergedSlots = combinedSlotsForStudent(stu, dateStr, [...existingSlots, slot]);
-    perDaySlots[sid] = serializeSlots(mergedSlots);
-    WEEKEND[dateStr] = perDaySlots;
-
-    await fetch('/api/extra-attend', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(EXTRA),
-    });
-    await fetch('/api/weekend-slots', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({ [dateStr]: perDaySlots }),
-    });
-    await fetch('/arrive-time/patch', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({
-        date: dateStr,
-        sid,
-        value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...mergedSlots)] || '',
-      }),
-    });
-    await resolveScheduledMakeupDemand(selectedDemand);
-
-    toast('보강 저장 완료');
+    toast(`${selectedDemand.name || sid}: ${formatMakeupDate(selectedDemand.absenceDate)} 결석 → ${formatMakeupDate(dateStr)} 보강 등록 완료`);
     setMakeupSelection(null);
     closeMakeupSlotPicker();
     await refreshMakeupPlanner();
@@ -2092,6 +2428,14 @@ export function initCalendar() {
       closeSchoolExamInfoPopup();
       return;
     }
+    if (attendanceCheckMode) {
+      ev.preventDefault();
+      attendanceCheckMode = false;
+      attendanceCheckSelection = null;
+      refreshMakeupConflictHints();
+      renderMakeupPlanner();
+      return;
+    }
     if (!makeupSelection && !manualAbsenceSelection) return;
     ev.preventDefault();
     if (manualAbsenceSelection) cancelManualAbsenceSelection();
@@ -2193,13 +2537,13 @@ export function initCalendar() {
           const extraArr = parseSlotNumbers(raw);
           if (extraArr.length) {
             const mark = extraArr.map(n => `${yoil(dateStr)}${n}`).join('·');
-            tail = `<span style="color:#2563eb;margin-left:6px">[${mark}]</span>`;
+            tail = `<span class="attend-extra-slot-badge">[${mark}]</span>`;
           }
         }
 
-        return `<li data-id="${s.id}" class="attend-roster-row">
+        return `<li data-id="${escapeAttr(s.id)}" class="attend-roster-row">
           <span class="attend-slot-label">${slotGroupLabel(slots)}</span>
-          <span class="attend-student-label">${s.name} (${s.curriculum}${s.subCurriculum ? ' ' + s.subCurriculum : ''}) ${tail}</span>
+          <span class="attend-student-label">${escapeHtml(s.name || '')} (${escapeHtml(s.curriculum || '')}${s.subCurriculum ? ' ' + escapeHtml(s.subCurriculum) : ''}) ${tail}</span>
         </li>`;
       }).join('');
 

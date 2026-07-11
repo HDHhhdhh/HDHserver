@@ -28,6 +28,9 @@ PYTHON_FILES = [
     *sorted((ROOT / "routes").glob("*.py")),
     *sorted((ROOT / "core").glob("*.py")),
     ROOT / "scripts/verify_refactor_safety.py",
+    ROOT / "scripts/admin_tests_record_detail_fixtures.py",
+    ROOT / "scripts/verify_admin_tests_record_details.py",
+    ROOT / "scripts/verify_submit_test_assignment_round_matching.py",
 ]
 
 JS_CHECK_FILES = [
@@ -41,7 +44,12 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student.js",
     ROOT / "static/js/shared/api.js",
+    ROOT / "static/js/shared/testRecordData.js",
+    ROOT / "static/js/shared/testRecordDetails.js",
     ROOT / "scripts/verify_student_material_access_scope.js",
+    ROOT / "scripts/verify_student_training_pack_round_filter.js",
+    ROOT / "scripts/verify_admin_tests_record_details_ui.js",
+    ROOT / "scripts/verify_admin_tests_record_detail_answer_link_ui.js",
 ]
 
 REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...]] = (
@@ -138,12 +146,17 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
     (
         9,
         "test modal persistence bridge keeps progress tests authoritative",
-        ("run_admin_test_modal_persistence_bridge_source_checks", "run_admin_test_modal_assignment_behavior_checks"),
+        (
+            "run_admin_test_modal_persistence_bridge_source_checks",
+            "run_admin_test_modal_assignment_behavior_checks",
+            "run_submit_test_assignment_round_matching_checks",
+        ),
         (
             "test modal save must build /api/progress/patch body through the persistence bridge",
             "progress patch preserves existing test authority",
             "assignedTests remain in log patch",
             "daily metadata is not cleared on success",
+            "wrongRoundMatched",
         ),
     ),
     (
@@ -184,6 +197,35 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
             "review temp import must preserve solutionFileId metadata",
             "unit answer-link temp output must contain Drive answerUrl",
             "catalog safety temp checks must not modify live file",
+        ),
+    ),
+    (
+        14,
+        "admin test records compute wrong-answer details without raw answer leakage",
+        (
+            "run_admin_tests_record_detail_contract_checks",
+            "run_admin_tests_record_detail_ui_checks",
+            "run_admin_tests_record_detail_answer_link_ui_checks",
+        ),
+        (
+            "publicSubmittedAnswersLeak",
+            "publicAnswersTextLeak",
+            "publicWrongDetailsLeak",
+            "publicRawWrongDetailsValueLeak",
+            "adminSensitiveFieldLeak",
+            "adminRawWrongDetailsValueLeak",
+            "adminAnswerUrl",
+            "restrictedAnswerUrlHidden",
+            "adminWrongDetails",
+            "legacyWrongDetailsFallback",
+            "legacyAnswersTextWrongDetails",
+            "runtimeWrites",
+            "wrongDetailLists",
+            "escapedStudentAnswer",
+            "answerLinkEscaped",
+            "restrictedDetailAnswerUrlFallbackHidden",
+            "apiDetailAnswerUrlWins",
+            "mobileCssContract",
         ),
     ),
 )
@@ -313,6 +355,17 @@ def print_runtime_diff(before: dict[str, str | None], after: dict[str, str | Non
         print(f"runtime changed: {key}", file=sys.stderr)
 
 
+def _run_captured(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+
+
 def run_python_compile() -> bool:
     ok = True
     for path in PYTHON_FILES:
@@ -329,7 +382,7 @@ def run_node_check(path: pathlib.Path) -> bool:
     cmd = ["node", "--check", rel(path)]
     print("$ " + " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         print("node not found", file=sys.stderr)
         return False
@@ -348,7 +401,7 @@ def run_student_material_access_scope_checks() -> None:
     cmd = ["node", "scripts/verify_student_material_access_scope.js"]
     print("$ " + " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found") from None
     if proc.stdout:
@@ -358,10 +411,24 @@ def run_student_material_access_scope_checks() -> None:
     _assert_unit(proc.returncode == 0, "student material access scope contract failed")
 
 
+def run_student_training_pack_round_filter_checks() -> None:
+    cmd = ["node", "scripts/verify_student_training_pack_round_filter.js"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student training-pack round filter contract failed")
+
+
 def run_academy_proxy_network_access_checks() -> None:
     cmd = [sys.executable, "scripts/verify_academy_proxy_network_access.py"]
     print("$ " + " ".join(cmd))
-    proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    proc = _run_captured(cmd)
     if proc.stdout:
         print(proc.stdout, end="")
     if proc.stderr:
@@ -959,11 +1026,19 @@ def run_log_repository_unit_checks() -> None:
             raise JsonSaveFailure(r"C:\runtime\logs.json write failed")
 
         log_repository_module.save_atomic = failing_save_atomic
+        expected_stdout = io.StringIO()
+        expected_stderr = io.StringIO()
         try:
-            failed_json = fail_repo.patch_entry(fail_date, sid, {"notes": "sqlite committed"}, {})
+            with contextlib.redirect_stdout(expected_stdout), contextlib.redirect_stderr(expected_stderr):
+                failed_json = fail_repo.patch_entry(fail_date, sid, {"notes": "sqlite committed"}, {})
         finally:
             log_repository_module.save_atomic = original_save_atomic
 
+        expected_failure_output = expected_stdout.getvalue() + expected_stderr.getvalue()
+        _assert_unit(
+            "[logs] json PATCH failed:" in expected_failure_output,
+            "json save failure must still be logged internally",
+        )
         _assert_unit(failed_json.sqlite_ok, "sqlite commit should still be reported when json save fails")
         _assert_unit(failed_json.json_ok is False, "json save failure must be surfaced")
         _assert_unit(failed_json.json_error is not None, "json save failure must keep an internal error")
@@ -1428,6 +1503,7 @@ def run_student_bootstrap_unit_checks() -> None:
     date = "2026-05-31"
     old_label = "테스트 / 대수 / 기존"
     new_label = "테스트 / 대수 / 신규"
+    stale_curriculum_label = "테스트 / 수학1 / 이전 커리큘럼"
     skipped_label = "테스트 / 대수 / 제외"
     stale_daily_label = "테스트 / 대수 / stale-daily"
     config_file_id = "BOOTSTRAP_SOLUTION_FILE_ID"
@@ -1452,6 +1528,18 @@ def run_student_bootstrap_unit_checks() -> None:
     }
     log_entry["assignedTests"][1].update(answer_link_test_meta)
     log_entry["testAssignmentDailyTests"][1].update(answer_link_test_meta)
+    log_entry["assignedTests"].append({
+        "label": stale_curriculum_label,
+        "name": "이전 커리큘럼",
+        "status": "assigned",
+        "curriculum": "수학1",
+    })
+    log_entry["testAssignmentDailyTests"].append({
+        "label": stale_curriculum_label,
+        "name": "이전 커리큘럼",
+        "status": "assigned",
+        "curriculum": "수학1",
+    })
     tests_config = {
         "categories": {
             "REVIEW": {
@@ -1495,6 +1583,8 @@ def run_student_bootstrap_unit_checks() -> None:
         },
     }
 
+    progress[date][sid]["tests"][stale_curriculum_label] = "assigned"
+
     class FakeLogRepository:
         def read_entry(self, _date, _sid):
             return SimpleNamespace(entry=log_entry)
@@ -1504,7 +1594,7 @@ def run_student_bootstrap_unit_checks() -> None:
 
     def fake_load(path):
         if path == api_basic.STU_PATH:
-            return [{"id": sid, "name": "학생1", "day1": "일 13:00"}]
+            return [{"id": sid, "name": "학생1", "curriculum": "대수", "day1": "일 13:00"}]
         if path == api_basic.PRG_PATH:
             return progress
         if path == api_basic.VID_PATH:
@@ -1555,6 +1645,10 @@ def run_student_bootstrap_unit_checks() -> None:
             "student bootstrap must expose all current active assigned tests, even if active before today",
         )
         _assert_unit(skipped_label not in labels, "student bootstrap must not expose current skipped tests")
+        _assert_unit(
+            stale_curriculum_label not in labels,
+            "student bootstrap must hide active assignments from a previous curriculum without deleting them",
+        )
         _assert_unit(stale_daily_label not in labels, "student bootstrap must suppress stale daily metadata")
         _assert_unit(
             payload["assignedTests"][1].get("answerUrl") == config_drive_url,
@@ -1591,6 +1685,239 @@ def run_student_bootstrap_unit_checks() -> None:
         api_basic._load_test_answer_link_map = original_map_loader
 
 
+def run_submit_test_assignment_completion_unit_checks() -> None:
+    from flask import Flask
+    from types import SimpleNamespace
+    import routes.api_basic as api_basic
+    import routes.api_tests as api_tests
+
+    sid = "submit-status-sid"
+    date = api_tests.dt.date.today().isoformat()
+    test_id = "unit-submit-status"
+    test_name = "제출 상태 테스트"
+    assigned_label = f"단원평가 / 공수1 / Lv.3 / 1회차 / {test_name}"
+    other_label = "단원평가 / 공수1 / Lv.3 / 1회차 / 다른 테스트"
+    log_entry = {
+        "assignedTests": [
+            {"id": test_id, "label": assigned_label, "name": test_name, "status": "assigned"},
+        ],
+        "testAssignmentDailyTests": [
+            {"id": test_id, "label": assigned_label, "name": test_name, "status": "assigned"},
+        ],
+    }
+    tests_config = {
+        "categories": {
+            "UNIT": {
+                "label": "단원평가",
+                "tests": [
+                    {
+                        "id": test_id,
+                        "name": test_name,
+                        "curriculum": "공수1",
+                        "difficulty": "Lv.3",
+                        "round": "1",
+                        "problems": 1,
+                        "answerKeys": {"1": ["1"]},
+                    },
+                ],
+            },
+        },
+    }
+
+    class FakeLogRepository:
+        def append_record(self, _date, _sid, _record, _merger):
+            return True
+
+        def read_entry(self, _date, _sid):
+            return SimpleNamespace(entry=log_entry)
+
+        def read_json_map(self):
+            return {date: {sid: log_entry}}
+
+    original_tests_path = api_tests.TESTS_PATH
+    original_tests_cfg_path = api_tests.TESTS_CFG_PATH
+    original_progress_path = getattr(api_tests, "PRG_PATH", None)
+    original_basic_load = api_basic.load
+    original_basic_load_absent = api_basic.load_absent
+    original_basic_get_log_repository = api_basic.get_log_repository
+    original_basic_academy_network_allowed = api_basic.academy_network_allowed
+    original_basic_student_is_registered_on_date = api_basic._student_is_registered_on_date
+    original_basic_config_loader = api_basic._load_tests_config_for_answer_links
+    original_basic_map_loader = api_basic._load_test_answer_link_map
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = pathlib.Path(tmp)
+        tests_path = tmp_dir / "tests.json"
+        tests_cfg_path = tmp_dir / "tests-config.json"
+        progress_path = tmp_dir / "progress.json"
+        tests_path.write_text("{}", "utf-8")
+        tests_cfg_path.write_text(json.dumps(tests_config, ensure_ascii=False), "utf-8")
+        progress_path.write_text(
+            json.dumps(
+                {
+                    date: {
+                        sid: {
+                            "tests": {
+                                assigned_label: "assigned",
+                                other_label: {"status": "assigned", "testId": "other-id"},
+                            },
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            "utf-8",
+        )
+
+        def fake_load(path):
+            if path == api_basic.STU_PATH:
+                return [{"id": sid, "name": "제출상태학생", "day1": "월 13:00"}]
+            if path == api_basic.PRG_PATH:
+                return json.loads(progress_path.read_text("utf-8"))
+            if path == api_basic.VID_PATH:
+                return []
+            if path == api_basic.UPD_PATH:
+                return {}
+            if path == api_basic.ASN_PATH:
+                return {}
+            if path == api_basic.MAT_PATH:
+                return {}
+            return {}
+
+        api_tests.TESTS_PATH = tests_path
+        api_tests.TESTS_CFG_PATH = tests_cfg_path
+        api_tests.PRG_PATH = progress_path
+        api_basic.load = fake_load
+        api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
+        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_basic.academy_network_allowed = lambda: True
+        api_basic._student_is_registered_on_date = lambda _student, _sid, _date: True
+        api_basic._load_tests_config_for_answer_links = lambda: tests_config
+        api_basic._load_test_answer_link_map = lambda: {}
+
+        try:
+            app = Flask("verify-submit-test-assignment-completion")
+            app.register_blueprint(api_tests.bp_api_tests)
+            app.register_blueprint(api_basic.bp_api_basic)
+            client = app.test_client()
+
+            response = client.post(
+                "/api/submit-test",
+                json={
+                    "sid": sid,
+                    "testId": test_id,
+                    "name": test_name,
+                    "round": 1,
+                    "answersText": "1",
+                },
+            )
+            payload = response.get_json() or {}
+            _assert_unit(response.status_code == 200, "submit-test fixture route must return 200")
+            _assert_unit(payload.get("ok") is True, "submit-test fixture route must return ok:true")
+
+            progress_after = json.loads(progress_path.read_text("utf-8"))
+            tests_after = progress_after[date][sid]["tests"]
+            _assert_unit(
+                tests_after.get(assigned_label) == "done",
+                "submit-test must convert matching assigned progress test to done",
+            )
+            _assert_unit(
+                tests_after.get(other_label) == {"status": "assigned", "testId": "other-id"},
+                "submit-test must not alter unrelated assigned progress tests",
+            )
+
+            bootstrap_response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
+            bootstrap_payload = bootstrap_response.get_json() or {}
+            _assert_unit(bootstrap_response.status_code == 200, "post-submit bootstrap fixture route must return 200")
+            bootstrap_labels = [item.get("label") for item in bootstrap_payload.get("assignedTests") or []]
+            _assert_unit(
+                assigned_label not in bootstrap_labels,
+                "completed submitted tests must not remain active in bootstrap",
+            )
+            _assert_unit(
+                other_label in bootstrap_labels,
+                "unrelated assigned tests must remain visible in bootstrap",
+            )
+        finally:
+            api_tests.TESTS_PATH = original_tests_path
+            api_tests.TESTS_CFG_PATH = original_tests_cfg_path
+            if original_progress_path is None:
+                try:
+                    delattr(api_tests, "PRG_PATH")
+                except AttributeError:
+                    pass
+            else:
+                api_tests.PRG_PATH = original_progress_path
+            api_basic.load = original_basic_load
+            api_basic.load_absent = original_basic_load_absent
+            api_basic.get_log_repository = original_basic_get_log_repository
+            api_basic.academy_network_allowed = original_basic_academy_network_allowed
+            api_basic._student_is_registered_on_date = original_basic_student_is_registered_on_date
+            api_basic._load_tests_config_for_answer_links = original_basic_config_loader
+            api_basic._load_test_answer_link_map = original_basic_map_loader
+
+
+def run_admin_tests_record_detail_contract_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_admin_tests_record_details.py"]
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("python not found")
+    if proc.returncode != 0:
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin test record detail contract failed")
+    if proc.stdout:
+        print(proc.stdout, end="")
+
+
+def run_admin_tests_record_detail_ui_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_tests_record_details_ui.js"]
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.returncode != 0:
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin test record detail UI contract failed")
+    if proc.stdout:
+        print(proc.stdout, end="")
+
+
+def run_admin_tests_record_detail_answer_link_ui_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_tests_record_detail_answer_link_ui.js"]
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.returncode != 0:
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin test record detail answer-link UI contract failed")
+    if proc.stdout:
+        print(proc.stdout, end="")
+
+
+def run_submit_test_assignment_round_matching_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_submit_test_assignment_round_matching.py"]
+    proc = _run_captured(cmd)
+    if proc.returncode != 0:
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "submit-test assignment round matching contract failed")
+    if proc.stdout:
+        print(proc.stdout, end="")
+
+
 def run_student_answer_link_render_source_checks() -> None:
     student_js = (ROOT / "static/js/student.js").read_text("utf-8")
     render_start = student_js.index("function renderAssignedTests()")
@@ -1615,6 +1942,54 @@ def run_student_answer_link_render_source_checks() -> None:
         "showAcademyOnlyNotice();",
     ]:
         _assert_unit(snippet in render_block, f"student assigned-test render block must preserve answer-link behavior: {snippet}")
+
+
+def run_unit_test_grading_readiness_checks() -> None:
+    from routes import api_basic, api_tests  # noqa: PLC0415
+
+    cfg = api_tests._load_tests_cfg()
+    categories = cfg.get("categories") if isinstance(cfg, dict) else {}
+    unit_category = categories.get("UNIT") if isinstance(categories, dict) else {}
+    unit_tests = unit_category.get("tests") if isinstance(unit_category, dict) else []
+    _assert_unit(isinstance(unit_tests, list) and unit_tests, "tests-config UNIT category must contain tests")
+
+    for test in unit_tests:
+        _assert_unit(isinstance(test, dict), "UNIT test entry must be an object")
+        test_id = str(test.get("id") or "").strip()
+        source_id = str(test.get("sourceId") or test.get("source_id") or "").strip()
+        _assert_unit(test_id, "UNIT test must have id")
+        _assert_unit(source_id, f"UNIT test must have sourceId: {test_id}")
+        try:
+            problems = int(test.get("problems") or 0)
+        except (TypeError, ValueError):
+            problems = 0
+        _assert_unit(problems > 0, f"UNIT test must have positive problems count: {test_id}")
+
+        round_match = re.search(r"\d+", str(test.get("round") or "1"))
+        round_no = int(round_match.group(0)) if round_match else 1
+        if round_no not in (1, 2, 3):
+            round_no = 1
+        test_def = api_tests._find_test_def_by_id(cfg, test_id)
+        _assert_unit(isinstance(test_def, dict), f"submit-test must find UNIT test by id: {test_id}")
+        key = api_tests._get_answer_key_for_round(test_def, problems, round_no)
+        _assert_unit(key is not None, f"UNIT test must expose answer key for grading: {test_id}")
+        _assert_unit(len(key) == problems, f"UNIT answer key length must match problems: {test_id}")
+        _assert_unit(all(str(answer).strip() for answer in key), f"UNIT answer key must not contain blanks: {test_id}")
+
+        correct, total, wrong, pct = api_tests._grade_answers(list(key), key)
+        _assert_unit(correct == problems and total == problems and wrong == [] and pct == 100.0, f"UNIT exact-answer grading must pass: {test_id}")
+
+        meta = api_tests._resolve_test_meta(str(test.get("name") or ""), test_id, api_tests._build_test_catalog(cfg))
+        _assert_unit(meta.get("type") == "UNIT", f"UNIT submit metadata must resolve as UNIT: {test_id}")
+
+        assigned_item = {
+            "categoryLabel": "단원평가",
+            "curriculum": test.get("curriculum"),
+            "difficulty": test.get("difficulty"),
+            "round": f"{round_no}회차",
+            "name": test.get("name"),
+        }
+        _assert_unit(api_basic._test_assignment_answer_url(assigned_item), f"UNIT label-only assignment must resolve answerUrl: {test_id}")
 
 
 def run_catalog_script_safety_source_checks() -> None:
@@ -1957,8 +2332,8 @@ def run_refactor_contract_evidence_source_checks() -> None:
 
     task_numbers = [task for task, _label, _helpers, _snippets in REFACTOR_CONTRACT_EVIDENCE]
     _assert_unit(
-        task_numbers == list(range(1, 14)),
-        "refactor contract evidence registry must cover Tasks 1-13 exactly once and in order",
+        task_numbers == list(range(1, 15)),
+        "refactor contract evidence registry must cover Tasks 1-14 exactly once and in order",
     )
 
     for task, label, helper_names, assertion_snippets in REFACTOR_CONTRACT_EVIDENCE:
@@ -2060,6 +2435,15 @@ def run_admin_chat_contract_source_checks() -> None:
                 "static/js/test_answer_link_map.json",
                 "assignedTests[].answerUrl",
                 "Drive explanation",
+            ],
+        ),
+        (
+            "admin test record detail contract",
+            [
+                "/tests의 테스트 통계 행을 클릭하면",
+                "전체 답지 링크",
+                "오답별 내 답/정답 비교",
+                "submittedAnswers가 없는 기존 제출 기록",
             ],
         ),
         (
@@ -2595,7 +2979,7 @@ ok(lastContactCall?.sid === 's3', 'contact fallback save still uses row sid');
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-wave-b-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -2859,7 +3243,7 @@ ok(!clear.includes('testAssignmentNote'), 'assignment note is not cleared on suc
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-test-modal-assignment-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -3162,7 +3546,7 @@ if (scenario === 'failures') {
     cmd = ["node", "--input-type=module", "-e", driver, scenario]
     print(f"$ node --input-type=module -e <admin-video-modal-preflight-{scenario}-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -3469,7 +3853,7 @@ console.log('videoModal assignment policy PASS');
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-video-modal-assignment-policy-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -3783,7 +4167,7 @@ if (scenario === 'failures') {
     cmd = ["node", "--input-type=module", "-e", driver, scenario]
     print(f"$ node --input-type=module -e <admin-log-modal-carried-reapply-{scenario}-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -4072,7 +4456,7 @@ console.log('logModal save policy PASS');
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-log-modal-save-policy-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.stdout:
@@ -4215,6 +4599,40 @@ const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && c
 ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
 
 calls = [];
+let currentWeekendSlots = { '2026-07-05': { s1: [1] } };
+globalThis.__state = {
+  students: [{ id: 's1', day1: '일2' }],
+  extra: {},
+  logs: {},
+  absentSlotsByDate: { '2026-07-05': { s1: [2] } },
+};
+globalThis.fetch = async (url, init = {}) => {
+  const call = { url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null };
+  calls.push(call);
+  if (String(url) === '/api/weekend-slots' && !init.method) return response(currentWeekendSlots);
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') {
+    currentWeekendSlots = { ...currentWeekendSlots, ...call.body };
+    return response('', 204);
+  }
+  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-07-05': ['s1'] });
+  if (String(url) === '/api/today_order' && init.method === 'POST') return response('', 204);
+  return response({});
+};
+const stateWidenCompact = await loadStateModule('weekend-widen-compact-label');
+await stateWidenCompact.loadWeekendSlots();
+ok(stateWidenCompact.labelFor('2026-07-05', 's1') === '일1', 'saved 일1 override is visible before widening');
+await stateWidenCompact.saveWeekendSlotsFromLabel('s1', '일1일2', '2026-07-05');
+const weekendWidenPost = calls.find(call => call.url === '/api/weekend-slots' && call.method === 'POST');
+ok(
+  JSON.stringify(weekendWidenPost?.body?.['2026-07-05']?.s1) === JSON.stringify([1, 2]),
+  'compact 일1일2 edit posts explicit [1,2] override',
+);
+ok(
+  stateWidenCompact.labelFor('2026-07-05', 's1') === '일1 일2',
+  'compact 일1일2 edit reloads as combined visible label despite stale absent slot',
+);
+
+calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({});
@@ -4275,6 +4693,7 @@ const loadRenderModule = async () => {
     .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
     .replace("import { getAdminDate, getRealToday } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-06'; const getRealToday = () => '2026-06-06';")
     .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
+    .replace("import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';", "const decorateStudentTestRecordButtons = async () => {};")
     .replace(/import \{[\s\S]*?\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
 const labelFor = () => '토1';
 const plannedTimeFor = () => '';
@@ -4429,7 +4848,7 @@ ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig upd
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-weekend-slot-driver>")
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+        proc = _run_captured(cmd)
     except FileNotFoundError:
         raise AssertionError("node not found")
     if proc.returncode != 0:
@@ -4457,10 +4876,17 @@ def run_unit_checks() -> bool:
         run_log_repository_unit_checks,
         run_student_answer_link_precedence_unit_checks,
         run_student_bootstrap_unit_checks,
+        run_submit_test_assignment_completion_unit_checks,
+        run_admin_tests_record_detail_contract_checks,
+        run_admin_tests_record_detail_ui_checks,
+        run_admin_tests_record_detail_answer_link_ui_checks,
+        run_submit_test_assignment_round_matching_checks,
         run_student_material_access_scope_checks,
+        run_student_training_pack_round_filter_checks,
         run_academy_proxy_network_access_checks,
         run_absence_test_assignment_transition_unit_checks,
         run_student_answer_link_render_source_checks,
+        run_unit_test_grading_readiness_checks,
         run_catalog_script_safety_source_checks,
         run_catalog_script_temp_file_behavior_checks,
         run_admin_css_scope_source_checks,
@@ -4690,6 +5116,21 @@ def main() -> int:
         help="Run only student assigned-test answer-link render source checks.",
     )
     parser.add_argument(
+        "--only-submit-test-assignment-completion",
+        action="store_true",
+        help="Run only submit-test assignment completion checks.",
+    )
+    parser.add_argument(
+        "--only-admin-tests-record-details",
+        action="store_true",
+        help="Run only admin test-record wrong-answer detail contract checks.",
+    )
+    parser.add_argument(
+        "--only-unit-test-grading-readiness",
+        action="store_true",
+        help="Run only UNIT catalog grading readiness checks.",
+    )
+    parser.add_argument(
         "--only-catalog-script-safety-source",
         action="store_true",
         help="Run only test catalog script safety source checks.",
@@ -4784,6 +5225,14 @@ def main() -> int:
         selected_checks.append(run_student_answer_link_precedence_unit_checks)
     if args.only_student_answer_link_render_source:
         selected_checks.append(run_student_answer_link_render_source_checks)
+    if args.only_submit_test_assignment_completion:
+        selected_checks.append(run_submit_test_assignment_completion_unit_checks)
+    if args.only_admin_tests_record_details:
+        selected_checks.append(run_admin_tests_record_detail_contract_checks)
+        selected_checks.append(run_admin_tests_record_detail_ui_checks)
+        selected_checks.append(run_admin_tests_record_detail_answer_link_ui_checks)
+    if args.only_unit_test_grading_readiness:
+        selected_checks.append(run_unit_test_grading_readiness_checks)
     if args.only_catalog_script_safety_source:
         selected_checks.append(run_catalog_script_safety_source_checks)
     if args.only_catalog_script_temp_behavior:

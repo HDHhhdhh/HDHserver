@@ -20,6 +20,17 @@ function resolveStudentId() {
 // 전역으로 공유해서 아래 IIFE들에서 같이 씀
 window.__STU_SID__ = resolveStudentId();
 window.__OCR_TEST_SHEET_ENABLED__ = new URLSearchParams(location.search).get("ocr") === "1";
+function resolveOcrQaDate() {
+  if (window.__OCR_TEST_SHEET_ENABLED__ !== true) return "";
+  const value = String(new URLSearchParams(location.search).get("qaDate") || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+window.__OCR_QA_DATE__ = resolveOcrQaDate();
+const OCR_PHASE1_ALLOWED_TEST_IDS = new Set([
+  't_unit_daesu_01_lv3_r1',
+  't_unit_daesu_02_lv3_r1',
+  't_unit_mijeok1_01_lv3_r1',
+]);
 try {
   if (window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
 } catch {}
@@ -62,6 +73,24 @@ const STUDENT_COMPOUND_INITIALS = new Map([
   ['\u3140', '\u3139\u314e'],
   ['\u3144', '\u3142\u3145'],
 ]);
+
+function isOcrPhase1AllowedTestId(testId) {
+  const normalized = String(testId || '').trim();
+  return OCR_PHASE1_ALLOWED_TEST_IDS.has(normalized) || /^t_unit_[a-z0-9_]+_r[123]$/i.test(normalized) || /^t_training_pack_[a-z0-9_]+_r[12]$/i.test(normalized);
+}
+
+function isOcrPhase1AllowedTest(test) {
+  const testId = test?.id || test?.testId;
+  if (isOcrPhase1AllowedTestId(testId)) return true;
+  const categoryKey = String(test?.categoryKey || test?.category || '').trim().toUpperCase();
+  const categoryLabel = String(test?.categoryLabel || test?.label || '').trim();
+  const problems = Number(test?.problems);
+  const trainingPackLike = categoryKey === 'TRAINING_PACK' || categoryLabel.includes('트레이닝팩') || categoryLabel.includes('트팩');
+  const unitLike = categoryKey === 'UNIT' || categoryLabel.includes('단원') || trainingPackLike;
+  const roundMatch = String(test?.round || '').trim().match(trainingPackLike ? /^([12])(?:\D|$)/ : /^([123])(?:\D|$)/);
+  const twentyProblems = !Number.isFinite(problems) || problems === 20;
+  return unitLike && twentyProblems && Boolean(roundMatch);
+}
 const STUDENT_COMPOUND_VOWEL_BY_PAIR = new Map([
   ['\u3157\u314f', '\u3158'], ['\u3157\u3150', '\u3159'], ['\u3157\u3163', '\u315a'],
   ['\u315c\u3153', '\u315d'], ['\u315c\u3154', '\u315e'], ['\u315c\u3163', '\u315f'],
@@ -218,6 +247,10 @@ window.todayLocalKey = function () {
     const now = new Date();
     const tz = now.getTimezoneOffset() * 60000;
     return new Date(now.getTime() - tz).toISOString().slice(0, 10);
+  }
+
+  function studentDataDateKey() {
+    return window.__OCR_QA_DATE__ || todayLocalKey();
   }
 
   // (표시 전용) 파일명에서 UUID/긴 타임스탬프 접두 제거
@@ -508,7 +541,7 @@ window.todayLocalKey = function () {
 
   /* ───────────── 데이터 로드 ───────────── */
   async function loadInitialData() {
-    const today = todayLocalKey();
+    const today = studentDataDateKey();
     const watchReq = fetch(`/api/watch/latest?sid=${encodeURIComponent(sid)}`)
       .then(r => r.json()).catch(() => ({}));
 
@@ -785,7 +818,7 @@ window.todayLocalKey = function () {
   }
 
   function homeworkBooksFromLogs() {
-    const today = todayLocalKey();
+    const today = studentDataDateKey();
     const logsToday = (logsCache || {})[today] || {};
     const entry = logsToday[String(sid)] || logsToday[sid] || {};
     const rows = Array.isArray(entry.homeworkTable) ? entry.homeworkTable : [];
@@ -860,9 +893,10 @@ window.todayLocalKey = function () {
     const list = $('assignedTestList');
     const openBtn = $('openTestSubmit');
     const hasTests = assignedTestsCache.length > 0;
-    const submissionBlocked = testSubmissionBlocked || assignedTestsCache.every(test => test?.submissionRestricted === true);
+    const canOpenOcrQaSubmit = window.__OCR_TEST_SHEET_ENABLED__ === true && !testSubmissionBlocked;
+    const submissionBlocked = testSubmissionBlocked || (hasTests && assignedTestsCache.every(test => test?.submissionRestricted === true));
 
-    if (openBtn) openBtn.hidden = !hasTests || submissionBlocked;
+    if (openBtn) openBtn.hidden = (!hasTests && !canOpenOcrQaSubmit) || submissionBlocked;
     if (panel) panel.hidden = !hasTests;
     if (!hasTests || !list) return;
 
@@ -872,6 +906,7 @@ window.todayLocalKey = function () {
       const answerUrl = assignedTestAnswerUrl(test);
       const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);
       const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);
+      const ocrPhase1Allowed = isOcrPhase1AllowedTest(test);
       const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);
       btn.className = 'assigned-test-btn';
       btn.dataset.testId = test.id || '';
@@ -901,7 +936,7 @@ window.todayLocalKey = function () {
 
       main.append(name, meta);
       btn.append(main, status);
-      if (window.__OCR_TEST_SHEET_ENABLED__ === true) {
+      if (window.__OCR_TEST_SHEET_ENABLED__ === true && ocrPhase1Allowed) {
         btn.addEventListener('click', event => {
           event.preventDefault();
           event.stopPropagation();
@@ -1332,7 +1367,7 @@ window.todayLocalKey = function () {
     const listBox = $('vidList');
     const frame = $('player');
 
-    const today = todayLocalKey();
+    const today = studentDataDateKey();
 
     if (courseBlocked) {
       if (listBox) {
@@ -1381,10 +1416,10 @@ window.todayLocalKey = function () {
       // const fixed = await ensureTodayAssignmentIfMissing();
       // if (fixed) return renderAssignedList();
 
+      const msg = courseVideosCompleted
+        ? COURSE_VIDEOS_COMPLETED_MESSAGE
+        : "오늘 할당된 영상이 없습니다 문의 부탁";
       if (listBox) {
-        const msg = courseVideosCompleted
-          ? COURSE_VIDEOS_COMPLETED_MESSAGE
-          : "오늘 할당된 영상이 없습니다 문의 부탁";
         listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
       }
       setPlayerEmptyState(msg);
@@ -2533,10 +2568,135 @@ window.todayLocalKey = function () {
 (() => {
   const CT = { 'Content-Type': 'application/json' };
   const OCR_TEST_SHEET_ENABLED = window.__OCR_TEST_SHEET_ENABLED__ === true;
-  const OCR_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-  const OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  const OCR_PHASE2B_REVIEW_ENDPOINT = '/api/ocr-test-sheet-review';
+  const OCR_PHASE1_INELIGIBLE_MESSAGE = '이 시험은 아직 사진 인식 테스트 대상이 아닙니다.';
+  const OCR_PHASE2B_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  const OCR_PHASE2B_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  const OCR_PHASE2B_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+  const OCR_REVIEW_PROBLEM_COUNT = 20;
+  const OCR_REVIEW_FINAL_STATUSES = new Set([
+    'safe_auto_grade',
+    'confirmed',
+    'student_selected_candidate',
+    'student_direct_input',
+    'safe_auto_grade_after_retake',
+    'student_selected_candidate_after_retake',
+    'student_direct_input_after_retake',
+  ]);
+  const OCR_REVIEW_AUTO_GRADE_STATUSES = new Set([
+    'safe_auto_grade',
+    'safe_auto_grade_after_retake',
+  ]);
+  const OCR_REVIEW_BLOCKING_STATUSES = new Set([
+    'review_required',
+    'retake_required',
+    'retake_uploaded',
+    'data_check_required',
+  ]);
+  const OCR_REVIEW_TRACE_WARNING_CODES = new Set([
+    'erased_trace_detected',
+    'crossed_out_answer',
+    'overwritten_answer',
+    'multiple_answer_candidates',
+    'unclear_final_answer',
+    'arrow_equal_confusion',
+    'relation_symbol_confusion',
+    'expression_operator_confusion',
+    'choice_number_invalid_for_auto_grade',
+    'answer_value_letter_confusion',
+    'digit_shape_confusion',
+    'answer_mode_unverified',
+    'local_checker_blank_conflict',
+    'local_checker_candidate_conflict',
+    'tesseract_blank_like',
+    'tesseract_choice_digit_veto',
+    'tesseract_multiple_choice_candidates',
+    'tesseract_multiple_candidates',
+    'tesseract_answer_value_format_conflict',
+    'tesseract_candidate_conflict',
+    'paddleocr_candidate_conflict',
+    'pix2tex_candidate_conflict',
+  ]);
+  const OCR_REVIEW_BULK_FILL_BLOCKING_WARNING_CODES = new Set([
+    'erased_trace_detected',
+    'crossed_out_answer',
+    'overwritten_answer',
+    'multiple_answer_candidates',
+    'unclear_final_answer',
+    'arrow_equal_confusion',
+    'relation_symbol_confusion',
+    'expression_operator_confusion',
+    'choice_number_invalid_for_auto_grade',
+    'answer_value_letter_confusion',
+    'digit_shape_confusion',
+    'answer_mode_unverified',
+    'local_checker_blank_conflict',
+    'local_checker_candidate_conflict',
+    'tesseract_blank_like',
+    'tesseract_choice_digit_veto',
+    'tesseract_multiple_choice_candidates',
+    'tesseract_multiple_candidates',
+    'tesseract_answer_value_format_conflict',
+    'tesseract_candidate_conflict',
+    'paddleocr_candidate_conflict',
+    'pix2tex_candidate_conflict',
+  ]);
+  const SUBMIT_OFFSET_GUARD_MIN_PROBLEMS = 10;
+  const SUBMIT_OFFSET_GUARD_MIN_SHIFTED_RATIO = 0.6;
+  const SUBMIT_OFFSET_GUARD_MIN_DELTA = 5;
+  const OCR_REVIEW_WARNING_MESSAGES = {
+    erased_trace_detected: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
+    crossed_out_answer: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
+    overwritten_answer: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
+    multiple_answer_candidates: '여러 답안 흔적이 보여 확인이 필요합니다.',
+    unclear_final_answer: '최종 답이 명확하지 않아 확인이 필요합니다.',
+    arrow_equal_confusion: '화살표와 등호가 애매해 직접 확인이 필요합니다.',
+    relation_symbol_confusion: '부등호 또는 등호가 애매해 직접 확인이 필요합니다.',
+    expression_operator_confusion: '식의 연산 기호가 애매해 직접 확인이 필요합니다.',
+    choice_number_invalid_for_auto_grade: '선택형 문항은 선지 번호(1~5)만 입력할 수 있어 확인이 필요합니다.',
+    answer_value_letter_confusion: '답값이 글자처럼 보여 직접 확인이 필요합니다.',
+    digit_shape_confusion: '숫자 모양이 애매해 직접 확인이 필요합니다.',
+    answer_mode_unverified: '이 시험은 문항 형식표가 아직 없어 직접 확인이 필요합니다.',
+    local_checker_blank_conflict: '보조 인식에서는 빈칸처럼 보여 직접 확인이 필요합니다.',
+    local_checker_candidate_conflict: '보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+    tesseract_blank_like: '보조 인식에서는 빈칸처럼 보여 직접 확인이 필요합니다.',
+    tesseract_choice_digit_veto: '보조 인식 결과 선지 번호가 명확하지 않아 직접 확인이 필요합니다.',
+    tesseract_multiple_choice_candidates: '보조 인식에서 선지 후보가 여러 개 보여 직접 확인이 필요합니다.',
+    tesseract_multiple_candidates: '보조 인식에서 답 후보가 여러 개 보여 직접 확인이 필요합니다.',
+    tesseract_answer_value_format_conflict: '보조 인식 결과 답값 형식이 맞지 않아 직접 확인이 필요합니다.',
+    tesseract_candidate_conflict: '보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+    paddleocr_candidate_conflict: '로컬 보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+    pix2tex_candidate_conflict: '수식 보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+  };
+  const OCR_REVIEW_ANSWER_KEY_FIELDS = new Set([
+    ['exp', 'ected'].join(''),
+    ['canonical', 'answer'].join('_'),
+    ['accepted', 'answers'].join('_'),
+    'correct',
+    'incorrect',
+    'score',
+    'wrong',
+    'pct',
+  ]);
+  const OCR_REVIEW_PRIMARY_KEYPAD_VALUES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', '-', '.', '+', '=', '<', '>', '<=', '>='];
+  const OCR_REVIEW_EXTENDED_KEYPAD_VALUES = ['x', 'y', 'n', '±', ',', '(', ')', '√', 'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ'];
+  const OCR_PHASE1_ANSWER_MODE_BY_TEST_ID = {
+    t_unit_daesu_01_lv3_r1: {
+      choice_number: new Set([1, 3, 5, 9, 13, 14, 17, 19]),
+      answer_value: new Set([2, 4, 6, 7, 8, 10, 11, 12, 15, 16, 18, 20]),
+    },
+    t_unit_daesu_02_lv3_r1: {
+      choice_number: new Set([3, 6, 7, 9, 10, 11, 15, 20]),
+      answer_value: new Set([1, 2, 4, 5, 8, 12, 13, 14, 16, 17, 18, 19]),
+    },
+  };
+  const OCR_REVIEW_ANSWER_MODE_LABELS = {
+    choice_number: '선택형 · 번호만 입력',
+    answer_value: '답값형 · 최종 답 입력',
+  };
   const TEST_TYPE_OPTIONS = [
     { value: 'UNIT', label: '단원평가', keys: ['UNIT', '단원평가'] },
+    { value: 'TRAINING_PACK', label: '트레이닝팩', keys: ['TRAINING_PACK', '트레이닝팩', '트팩'] },
     { value: 'REVIEW', label: '복습 테스트', keys: ['REVIEW'] },
     { value: 'SCHOOL_PAST', label: '학군지 기출', keys: ['SCHOOL_PAST'] },
     { value: 'ILSAN_PAST', label: '일산 기출', keys: ['ILSAN_PAST'] },
@@ -2600,7 +2760,22 @@ window.todayLocalKey = function () {
   }
 
   function getAssignedTestsForSubmit() {
-    return Array.isArray(window.__ASSIGNED_TESTS__) ? window.__ASSIGNED_TESTS__ : [];
+    const assigned = Array.isArray(window.__ASSIGNED_TESTS__) ? window.__ASSIGNED_TESTS__ : [];
+    if (assigned.length) return assigned;
+    if (!OCR_TEST_SHEET_ENABLED) return [];
+    return allConfiguredTests()
+      .filter(test => isOcrPhase1AllowedTest(test))
+      .map(test => ({
+        id: test.id,
+        sourceId: test.sourceId,
+        name: test.name,
+        label: test.name,
+        categoryKey: test.categoryKey,
+        categoryLabel: test.categoryLabel,
+        curriculum: test.curriculum,
+        difficulty: test.difficulty,
+        round: test.round,
+      }));
   }
 
   function assignedRound(value) {
@@ -2758,13 +2933,16 @@ window.todayLocalKey = function () {
       for (const t of (cat?.tests || [])) out.push(t);
     }
 
-    // 커리 정보가 있으면 커리 일치하는 시험을 우선 보여주고, 없으면 전체
-    if (myCur) {
-      const same = out.filter(t => !t.curriculum || t.curriculum === myCur);
-      const scoped = same.length ? same : out;
-      return scoped.filter(assignedMatchesTest);
-    }
-    return out.filter(assignedMatchesTest);
+    const assigned = out.filter(assignedMatchesTest);
+    if (!myCur) return assigned;
+
+    const sameCurriculum = [];
+    const otherCurriculum = [];
+    assigned.forEach(test => {
+      if (!test.curriculum || test.curriculum === myCur) sameCurriculum.push(test);
+      else otherCurriculum.push(test);
+    });
+    return sameCurriculum.concat(otherCurriculum);
   }
 
   function findTestById(typeVal, testId, myCur) {
@@ -2829,6 +3007,7 @@ window.todayLocalKey = function () {
     ].map(v => String(v || '')).join(' ');
     return (
       /\bUNIT\b/i.test(source) || source.includes('단원평가') || source.includes('단원') ||
+      /\bTRAINING_PACK\b/i.test(source) || /\bTRAINING\b/i.test(source) || source.includes('트레이닝팩') || source.includes('트팩') ||
       /\bREVIEW\b/i.test(source) || source.includes('복습') ||
       /\bSCHOOL_PAST\b/i.test(source) || /\bSCHOOL\b/i.test(source) || source.includes('학군지') || source.includes('학교별') ||
       /\bILSAN_PAST\b/i.test(source) || source.includes('일산')
@@ -2867,16 +3046,73 @@ window.todayLocalKey = function () {
   }
 
   // ───────────── 답안 파싱/클라 채점(fallback용) ─────────────
+  function parseAnswerEntries(text) {
+    const s = String(text ?? '').trim();
+    if (!s) return [];
+    const lines = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').map(v => v.trim()).filter(Boolean);
+    if (lines.length > 1) return lines;
+    if (/[\s,]/.test(s)) return s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+    return s.split('').map(v => v.trim()).filter(Boolean);
+  }
+
   function parseAnswerSpec(text, problems) {
     const s = String(text ?? '').trim();
     if (!s) return new Array(problems).fill('');
-    let arr;
-    if (/[\s,]/.test(s)) arr = s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
-    else arr = s.split('').map(v => v.trim()).filter(Boolean);
+    let arr = parseAnswerEntries(s);
 
     if (arr.length > problems) arr = arr.slice(0, problems);
     if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(''));
     return arr;
+  }
+
+  function answerCountValidationMessage(text, problems) {
+    const total = Number(problems) || 0;
+    if (!total) return '';
+    const entries = parseAnswerEntries(text);
+    if (entries.length === total) return '';
+    return `답안 개수가 현재 시험 문항 수와 맞지 않습니다. 현재 ${entries.length}개 / 필요한 ${total}개입니다. 한 문항당 한 줄로 입력해주세요.`;
+  }
+
+  function submitAnswerModeForQuestion(testId, questionNo) {
+    const no = Number(questionNo);
+    const config = OCR_PHASE1_ANSWER_MODE_BY_TEST_ID[String(testId || '').trim()];
+    if (!config || !Number.isInteger(no)) return '';
+    if (config.choice_number.has(no)) return 'choice_number';
+    if (config.answer_value.has(no)) return 'answer_value';
+    return '';
+  }
+
+  function submitCleanOneLineAnswer(value) {
+    const text = String(value || '').trim();
+    if (/[\r\n]/.test(text)) return text;
+    return text.replace(/\s+/g, '');
+  }
+
+  function submitIsChoiceNumberAnswer(answer) {
+    return /^[1-5]$/.test(String(answer || '').trim());
+  }
+
+  function submitAnswerValidationMessage(answer, mode, questionNo) {
+    const text = submitCleanOneLineAnswer(answer);
+    if (!text) return `${questionNo}번 문항 답안을 입력해주세요.`;
+    if (/[\r\n]/.test(text)) return `${questionNo}번 문항 답안은 한 줄이어야 합니다.`;
+    if (mode === 'choice_number' && !submitIsChoiceNumberAnswer(text)) {
+      return `${questionNo}번 선택형 문항은 선지 번호(1~5)만 입력해야 합니다.`;
+    }
+    return '';
+  }
+
+  function answerModeValidationMessageForAnswersText(text, testId, problems) {
+    const entries = parseAnswerEntries(text);
+    const total = Number(problems) || entries.length;
+    for (let index = 0; index < Math.min(entries.length, total); index += 1) {
+      const questionNo = index + 1;
+      const mode = submitAnswerModeForQuestion(testId, questionNo);
+      if (!mode) continue;
+      const validationMessage = submitAnswerValidationMessage(entries[index], mode, questionNo);
+      if (validationMessage) return validationMessage;
+    }
+    return '';
   }
 
   function getKeyForRound(test, roundNo) {
@@ -3087,6 +3323,68 @@ window.todayLocalKey = function () {
     return { correct, total: problems, wrong, pct };
   }
 
+  function submitNormalizeGradingValue(value) {
+    return String(value ?? '').replace(/\s+/g, '').toUpperCase();
+  }
+
+  function submitCountShiftedAnswerMatches(answers, key, problems, keyShift) {
+    let matches = 0;
+    for (let index = 0; index < problems; index += 1) {
+      const keyIndex = index + keyShift;
+      if (keyIndex < 0 || keyIndex >= problems) continue;
+      const answer = submitNormalizeGradingValue(answers[index]);
+      const expected = submitNormalizeGradingValue(key[keyIndex]);
+      if (answer && expected && answer === expected) matches += 1;
+    }
+    return matches;
+  }
+
+  function submitDetectOffsetGuard(answersText, keyArr, problems) {
+    const total = Number(problems) || 0;
+    if (total < SUBMIT_OFFSET_GUARD_MIN_PROBLEMS || !Array.isArray(keyArr)) return null;
+    const answers = parseAnswerSpec(answersText, total);
+    const key = keyArr.slice(0, total).map(value => String(value ?? '').trim());
+    if (key.length < total) key.push(...new Array(total - key.length).fill(''));
+
+    const graded = gradeClientSide(answers.join('\n'), key, total);
+    if (graded.correct > Math.floor(total / 2)) return null;
+
+    const nextKeyMatches = submitCountShiftedAnswerMatches(answers, key, total, 1);
+    const previousKeyMatches = submitCountShiftedAnswerMatches(answers, key, total, -1);
+    const shiftedMatches = Math.max(nextKeyMatches, previousKeyMatches);
+    const requiredMatches = Math.max(
+      graded.correct + SUBMIT_OFFSET_GUARD_MIN_DELTA,
+      Math.floor(total * SUBMIT_OFFSET_GUARD_MIN_SHIFTED_RATIO),
+    );
+    if (shiftedMatches < requiredMatches) return null;
+
+    return {
+      correct: graded.correct,
+      total,
+      shiftedMatches,
+      requiredMatches,
+      direction: nextKeyMatches >= previousKeyMatches ? 'next_key' : 'previous_key',
+    };
+  }
+
+  function submitOffsetGuardMessage(guard) {
+    const directionText = guard?.direction === 'previous_key'
+      ? '\ud604\uc7ac 2\ubc88 \uc904\uc774 1\ubc88 \ubb38\ud56d \ub2f5\ucc98\ub7fc \ubcf4\uc774\ub294 \ud328\ud134\uc785\ub2c8\ub2e4.'
+      : '\ud604\uc7ac 1\ubc88 \uc904\uc774 2\ubc88 \ubb38\ud56d \ub2f5\ucc98\ub7fc \ubcf4\uc774\ub294 \ud328\ud134\uc785\ub2c8\ub2e4.';
+    return [
+      '\ub2f5\uc548\uc774 \ud55c \ubb38\ud56d \ubc00\ub9b0 \ud328\ud134\uc73c\ub85c \ubcf4\uc785\ub2c8\ub2e4.',
+      directionText,
+      '\uc2dc\ud5d8/\ud68c\ucc28 \uc120\ud0dd\uacfc \ub2f5\uc548\uc9c0 \ubb38\ud56d \ubc88\ud638\ub97c \ud655\uc778\ud55c \ub4a4, 1\ubc88\ubd80\ud130 \ud55c \ubb38\ud56d\ub2f9 \ud55c \uc904\ub85c \ub2e4\uc2dc \ub9de\ucdb0\uc8fc\uc138\uc694.',
+    ].join('\n');
+  }
+
+  function submitOffsetGuardMessageForAnswersText(answersText, test, round) {
+    const key = getKeyForRound(test, round);
+    if (!key) return '';
+    const guard = submitDetectOffsetGuard(answersText, key, test?.problems);
+    return guard ? submitOffsetGuardMessage(guard) : '';
+  }
+
   // ───────────── UI ─────────────
   function injectStyles() {
     if (document.getElementById('test-submit-styles')) return;
@@ -3096,12 +3394,12 @@ window.todayLocalKey = function () {
     :root{
       --ts-card-bg:#ffffff; --ts-card-fg:#0f172a; --ts-border:#e5e7eb; --ts-muted:#6b7280;
       --ts-field-bg:#ffffff; --ts-focus:#2563eb; --ts-primary:#2563eb; --ts-primary-fg:#ffffff;
-      --ts-backdrop:rgba(0,0,0,.45);
+      --ts-warning:#b45309; --ts-warning-bg:#fff7ed; --ts-backdrop:rgba(0,0,0,.45);
     }
     body.dark{
       --ts-card-bg:#0f172a; --ts-card-fg:#e5e7eb; --ts-border:#334155; --ts-muted:#94a3b8;
       --ts-field-bg:#0b1220; --ts-focus:#60a5fa; --ts-backdrop:rgba(0,0,0,.55);
-      --ts-primary:#2563eb; --ts-primary-fg:#ffffff;
+      --ts-primary:#2563eb; --ts-primary-fg:#ffffff; --ts-warning:#f59e0b; --ts-warning-bg:#2a1d0b;
     }
     #testSubmitModal{ position:fixed; inset:0; z-index:99999; display:none; justify-content:center; align-items:center; background:var(--ts-backdrop); }
     #testSubmitModal .ts-card{ width:480px; max-width:92vw; border-radius:14px; padding:14px;
@@ -3124,25 +3422,130 @@ window.todayLocalKey = function () {
     #testSubmitModal .ts-row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
     @media (max-width:520px){ #testSubmitModal .ts-row3{ grid-template-columns:1fr; } }
     #testSubmitModal .ts-info{ margin-top:6px; font-size:13px; color:var(--ts-muted); white-space:pre-wrap; }
-    #testSubmitModal .ts-ocr{ display:grid; gap:6px; padding:10px; border:1px solid var(--ts-border); border-radius:10px; }
-    #testSubmitModal .ts-ocr-row{ display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; }
-    @media (max-width:520px){ #testSubmitModal .ts-ocr-row{ grid-template-columns:1fr; } }
-    #testSubmitModal .ts-ocr-run{
-      height:36px; padding:0 12px; border:none; border-radius:10px; cursor:pointer; font-weight:800;
+    #testSubmitModal .ts-writing-rule{ margin-top:8px; padding:8px 10px; border:1px solid var(--ts-border); border-radius:10px; background:var(--ts-field-bg); color:var(--ts-card-fg); font-size:12px; line-height:1.45; }
+    #testSubmitModal .ts-writing-rule ul{ margin:4px 0 0; padding-left:18px; }
+    #testSubmitModal .ts-ocr-entry{ display:grid; gap:8px; padding:10px; border:1px solid var(--ts-border); border-radius:10px; background:color-mix(in srgb, var(--ts-primary) 4%, var(--ts-card-bg) 96%); }
+    #testSubmitModal .ts-ocr-notice{ display:grid; gap:2px; padding:8px 10px; border:1px solid color-mix(in srgb, var(--ts-primary) 34%, var(--ts-border) 66%); border-radius:10px; background:var(--ts-card-bg); color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-notice strong{ font-size:14px; }
+    #testSubmitModal .ts-ocr-open, #testSubmitModal .ts-ocr-apply, #testSubmitModal .ts-ocr-confirm{
+      min-height:40px; padding:0 14px; border:none; border-radius:10px; cursor:pointer; font-weight:800; font-size:15px;
       background:var(--ts-primary); color:var(--ts-primary-fg); white-space:nowrap;
     }
-    #testSubmitModal .ts-ocr-run:disabled{ opacity:.55; cursor:not-allowed; }
+    #testSubmitModal .ts-ocr-open{ justify-self:start; }
+    #testSubmitModal .ts-ocr-open:disabled, #testSubmitModal .ts-ocr-apply:disabled, #testSubmitModal .ts-ocr-confirm:disabled{ opacity:.55; cursor:not-allowed; }
     #testSubmitModal .ts-ocr-status{ min-height:18px; font-size:12px; color:var(--ts-muted); white-space:pre-wrap; }
     #testSubmitModal .ts-ocr-status[data-state="error"]{ color:#dc2626; }
     #testSubmitModal .ts-ocr-status[data-state="ok"]{ color:#059669; }
-    #testSubmitModal .ts-ocr-preview{ display:grid; gap:6px; font-size:12px; color:var(--ts-card-fg); }
-    #testSubmitModal .ts-ocr-preview[hidden]{ display:none; }
-    #testSubmitModal .ts-ocr-preview-title{ font-weight:800; }
-    #testSubmitModal .ts-ocr-preview-list{ margin:0; padding-left:18px; max-height:100px; overflow:auto; }
+    #testSubmitModal .ts-ocr-panel{ display:grid; gap:12px; }
+    #testSubmitModal .ts-ocr-panel[hidden]{ display:none; }
+    #testSubmitModal .ts-ocr-summary{ display:flex; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--ts-muted); }
+    #testSubmitModal .ts-ocr-pill{ border:1px solid var(--ts-border); border-radius:999px; padding:5px 10px; background:var(--ts-field-bg); line-height:1.35; }
+    #testSubmitModal .ts-ocr-card{ display:grid; gap:12px; border:1px solid var(--ts-border); border-radius:12px; padding:12px; background:var(--ts-field-bg); }
+    #testSubmitModal .ts-ocr-card h4{ margin:0; font-size:16px; line-height:1.25; font-weight:900; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-mode{ justify-self:start; display:inline-flex; align-items:center; min-height:26px; padding:0 10px; border:1px solid var(--ts-border); border-radius:999px; background:var(--ts-card-bg); color:var(--ts-muted); font-size:13px; font-weight:800; }
+    #testSubmitModal .ts-ocr-recognized{ font-size:14px; line-height:1.5; color:var(--ts-muted); }
+    #testSubmitModal .ts-ocr-prefill-note{ border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-muted); font-size:14px; line-height:1.5; }
+    #testSubmitModal .ts-ocr-warning{ border:1px solid color-mix(in srgb, var(--ts-warning) 45%, var(--ts-border) 55%); border-radius:10px; padding:9px 12px; background:var(--ts-warning-bg); color:var(--ts-warning); font-size:14px; line-height:1.5; }
+    #testSubmitModal .ts-ocr-candidates{ display:flex; flex-wrap:wrap; gap:8px; }
+    #testSubmitModal .ts-ocr-candidate, #testSubmitModal .ts-ocr-key{
+      min-height:38px; padding:0 12px; border:1px solid var(--ts-border); border-radius:10px;
+      background:var(--ts-card-bg); color:var(--ts-card-fg); cursor:pointer;
+    }
+    #testSubmitModal .ts-ocr-choice-grid{ display:grid; grid-template-columns:repeat(5,minmax(48px,1fr)); gap:8px; }
+    #testSubmitModal .ts-ocr-choice{
+      min-height:48px; border:1px solid var(--ts-border); border-radius:10px; background:var(--ts-card-bg);
+      color:var(--ts-card-fg); cursor:pointer; font-weight:900; font-size:17px;
+    }
+    #testSubmitModal .ts-ocr-choice[aria-pressed="true"]{ border-color:var(--ts-primary); background:var(--ts-primary); color:var(--ts-primary-fg); }
+    #testSubmitModal .ts-ocr-choice:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ts-focus) 30%, transparent); }
+    #testSubmitModal .ts-ocr-current{ width:100%; min-height:42px; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-card-fg); font-size:16px; }
+    #testSubmitModal .ts-ocr-current[hidden]{ display:none; }
+    #testSubmitModal .ts-ocr-keypad{ display:grid; grid-template-columns:repeat(auto-fit,minmax(46px,1fr)); gap:8px; }
+    #testSubmitModal .ts-ocr-keypad-primary{ grid-template-columns:repeat(5,minmax(0,1fr)); }
+    #testSubmitModal .ts-ocr-keypad-more{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; background:var(--ts-card-bg); }
+    #testSubmitModal .ts-ocr-keypad-more summary{ cursor:pointer; font-size:13px; font-weight:900; color:var(--ts-muted); }
+    #testSubmitModal .ts-ocr-keypad-more[open] summary{ margin-bottom:8px; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-keypad-extended{ grid-template-columns:repeat(auto-fit,minmax(48px,1fr)); }
+    #testSubmitModal .ts-ocr-safe details{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; }
+    #testSubmitModal .ts-ocr-safe-list{ margin:8px 0 0; padding-left:18px; max-height:120px; overflow:auto; font-size:12px; }
+    #testSubmitModal .ts-answer-details{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; background:var(--ts-field-bg); }
+    #testSubmitModal .ts-answer-details summary{ cursor:pointer; color:var(--ts-card-fg); font-size:14px; font-weight:900; line-height:1.35; }
+    #testSubmitModal .ts-answer-details[open] summary{ margin-bottom:8px; }
     #testSubmitModal .ts-answer-link{ display:none; margin-top:8px; font-size:13px; color:var(--ts-muted); }
     #testSubmitModal .ts-answer-link a{
       display:inline-flex; align-items:center; justify-content:center; height:38px; padding:0 14px;
       border-radius:10px; background:var(--ts-primary); color:var(--ts-primary-fg); text-decoration:none; font-weight:800;
+    }
+    #testSubmitModal .ts-result-panel{
+      display:grid; gap:14px; margin-top:14px; padding:18px; border:1px solid color-mix(in srgb, var(--ts-primary) 38%, var(--ts-border) 62%);
+      border-radius:14px; background:color-mix(in srgb, var(--ts-primary) 6%, var(--ts-card-bg) 94%);
+    }
+    #testSubmitModal .ts-result-panel[hidden]{ display:none; }
+    #testSubmitModal .ts-result-head{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    #testSubmitModal .ts-result-title{ display:grid; gap:3px; }
+    #testSubmitModal .ts-result-title strong{ font-size:21px; line-height:1.22; }
+    #testSubmitModal .ts-result-title span{ font-size:14px; color:var(--ts-card-fg); opacity:.78; }
+    #testSubmitModal .ts-result-rate{ min-width:132px; text-align:right; display:grid; gap:4px; justify-items:end; }
+    #testSubmitModal .ts-result-rate-label{ font-size:13px; line-height:1.1; font-weight:900; color:var(--ts-card-fg); opacity:.72; }
+    #testSubmitModal .ts-result-rate-value{ font-size:42px; line-height:.95; font-weight:900; color:var(--ts-primary); letter-spacing:0; }
+    #testSubmitModal .ts-result-metrics{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    #testSubmitModal .ts-result-metric{ padding:13px; border:1px solid var(--ts-border); border-radius:12px; background:var(--ts-card-bg); }
+    #testSubmitModal .ts-result-metric span{ display:block; font-size:13px; color:var(--ts-card-fg); opacity:.72; margin-bottom:5px; }
+    #testSubmitModal .ts-result-metric strong{ font-size:21px; line-height:1.12; }
+    #testSubmitModal .ts-result-wrong-title{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; font-size:17px; font-weight:900; }
+    #testSubmitModal .ts-result-wrong-count{ display:inline-flex; min-height:34px; align-items:center; padding:0 12px; border:1px solid var(--ts-border); border-radius:999px; background:var(--ts-card-bg); color:var(--ts-card-fg); font-size:13px; font-weight:900; }
+    #testSubmitModal .ts-result-empty{ padding:14px; border-radius:12px; background:var(--ts-card-bg); color:#047857; font-size:15px; font-weight:900; }
+    #testSubmitModal .ts-result-compare{ display:grid; gap:10px; }
+    #testSubmitModal .ts-result-comparison-card{
+      display:grid; gap:10px; padding:12px; border:1px solid var(--ts-border); border-radius:12px;
+      background:var(--ts-card-bg);
+    }
+    #testSubmitModal .ts-result-row-no{ color:var(--ts-card-fg); opacity:.82; font-size:16px; font-weight:900; }
+    #testSubmitModal .ts-result-answer-values{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    #testSubmitModal .ts-result-answer-block{ display:grid; gap:6px; min-width:0; }
+    #testSubmitModal .ts-result-answer-label{ font-size:12px; line-height:1.2; font-weight:900; color:var(--ts-card-fg); opacity:.72; }
+    #testSubmitModal .ts-result-my-answer, #testSubmitModal .ts-result-correct-answer{
+      display:inline-flex; width:100%; min-height:44px; box-sizing:border-box; align-items:center; justify-content:center;
+      padding:6px 10px; border-radius:10px; font-size:17px; line-height:1.2; font-weight:900; text-align:center;
+      overflow-wrap:anywhere; word-break:break-word;
+    }
+    #testSubmitModal .ts-result-my-answer{ border:1px solid color-mix(in srgb, var(--ts-danger) 35%, var(--ts-border) 65%); background:color-mix(in srgb, var(--ts-danger) 7%, var(--ts-card-bg) 93%); color:var(--ts-card-fg); }
+    #testSubmitModal .ts-result-correct-answer{ border:1px solid color-mix(in srgb, var(--ts-success) 35%, var(--ts-border) 65%); background:color-mix(in srgb, var(--ts-success) 7%, var(--ts-card-bg) 93%); color:var(--ts-card-fg); }
+    #testSubmitModal .ts-result-answer{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-items:center; }
+    #testSubmitModal .ts-result-answer-button, #testSubmitModal .ts-result-answer-link{
+      min-height:42px; padding:0 14px; border:1px solid var(--ts-primary); border-radius:10px;
+      background:var(--ts-primary); color:var(--ts-primary-fg); font-weight:900; cursor:pointer; text-decoration:none;
+    }
+    #testSubmitModal .ts-result-answer-link{ display:inline-flex; align-items:center; justify-content:center; background:var(--ts-card-bg); color:var(--ts-primary); }
+    #testSubmitModal.ts-result-view .ts-submit-fields,
+    #testSubmitModal.ts-result-view .ts-answer-details,
+    #testSubmitModal.ts-result-view .ts-ocr-entry,
+    #testSubmitModal.ts-result-view .ts-memo-entry,
+    #testSubmitModal.ts-result-view .ts-actions,
+    #testSubmitModal.ts-result-view #tsInfo,
+    #testSubmitModal.ts-result-view #tsAnswerLinkArea{ display:none !important; }
+    #testAnswerPreviewModal{ position:fixed; inset:0; z-index:100000; display:none; justify-content:center; align-items:center; background:var(--ts-backdrop); }
+    #testAnswerPreviewModal .ts-preview-card{ width:min(1100px,96vw); height:min(760px,90vh); display:grid; grid-template-rows:auto 1fr; border:1px solid var(--ts-border); border-radius:16px; background:var(--ts-card-bg); color:var(--ts-card-fg); box-shadow:0 20px 48px rgba(0,0,0,.4); overflow:hidden; }
+    #testAnswerPreviewModal .ts-preview-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--ts-border); }
+    #testAnswerPreviewModal .ts-preview-title{ font-weight:900; font-size:16px; }
+    #testAnswerPreviewModal .ts-preview-actions{ display:flex; gap:8px; align-items:center; }
+    #testAnswerPreviewModal .ts-preview-link{ color:var(--ts-primary); font-weight:900; text-decoration:none; }
+    #testAnswerPreviewModal .ts-preview-close{ border:1px solid var(--ts-border); border-radius:10px; background:var(--ts-field-bg); color:var(--ts-card-fg); min-height:34px; padding:0 10px; cursor:pointer; font-weight:800; }
+    #testAnswerPreviewModal .ts-preview-body{ position:relative; min-height:0; background:#fff; }
+    #testAnswerPreviewFrame{ width:100%; height:100%; border:0; background:#fff; }
+    #testAnswerPreviewModal .ts-preview-loading{
+      position:absolute; inset:0; display:grid; place-items:center; padding:24px;
+      background:var(--ts-card-bg); color:var(--ts-card-fg); text-align:center; font-size:14px; line-height:1.55;
+    }
+    #testAnswerPreviewModal .ts-preview-loading strong{ display:block; margin-bottom:6px; font-size:16px; }
+    #testAnswerPreviewModal .ts-preview-loading span{ color:var(--ts-muted); }
+    #testAnswerPreviewModal .ts-preview-loading[hidden]{ display:none; }
+    @media (max-width:520px){
+      #testSubmitModal .ts-card{ max-height:88vh; }
+      #testSubmitModal .ts-result-head{ display:grid; }
+      #testSubmitModal .ts-result-rate{ text-align:left; }
+      #testSubmitModal .ts-result-metrics{ grid-template-columns:1fr; }
+      #testSubmitModal .ts-result-answer{ grid-template-columns:1fr; }
     }
     #testSubmitModal .ts-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
     #testSubmitModal .ts-submit{
@@ -3158,15 +3561,27 @@ window.todayLocalKey = function () {
     if (document.getElementById('testSubmitModal')) return;
 
     const ocrMarkup = OCR_TEST_SHEET_ENABLED ? `
-            <div class="ts-ocr">
-              <label>답안지 사진 OCR</label>
-              <div class="ts-ocr-row">
-                <input id="tsOcrImage" type="file" accept="image/*" capture="environment">
-                <button id="tsOcrRun" class="ts-ocr-run" type="button">OCR로 답안 읽기</button>
+            <div class="ts-ocr-entry">
+              <div class="ts-ocr-notice">
+                <strong>OCR 실험 기능</strong>
               </div>
+              <input id="tsOcrReviewImage" type="file" accept="image/jpeg,image/png,image/webp" capture="environment">
+              <button id="tsOcrReviewOpen" class="ts-ocr-open" type="button">답안 사진 넣기</button>
               <div id="tsOcrStatus" class="ts-ocr-status" aria-live="polite"></div>
-              <div id="tsOcrPreview" class="ts-ocr-preview" hidden></div>
+              <div id="tsOcrReviewPanel" class="ts-ocr-panel" hidden></div>
             </div>
+    ` : '';
+    const writingRuleMarkup = OCR_TEST_SHEET_ENABLED ? `
+              <div id="tsWritingRule" class="ts-writing-rule">
+                <strong>답안 작성 기준</strong>
+                <ul>
+                  <li>객관식 문항은 선지 번호만 작성하세요.</li>
+                  <li>주관식/답값형 문항은 최종 답만 작성하세요.</li>
+                  <li>예: 객관식은 1~5, 답값형은 12, 64, 1/2처럼 한 답만 씁니다.</li>
+                  <li>x=2, 3√2, 1,3처럼 식이나 여러 답을 쓰면 자동 채움이 막힐 수 있습니다.</li>
+                  <li>풀이식, 중간식, 선지 내용은 오답 처리될 수 있습니다.</li>
+                </ul>
+              </div>
     ` : '';
 
     document.body.insertAdjacentHTML('beforeend', `
@@ -3178,11 +3593,12 @@ window.todayLocalKey = function () {
           </div>
 
           <div class="ts-grid">
-            <div class="ts-row3">
+            <div class="ts-row3 ts-submit-fields">
               <div>
                 <label>종류</label>
                 <select id="tsType">
                   <option value="UNIT" selected>단원평가</option>
+                  <option value="TRAINING_PACK">트레이닝팩</option>
                 </select>
               </div>
               <div>
@@ -3199,23 +3615,48 @@ window.todayLocalKey = function () {
               </div>
             </div>
 
-            <div>
-              <label>답 입력 (공백/쉼표/붙여쓰기 모두 가능)</label>
-              <textarea id="tsAnswersText" placeholder="예) 1 3 2 4 5 ... 또는 13245..."></textarea>
+            <div class="ts-answer-entry">
+              <details id="tsAnswersDetails" class="ts-answer-details">
+                <summary>답 입력 열기</summary>
+                <label>답 입력 (OCR 확인 후 자동 채움 · 수동 입력 가능)</label>
+                <textarea id="tsAnswersText" placeholder="OCR 확인 완료 후 자동으로 채워집니다. 수동 입력도 가능합니다."></textarea>
+                ${writingRuleMarkup}
+              </details>
               <div id="tsInfo" class="ts-info"></div>
               <div id="tsAnswerLinkArea" class="ts-answer-link"></div>
+              <div id="tsResultPanel" class="ts-result-panel" hidden></div>
             </div>
 
             ${ocrMarkup}
 
-            <div>
+            <div class="ts-memo-entry">
               <label>메모(선택)</label>
               <textarea id="tsMemo" rows="2" placeholder="메모가 있으면 적어주세요"></textarea>
             </div>
           </div>
 
           <div class="ts-actions">
-            <button id="tsSubmit" class="ts-submit">${OCR_TEST_SHEET_ENABLED ? '확인 후 제출' : '제출'}</button>
+            <button id="tsSubmit" class="ts-submit">제출</button>
+          </div>
+        </div>
+      </div>
+      <div id="testAnswerPreviewModal" aria-hidden="true">
+        <div class="ts-preview-card" role="dialog" aria-modal="true" aria-labelledby="testAnswerPreviewTitle">
+          <div class="ts-preview-head">
+            <div id="testAnswerPreviewTitle" class="ts-preview-title">전체 답지 보기</div>
+            <div class="ts-preview-actions">
+              <a id="testAnswerPreviewOpenExternal" class="ts-preview-link" target="_blank" rel="noopener noreferrer">새 탭으로 열기</a>
+              <button id="testAnswerPreviewClose" class="ts-preview-close" type="button">닫기</button>
+            </div>
+          </div>
+          <div class="ts-preview-body">
+            <iframe id="testAnswerPreviewFrame" title="전체 답지 미리보기"></iframe>
+            <div id="testAnswerPreviewLoading" class="ts-preview-loading" role="status" aria-live="polite" hidden>
+              <div>
+                <strong>답지를 불러오는 중입니다.</strong>
+                <span>잠시 기다려주세요. 오래 걸리면 새 탭으로 열어주세요.</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3236,10 +3677,19 @@ window.todayLocalKey = function () {
     const memoEl = document.getElementById('tsMemo');
     const infoEl = document.getElementById('tsInfo');
     const answerLinkArea = document.getElementById('tsAnswerLinkArea');
-    const ocrImageEl = document.getElementById('tsOcrImage');
-    const btnOcr = document.getElementById('tsOcrRun');
+    const resultPanel = document.getElementById('tsResultPanel');
+    const answerPreviewModal = document.getElementById('testAnswerPreviewModal');
+    const answerPreviewTitle = document.getElementById('testAnswerPreviewTitle');
+    const answerPreviewFrame = document.getElementById('testAnswerPreviewFrame');
+    const answerPreviewOpenExternal = document.getElementById('testAnswerPreviewOpenExternal');
+    const answerPreviewClose = document.getElementById('testAnswerPreviewClose');
+    const answerPreviewLoading = document.getElementById('testAnswerPreviewLoading');
+    const ocrReviewImageEl = document.getElementById('tsOcrReviewImage');
+    const btnOcrReviewOpen = document.getElementById('tsOcrReviewOpen');
     const ocrStatusEl = document.getElementById('tsOcrStatus');
-    const ocrPreviewEl = document.getElementById('tsOcrPreview');
+    const ocrReviewPanel = document.getElementById('tsOcrReviewPanel');
+    let ocrReviewPayload = null;
+    let ocrReviewLastMeta = null;
 
     const currentCur = () => getMyCurriculumFromNamebar();
 
@@ -3262,6 +3712,25 @@ window.todayLocalKey = function () {
       return selType.value;
     }
 
+    function availableRoundsForType(typeVal = selType.value) {
+      const rounds = new Set();
+      listTestsForType(typeVal, currentCur()).forEach(test => {
+        const round = assignedRound(test.round || '1');
+        if (round) rounds.add(round);
+      });
+      return Array.from(rounds).sort((a, b) => Number(a) - Number(b));
+    }
+
+    function renderRoundOptions(preselectRound = '') {
+      const rounds = availableRoundsForType();
+      const fallbackRounds = rounds.length ? rounds : ['1'];
+      const wanted = assignedRound(preselectRound || selRound.value || fallbackRounds[0]);
+      selRound.innerHTML = fallbackRounds.map(round =>
+        `<option value="${round}">${roundLabel(round)}</option>`
+      ).join('');
+      selRound.value = fallbackRounds.includes(wanted) ? wanted : fallbackRounds[0];
+      return selRound.value;
+    }
     function renderTestOptions(preselectTestId = '') {
       const myCur = currentCur();
       const type = selType.value;
@@ -3269,6 +3738,8 @@ window.todayLocalKey = function () {
 
       if (!list.length) {
         selTestId.innerHTML = `<option value="">(시험 없음)</option>`;
+        selRound.innerHTML = `<option value="1">1회차</option>`;
+        selRound.value = '1';
         infoEl.textContent = '오늘 배정된 시험이 없습니다.';
         return;
       }
@@ -3288,6 +3759,8 @@ window.todayLocalKey = function () {
         if (match) selTestId.value = String(match.id || '');
       }
 
+      const selectedTest = findTestById(type, selTestId.value, myCur);
+      renderRoundOptions(selectedTest?.round || selRound.value);
       updateInfo();
     }
 
@@ -3307,16 +3780,7 @@ window.todayLocalKey = function () {
         selRound.value = String(round);
       }
 
-      const key = getKeyForRound(t, round);
-      const keyOk = Array.isArray(key) && key.length;
-
-      let msg = `${typeLabel(type)}\n문항 수: ${t.problems}문항\n회차: ${round}회차\n`;
-      msg += keyOk
-        ? '정답키 등록됨 → 제출하면 서버가 자동 채점합니다.'
-        : '정답키가 아직 등록되지 않았습니다 → 선생님께 말해 주세요.';
-
-      if (extra) msg += `\n\n${extra}`;
-      infoEl.textContent = msg;
+      infoEl.textContent = extra ? String(extra) : '';
     }
 
     function resetAnswerLink() {
@@ -3325,6 +3789,253 @@ window.todayLocalKey = function () {
       answerLinkArea.replaceChildren();
     }
 
+    function setResultViewMode(active) {
+      modal?.classList?.toggle?.('ts-result-view', Boolean(active));
+    }
+
+    function resetResultPanel() {
+      if (!resultPanel) return;
+      setResultViewMode(false);
+      resultPanel.hidden = true;
+      resultPanel.replaceChildren();
+    }
+
+    function formatSubmitPercent(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+      return `${value.toFixed(1)}%`;
+    }
+
+    function parseScoreParts(score, fallbackTotal) {
+      const text = String(score || '').trim();
+      const match = text.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+      if (!match) return { correct: null, total: Number(fallbackTotal) || null };
+      return { correct: Number(match[1]), total: Number(match[2]) };
+    }
+
+    function submitResultRows(answersText, key, wrongNumbers, problems) {
+      const answers = parseAnswerSpec(answersText, problems);
+      return wrongNumbers.map(no => {
+        const index = Number(no) - 1;
+        return {
+          questionNo: Number(no),
+          myAnswer: String(answers[index] ?? '').trim() || '(빈칸)',
+          correctAnswer: String(key?.[index] ?? '').trim() || '(정답 정보 없음)',
+        };
+      });
+    }
+
+    function submitResultRowsFromResponse(responseData) {
+      const rows = Array.isArray(responseData?.wrongDetails) ? responseData.wrongDetails : [];
+      return rows.map(row => ({
+        questionNo: Number(row?.questionNo || row?.question_no),
+        myAnswer: String(row?.myAnswer ?? row?.my_answer ?? '').trim() || '(빈칸)',
+        correctAnswer: String(row?.correctAnswer ?? row?.correct_answer ?? '').trim() || '(정답 정보 없음)',
+      })).filter(row => Number.isInteger(row.questionNo) && row.questionNo >= 1);
+    }
+
+    function buildSubmitResultViewModel({ test, round, answersText, responseData = {}, fallbackGraded = null, answerUrl = '' }) {
+      const problems = Number(test?.problems) || parseAnswerEntries(answersText).length || 0;
+      const key = getKeyForRound(test, round);
+      const localGraded = key ? gradeClientSide(answersText, key, problems) : null;
+      const responseRows = submitResultRowsFromResponse(responseData);
+      const score = String(responseData.score || (fallbackGraded ? `${fallbackGraded.correct}/${fallbackGraded.total}` : '') || '').trim();
+      const scoreParts = parseScoreParts(score, problems);
+      const wrongNumbers = (Array.isArray(responseData.wrong) ? responseData.wrong : fallbackGraded?.wrong || localGraded?.wrong || [])
+        .map(value => Number(value))
+        .filter(value => Number.isInteger(value) && value >= 1 && (!problems || value <= problems))
+        .sort((a, b) => a - b);
+      const correct = scoreParts.correct ?? Math.max(0, (scoreParts.total || problems) - wrongNumbers.length);
+      const total = scoreParts.total || problems;
+      const pct = typeof responseData.pct === 'number'
+        ? responseData.pct
+        : (typeof fallbackGraded?.pct === 'number' ? fallbackGraded.pct : (typeof localGraded?.pct === 'number' ? localGraded.pct : null));
+      return {
+        title: String(test?.name || '선택한 시험'),
+        round,
+        score: score || `${correct}/${total}`,
+        correct,
+        total,
+        pct,
+        wrongNumbers,
+        rows: responseRows.length ? responseRows : (key ? submitResultRows(answersText, key, wrongNumbers, problems) : []),
+        answerUrl,
+      };
+    }
+
+    function closeAnswerPreview() {
+      if (!answerPreviewModal) return;
+      answerPreviewModal.style.display = 'none';
+      answerPreviewModal.setAttribute('aria-hidden', 'true');
+      answerPreviewModal.dataset.state = 'closed';
+      if (answerPreviewLoading) answerPreviewLoading.hidden = true;
+      if (answerPreviewFrame) answerPreviewFrame.src = 'about:blank';
+    }
+
+    function setAnswerPreviewLoading(isLoading) {
+      if (!answerPreviewModal || !answerPreviewLoading) return;
+      answerPreviewModal.dataset.state = isLoading ? 'loading' : 'loaded';
+      answerPreviewLoading.hidden = !isLoading;
+    }
+
+    function answerPreviewFrameUrl(url) {
+      const text = String(url || '').trim();
+      const filePathMatch = text.match(/^https:\/\/drive\.google\.com\/file\/d\/([^/?#]+)/i);
+      if (filePathMatch) {
+        return `https://drive.google.com/file/d/${filePathMatch[1]}/preview`;
+      }
+      const idQueryMatch = text.match(/^https:\/\/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([^&#]+)/i);
+      if (idQueryMatch) {
+        return `https://drive.google.com/file/d/${idQueryMatch[1]}/preview`;
+      }
+      return text;
+    }
+
+    function openAnswerPreview(url, title = '전체 답지 보기') {
+      const safeUrl = String(url || '').trim();
+      if (!safeUrl) return;
+      if (!answerPreviewModal || !answerPreviewFrame || !answerPreviewOpenExternal) {
+        window.open(safeUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (answerPreviewTitle) answerPreviewTitle.textContent = title;
+      answerPreviewOpenExternal.href = safeUrl;
+      setAnswerPreviewLoading(true);
+      answerPreviewFrame.src = answerPreviewFrameUrl(safeUrl);
+      answerPreviewModal.style.display = 'flex';
+      answerPreviewModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function renderSubmitResultPanel(result) {
+      if (!resultPanel) return;
+      resultPanel.replaceChildren();
+      if (!result) {
+        setResultViewMode(false);
+        resultPanel.hidden = true;
+        return;
+      }
+
+      const head = document.createElement('div');
+      head.className = 'ts-result-head';
+      const title = document.createElement('div');
+      title.className = 'ts-result-title';
+      const strong = document.createElement('strong');
+      strong.textContent = '채점 결과';
+      const subtitle = document.createElement('span');
+      subtitle.textContent = `${result.title} · ${roundLabel(result.round) || '1회차'}`;
+      title.append(strong, subtitle);
+
+      const rate = document.createElement('div');
+      rate.className = 'ts-result-rate';
+      const rateLabel = document.createElement('span');
+      rateLabel.className = 'ts-result-rate-label';
+      rateLabel.textContent = '정답률';
+      const rateValue = document.createElement('strong');
+      rateValue.className = 'ts-result-rate-value';
+      rateValue.textContent = formatSubmitPercent(result.pct);
+      rate.append(rateLabel, rateValue);
+      head.append(title, rate);
+
+      const metrics = document.createElement('div');
+      metrics.className = 'ts-result-metrics';
+      [
+        ['점수', result.score],
+        ['정답', `${result.correct}/${result.total}`],
+        ['오답', `${result.wrongNumbers.length}개`],
+      ].forEach(([label, value]) => {
+        const metric = document.createElement('div');
+        metric.className = 'ts-result-metric';
+        const labelEl = document.createElement('span');
+        labelEl.textContent = label;
+        const valueEl = document.createElement('strong');
+        valueEl.textContent = value;
+        metric.append(labelEl, valueEl);
+        metrics.appendChild(metric);
+      });
+
+      const wrongTitle = document.createElement('div');
+      wrongTitle.className = 'ts-result-wrong-title';
+      const wrongHeading = document.createElement('strong');
+      wrongHeading.textContent = '틀린 문항 답 비교';
+      const wrongCount = document.createElement('span');
+      wrongCount.className = 'ts-result-wrong-count';
+      wrongCount.textContent = result.wrongNumbers.length
+        ? `틀린 문항: ${result.wrongNumbers.map(no => `${no}번`).join(', ')}`
+        : '틀린 문항 없음';
+      wrongTitle.append(wrongHeading, wrongCount);
+
+      const wrongBody = document.createElement('div');
+      if (!result.wrongNumbers.length) {
+        wrongBody.className = 'ts-result-empty';
+        wrongBody.textContent = '이번 제출에서 오답이 없습니다.';
+      } else if (result.rows.length) {
+        wrongBody.className = 'ts-result-compare';
+        result.rows.forEach(row => {
+          const card = document.createElement('div');
+          card.className = 'ts-result-comparison-card';
+          const question = document.createElement('div');
+          question.className = 'ts-result-row-no';
+          question.textContent = `${row.questionNo}번`;
+
+          const values = document.createElement('div');
+          values.className = 'ts-result-answer-values';
+          const myAnswerBlock = document.createElement('div');
+          myAnswerBlock.className = 'ts-result-answer-block';
+          const myAnswerLabel = document.createElement('span');
+          myAnswerLabel.className = 'ts-result-answer-label';
+          myAnswerLabel.textContent = '내 답';
+          const myAnswer = document.createElement('span');
+          myAnswer.className = 'ts-result-my-answer';
+          myAnswer.textContent = row.myAnswer;
+          myAnswerBlock.append(myAnswerLabel, myAnswer);
+
+          const correctAnswerBlock = document.createElement('div');
+          correctAnswerBlock.className = 'ts-result-answer-block';
+          const correctAnswerLabel = document.createElement('span');
+          correctAnswerLabel.className = 'ts-result-answer-label';
+          correctAnswerLabel.textContent = '정답';
+          const correctAnswer = document.createElement('span');
+          correctAnswer.className = 'ts-result-correct-answer';
+          correctAnswer.textContent = row.correctAnswer;
+          correctAnswerBlock.append(correctAnswerLabel, correctAnswer);
+
+          values.append(myAnswerBlock, correctAnswerBlock);
+          card.append(question, values);
+          wrongBody.appendChild(card);
+        });
+      } else {
+        wrongBody.className = 'ts-result-empty';
+        wrongBody.textContent = '정답 비교 정보를 불러오지 못했습니다. 전체 답지에서 확인해주세요.';
+      }
+
+      const answerActions = document.createElement('div');
+      answerActions.className = 'ts-result-answer';
+      if (result.answerUrl) {
+        const previewButton = document.createElement('button');
+        previewButton.type = 'button';
+        previewButton.className = 'ts-result-answer-button';
+        previewButton.textContent = '전체 답지 크게 보기';
+        previewButton.addEventListener('click', () => openAnswerPreview(result.answerUrl, `${result.title} ${roundLabel(result.round)} 답지`));
+        const link = document.createElement('a');
+        link.className = 'ts-result-answer-link';
+        link.href = result.answerUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = '새 탭으로 열기';
+        answerActions.append(previewButton, link);
+      } else {
+        const help = document.createElement('div');
+        help.className = 'ts-info';
+        help.textContent = studentAnswerAccessBlocked() ? '전체 답지는 학원 Wi-Fi에서만 볼 수 있습니다.' : '전체 답지 링크 준비 중';
+        answerActions.appendChild(help);
+      }
+
+      resultPanel.append(head, metrics, wrongTitle, wrongBody, answerActions);
+      resultPanel.hidden = false;
+      setResultViewMode(true);
+    }
+
+    const OCR_PHASE1_READY_MESSAGE = '답안지 사진을 선택한 뒤 답안 사진 넣기 버튼을 눌러주세요.';
+
     function ocrTestSheetSetStatus(message = '', state = '') {
       if (!ocrStatusEl) return;
       ocrStatusEl.textContent = message;
@@ -3332,147 +4043,884 @@ window.todayLocalKey = function () {
       else delete ocrStatusEl.dataset.state;
     }
 
-    function ocrTestSheetClearPreview() {
-      if (!ocrPreviewEl) return;
-      ocrPreviewEl.hidden = true;
-      ocrPreviewEl.replaceChildren();
+    function ocrPhase1CurrentTest() {
+      return findTestById(selType.value, selTestId.value, currentCur());
+    }
+
+    function ocrReviewCurrentSelectionContext() {
+      const test = ocrPhase1CurrentTest();
+      const round = parseInt(test?.round || selRound.value, 10) || 1;
+      return {
+        testId: String(test?.id || selTestId.value || '').trim(),
+        round: String(round),
+      };
+    }
+
+    function ocrReviewClearAnswersTextOrigin() {
+      delete answersTextEl.dataset.ocrFilled;
+      delete answersTextEl.dataset.ocrTestId;
+      delete answersTextEl.dataset.ocrRound;
+    }
+
+    function ocrReviewAnswersTextContextMatches() {
+      if (answersTextEl.dataset.ocrFilled !== '1') return true;
+      const current = ocrReviewCurrentSelectionContext();
+      return answersTextEl.dataset.ocrTestId === current.testId && answersTextEl.dataset.ocrRound === current.round;
+    }
+
+    function ocrReviewClearStaleAnswersText(message = '') {
+      if (ocrReviewAnswersTextContextMatches()) return false;
+      answersTextEl.value = '';
+      ocrReviewClearAnswersTextOrigin();
+      if (message) ocrTestSheetSetStatus(message, 'error');
+      return true;
+    }
+
+    function ocrReviewApplyAnswersText(result) {
+      const current = ocrReviewCurrentSelectionContext();
+      const resultTestId = String(result.testId || current.testId);
+      const resultRound = String(result.round || current.round);
+      if (resultTestId !== current.testId || resultRound !== current.round) {
+        throw new Error('사진 인식 결과가 현재 선택한 시험/회차와 맞지 않습니다. 다시 인식해주세요.');
+      }
+      answersTextEl.dataset.ocrProgrammaticFill = '1';
+      answersTextEl.value = result.answersText;
+      answersTextEl.dataset.ocrFilled = '1';
+      answersTextEl.dataset.ocrTestId = resultTestId;
+      answersTextEl.dataset.ocrRound = resultRound;
+      answersTextEl.dispatchEvent(new Event('input', { bubbles: true }));
+      delete answersTextEl.dataset.ocrProgrammaticFill;
+    }
+
+    function ocrPhase1TestEligible(test = null) {
+      if (test && typeof test === 'object') return isOcrPhase1AllowedTest(test);
+      return isOcrPhase1AllowedTestId(selTestId.value);
+    }
+
+    function ocrPhase1UpdateEligibilityState() {
+      if (!OCR_TEST_SHEET_ENABLED) return false;
+      const allowed = ocrPhase1TestEligible(ocrPhase1CurrentTest());
+      if (btnOcrReviewOpen) {
+        btnOcrReviewOpen.hidden = !allowed;
+        btnOcrReviewOpen.disabled = !allowed;
+        if (allowed) {
+          btnOcrReviewOpen.removeAttribute('aria-disabled');
+          btnOcrReviewOpen.removeAttribute('title');
+        } else {
+          btnOcrReviewOpen.setAttribute('aria-disabled', 'true');
+          btnOcrReviewOpen.title = OCR_PHASE1_INELIGIBLE_MESSAGE;
+        }
+      }
+      if (ocrReviewImageEl) {
+        ocrReviewImageEl.hidden = !allowed;
+        ocrReviewImageEl.disabled = !allowed;
+      }
+      if (!allowed) {
+        ocrReviewPayload = null;
+        ocrReviewClearPanel();
+        ocrTestSheetSetStatus(OCR_PHASE1_INELIGIBLE_MESSAGE, 'error');
+      } else {
+        const currentStatus = String(ocrStatusEl?.textContent || '').trim();
+        if ((currentStatus === OCR_PHASE1_INELIGIBLE_MESSAGE || !currentStatus) && !ocrReviewSelectedImage() && !ocrReviewPayload) {
+          ocrTestSheetSetStatus(OCR_PHASE1_READY_MESSAGE);
+        }
+      }
+      return allowed;
+    }
+
+    function ocrReviewClearPanel() {
+      if (!ocrReviewPanel) return;
+      ocrReviewPanel.hidden = true;
+      ocrReviewPanel.replaceChildren();
     }
 
     function ocrTestSheetResetControls() {
-      if (ocrImageEl) ocrImageEl.value = '';
+      ocrReviewPayload = null;
+      if (ocrReviewImageEl) ocrReviewImageEl.value = '';
+      ocrReviewClearAnswersTextOrigin();
       ocrTestSheetSetStatus();
-      ocrTestSheetClearPreview();
+      ocrReviewClearPanel();
     }
 
-    function ocrTestSheetSelectedFile() {
-      return ocrImageEl?.files?.[0] || null;
+    function ocrReviewClone(value) {
+      return JSON.parse(JSON.stringify(value));
     }
 
-    function ocrTestSheetIsSupportedImage(file) {
-      if (!file) return false;
-      const type = String(file.type || '').toLowerCase();
-      const name = String(file.name || '').toLowerCase();
-      return OCR_IMAGE_TYPES.has(type) || /\.(jpe?g|png|webp)$/.test(name);
-    }
-
-    async function ocrTestSheetParseResponse(res) {
-      const body = await res.text();
-      try {
-        return body.trim() ? JSON.parse(body) : {};
-      } catch {
-        return { ok: false, error: body.slice(0, 200) || 'OCR 응답을 읽지 못했습니다.', warnings: [] };
+    function ocrReviewFindForbiddenKeys(value, path = '$', out = []) {
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => ocrReviewFindForbiddenKeys(item, `${path}[${index}]`, out));
+        return out;
       }
+      if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([key, child]) => {
+          const nextPath = `${path}.${key}`;
+          if (OCR_REVIEW_ANSWER_KEY_FIELDS.has(key)) out.push(nextPath);
+          ocrReviewFindForbiddenKeys(child, nextPath, out);
+        });
+      }
+      return out;
     }
 
-    function ocrTestSheetFailure(detail = '') {
-      ocrTestSheetClearPreview();
-      const reason = String(detail || '').trim();
-      const message = reason
-        ? `OCR을 사용할 수 없습니다. ${reason}\n기존 방식으로 제출해 주세요.`
-        : 'OCR을 사용할 수 없습니다. 기존 방식으로 제출해 주세요.';
-      ocrTestSheetSetStatus(message, 'error');
+    function ocrReviewAnswerModeForQuestion(testId, questionNo) {
+      const no = Number(questionNo);
+      const config = OCR_PHASE1_ANSWER_MODE_BY_TEST_ID[String(testId || '').trim()];
+      if (!config || !Number.isInteger(no)) return '';
+      if (config.choice_number.has(no)) return 'choice_number';
+      if (config.answer_value.has(no)) return 'answer_value';
+      return '';
     }
 
-    function ocrTestSheetRenderPreview(data, test, round) {
-      if (!ocrPreviewEl) return;
-      ocrPreviewEl.replaceChildren();
-      const title = document.createElement('div');
-      title.className = 'ts-ocr-preview-title';
-      title.textContent = `${test?.name || '선택한 테스트'} · ${round}회차`;
+    function ocrReviewAnswerModeLabel(mode) {
+      return OCR_REVIEW_ANSWER_MODE_LABELS[mode] || '답안 형식 확인';
+    }
 
-      const score = document.createElement('div');
-      const wrong = Array.isArray(data.wrong) ? data.wrong : [];
-      const pct = Number.isFinite(Number(data.pct)) ? `${Number(data.pct)}%` : '-';
-      const hasGradePreview = Boolean(data.score) || wrong.length || pct !== '-';
-      score.textContent = hasGradePreview
-        ? `채점 미리보기: ${data.score || '-'} / 정답률 ${pct} / 오답 ${wrong.length ? wrong.join(', ') : '없음'}`
-        : '인식 결과를 답칸에 넣었습니다. 제출 전 내용을 확인해주세요.';
+    function ocrReviewIsChoiceNumberAnswer(answer) {
+      return /^[1-5]$/.test(String(answer || '').trim());
+    }
 
-      const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean).map(String) : [];
-      const warningLine = document.createElement('div');
-      warningLine.textContent = warnings.length ? `경고: ${warnings.join(' / ')}` : '경고: 없음';
+    function ocrReviewIsSimpleFinalAnswer(answer) {
+      return /^[-+]?\d+(?:\/\d+|\.\d+)?$/.test(String(answer || '').trim());
+    }
 
-      const items = Array.isArray(data.items) ? data.items : [];
-      const list = document.createElement('ol');
-      list.className = 'ts-ocr-preview-list';
-      items.slice(0, 40).forEach(item => {
-        const li = document.createElement('li');
-        const answer = String(item?.answer || '').trim() || '(빈칸)';
-        const confidence = Number.isFinite(Number(item?.confidence))
-          ? ` · 신뢰도 ${Math.round(Number(item.confidence) * 100)}%`
-          : '';
-        li.textContent = `${answer}${confidence}`;
-        list.appendChild(li);
+    function ocrReviewQuestionListText(questionNumbers) {
+      return questionNumbers.map(no => `${no}번`).join(', ');
+    }
+
+    function ocrReviewNormalizeStringArray(value, label, questionNo) {
+      const values = Array.isArray(value) ? value : [];
+      return values.map(item => {
+        const text = String(item);
+        if (/[\r\n]/.test(text)) throw new Error(`${questionNo}번 문항 ${label}은 한 줄이어야 합니다.`);
+        return text;
+      });
+    }
+
+    function ocrReviewHasTraceWarning(warnings) {
+      return warnings.some(warning => OCR_REVIEW_TRACE_WARNING_CODES.has(warning));
+    }
+
+    function ocrReviewHasReliableText(value) {
+      const text = String(value || '').trim().toLowerCase();
+      return text !== '' && text !== '?' && text !== '??' && text !== 'unknown' && text !== 'unclear';
+    }
+
+    function ocrReviewCleanOneLineAnswer(value) {
+      const text = String(value || '').trim();
+      if (text.includes(String.fromCharCode(10)) || text.includes(String.fromCharCode(13))) return text;
+      return text
+        .replace(/\s+/g, '')
+        .replace(/\sqrt/gi, '√')
+        .replace(/sqrt\(([^()]*)\)/gi, '√$1')
+        .replace(/sqrt\{([^{}]*)\}/gi, '√$1')
+        .replace(/sqrt/gi, '√');
+    }
+
+    function ocrReviewAnswerCanPrefill(answer, mode) {
+      const text = ocrReviewCleanOneLineAnswer(answer);
+      if (!ocrReviewHasReliableText(text)) return false;
+      if (mode === 'choice_number') return ocrReviewIsChoiceNumberAnswer(text);
+      if (mode === 'answer_value') return /\d/.test(text);
+      return ocrReviewIsSimpleFinalAnswer(text);
+    }
+
+    function ocrReviewDefaultAnswerForReviewInput(item) {
+      const answer = ocrReviewCleanOneLineAnswer(item.final_answer || item.recognized || '');
+      return ocrReviewAnswerCanPrefill(answer, item.answer_mode) ? answer : '';
+    }
+
+    function ocrReviewPrefillNoticeText(item, recognizedAnswer, initialAnswer) {
+      if (initialAnswer || item.status !== 'review_required') return '';
+      if (!ocrReviewHasReliableText(recognizedAnswer)) return '인식값이 명확하지 않아 빈칸으로 두었습니다. 직접 입력해주세요.';
+      if (item.answer_mode === 'choice_number') return '인식값이 선택형 형식에 맞지 않아 빈칸으로 두었습니다. 아래 번호 중 하나를 선택해주세요.';
+      if (item.answer_mode === 'answer_value') return '인식값이 답값 형식에 맞지 않아 빈칸으로 두었습니다. 최종 답만 입력해주세요.';
+      return '';
+    }
+
+    function ocrReviewAnswerValidationMessage(answer, mode, questionNo) {
+      const text = ocrReviewCleanOneLineAnswer(answer);
+      if (!text) return `${questionNo}번 문항 답안을 입력해주세요.`;
+      if (/[\r\n]/.test(text)) return `${questionNo}번 문항 답안은 한 줄이어야 합니다.`;
+      if (mode === 'choice_number' && !ocrReviewIsChoiceNumberAnswer(text)) {
+        return `${questionNo}번 선택형 문항은 선지 번호(1~5)만 입력해야 합니다.`;
+      }
+      if (!mode && !ocrReviewIsSimpleFinalAnswer(text)) {
+        return `${questionNo}번 문항은 자동 확인 가능한 숫자/분수/소수 답만 입력할 수 있습니다.`;
+      }
+      return '';
+    }
+
+    function ocrReviewHasBulkFillBlockingWarning(item) {
+      if (item.warnings.some(warning => OCR_REVIEW_BULK_FILL_BLOCKING_WARNING_CODES.has(warning))) return true;
+      return item.warnings.some(warning => /지운|덧쓴|취소|여러|복수|애매|불명확|명확하지|unclear|ambiguous|overwritten|erased|crossed/i.test(String(warning || '')));
+    }
+
+    function ocrReviewBulkFillBlockingMessage(item) {
+      if (item.warnings.includes('choice_number_invalid_for_auto_grade')) {
+        return `${item.question_no}번 선택형 문항은 선지 번호(1~5)만 입력할 수 있어 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('answer_value_letter_confusion')) {
+        return `${item.question_no}번 문항은 답값이 글자처럼 보여 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('digit_shape_confusion')) {
+        return `${item.question_no}번 문항은 숫자 모양이 애매해 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('answer_mode_unverified')) {
+        return `${item.question_no}번 문항은 문항 형식표가 아직 없어 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('local_checker_blank_conflict') || item.warnings.includes('tesseract_blank_like')) {
+        return `${item.question_no}번 문항은 보조 인식에서 빈칸처럼 보여 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('tesseract_choice_digit_veto') || item.warnings.includes('tesseract_multiple_choice_candidates')) {
+        return `${item.question_no}번 선택형 문항은 보조 인식 결과 선지 번호가 명확하지 않아 직접 확정해야 합니다.`;
+      }
+      if (item.warnings.includes('tesseract_multiple_candidates') || item.warnings.includes('tesseract_answer_value_format_conflict')) {
+        return `${item.question_no}번 문항은 보조 인식 결과 답값 형식이 맞지 않아 직접 확정해야 합니다.`;
+      }
+      if (
+        item.warnings.includes('local_checker_candidate_conflict') ||
+        item.warnings.includes('tesseract_candidate_conflict') ||
+        item.warnings.includes('paddleocr_candidate_conflict') ||
+        item.warnings.includes('pix2tex_candidate_conflict')
+      ) {
+        return `${item.question_no}번 문항은 보조 인식 결과가 자동 인식값과 달라 직접 확정해야 합니다.`;
+      }
+      return `${item.question_no}번 문항은 지운 흔적, 덧쓴 흔적, 또는 기호 애매함이 있어 직접 확정해야 합니다.`;
+    }
+
+    function ocrReviewCandidatesAreUnambiguous(item, answer) {
+      const candidates = item.candidates.map(candidate => ocrReviewCleanOneLineAnswer(candidate)).filter(Boolean);
+      return !candidates.length || candidates.every(candidate => candidate === answer);
+    }
+
+    function ocrReviewRecognizedAnswerForBulkFill(item) {
+      if (item.status !== 'review_required') return '';
+      if (ocrReviewHasBulkFillBlockingWarning(item)) return '';
+      const answer = ocrReviewCleanOneLineAnswer(item.recognized);
+      if (!ocrReviewAnswerCanPrefill(answer, item.answer_mode)) return '';
+      if (!ocrReviewHasReliableText(answer)) return '';
+      if (!ocrReviewCandidatesAreUnambiguous(item, answer)) return '';
+      if (ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no)) return '';
+      return answer;
+    }
+
+    function ocrReviewMaterializeRecognizedAnswers(payload) {
+      const normalized = ocrReviewNormalizePayload(payload);
+      let recognizedFillCount = 0;
+      const items = normalized.items.map(item => {
+        const recognizedAnswer = ocrReviewRecognizedAnswerForBulkFill(item);
+        if (!recognizedAnswer) {
+          if (!OCR_REVIEW_FINAL_STATUSES.has(item.status)) return item;
+          return { ...item, final_answer: ocrReviewCleanOneLineAnswer(item.final_answer) };
+        }
+        recognizedFillCount += 1;
+        return {
+          ...item,
+          status: 'student_direct_input',
+          source: 'student_direct_input',
+          final_answer: recognizedAnswer,
+        };
+      });
+      return { payload: { ...normalized, items }, recognizedFillCount };
+    }
+
+    function ocrReviewBlockerMessage(item) {
+      if (item.status === 'review_required') {
+        const answer = ocrReviewCleanOneLineAnswer(item.recognized);
+        const validationMessage = ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no);
+        if (!ocrReviewHasReliableText(answer)) return `${item.question_no}번 문항 인식값이 명확하지 않습니다. 직접 확인해주세요.`;
+        if (ocrReviewHasBulkFillBlockingWarning(item)) return ocrReviewBulkFillBlockingMessage(item);
+        if (!ocrReviewCandidatesAreUnambiguous(item, answer)) return `${item.question_no}번 문항은 후보가 여러 개라 직접 골라야 합니다.`;
+        if (validationMessage) return validationMessage;
+        return `${item.question_no}번 문항을 먼저 확정해야 합니다.`;
+      }
+      if (item.status === 'data_check_required') return `${item.question_no}번 문항은 선생님 확인이 필요합니다.`;
+      if (item.status === 'retake_required' || item.status === 'retake_uploaded') return `${item.question_no}번 문항은 재촬영 또는 재인식이 필요합니다.`;
+      return `${item.question_no}번 문항을 먼저 처리해야 합니다.`;
+    }
+
+    function ocrReviewTraceNeedsRetake(item) {
+      if (!item.warnings.includes('unclear_final_answer')) return false;
+      if (ocrReviewHasReliableText(item.final_answer) || ocrReviewHasReliableText(item.recognized)) return false;
+      return !item.candidates.some(candidate => ocrReviewHasReliableText(candidate));
+    }
+
+    function ocrReviewApplyTraceSafetyPolicy(item) {
+      const autoGradeStatus = OCR_REVIEW_AUTO_GRADE_STATUSES.has(item.status) || OCR_REVIEW_AUTO_GRADE_STATUSES.has(item.source);
+      if (!autoGradeStatus || !ocrReviewHasTraceWarning(item.warnings)) return item;
+      return {
+        ...item,
+        status: ocrReviewTraceNeedsRetake(item) ? 'retake_required' : 'review_required',
+        final_answer: null,
+        source: null,
+      };
+    }
+
+    function ocrReviewWarningMessages(item) {
+      const messages = [];
+      item.warnings.forEach(warning => {
+        const message = OCR_REVIEW_WARNING_MESSAGES[warning] || warning;
+        if (message && !messages.includes(message)) messages.push(message);
+      });
+      return messages;
+    }
+
+    function ocrReviewRenderWarnings(item) {
+      const messages = ocrReviewWarningMessages(item);
+      if (!messages.length) return null;
+      const warning = document.createElement('div');
+      warning.className = 'ts-ocr-warning';
+      warning.textContent = messages.join(' ');
+      return warning;
+    }
+
+    function ocrReviewNormalizePayload(raw) {
+      const leaks = ocrReviewFindForbiddenKeys(raw);
+      if (leaks.length) throw new Error(`학생 화면에 노출할 수 없는 필드가 포함되어 있습니다: ${leaks.join(', ')}`);
+      if (!raw || typeof raw !== 'object') throw new Error('사진 인식 검토 정보가 올바르지 않습니다.');
+      const items = Array.isArray(raw.items) ? raw.items : [];
+      const problemCount = Number(raw.problem_count || OCR_REVIEW_PROBLEM_COUNT);
+      if (problemCount !== OCR_REVIEW_PROBLEM_COUNT) throw new Error('문항 수가 맞지 않습니다.');
+      if (items.length !== problemCount) throw new Error('문항 목록이 20개가 아닙니다.');
+      const seen = new Set();
+      items.forEach(item => {
+        const no = Number(item?.question_no);
+        if (!Number.isInteger(no) || no < 1 || no > problemCount) throw new Error('문항 번호가 올바르지 않습니다.');
+        if (seen.has(no)) throw new Error(`${no}번 문항이 중복되었습니다.`);
+        seen.add(no);
+        const status = String(item.status || '');
+        if (!OCR_REVIEW_FINAL_STATUSES.has(status) && !OCR_REVIEW_BLOCKING_STATUSES.has(status)) {
+          throw new Error(`${no}번 문항 상태가 올바르지 않습니다.`);
+        }
+      });
+      const testId = String(raw.test_id || raw.testId || '');
+      return {
+        source: String(raw.source || 'phase1_local_mock_review_payload'),
+        test_id: testId,
+        round: String(raw.round || '1'),
+        problem_count: problemCount,
+        items: items.map(item => {
+          const no = Number(item.question_no);
+          return ocrReviewApplyTraceSafetyPolicy({
+            question_no: no,
+            answer_mode: ocrReviewAnswerModeForQuestion(testId, no),
+            status: String(item.status || ''),
+            recognized: String(item.recognized || ''),
+            warnings: ocrReviewNormalizeStringArray(item.warnings, '경고 문구', no),
+            candidates: ocrReviewNormalizeStringArray(item.candidates, '후보 답안', no),
+            final_answer: item.final_answer == null ? null : String(item.final_answer),
+            source: item.source == null ? null : String(item.source),
+          });
+        }).sort((a, b) => a.question_no - b.question_no),
+      };
+    }
+
+    function ocrReviewCreateMockPayload(test, round) {
+      const baseAnswers = ['1', '-3', 'x=n', '0.5', '2', 'ㄴ,ㄹ', '5', '2x+1', '4', '6', '256', 'a/2', '5', '1', '-1<x<5', 'y=n', '2', '139/2', 'x±2=4', '26sqrt(21)'];
+      const reviewItems = new Map([
+        [3, ['x=2', '3', 'x=n', 'x=?']],
+        [10, ['0', '6', '?']],
+        [18, ['129/2', '139/2', '?']],
+        [19, ['x+2=4', '3', 'x±2=4', 'x-2=4']],
+      ]);
+      return ocrReviewNormalizePayload({
+        source: 'phase1_local_mock_review_payload',
+        test_id: String(test?.id || selTestId.value || 'mock_subjective_test'),
+        round: String(round || '1'),
+        problem_count: OCR_REVIEW_PROBLEM_COUNT,
+        items: baseAnswers.map((answer, index) => {
+          const questionNo = index + 1;
+          const candidates = reviewItems.get(questionNo);
+          if (candidates) {
+            return {
+              question_no: questionNo,
+              status: 'review_required',
+              recognized: answer,
+              warnings: ['확인이 필요한 인식값입니다.'],
+              candidates,
+              final_answer: null,
+              source: null,
+            };
+          }
+          return {
+            question_no: questionNo,
+            status: 'safe_auto_grade',
+            recognized: answer,
+            warnings: [],
+            candidates: [],
+            final_answer: answer,
+            source: 'safe_auto_grade',
+          };
+        }),
+      });
+    }
+
+    function ocrReviewBlockingItems(payload) {
+      return payload.items.filter(item => {
+        if (item.status === 'review_required') return true;
+        return item.status === 'retake_required' || item.status === 'retake_uploaded' || item.status === 'data_check_required';
+      });
+    }
+
+    function ocrReviewIsUserConfirmedStatus(item) {
+      return item.status === 'confirmed' ||
+        item.status === 'student_selected_candidate' ||
+        item.status === 'student_direct_input' ||
+        item.status === 'student_selected_candidate_after_retake' ||
+        item.status === 'student_direct_input_after_retake';
+    }
+
+    function ocrReviewAnswerForPartialFill(item) {
+      if (!OCR_REVIEW_FINAL_STATUSES.has(item.status)) return '';
+      const userConfirmed = ocrReviewIsUserConfirmedStatus(item);
+      if (!userConfirmed && ocrReviewHasBulkFillBlockingWarning(item)) return '';
+      const answer = ocrReviewCleanOneLineAnswer(item.final_answer);
+      if (!ocrReviewAnswerCanPrefill(answer, item.answer_mode)) return '';
+      if (!userConfirmed && !ocrReviewCandidatesAreUnambiguous(item, answer)) return '';
+      if (ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no)) return '';
+      return answer;
+    }
+
+    function ocrReviewPartialFillSummary(items) {
+      const lines = items.map(item => ocrReviewAnswerForPartialFill(item));
+      const filledQuestions = [];
+      const blankQuestions = [];
+      lines.forEach((line, index) => {
+        const questionNo = index + 1;
+        if (line) filledQuestions.push(questionNo);
+        else blankQuestions.push(questionNo);
+      });
+      return { lines, filledQuestions, blankQuestions };
+    }
+
+    function ocrReviewPrepareAnswersText(payload) {
+      const normalized = ocrReviewNormalizePayload(payload);
+      const partial = ocrReviewPartialFillSummary(normalized.items);
+      if (!partial.filledQuestions.length) throw new Error('사진 인식 결과에서 안전하게 채울 수 있는 문항이 없습니다. 기존 방식으로 직접 입력해주세요.');
+      return {
+        answersText: partial.lines.join('\n'),
+        recognizedFillCount: 0,
+        filledLineCount: partial.filledQuestions.length,
+        blankLineCount: partial.blankQuestions.length,
+        blankQuestions: partial.blankQuestions,
+        testId: normalized.test_id,
+        round: normalized.round,
+      };
+    }
+
+    function ocrReviewConvertToAnswersText(payload) {
+      return ocrReviewPrepareAnswersText(payload).answersText;
+    }
+
+    function ocrReviewCounts(payload) {
+      return payload.items.reduce((acc, item) => {
+        if (item.status === 'review_required') acc.review += 1;
+        else if (item.status === 'retake_required') acc.retake += 1;
+        else if (item.status === 'retake_uploaded') acc.pendingRetake += 1;
+        else if (item.status === 'data_check_required') acc.dataCheck += 1;
+        else acc.safe += 1;
+        return acc;
+      }, { safe: 0, review: 0, retake: 0, pendingRetake: 0, dataCheck: 0 });
+    }
+
+    function ocrReviewAppendKey(input, value) {
+      const token = value === '√( )' || value === 'sqrt( )' ? '√' : value;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = `${input.value.slice(0, start)}${token}${input.value.slice(end)}`;
+      const cursor = start + token.length;
+      input.focus();
+      input.setSelectionRange(cursor, cursor);
+      input.dataset.answerSource = 'student_direct_input';
+    }
+
+    function ocrReviewRender() {
+      if (!ocrReviewPanel || !ocrReviewPayload) return;
+      ocrReviewPanel.replaceChildren();
+      const counts = ocrReviewCounts(ocrReviewPayload);
+      const fillPreview = ocrReviewPartialFillSummary(ocrReviewPayload.items);
+      const fillableCount = fillPreview.filledQuestions.length;
+      const blankCount = fillPreview.blankQuestions.length;
+      const summary = document.createElement('div');
+      summary.className = 'ts-ocr-summary';
+      [
+        `자동 인식 완료 ${counts.safe}`,
+        `확인 필요 ${counts.review}`,
+        `답칸 채움 가능 ${fillableCount}`,
+        `빈칸 유지 ${blankCount}`,
+        `재촬영 필요 ${counts.retake}`,
+        `재인식 대기 ${counts.pendingRetake}`,
+        `선생님 확인 ${counts.dataCheck}`,
+      ].forEach(text => {
+        const pill = document.createElement('span');
+        pill.className = 'ts-ocr-pill';
+        pill.textContent = text;
+        summary.appendChild(pill);
+      });
+      ocrReviewPanel.appendChild(summary);
+
+      ocrReviewPayload.items.filter(item => item.status === 'review_required').forEach(item => {
+        ocrReviewPanel.appendChild(ocrReviewRenderReviewCard(item));
+      });
+      ocrReviewPayload.items.filter(item => item.status === 'retake_required' || item.status === 'retake_uploaded' || item.status === 'data_check_required').forEach(item => {
+        ocrReviewPanel.appendChild(ocrReviewRenderBlockedCard(item));
+      });
+      ocrReviewPanel.appendChild(ocrReviewRenderSafeAutoList());
+      const blockingItems = ocrReviewBlockingItems(ocrReviewPayload);
+      const firstBlockingItem = blockingItems[0] || null;
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.className = 'ts-ocr-apply';
+      applyBtn.disabled = fillableCount === 0;
+      applyBtn.textContent = fillableCount
+        ? `안전한 답안 ${fillableCount}개만 답칸 채우기`
+        : '채울 수 있는 안전 답안 없음';
+      applyBtn.addEventListener('click', () => {
+        if (!fillableCount) {
+          const targetCard = firstBlockingItem
+            ? ocrReviewPanel.querySelector('[data-question-no="' + firstBlockingItem.question_no + '"]') || ocrReviewPanel.querySelector('.ts-ocr-card')
+            : ocrReviewPanel.querySelector('.ts-ocr-card');
+          targetCard?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          ocrTestSheetSetStatus(firstBlockingItem ? ocrReviewBlockerMessage(firstBlockingItem) : '안전하게 채울 수 있는 문항이 없습니다.', 'error');
+          return;
+        }
+        try {
+          const result = ocrReviewPrepareAnswersText(ocrReviewPayload);
+          ocrReviewApplyAnswersText(result);
+          const lineCount = result.answersText.split('\n').length;
+          ocrTestSheetSetStatus(`검토한 답안 ${lineCount}줄 중 ${result.filledLineCount}개를 채웠고 ${result.blankLineCount}개는 빈칸으로 남겼습니다. 제출은 기존 제출 버튼에서만 진행됩니다.`, 'ok');
+        } catch (err) {
+          ocrTestSheetSetStatus(err?.message || '아직 처리되지 않은 문항이 있습니다.', 'error');
+        }
+      });
+      ocrReviewPanel.appendChild(applyBtn);
+      ocrReviewPanel.hidden = false;
+    }
+
+    function ocrReviewRenderReviewCard(item) {
+      const card = document.createElement('section');
+      card.className = 'ts-ocr-card';
+      card.dataset.questionNo = String(item.question_no);
+      const title = document.createElement('h4');
+      title.textContent = `${item.question_no}번 문항 확인 필요`;
+      const mode = document.createElement('div');
+      mode.className = 'ts-ocr-mode';
+      mode.textContent = ocrReviewAnswerModeLabel(item.answer_mode);
+      const recognizedAnswer = ocrReviewCleanOneLineAnswer(item.recognized || '');
+      const hasReliableRecognizedAnswer = ocrReviewHasReliableText(recognizedAnswer);
+      const recognized = document.createElement('div');
+      recognized.className = 'ts-ocr-recognized';
+      recognized.textContent = `자동 인식값: ${hasReliableRecognizedAnswer ? recognizedAnswer : '확인 필요'}`;
+      const warning = ocrReviewRenderWarnings(item);
+      const isChoiceNumber = item.answer_mode === 'choice_number';
+      const hint = document.createElement('div');
+      hint.className = 'ts-ocr-recognized';
+      hint.textContent = isChoiceNumber
+        ? '선택형은 아래 번호 버튼 1~5 중 하나를 누른 뒤 확정해주세요.'
+        : '답값형은 최종 답만 입력한 뒤 확정해주세요.';
+      const initialAnswer = ocrReviewDefaultAnswerForReviewInput(item);
+      const prefillNoticeText = ocrReviewPrefillNoticeText(item, recognizedAnswer, initialAnswer);
+      const prefillNotice = document.createElement('div');
+      prefillNotice.className = 'ts-ocr-prefill-note';
+      prefillNotice.textContent = prefillNoticeText;
+      const input = document.createElement('input');
+      input.className = 'ts-ocr-current';
+      input.type = isChoiceNumber ? 'hidden' : 'text';
+      input.value = initialAnswer;
+      input.dataset.answerSource = 'student_direct_input';
+      input.hidden = isChoiceNumber;
+
+      const candidates = document.createElement('div');
+      candidates.className = 'ts-ocr-candidates';
+      item.candidates.forEach(candidate => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ts-ocr-candidate';
+        btn.textContent = candidate;
+        btn.addEventListener('click', () => {
+          input.value = candidate;
+          input.dataset.answerSource = 'student_selected_candidate';
+        });
+        candidates.appendChild(btn);
+      });
+      input.addEventListener('input', () => {
+        input.dataset.answerSource = 'student_direct_input';
       });
 
-      ocrPreviewEl.append(title, score, warningLine);
-      if (items.length) ocrPreviewEl.appendChild(list);
-      ocrPreviewEl.hidden = false;
+      const choiceGrid = document.createElement('div');
+      choiceGrid.className = 'ts-ocr-choice-grid';
+      choiceGrid.setAttribute('role', 'group');
+      choiceGrid.setAttribute('aria-label', `${item.question_no}번 선택형 답 선택`);
+      const syncChoiceButtons = selected => {
+        choiceGrid.querySelectorAll('button').forEach(button => {
+          const isSelected = button.dataset.value === selected;
+          button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        });
+      };
+      ['1', '2', '3', '4', '5'].forEach(value => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ts-ocr-choice';
+        btn.textContent = value;
+        btn.dataset.value = value;
+        btn.setAttribute('aria-pressed', input.value === value ? 'true' : 'false');
+        btn.addEventListener('click', () => {
+          input.value = value;
+          input.dataset.answerSource = 'student_direct_input';
+          syncChoiceButtons(value);
+        });
+        choiceGrid.appendChild(btn);
+      });
+
+      const keypad = document.createElement('div');
+      keypad.className = 'ts-ocr-keypad ts-ocr-keypad-primary';
+      OCR_REVIEW_PRIMARY_KEYPAD_VALUES.forEach(value => {
+        const key = document.createElement('button');
+        key.type = 'button';
+        key.className = 'ts-ocr-key';
+        key.textContent = value;
+        key.addEventListener('click', () => ocrReviewAppendKey(input, value));
+        keypad.appendChild(key);
+      });
+      const moreKeypad = document.createElement('details');
+      moreKeypad.className = 'ts-ocr-keypad-more';
+      const moreKeypadSummary = document.createElement('summary');
+      moreKeypadSummary.textContent = '기호 더 보기';
+      const extendedKeypad = document.createElement('div');
+      extendedKeypad.className = 'ts-ocr-keypad ts-ocr-keypad-extended';
+      OCR_REVIEW_EXTENDED_KEYPAD_VALUES.forEach(value => {
+        const key = document.createElement('button');
+        key.type = 'button';
+        key.className = 'ts-ocr-key';
+        key.textContent = value;
+        key.addEventListener('click', () => ocrReviewAppendKey(input, value));
+        extendedKeypad.appendChild(key);
+      });
+      moreKeypad.append(moreKeypadSummary, extendedKeypad);
+      const actions = document.createElement('div');
+      actions.className = 'ts-ocr-candidates';
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'ts-ocr-candidate';
+      clearBtn.textContent = '지우기';
+      clearBtn.addEventListener('click', () => {
+        input.value = isChoiceNumber ? '' : input.value.slice(0, -1);
+        input.dataset.answerSource = 'student_direct_input';
+        if (isChoiceNumber) syncChoiceButtons('');
+      });
+      const resetBtn = document.createElement('button');
+      resetBtn.type = 'button';
+      resetBtn.className = 'ts-ocr-candidate';
+      resetBtn.textContent = '초기화';
+      resetBtn.addEventListener('click', () => {
+        const resetValue = ocrReviewCleanOneLineAnswer(item.recognized || '');
+        input.value = ocrReviewAnswerCanPrefill(resetValue, item.answer_mode) ? resetValue : '';
+        input.dataset.answerSource = 'student_direct_input';
+        if (isChoiceNumber) syncChoiceButtons(input.value);
+      });
+      const confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      confirmBtn.className = 'ts-ocr-confirm';
+      confirmBtn.textContent = '확정';
+      confirmBtn.addEventListener('click', () => {
+        const answer = ocrReviewCleanOneLineAnswer(input.value);
+        if (!ocrReviewHasReliableText(answer)) {
+          ocrTestSheetSetStatus(`${item.question_no}번 문항 답안을 선택하거나 입력해주세요.`, 'error');
+          return;
+        }
+        const validationMessage = ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no);
+        if (validationMessage) {
+          ocrTestSheetSetStatus(validationMessage, 'error');
+          return;
+        }
+        const source = input.dataset.answerSource === 'student_selected_candidate' ? 'student_selected_candidate' : 'student_direct_input';
+        input.value = answer;
+        item.final_answer = answer;
+        item.source = source;
+        item.status = source;
+        item.warnings = [];
+        item.candidates = [];
+        ocrTestSheetSetStatus(`${item.question_no}번 문항을 확인했습니다.`);
+        ocrReviewRender();
+      });
+      actions.append(clearBtn, resetBtn, confirmBtn);
+      const children = [title, mode, recognized];
+      if (warning) children.push(warning);
+      if (prefillNoticeText) children.push(prefillNotice);
+      children.push(hint);
+      if (isChoiceNumber) children.push(choiceGrid, input);
+      else {
+        children.push(candidates, input, keypad, moreKeypad);
+      }
+      children.push(actions);
+      card.append(...children);
+      return card;
+    }
+    function ocrReviewRenderBlockedCard(item) {
+      const card = document.createElement('section');
+      card.className = 'ts-ocr-card';
+      card.dataset.questionNo = String(item.question_no);
+      const title = document.createElement('h4');
+      const statusLabel = item.status === 'data_check_required' ? '선생님 확인 필요' : item.status === 'retake_uploaded' ? '재인식 대기' : '재촬영 필요';
+      title.textContent = `${item.question_no}번 문항 ${statusLabel}`;
+      const mode = document.createElement('div');
+      mode.className = 'ts-ocr-mode';
+      mode.textContent = ocrReviewAnswerModeLabel(item.answer_mode);
+      const message = document.createElement('div');
+      message.className = 'ts-ocr-recognized';
+      message.textContent = item.status === 'data_check_required'
+        ? '이 문항은 학생 화면에서 직접 확정할 수 없습니다. 기존 수동 입력으로 제출하거나 선생님 확인이 필요합니다.'
+        : '이 문항은 다시 촬영하거나 재인식해야 합니다. 기존 수동 입력으로 대체해주세요.';
+      const warning = ocrReviewRenderWarnings(item);
+      if (warning) card.append(title, mode, warning, message);
+      else card.append(title, mode, message);
+      return card;
     }
 
-    async function ocrTestSheetRun() {
-      if (!OCR_TEST_SHEET_ENABLED) return;
-      const testId = selTestId.value;
-      const file = ocrTestSheetSelectedFile();
-      if (!testId) {
-        ocrTestSheetSetStatus('시험을 먼저 선택해주세요.', 'error');
-        return;
-      }
-      if (!file) {
-        ocrTestSheetSetStatus('답안지 사진을 선택해주세요.', 'error');
-        return;
-      }
-      if (!ocrTestSheetIsSupportedImage(file)) {
-        ocrTestSheetSetStatus('jpg, png, webp 이미지만 업로드할 수 있습니다.', 'error');
-        return;
-      }
-      if (file.size > OCR_MAX_IMAGE_BYTES) {
-        ocrTestSheetSetStatus('이미지는 8MB 이하만 업로드할 수 있습니다.', 'error');
-        return;
-      }
+    function ocrReviewRenderSafeAutoList() {
+      const wrap = document.createElement('div');
+      wrap.className = 'ts-ocr-safe';
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      const safeItems = ocrReviewPayload.items.filter(item => OCR_REVIEW_FINAL_STATUSES.has(item.status));
+      summary.textContent = `자동 인식 완료 문항 ${safeItems.length}개 보기`;
+      const list = document.createElement('ol');
+      list.className = 'ts-ocr-safe-list';
+      safeItems.forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = `${item.question_no}번 ${ocrReviewAnswerModeLabel(item.answer_mode)}: ${item.final_answer || item.recognized || ''}`;
+        list.appendChild(li);
+      });
+      details.append(summary, list);
+      wrap.appendChild(details);
+      return wrap;
+    }
 
-      const t = findTestById(selType.value, testId, currentCur());
-      const round = parseInt(t?.round || selRound.value, 10) || 1;
-      const form = new FormData();
-      form.append('sid', sid);
-      form.append('testId', testId);
-      form.append('round', String(round));
-      form.append('image', file);
+    function ocrReviewSelectedImage() {
+      const file = ocrReviewImageEl?.files?.[0];
+      return file || null;
+    }
 
-      if (btnOcr) btnOcr.disabled = true;
-      ocrTestSheetClearPreview();
-      ocrTestSheetSetStatus('OCR로 답안을 읽는 중입니다...');
+    function ocrReviewImageExtension(filename) {
+      const name = String(filename || '').trim();
+      if (!name.includes('.')) return '';
+      return name.split('.').pop().toLowerCase();
+    }
+
+    function ocrReviewImageValidationMessage(file) {
+      if (!file) return '답안지 사진을 먼저 선택해주세요.';
+      const extension = ocrReviewImageExtension(file.name);
+      if (!OCR_PHASE2B_IMAGE_EXTENSIONS.has(extension)) return 'jpg, jpeg, png, webp 형식의 답안지 사진만 사용할 수 있습니다.';
+      if (file.type && !OCR_PHASE2B_IMAGE_TYPES.has(file.type)) return 'jpg, jpeg, png, webp 형식의 답안지 사진만 사용할 수 있습니다.';
+      if (file.size > OCR_PHASE2B_MAX_IMAGE_BYTES) return '답안지 사진은 8MB 이하만 사용할 수 있습니다.';
+      return '';
+    }
+
+    function ocrReviewRouteErrorMessage(code) {
+      const normalized = String(code || '').trim();
+      if (normalized === 'feature_disabled') return '사진 인식 검토를 아직 사용할 수 없습니다. 기존 방식으로 입력해주세요.';
+      if (normalized === 'missing_image') return '답안지 사진을 먼저 선택해주세요.';
+      if (normalized === 'unsupported_image_type') return 'jpg, jpeg, png, webp 형식의 답안지 사진만 사용할 수 있습니다.';
+      if (normalized === 'image_too_large') return '답안지 사진은 8MB 이하만 사용할 수 있습니다.';
+      if (normalized === 'marker_detection_failed') return '\uC0AC\uC9C4\uC5D0\uC11C \uB2F5\uC548\uC9C0 \uAE30\uC900\uC810\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uBC1D\uC740 \uACF3\uC5D0\uC11C \uB124 \uBAA8\uC11C\uB9AC\uAC00 \uBCF4\uC774\uAC8C \uB2E4\uC2DC \uCD2C\uC601\uD574\uC8FC\uC138\uC694.';
+      if (normalized === 'answer_box_detection_failed' || normalized === 'crop_failed') return '\uB2F5\uCE78 \uC704\uCE58\uB97C \uC548\uC815\uC801\uC73C\uB85C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2F5\uC548\uC9C0\uB97C \uD3C9\uD3C9\uD558\uAC8C \uB193\uACE0 \uB2E4\uC2DC \uCD2C\uC601\uD574\uC8FC\uC138\uC694.';
+      if (normalized === 'image_quality_failed') return '\uC0AC\uC9C4\uC774 \uD750\uB9AC\uAC70\uB098 \uADF8\uB9BC\uC790\uAC00 \uAC15\uD574 \uC778\uC2DD\uD558\uAE30 \uC5B4\uB835\uC2B5\uB2C8\uB2E4. \uBC1D\uC740 \uACF3\uC5D0\uC11C \uB2E4\uC2DC \uCD2C\uC601\uD574\uC8FC\uC138\uC694.';
+      if (normalized === 'test_not_allowlisted' || normalized === 'blocked_test') return OCR_PHASE1_INELIGIBLE_MESSAGE;
+      if (normalized === 'round_not_allowlisted' || normalized === 'wrong_round') return '이 회차는 아직 사진 인식 테스트 대상이 아닙니다. 기존 방식으로 입력해주세요.';
+      if (normalized === 'forbidden_student' || normalized === 'ghost_sid') return '현재 학생 정보에서는 사진 인식 검토를 사용할 수 없습니다. 기존 방식으로 입력해주세요.';
+      return '사진 인식 검토 정보를 불러오지 못했습니다. 기존 방식으로 입력해주세요.';
+    }
+
+    function ocrReviewMetaStatusMessage(meta) {
+      const cacheStatus = String(meta?.cache_status || '');
+      const providerStatus = String(meta?.provider_status || '');
+      if (cacheStatus === 'hit') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC800\uC7A5\uB41C \uC778\uC2DD \uACB0\uACFC\uB85C \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
+      if (providerStatus === 'provider_disabled') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC2E4\uC2DC\uAC04 \uC778\uC2DD\uC740 \uAEBC\uC838 \uC788\uC5B4 \uC0D8\uD50C \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
+      if (providerStatus === 'live_call_succeeded') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC778\uC2DD \uACB0\uACFC \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
+      return '\uC0AC\uC9C4 \uC778\uC2DD \uAC80\uD1A0 \uC900\uBE44 \uC644\uB8CC. \uD655\uC778 \uD544\uC694\uD55C \uBB38\uD56D\uC744 \uCC98\uB9AC\uD55C \uB4A4 \uB2F5\uCE78\uC744 \uCC44\uC6CC\uC8FC\uC138\uC694.';
+    }
+
+    async function ocrReviewRunWithProgress(action) {
+      const stages = [
+        '\uC0AC\uC9C4 \uBCF4\uC815 \uC911\uC785\uB2C8\uB2E4...',
+        '\uB2F5\uCE78 \uCD94\uCD9C \uC911\uC785\uB2C8\uB2E4...',
+        '\uC778\uC2DD \uC900\uBE44 \uC911\uC785\uB2C8\uB2E4...',
+        '\uC778\uC2DD \uC911\uC774\uAC70\uB098 cache\uB97C \uD655\uC778 \uC911\uC785\uB2C8\uB2E4...',
+        '\uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44 \uC911\uC785\uB2C8\uB2E4...',
+      ];
+      ocrTestSheetSetStatus(stages[0]);
+      const timers = stages.slice(1).map((message, index) => setTimeout(() => ocrTestSheetSetStatus(message), 650 + index * 850));
       try {
-        const res = await fetch('/api/ocr-test-sheet', { method: 'POST', body: form });
-        const data = await ocrTestSheetParseResponse(res);
-        if (!res.ok || data.ok === false) {
-          ocrTestSheetFailure(data?.error);
-          return;
-        }
-        const answersText = String(data.answersText || '').trim();
-        if (!answersText) {
-          ocrTestSheetFailure('OCR 결과에서 답안을 찾지 못했습니다.');
-          return;
-        }
-        answersTextEl.value = answersText;
-        answersTextEl.dispatchEvent(new Event('input', { bubbles: true }));
-        ocrTestSheetRenderPreview(data, t, round);
-        ocrTestSheetSetStatus('OCR 결과를 답칸에 넣었습니다. 확인 후 제출해주세요.', 'ok');
-      } catch {
-        ocrTestSheetFailure('네트워크 오류로 OCR 요청이 실패했습니다.');
+        return await action();
       } finally {
-        if (btnOcr) btnOcr.disabled = false;
+        timers.forEach(timer => clearTimeout(timer));
       }
     }
 
-    async function renderAnswerLink(testId, round) {
-      if (!answerLinkArea) return;
-      answerLinkArea.replaceChildren();
-      answerLinkArea.style.display = 'block';
+    async function ocrReviewFetchRoutePayload(test, round, imageFile) {
+      const form = new FormData();
+      form.append('sid', String(sid || ''));
+      form.append('testId', String(test?.id || test?.testId || selTestId.value || ''));
+      form.append('round', String(round || '1'));
+      form.append('image', imageFile);
+      const res = await fetch(OCR_PHASE2B_REVIEW_ENDPOINT, {
+        method: 'POST',
+        body: form,
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      const leaks = ocrReviewFindForbiddenKeys(data);
+      if (leaks.length) {
+        throw new Error('학생 화면에 표시할 수 없는 검토 정보가 포함되어 있습니다. 기존 방식으로 입력해주세요.');
+      }
+      if (!res.ok || data?.ok !== true) {
+        throw new Error(ocrReviewRouteErrorMessage(data?.errorCode || data?.code));
+      }
+      if (!data.review_payload) throw new Error(ocrReviewRouteErrorMessage('invalid_response'));
+      ocrReviewLastMeta = (data.review_meta && typeof data.review_meta === 'object') ? data.review_meta : null;
+      return ocrReviewNormalizePayload(data.review_payload);
+    }
 
+    async function ocrReviewOpenRouteFlow() {
+      if (!OCR_TEST_SHEET_ENABLED) return;
+      try {
+        const t = findTestById(selType.value, selTestId.value, currentCur());
+        if (!ocrPhase1TestEligible(t)) {
+          ocrPhase1UpdateEligibilityState();
+          return;
+        }
+        const round = parseInt(t?.round || selRound.value, 10) || 1;
+        const imageFile = ocrReviewSelectedImage();
+        const imageValidationMessage = ocrReviewImageValidationMessage(imageFile);
+        if (imageValidationMessage) {
+          ocrReviewPayload = null;
+          ocrReviewClearPanel();
+          ocrTestSheetSetStatus(imageValidationMessage, 'error');
+          return;
+        }
+        if (btnOcrReviewOpen) {
+          btnOcrReviewOpen.disabled = true;
+          btnOcrReviewOpen.textContent = '사진 인식 중...';
+        }
+        ocrReviewLastMeta = null;
+        ocrReviewPayload = ocrReviewClone(await ocrReviewRunWithProgress(() => ocrReviewFetchRoutePayload(t, round, imageFile)));
+        ocrReviewRender();
+        ocrTestSheetSetStatus(ocrReviewMetaStatusMessage(ocrReviewLastMeta));
+      } catch (err) {
+        ocrReviewPayload = null;
+        ocrReviewClearPanel();
+        window.__OCR_PHASE1_LAST_OPEN_ERROR__ = err?.message || String(err || '');
+        ocrTestSheetSetStatus(err?.message || '사진 인식 검토 정보를 열지 못했습니다. 기존 방식으로 입력해주세요.', 'error');
+      } finally {
+        if (btnOcrReviewOpen) {
+          btnOcrReviewOpen.disabled = !ocrPhase1TestEligible(ocrPhase1CurrentTest());
+          btnOcrReviewOpen.textContent = '답안 사진 넣기';
+        }
+      }
+    }
+
+    async function resolveAnswerUrlForSelection(testId, round) {
       if (studentAnswerAccessBlocked()) {
-        answerLinkArea.textContent = '해설지는 학원 Wi-Fi에서만 볼 수 있습니다.';
-        return;
+        return '';
       }
 
       const configuredTest = findTestById(selType.value, testId, currentCur());
@@ -3482,17 +4930,32 @@ window.todayLocalKey = function () {
         answerUrl = getAnswerLinkForRound(testId, round, configuredTest?.sourceId);
       }
 
-      if (!answerUrl) {
-        answerLinkArea.textContent = '해설지 링크 준비 중';
-        return;
+      return answerUrl || '';
+    }
+
+    async function renderAnswerLink(testId, round) {
+      if (!answerLinkArea) return '';
+      answerLinkArea.replaceChildren();
+      answerLinkArea.style.display = 'block';
+
+      if (studentAnswerAccessBlocked()) {
+        answerLinkArea.textContent = '전체 답지는 학원 Wi-Fi에서만 볼 수 있습니다.';
+        return '';
       }
 
-      const a = document.createElement('a');
-      a.href = answerUrl;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.textContent = '해설지 보기';
-      answerLinkArea.appendChild(a);
+      const answerUrl = await resolveAnswerUrlForSelection(testId, round);
+      if (!answerUrl) {
+        answerLinkArea.textContent = '전체 답지 링크 준비 중';
+        return '';
+      }
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ts-result-answer-button';
+      button.textContent = '전체 답지 크게 보기';
+      button.addEventListener('click', () => openAnswerPreview(answerUrl, '전체 답지 크게 보기'));
+      answerLinkArea.appendChild(button);
+      return answerUrl;
     }
 
     const open = (preselectTestId = '') => {
@@ -3501,7 +4964,7 @@ window.todayLocalKey = function () {
         return false;
       }
       const assigned = getAssignedTestsForSubmit();
-      if (!assigned.length) return false;
+      if (!assigned.length && !OCR_TEST_SHEET_ENABLED) return false;
       const renderSelection = (preferredTestId = '') => {
         const myCur = currentCur();
         const configured = listAssignedConfiguredTests(myCur);
@@ -3517,14 +4980,18 @@ window.todayLocalKey = function () {
 
       renderSelection(preselectTestId);
       answersTextEl.value = '';
+      ocrReviewClearAnswersTextOrigin();
       memoEl.value = '';
       ocrTestSheetResetControls();
+      ocrPhase1UpdateEligibilityState();
       resetAnswerLink();
+      resetResultPanel();
       if (!studentAnswerAccessBlocked()) void loadAnswerLinkMap();
       modal.style.display = 'flex';
       void testsConfigReady.then(() => {
         if (modal.style.display === 'none') return;
         renderSelection(selTestId.value || preselectTestId);
+        ocrPhase1UpdateEligibilityState();
       });
       return true;
     };
@@ -3533,30 +5000,44 @@ window.todayLocalKey = function () {
     btnOpen?.addEventListener('click', () => { open(); });
     btnClose?.addEventListener('click', close);
     modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    answerPreviewClose?.addEventListener('click', closeAnswerPreview);
+    answerPreviewModal?.addEventListener('click', (e) => { if (e.target === answerPreviewModal) closeAnswerPreview(); });
+    answerPreviewFrame?.addEventListener('load', () => {
+      if (answerPreviewModal?.style.display === 'flex') setAnswerPreviewLoading(false);
+    });
 
     selType.addEventListener('change', () => {
       resetAnswerLink();
+      resetResultPanel();
       ocrTestSheetSetStatus();
-      ocrTestSheetClearPreview();
+      ocrReviewClearPanel();
       renderTestOptions();
+      ocrReviewClearStaleAnswersText('시험 종류가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+      ocrPhase1UpdateEligibilityState();
     });
     selTestId.addEventListener('change', () => {
       resetAnswerLink();
+      resetResultPanel();
       ocrTestSheetSetStatus();
-      ocrTestSheetClearPreview();
+      ocrReviewClearPanel();
       const t = findTestById(selType.value, selTestId.value, currentCur());
-      if (t?.round) selRound.value = String(t.round);
+      renderRoundOptions(t?.round || selRound.value);
       updateInfo();
+      ocrReviewClearStaleAnswersText('시험이 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+      ocrPhase1UpdateEligibilityState();
     });
     selRound.addEventListener('change', () => {
       resetAnswerLink();
+      resetResultPanel();
       ocrTestSheetSetStatus();
-      ocrTestSheetClearPreview();
+      ocrReviewClearPanel();
       const myCur = currentCur();
       const current = findTestById(selType.value, selTestId.value, myCur);
       const sibling = findSiblingTestByRound(selType.value, current, selRound.value, myCur);
       if (sibling) selTestId.value = sibling.id;
       updateInfo();
+      ocrReviewClearStaleAnswersText('회차가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+      ocrPhase1UpdateEligibilityState();
     });
 
     window.openAssignedTestSubmit = (testId = '') => open(testId);
@@ -3565,28 +5046,122 @@ window.todayLocalKey = function () {
       try {
         const testId = String(test?.id || test?.testId || test?.label || '');
         if (!open(testId)) return false;
-        ocrTestSheetSetStatus('답안지 사진을 선택하거나 촬영한 뒤 OCR로 답안 읽기를 눌러 주세요.');
-        if (ocrImageEl) {
-          ocrImageEl.value = '';
-          setTimeout(() => {
-            try { ocrImageEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
-          }, 0);
-        }
+        if (!ocrPhase1UpdateEligibilityState()) return false;
+        ocrTestSheetSetStatus('답안 사진 넣기 버튼을 눌러 사진 인식 검토를 열어 주세요.');
+        setTimeout(() => {
+          try { btnOcrReviewOpen?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+        }, 0);
         return true;
       } catch {
-        ocrTestSheetFailure();
+        ocrTestSheetSetStatus('사진 인식 검토를 열지 못했습니다. 기존 방식으로 입력해주세요.', 'error');
         return false;
       }
     };
-    btnOcr?.addEventListener('click', ocrTestSheetRun);
-    ocrImageEl?.addEventListener('change', () => {
-      ocrTestSheetClearPreview();
-      if (ocrTestSheetSelectedFile()) {
-        ocrTestSheetSetStatus('사진이 선택되었습니다. OCR로 답안 읽기를 눌러 주세요.');
-      } else {
-        ocrTestSheetSetStatus('답안지 사진을 선택하거나 촬영해 주세요.');
-      }
+    if (OCR_TEST_SHEET_ENABLED) {
+      const createReviewFixturePayloadForTest = () => {
+        const t = findTestById(selType.value, selTestId.value, currentCur());
+        if (!ocrPhase1TestEligible(t)) throw new Error(OCR_PHASE1_INELIGIBLE_MESSAGE);
+        return ocrReviewClone(ocrReviewCreateMockPayload(t, selRound.value));
+      };
+      const ocrPhase2ReviewTestHook = {
+        phase: 'phase2_review',
+        allowedTestIds: () => Array.from(OCR_PHASE1_ALLOWED_TEST_IDS),
+        answerModeForQuestion: questionNo => ocrReviewAnswerModeForQuestion(selTestId.value, Number(questionNo)),
+        createFixturePayload: createReviewFixturePayloadForTest,
+        convertToAnswersText: payload => ocrReviewConvertToAnswersText(payload),
+        findForbiddenKeys: payload => ocrReviewFindForbiddenKeys(payload),
+        parseAnswersTextForTest: (text, problems = OCR_REVIEW_PROBLEM_COUNT) => parseAnswerSpec(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
+        answerCountValidationMessage: (text, problems = OCR_REVIEW_PROBLEM_COUNT) => answerCountValidationMessage(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
+        answerModeValidationMessage: (text, testId = selTestId.value, problems = OCR_REVIEW_PROBLEM_COUNT) => answerModeValidationMessageForAnswersText(text, testId, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
+        submitOffsetGuardMessage: (text, test = findTestById(selType.value, selTestId.value, currentCur()), round = selRound.value) => submitOffsetGuardMessageForAnswersText(text, test, round),
+        getCurrentPayload: () => ocrReviewPayload ? ocrReviewClone(ocrReviewPayload) : null,
+        getAssignedCaptureStateForTest: (test = {}) => {
+          const requestedTestId = String(test?.id || test?.testId || test?.label || '');
+          const configured = requestedTestId
+            ? findTestById(typeValueForTest(test), requestedTestId, currentCur()) || findTestById(selType.value, requestedTestId, currentCur())
+            : null;
+          const target = configured || test || ocrPhase1CurrentTest();
+          return {
+            enabled: OCR_TEST_SHEET_ENABLED === true,
+            requestedTestId,
+            selectedTestId: selTestId.value,
+            selectedRound: selRound.value,
+            eligible: ocrPhase1TestEligible(target),
+            hasStartCapture: typeof window.ocrTestSheetStartCapture === 'function',
+            hasOpenAssignedTestSubmit: typeof window.openAssignedTestSubmit === 'function',
+          };
+        },
+        startAssignedCaptureForTest: (test = {}) => window.ocrTestSheetStartCapture(test),
+        renderPayloadForTest: payload => {
+          ocrReviewPayload = ocrReviewClone(ocrReviewNormalizePayload(payload));
+          ocrReviewRender();
+          return ocrReviewPanel;
+        },
+        getAnswersTextState: () => ({
+          value: answersTextEl.value,
+          ocrFilled: answersTextEl.dataset.ocrFilled || '',
+          ocrTestId: answersTextEl.dataset.ocrTestId || '',
+          ocrRound: answersTextEl.dataset.ocrRound || '',
+          contextMatches: ocrReviewAnswersTextContextMatches(),
+        }),
+        applyAnswersTextForTest: payload => {
+          const result = ocrReviewPrepareAnswersText(payload);
+          ocrReviewApplyAnswersText(result);
+          return {
+            value: answersTextEl.value,
+            ocrFilled: answersTextEl.dataset.ocrFilled || '',
+            ocrTestId: answersTextEl.dataset.ocrTestId || '',
+            ocrRound: answersTextEl.dataset.ocrRound || '',
+            contextMatches: ocrReviewAnswersTextContextMatches(),
+          };
+        },
+        clearStaleAnswersText: () => ocrReviewClearStaleAnswersText(),
+        isCurrentTestEligible: () => ocrPhase1TestEligible(ocrPhase1CurrentTest()),
+        setImageFileForTest: file => {
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          if (ocrReviewImageEl) ocrReviewImageEl.files = transfer.files;
+        },
+        fetchRoutePayload: () => ocrReviewFetchRoutePayload(ocrPhase1CurrentTest(), selRound.value, ocrReviewSelectedImage()),
+        getLastReviewMeta: () => ocrReviewLastMeta ? ocrReviewClone(ocrReviewLastMeta) : null,
+        openRouteFlow: ocrReviewOpenRouteFlow,
+        openReviewFlow: ocrReviewOpenRouteFlow,
+      };
+      window.__OCR_PHASE2_REVIEW_TEST_HOOK__ = ocrPhase2ReviewTestHook;
+      window.__OCR_PHASE1_TEST_HOOK__ = {
+        ...ocrPhase2ReviewTestHook,
+        createMockPayload: createReviewFixturePayloadForTest,
+        openMockFlow: ocrReviewOpenRouteFlow,
+      };
+    }
+    window.__TEST_SUBMIT_RESULT_UI_HOOK__ = {
+      buildResultForTest: ({ testId = selTestId.value, round = selRound.value, answersText = '', responseData = {}, fallbackGraded = null, answerUrl = '' } = {}) => {
+        const test = findTestById(selType.value, testId, currentCur()) || ocrPhase1CurrentTest();
+        return buildSubmitResultViewModel({ test, round, answersText, responseData, fallbackGraded, answerUrl });
+      },
+      renderResultForTest: options => {
+        const result = window.__TEST_SUBMIT_RESULT_UI_HOOK__.buildResultForTest(options || {});
+        renderSubmitResultPanel(result);
+        return resultPanel;
+      },
+      getResultPanelText: () => resultPanel?.textContent || '',
+      hasAnswerPreview: () => Boolean(answerPreviewModal && answerPreviewFrame && answerPreviewOpenExternal),
+    };
+    ocrPhase1UpdateEligibilityState();
+    ocrReviewImageEl?.addEventListener('change', () => {
+      ocrReviewPayload = null;
+      ocrReviewClearPanel();
+      const file = ocrReviewSelectedImage();
+      const validationMessage = ocrReviewImageValidationMessage(file);
+      if (validationMessage) ocrTestSheetSetStatus(validationMessage, file ? 'error' : '');
+      else ocrTestSheetSetStatus('사진이 선택되었습니다. 답안 사진 넣기 버튼을 눌러주세요.');
     });
+    answersTextEl.addEventListener('input', () => {
+      if (answersTextEl.dataset.ocrProgrammaticFill === '1') return;
+      ocrReviewClearAnswersTextOrigin();
+      resetResultPanel();
+    });
+    btnOcrReviewOpen?.addEventListener('click', () => { void ocrReviewOpenRouteFlow(); });
 
     btnSubmit?.addEventListener('click', async () => {
       if (studentTestSubmissionBlocked()) {
@@ -3597,15 +5172,30 @@ window.todayLocalKey = function () {
       const testId = selTestId.value;
       const answersText = String(answersTextEl.value || '').trim();
       const memo = String(memoEl.value || '').trim();
+      const ocrFilledSubmission = answersTextEl.dataset.ocrFilled === '1';
       resetAnswerLink();
+      resetResultPanel();
 
       if (!testId) return alert('시험을 선택해주세요.');
       if (!answersText) return alert('답을 입력해주세요.');
+      if (!ocrReviewAnswersTextContextMatches()) {
+        return alert('OCR로 채운 답안이 현재 선택한 시험/회차와 맞지 않습니다. 다시 인식하거나 직접 입력해주세요.');
+      }
 
       const t = findTestById(type, testId, currentCur());
       if (!t) return alert('시험 정보를 찾지 못했습니다.');
+      const answerCountMessage = answerCountValidationMessage(answersText, t.problems);
+      if (answerCountMessage) return alert(answerCountMessage);
+      const answerModeMessage = answerModeValidationMessageForAnswersText(answersText, testId, t.problems);
+      if (answerModeMessage) return alert(answerModeMessage);
       const round = parseInt(t.round || selRound.value, 10) || 1;
       if (selRound) selRound.value = String(round);
+      const offsetGuardMessage = submitOffsetGuardMessageForAnswersText(answersText, t, round);
+      if (offsetGuardMessage) {
+        updateInfo(offsetGuardMessage);
+        try { answersTextEl.focus(); } catch {}
+        return alert(offsetGuardMessage);
+      }
 
       // ✅ 1) 서버 자동 채점/저장
       try {
@@ -3617,28 +5207,41 @@ window.todayLocalKey = function () {
             testId,
             round,
             answersText,
-            memo
+            memo,
+            answerSource: ocrFilledSubmission ? 'ocr_review' : 'manual',
+            ocrReview: ocrFilledSubmission
           })
         });
 
-        if (!res.ok) throw new Error(String(res.status));
         const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) {
+          const message = data?.message || '제출 안전 검사에 통과하지 못했습니다. 답안과 시험/회차를 다시 확인해주세요.';
+          if (data?.fallbackAllowed === false || data?.errorCode === 'possible_answer_offset') {
+            alert(message);
+            return;
+          }
+          throw new Error(message || String(res.status));
+        }
 
-        // 응답 예: { ok:true, score:"18/20", wrong:[...], pct:90 }
-        const score = data.score || '';
-        const pct = (typeof data.pct === 'number') ? data.pct : null;
-        const wrong = Array.isArray(data.wrong) ? data.wrong : [];
-
-        let extra = `제출 완료\n점수: ${score}`;
-        if (pct != null) extra += ` (${pct.toFixed(1)}%)`;
-        if (wrong.length) extra += `\n오답: ${wrong.join(', ')}`;
-        updateInfo(extra);
-        await renderAnswerLink(testId, round);
+        updateInfo();
+        resetAnswerLink();
+        const answerUrl = await resolveAnswerUrlForSelection(testId, round);
+        renderSubmitResultPanel(buildSubmitResultViewModel({
+          test: t,
+          round,
+          answersText,
+          responseData: data,
+          answerUrl,
+        }));
 
         try { localStorage.setItem('updPing', Date.now().toString()); } catch { }
         return;
       } catch (e) {
         console.warn('[submit-test] server grade failed, fallback to client side', e);
+        if (ocrFilledSubmission) {
+          alert('OCR로 채운 답안은 서버 안전 검사를 통과해야 제출할 수 있습니다. 다시 인식하거나 직접 입력으로 바꾼 뒤 제출해주세요.');
+          return;
+        }
       }
 
       // ✅ 2) fallback: 클라 채점 후 기존 방식으로 저장(서버가 구버전일 때 대비)
@@ -3698,11 +5301,16 @@ window.todayLocalKey = function () {
       } catch { }
 
       try { localStorage.setItem('updPing', Date.now().toString()); } catch { }
-      let extra = `제출 완료\n점수: ${score}`;
-      if (typeof graded.pct === 'number') extra += ` (${graded.pct.toFixed(1)}%)`;
-      if (graded.wrong.length) extra += `\n오답: ${graded.wrong.join(', ')}`;
-      updateInfo(extra);
-      await renderAnswerLink(testId, round);
+      updateInfo();
+      resetAnswerLink();
+      const answerUrl = await resolveAnswerUrlForSelection(testId, round);
+      renderSubmitResultPanel(buildSubmitResultViewModel({
+        test: t,
+        round,
+        answersText,
+        fallbackGraded: graded,
+        answerUrl,
+      }));
     });
   }
 

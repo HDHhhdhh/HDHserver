@@ -1,6 +1,7 @@
 ﻿// /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
 import { ensureProgressForSid } from '../core/state.js';
+import { localDateKey } from '../core/date.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
 
 let tipEl = null;
@@ -124,7 +125,7 @@ export function initHoverTooltip() {
   // 영상/테스트 표시 (가로 스크롤 제거: flex-wrap)
   // ───────────────────────────────────────────
   function renderProgressTables(stu) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateKey();
 
     // 누적 progress 병합(오늘 포함, 최신이 우선)
     const allDates = Object.keys(state.progress || {}).filter(d => d <= today).sort();
@@ -352,7 +353,7 @@ export function initHoverTooltip() {
     const a = ev.target.closest('a.stuName');
     if (!a) return;
 
-    const sid = a.dataset.sid;
+    const sid = a.dataset.sid || a.dataset.id;
     const name = (a.textContent || '').trim();
 
     const stu = (state.students || []).find(s => String(s.id) === String(sid))

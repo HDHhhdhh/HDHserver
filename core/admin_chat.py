@@ -74,8 +74,9 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "answer": (
             "학생 정보는 students.json을 기준으로 이름, sid, 학교, 학년, 과정, 레벨, "
             "교재, 등원 요일/시간, 학습문서 링크 등을 관리합니다. 전체학생 화면은 /students입니다."
+            " 전체학생 화면의 학교 칸은 기존 학교명이 비어 있어도 '학교 입력' 표시를 눌러 나중에 기입할 수 있습니다."
         ),
-        "sources": ["students.json", "static/all.html", "static/js/all/main.js"],
+        "sources": ["students.json", "static/all.html", "static/js/all/main.js", "static/js/all/features/table.js"],
     },
     {
         "title": "출결과 오늘 학생",
@@ -91,12 +92,17 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["보강", "보강잡기", "결석 추가", "보강 명단", "내보내기", "결석", "복구", "연강", "선보강", "extra", "absent", "weekend", "carryover"],
         "answer": (
             "보강 잡기 명단은 미해결 결석/직접 추가한 결석 수요를 계속 유지하며, 결석일보다 앞선 날짜에도 보강을 잡을 수 있습니다. "
+            "보강 잡기에서 캘린더 날짜를 고르면 makeup_carryover의 원본 결석 ID(originalAbsenceId)를 기준으로 scheduledMakeup을 저장하고, "
+            "명단에는 보강 예정일, 달력 칸과 날짜 상세 명단에는 원본 결석일 보강 배지를 함께 표시합니다. "
+            "캘린더 날짜는 최대 두 명의 이름을 미리 보여주며, 인원 수를 누르면 그 날짜에 연결된 보강 명단이 열리고, 별도 캘린더 검색은 학생의 예정 날짜를 강조합니다. "
+            "보강 변경/취소는 같은 originalAbsenceId의 scheduledMakeup만 갱신하거나 해제합니다. "
             "결석 추가는 보강 서비스 추가와 구분되는 기능으로, 학생 이름과 과목을 먼저 고른 뒤 기존 관리자 운영판 캘린더에서 여러 결석 날짜를 선택해 날짜 단위 결석분을 명단에 직접 추가합니다. "
             "결석 복구는 관리자 운영판 상단에서 선택한 날짜를 기준으로 해당 날짜의 결석 학생을 불러옵니다. "
             "같은 날짜 정규수업과 보강/결석이 이어지면 연강으로 표시하고, 연강 결석은 타임별로 분리 처리할 수 있습니다. "
+            "오늘/하원 표의 구분 라벨 편집은 weekend-slots 저장값을 우선해 일1일2를 일1로 줄이거나 일1을 일1일2로 늘리는 수정도 낡은 결석 슬롯보다 우선해서 새로고침 뒤 유지해야 합니다. "
             "주말 보강 슬롯은 1/2/3을 보존하며, 슬롯 3은 화면 라벨과 보강 카운트에서도 빠지면 안 됩니다."
         ),
-        "sources": ["routes/api_attend.py", "routes/api_makeup_carryover.py", "static/js/admin/features/calendar.js", "static/js/admin/features/makeupPending.js", "static/js/admin/features/absentRecovery.js"],
+        "sources": ["routes/api_attend.py", "routes/api_makeup_carryover.py", "static/js/admin/features/today.state.js", "static/js/admin/features/calendar.js", "static/js/admin/features/makeupPending.js", "static/js/admin/features/absentRecovery.js"],
     },
     {
         "title": "수업 로그와 숙제",
@@ -116,10 +122,13 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "영상 목록은 videos.json, 날짜별 배정은 updates.json, 시청/진도 상태는 progress.json과 watch.json에 있습니다. "
             "학생 개인페이지는 학원 밖에서도 목록과 자료 다운로드를 보여주지만, /api/get-url 영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
             "수업일이 아니거나 재생이 제한된 학생 화면은 빈 검은 플레이어 대신 재생목록 안내를 중심으로 보여줍니다. "
-            "로컬/Cloudflare 프록시 뒤에서는 loopback 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시가 전달한 실제 학생 IP만 학원 네트워크 판정에 사용하며, Cloudflare의 CF-Connecting-IP가 있으면 X-Forwarded-For 체인보다 우선합니다. "
+            "로컬/Cloudflare 프록시 뒤에서는 loopback, Cloudflare 공식 프록시 대역, 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시가 전달한 실제 학생 IP만 학원 네트워크 판정에 사용하며, Cloudflare의 CF-Connecting-IP가 있으면 X-Forwarded-For 체인보다 우선합니다. "
+            "Cloudflare Pseudo IPv4 overwrite 요청은 CF-Connecting-IPv6의 실제 IPv6를 사용합니다. "
             "외부 직접 접속의 forwarded IP 위조는 신뢰하지 않습니다. "
             "자동 시청 진도는 수동 white/skip 설정을 덮어쓰지 않아야 합니다. "
+            "A:Ble 과정(커리큘럼 또는 세부과정)은 신규/변경 시 자동 영상 수 기본값을 1개로 잡고, 관리자가 1~5개 중 다시 조정할 수 있습니다. "
             "관리자 오늘 목록과 명단 내보내기는 필요한 학생의 progress 이력만 묶음으로 조회해 전체 progress.json 다운로드를 피합니다. "
+            "학생의 커리큘럼을 변경해도 기존 테스트 배정 이력은 보존하며, 명단 내보내기와 학생 개인 화면에는 현재 커리큘럼과 일치하는 활성 테스트만 표시합니다. "
             "정규 커리큘럼 영상이 모두 초록(done) 또는 빨강(skip)이면 진도 완료로 보며, 학생 개인페이지에는 완료 안내를 보여주고 자동 영상 배정은 멈춥니다."
         ),
         "sources": ["app.py", "core/network_access.py", "routes/api_basic.py", "routes/api_kollus.py", "routes/api_watch.py", "static/js/admin/features/videoModal.js", "static/js/student.js"],
@@ -139,8 +148,8 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["Wi-Fi", "wifi", "프록시", "proxy", "TRUSTED_PROXY_CIDRS", "CF-Connecting-IP", "X-Forwarded-For", "academyAccessAllowed"],
         "answer": (
             "영상 재생과 테스트 답지 링크는 학원 Wi-Fi 네트워크에서만 허용합니다. "
-            "기본적으로 loopback 프록시만 forwarded header를 신뢰하며, 운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
-            "등록된 프록시에서 온 요청만 CF-Connecting-IP 또는 X-Forwarded-For의 실제 학생 IP를 학원 네트워크 판정에 사용하고, 직접 접속자가 보낸 header 위조는 무시합니다."
+            "기본적으로 loopback과 Cloudflare 공식 프록시 대역의 forwarded header를 신뢰하며, 그 밖의 운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
+            "등록된 프록시에서 온 요청만 CF-Connecting-IP 또는 X-Forwarded-For의 실제 학생 IP를 학원 네트워크 판정에 사용하고, 직접 접속자가 보낸 header 위조나 malformed X-Forwarded-For 체인은 무시합니다."
         ),
         "sources": ["core/network_access.py", "routes/api_kollus.py", "routes/api_basic.py", "static/js/student.js"],
     },
@@ -149,7 +158,11 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
         "keywords": ["테스트", "성적", "채점", "assignedTests", "tests", "시험", "오답", "OCR", "ocr", "답안지"],
         "answer": (
             "테스트 카탈로그는 tests-config.json, 제출 성적은 tests.json에 저장됩니다. "
+            "/tests의 테스트 통계 행을 클릭하면 학생별 정답률, 정답 수, 오답 문항 번호를 확인할 수 있고, 학원 Wi-Fi 허용 네트워크에서는 전체 답지 링크도 함께 표시합니다. "
+            "신규 /api/submit-test 제출은 정답을 기록에 저장하지 않고 학생 제출 답안만 내부 필드로 보관하며, /api/tests-records가 관리자 통계 상세용 오답별 내 답/정답 비교를 조회 시점에 계산합니다. "
+            "submittedAnswers가 없는 기존 제출 기록은 내 답 비교 대신 이전 제출 기록이라 비교가 없다는 안내를 보여줍니다. "
             "학생 bootstrap에서는 progress[date][sid].tests 상태가 authoritative이고, 로그의 assignedTests는 메타데이터/폴백입니다. "
+            "학생이 /api/submit-test로 테스트를 제출하면 같은 날짜/학생의 matching active progress 테스트 배정을 done으로 바꿔 완료 상태로 정리합니다. "
             "학생 화면의 오늘 테스트는 assigned(배정)와 interrupted(배부) 상태를 날짜/신규 여부와 무관하게 보여주며, 명단 내보내기는 assigned(배정) 상태를 계속 출력합니다. "
             "하원/숙검하원은 테스트 배정 상태를 유지하고, 기록 정리만 결석 학생을 제외한 assigned 테스트를 done으로 바꿉니다. 결석 처리는 assigned 테스트를 interrupted(배부)로 바꿉니다. "
             "테스트 배정 팝업은 좌클릭/드래그로 없음→배정→배부→완료를 순환하고, 우클릭/드래그로 없음↔제외를 토글합니다. "
@@ -200,8 +213,8 @@ FEATURE_TOPICS: list[dict[str, Any]] = [
             "학생 화면은 /student/<sid>와 /student-test/<sid>에서 동작하고, /api/auth/* 토큰으로 학생 계정을 관리합니다. "
             "학생 bootstrap 응답 형태는 유지해야 하며 assignedTests는 top-level 배열입니다. "
             "외부 네트워크에서는 academyAccessAllowed=false와 안내 문구를 내려 목록과 자료 다운로드는 유지하되 영상 재생과 테스트 답지 열람만 막습니다. "
-            "TRUST_PROXY_HEADERS/ProxyFix 배포에서는 원래 REMOTE_ADDR이 loopback 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시일 때만 CF-Connecting-IP를 우선하고, 없으면 X-Forwarded-For의 첫 IP를 영상 URL 판정에 사용합니다. "
-            "운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
+            "TRUST_PROXY_HEADERS/ProxyFix 배포에서는 원래 REMOTE_ADDR이 loopback, Cloudflare 공식 프록시 대역, 또는 TRUSTED_PROXY_CIDRS에 등록한 프록시일 때만 CF-Connecting-IP를 우선하고, Cloudflare Pseudo IPv4 overwrite이면 CF-Connecting-IPv6를 사용하며, 없으면 X-Forwarded-For의 첫 IP를 영상 URL 판정에 사용합니다. "
+            "Cloudflare가 아닌 운영 프록시가 loopback이 아니면 TRUSTED_PROXY_CIDRS=203.0.113.10/32처럼 실제 프록시 IP/CIDR를 지정해야 합니다. "
             "ghost-outside-test는 students.json에 넣지 않는 코드 전용 외부접속 테스트 학생이라 전체 학생 명단과 집계에 포함되지 않으며, 관련 저장 API도 읽기 전용으로 차단됩니다."
         ),
         "sources": ["app.py", "core/ghost_student.py", "core/network_access.py", "routes/api_auth.py", "routes/api_basic.py", "routes/api_kollus.py", "static/js/student.js", "static/js/auth.js"],

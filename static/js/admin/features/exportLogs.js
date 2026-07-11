@@ -392,6 +392,29 @@ function rosterSubjectFor(stu, fallback = '') {
   return first.split(':')[0].trim() || first;
 }
 
+function normalizeRosterCurriculum(value) {
+  const compact = normStr(value).replace(/\s+/g, '');
+  const aliases = {
+    '공통수학1': '공수1',
+    '공통수학2': '공수2',
+    '미적1': '미적분1',
+    '미적분Ⅰ': '미적분1',
+    '미적분I': '미적분1',
+    '미적2': '미적분2',
+    '미적분Ⅱ': '미적분2',
+    '미적분II': '미적분2',
+    '확률과통계': '확통',
+  };
+  return aliases[compact] || (compact === '미적분' ? '미적분1' : compact);
+}
+
+function rosterTestMatchesCurrentCurriculum(item, student) {
+  const current = normalizeRosterCurriculum(student?.curriculum ?? student?.subject);
+  if (!current) return true;
+  const assigned = normalizeRosterCurriculum(item?.curriculum);
+  return assigned === current;
+}
+
 function rosterAssignedVideoMids(dateStr, sid) {
   const day = state.updates?.[dateStr] || {};
   const assignment = lookupSidEntry(day, sid);
@@ -797,7 +820,7 @@ function previousRosterAssignedTests(dateStr, sid) {
   return [];
 }
 
-function rosterAssignedTests(dateStr, sid) {
+function rosterAssignedTests(dateStr, sid, student = null) {
   const { hasDaily, items: logItems, dailyLabels } = logTestSnapshotForRoster(dateStr, sid);
   const logByLabel = new Map(logItems.map(item => [item.label, item]));
   const progressTests = rosterProgressTestStatuses(dateStr, sid);
@@ -812,17 +835,18 @@ function rosterAssignedTests(dateStr, sid) {
       items.push(parseRosterTestLabel(label, normalized, logByLabel.get(label) || {}));
     });
     items.push(...rosterNewProgressTestsForDate(dateStr, sid, logByLabel, dailyLabels || new Set()));
-    return rosterSortTests(dedupeRosterTests(items));
+    return rosterSortTests(dedupeRosterTests(items)).filter(item => rosterTestMatchesCurrentCurriculum(item, student));
   }
 
   const active = rosterActiveTestsForDate(dateStr, sid);
   if (rosterTestsCleared(dateStr, sid)) return [];
   if (!active.length) {
     if (rosterHasProgressTests(dateStr, sid)) return [];
-    return rosterSortTests(previousRosterAssignedTests(dateStr, sid));
+    return rosterSortTests(previousRosterAssignedTests(dateStr, sid))
+      .filter(item => rosterTestMatchesCurrentCurriculum(item, student));
   }
 
-  return rosterSortTests(active);
+  return rosterSortTests(active).filter(item => rosterTestMatchesCurrentCurriculum(item, student));
 }
 
 function rosterSortTests(items) {
@@ -893,7 +917,7 @@ function rosterTaskText(dateStr, stu, videoMap) {
   const lines = [ROSTER_TEXT_DEFAULT, '', `오늘 할 일${subject ? ` (${subject})` : ''}`];
   const videos = rosterVideoText(dateStr, sid, videoMap);
   if (videos) lines.push('', `영상 : ${videos}`);
-  appendRosterTestSections(lines, rosterAssignedTests(dateStr, sid));
+  appendRosterTestSections(lines, rosterAssignedTests(dateStr, sid, stu));
   return lines.join('\n');
 }
 

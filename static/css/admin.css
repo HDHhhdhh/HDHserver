@@ -1098,6 +1098,14 @@ body.admin.dark #calendar .att-count-badge {
   text-shadow: none;
 }
 
+body.admin .makeup-planner,
+body.admin .attend-roster-row {
+  --makeup-accent: #f97316;
+  --makeup-accent-ink: #c2410c;
+  --makeup-accent-soft: rgba(249, 115, 22, .12);
+  --makeup-accent-line: rgba(249, 115, 22, .34);
+}
+
 body.admin.makeup-selecting::before,
 body.admin.manual-absence-selecting::before {
   content: "";
@@ -1308,6 +1316,15 @@ body.admin .makeup-planner-title-row {
   min-width: 0;
 }
 
+body.admin .makeup-planner-control-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  white-space: nowrap;
+}
+
 body.admin .makeup-export-btn {
   height: 30px;
   min-height: 30px;
@@ -1372,11 +1389,46 @@ body.admin.dark .makeup-row.is-active {
 
 body.admin .makeup-label {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+body.admin .makeup-panel-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  margin-top: 12px;
+}
+
+body.admin .makeup-panel-stack .makeup-planner {
+  margin-top: 0;
+  min-height: 330px;
+}
+
+body.admin .makeup-label > span:first-child {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  font-weight: 850;
+}
+
+body.admin .makeup-scheduled-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--makeup-accent-line);
+  border-radius: 999px;
+  background: var(--makeup-accent-soft);
+  color: var(--makeup-accent-ink);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 4px 8px;
 }
 
 body.admin .makeup-actions {
@@ -1455,6 +1507,12 @@ body.admin .attend-slot-label {
   font-size: 12px;
   font-weight: 900;
   text-align: center;
+}
+
+body.admin .attend-extra-slot-badge {
+  margin-left: 6px;
+  color: #2563eb;
+  font-weight: 800;
 }
 
 body.admin .attend-student-label {
@@ -5600,6 +5658,22 @@ body.admin .modal-close {
 }
 
 @media (max-width: 720px) {
+  body.admin .announcement-board {
+    left: 50%;
+    width: min(360px, calc(100vw - 32px));
+    transform: translateX(-50%);
+  }
+
+  body.admin:not(.admin-simple) #todayTools .today-search {
+    flex-wrap: wrap;
+  }
+
+  body.admin:not(.admin-simple) #todayTools #homeworkLeaveBtn,
+  body.admin:not(.admin-simple) #todayTools #absentRecoverBtn {
+    flex: 1 1 calc(50% - 4px) !important;
+    min-width: 0;
+  }
+
   body.admin .ann-reply-expand-modal,
   body.admin .ann-compose-expand-modal {
     padding: 7px;

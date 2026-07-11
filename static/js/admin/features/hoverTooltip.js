@@ -1,5 +1,6 @@
 // /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
 
 export function initHoverTooltip() {
@@ -434,7 +435,7 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   function renderProgressTables(stu, opts = {}) {
     const { includeVideo = true } = opts;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getAdminDate();
 
     const allDates = Object.keys(state.progress || {}).filter(d => d <= today).sort();
     const mergedProg = {};

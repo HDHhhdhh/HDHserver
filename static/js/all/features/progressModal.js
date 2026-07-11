@@ -1,5 +1,6 @@
 ﻿import { toast } from '../core/utils.js';
 import { ensureProgressForSid, state } from '../core/state.js';
+import { localDateKey } from '../core/date.js';
 
 let editingSid = null;
 
@@ -41,7 +42,7 @@ document.addEventListener('click', async (e)=>{
                  (v.subCurriculum||'').trim().toLowerCase()===subKey)
     .sort((a,b)=>a.chapter-b.chapter);
 
-  const today = new Date().toISOString().slice(0,10);
+  const today = localDateKey();
   const dates = Object.keys(state.progress||{}).filter(d=>d<=today).sort();
   const progEntry = {};
   dates.forEach(d=>{
@@ -75,7 +76,7 @@ document.addEventListener('click', (e)=>{
 
 function save(){
   if (!editingSid) return;
-  const today = new Date().toISOString().slice(0,10);
+  const today = localDateKey();
   const newProg = {};
   zone.querySelectorAll('.progress-cell').forEach(cell=>{
     const st = cell.dataset.state;

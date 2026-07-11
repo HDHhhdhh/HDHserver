@@ -15,6 +15,10 @@ import { SELF_STUDY_DAYS_FIELD, isSelfStudyDayField, nextSelfStudyDays } from '.
 
 const subCurrOptions = ['A:Ble', 'APEX'];
 const CURRICULUM_OPTIONS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
+const EMPTY_SCHOOL_LABEL = '학교 입력';
+const AUTO_VIDEO_ASSIGN_FIELD = 'autoVideoAssignCount';
+const ABLE_AUTO_VIDEO_ASSIGN_COUNT = 1;
+const ABLE_CURRICULUM_KEY = 'a:ble';
 
 // 다양한 응답 형태를 '성공'으로 인정
 const ok = (r) =>
@@ -35,6 +39,25 @@ function escapeHtml(s = '') {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function normalizeInlineCellText(value = '') {
+  return String(value ?? '').replace(/\u00a0/g, ' ').trim();
+}
+
+function isAbleCurriculumValue(value) {
+  return String(value ?? '').trim().toLowerCase() === ABLE_CURRICULUM_KEY;
+}
+
+function usesAbleCurriculum(stu) {
+  return isAbleCurriculumValue(stu?.curriculum) || isAbleCurriculumValue(stu?.subCurriculum);
+}
+
+function syncAbleAutoVideoAssignDefault(stu, wasAble, changedValue) {
+  if (!stu) return;
+  if (usesAbleCurriculum(stu) && (!wasAble || isAbleCurriculumValue(changedValue))) {
+    stu[AUTO_VIDEO_ASSIGN_FIELD] = ABLE_AUTO_VIDEO_ASSIGN_COUNT;
+  }
 }
 
 // 이름+학교로 중복 학생 묶기용 키
@@ -157,6 +180,7 @@ export function renderTable() {
     const high = s.highSchool || s.schoolHigh || s.high || s.highschool || s.high_school || s.고등학교 || '';
     const middle = s.middleSchool || s.schoolMiddle || s.middle || s.middleschool || s.middle_school || s.중학교 || s.school || '';
     const schoolText = s.school || high || middle || '';
+    const schoolValue = normalizeInlineCellText(schoolText);
     const doc = s.docUrl || '';
     const cur = s.curriculum || '';
 
@@ -189,11 +213,16 @@ export function renderTable() {
 
       <!-- 학교: 인라인 편집 전용(더블클릭) -->
       <td>
-        <span class="cell-school"
+        <span class="cell-school${schoolValue ? '' : ' is-empty'}"
               data-id="${s.id}"
+              data-empty="${schoolValue ? '0' : '1'}"
               contenteditable="false"
-              title="더블클릭하여 학교를 편집하세요">
-          ${schoolText ? escapeHtml(schoolText) : '&nbsp;'}
+              tabindex="0"
+              role="textbox"
+              aria-label="학교"
+              aria-readonly="true"
+              title="${schoolValue ? '더블클릭하여 학교를 편집하세요' : '클릭하여 학교를 입력하세요'}">
+          ${schoolValue ? escapeHtml(schoolValue) : EMPTY_SCHOOL_LABEL}
         </span>
       </td>
 
@@ -261,6 +290,7 @@ export function renderTable() {
                  value="${escapeHtml(doc)}">
           <button type="button" class="docOpen" title="새 탭에서 열기" data-id="${s.id}">🔗</button>
           <button type="button" class="miniProgBtn" title="영상 진도 보기/수정" data-id="${s.id}">🎬</button>
+          <button type="button" class="studentTestRecordBtn" title="테스트 기록 보기" data-test-result-sid="${escapeHtml(s.id)}" data-test-result-name="${escapeHtml(s.name || s.id)}">기록</button>
         </div>
       </td>
     </tr>`;
@@ -323,10 +353,37 @@ export function renderTable() {
       #allWrap .studentsTable .cell-school,
       #allWrap .studentsTable .cell-grade {
         display:inline-block;
-        min-width:0;
         max-width:100%;
         overflow-wrap:anywhere;
         word-break:keep-all;
+      }
+      #allWrap .studentsTable .cell-school {
+        min-width:4.5em;
+        padding:2px 5px;
+        border-radius:6px;
+        cursor:text;
+      }
+      #allWrap .studentsTable .cell-grade {
+        min-width:0;
+      }
+      #allWrap .studentsTable .cell-school[data-empty="1"] {
+        color:#64748b;
+        border:1px dashed #cbd5e1;
+        background:rgba(148,163,184,.08);
+      }
+      body.dark #allWrap .studentsTable .cell-school[data-empty="1"] {
+        color:#94a3b8;
+        border-color:#475569;
+        background:rgba(148,163,184,.12);
+      }
+      #allWrap .studentsTable .cell-school.editing {
+        color:inherit;
+        border:1px solid #2563eb;
+        background:#fff;
+        outline:2px solid rgba(37,99,235,.2);
+      }
+      body.dark #allWrap .studentsTable .cell-school.editing {
+        background:#0b1220;
       }
 
       /* 커리/세부커리 정렬 */
@@ -396,7 +453,15 @@ export function renderTable() {
         padding-right:8px;
       }
       #allWrap .studentsTable .docBox {
-        grid-template-columns:minmax(0, 1fr) 36px 36px;
+        grid-template-columns:minmax(0, 1fr) 34px 34px;
+        gap:4px;
+      }
+      #allWrap .studentsTable .docBox .studentTestRecordBtn {
+        grid-column:1 / -1;
+        width:100%;
+        min-width:0;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       /* ✅ 독스 칸 줄이기 */
       #allWrap .studentsTable .docUrlInput {
@@ -596,7 +661,11 @@ document.addEventListener('change', (e) => {
     const sid = e.target.dataset.id;
     const value = (e.target.value || '').trim();
     const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) stu.curriculum = value;
+    if (stu) {
+      const wasAble = usesAbleCurriculum(stu);
+      stu.curriculum = value;
+      syncAbleAutoVideoAssignDefault(stu, wasAble, value);
+    }
     patchField(sid, 'curriculum', value)
       .then(r => ok(r) ? toast('커리큘럼 저장됨') : Promise.reject(r))
       .then(() => { renderCurStats(); })
@@ -609,7 +678,11 @@ document.addEventListener('change', (e) => {
     const sid = e.target.dataset.id;
     const value = e.target.value;
     const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) stu.subCurriculum = value;
+    if (stu) {
+      const wasAble = usesAbleCurriculum(stu);
+      stu.subCurriculum = value;
+      syncAbleAutoVideoAssignDefault(stu, wasAble, value);
+    }
     patchField(sid, 'subCurriculum', value)
       .then(r => ok(r) ? toast('저장됨') : Promise.reject(r))
       .catch(() => alert('저장 실패'));
@@ -899,38 +972,74 @@ function saveTimeInput(el) {
 /* ─────────────────────────────────────────
    "학교" 인라인 편집
 ────────────────────────────────────────── */
+function setSchoolCellDisplay(el, value) {
+  const text = normalizeInlineCellText(value);
+  el.textContent = text || EMPTY_SCHOOL_LABEL;
+  el.dataset.empty = text ? '0' : '1';
+  el.classList.toggle('is-empty', !text);
+  el.contentEditable = 'false';
+  el.setAttribute('aria-readonly', 'true');
+  el.title = text ? '더블클릭하여 학교를 편집하세요' : '클릭하여 학교를 입력하세요';
+}
+
+function getSchoolCellValue(el) {
+  return el?.dataset.empty === '1' ? '' : normalizeInlineCellText(el?.textContent || '');
+}
+
+function focusEditableEnd(el) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  el.focus();
+}
+
+function startSchoolEdit(el) {
+  if (!el || el.isContentEditable) return;
+
+  const prev = getSchoolCellValue(el);
+  el.dataset.orig = prev;
+  el.textContent = prev;
+  el.dataset.empty = '0';
+  el.classList.remove('is-empty');
+  el.contentEditable = 'true';
+  el.setAttribute('aria-readonly', 'false');
+  el.classList.add('editing');
+  focusEditableEnd(el);
+}
+
 function initSchoolInlineEdit() {
   const tbody = document.querySelector('#allWrap table tbody');
   if (!tbody) return;
 
+  tbody.addEventListener('click', (e) => {
+    const el = e.target.closest('.cell-school');
+    if (!el || el.isContentEditable || el.dataset.empty !== '1') return;
+    e.preventDefault();
+    startSchoolEdit(el);
+  });
+
   // 편집 시작
   tbody.addEventListener('dblclick', (e) => {
     const el = e.target.closest('.cell-school'); if (!el) return;
-    if (el.isContentEditable) return;
-
-    el.dataset.orig = (el.textContent || '').trim();
-    el.contentEditable = 'true';
-    el.classList.add('editing');
-
-    // 커서 끝으로
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges(); sel.addRange(range);
-    el.focus();
+    startSchoolEdit(el);
   });
 
   // 저장(commit)
   const commit = async (el) => {
     const sid = el.dataset.id;
-    const next = (el.textContent || '').trim();
-    const prev = (el.dataset.orig || '').trim();
+    const next = normalizeInlineCellText(el.textContent || '');
+    const prev = normalizeInlineCellText(el.dataset.orig || '');
     el.contentEditable = 'false';
     el.classList.remove('editing');
     el.removeAttribute('data-orig');
 
-    if (next === prev) return; // 변경 없음
+    if (next === prev) {
+      setSchoolCellDisplay(el, prev);
+      return;
+    }
 
     const stu = state.students.find(s => String(s.id) === String(sid));
     if (stu) {
@@ -940,11 +1049,12 @@ function initSchoolInlineEdit() {
     try {
       const res = await patchField(sid, 'school', next);
       if (!ok(res)) throw new Error(res?.status || 'save-failed');
+      setSchoolCellDisplay(el, next);
       toast('학교 저장됨');
       renderCurStats();
     } catch (err) {
       if (stu) stu.school = prev;
-      el.textContent = prev || '\u00a0';
+      setSchoolCellDisplay(el, prev);
       alert('학교 저장 실패');
     }
   };
@@ -952,8 +1062,7 @@ function initSchoolInlineEdit() {
   // 취소(rollback)
   const cancel = (el) => {
     const prev = el.dataset.orig || '';
-    el.textContent = prev || '\u00a0';
-    el.contentEditable = 'false';
+    setSchoolCellDisplay(el, prev);
     el.classList.remove('editing');
     el.removeAttribute('data-orig');
   };
@@ -966,7 +1075,15 @@ function initSchoolInlineEdit() {
 
   tbody.addEventListener('keydown', (e) => {
     const el = e.target.closest('.cell-school');
-    if (!el || !el.isContentEditable) return;
+    if (!el) return;
+
+    if (!el.isContentEditable) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        startSchoolEdit(el);
+      }
+      return;
+    }
 
     if (e.key === 'Enter') {
       e.preventDefault();

@@ -31,6 +31,8 @@ let videoOpenSeq = 0;
 
 const AUTO_ASSIGN_FIELD = 'autoVideoAssignCount';
 const DEFAULT_AUTO_ASSIGN_COUNT = 3;
+const ABLE_AUTO_ASSIGN_COUNT = 1;
+const ABLE_CURRICULUM_KEY = 'a:ble';
 const MIN_AUTO_ASSIGN_COUNT = 1;
 const MAX_AUTO_ASSIGN_COUNT = 10;
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
@@ -76,8 +78,20 @@ function clampAutoAssignCount(value, fallback = DEFAULT_AUTO_ASSIGN_COUNT) {
   return Math.max(MIN_AUTO_ASSIGN_COUNT, Math.min(MAX_AUTO_ASSIGN_COUNT, Math.round(n)));
 }
 
+function isAbleCurriculumValue(value) {
+  return String(value ?? '').trim().toLowerCase() === ABLE_CURRICULUM_KEY;
+}
+
+function usesAbleCurriculum(stu) {
+  return isAbleCurriculumValue(stu?.curriculum) || isAbleCurriculumValue(stu?.subCurriculum);
+}
+
+function defaultAutoAssignCountForStudent(stu) {
+  return usesAbleCurriculum(stu) ? ABLE_AUTO_ASSIGN_COUNT : DEFAULT_AUTO_ASSIGN_COUNT;
+}
+
 function autoAssignCountForStudent(stu) {
-  return clampAutoAssignCount(stu?.[AUTO_ASSIGN_FIELD], DEFAULT_AUTO_ASSIGN_COUNT);
+  return clampAutoAssignCount(stu?.[AUTO_ASSIGN_FIELD], defaultAutoAssignCountForStudent(stu));
 }
 
 function escapeHtml(s) {
@@ -1133,9 +1147,10 @@ async function saveAutoAssignCountForCurrent(count) {
   const sid = String(editingSid || '').trim();
   if (!sid) return;
 
-  const nextCount = clampAutoAssignCount(count);
   const stu = state.students.find(x => String(x.id) === sid);
   if (!stu) return;
+
+  const nextCount = clampAutoAssignCount(count);
 
   stu[AUTO_ASSIGN_FIELD] = nextCount;
   renderAutoAssignControl(stu);

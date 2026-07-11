@@ -43,6 +43,58 @@ def _norm_slot_list(value: Any) -> list[int]:
     return out
 
 
+def _normalize_schedule(
+    raw: Any,
+    *,
+    fallback_original_absence_id: str = "",
+    fallback_student_id: str = "",
+) -> Dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    original_absence_id = str(
+        raw.get("originalAbsenceId")
+        or raw.get("original_absence_id")
+        or fallback_original_absence_id
+        or ""
+    ).strip()
+    student_id = str(raw.get("studentId") or raw.get("student_id") or fallback_student_id or "").strip()
+    makeup_date = _norm_date(raw.get("makeupDate") or raw.get("makeup_date"))
+    status = str(raw.get("status") or "scheduled").strip().lower()
+    if status not in {"scheduled", "completed", "cancelled"}:
+        status = "scheduled"
+    makeup_times = _norm_slot_list(
+        raw.get("makeupTimes")
+        or raw.get("makeup_times")
+        or raw.get("ownedSlots")
+        or raw.get("owned_slots")
+        or raw.get("slots")
+        or raw.get("slot")
+    )
+    if not makeup_times:
+        makeup_times = [1]
+    if not original_absence_id or not student_id:
+        return None
+    if status == "scheduled" and not makeup_date:
+        return None
+    schedule: Dict[str, Any] = {
+        "originalAbsenceId": original_absence_id,
+        "studentId": student_id,
+        "makeupDate": makeup_date,
+        "makeupTimes": makeup_times,
+        "status": status,
+        "createdAt": str(raw.get("createdAt") or raw.get("created_at") or "").strip(),
+        "updatedAt": str(raw.get("updatedAt") or raw.get("updated_at") or "").strip(),
+    }
+    created_by = str(raw.get("createdBy") or raw.get("created_by") or "").strip()
+    if created_by:
+        schedule["createdBy"] = created_by
+    schedule["ownedExtra"] = bool(raw.get("ownedExtra") or raw.get("owned_extra"))
+    owned_slots = _norm_slot_list(raw.get("ownedSlots") or raw.get("owned_slots"))
+    if owned_slots:
+        schedule["ownedSlots"] = owned_slots
+    return schedule
+
+
 def _normalize_manual(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
     if not isinstance(raw, dict):
         return {}
@@ -64,7 +116,7 @@ def _normalize_manual(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
             slots = _norm_slot_list(row.get("slots", row.get("slot")))
             if not slots and not date_only:
                 slots = [1]
-            rows[key] = {
+            normalized_row: Dict[str, Any] = {
                 "sid": sid,
                 "slots": [] if date_only else slots,
                 "dateOnly": date_only,
@@ -74,6 +126,14 @@ def _normalize_manual(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
                 "note": str(row.get("note") or "").strip(),
                 "course": str(row.get("course") or "").strip(),
             }
+            schedule = _normalize_schedule(
+                row.get("scheduledMakeup") or row.get("scheduled_makeup"),
+                fallback_original_absence_id=f"manual|{date_key}|{key}",
+                fallback_student_id=sid,
+            )
+            if schedule:
+                normalized_row["scheduledMakeup"] = schedule
+            rows[key] = normalized_row
         if rows:
             out[date_key] = rows
     return out
@@ -85,12 +145,12 @@ def _normalize_payload(raw: Any) -> Dict[str, Any]:
     if not isinstance(by_absence, dict):
         by_absence = source
 
-    out: Dict[str, Dict[str, Dict[str, str]]] = {}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for date_raw, sid_map in by_absence.items():
         date_key = _norm_date(date_raw)
         if not date_key or not isinstance(sid_map, dict):
             continue
-        rows: Dict[str, Dict[str, str]] = {}
+        rows: Dict[str, Dict[str, Any]] = {}
         for sid_raw, value in sid_map.items():
             sid = _norm_sid(sid_raw)
             if not sid:
@@ -101,11 +161,20 @@ def _normalize_payload(raw: Any) -> Dict[str, Any]:
             state = str(row.get("state") or "").strip().lower()
             if state not in {"open", "carried"}:
                 state = "carried"
-            rows[sid] = {
+            normalized_row: Dict[str, Any] = {
                 "state": state,
                 "updatedAt": str(row.get("updatedAt") or "").strip(),
                 "note": str(row.get("note") or "").strip(),
             }
+            student_id = sid.split("|", 1)[0].strip()
+            schedule = _normalize_schedule(
+                row.get("scheduledMakeup") or row.get("scheduled_makeup"),
+                fallback_original_absence_id=f"absence|{date_key}|{sid}",
+                fallback_student_id=student_id,
+            )
+            if schedule:
+                normalized_row["scheduledMakeup"] = schedule
+            rows[sid] = normalized_row
         if rows:
             out[date_key] = rows
 

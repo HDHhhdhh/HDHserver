@@ -56,6 +56,21 @@ def test_direct_academy_client_is_allowed() -> None:
         raise AssertionError("direct academy Wi-Fi clients must retain answer access")
 
 
+def test_ipv4_mapped_academy_client_is_allowed_and_canonical() -> None:
+    # Given
+    req = RequestStub(remote_addr="::ffff:110.14.147.14", headers={})
+
+    # When
+    client_ip = client_ip_from_request(req)
+    allowed = academy_network_allowed(req)
+
+    # Then
+    if client_ip != "110.14.147.14":
+        raise AssertionError(f"expected IPv4-mapped academy IP to canonicalize, got {client_ip!r}")
+    if not allowed:
+        raise AssertionError("IPv4-mapped academy clients must retain video access")
+
+
 def test_direct_private_academy_lan_clients_are_allowed() -> None:
     # Given
     examples = (
@@ -88,10 +103,10 @@ def test_trusted_loopback_proxy_uses_cf_connecting_ip() -> None:
         raise AssertionError("trusted Cloudflare/local proxy must allow academy client IP")
 
 
-def test_trusted_cloudflare_header_is_authoritative_with_forwarded_for_chain() -> None:
+def test_cloudflare_proxy_header_is_authoritative_with_forwarded_for_chain() -> None:
     # Given
     req = RequestStub(
-        remote_addr="127.0.0.1",
+        remote_addr="172.71.0.10",
         headers={"CF-Connecting-IP": "110.14.147.14", "X-Forwarded-For": "110.14.147.14, 172.71.0.10"},
     )
 
@@ -104,6 +119,28 @@ def test_trusted_cloudflare_header_is_authoritative_with_forwarded_for_chain() -
         raise AssertionError(f"expected authoritative CF-Connecting-IP client, got {client_ip!r}")
     if not allowed:
         raise AssertionError("trusted Cloudflare request must not be blocked by appended proxy chain")
+
+
+def test_cloudflare_pseudo_ipv4_uses_cf_connecting_ipv6() -> None:
+    # Given
+    req = RequestStub(
+        remote_addr="172.71.0.10",
+        headers={
+            "CF-Connecting-IP": "240.0.0.44",
+            "CF-Connecting-IPv6": "2a09:bac2:46d9::44",
+            "X-Forwarded-For": "240.0.0.44, 172.71.0.10",
+        },
+    )
+
+    # When
+    client_ip = client_ip_from_request(req)
+    allowed = academy_network_allowed(req)
+
+    # Then
+    if client_ip != "2a09:bac2:46d9::44":
+        raise AssertionError(f"expected real IPv6 client from CF-Connecting-IPv6, got {client_ip!r}")
+    if not allowed:
+        raise AssertionError("Cloudflare Pseudo IPv4 overwrite must still allow academy IPv6 clients")
 
 
 def test_cf_connecting_ip_takes_precedence_over_forwarded_for() -> None:
@@ -170,6 +207,24 @@ def test_forwarded_for_takes_precedence_over_real_ip() -> None:
     # Then
     if allowed:
         raise AssertionError("X-Real-IP must not be trusted when X-Forwarded-For is present")
+
+
+def test_malformed_forwarded_for_does_not_skip_to_spoofed_academy_ip() -> None:
+    # Given
+    req = RequestStub(
+        remote_addr="127.0.0.1",
+        headers={"X-Forwarded-For": "not-an-ip, 192.168.0.44"},
+    )
+
+    # When
+    client_ip = client_ip_from_request(req)
+    allowed = academy_network_allowed(req)
+
+    # Then
+    if client_ip != "127.0.0.1":
+        raise AssertionError(f"malformed forwarded chain must fall back to remote proxy, got {client_ip!r}")
+    if allowed:
+        raise AssertionError("malformed X-Forwarded-For must not skip to a spoofed academy IP")
 
 
 def test_direct_public_client_cannot_spoof_forwarded_for() -> None:
@@ -262,7 +317,7 @@ def test_answer_map_allows_trusted_cf_connecting_ip() -> None:
         raise AssertionError(f"trusted CF-Connecting-IP answer map request failed: {response.status_code}")
 
 
-def test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain() -> None:
+def test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_chain() -> None:
     # Given
     import routes.api_kollus as api_kollus
 
@@ -283,7 +338,7 @@ def test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain() -> N
                 "X-Forwarded-For": "110.14.147.14, 172.71.0.10",
                 "User-Agent": "Mozilla/5.0 KAKAOTALK 10.0",
             },
-            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            environ_overrides={"REMOTE_ADDR": "172.71.0.10"},
         )
         body = response.get_data(as_text=True)
     finally:
@@ -542,19 +597,22 @@ def main() -> None:
     run_checks(
         (
             test_direct_academy_client_is_allowed,
+            test_ipv4_mapped_academy_client_is_allowed_and_canonical,
             test_direct_private_academy_lan_clients_are_allowed,
             test_trusted_loopback_proxy_uses_cf_connecting_ip,
-            test_trusted_cloudflare_header_is_authoritative_with_forwarded_for_chain,
+            test_cloudflare_proxy_header_is_authoritative_with_forwarded_for_chain,
+            test_cloudflare_pseudo_ipv4_uses_cf_connecting_ipv6,
             test_cf_connecting_ip_takes_precedence_over_forwarded_for,
             test_trusted_loopback_proxy_uses_leftmost_forwarded_for_client,
             test_trusted_loopback_proxy_uses_real_ip_without_forwarded_for,
             test_forwarded_for_takes_precedence_over_real_ip,
+            test_malformed_forwarded_for_does_not_skip_to_spoofed_academy_ip,
             test_direct_public_client_cannot_spoof_forwarded_for,
             test_direct_public_client_cannot_spoof_cf_connecting_ip,
             test_configured_public_proxy_uses_cf_connecting_ip,
             test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
-            test_get_url_allows_trusted_cf_connecting_ip_with_forwarded_for_chain,
+            test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_chain,
             test_get_url_allows_configured_public_proxy_cf_connecting_ip,
             test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,
             test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header,

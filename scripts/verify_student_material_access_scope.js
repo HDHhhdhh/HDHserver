@@ -410,6 +410,12 @@ async function main() {
   };
 
   const fetchCalls = [];
+  const quietConsole = Object.create(console);
+  quietConsole.warn = (...args) => {
+    const message = args.map(String).join(' ');
+    if (message.includes('[announce] required elements not found on this page, skip init')) return;
+    console.warn(...args);
+  };
   const context = {
     window: {},
     document,
@@ -431,7 +437,7 @@ async function main() {
       if (text.startsWith('/js/test_answer_link_map')) return makeResponse('academy network required', 403);
       return makeResponse({});
     },
-    console,
+    console: quietConsole,
     URL,
     URLSearchParams,
     Date,

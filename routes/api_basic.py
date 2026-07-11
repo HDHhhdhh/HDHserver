@@ -411,6 +411,37 @@ def _fallback_assigned_test_from_label(label: str, status: str) -> dict:
     return item
 
 
+def _normalized_test_curriculum(value) -> str:
+    compact = re.sub(r"\s+", "", str(value or ""))
+    aliases = {
+        "공통수학1": "공수1",
+        "공통수학2": "공수2",
+        "미적1": "미적분1",
+        "미적분Ⅰ": "미적분1",
+        "미적분I": "미적분1",
+        "미적2": "미적분2",
+        "미적분Ⅱ": "미적분2",
+        "미적분II": "미적분2",
+        "확률과통계": "확통",
+    }
+    return aliases.get(compact, "미적분1" if compact == "미적분" else compact)
+
+
+def _assigned_test_curriculum(item: dict) -> str:
+    direct = item.get("curriculum") or item.get("subject") or item.get("course")
+    if str(direct or "").strip():
+        return _normalized_test_curriculum(direct)
+    parts = [part.strip() for part in str(item.get("label") or "").split("/") if part.strip()]
+    return _normalized_test_curriculum(parts[1] if len(parts) > 1 else "")
+
+
+def _filter_assigned_tests_for_student_curriculum(items: list[dict], student: dict) -> list[dict]:
+    current = _normalized_test_curriculum(student.get("curriculum") or student.get("subject"))
+    if not current:
+        return items
+    return [item for item in items if _assigned_test_curriculum(item) == current]
+
+
 def _assigned_test_label(raw: dict) -> str:
     label = str(raw.get("label") or "").strip()
     if label:
@@ -657,7 +688,7 @@ def _candidate_test_ids(item: dict) -> list[str]:
 
 def _find_test_config_for_assignment(item: dict) -> dict:
     category_key = _test_assignment_category_key(item)
-    if category_key not in {"REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}:
+    if category_key not in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}:
         return {}
 
     config = _load_tests_config_for_answer_links()
@@ -719,7 +750,8 @@ def _test_assignment_answer_url(item: dict) -> str:
     if direct_url:
         return direct_url
 
-    config_url = _test_config_answer_url(_find_test_config_for_assignment(item))
+    configured_test = _find_test_config_for_assignment(item)
+    config_url = _test_config_answer_url(configured_test)
     if config_url:
         return config_url
 
@@ -728,15 +760,16 @@ def _test_assignment_answer_url(item: dict) -> str:
         return ""
 
     round_key = _normalize_test_answer_round(item.get("round"))
-    for test_id in _candidate_test_ids(item):
-        rounds = link_map.get(test_id)
-        if isinstance(rounds, dict):
-            url = _answer_url_from_link_entry(rounds.get(round_key))
+    for candidate in (item, configured_test):
+        for test_id in _candidate_test_ids(candidate):
+            rounds = link_map.get(test_id)
+            if isinstance(rounds, dict):
+                url = _answer_url_from_link_entry(rounds.get(round_key))
+                if url:
+                    return url
+            url = _answer_url_from_link_entry(rounds)
             if url:
                 return url
-        url = _answer_url_from_link_entry(rounds)
-        if url:
-            return url
     return ""
 
 
@@ -1323,6 +1356,8 @@ def _has_assigned(val) -> bool:
 
 AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
 DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
+ABLE_AUTO_VIDEO_ASSIGN_COUNT = 1
+ABLE_CURRICULUM_KEY = "a:ble"
 MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
 MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
 VIDEO_PROGRESS_FINISHED_STATUSES = {"done", "skip"}
@@ -1336,10 +1371,26 @@ def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASS
     return max(MIN_AUTO_VIDEO_ASSIGN_COUNT, min(MAX_AUTO_VIDEO_ASSIGN_COUNT, n))
 
 
+def _is_able_curriculum_value(value) -> bool:
+    return str(value or "").strip().casefold() == ABLE_CURRICULUM_KEY
+
+
+def _student_uses_able_curriculum(stu: dict) -> bool:
+    if not isinstance(stu, dict):
+        return False
+    return _is_able_curriculum_value(stu.get("curriculum")) or _is_able_curriculum_value(stu.get("subCurriculum"))
+
+
+def _apply_able_auto_video_assign_default(stu: dict) -> None:
+    if _student_uses_able_curriculum(stu):
+        stu[AUTO_VIDEO_ASSIGN_FIELD] = ABLE_AUTO_VIDEO_ASSIGN_COUNT
+
+
 def _student_auto_video_assign_count(stu: dict) -> int:
     if not isinstance(stu, dict):
         return DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
-    return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD))
+    default = ABLE_AUTO_VIDEO_ASSIGN_COUNT if _student_uses_able_curriculum(stu) else DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
+    return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD), default=default)
 
 
 def _is_finished_video_progress_status(status) -> bool:
@@ -1899,6 +1950,7 @@ def api_student_bootstrap():
         sid,
         json_logs_for_assigned,
     )
+    assigned_tests = _filter_assigned_tests_for_student_curriculum(assigned_tests, student)
     assigned_tests = _academy_restricted_assigned_tests(assigned_tests, academy_allowed)
     homework_books = _student_homework_book_names_from_log(log_entry)
 
@@ -1953,6 +2005,7 @@ def api_add_student():
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
     data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
+    _apply_able_auto_video_assign_default(data)
     students.append(data)
     save_atomic(STU_PATH, students)
     return jsonify({"id": data["id"]})
@@ -1991,7 +2044,15 @@ def api_weekend_slots():
                 return int(v)
             return v
 
-        cur.setdefault(date, {}).update({str(k): norm(v) for k, v in mapping.items()})
+        day = cur.setdefault(date, {})
+        for k, v in mapping.items():
+            sid = str(k)
+            if v is None or v is False or v == []:
+                day.pop(sid, None)
+                continue
+            day[sid] = norm(v)
+        if not day:
+            cur.pop(date, None)
     save_atomic(WEEKEND_SLOTS_PATH, cur)
     return "", 204
 
@@ -2157,9 +2218,16 @@ def api_update_student_field():
     students: List[dict] = load(STU_PATH)
     for s in students:
         if str(s.get("id")) == str(sid):
+            was_able = _student_uses_able_curriculum(s)
             if field == AUTO_VIDEO_ASSIGN_FIELD:
                 value = _coerce_auto_video_assign_count(value)
             s[field] = value
+            if (
+                field in {"curriculum", "subCurriculum"}
+                and _student_uses_able_curriculum(s)
+                and (not was_able or _is_able_curriculum_value(value))
+            ):
+                _apply_able_auto_video_assign_default(s)
             save_atomic(STU_PATH, students)
             return "OK"
     abort(404)

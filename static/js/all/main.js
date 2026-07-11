@@ -4,7 +4,7 @@ import { loadAll, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
 import { renderTable } from './features/table.js';
 import './features/progressModal.js';
-import './features/hoverTooltip.js';
+import { initHoverTooltip } from './features/hoverTooltip.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
 import { hookDeleteButtons } from './features/deleteButtons.js';
@@ -12,6 +12,7 @@ import { hookCloneButtons } from './features/cloneButtons.js';
 import './features/escClose.js';
 import { mountNewStudentBar } from './features/addStudent.js';
 import { mountChatRosterExport } from './features/chatRosterExport.js';
+import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 
 /** 이름+학교 기준으로 학생 dedup용 키 (table.js와 동일 로직) */
 function dedupKeyForStudent(s) {
@@ -69,11 +70,14 @@ function renderAll() {
   });
   mountNewStudentBar();
   mountChatRosterExport();
+  decorateStudentTestRecordButtons(document).catch(console.warn);
 }
 
 (async function init() {
   try {
     await loadAll();
+    initStudentTestRecordDetails(document);
+    initHoverTooltip();
     renderAll();
 
     document.addEventListener('admin:refresh', () => {

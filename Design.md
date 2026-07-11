@@ -1,180 +1,185 @@
-﻿# Design System Baseline (Admin)
+# Server Student UI Design System
 
-## 1) Goal
-- Keep the current product structure (plain HTML/CSS/JS) and improve visual consistency/readability.
-- Use reference designs only for style language (tokens + layout rhythm), not full copy/paste UI blocks.
-- Prioritize Korean readability in dense admin screens (table + calendar + controls).
+This document captures the existing student-page modal design system so future OCR UI work stays consistent. It is intentionally narrow: the current contract covers the student test submit modal, hidden `?ocr=1` OCR review flow, submit result panel, and answer-preview modal.
 
-## 2) Recommended Reference Set
-Use these in `Style Extractor` in this order:
+## 1. Atmosphere & Identity
 
-1. Tabler (base dashboard rhythm)
-- https://preview.tabler.io/
-- https://tabler.io/
+The student modal should feel like a calm study utility: compact, direct, and low-friction. The signature is a quiet blue-accented worksheet workflow, where uncertain OCR results are handled through clear cards and large confirmation controls rather than dense free-form typing. The UI should read as operational and trustworthy, not decorative or marketing-like.
 
-2. Kiaalap (education domain patterns)
-- https://github.com/puikinsh/kiaalap
+## 2. Color
 
-3. CoreUI (high-density admin table/chart patterns)
-- https://coreui.io/product/free-bootstrap-admin-template/
-- https://coreui.io/product/free-bootstrap-dashboard-with-charts/
+### Palette
 
-Optional scan:
-- https://adminlte.io/themes/v4/index.html
-- https://tailadmin.com/
+| Role | Token | Light | Dark | Usage |
+|---|---|---:|---:|---|
+| Surface/modal | `--ts-card-bg` | `#ffffff` | `#0f172a` | Modal cards, OCR notice, result surfaces |
+| Text/primary | `--ts-card-fg` | `#0f172a` | `#e5e7eb` | Headings, body, entered answers |
+| Border/default | `--ts-border` | `#e5e7eb` | `#334155` | Inputs, cards, table borders |
+| Text/muted | `--ts-muted` | `#6b7280` | `#94a3b8` | Help copy, metadata, status text |
+| Field/surface | `--ts-field-bg` | `#ffffff` | `#0b1220` | Textareas, selects, compact cards |
+| Focus | `--ts-focus` | `#2563eb` | `#60a5fa` | Focus ring and input focus border |
+| Accent/primary | `--ts-primary` | `#2563eb` | `#2563eb` | Primary buttons, selected choices, answer links |
+| Accent/on-primary | `--ts-primary-fg` | `#ffffff` | `#ffffff` | Text on primary buttons |
+| Warning/text | `--ts-warning` | `#b45309` | `#f59e0b` | OCR warnings and manual-check notices |
+| Warning/surface | `--ts-warning-bg` | `#fff7ed` | `#2a1d0b` | Warning cards |
+| Overlay | `--ts-backdrop` | `rgba(0,0,0,.45)` | `rgba(0,0,0,.55)` | Modal backdrops |
+| Status/error | literal | `#dc2626` | `#dc2626` | OCR status error text |
+| Status/success | literal | `#059669` | `#059669` | OCR status success text |
 
-## 3) Style Extractor Prompt (Copy/Paste)
-Use this prompt per reference and merge results:
+### Rules
 
-```text
-Extract style tokens and component-level visual rules from this page for an education admin dashboard.
-Output JSON with keys:
-- color: {bg, surface, surfaceAlt, border, text, textMuted, primary, primarySoft, success, warning, danger}
-- typography: {fontFamily, titleSize, bodySize, captionSize, lineHeightBody, lineHeightDense, weightRegular, weightMedium, weightBold}
-- radius: {sm, md, lg, xl, pill}
-- shadow: {soft, card, floating}
-- spacing: {2,4,6,8,10,12,14,16,20,24,28,32}
-- component: {topbar, card, button, input, table, badge, tabs, calendarEvent}
-Also add:
-- readability rules for Korean text in dense tables/calendars.
-- avoid rules (what not to copy because it hurts legibility).
-```
+- Use blue only for actions, focus, selected choices, and informational OCR/result accents.
+- Use warning amber only when the student must inspect or manually confirm an answer.
+- Do not add new raw colors in the modal/OCR surface. Add a token here first.
+- `color-mix()` may derive subtle blue or warning surfaces from these tokens.
 
-## 4) Canonical Token Set (Merged Baseline)
-This is the recommended base token set for this project after merging references.
+## 3. Typography
 
-### Light
-```css
-:root {
-  --ds-bg: #f3f6fb;
-  --ds-surface: #ffffff;
-  --ds-surface-2: #f8fbff;
-  --ds-border: #d7e2f0;
-  --ds-border-strong: #c2d3e8;
-  --ds-text: #1f2f45;
-  --ds-text-muted: #637b9b;
+### Font Stack
 
-  --ds-primary: #2f77ec;
-  --ds-primary-soft: #deebff;
-  --ds-success: #1cad73;
-  --ds-warning: #d49a1f;
-  --ds-danger: #d84d52;
+- Primary page font: `IBM Plex Sans KR`, then system sans-serif fallback.
+- Display/accent font available from the page: `Sora`.
+- Numeric answer values should use the inherited modal font with heavy weight. If tabular alignment becomes necessary, add a numeric/mono rule here first.
 
-  --ds-radius-sm: 8px;
-  --ds-radius-md: 12px;
-  --ds-radius-lg: 16px;
-  --ds-radius-xl: 22px;
-  --ds-radius-pill: 999px;
+### Scale
 
-  --ds-shadow-soft: 0 6px 16px rgba(17, 34, 58, 0.08);
-  --ds-shadow-card: 0 10px 26px rgba(17, 34, 58, 0.12);
+| Level | Size | Weight | Line Height | Usage |
+|---|---:|---:|---:|---|
+| Modal title | `18px` | `800` | normal | Test submit modal heading |
+| Result title | `21px` | `900` | `1.22` | Result panel title |
+| Result rate | `42px` | `900` | `.95` | Large score/rate number |
+| Result metric | `21px` | `900` | `1.12` | Correct/wrong/total metric values |
+| Section/row label | `17px` | `900` | normal | Wrong-answer comparison title |
+| Body/value | `15px` to `17px` | `900` for answers | `1.2` to normal | Result comparison labels and answer chips |
+| OCR card title | `16px` | `900` | `1.25` | Per-question review card title |
+| Help/status | `12px` to `14px` | `400` to `800` | `1.45` to `1.5` where multiline | Help, status, badges, warning copy |
 
-  --ds-space-4: 4px;
-  --ds-space-8: 8px;
-  --ds-space-12: 12px;
-  --ds-space-16: 16px;
-  --ds-space-20: 20px;
-  --ds-space-24: 24px;
-}
-```
+### Rules
 
-### Dark
-```css
-body.dark {
-  --ds-bg: #0d1728;
-  --ds-surface: #13253d;
-  --ds-surface-2: #19314e;
-  --ds-border: #2c4a6d;
-  --ds-border-strong: #39608c;
-  --ds-text: #e5efff;
-  --ds-text-muted: #9ebbe0;
+- Keep OCR instructional text short and sentence-case Korean.
+- Avoid exclamation marks in success or error messages.
+- Preserve CJK readability: do not narrow containers or buttons so much that Korean particles or endings orphan onto their own line.
 
-  --ds-primary: #6fb0ff;
-  --ds-primary-soft: rgba(111, 176, 255, 0.20);
-  --ds-success: #44d19c;
-  --ds-warning: #f1c05d;
-  --ds-danger: #ff8d95;
+## 4. Spacing & Layout
 
-  --ds-shadow-soft: 0 8px 20px rgba(0, 0, 0, 0.24);
-  --ds-shadow-card: 0 14px 30px rgba(0, 0, 0, 0.30);
-}
-```
+### Base Unit
 
-## 5) Component Rules (Use Across Pages)
+All modal spacing should stay on the existing 4px rhythm.
 
-### Topbar
-- Height: 56~64px visual weight.
-- Title: 22~28px, `700`.
-- Subtitle/help text: 12~13px, muted color.
-- Keep action controls grouped with min 8px gaps.
+| Token | Value | Current usage |
+|---|---:|---|
+| `--space-1` | `4px` | Small summary/list margin |
+| `--space-2` | `8px` | Default compact gap, notice padding top/bottom |
+| `--space-3` | `12px` | Button horizontal padding, preview header gap |
+| `--space-4` | `16px` | Standard nearby spacing, mobile-safe text breathing |
+| `--space-5` | `20px` | Reserved for larger future modal spacing |
+| `--space-6` | `24px` | Reserved for broader student page panels |
 
-### Card
-- Surface uses `--ds-surface`.
-- Border: `1px solid --ds-border`.
-- Radius: `--ds-radius-lg` or `--ds-radius-xl` for major panels.
-- Padding: 14~20px (not below 12px on desktop).
+### Layout
 
-### Button/Input/Select
-- Control height: 36~40px.
-- Border radius: 8~10px.
-- Focus ring should be visible in both themes.
-- Primary CTA should only use one strong accent tone per screen.
+- Submit modal width: `480px`, max `92vw`.
+- Submit modal max height: `80vh`, `88vh` on narrow screens.
+- Preview modal: `min(1100px, 96vw)` by `min(760px, 90vh)`.
+- OCR review panel: grid with `12px` gaps.
+- Choice grids: exactly five equal buttons for `choice_number`.
+- Mobile breakpoint: `520px`; stack result head and metrics at this width.
 
-### Table (Important)
-- Header font: 12~13px medium/bold.
-- Body font: 13~14px.
-- Row height: 36~42px.
-- Zebra/hover should be subtle; do not over-saturate rows.
-- Keep numeric columns right-aligned.
+### Rules
 
-### Calendar Event Chips (Important)
-- Minimum readable text: 12px (avoid 10~11px).
-- Max one-line chip if dense; abbreviate as `학교 학년 과목` format.
-- Priority order in same date cell:
-  1. 수학 시험일
-  2. 기타 시험/행사
-- Limit visual variants to 2~3 colors per month view.
+- Keep answer confirmation controls stable in size. Buttons, labels, warnings, and dynamic status copy must not resize the grid enough to shift the workflow.
+- The first line in `#tsAnswersText` is question 1. Any UI that fills the textarea must preserve exactly 20 non-empty newline-separated lines.
 
-### Badge/Pill
-- Rounded pill with 11~12px text.
-- Use muted backgrounds for count/meta; avoid pure saturated backgrounds.
+## 5. Components
 
-## 6) Korean Readability Rules (Do / Don't)
+### Test submit modal
 
-Do:
-- Use `Noto Sans KR` + fallback stack.
-- Keep body line-height >= `1.45`.
-- Keep dense lists/tables at 13px minimum.
-- Prefer concise labels (`학년`, `수학`, `중간`, `기말`).
+- **Structure**: fixed backdrop, centered `.ts-card`, header, test selectors, answer textarea, OCR entry, memo, result panel, actions.
+- **Variants**: normal, OCR-enabled with `?ocr=1`, dark mode via `body.dark`.
+- **Spacing**: `14px` card padding, `10px` grid gap, `8px` compact row gap.
+- **States**: open, closed, OCR eligible, OCR ineligible, result rendered.
+- **Accessibility**: keep close and submit controls as real buttons; preserve `aria-live` status for OCR.
+- **Motion**: none required. Do not add decorative animation.
 
-Don't:
-- Don't use extra-tight letter-spacing for Korean.
-- Don't stack more than 3 visual emphases in one row (color + bold + badge).
-- Don't use too many event colors in monthly calendar.
+### OCR entry
 
-## 7) Mapping to Current Files
-- Global admin token anchor: `static/css/admin.css` (`body.admin` and `body.admin.dark` vars)
-- Legacy/lightweight screens: `static/css/style.css` (`:root`, `body.dark` vars)
-- Calendar behavior/labels: `static/js/admin/features/calendar.js`
-- Test management dense UI: `static/tests.html`, `static/js/tests.js`
+- **Structure**: `.ts-ocr-entry`, `.ts-ocr-notice`, file input, helper copy, `답안 사진 넣기` button, `#tsOcrStatus`, review panel.
+- **Variants**: ready, image selected, loading/progress, success, error, disabled/ineligible.
+- **States**:
+  - Ready copy: `답안지 사진을 선택한 뒤 답안 사진 넣기 버튼을 눌러주세요.`
+  - No-image error: `답안지 사진을 먼저 선택해주세요.`
+  - Progress stages: photo correction, answer-box extraction, recognition preparation, cache/live recognition check, review screen preparation.
+  - Error status uses `data-state="error"`.
+  - Success status uses `data-state="ok"`.
+- **Accessibility**: status remains `aria-live="polite"`; route errors must not use alert-only feedback.
+- **Motion**: route progress is text-based, not spinner-based.
 
-## 8) Rollout Plan (Safe)
-1. Token alignment only
-- Map existing vars to `--ds-*` equivalents (no layout changes).
+### OCR review card
 
-2. Dense readability pass
-- Table font-size/row-height/cell padding normalization.
-- Calendar event chip font and ordering cleanup.
+- **Structure**: question title, mode pill, recognized value, warning/prefill note, candidate buttons or five-choice grid, input/keypad, confirm/reset actions.
+- **Variants**: `choice_number`, `answer_value`, warning-required, candidate-required, unresolved.
+- **States**: default, selected choice, typed answer, confirmed, validation error.
+- **Sizing**: card padding `12px`, internal gap `12px`, choice buttons `48px` minimum height, confirm buttons `40px` minimum height, current-answer input `42px` minimum height.
+- **Accessibility**: choice controls use visible button states; focus ring must remain visible.
+- **Rules**: only confirmation-needed questions appear as cards. Auto-recognized items stay in collapsed summary/details.
 
-3. Component consistency pass
-- Buttons/inputs/cards radius + border + focus style unify.
+### OCR summary and apply action
 
-4. Final polish
-- One accent per page, muted secondaries, reduced visual noise.
+- **Structure**: status count pills, safe-auto-grade details, apply button.
+- **States**: fillable, blocked by review-required item, blocked by retake/data-check item, success.
+- **Rules**: never auto-click submit. Filling answers is separate from final submission.
 
-## 9) Acceptance Checklist
-- [ ] Korean text readable at 100% zoom on 1366px width.
-- [ ] Table rows are scan-friendly and not cramped.
-- [ ] Calendar events readable without color overload.
-- [ ] Light/dark themes keep contrast and focus visibility.
-- [ ] No page-specific one-off styles that break token consistency.
+### Submit result panel
+
+- **Structure**: result heading, score/rate, metric cards, wrong-answer comparison cards, answer-preview actions.
+- **Variants**: no wrong answers, wrong-answer table, answer-link available, answer-link restricted.
+- **States**: hidden, rendered, preview modal open.
+- **Sizing**: wrong-answer comparison cards use `12px` padding and `10px` gaps; answer chips use `44px` minimum height and `17px` heavy text.
+- **Rules**: wrong-answer comparison should show question number, student's answer, and correct answer clearly at readable size. On mobile, prefer card rows over compact tables so answer values remain large and tappable.
+
+### Answer preview modal
+
+- **Structure**: fixed backdrop, preview card, header, iframe, loading/status layer, close button, external link.
+- **States**: closed, open/loading, open/loaded.
+- **Rules**: iframe must not expose local filesystem paths. Google Drive file links use `/preview` inside the iframe, while the external link keeps the original Drive URL. Keep external Drive links as links, not embedded secrets.
+- **Loading state**: show a calm centered status message while the Drive preview iframe initializes, then hide it on iframe `load`. If Drive remains slow, the external-link action stays available.
+
+## 6. Motion & Interaction
+
+### Timing
+
+| Type | Duration | Easing | Usage |
+|---|---:|---|---|
+| Micro | `100ms` to `150ms` | `ease-out` | Future button press feedback only |
+| Standard | `200ms` to `300ms` | `ease-in-out` | Future modal state polish only |
+
+### Rules
+
+- Current modal intentionally uses minimal motion.
+- Do not animate layout properties.
+- Do not add motion unless it communicates loading, selection, confirmation, or disabled state.
+- Respect reduced-motion if future transitions are added.
+
+## 7. Depth & Surface
+
+### Strategy
+
+Depth strategy: mixed, but restrained.
+
+- Modal depth: border plus shadow.
+- Inner OCR/result cards: borders and tonal shifts, not heavy shadows.
+- Status and warning surfaces: token-based tonal backgrounds.
+- Choice buttons: border-first, filled primary only when selected.
+
+### Elevation
+
+| Level | Value | Usage |
+|---|---|---|
+| Modal | `0 12px 32px rgba(0,0,0,.35)` | Test submit modal |
+| Preview modal | `0 20px 48px rgba(0,0,0,.4)` | Full answer preview |
+| Inner panels | border plus `color-mix()` tonal surface | OCR entry and result panel |
+
+### Rules
+
+- Do not nest card-like frames inside multiple additional card shells unless the frame represents a real workflow boundary.
+- Keep OCR warning surfaces visually stronger than neutral help text, but weaker than final submit actions.
+- Any new surface style used more than once must be documented here before code changes.

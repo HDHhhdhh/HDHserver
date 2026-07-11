@@ -307,25 +307,19 @@ export function getSlots(dateStr, sid) {
   const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
   const rawSlots = normalizeSlotValue(raw, dateStr);
   const regularSlots = regularSlotsForStudent(dateStr, sid);
-  const extraIds = new Set([
-    ...((state.extra?.[dateStr] || []).map?.(String) || []),
-    ...((window.extra?.[dateStr] || []).map?.(String) || []),
-  ]);
-  const isExtraAttendance = extraIds.has(String(sid));
 
   let slots = [];
   if (rawSlots.length) {
-    if (isExtraAttendance && regularSlots.length) {
-      slots = Array.from(new Set([...regularSlots, ...rawSlots])).sort((a, b) => a - b);
-    } else {
-      slots = rawSlots;
-    }
+    // Extra/makeup schedulers persist merged slots when they need additive behavior.
+    // Inline "구분" edits must be authoritative so 일1일2 can narrow to 일1
+    // or widen back to 일1일2 even if an old slot-specific absence remains.
+    slots = rawSlots;
   } else {
     slots = regularSlots.length ? regularSlots : [];
   }
 
   const absentSlots = normalizeSlotValue(state.absentSlotsByDate?.[dateStr]?.[String(sid)], dateStr);
-  if (absentSlots.length && !(isExtraAttendance && rawSlots.length)) {
+  if (absentSlots.length && !rawSlots.length) {
     const absentSet = new Set(absentSlots);
     return slots.filter(slot => !absentSet.has(slot));
   }

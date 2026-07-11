@@ -122,7 +122,8 @@ function courseForExport(course) {
 export function formatMakeupDate(dateStr) {
   const date = normDate(dateStr);
   if (!date) return '';
-  const d = new Date(date);
+  const [year, monthNum, dayNum] = date.split('-').map(Number);
+  const d = new Date(year, monthNum - 1, dayNum);
   const month = d.getMonth() + 1;
   const day = d.getDate();
   const yoil = WCHR[d.getDay()] || '';
@@ -136,6 +137,42 @@ function parseSlotNumbers(raw) {
     return matches.map(n => parseInt(n, 10));
   }).filter(n => n === 1 || n === 2 || n === 3);
   return Array.from(new Set(slots)).sort((a, b) => a - b);
+}
+
+function normalizeSchedule(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const originalAbsenceId = String(raw.originalAbsenceId || raw.original_absence_id || '').trim();
+  const studentId = String(raw.studentId || raw.student_id || '').trim();
+  const makeupDate = normDate(raw.makeupDate || raw.makeup_date);
+  const status = String(raw.status || 'scheduled').trim().toLowerCase();
+  if (status !== 'scheduled' || !originalAbsenceId || !studentId || !makeupDate) return null;
+  const makeupTimes = parseSlotNumbers(raw.makeupTimes || raw.makeup_times || raw.slots || raw.slot);
+  const ownedSlots = parseSlotNumbers(raw.ownedSlots || raw.owned_slots);
+  return {
+    originalAbsenceId,
+    studentId,
+    makeupDate,
+    makeupTimes: makeupTimes.length ? makeupTimes : [1],
+    status,
+    createdAt: String(raw.createdAt || raw.created_at || '').trim(),
+    updatedAt: String(raw.updatedAt || raw.updated_at || '').trim(),
+    createdBy: String(raw.createdBy || raw.created_by || '').trim(),
+    ownedExtra: raw.ownedExtra === true || raw.owned_extra === true,
+    ownedSlots,
+  };
+}
+
+export function makeupOriginalAbsenceId(item) {
+  const source = String(item?.source || 'absence').trim() || 'absence';
+  const absenceDate = normDate(item?.absenceDate);
+  const sid = String(item?.sid || '').trim();
+  if (!absenceDate || !sid) return '';
+  if (source === 'manual') {
+    const manualKey = String(item?.manualKey || '').trim();
+    return `manual|${absenceDate}|${manualKey || sid}`;
+  }
+  const slot = item?.dateOnly ? '' : (parseSlotNumbers(item?.slot)[0] || '');
+  return `absence|${absenceDate}|${sid}${slot ? `|${slot}` : ''}`;
 }
 
 function dayValues(stu) {
@@ -276,6 +313,99 @@ function buildManualDemandRows({ studentsBySid, manualMakeups = {} }) {
     }
   }
   return out;
+}
+
+export function buildScheduledMakeupRows({ students = [], carryover = {} } = {}) {
+  const studentsBySid = new Map((students || []).map(stu => [String(stu?.id), stu]));
+  const out = [];
+  const seen = new Set();
+  const byAbsence = carryover?.by_absence && typeof carryover.by_absence === 'object'
+    ? carryover.by_absence
+    : {};
+
+  Object.entries(byAbsence).forEach(([dateRaw, rows]) => {
+    const absenceDate = normDate(dateRaw);
+    if (!absenceDate || !rows || typeof rows !== 'object') return;
+    Object.entries(rows).forEach(([rowKeyRaw, value]) => {
+      const rowKey = String(rowKeyRaw || '').trim();
+      const row = value && typeof value === 'object' ? value : {};
+      const schedule = normalizeSchedule(row.scheduledMakeup || row.scheduled_makeup);
+      if (!rowKey || !schedule) return;
+      const [rowSid, rowSlot] = rowKey.split('|');
+      const sid = String(schedule.studentId || rowSid || '').trim();
+      if (!sid) return;
+      const slot = parseSlotNumbers(rowSlot || schedule.originalAbsenceId.split('|').pop())[0] || '';
+      const stu = studentsBySid.get(sid) || { id: sid, name: sid };
+      const item = {
+        source: 'absence',
+        scheduled: true,
+        carryoverKey: rowKey,
+        sid,
+        absenceDate,
+        slot,
+        dateOnly: !slot,
+        student: stu,
+        name: String(stu?.name || sid).trim(),
+        school: studentSchool(stu),
+        course: studentCourse(stu),
+        originalAbsenceId: schedule.originalAbsenceId,
+        scheduledMakeup: schedule,
+      };
+      const key = makeupOriginalAbsenceId(item);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    });
+  });
+
+  const manual = carryover?.manual && typeof carryover.manual === 'object' ? carryover.manual : {};
+  Object.entries(manual).forEach(([dateRaw, rows]) => {
+    const absenceDate = normDate(dateRaw);
+    if (!absenceDate || !rows || typeof rows !== 'object') return;
+    Object.entries(rows).forEach(([manualKeyRaw, value]) => {
+      const manualKey = String(manualKeyRaw || '').trim();
+      const row = value && typeof value === 'object' ? value : {};
+      const schedule = normalizeSchedule(row.scheduledMakeup || row.scheduled_makeup);
+      const sid = String(schedule?.studentId || row.sid || '').trim();
+      if (!manualKey || !sid || !schedule) return;
+      const stu = studentsBySid.get(sid) || { id: sid, name: sid };
+      const dateOnly = row.dateOnly === true || row.date_only === true || row.slotless === true;
+      const slot = dateOnly ? '' : (parseSlotNumbers(row.slots ?? row.slot)[0] || parseSlotNumbers(schedule.makeupTimes)[0] || 1);
+      const item = {
+        source: 'manual',
+        scheduled: true,
+        manualKey,
+        sid,
+        absenceDate,
+        slot,
+        dateOnly,
+        student: stu,
+        name: String(stu?.name || sid).trim(),
+        school: studentSchool(stu),
+        course: String(row.course || studentCourse(stu) || '').trim(),
+        originalAbsenceId: schedule.originalAbsenceId,
+        scheduledMakeup: schedule,
+      };
+      const key = makeupOriginalAbsenceId(item);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    });
+  });
+
+  return out.sort((a, b) =>
+    String(a.scheduledMakeup?.makeupDate || '').localeCompare(String(b.scheduledMakeup?.makeupDate || '')) ||
+    String(a.absenceDate || '').localeCompare(String(b.absenceDate || '')) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }) ||
+    Number(a.slot || 0) - Number(b.slot || 0)
+  );
+}
+
+export function buildScheduledMakeupCalendarSummary(rows) {
+  const scheduledRows = Array.isArray(rows) ? rows : [];
+  const previewRows = scheduledRows.slice(0, 2);
+  const total = scheduledRows.length;
+  return { previewRows, total, remaining: total - previewRows.length };
 }
 
 function scheduledSupplyCounts({ studentsBySid, extra = {}, weekendSlots = {} }) {

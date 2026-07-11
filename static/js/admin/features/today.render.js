@@ -10,6 +10,7 @@
 import { $, toast } from '../core/utils.js';
 import { getAdminDate, getRealToday } from '../core/adminDate.js';
 import { state } from '../core/state.js';
+import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';
 
 import {
   yoilOf,
@@ -986,7 +987,6 @@ function _bindDoneWrapInlineEditOnce() {
     try {
       await saveWeekendSlotsFromLabel(sid, cleaned, date);
     } catch (e) {
-      console.error(e);
       el.textContent = prevOrig;
       el.dataset.orig = prevOrig;
       try { toast('주말 슬롯 저장 실패'); } catch {}
@@ -1130,6 +1130,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
     <td class="done-action-cell">
       <div class="today-actions">
       <button class="openStudentPopups" title="상담 기록">🧾</button>
+      <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sid)}" title="테스트 기록 보기">기록</button>
       <button class="markAbsent" title="결석">🚫</button>
       <button class="markLeave" title="하원">🏠</button>
       <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
@@ -1267,6 +1268,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
         <td class="today-action-cell">
           <div class="today-actions">
           <button class="openStudentPopups" title="상담 기록">🧾</button>
+          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(s.id)}" data-test-result-name="${escapeAttr(s.name || s.id)}" title="테스트 기록 보기">기록</button>
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
           </div>
@@ -1311,6 +1313,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
 
   if (cnt) cnt.textContent = String(list.filter(s => !isSelfStudy(dateKey, s.id)).length);
 
+  decorateStudentTestRecordButtons(host).catch(console.warn);
   requestAnimationFrame(() => attachSortable(dateKey, alphaSortOnly));
 }
 
@@ -1362,6 +1365,7 @@ export function renderDone(doneEntries) {
         <td class="done-action-cell">
           <div class="today-actions">
           <button class="openStudentPopups" title="상담 기록">🧾</button>
+          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sid)}" data-test-result-name="${escapeAttr(name || sid)}" title="테스트 기록 보기">기록</button>
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
           <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
@@ -1395,6 +1399,7 @@ export function renderDone(doneEntries) {
   `;
 
   _bindDoneWrapInlineEditOnce();
+  decorateStudentTestRecordButtons(wrap).catch(console.warn);
 }
 
 // --- todayWrap event delegation ---
@@ -1454,7 +1459,6 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     try {
       await saveWeekendSlotsFromLabel(sid, cleaned, dateKey);
     } catch (e) {
-      console.error(e);
       el.textContent = prevOrig;
       el.dataset.orig = prevOrig;
       try { toast('주말 슬롯 저장 실패'); } catch {}

@@ -19,6 +19,7 @@ import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
 import { initAdminChatbot } from './features/adminChatbot.js';
+import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 
 
 // 1) 공통 초기화
@@ -52,6 +53,7 @@ initTimeGraph();
 initAdminDateBar({ mountId: 'adminDateMount' });
 initAdminUiEnhance();
 initAdminChatbot();
+initStudentTestRecordDetails(document);
 
 
 // 4) 최초 렌더 + 이벤트로 재렌더

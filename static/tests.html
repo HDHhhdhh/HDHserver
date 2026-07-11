@@ -1054,6 +1054,326 @@
       color: var(--fg);
     }
 
+    body.admin.tests-page .detail-answer-link-row {
+      display: flex;
+      justify-content: flex-end;
+      padding: 10px 16px 0;
+    }
+
+    body.admin.tests-page .detail-answer-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      text-decoration: none;
+    }
+
+    body.admin.tests-page .score-with-wrong {
+      display: grid;
+      gap: 6px;
+      justify-items: center;
+      line-height: 1.2;
+    }
+
+    body.admin.tests-page .score-with-wrong strong {
+      font-size: 15px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .score-with-wrong span {
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .wrong-detail-list {
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      font-size: 14px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .wrong-detail-list summary {
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 6px 10px;
+      border: 1px solid color-mix(in oklab, var(--accent) 42%, var(--line) 58%);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--accent) 9%, var(--card) 91%);
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 900;
+      line-height: 1.25;
+      word-break: keep-all;
+    }
+
+    body.admin.tests-page .wrong-detail-list ul {
+      display: grid;
+      gap: 8px;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    body.admin.tests-page .wrong-detail-list li {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      overflow-wrap: anywhere;
+    }
+
+    body.admin.tests-page .wrong-detail-no {
+      color: var(--fg);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    body.admin.tests-page .wrong-detail-answer {
+      min-height: 44px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-content: center;
+      align-items: center;
+      gap: 2px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      font-style: normal;
+      color: var(--fg);
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .wrong-detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    body.admin.tests-page .wrong-detail-answer strong {
+      color: var(--fg);
+      font-size: 15px;
+      line-height: 1.2;
+    }
+
+    body.admin.tests-page .wrong-detail-correct strong {
+      color: var(--accent);
+    }
+
+    body.admin.tests-page .wrong-detail-empty {
+      width: 100%;
+      margin: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    @media (max-width: 640px) {
+      body.admin.tests-page .stats-detail-modal {
+        padding: 12px;
+      }
+
+      body.admin.tests-page .stats-detail-dialog {
+        width: calc(100vw - 24px);
+        max-height: calc(100vh - 24px);
+      }
+
+      body.admin.tests-page .stats-detail-modal-body {
+        padding: 12px;
+      }
+
+      body.admin.tests-page .detail-metrics {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      body.admin.tests-page .panel-table-wrap {
+        padding: 12px 8px;
+        overflow: hidden;
+      }
+
+      body.admin.tests-page .detail-answer-link-row {
+        justify-content: stretch;
+      }
+
+      body.admin.tests-page .detail-answer-link {
+        width: 100%;
+      }
+
+      body.admin.tests-page .detail-student-table,
+      body.admin.tests-page .detail-student-table thead,
+      body.admin.tests-page .detail-student-table tbody,
+      body.admin.tests-page .detail-student-table tr,
+      body.admin.tests-page .detail-student-table td {
+        display: block;
+        width: 100%;
+      }
+
+      body.admin.tests-page .detail-student-table {
+        min-width: 0;
+        border-spacing: 0;
+      }
+
+      body.admin.tests-page .detail-student-table thead {
+        display: none;
+      }
+
+      body.admin.tests-page .detail-student-table tr {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      body.admin.tests-page .detail-student-table tr:last-child {
+        border-bottom: 0;
+      }
+
+      body.admin.tests-page .detail-student-table td {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        padding: 7px 0;
+        border-bottom: 0;
+        text-align: left !important;
+      }
+
+      body.admin.tests-page .detail-student-table td > * {
+        min-width: 0;
+      }
+
+      body.admin.tests-page .detail-student-table td::before {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(1)::before {
+        content: "학생";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(2)::before {
+        content: "레벨";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(3)::before {
+        content: "점수";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(4)::before {
+        content: "채점 결과";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(5)::before {
+        content: "응시일";
+      }
+
+      body.admin.tests-page .score-with-wrong {
+        justify-items: stretch;
+      }
+
+      body.admin.tests-page .wrong-detail-list li {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    body.admin.tests-page .detail-student-table {
+      min-width: 0;
+      table-layout: fixed;
+    }
+
+    body.admin.tests-page .detail-student-table th,
+    body.admin.tests-page .detail-student-table td {
+      padding-left: 8px;
+      padding-right: 8px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      vertical-align: middle;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(1),
+    body.admin.tests-page .detail-student-table td:nth-child(1) {
+      width: 18%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(2),
+    body.admin.tests-page .detail-student-table td:nth-child(2) {
+      width: 9%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(3),
+    body.admin.tests-page .detail-student-table td:nth-child(3) {
+      width: 12%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(4),
+    body.admin.tests-page .detail-student-table td:nth-child(4) {
+      width: 45%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(5),
+    body.admin.tests-page .detail-student-table td:nth-child(5) {
+      width: 16%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(1) {
+      width: 22%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(2) {
+      width: 15%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(3) {
+      width: 16%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(4) {
+      width: 31%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(5) {
+      width: 16%;
+    }
+
+    @media (max-width: 640px) {
+      body.admin.tests-page .detail-student-table th,
+      body.admin.tests-page .detail-student-table td,
+      body.admin.tests-page .detail-student-table th:nth-child(1),
+      body.admin.tests-page .detail-student-table th:nth-child(2),
+      body.admin.tests-page .detail-student-table th:nth-child(3),
+      body.admin.tests-page .detail-student-table th:nth-child(4),
+      body.admin.tests-page .detail-student-table th:nth-child(5),
+      body.admin.tests-page .detail-student-table td:nth-child(1),
+      body.admin.tests-page .detail-student-table td:nth-child(2),
+      body.admin.tests-page .detail-student-table td:nth-child(3),
+      body.admin.tests-page .detail-student-table td:nth-child(4),
+      body.admin.tests-page .detail-student-table td:nth-child(5) {
+        width: 100%;
+        word-break: keep-all;
+      }
+    }
+
     body.admin.tests-page .empty-cell {
       text-align: center !important;
       color: var(--muted);
@@ -1112,6 +1432,10 @@
 
       body.admin.tests-page .stats-table {
         min-width: 760px;
+      }
+
+      body.admin.tests-page .detail-student-table {
+        min-width: 0;
       }
     }
   </style></head>

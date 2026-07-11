@@ -40,8 +40,8 @@ function makeContext(state) {
   return context;
 }
 
-function labelsFor(state, date, sid = 's1') {
-  return makeContext(state).rosterAssignedTests(date, sid).map(item => item.label).sort();
+function labelsFor(state, date, sid = 's1', student = null) {
+  return makeContext(state).rosterAssignedTests(date, sid, student).map(item => item.label).sort();
 }
 
 function videoTextFor(state, date, sid = 's1') {
@@ -86,6 +86,35 @@ const schoolCarry = 'SCHOOL / ALG / mid / final / 1 / old school';
 const unitNew = 'UNIT / ALG / Lv.6 / 1 / new unit';
 const schoolHighNew = 'SCHOOL / ALG / high / final / 1 / new school high';
 const schoolMidNew = 'SCHOOL / ALG / mid / final / 2 / new school mid';
+
+assertEqual(
+  'previous-curriculum assignments stay stored but are excluded from the roster export',
+  labelsFor({
+    logs: {
+      '2026-06-03': {
+        s1: {
+          testAssignmentDailyTests: [
+            { label: 'UNIT / ALG-current / Lv.6 / 1 / current unit', status: 'assigned', categoryKey: 'UNIT', curriculum: 'ALG-current' },
+            { label: 'UNIT / ALG-previous / Lv.6 / 1 / previous unit', status: 'assigned', categoryKey: 'UNIT', curriculum: 'ALG-previous' },
+          ],
+        },
+      },
+    },
+    progress: {
+      '2026-06-03': {
+        s1: {
+          tests: {
+            'UNIT / ALG-current / Lv.6 / 1 / current unit': 'assigned',
+            'UNIT / ALG-previous / Lv.6 / 1 / previous unit': 'assigned',
+          },
+        },
+      },
+    },
+    videos: [],
+    updates: {},
+  }, '2026-06-03', 's1', { id: 's1', curriculum: 'ALG-current' }),
+  ['UNIT / ALG-current / Lv.6 / 1 / current unit'],
+);
 
 assertEqual(
   'daily slice plus active progress tests are exported',

@@ -12,12 +12,14 @@ const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
 const CATEGORY_DEFS = [
   { key: 'REVIEW', label: '복습 테스트', difficulties: ['상', '중상'] },
   { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
+  { key: 'TRAINING_PACK', label: '트레이닝팩', difficulties: ['트팩'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
   { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
 ];
 const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
 const STATS_TYPE_LABELS = {
   REVIEW: '복테',
+  TRAINING_PACK: '트팩',
   SCHOOL_PAST: '학군지',
   ILSAN_PAST: '일산',
 };
@@ -30,6 +32,7 @@ const DEFAULT_RULES = {
   SCHOOL_PAST: defaultTwoBandRules(),
   ILSAN_PAST: defaultIlsanRules(),
   UNIT: defaultUnitRules(),
+  TRAINING_PACK: defaultTrainingPackRules(),
 };
 
 let TEST_CFG = { categories: {} };
@@ -53,7 +56,7 @@ const ui = {
 };
 
 function isUnitCategory(categoryKey) {
-  return String(categoryKey || '') === 'UNIT';
+  return ['UNIT', 'TRAINING_PACK'].includes(String(categoryKey || ''));
 }
 
 function isPastCategory(categoryKey) {
@@ -109,6 +112,16 @@ function defaultUnitRules() {
   return out;
 }
 
+function defaultTrainingPackRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      '트팩': STUDENT_LEVELS.slice(),
+    };
+  });
+  return out;
+}
+
 async function fetchJSONSafe(url, init = {}) {
   const res = await fetch(url, { cache: 'no-store', ...init });
   const body = await res.text();
@@ -159,6 +172,7 @@ function categoryKeyFrom(rawKey, label = '') {
   const raw = `${rawKey || ''} ${label || ''}`.toUpperCase();
   const ko = `${rawKey || ''} ${label || ''}`.replace(/\s+/g, '');
   if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
+  if (raw.includes('TRAINING') || ko.includes('트레이닝팩') || ko.includes('트팩')) return 'TRAINING_PACK';
   if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
   if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
   if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
@@ -208,6 +222,9 @@ function editCategoryValue() {
 }
 
 function roundHelpText(categoryKey) {
+  if (String(categoryKey || '') === 'TRAINING_PACK') {
+    return '트레이닝팩은 같은 단원 안의 세트 번호를 1회차, 2회차로 구분합니다.';
+  }
   return isUnitCategory(categoryKey)
     ? '단원평가는 같은 이름의 시험을 다른 문제로 반복하는 세트 번호입니다.'
     : '복습테스트와 기출은 학생이 순서대로 보게 되는 시험 목록 순번입니다.';
@@ -792,6 +809,7 @@ function downloadCsvTemplate() {
     ['분류', '과목', '난이도', '고사', '회차', '시험명', '문항수', '정답', '1회차정답', '2회차정답', '3회차정답'],
     ['복습 테스트', '대수', '상', '', '1', '대수 복습 상 1회차', '20', '1 2 3 4', '', '', ''],
     ['단원평가', '공수1', 'Lv.4', '', '1', '원의 방정식 Lv.4', '20', '', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
+    ['트레이닝팩', '미적분1', '트팩', '', '1', '함수의 극한1', '20', '', '1,2,3,4', '1,2,3,4', ''],
     ['학군지 기출', '공수1', '상', '중간고사', '1', '학군지 기출 공수1 중간고사 상 1회차', '20', '1 2 3 4', '', '', ''],
     ['일산 기출', '대수', '중', '기말고사', '1', '일산 기출 대수 기말고사 중 1회차', '20', '1 2 3 4', '', '', ''],
     ['일산 기출', '대수', ILSAN_GRAPH_DIFFICULTY, '기말고사', '2', '그래프 포함 일산 기출 대수 기말고사 2회차', '20', '1 2 3 4', '', '', ''],
@@ -926,8 +944,12 @@ function rowObject(headers, cells) {
   return out;
 }
 
+function csvAnswerRounds(row) {
+  return ['1', '2', '3'].filter(round => String(row[`answers${round}`] || '').trim());
+}
+
 function hasRoundAnswerColumns(row) {
-  return ['1', '2', '3'].some(round => String(row[`answers${round}`] || '').trim());
+  return csvAnswerRounds(row).length > 0;
 }
 
 function answerKeyFromCsvRow(row, round, problems) {
@@ -1017,7 +1039,8 @@ async function importTestsFromCsv(file) {
     const baseId = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
     const orderRaw = Number(row.sourceOrder || sourceOrder);
     const rowOrder = Number.isFinite(orderRaw) ? orderRaw : sourceOrder;
-    const rounds = categoryKey === 'UNIT' && hasRoundAnswerColumns(row) ? ['1', '2', '3'] : [csvRound];
+    const csvRounds = isUnitCategory(categoryKey) && hasRoundAnswerColumns(row) ? csvAnswerRounds(row) : [];
+    const rounds = csvRounds.length ? csvRounds : [csvRound];
 
     const cat = TEST_CFG.categories[categoryKey] = TEST_CFG.categories[categoryKey] || { label: def.label, tests: [] };
     if (!Array.isArray(cat.tests)) cat.tests = [];
@@ -1296,6 +1319,45 @@ function detailMetric(label, value) {
   `;
 }
 
+function wrongListText(wrong) {
+  if (!Array.isArray(wrong) || !wrong.length) return '틀린 문항 없음';
+  const numbers = wrong.map(value => String(value).trim()).filter(Boolean).join(', ');
+  return numbers ? `틀린 문항 ${numbers}` : '틀린 문항 없음';
+}
+
+function wrongDetailListHtml(details, wrong = []) {
+  const rows = Array.isArray(details) ? details.filter(row => row && typeof row === 'object') : [];
+  const wrongNumbers = Array.isArray(wrong) ? wrong.map(value => String(value).trim()).filter(Boolean) : [];
+  if (!rows.length && wrongNumbers.length) {
+    return '<p class="wrong-detail-empty">이전 제출 기록이라 내 답 비교가 없습니다.</p>';
+  }
+  if (!rows.length) return '';
+  const items = rows.map(row => {
+    const no = String(row.questionNo ?? row.question_no ?? '').trim();
+    const mine = String(row.myAnswer ?? row.my_answer ?? '').trim() || '-';
+    const correct = String(row.correctAnswer ?? row.correct_answer ?? '').trim() || '-';
+    return `
+      <li>
+        <span class="wrong-detail-no">${escapeHtml(no ? `${no}번` : '-')}</span>
+        <b class="wrong-detail-answer wrong-detail-mine">
+          <span class="wrong-detail-label">내 답</span>
+          <strong>${escapeHtml(mine)}</strong>
+        </b>
+        <em class="wrong-detail-answer wrong-detail-correct">
+          <span class="wrong-detail-label">정답</span>
+          <strong>${escapeHtml(correct)}</strong>
+        </em>
+      </li>
+    `;
+  }).join('');
+  return `
+    <details class="wrong-detail-list">
+      <summary>틀린 문항 내 답/정답 비교</summary>
+      <ul>${items}</ul>
+    </details>
+  `;
+}
+
 function statsDetailHost() {
   return $('#statsDetailModalBody') || $('#statsDetail');
 }
@@ -1356,12 +1418,20 @@ function renderStatsDetail(test = null, fetchDetail = false) {
   }
 
   const records = Array.isArray(TEST_STATS_DETAIL?.records) ? TEST_STATS_DETAIL.records : [];
+  const detailAnswerUrl = String(TEST_STATS_DETAIL?.answerUrl || '').trim();
+  const answerLink = detailAnswerUrl ? { url: detailAnswerUrl, label: '전체 답지 보기' } : null;
   const studentRows = records.map(rec => `
     <tr>
       <td style="text-align:left;">${escapeHtml(rec.studentName || rec.sid || '-')}</td>
       <td>${escapeHtml(rec.level || '-')}</td>
       <td>${escapeHtml(fmtPct(rec.pct))}</td>
-      <td>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</td>
+      <td>
+        <div class="score-with-wrong">
+          <strong>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</strong>
+          <span>${escapeHtml(wrongListText(rec.wrong))}</span>
+          ${wrongDetailListHtml(rec.wrongDetails, rec.wrong)}
+        </div>
+      </td>
       <td style="text-align:left;">${escapeHtml((rec.createdAt || '').slice(0, 10) || '-')}</td>
     </tr>
   `).join('');
@@ -1382,6 +1452,13 @@ function renderStatsDetail(test = null, fetchDetail = false) {
         ${detailMetric('최대', fmtPct(stat.max_pct))}
         ${detailMetric('최소', fmtPct(stat.min_pct))}
       </div>
+      ${answerLink ? `
+        <div class="detail-answer-link-row">
+          <a class="detail-answer-link" href="${escapeAttr(answerLink.url)}" target="_blank" rel="noopener noreferrer">
+            ${escapeHtml(answerLink.label || '답지 보기')}
+          </a>
+        </div>
+      ` : ''}
       <div class="panel-table-wrap">
         <table class="stats-table detail-student-table">
           <thead>
@@ -1389,7 +1466,7 @@ function renderStatsDetail(test = null, fetchDetail = false) {
               <th>학생</th>
               <th>레벨</th>
               <th>점수</th>
-              <th>정답</th>
+              <th>채점 결과</th>
               <th>응시일</th>
             </tr>
           </thead>

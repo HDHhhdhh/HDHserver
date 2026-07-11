@@ -30,6 +30,33 @@ TRUSTED_PROXY_NETWORKS: Final[tuple[IPNetwork, ...]] = (
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
 )
+CLOUDFLARE_PROXY_NETWORKS: Final[tuple[IPNetwork, ...]] = (
+    # Cloudflare publishes these canonical proxy ranges at
+    # https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6.
+    ipaddress.ip_network("173.245.48.0/20"),
+    ipaddress.ip_network("103.21.244.0/22"),
+    ipaddress.ip_network("103.22.200.0/22"),
+    ipaddress.ip_network("103.31.4.0/22"),
+    ipaddress.ip_network("141.101.64.0/18"),
+    ipaddress.ip_network("108.162.192.0/18"),
+    ipaddress.ip_network("190.93.240.0/20"),
+    ipaddress.ip_network("188.114.96.0/20"),
+    ipaddress.ip_network("197.234.240.0/22"),
+    ipaddress.ip_network("198.41.128.0/17"),
+    ipaddress.ip_network("162.158.0.0/15"),
+    ipaddress.ip_network("104.16.0.0/13"),
+    ipaddress.ip_network("104.24.0.0/14"),
+    ipaddress.ip_network("172.64.0.0/13"),
+    ipaddress.ip_network("131.0.72.0/22"),
+    ipaddress.ip_network("2400:cb00::/32"),
+    ipaddress.ip_network("2606:4700::/32"),
+    ipaddress.ip_network("2803:f800::/32"),
+    ipaddress.ip_network("2405:b500::/32"),
+    ipaddress.ip_network("2405:8100::/32"),
+    ipaddress.ip_network("2a06:98c0::/29"),
+    ipaddress.ip_network("2c0f:f248::/32"),
+)
+CLOUDFLARE_PSEUDO_IPV4_NETWORK: Final = ipaddress.ip_network("240.0.0.0/4")
 
 ANSWER_LINK_FIELD_NAMES = frozenset(
     {
@@ -90,9 +117,16 @@ IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 def _parse_ip(value: str) -> IPAddress | None:
     try:
-        return ipaddress.ip_address(clean_client_ip(value))
+        ip = ipaddress.ip_address(clean_client_ip(value))
     except ValueError:
         return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    return ip
+
+
+def _is_cloudflare_pseudo_ipv4(ip: IPAddress) -> bool:
+    return isinstance(ip, ipaddress.IPv4Address) and ip in CLOUDFLARE_PSEUDO_IPV4_NETWORK
 
 
 def _configured_trusted_proxy_networks() -> tuple[IPNetwork, ...]:
@@ -110,7 +144,7 @@ def _configured_trusted_proxy_networks() -> tuple[IPNetwork, ...]:
 
 
 def trusted_proxy_networks() -> tuple[IPNetwork, ...]:
-    return TRUSTED_PROXY_NETWORKS + _configured_trusted_proxy_networks()
+    return TRUSTED_PROXY_NETWORKS + CLOUDFLARE_PROXY_NETWORKS + _configured_trusted_proxy_networks()
 
 
 def client_ip_from_request(req: RequestLike | None = None) -> str:
@@ -119,23 +153,27 @@ def client_ip_from_request(req: RequestLike | None = None) -> str:
     trust_addr = _proxy_fix_original_remote_addr(req) or remote_addr
     remote_ip = _parse_ip(trust_addr)
     if remote_ip is None or not any(remote_ip in net for net in trusted_proxy_networks()):
-        return remote_addr
+        return str(remote_ip) if remote_ip is not None else remote_addr
 
     cf_connecting_ip = clean_client_ip(req.headers.get("CF-Connecting-IP") or "")
-    if _parse_ip(cf_connecting_ip) is not None:
-        return cf_connecting_ip
+    parsed_cf_connecting_ip = _parse_ip(cf_connecting_ip)
+    if parsed_cf_connecting_ip is not None:
+        if _is_cloudflare_pseudo_ipv4(parsed_cf_connecting_ip):
+            cf_connecting_ipv6 = _parse_ip(req.headers.get("CF-Connecting-IPv6") or "")
+            if isinstance(cf_connecting_ipv6, ipaddress.IPv6Address):
+                return str(cf_connecting_ipv6)
+        return str(parsed_cf_connecting_ip)
 
     forwarded_for = req.headers.get("X-Forwarded-For") or ""
     if forwarded_for.strip():
-        for candidate in forwarded_for.split(","):
-            client_ip = clean_client_ip(candidate)
-            if _parse_ip(client_ip) is not None:
-                return client_ip
-        return remote_addr
+        first_candidate = clean_client_ip(forwarded_for.split(",", 1)[0])
+        parsed_forwarded_for = _parse_ip(first_candidate)
+        return str(parsed_forwarded_for) if parsed_forwarded_for is not None else remote_addr
 
     real_ip = clean_client_ip(req.headers.get("X-Real-IP") or "")
-    if _parse_ip(real_ip) is not None:
-        return real_ip
+    parsed_real_ip = _parse_ip(real_ip)
+    if parsed_real_ip is not None:
+        return str(parsed_real_ip)
 
     return remote_addr
 

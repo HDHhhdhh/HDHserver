@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from statistics import median, pstdev
 import datetime as dt
 import re
 import time
-from typing import Tuple
+from typing import Final, Tuple, TypedDict
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -15,14 +16,94 @@ from core.ghost_student import (
 )
 from core.network_access import academy_network_allowed, strip_tests_config_answer_links
 from core.paths import (
-    LOGS_PATH, TESTS_PATH, STU_PATH,
+    LOGS_PATH, TESTS_PATH, STU_PATH, PRG_PATH,
     TESTS_CFG_PATH
 )
-from core.storage import load, save_atomic, nocache_resp, utc_now_isoz
+from core.storage import load, save_atomic, nocache_resp, utc_now_isoz, file_lock
 
 bp_api_tests = Blueprint("api_tests", __name__)
-TEST_TYPE_ORDER = ("REVIEW", "UNIT", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
+TEST_TYPE_ORDER = ("REVIEW", "UNIT", "TRAINING_PACK", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
+TEST_ASSIGNMENT_TYPE_LABELS = {
+    "REVIEW": "복습 테스트",
+    "UNIT": "단원평가",
+    "TRAINING_PACK": "트레이닝팩",
+    "SCHOOL_PAST": "학군지 기출",
+    "ILSAN_PAST": "일산 기출",
+    "FINAL": "파이널",
+    "HELL": "HELL",
+}
+TEST_ASSIGNMENT_ACTIVE_STATUSES = {"assigned", "interrupted"}
 OCR_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+OCR_PHASE2A_REVIEW_ROUTE_ENABLED_ENV = "OCR_PHASE2_REVIEW_ROUTE_ENABLED"
+OCR_PHASE2A_TRUTHY_VALUES = {"1", "true", "yes", "on"}
+OCR_PHASE2A_REVIEW_TEST_ID = "t_unit_daesu_01_lv3_r1"
+OCR_PHASE2A_REVIEW_ROUND = 1
+OCR_PHASE2A_REVIEW_ALLOWED_TESTS: Final[dict[str, int]] = {
+    OCR_PHASE2A_REVIEW_TEST_ID: OCR_PHASE2A_REVIEW_ROUND,
+    "t_unit_daesu_02_lv3_r1": 1,
+}
+OCR_PHASE2A_UNIT_REVIEW_ROUNDS: Final[frozenset[int]] = frozenset((1, 2, 3))
+OCR_PHASE2B_IMAGE_FIELD = "image"
+OCR_PHASE2B_ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+OCR_PHASE2B_ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+OCR_PHASE2A_MOCK_ANSWERS = (
+    "1", "-3", "x=n", "0.5", "2",
+    "ㄴ,ㄹ", "5", "2x+1", "4", "6",
+    "256", "a/2", "5", "1", "-1<x<5",
+    "y=n", "2", "139/2", "x±2=4", "26sqrt(21)",
+)
+OCR_PHASE2A_REVIEW_CANDIDATES = {
+    3: ("x=2", "3", "x=n", "x=?"),
+    10: ("0", "6", "?"),
+    18: ("129/2", "139/2", "?"),
+    19: ("x+2=4", "3", "x±2=4", "x-2=4"),
+}
+OCR_STUDENT_FORBIDDEN_KEYS = {
+    "expected",
+    "canonical_answer",
+    "accepted_answers",
+    "correct",
+    "incorrect",
+    "score",
+    "wrong",
+    "pct",
+}
+OCR_STUDENT_FORBIDDEN_VALUE_TOKENS = (
+    "C:\\",
+    "C:/",
+    "server-ocr",
+    "phase2c_route_uploads",
+    "crop_benchmark_inputs",
+)
+OCR_REVIEW_META_TEXT_FIELDS = (
+    "photo_correction",
+    "answer_box_extraction",
+    "answer_box_source",
+    "provider_input",
+    "cache_status",
+    "cache_source",
+    "provider_status",
+)
+OCR_REVIEW_META_INT_FIELDS = (
+    "crop_count",
+    "contact_sheet_count",
+    "provider_call_count",
+)
+OCR_REVIEW_META_TEXT_MAX_LENGTH: Final = 80
+INTERNAL_TEST_RECORD_FIELDS: Final[frozenset[str]] = frozenset({"submittedAnswers", "answersText", "wrongDetails"})
+SUBMIT_OFFSET_GUARD_MIN_PROBLEMS: Final = 10
+SUBMIT_OFFSET_GUARD_MIN_SHIFTED_RATIO: Final = 0.6
+SUBMIT_OFFSET_GUARD_MIN_DELTA: Final = 5
+SUBMIT_PROGRESS_STATUS_SKIP_MODES: Final = {"skip", "none", "disabled"}
+SUBMIT_PROGRESS_STATUS_MARK_DONE_MODES: Final = {"mark_done", "submit_complete"}
+SUBMIT_PROGRESS_STATUS_AUTHORIZED_VALUES: Final = {"true", "1", "yes", "authorized"}
+SUBMIT_PROGRESS_STATUS_OCR_SOURCES: Final = {"ocr_review", "ocr-review", "ocr"}
+
+
+class WrongAnswerDetail(TypedDict):
+    questionNo: int
+    myAnswer: str
+    correctAnswer: str
 
 TEST_LEVEL_RE = re.compile(r"""
   (?:\(|\[)?\s*
@@ -97,6 +178,8 @@ def _normalize_test_type(raw: str) -> str:
     compact = re.sub(r"\s+", "", s)
     if "REVIEW" in up or "복습" in compact:
         return "REVIEW"
+    if "TRAINING" in up or "트레이닝팩" in compact or "트팩" in compact:
+        return "TRAINING_PACK"
     if "SCHOOL" in up or "학군지" in compact:
         return "SCHOOL_PAST"
     if "ILSAN" in up or "일산" in compact:
@@ -198,6 +281,254 @@ def _resolve_test_meta(raw_name: str, test_id: str, catalog: dict) -> dict:
         base["type"] = "UNIT"
     return base
 
+
+def _test_assignment_category_label(raw_type: str) -> str:
+    type_key = _normalize_test_type(raw_type)
+    return TEST_ASSIGNMENT_TYPE_LABELS.get(type_key, str(raw_type or "").strip())
+
+
+def _test_assignment_round_label(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw if "회" in raw else f"{raw}회차"
+
+
+def _test_assignment_status_name(value) -> str:
+    raw = value.get("status") if isinstance(value, dict) else value
+    status = str(raw or "").strip().lower()
+    if status in {"assigned", "done", "interrupted", "skip"}:
+        return status
+    return "assigned" if status else ""
+
+
+def _test_assignment_is_active(value) -> bool:
+    return _test_assignment_status_name(value) in TEST_ASSIGNMENT_ACTIVE_STATUSES
+
+
+def _test_assignment_done_value(value):
+    if isinstance(value, dict):
+        updated = dict(value)
+        updated["status"] = "done"
+        return updated
+    return "done"
+
+
+def _assignment_label_from_parts(parts) -> str:
+    return " / ".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _submitted_assignment_label_candidates(record: dict, meta_snapshot: dict) -> set[str]:
+    candidates: set[str] = set()
+    names = [
+        record.get("name"),
+        record.get("testName"),
+        meta_snapshot.get("test_name") if isinstance(meta_snapshot, dict) else "",
+        meta_snapshot.get("unit_name") if isinstance(meta_snapshot, dict) else "",
+    ]
+    clean_names: list[str] = []
+    for raw_name in names:
+        name = str(raw_name or "").strip()
+        canon = _canon_test_name(name)
+        for candidate in (name, canon):
+            if candidate and candidate not in candidates:
+                candidates.add(candidate)
+                clean_names.append(candidate)
+
+    primary_name = clean_names[0] if clean_names else ""
+    category = _test_assignment_category_label(meta_snapshot.get("type") if isinstance(meta_snapshot, dict) else "")
+    curriculum = str(meta_snapshot.get("curriculum") or "").strip() if isinstance(meta_snapshot, dict) else ""
+    difficulty = str(meta_snapshot.get("difficulty") or "").strip() if isinstance(meta_snapshot, dict) else ""
+    term = _normalize_test_term(meta_snapshot.get("term") or "") if isinstance(meta_snapshot, dict) else ""
+    round_label = _test_assignment_round_label(meta_snapshot.get("round") if isinstance(meta_snapshot, dict) else "")
+
+    for parts in (
+        (category, curriculum, difficulty, round_label, primary_name),
+        (category, curriculum, difficulty, term, round_label, primary_name),
+    ):
+        label = _assignment_label_from_parts(parts)
+        if label:
+            candidates.add(label)
+    return candidates
+
+
+def _assignment_status_matches_submitted_id(value, test_id: str, source_id: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    test_id = str(test_id or "").strip()
+    source_id = str(source_id or "").strip()
+    explicit_ids = [
+        str(value.get(key) or "").strip()
+        for key in ("id", "testId", "test_id")
+    ]
+    explicit_ids = [current for current in explicit_ids if current]
+    if test_id and test_id in explicit_ids:
+        return True
+    if test_id and explicit_ids:
+        return False
+
+    for key in ("sourceId", "source_id"):
+        current = str(value.get(key) or "").strip()
+        if current and source_id and current == source_id:
+            return True
+    return False
+
+
+def _last_assignment_label_part(label: str) -> str:
+    return str(label or "").split(" / ")[-1].strip()
+
+
+def _matching_submitted_assignment_labels(tests: dict, record: dict, meta_snapshot: dict) -> list[str]:
+    candidates = _submitted_assignment_label_candidates(record, meta_snapshot)
+    submitted_names = {_canon_test_name(name) for name in candidates if _canon_test_name(name)}
+    test_id = str(record.get("testId") or "").strip()
+    source_id = str(record.get("sourceId") or "").strip()
+    exact_matches: list[str] = []
+    active_name_matches: list[str] = []
+
+    for label, status_value in tests.items():
+        if not _test_assignment_is_active(status_value):
+            continue
+        label_text = str(label or "").strip()
+        if label_text in candidates or _assignment_status_matches_submitted_id(status_value, test_id, source_id):
+            exact_matches.append(label)
+            continue
+        last_part = _last_assignment_label_part(label_text)
+        if _canon_test_name(last_part) in submitted_names:
+            active_name_matches.append(label)
+
+    if exact_matches:
+        return exact_matches
+    if len(active_name_matches) == 1:
+        return active_name_matches
+    return []
+
+
+def _mark_submitted_assignment_done(date: str, sid: str, record: dict, meta_snapshot: dict) -> bool:
+    date_key = str(date or "").strip()
+    sid_key = str(sid or "").strip()
+    if not date_key or not sid_key:
+        return False
+
+    with file_lock(PRG_PATH):
+        progress = load(PRG_PATH)
+        if not isinstance(progress, dict):
+            return False
+        day = progress.get(date_key)
+        if not isinstance(day, dict):
+            return False
+        entry_key = sid_key if sid_key in day else str(sid_key)
+        entry = day.get(entry_key)
+        if not isinstance(entry, dict):
+            return False
+        tests = entry.get("tests")
+        if not isinstance(tests, dict) or not tests:
+            return False
+
+        matches = _matching_submitted_assignment_labels(tests, record, meta_snapshot)
+        if not matches:
+            return False
+
+        updated_tests = dict(tests)
+        for label in matches:
+            updated_tests[label] = _test_assignment_done_value(updated_tests.get(label))
+        entry = dict(entry)
+        entry["tests"] = updated_tests
+        day = dict(day)
+        day[entry_key] = entry
+        progress[date_key] = day
+        save_atomic(PRG_PATH, progress)
+        return True
+
+
+def _mark_submitted_assignment_done_best_effort(date: str, sid: str, record: dict, meta_snapshot: dict) -> bool:
+    try:
+        return _mark_submitted_assignment_done(date, sid, record, meta_snapshot)
+    except Exception as exc:
+        print("[submit-test] progress test status update failed:", exc, flush=True)
+        return False
+
+
+def _submit_payload_is_ocr_review(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    answer_source = str(data.get("answerSource") or data.get("answer_source") or "").strip().lower()
+    return answer_source in SUBMIT_PROGRESS_STATUS_OCR_SOURCES or data.get("ocrReview") is True
+
+
+def _submit_progress_status_authorized(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    value = data.get("progressStatusAuthorized")
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in SUBMIT_PROGRESS_STATUS_AUTHORIZED_VALUES
+    return False
+
+
+def _submit_progress_status_policy(data: dict) -> dict:
+    requested_mode = str(data.get("progressStatusMode") or "").strip().lower() if isinstance(data, dict) else ""
+    is_ocr_review = _submit_payload_is_ocr_review(data)
+
+    if requested_mode in SUBMIT_PROGRESS_STATUS_SKIP_MODES:
+        return {
+            "attempted": False,
+            "completed": False,
+            "status": "skipped",
+            "reason": "request_skipped_progress_status",
+            "source": "ocr_review" if is_ocr_review else "manual",
+        }
+
+    if is_ocr_review:
+        if requested_mode in SUBMIT_PROGRESS_STATUS_MARK_DONE_MODES and _submit_progress_status_authorized(data):
+            return {
+                "attempted": True,
+                "completed": False,
+                "status": "authorized",
+                "reason": "ocr_review_progress_status_authorized",
+                "source": "ocr_review",
+            }
+        return {
+            "attempted": False,
+            "completed": False,
+            "status": "skipped",
+            "reason": "ocr_review_requires_explicit_progress_status_authorization",
+            "source": "ocr_review",
+        }
+
+    return {
+        "attempted": True,
+        "completed": False,
+        "status": "authorized",
+        "reason": "manual_submit_progress_status",
+        "source": "manual",
+    }
+
+
+def _submit_assignment_progress_status_result(
+    date: str,
+    sid: str,
+    record: dict,
+    meta_snapshot: dict,
+    data: dict,
+) -> dict:
+    result = _submit_progress_status_policy(data)
+    if not result["attempted"]:
+        return result
+    try:
+        completed = _mark_submitted_assignment_done(date, sid, record, meta_snapshot)
+    except Exception as exc:
+        print("[submit-test] progress test status update failed:", exc, flush=True)
+        return {**result, "completed": False, "status": "failed", "reason": "progress_status_update_failed"}
+    return {
+        **result,
+        "completed": bool(completed),
+        "status": "done" if completed else "not_matched",
+        "reason": "progress_status_marked_done" if completed else "no_matching_active_assignment",
+    }
+
+
 def _record_meta(rec: dict, catalog: dict) -> dict:
     resolved = _resolve_test_meta(rec.get("name"), rec.get("test_id"), catalog)
     snap = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
@@ -210,6 +541,30 @@ def _record_meta(rec: dict, catalog: dict) -> dict:
         if value is not None and str(value).strip() != "":
             out[key] = _normalize_test_term(value) if key == "term" else value
     return out
+
+
+def _admin_test_answer_url(target_meta: dict | None, test_id: str) -> str:
+    if not academy_network_allowed() or not isinstance(target_meta, dict):
+        return ""
+    try:
+        from routes.api_basic import _test_assignment_answer_url
+    except ImportError:
+        return ""
+
+    item = {
+        "type": target_meta.get("type") or "UNIT",
+        "category": target_meta.get("type") or "UNIT",
+        "id": test_id,
+        "testId": test_id,
+        "sourceId": target_meta.get("source_id") or "",
+        "name": target_meta.get("test_name") or target_meta.get("unit_name") or "",
+        "round": target_meta.get("round") or "",
+        "curriculum": target_meta.get("curriculum") or "",
+        "difficulty": target_meta.get("difficulty") or "",
+        "term": target_meta.get("term") or "",
+    }
+    return _test_assignment_answer_url(item)
+
 
 def _meta_matches_target(meta: dict, target: dict | None) -> bool:
     if not isinstance(meta, dict) or not isinstance(target, dict):
@@ -395,6 +750,93 @@ def _grade_answers(answers: list[str], key: list[str]) -> tuple[int, int, list[i
     return correct, total, wrong, pct
 
 
+def _wrong_answer_details(answers: list[str], key: list[str], wrong: list[int]) -> list[WrongAnswerDetail]:
+    details: list[WrongAnswerDetail] = []
+    for question_no in wrong:
+        index = question_no - 1
+        details.append(
+            {
+                "questionNo": question_no,
+                "myAnswer": (answers[index] if 0 <= index < len(answers) else "").strip(),
+                "correctAnswer": (key[index] if 0 <= index < len(key) else "").strip(),
+            },
+        )
+    return details
+
+
+def _normalize_wrong_numbers(values) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    out: list[int] = []
+    for value in values:
+        try:
+            question_no = int(str(value).strip())
+        except Exception:
+            continue
+        if question_no > 0:
+            out.append(question_no)
+    return out
+
+
+def _submitted_answers_from_record(rec: dict, total: int) -> list[str] | None:
+    raw = rec.get("submittedAnswers")
+    if isinstance(raw, list):
+        answers = [str(value).strip() for value in raw]
+        if len(answers) > total:
+            answers = answers[:total]
+        if len(answers) < total:
+            answers += [""] * (total - len(answers))
+        return answers
+
+    raw_text = rec.get("answersText")
+    if isinstance(raw_text, str) and raw_text.strip():
+        return _parse_answer_spec(raw_text, total)
+
+    return None
+
+
+def _sanitize_tests_payload_for_public_api(value):
+    if isinstance(value, list):
+        return [_sanitize_tests_payload_for_public_api(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_tests_payload_for_public_api(child)
+            for key, child in value.items()
+            if key not in INTERNAL_TEST_RECORD_FIELDS
+        }
+    return value
+
+
+def _count_shifted_answer_matches(answers: list[str], key: list[str], key_shift: int) -> int:
+    total = len(key)
+    matches = 0
+    for index in range(total):
+        key_index = index + key_shift
+        if key_index < 0 or key_index >= total:
+            continue
+        answer = (answers[index] if index < len(answers) else "").strip()
+        expected = (key[key_index] if key_index < len(key) else "").strip()
+        if answer and expected and answer == expected:
+            matches += 1
+    return matches
+
+
+def _detect_shifted_answer_mapping(answers: list[str], key: list[str], correct: int) -> bool:
+    total = len(key)
+    if total < SUBMIT_OFFSET_GUARD_MIN_PROBLEMS:
+        return False
+    if correct > total // 2:
+        return False
+    next_key_matches = _count_shifted_answer_matches(answers, key, 1)
+    previous_key_matches = _count_shifted_answer_matches(answers, key, -1)
+    shifted_matches = max(next_key_matches, previous_key_matches)
+    required_matches = max(
+        correct + SUBMIT_OFFSET_GUARD_MIN_DELTA,
+        int(total * SUBMIT_OFFSET_GUARD_MIN_SHIFTED_RATIO),
+    )
+    return shifted_matches >= required_matches
+
+
 def _ocr_preview_items(raw_items, answers: list[str], problems: int) -> list[dict[str, str | int | float]]:
     source_items = raw_items if isinstance(raw_items, list) else []
     out = []
@@ -406,6 +848,329 @@ def _ocr_preview_items(raw_items, answers: list[str], problems: int) -> list[dic
                 item["confidence"] = round(float(confidence), 4)
         out.append(item)
     return out
+
+
+def _phase2a_review_request_value(raw_json, key: str) -> str:
+    value = request.form.get(key)
+    if value is None and isinstance(raw_json, dict):
+        value = raw_json.get(key)
+    return str(value or "").strip()
+
+
+def _phase2a_review_error(status: int, code: str, message: str):
+    return jsonify({"ok": False, "errorCode": code, "message": message, "warnings": []}), status
+
+
+def _phase2a_review_route_enabled() -> bool:
+    return os.environ.get(OCR_PHASE2A_REVIEW_ROUTE_ENABLED_ENV, "").strip().lower() in OCR_PHASE2A_TRUTHY_VALUES
+
+
+def _phase2a_review_catalog_allowed_round(test_id: str) -> int | None:
+    if not test_id:
+        return None
+    cfg = load(TESTS_CFG_PATH)
+    categories = cfg.get("categories") if isinstance(cfg, dict) else None
+    if not isinstance(categories, dict):
+        return None
+    for category_key in ("UNIT", "TRAINING_PACK"):
+        category = categories.get(category_key)
+        tests = category.get("tests") if isinstance(category, dict) else None
+        if not isinstance(tests, list):
+            continue
+        for item in tests:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("id") or "").strip() != test_id:
+                continue
+            try:
+                problems = int(item.get("problems") or 0)
+                round_no = int(str(item.get("round") or "").strip())
+            except (TypeError, ValueError):
+                return None
+            allowed_rounds = frozenset((1, 2)) if category_key == "TRAINING_PACK" else OCR_PHASE2A_UNIT_REVIEW_ROUNDS
+            if problems != 20 or round_no not in allowed_rounds:
+                return None
+            return round_no
+    return None
+
+
+def _phase2a_review_allowed_round(test_id: str) -> int | None:
+    return OCR_PHASE2A_REVIEW_ALLOWED_TESTS.get(test_id) or _phase2a_review_catalog_allowed_round(test_id)
+
+
+def _phase2b_image_extension(filename: str) -> str:
+    if "." not in filename:
+        return ""
+    return filename.rsplit(".", 1)[1].strip().lower()
+
+
+def _phase2b_validate_uploaded_image():
+    image = request.files.get(OCR_PHASE2B_IMAGE_FIELD)
+    if image is None or not str(image.filename or "").strip():
+        return _phase2a_review_error(400, "missing_image", "answer sheet image required")
+
+    extension = _phase2b_image_extension(str(image.filename or ""))
+    mimetype = str(image.mimetype or image.content_type or "").split(";", 1)[0].strip().lower()
+    if extension not in OCR_PHASE2B_ALLOWED_IMAGE_EXTENSIONS or mimetype not in OCR_PHASE2B_ALLOWED_IMAGE_MIME_TYPES:
+        return _phase2a_review_error(415, "unsupported_image_type", "unsupported answer sheet image type")
+
+    stream = image.stream
+    try:
+        position = stream.tell()
+    except (AttributeError, OSError):
+        position = None
+    data = stream.read(OCR_MAX_IMAGE_BYTES + 1)
+    if position is not None:
+        stream.seek(position)
+    if not data:
+        return _phase2a_review_error(400, "missing_image", "answer sheet image required")
+    if len(data) > OCR_MAX_IMAGE_BYTES:
+        return _phase2a_review_error(413, "image_too_large", "answer sheet image is too large")
+    return None
+
+
+def _phase2a_review_required_stub_payload(test_id: str, round_no: int) -> dict:
+    items = []
+    for index, answer in enumerate(OCR_PHASE2A_MOCK_ANSWERS, start=1):
+        candidates = OCR_PHASE2A_REVIEW_CANDIDATES.get(index)
+        items.append({
+            "question_no": index,
+            "status": "review_required",
+            "recognized": answer,
+            "warnings": ["cached_or_provider_result_required"],
+            "candidates": list(candidates or ()),
+            "final_answer": None,
+            "source": None,
+        })
+    return {
+        "source": "phase2a_route_stub_review_required",
+        "test_id": test_id,
+        "round": str(round_no),
+        "problem_count": len(OCR_PHASE2A_MOCK_ANSWERS),
+        "items": items,
+    }
+
+
+def _phase2a_forbidden_student_payload_paths(value, path: str = "$") -> list[str]:
+    out: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            next_path = f"{path}.{key}"
+            if key in OCR_STUDENT_FORBIDDEN_KEYS:
+                out.append(next_path)
+            out.extend(_phase2a_forbidden_student_payload_paths(child, next_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            out.extend(_phase2a_forbidden_student_payload_paths(child, f"{path}[{index}]"))
+    return out
+
+
+def _phase2a_text_has_forbidden_value(value: str) -> bool:
+    text = str(value or "")
+    normalized = text.replace("\\", "/").lower()
+    if re.search(r"\b[a-zA-Z]:[\\/]", text):
+        return True
+    return any(token.replace("\\", "/").lower() in normalized for token in OCR_STUDENT_FORBIDDEN_VALUE_TOKENS)
+
+
+def _phase2a_forbidden_student_payload_value_paths(value, path: str = "$") -> list[str]:
+    out: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            out.extend(_phase2a_forbidden_student_payload_value_paths(child, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            out.extend(_phase2a_forbidden_student_payload_value_paths(child, f"{path}[{index}]"))
+    elif isinstance(value, str) and _phase2a_text_has_forbidden_value(value):
+        out.append(path)
+    return out
+
+
+def _phase2a_review_meta_text(value) -> str:
+    text = str(value or "").strip()
+    if _phase2a_text_has_forbidden_value(text):
+        return "redacted_path"
+    return text[:OCR_REVIEW_META_TEXT_MAX_LENGTH]
+
+
+def _phase2a_review_meta_int(value) -> int:
+    try:
+        count = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(count, 0)
+
+
+def _phase2a_harden_review_meta(meta: dict) -> dict:
+    source = meta if isinstance(meta, dict) else {}
+    out: dict[str, str | int] = {}
+    for key in OCR_REVIEW_META_TEXT_FIELDS:
+        out[key] = _phase2a_review_meta_text(source.get(key))
+    for key in OCR_REVIEW_META_INT_FIELDS:
+        out[key] = _phase2a_review_meta_int(source.get(key))
+    return out
+
+
+@bp_api_tests.post("/api/ocr-test-sheet-review")
+def ocr_test_sheet_review():
+    if not _phase2a_review_route_enabled():
+        return _phase2a_review_error(503, "feature_disabled", "OCR review route is disabled.")
+
+    raw_json = request.get_json(silent=True) if request.is_json else {}
+    if not isinstance(raw_json, dict):
+        raw_json = {}
+
+    sid = _phase2a_review_request_value(raw_json, "sid")
+    test_id = _phase2a_review_request_value(raw_json, "testId")
+    round_raw = _phase2a_review_request_value(raw_json, "round") or "1"
+
+    if not sid:
+        return _phase2a_review_error(400, "invalid_request", "sid required")
+    if is_ghost_student_sid(sid):
+        return _phase2a_review_error(403, "forbidden_student", GHOST_STUDENT_WRITE_ERROR)
+    if not test_id:
+        return _phase2a_review_error(400, "invalid_request", "testId required")
+    allowed_round = _phase2a_review_allowed_round(test_id)
+    if allowed_round is None:
+        return _phase2a_review_error(403, "test_not_allowlisted", "OCR review is not enabled for this test.")
+
+    try:
+        round_no = int(round_raw)
+    except ValueError:
+        return _phase2a_review_error(400, "invalid_request", "round must be 1")
+    if round_no != allowed_round:
+        return _phase2a_review_error(403, "round_not_allowlisted", "OCR review is not enabled for this round.")
+
+    image_error = _phase2b_validate_uploaded_image()
+    if image_error is not None:
+        return image_error
+
+    image = request.files.get(OCR_PHASE2B_IMAGE_FIELD)
+    if image is None:
+        return _phase2a_review_error(400, "missing_image", "answer sheet image required")
+
+    try:
+        from tools.subjective_sheet_lab.phase2c_crop_pipeline_adapter import (
+            Phase2CPipelineError,
+            Phase2CRequest,
+            run_phase2c_crop_pipeline,
+        )
+    except ImportError:
+        current_app.logger.exception("ocr-test-sheet-review phase2c adapter import failed")
+        return _phase2a_review_error(500, "pipeline_unavailable", "Answer sheet processing is unavailable.")
+
+    try:
+        pipeline_result = run_phase2c_crop_pipeline(
+            Phase2CRequest(
+                sid=sid,
+                test_id=test_id,
+                round_no=round_no,
+                image_stream=image.stream,
+                original_filename=str(image.filename or ""),
+                content_type=str(image.mimetype or image.content_type or ""),
+            )
+        )
+    except Phase2CPipelineError as exc:
+        current_app.logger.warning("ocr-test-sheet-review phase2c pipeline failed: %s", exc)
+        return _phase2a_review_error(exc.http_status, exc.error_code, exc.student_message)
+
+    current_app.logger.info(
+        "ocr-test-sheet-review phase2c prepared case=%s crops=%s contacts=%s",
+        pipeline_result.case_id,
+        pipeline_result.crop_count,
+        pipeline_result.contact_sheet_count,
+    )
+
+    review_payload = _phase2a_review_required_stub_payload(test_id, round_no)
+    review_meta = {
+        "photo_correction": "completed",
+        "answer_box_extraction": "completed",
+        "answer_box_source": str(getattr(pipeline_result, "answer_box_source", "")),
+        "provider_input": "crop_contact_sheet",
+        "crop_count": int(getattr(pipeline_result, "crop_count", 0) or 0),
+        "contact_sheet_count": int(getattr(pipeline_result, "contact_sheet_count", 0) or 0),
+        "cache_status": "not_checked",
+        "cache_source": "",
+        "provider_status": "not_called",
+        "provider_call_count": 0,
+    }
+    try:
+        from tools.subjective_sheet_lab.phase2d_cached_review_payload_adapter import (
+            Phase2DCacheUnavailable,
+            Phase2DRequest,
+            load_phase2d_cached_review_payload,
+        )
+
+        cached_review = load_phase2d_cached_review_payload(
+            Phase2DRequest(
+                sid=sid,
+                test_id=test_id,
+                round_no=round_no,
+                pipeline_result=pipeline_result,
+            )
+        )
+        review_payload = cached_review.review_payload
+        review_meta["cache_status"] = str(cached_review.cache_status)
+        review_meta["cache_source"] = str(cached_review.source_kind)
+        current_app.logger.info(
+            "ocr-test-sheet-review phase2d cache hit kind=%s status=%s path=%s",
+            cached_review.source_kind,
+            cached_review.cache_status,
+            cached_review.cache_path,
+        )
+    except ImportError:
+        review_meta["cache_status"] = "adapter_unavailable"
+        current_app.logger.exception("ocr-test-sheet-review phase2d adapter import failed")
+    except Phase2DCacheUnavailable as exc:
+        review_meta["cache_status"] = str(exc.reason)
+        current_app.logger.info("ocr-test-sheet-review phase2d cache fallback: %s", exc)
+        try:
+            from tools.subjective_sheet_lab.phase2e_gemini_live_ocr_adapter import (
+                Phase2ERequest,
+                prepare_phase2e_live_ocr,
+            )
+
+            phase2e_result = prepare_phase2e_live_ocr(
+                Phase2ERequest(
+                    sid=sid,
+                    test_id=test_id,
+                    round_no=round_no,
+                    pipeline_result=pipeline_result,
+                    cache_miss_reason=exc.reason,
+                    request_metadata={"route": "/api/ocr-test-sheet-review"},
+                )
+            )
+            review_meta["provider_status"] = str(phase2e_result.status.value)
+            review_meta["provider_call_count"] = int(phase2e_result.provider_call_count or 0)
+            current_app.logger.info(
+                "ocr-test-sheet-review phase2e status=%s reason=%s provider_calls=%s",
+                phase2e_result.status.value,
+                phase2e_result.reason,
+                phase2e_result.provider_call_count,
+            )
+            if phase2e_result.review_payload is not None:
+                review_payload = phase2e_result.review_payload
+        except ImportError:
+            review_meta["provider_status"] = "adapter_unavailable"
+            current_app.logger.exception("ocr-test-sheet-review phase2e adapter import failed")
+
+    review_meta = _phase2a_harden_review_meta(review_meta)
+    payload = {
+        "ok": True,
+        "review_payload": review_payload,
+        "review_meta": review_meta,
+        "warnings": [],
+    }
+    leaks = _phase2a_forbidden_student_payload_paths(payload)
+    value_leaks = _phase2a_forbidden_student_payload_value_paths(payload)
+    if leaks or value_leaks:
+        current_app.logger.error(
+            "ocr-test-sheet-review student payload leak: keys=%s values=%s",
+            ", ".join(leaks),
+            ", ".join(value_leaks),
+        )
+        return _phase2a_review_error(500, "contract_violation", "OCR review payload failed safety checks.")
+    return jsonify(payload)
 
 
 @bp_api_tests.post("/api/ocr-test-sheet")
@@ -503,6 +1268,8 @@ def submit_test():
         name = str(tdef.get("name") or "").strip()
 
     pct = None
+    wrong_details: list[WrongAnswerDetail] = []
+    submitted_answers: list[str] | None = None
     if answers_text is not None:
 
         problems = None
@@ -519,7 +1286,17 @@ def submit_test():
             return jsonify({"ok": False, "error": "cannot grade: missing answer key"}), 400
 
         answers = _parse_answer_spec(str(answers_text), problems)
+        submitted_answers = answers
         correct, total, wrong_calc, pct = _grade_answers(answers, key)
+        wrong_details = _wrong_answer_details(answers, key, wrong_calc)
+        if _detect_shifted_answer_mapping(answers, key, correct):
+            return jsonify({
+                "ok": False,
+                "error": "possible_answer_offset",
+                "errorCode": "possible_answer_offset",
+                "message": "답안이 한 문항 밀린 패턴으로 보입니다. 시험/회차 선택과 답안지 문항 번호를 확인한 뒤 다시 제출해주세요.",
+                "fallbackAllowed": False,
+            }), 409
         score = f"{correct}/{total}"
         wrong = wrong_calc
 
@@ -583,7 +1360,10 @@ def submit_test():
             if not isinstance(arr, list):
                 arr = []
             arr = [x for x in arr if isinstance(x, dict)]
-            arr.append(record)
+            tests_record = dict(record)
+            if submitted_answers is not None:
+                tests_record["submittedAnswers"] = submitted_answers
+            arr.append(tests_record)
             per_day[sid] = arr
             tests_json[today] = per_day
             save_atomic(TESTS_PATH, tests_json)
@@ -594,12 +1374,23 @@ def submit_test():
     if not logs_saved and not tests_saved:
         return jsonify({'ok': False, 'error': 'failed to save test record'}), 500
 
-    return jsonify({'ok': True, 'score': score, 'wrong': record["wrong"], 'pct': pct})
+    assignment_progress = _submit_assignment_progress_status_result(today, sid, record, meta_snapshot, data)
+    assignment_completed = bool(assignment_progress.get("completed"))
+
+    return jsonify({
+        'ok': True,
+        'score': score,
+        'wrong': record["wrong"],
+        'wrongDetails': wrong_details,
+        'pct': pct,
+        'assignmentCompleted': assignment_completed,
+        'assignmentProgress': assignment_progress,
+    })
 
 @bp_api_tests.route("/api/tests", methods=["GET", "POST"])
 def api_tests():
     if request.method == "GET":
-        return nocache_resp(load(TESTS_PATH))
+        return nocache_resp(_sanitize_tests_payload_for_public_api(load(TESTS_PATH)))
     incoming = request.get_json(force=True) or {}
     if mapping_contains_ghost_student_sid(incoming):
         return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
@@ -672,7 +1463,7 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                     name = str(rec.get("name", "")).strip()
                     score = str(rec.get("score", "")).strip()
                     created_at = rec.get("createdAt") or ""
-                    wrong = rec.get("wrong") if isinstance(rec.get("wrong"), list) else []
+                    wrong = _normalize_wrong_numbers(rec.get("wrong"))
                     memo = str(rec.get("memo") or "").strip()
                     raw_meta = rec.get("testMeta") if isinstance(rec.get("testMeta"), dict) else {}
                     snap_meta = {
@@ -696,6 +1487,7 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                             continue
                     except Exception:
                         continue
+                    submitted_answers = _submitted_answers_from_record(rec, total)
 
                     key = (str(sid), name, str(created_at))
                     if key in seen:
@@ -708,6 +1500,7 @@ def _iter_test_records(start: dt.date | None, end: dt.date | None):
                         "correct": int(correct),
                         "total": int(total),
                         "wrong": wrong,
+                        "submitted_answers": submitted_answers,
                         "created_at": str(created_at),
                         "memo": memo,
                         "day": day,
@@ -749,7 +1542,8 @@ def api_tests_records():
         days = 30
     days = max(1, min(3650, days))
     start = end - dt.timedelta(days=days - 1)
-    catalog = _build_test_catalog(_load_tests_cfg())
+    cfg = _load_tests_cfg()
+    catalog = _build_test_catalog(cfg)
 
     sid_to_name = {}
     sid_to_level = {}
@@ -811,6 +1605,24 @@ def api_tests_records():
         if band_q and lv != band_q:
             continue
 
+        wrong_details: list[WrongAnswerDetail] = []
+        submitted_answers = rec.get("submitted_answers")
+        if isinstance(submitted_answers, list) and submitted_answers:
+            try:
+                round_no = int(meta.get("round") or 1)
+            except Exception:
+                round_no = 1
+            if round_no not in (1, 2, 3):
+                round_no = 1
+            test_def = (
+                _find_test_def_by_id(cfg, rec_test_id)
+                or _find_test_def_by_id(cfg, str(meta.get("source_id") or ""))
+                or _find_test_def_by_id(cfg, test_id_q)
+            )
+            key = _get_answer_key_for_round(test_def, total, round_no) if test_def else None
+            if key:
+                wrong_details = _wrong_answer_details(submitted_answers, key, rec["wrong"])
+
         recs.append({
             "sid": sid,
             "studentName": stu_name,
@@ -818,6 +1630,8 @@ def api_tests_records():
             "pct": pct,
             "correct": correct,
             "total": total,
+            "wrong": rec["wrong"],
+            "wrongDetails": wrong_details,
             "createdAt": rec["created_at"],
             "memo": rec["memo"],
             "testId": rec_test_id,
@@ -830,6 +1644,7 @@ def api_tests_records():
         })
 
     recs.sort(key=lambda r: (-float(r.get("pct") or 0), str(r.get("studentName") or ""), str(r.get("createdAt") or "")))
+    answer_url = _admin_test_answer_url(target_meta, test_id_q)
 
     return nocache_resp({
         "range": {"start": start.isoformat(), "end": end.isoformat()},
@@ -843,6 +1658,7 @@ def api_tests_records():
             "band": band_q,
         },
         "total": len(recs),
+        "answerUrl": answer_url,
         "records": recs,
     })
 
