@@ -32,6 +32,18 @@ progress.json.*.tmp
 /static/js/test_answer_link_map.js
 /.debug-journal.md
 
+# Local agent, browser, test, and OCR-lab artifacts
+/.omo/teams/
+/.omo/lazycodex-executor-verify/
+/codex_status/
+/test-results/
+/NUL
+/1
+/homework_excel_*.xlsx
+/homework_excel_*.txt
+/homework_excel_*_notepad.md
+/tools/subjective_sheet_lab/*
+
 # Python/runtime artifacts
 __pycache__/
 *.py[cod]
