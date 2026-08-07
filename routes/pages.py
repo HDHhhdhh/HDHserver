@@ -17,10 +17,13 @@ def root():
     return current_app.send_static_file("index.html")
 
 @bp_pages.get("/admin")
+@bp_pages.get("/dh1130")
+@bp_pages.get("/demo/rh3123")
 def page_admin():
     return current_app.send_static_file("admin.html")
 
 @bp_pages.get("/students")
+@bp_pages.get("/demo/rh3123/students")
 def page_all():
     return current_app.send_static_file("all.html")
 
@@ -30,17 +33,20 @@ def page_student(sid: str):
 
 @bp_pages.get("/student-test/<sid>")
 def page_student_test(sid: str):
-    return current_app.send_static_file("student copy.html")
+    return current_app.send_static_file("student.html")
 
 @bp_pages.get("/video-manage")
+@bp_pages.get("/demo/rh3123/video-manage")
 def page_video_manage():
     return current_app.send_static_file("video-manage.html")
 
 @bp_pages.get("/school-cal")
+@bp_pages.get("/demo/rh3123/school-cal")
 def page_school_cal():
     return current_app.send_static_file("school-cal.html")
 
 @bp_pages.get("/tests")
+@bp_pages.get("/demo/rh3123/tests")
 def tests_page():
     return current_app.send_static_file("tests.html")
 

@@ -3,17 +3,32 @@ from __future__ import annotations
 import time
 from flask import Blueprint, jsonify, request
 
+from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
 from core.paths import WATCH_PATH, PRG_PATH
+from core.progress_rules import (
+    PROGRESS_MANUAL_META_KEY,
+    VALID_VIDEO_PROGRESS_STATUSES,
+    WATCH_AUTO_PROGRESS_META_KEY,
+    merge_progress_day_sid,
+    merge_watch_entry,
+    normalize_watch_entry,
+    watch_auto_status,
+    watch_rank,
+)
 from core.storage import load, save_atomic, nocache_resp
 
 bp_api_watch = Blueprint("api_watch", __name__)
+
+AUTO_PROGRESS_META_KEY = WATCH_AUTO_PROGRESS_META_KEY
+MANUAL_PROGRESS_META_KEY = PROGRESS_MANUAL_META_KEY
 
 
 def _watch_lock():
     from routes.api_basic import _InterProcessFileLock
 
     wp = str(getattr(WATCH_PATH, "__fspath__", lambda: str(WATCH_PATH))())
-    return _InterProcessFileLock(wp + ".lock", timeout_sec=6.0, poll_sec=0.05)
+    return _InterProcessFileLock(wp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _sid_keys(sid: str) -> list[str]:
@@ -25,64 +40,6 @@ def _sid_keys(sid: str) -> list[str]:
     return [k for k in keys if k]
 
 
-def _norm_watch_entry(entry) -> dict:
-    if not isinstance(entry, dict):
-        entry = {}
-
-    try:
-        last = max(0, int(float(entry.get("last", 0) or 0)))
-    except Exception:
-        last = 0
-    try:
-        dur = max(0, int(float(entry.get("dur", 0) or 0)))
-    except Exception:
-        dur = 0
-    try:
-        updated_at = int(entry.get("updatedAt") or 0)
-    except Exception:
-        updated_at = 0
-
-    completed = bool(entry.get("completed", False))
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": updated_at,
-    }
-
-
-def _merge_watch_entry(prev, incoming) -> dict:
-    a = _norm_watch_entry(prev)
-    b = _norm_watch_entry(incoming)
-
-    last = max(a["last"], b["last"])
-    dur = max(a["dur"], b["dur"])
-    completed = a["completed"] or b["completed"]
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": max(a["updatedAt"], b["updatedAt"]),
-    }
-
-
-def _watch_rank(entry: dict) -> tuple:
-    e = _norm_watch_entry(entry)
-    pct = (e["last"] / e["dur"]) if e["dur"] > 0 else (1.0 if e["completed"] else 0.0)
-    return (
-        1 if e["completed"] else 0,
-        pct,
-        e["last"],
-        e["updatedAt"],
-    )
-
-
 def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
     date = str(date or "").strip()
     sid = str(sid or "").strip()
@@ -90,7 +47,7 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
     if not date or not sid or not mid:
         raise ValueError("missing date/sid/mid")
 
-    merged_incoming = _norm_watch_entry(incoming)
+    merged_incoming = normalize_watch_entry(incoming)
     if not merged_incoming["updatedAt"]:
         merged_incoming["updatedAt"] = int(time.time() * 1000)
 
@@ -118,12 +75,26 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
             by_date[sid_key] = by_sid
 
         prev = by_sid.get(mid, {})
-        merged = _merge_watch_entry(prev, merged_incoming)
+        merged = merge_watch_entry(prev, merged_incoming)
         by_sid[mid] = merged
 
         save_atomic(WATCH_PATH, data)
 
     return merged
+
+
+def _get_watch_entry(date: str, sid: str, mid: str) -> dict:
+    data = load(WATCH_PATH)
+    if not isinstance(data, dict):
+        return {}
+    by_date = data.get(str(date or "").strip())
+    if not isinstance(by_date, dict):
+        return {}
+    for key in _sid_keys(sid):
+        by_sid = by_date.get(key)
+        if isinstance(by_sid, dict):
+            return normalize_watch_entry(by_sid.get(str(mid or "").strip()))
+    return {}
 
 
 def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
@@ -134,18 +105,17 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 
     if not date or not sid or not mid:
         raise ValueError("missing date/sid/mid")
-    if status not in ("done", "interrupted", "skip", "none", ""):
+    if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
-    from routes.api_basic import _load_progress_strict, _progress_lock
+    from routes.api_basic import _load_progress_strict, _progress_lock, _save_progress_strict
 
     with _progress_lock():
-        current = _load_progress_strict()
+        current = dict(_load_progress_strict(PRG_PATH))
 
-        day = current.setdefault(date, {})
-        if not isinstance(day, dict):
-            day = {}
-            current[date] = day
+        current_day = current.get(date)
+        day = dict(current_day) if isinstance(current_day, dict) else {}
+        current[date] = day
 
         sid_key = sid
         cur_sid = None
@@ -158,31 +128,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if cur_sid is None:
             cur_sid = {}
 
-        merged = dict(cur_sid)
-        prev = str(cur_sid.get(mid) or "").strip()
-
-        # watch-status는 "자동 반영" 경로이므로 수동으로 지정된 상태를 우선한다.
-        # - interrupted 자동값은 기존 상태가 없을 때만 세팅
-        # - done 자동값은 interrupted를 done으로 올리는 것만 허용
-        # - skip/done은 자동값으로 덮어쓰지 않음
-        if status in ("", "none"):
-            if prev not in ("done", "interrupted", "skip"):
-                merged.pop(mid, None)
-        elif status == "interrupted":
-            if prev in ("done", "interrupted", "skip"):
-                pass
-            else:
-                merged[mid] = "interrupted"
-        elif status == "done":
-            if prev == "skip":
-                merged[mid] = "skip"
-            else:
-                merged[mid] = "done"
-        elif status == "skip":
-            if prev != "done":
-                merged[mid] = "skip"
-        else:
-            merged[mid] = status
+        merged = merge_progress_day_sid(cur_sid, {mid: status}, source="auto")
 
         if merged:
             day[sid_key] = merged
@@ -192,7 +138,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if not day:
             current.pop(date, None)
 
-        save_atomic(PRG_PATH, current)
+        _save_progress_strict(current, PRG_PATH)
 
     return merged
 
@@ -200,6 +146,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 @bp_api_watch.get("/api/watch/latest")
 def api_watch_latest():
     sid = str(request.args.get("sid") or "").strip()
+    date = str(request.args.get("date") or "").strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
 
@@ -209,7 +156,8 @@ def api_watch_latest():
 
     out = {}
     keys = _sid_keys(sid)
-    for by_date in data.values():
+    date_items = [(date, data.get(date))] if date else data.items()
+    for _, by_date in date_items:
         if not isinstance(by_date, dict):
             continue
 
@@ -228,16 +176,22 @@ def api_watch_latest():
                 continue
 
             current = out.get(mid_s)
-            normalized = _norm_watch_entry(entry)
-            if current is None or _watch_rank(normalized) > _watch_rank(current):
+            normalized = normalize_watch_entry(entry)
+            if current is None or watch_rank(normalized) > watch_rank(current):
                 out[mid_s] = normalized
 
-    return jsonify({"ok": True, "sid": sid, "watch": out})
+    return jsonify({"ok": True, "sid": sid, "date": date, "watch": out})
 
 @bp_api_watch.route("/api/watch", methods=["GET", "POST"])
 def api_watch():
     if request.method == "GET":
         return nocache_resp(load(WATCH_PATH))
+    if not academy_network_allowed():
+        return jsonify({
+            "ok": False,
+            "error": "academy_network_required",
+            "message": ACADEMY_ACCESS_MESSAGE,
+        }), 403
 
     body = request.get_json(force=True) or {}
     date = str(body.get("date") or "").strip()
@@ -245,6 +199,8 @@ def api_watch():
     mid  = str(body.get("mid")  or "").strip()
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     try:
         last = max(0, int(float(body.get("last", 0))))
@@ -262,12 +218,21 @@ def api_watch():
     }
 
     merged = _save_watch_entry(date, sid, mid, incoming)
+    status = watch_auto_status(merged)
+    progress = _save_progress_status(date, sid, mid, status) if status else {}
 
-    return jsonify({"ok": True, "watch": merged})
+    return jsonify({"ok": True, "watch": merged, "progress": progress})
 
 
 @bp_api_watch.post("/api/watch-status")
 def api_watch_status():
+    if not academy_network_allowed():
+        return jsonify({
+            "ok": False,
+            "error": "academy_network_required",
+            "message": ACADEMY_ACCESS_MESSAGE,
+        }), 403
+
     body = request.get_json(force=True) or {}
     date = str(body.get("date") or "").strip()
     sid = str(body.get("sid") or "").strip()
@@ -276,8 +241,18 @@ def api_watch_status():
 
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
-    if status not in ("done", "interrupted", "skip", "none", ""):
+    if is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
+    if status not in VALID_VIDEO_PROGRESS_STATUSES:
         return jsonify({"ok": False, "error": "bad status"}), 400
+
+    if status == "interrupted":
+        try:
+            watch = _get_watch_entry(date, sid, mid)
+            if watch_auto_status(watch) == "done":
+                status = "done"
+        except Exception:
+            pass
 
     merged = _save_progress_status(date, sid, mid, status)
 

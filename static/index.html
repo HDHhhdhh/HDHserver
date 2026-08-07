@@ -8,47 +8,60 @@
 
   <style>
     :root{
-      --bg:#f9fafb;
+      --bg:#f4f6f8;
       --card:#ffffff;
-      --line:#e5e7eb;
-      --text:#111827;
-      --muted:#6b7280;
-      --accent:#2563eb;
-      --accent-soft:#e0e7ff;
-      --danger:#dc2626;
+      --line:#d9dee7;
+      --text:#20242c;
+      --muted:#5d6878;
+      --accent:#1769aa;
+      --accent-soft:#e7f1f8;
+      --danger:#b42318;
     }
     *{box-sizing:border-box}
     body{
       margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-      background:var(--bg); color:var(--text);
-      font-family: system-ui, -apple-system, Segoe UI, Apple SD Gothic Neo, Noto Sans KR, sans-serif;
+      background:linear-gradient(180deg, #f7f8fa 0%, var(--bg) 100%); color:var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      letter-spacing:0;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      text-rendering:optimizeLegibility;
+      font-variant-numeric:tabular-nums;
       padding:24px;
     }
-    .layout{ width:min(1120px, 96vw); display:flex; gap:40px; align-items:center; justify-content:center; }
+    .layout{ width:min(1120px, 96vw); display:flex; gap:24px; align-items:center; justify-content:center; }
     .hero{
-      flex: 1 1 640px; height: 560px; border-radius: 18px; border: 1px solid rgba(0,0,0,.06);
+      flex: 1 1 640px; height: 560px; border-radius: 8px; border: 1px solid rgba(0,0,0,.06);
       background-image: url("/files/landing.png");
       background-repeat: no-repeat; background-position: center; background-size: contain;
-      background-color: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.10);
+      background-color: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
     }
     .card{
       flex: 0 0 420px; width:420px; background:var(--card); border:1px solid var(--line);
-      border-radius:12px; padding:24px 20px; box-shadow: 0 10px 28px rgba(0,0,0,.06);
+      border-radius:8px; padding:24px 20px; box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 10px 24px rgba(15, 23, 42, .07);
     }
     h1{ margin:0 0 6px; font-size:20px; font-weight:700; }
     .sub{ margin:0 0 18px; font-size:13px; color:var(--muted); }
 
     label{ display:block; margin:12px 0 6px; font-size:13px; color:var(--muted); }
     input{
-      width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line); font-size:14px;
+      width:100%; min-height:40px; padding:11px 12px; border-radius:8px; border:1px solid var(--line);
+      font-family:inherit; font-size:14px; line-height:1.35;
+      transition: border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1);
     }
-    input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+    input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 
     .row{ display:flex; gap:10px; margin-top:16px; }
     button{
-      flex:1; padding:11px; border-radius:8px; border:1px solid transparent;
-      cursor:pointer; font-weight:600; font-size:14px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:6px;
+      flex:1; min-height:40px; padding:11px; border-radius:8px; border:1px solid transparent;
+      cursor:pointer; font-family:inherit; font-weight:600; font-size:14px; line-height:1; text-align:center;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1), color 150ms cubic-bezier(.2, 0, 0, 1);
     }
+    button:active{ transform:scale(.96); }
     .btn{ background:var(--accent); color:#fff; }
     .btn:hover{ background:#1d4ed8; }
     .btn2{ background:#fff; color:var(--text); border:1px solid var(--line); }
@@ -69,13 +82,14 @@
       align-items:center; justify-content:center;
       z-index:9999;
       padding:18px;
+      backdrop-filter: blur(10px) saturate(120%);
     }
     .modal{
       width:min(420px, 92vw);
       background:#fff;
-      border-radius:12px;
+      border-radius:8px;
       border:1px solid rgba(0,0,0,.08);
-      box-shadow: 0 12px 36px rgba(0,0,0,.20);
+      box-shadow: 0 24px 64px rgba(15,23,42,.22);
       padding:18px 16px;
     }
     .modal h2{

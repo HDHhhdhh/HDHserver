@@ -11,7 +11,17 @@
 //   - alphaSortOnly(가나다 모드)에서는 예외 없이 이름만 정렬
 
 import { state } from '../core/state.js';
+import { api } from '../core/api.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { todayLocalKey } from '../core/utils.js';
+import {
+  applySearchPlaceholder,
+  matchesSearchKey,
+  normalizeSearch as normalizeSharedSearch,
+  searchKeyForText as sharedSearchKeyForText,
+  studentSearchKey as sharedStudentSearchKey,
+} from '../../shared/search.js';
+import { countPendingMakeupsBySid } from './makeupPending.js';
 
 import {
   loadWeekendSlots,
@@ -25,7 +35,10 @@ import {
   yoilOf,
   plannedMinutesFor,
   isAttended,
+  isSelfStudy,
   isHwChecked,
+  isHwCheckRequested,
+  hwCheckRequestedAt,
   truthy,
   labelFor,
 } from './today.state.js';
@@ -36,41 +49,499 @@ import {
   bindTodayTableEvents,
 } from './today.render.js';
 
-// ─────────────────────────────────────────────
-// 가나다 정렬 토글 (localStorage 유지)
-// ─────────────────────────────────────────────
-const LS_ALPHA_SORT = 'todayAlphaSortOnly';
-let _alphaSortOnly = (localStorage.getItem(LS_ALPHA_SORT) === '1');
+function dateQuery(dateKey) {
+  return new URLSearchParams({ date: String(dateKey || '') }).toString();
+}
 
-function alphaBtnText() { return _alphaSortOnly ? '원래정렬' : '가나다정렬'; }
+function isCurrentAdminDate(dateKey) {
+  return String(getAdminDate() || '') === String(dateKey || '');
+}
+
+function makeupCountGroupKey(student) {
+  const name = String(student?.name || '').trim();
+  if (!name) return String(student?.id || '').trim();
+  const school = String(student?.school || '').trim();
+  const grade = String(student?.grade || '').trim();
+  return [name, school, grade].filter(Boolean).join('|');
+}
+
+function aggregateMakeupCountsByStudent(students, countsBySid) {
+  const rows = Array.isArray(students) ? students : [];
+  const studentsBySid = new Map(rows.map(student => [String(student?.id || ''), student]));
+  const groupTotals = new Map();
+  const groupBySid = new Map();
+
+  Object.entries(countsBySid || {}).forEach(([sid, rawCount]) => {
+    const count = Number(rawCount || 0) || 0;
+    if (count <= 0) return;
+    const student = studentsBySid.get(String(sid)) || { id: sid };
+    const groupKey = makeupCountGroupKey(student);
+    groupBySid.set(String(sid), groupKey);
+    groupTotals.set(groupKey, (groupTotals.get(groupKey) || 0) + count);
+  });
+
+  rows.forEach(student => {
+    const sid = String(student?.id || '');
+    if (!sid) return;
+    const groupKey = makeupCountGroupKey(student);
+    if (groupTotals.has(groupKey)) groupBySid.set(sid, groupKey);
+  });
+
+  const out = { ...(countsBySid || {}) };
+  groupBySid.forEach((groupKey, sid) => {
+    out[sid] = groupTotals.get(groupKey) || 0;
+  });
+  return out;
+}
+
+function mergeDateSidMap(target, incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  Object.entries(incoming).forEach(([date, day]) => {
+    if (!day || typeof day !== 'object') return;
+    target[date] = target[date] || {};
+    Object.entries(day).forEach(([sid, entry]) => {
+      if (entry && typeof entry === 'object') target[date][String(sid)] = entry;
+    });
+  });
+}
+
+async function ensureLogsForDate(dateKey, options = {}) {
+  const key = String(dateKey || '').trim();
+  if (!key || (state.logs?.[key] && !options.force)) return;
+  try {
+    const res = await fetch(`/api/logs?${dateQuery(key)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.logs = state.logs || {};
+      state.logs[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      window.logs = state.logs;
+    }
+  } catch {}
+}
+
+const logHistoryLoadedSids = new Set();
+
+async function ensureLogHistoryForSids(sids, options = {}) {
+  const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
+  if (!keys.length) return;
+
+  const pending = keys.filter(sid => options.forceHistory || !logHistoryLoadedSids.has(sid));
+  if (!pending.length) return;
+
+  for (const sid of pending) {
+    try {
+      const q = new URLSearchParams({ sid }).toString();
+      const res = await fetch(`/api/logs?${q}`, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        state.logs = state.logs || {};
+        mergeDateSidMap(state.logs, data);
+        window.logs = state.logs;
+        logHistoryLoadedSids.add(sid);
+      }
+    } catch {}
+  }
+}
+
+async function ensureProgressForDate(dateKey, options = {}) {
+  const key = String(dateKey || '').trim();
+  if (!key || (state.progress?.[key] && !options.force)) return;
+  try {
+    const res = await fetch(`/api/progress?${dateQuery(key)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.progress = state.progress || {};
+      state.progress[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      window.progressData = state.progress;
+    }
+  } catch {}
+}
+
+const progressHistoryLoadedSids = new Set();
+let progressHistoryLoadedAll = false;
+let progressHistoryAllPromise = null;
+
+async function loadAllProgressHistoryOnce(force = false) {
+  if (progressHistoryLoadedAll && !force) return true;
+  if (progressHistoryAllPromise && !force) return progressHistoryAllPromise;
+
+  progressHistoryAllPromise = (async () => {
+    try {
+      const res = await fetch('/api/progress', { cache: 'no-store' });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        state.progress = state.progress || {};
+        mergeDateSidMap(state.progress, data);
+        window.progressData = state.progress;
+        progressHistoryLoadedAll = true;
+        return true;
+      }
+    } catch {}
+    return false;
+  })();
+
+  try {
+    return await progressHistoryAllPromise;
+  } finally {
+    progressHistoryAllPromise = null;
+  }
+}
+
+async function loadProgressHistoryForSidBatch(sids) {
+  const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
+  if (!keys.length) return true;
+
+  const batchSize = 60;
+  for (let i = 0; i < keys.length; i += batchSize) {
+    const chunk = keys.slice(i, i + batchSize);
+    const q = new URLSearchParams({ sids: chunk.join(',') }).toString();
+    const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data || typeof data !== 'object') return false;
+    state.progress = state.progress || {};
+    mergeDateSidMap(state.progress, data);
+    window.progressData = state.progress;
+    chunk.forEach(sid => progressHistoryLoadedSids.add(sid));
+  }
+  return true;
+}
+
+async function ensureProgressHistoryForSids(sids, options = {}) {
+  const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
+  if (!keys.length) return;
+  if (progressHistoryLoadedAll && !options.forceHistory) {
+    keys.forEach(sid => progressHistoryLoadedSids.add(sid));
+    return;
+  }
+
+  const pending = keys.filter(sid => options.forceHistory || !progressHistoryLoadedSids.has(sid));
+  if (!pending.length) return;
+
+  if (pending.length >= 4) {
+    const loadedBatch = await loadProgressHistoryForSidBatch(pending);
+    if (loadedBatch) return;
+
+    const loaded = await loadAllProgressHistoryOnce(!!options.forceHistory);
+    if (loaded) {
+      pending.forEach(sid => progressHistoryLoadedSids.add(sid));
+      return;
+    }
+  }
+
+  await Promise.all(pending.map(async (sid) => {
+    try {
+      const q = new URLSearchParams({ sid }).toString();
+      const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        state.progress = state.progress || {};
+        mergeDateSidMap(state.progress, data);
+        window.progressData = state.progress;
+        progressHistoryLoadedSids.add(sid);
+      }
+    } catch {}
+  }));
+}
+
+async function refreshStudentsIfNeeded(options = {}) {
+  if (!options.force && Array.isArray(state.students) && state.students.length) return;
+  try {
+    const res = await fetch('/api/students', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      state.students = data;
+      window.students = state.students;
+    }
+  } catch {}
+}
+
+async function refreshAbsencesIfNeeded(options = {}) {
+  if (!options.force && state.absentByDate && Object.keys(state.absentByDate).length) return;
+  try {
+    const res = await fetch('/api/absent', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      state.absentByDate = data.by_date || data.absentByDate || state.absentByDate || {};
+      state.absences = data.by_student || data.absences || state.absences || {};
+      state.absentSlotsByDate = data.by_slot || data.absentSlotsByDate || state.absentSlotsByDate || {};
+      window.absentByDate = state.absentByDate;
+      window.absentSlotsByDate = state.absentSlotsByDate;
+      if (window.state) {
+        window.state.absentByDate = state.absentByDate;
+        window.state.absences = state.absences;
+        window.state.absentSlotsByDate = state.absentSlotsByDate;
+      }
+    }
+  } catch {}
+}
+
+function ensureStaleDoneWarningStyle() {
+  if (document.getElementById('staleDoneWarningStyle')) return;
+  const s = document.createElement('style');
+  s.id = 'staleDoneWarningStyle';
+  s.textContent = `
+    #staleDoneWarning{
+      display:block;margin:8px 0 0;padding:7px 9px;border-radius:8px;
+      border:1px solid rgba(245,158,11,.45);
+      background:rgba(245,158,11,.12);
+      color:#92400e;font-weight:700;line-height:1.35;
+    }
+    body.dark #staleDoneWarning{
+      border-color:rgba(251,191,36,.5);
+      background:rgba(251,191,36,.13);
+      color:#fde68a;
+    }
+    #staleDoneWarning[hidden]{display:none}
+  `;
+  document.head.appendChild(s);
+}
+
+function renderStaleDoneWarning(summary) {
+  const anchor = document.getElementById('todaySlotCounts');
+  if (!anchor) return;
+
+  ensureStaleDoneWarningStyle();
+
+  let el = document.getElementById('staleDoneWarning');
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'staleDoneWarning';
+    el.className = 'hero-sub';
+    el.setAttribute('aria-live', 'polite');
+    anchor.insertAdjacentElement('afterend', el);
+  }
+
+  const byDateRows = Array.isArray(summary?.byDate) ? summary.byDate : [];
+  const total = Number(summary?.total || 0);
+  if (!total || !byDateRows.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+
+  const preview = byDateRows
+    .slice(0, 3)
+    .map((row) => `${row.date} ${row.count}건`)
+    .join(', ');
+  const more = byDateRows.length > 3 ? ` 외 ${byDateRows.length - 3}일` : '';
+  const students = Number(summary?.students || 0);
+  const studentText = students && students !== total ? `/${students}명` : '';
+
+  el.hidden = false;
+  el.textContent = `정리 필요: 어제까지 하원 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+}
+
+let staleSummaryRequestSeq = 0;
+async function refreshStaleDoneWarning(dateKey) {
+  const seq = ++staleSummaryRequestSeq;
+  try {
+    const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
+    const res = await fetch(`/api/logs/unarchived-summary?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (seq !== staleSummaryRequestSeq) return;
+    if (!isCurrentAdminDate(dateKey)) return;
+    renderStaleDoneWarning(data);
+  } catch (err) {
+    console.warn('[today] stale done summary failed:', err);
+  }
+}
+
+// ─────────────────────────────────────────────
+// 오늘 학생 도구/검색
+// ─────────────────────────────────────────────
+const LS_SEARCH_FIELD = 'todaySearchField';
+const TODAY_SEARCH_FIELDS = new Set(['all', 'name', 'school', 'curriculum']);
+let _alphaSortOnly = false;
+let _todaySearchField = TODAY_SEARCH_FIELDS.has(localStorage.getItem(LS_SEARCH_FIELD))
+  ? localStorage.getItem(LS_SEARCH_FIELD)
+  : 'all';
+let _makeupCarryover = null;
+
+function normalizeSearch(value) {
+  return normalizeSharedSearch(value);
+}
+
+const HANGUL_BASE = 0xac00;
+const HANGUL_END = 0xd7a3;
+const HANGUL_INITIALS_COMPAT = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const HANGUL_INITIALS_LEAD = [
+  0x1100, 0x1101, 0x1102, 0x1103, 0x1104, 0x1105, 0x1106, 0x1107, 0x1108,
+  0x1109, 0x110a, 0x110b, 0x110c, 0x110d, 0x110e, 0x110f, 0x1110, 0x1111, 0x1112,
+].map(code => String.fromCharCode(code));
+
+function hangulInitials(value, initials = HANGUL_INITIALS_COMPAT) {
+  return Array.from(String(value || '')).map(ch => {
+    const code = ch.charCodeAt(0);
+    if (code < HANGUL_BASE || code > HANGUL_END) return ch;
+    return initials[Math.floor((code - HANGUL_BASE) / 588)] || ch;
+  }).join('');
+}
+
+function searchKeyForText(value) {
+  return sharedSearchKeyForText(value);
+}
+
+function studentFieldValues(stu, field) {
+  const school = [
+    stu?.school,
+    stu?.schoolName,
+    stu?.highSchool,
+    stu?.middleSchool,
+    stu?.high,
+    stu?.middle,
+    stu?.schoolHigh,
+    stu?.schoolMiddle,
+  ];
+  const curriculum = [
+    stu?.curriculum,
+    stu?.subCurriculum,
+    stu?.subject,
+    stu?.course,
+  ];
+
+  if (field === 'name') return [stu?.name, stu?.id];
+  if (field === 'school') return school;
+  if (field === 'curriculum') return curriculum;
+  return [stu?.name, stu?.id, ...school, ...curriculum];
+}
+
+function studentSearchKey(stu, field) {
+  if (field === 'all') return sharedStudentSearchKey(stu);
+  if (field === 'name') return sharedStudentSearchKey({ name: stu?.name, id: stu?.id });
+  return searchKeyForText(studentFieldValues(stu, field).filter(Boolean).join(' '));
+}
+
 function updateAlphaSortBtn() {
-  const btn = document.getElementById('todayAlphaSortBtn');
-  if (!btn) return;
-  btn.textContent = alphaBtnText();
-  btn.setAttribute('aria-pressed', _alphaSortOnly ? 'true' : 'false');
-  btn.dataset.on = _alphaSortOnly ? '1' : '0';
+  _alphaSortOnly = false;
+  document.getElementById('todayAlphaSortBtn')?.remove();
+}
+
+function ensureHomeworkLeaveButton() {
+  let button = document.getElementById('homeworkLeaveBtn');
+  if (!button) {
+    button = document.createElement('button');
+    button.id = 'homeworkLeaveBtn';
+    button.className = 'btn secondary';
+    button.type = 'button';
+    button.textContent = '숙검하원';
+    button.title = '숙제 검사 완료 학생 일괄 하원';
+  }
+  return button;
+}
+
+function placeTodaySearchActions(search) {
+  const absentButton = document.getElementById('absentRecoverBtn');
+  const homeworkLeaveButton = ensureHomeworkLeaveButton();
+  const input = search?.querySelector?.('#todaySearchInput');
+  if (!input) return;
+  input.insertAdjacentElement('afterend', homeworkLeaveButton);
+  if (absentButton) homeworkLeaveButton.insertAdjacentElement('afterend', absentButton);
+}
+
+function ensureTodaySearchControls(tools) {
+  if (!tools) return;
+  const existingSearch = document.getElementById('todaySearchInput')?.closest?.('.today-search');
+  if (existingSearch) {
+    placeTodaySearchActions(existingSearch);
+    return;
+  }
+
+  const search = document.createElement('div');
+  search.className = 'today-search';
+  search.innerHTML = `
+    <select id="todaySearchField" aria-label="오늘 학생 검색 대상">
+      <option value="all">전체</option>
+      <option value="name">이름</option>
+      <option value="school">학교</option>
+      <option value="curriculum">과목</option>
+    </select>
+    <input id="todaySearchInput" type="search" autocomplete="off"
+           placeholder="오늘 학생 검색" aria-label="오늘 학생 검색">
+    <span id="todaySearchHint" class="today-search-hint" aria-live="polite"></span>
+  `;
+  tools.appendChild(search);
+  placeTodaySearchActions(search);
+
+  const field = search.querySelector('#todaySearchField');
+  const input = search.querySelector('#todaySearchInput');
+  applySearchPlaceholder(input, '오늘 학생 검색');
+  field.value = _todaySearchField;
+  field.addEventListener('change', () => {
+    _todaySearchField = TODAY_SEARCH_FIELDS.has(field.value) ? field.value : 'all';
+    try { localStorage.setItem(LS_SEARCH_FIELD, _todaySearchField); } catch {}
+    applyTodaySearchFilter();
+  });
+  input.addEventListener('input', applyTodaySearchFilter);
+  input.addEventListener('search', applyTodaySearchFilter);
+  input.addEventListener('compositionend', applyTodaySearchFilter);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      input.value = '';
+      applyTodaySearchFilter();
+    }
+  });
 }
 function ensureAlphaSortBtn() {
-  if (document.getElementById('todayAlphaSortBtn')) return;
+  if (document.getElementById('todaySearchInput')) {
+    document.getElementById('todayAlphaSortBtn')?.remove();
+    const wrap = document.getElementById('todayWrap');
+    if (wrap) wrap.dataset.alpha = '0';
+    return;
+  }
 
   if (!document.getElementById('todayAlphaSortBtnStyle')) {
     const s = document.createElement('style');
     s.id = 'todayAlphaSortBtnStyle';
     s.textContent = `
       .today-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
-      .today-tools .btn-sort{
-        display:inline-flex;align-items:center;justify-content:center;
-        height:32px;padding:0 12px;border-radius:10px;
-        border:1px solid rgba(148,163,184,.55);
-        background:rgba(248,250,252,.95);
-        cursor:pointer;user-select:none;font-size:13px;line-height:1;
-        transition:transform .08s ease, filter .12s ease, background .12s ease, border-color .12s ease;
+      .today-search{
+        --today-search-max:max(320px, min(calc(100% - 180px), calc(56.25vw - 58px)));
+        display:flex;align-items:center;gap:8px;flex:0 1 var(--today-search-max);
+        min-width:min(100%, 320px);max-width:var(--today-search-max);
       }
-      body.dark .today-tools .btn-sort{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}
-      .today-tools .btn-sort:hover{filter:brightness(1.03)}
-      .today-tools .btn-sort:active{transform:scale(.98)}
-      .today-tools .btn-sort[data-on="1"]{background:rgba(99,102,241,.12);border-color:rgba(99,102,241,.55)}
+      .today-search select,
+      .today-search input{
+        height:42px;border-radius:12px;border:1px solid rgba(148,163,184,.55);
+        background:rgba(248,250,252,.96);color:#0f172a;box-sizing:border-box;
+        font-size:15px;font-weight:700;outline:none;
+      }
+      .today-search select{flex:0 0 116px;padding:0 10px}
+      .today-search input{min-width:0;flex:1 1 auto;padding:0 13px}
+      body.admin .today-search #absentRecoverBtn{
+        flex:0 0 auto;height:42px !important;padding:0 16px !important;border-radius:12px !important;
+        font-size:15px !important;line-height:1 !important;white-space:nowrap;
+      }
+      body.admin .today-search #homeworkLeaveBtn{
+        flex:0 0 auto;height:42px !important;padding:0 16px !important;border-radius:12px !important;
+        font-size:15px !important;line-height:1 !important;white-space:nowrap;
+      }
+      .today-search input:focus,
+      .today-search select:focus{border-color:rgba(37,99,235,.72);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+      .today-search .today-search-hint{
+        flex:0 0 auto;min-width:72px;font-size:13px;font-weight:800;color:#64748b;text-align:right;
+      }
+      body.dark .today-search select,
+      body.dark .today-search input{border-color:#334155;background:rgba(2,6,23,.55);color:#e2e8f0}
+      body.dark .today-search .today-search-hint{color:#94a3b8}
+      #todayWrap tr.is-search-hidden,
+      #doneWrap tr.is-search-hidden{display:none !important}
       #todayWrap[data-alpha="1"] .drag-handle{opacity:.35;cursor:default !important}
+      @media (max-width:1180px){
+        .today-search{flex-basis:100%;max-width:100%}
+      }
+      @media (max-width:720px){
+        .today-search{flex-basis:100%;margin-left:0}
+        .today-search .today-search-hint{display:none}
+      }
     `;
     document.head.appendChild(s);
   }
@@ -86,31 +557,79 @@ function ensureAlphaSortBtn() {
     wrap.insertAdjacentElement('beforebegin', tools);
   }
 
-  const btn = document.createElement('button');
-  btn.id = 'todayAlphaSortBtn';
-  btn.type = 'button';
-  btn.className = 'btn-sort';
-  btn.textContent = alphaBtnText();
-  btn.dataset.on = _alphaSortOnly ? '1' : '0';
-  btn.setAttribute('aria-pressed', _alphaSortOnly ? 'true' : 'false');
-  btn.title = '한 번 누르면 기존 정렬/드래그순서 무시하고 가나다, 다시 누르면 원래 정렬';
-
-  btn.addEventListener('click', () => {
-    _alphaSortOnly = !_alphaSortOnly;
-    try { localStorage.setItem(LS_ALPHA_SORT, _alphaSortOnly ? '1' : '0'); } catch {}
-    updateAlphaSortBtn();
-    loadTodayAndRender();
-  });
-
-  tools.appendChild(btn);
   updateAlphaSortBtn();
-  wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
+  ensureTodaySearchControls(tools);
+  wrap.dataset.alpha = '0';
 }
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', ensureAlphaSortBtn, { once: true });
 } else {
   ensureAlphaSortBtn();
+}
+
+function applyTodaySearchFilter() {
+  const host = document.getElementById('todayWrap');
+  const doneHost = document.getElementById('doneWrap');
+  const input = document.getElementById('todaySearchInput');
+  const field = document.getElementById('todaySearchField');
+  const hint = document.getElementById('todaySearchHint');
+  if (!host || !input) return;
+
+  const queryText = input.value || '';
+  const mode = TODAY_SEARCH_FIELDS.has(field?.value) ? field.value : _todaySearchField;
+  const todayRows = Array.from(host.querySelectorAll('tr[data-sid]'));
+  const doneRows = Array.from(doneHost?.querySelectorAll('tr[data-sid]') || []);
+  const rows = [...todayRows, ...doneRows];
+  let todayVisible = 0;
+  let doneVisible = 0;
+
+  if (!normalizeSearch(queryText)) {
+    for (const row of rows) {
+      if (!row.hidden && !row.classList.contains('is-search-hidden')) continue;
+      row.hidden = false;
+      row.classList.remove('is-search-hidden');
+      row.setAttribute('aria-hidden', 'false');
+    }
+    if (hint) hint.textContent = '';
+    return;
+  }
+
+  const studentsById = new Map(
+    (state.students || []).map(stu => [String(stu?.id || ''), stu]),
+  );
+
+  for (const row of rows) {
+    const sid = String(row.dataset.sid || '');
+    const stu = studentsById.get(sid);
+    const key = stu ? studentSearchKey(stu, mode) : searchKeyForText(row.textContent || '');
+    const matches = matchesSearchKey(key, queryText);
+    row.hidden = !matches;
+    row.classList.toggle('is-search-hidden', !matches);
+    row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+    if (matches && row.closest('#doneWrap')) doneVisible += 1;
+    else if (matches) todayVisible += 1;
+  }
+
+  if (hint) {
+    hint.textContent = queryText.trim()
+      ? `${todayVisible}/${todayRows.length}명 · 하원 ${doneVisible}/${doneRows.length}`
+      : '';
+  }
+}
+
+async function loadMakeupCarryoverMap(options = {}) {
+  if (_makeupCarryover && !options.force) return _makeupCarryover;
+  try {
+    const res = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await res.json();
+    _makeupCarryover = data && typeof data === 'object' ? data : {};
+  } catch (err) {
+    console.warn('[today] makeup carryover load failed:', err);
+    _makeupCarryover = _makeupCarryover || {};
+  }
+  return _makeupCarryover;
 }
 
 // ─────────────────────────────────────────────
@@ -167,13 +686,86 @@ function sortDoneEntries(entries) {
   return out;
 }
 
+function homeworkRequestRank(dateStr, stu) {
+  const sid = stu?.id;
+  if (isSelfStudy(dateStr, sid)) return 1;
+  const attended = isAttended(dateStr, sid);
+  const checked = isHwChecked(dateStr, sid);
+  const requested = attended && !checked && isHwCheckRequested(dateStr, sid);
+  return requested ? 0 : 1;
+}
+
+function compareTodayStudents(dateStr, baseOrder) {
+  return (a, b) => {
+    const ga = timeGroupRank(dateStr, a.id);
+    const gb = timeGroupRank(dateStr, b.id);
+    if (ga !== gb) return ga - gb;
+
+    const attA = isAttended(dateStr, a.id) ? 1 : 0;
+    const attB = isAttended(dateStr, b.id) ? 1 : 0;
+    const hwcA = isHwChecked(dateStr, a.id) ? 1 : 0;
+    const hwcB = isHwChecked(dateStr, b.id) ? 1 : 0;
+    const selfA = isSelfStudy(dateStr, a.id) ? 1 : 0;
+    const selfB = isSelfStudy(dateStr, b.id) ? 1 : 0;
+    const statusA = selfA ? 2 : hwcA ? 1 : 0;
+    const statusB = selfB ? 2 : hwcB ? 1 : 0;
+    const reqA = homeworkRequestRank(dateStr, a);
+    const reqB = homeworkRequestRank(dateStr, b);
+    const ta = plannedMinutesFor(dateStr, a.id);
+    const tb = plannedMinutesFor(dateStr, b.id);
+
+    if (selfA !== selfB) return selfA - selfB;
+    if (attA !== attB) return attA - attB;
+    if (reqA !== reqB) return reqA - reqB;
+    if (reqA === 0 && reqB === 0) {
+      const atA = hwCheckRequestedAt(dateStr, a.id) || '9999-99-99T99:99:99.999Z';
+      const atB = hwCheckRequestedAt(dateStr, b.id) || '9999-99-99T99:99:99.999Z';
+      const atCmp = atA.localeCompare(atB);
+      if (atCmp !== 0) return atCmp;
+    }
+    if (statusA !== statusB) return statusA - statusB;
+    if (ta !== tb) return ta - tb;
+
+    const nameCmp = String(a.name || '').localeCompare(String(b.name || ''), 'ko-KR', {
+      sensitivity: 'base',
+      numeric: true,
+    });
+    if (nameCmp !== 0) return nameCmp;
+
+    if (baseOrder) {
+      const ai = baseOrder.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER;
+      const bi = baseOrder.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+    }
+
+    return String(a.id).localeCompare(String(b.id), 'ko-KR', {
+      sensitivity: 'base',
+      numeric: true,
+    });
+  };
+}
+
+function sortTodayStudents(list, dateStr, { preserveCurrentOrder = false } = {}) {
+  const out = Array.isArray(list) ? list : [];
+  const baseOrder = preserveCurrentOrder
+    ? new Map(out.map((stu, idx) => [String(stu?.id), idx]))
+    : null;
+  out.sort(compareTodayStudents(dateStr, baseOrder));
+  return out;
+}
+
 // ─────────────────────────────────────────────
 // 선택 날짜 명단 계산
 // ─────────────────────────────────────────────
 async function loadExtraAttendMap() {
   try {
     const m = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
-    return (m && typeof m === 'object') ? m : {};
+    if (m && typeof m === 'object') {
+      state.extra = m;
+      window.extra = state.extra;
+      return m;
+    }
+    return {};
   } catch {
     return {};
   }
@@ -223,59 +815,88 @@ async function computeTodayList(dateKey) {
   }
 
   // 정렬 우선순위:
-  // 그룹 > 출석 확인 > 숙제 검사 완료 > 등원시간 > 가나다
-  list.sort((a, b) => {
-    const ga = timeGroupRank(dateStr, a.id);
-    const gb = timeGroupRank(dateStr, b.id);
-    if (ga !== gb) return ga - gb;
-
-    const attA = isAttended(dateStr, a.id) ? 1 : 0;
-    const attB = isAttended(dateStr, b.id) ? 1 : 0;
-    const hwcA = isHwChecked(dateStr, a.id) ? 1 : 0;
-    const hwcB = isHwChecked(dateStr, b.id) ? 1 : 0;
-    const ta = plannedMinutesFor(dateStr, a.id);
-    const tb = plannedMinutesFor(dateStr, b.id);
-
-    if (attA !== attB) return attA - attB;
-    if (hwcA !== hwcB) return hwcA - hwcB;
-    if (ta !== tb) return ta - tb;
-
-    const nameCmp = String(a.name || '').localeCompare(String(b.name || ''), 'ko');
-    if (nameCmp !== 0) return nameCmp;
-    return String(a.id).localeCompare(String(b.id));
-  });
-
+  // 그룹 > 출석 확인 > 숙검요청(요청 빠른 순) > 숙제 검사 완료 > 등원시간 > 가나다
   return { dateStr, list };
 }
 
 // ─────────────────────────────────────────────
 // 공개: 로드 + 렌더
 // ─────────────────────────────────────────────
-export async function loadTodayAndRender() {
+let todayRenderSeq = 0;
+let lastAutoAssignmentBoundaryDate = todayLocalKey();
+
+async function refreshUpdatesAtAssignmentBoundary(reason = '') {
+  const realDate = todayLocalKey();
+  const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;
+  if (!boundary) return;
+
+  try {
+    const updates = await api.get('/api/updates', { cache: 'no-store' });
+    if (updates && typeof updates === 'object') state.updates = updates;
+    lastAutoAssignmentBoundaryDate = realDate;
+  } catch {
+    // Rendering can continue with the last stable snapshot; retry on the next
+    // date/visibility refresh rather than creating a client-side assignment.
+  }
+}
+
+export async function loadTodayAndRender(options = {}) {
   ensureAlphaSortBtn();
   updateAlphaSortBtn();
 
-  const dateKey = getAdminDate();
+  await refreshUpdatesAtAssignmentBoundary(options.reason || '');
 
-  await loadWeekendSlots();
-  await ensureAttendLoaded(dateKey);
-  await ensureContactLoaded(dateKey);
-  await ensureArriveLoaded(dateKey);
+  const force = !!options.force;
+  const seq = ++todayRenderSeq;
+  const dateKey = getAdminDate();
+  const forceDatePayloads = !!(force && (options.reason === 'date' || options.forceDatePayloads));
+
+  await Promise.all([
+    refreshStudentsIfNeeded({ force }),
+    refreshAbsencesIfNeeded({ force }),
+    ensureLogsForDate(dateKey, { force: forceDatePayloads }),
+    ensureProgressForDate(dateKey, { force: forceDatePayloads }),
+    loadWeekendSlots(),
+    ensureAttendLoaded(dateKey, { force }),
+    ensureContactLoaded(dateKey, { force }),
+    ensureArriveLoaded(dateKey, { force }),
+    loadMakeupCarryoverMap({ force }),
+  ]);
+
+  if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
   const doneEntries = sortDoneEntries(
     collectUnarchivedLogsByDate(dateKey),
   );
 
-  const { list: raw } = await computeTodayList(dateKey);
+  const [{ list: raw }] = await Promise.all([
+    computeTodayList(dateKey),
+    loadOrderMap({ force }),
+  ]);
+  if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
+  const list = sortTodayStudents(applySavedOrder(raw, dateKey), dateKey, { preserveCurrentOrder: true });
 
-  await loadOrderMap();
-  const list = _alphaSortOnly ? raw : applySavedOrder(raw, dateKey);
+  await ensureProgressHistoryForSids(list.map(s => s.id), { forceHistory: forceDatePayloads });
+  if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
+
+  const makeupCounts = aggregateMakeupCountsByStudent(state.students || [], countPendingMakeupsBySid({
+    students: state.students || [],
+    absentByDate: state.absentByDate || {},
+    absentSlotsByDate: state.absentSlotsByDate || {},
+    extra: state.extra || {},
+    weekendSlots: state.weekendSlots || window.weekendSlots || {},
+    carryover: _makeupCarryover || {},
+    manualMakeups: _makeupCarryover?.manual || {},
+  }));
 
   const wrap = document.getElementById('todayWrap');
-  if (wrap) wrap.dataset.alpha = _alphaSortOnly ? '1' : '0';
+  if (wrap) wrap.dataset.alpha = '0';
 
-  renderToday(list, dateKey, _alphaSortOnly);
   renderDone(doneEntries);
+  renderToday(list, dateKey, false, makeupCounts);
+  applyTodaySearchFilter();
+  renderStaleDoneWarning({ total: 0, byDate: [] });
+  void refreshStaleDoneWarning(dateKey);
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));
@@ -290,5 +911,53 @@ if (document.readyState === 'loading') {
   bindTodayTableEvents(loadTodayAndRender);
 }
 
-document.addEventListener('admin:refresh', loadTodayAndRender);
-document.addEventListener('admin:date-change', loadTodayAndRender);
+function isElementEditing(el) {
+  if (!el || el === document.body) return false;
+  if (el.id === 'todaySearchInput' || el.id === 'todaySearchField') return false;
+  return !!el.closest?.('input, textarea, select, [contenteditable="true"]');
+}
+
+function isModalOpen(el) {
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+}
+
+function shouldSkipAutoRefresh() {
+  if (document.hidden) return true;
+  if (isElementEditing(document.activeElement)) return true;
+  return [
+    '#logModal',
+    '#vidModal',
+    '#testModal',
+    '#extraModal',
+    '#absentRegisterModal',
+    '#attendModal',
+    '#selectionModal',
+    '#yoilModal',
+  ].some(selector => isModalOpen(document.querySelector(selector)));
+}
+
+function initAdminAutoRefresh() {
+  if (window.__adminTodayAutoRefreshStarted) return;
+  window.__adminTodayAutoRefreshStarted = true;
+
+  const refresh = async () => {
+    await refreshUpdatesAtAssignmentBoundary('auto');
+    if (shouldSkipAutoRefresh()) return;
+    loadTodayAndRender({ force: true, reason: 'auto' });
+  };
+
+  window.setInterval(refresh, 30 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+}
+
+document.addEventListener('admin:refresh', (ev) => {
+  const force = !!ev?.detail?.force;
+  const forceDatePayloads = !!ev?.detail?.forceDatePayloads;
+  loadTodayAndRender({ force, forceDatePayloads, reason: 'event' });
+});
+document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));
+initAdminAutoRefresh();

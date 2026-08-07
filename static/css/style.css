@@ -1,5 +1,7 @@
 /* ========== 색 · 폰트 ========== */
 :root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
   --bg-light: #f8f9fc;
   --bg-dark: #0d1117;
   --card-light: #ffffff;
@@ -38,12 +40,14 @@
 
 /* ========== body & 헤더 ========== */
 body {
-  font-family: 'Noto Sans KR', system-ui, sans-serif;
+  font-family: var(--font-ui);
   margin: 2rem auto;
   max-width: 1280px;
   background: var(--bg-light);
   color: var(--text);
-  transition: .25s;
+  transition-property: background-color, color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
 }
 
 body.dark {
@@ -82,7 +86,7 @@ input[type="text"],
 input[type="number"],
 select,
 button {
-  font: 15px/1.4 'Noto Sans KR', system-ui, sans-serif;
+  font: 15px/1.4 var(--font-ui);
   padding: 6px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -128,7 +132,9 @@ body.dark select:focus {
   inset: 0;
   border-radius: 9999px;
   background: #cbd5e1;
-  transition: .25s
+  transition-property: background-color, border-color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1)
 }
 
 .slider:before {
@@ -140,7 +146,9 @@ body.dark select:focus {
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  transition: .25s
+  transition-property: transform, box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1)
 }
 
 input:checked+.slider {
@@ -1695,4 +1703,675 @@ body:not(.dark) .pill {
   background: #f8fafc;
   color: var(--muted);
   border: 1px solid var(--line);
+}
+
+/* =========================================
+   Apple clean refresh for shared legacy pages
+   - CSS-only polish for /students and utility pages.
+   ========================================= */
+:root {
+  --apple-bg: #f5f5f7;
+  --apple-surface: #ffffff;
+  --apple-surface-soft: #fbfbfd;
+  --apple-fill: #f2f2f7;
+  --apple-border: #d2d2d7;
+  --apple-border-strong: #b8b8c0;
+  --apple-text: #1d1d1f;
+  --apple-muted: #6e6e73;
+  --apple-blue: #0071e3;
+  --apple-blue-soft: #e8f2ff;
+  --apple-red: #d70015;
+  --apple-radius: 14px;
+  --apple-radius-lg: 18px;
+  --apple-shadow: 0 12px 34px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.04);
+  --apple-shadow-float: 0 28px 80px rgba(0, 0, 0, 0.22);
+}
+
+body.dark {
+  --apple-bg: #050507;
+  --apple-surface: #1c1c1e;
+  --apple-surface-soft: #242426;
+  --apple-fill: #2c2c2e;
+  --apple-border: #3a3a3c;
+  --apple-border-strong: #48484a;
+  --apple-text: #f5f5f7;
+  --apple-muted: #a1a1a6;
+  --apple-blue: #0a84ff;
+  --apple-blue-soft: rgba(10, 132, 255, 0.18);
+  --apple-red: #ff453a;
+}
+
+body {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+body.all-page {
+  background: linear-gradient(180deg, #fbfbfd 0%, var(--apple-bg) 100%) !important;
+  color: var(--apple-text);
+}
+
+body.dark.all-page {
+  background: linear-gradient(180deg, #111113 0%, #050507 100%) !important;
+}
+
+body.all-page .topbar {
+  top: 10px !important;
+  width: min(1680px, calc(100vw - 48px)) !important;
+  margin-top: 10px !important;
+  margin-bottom: 18px !important;
+  padding: 12px 16px !important;
+  border: 1px solid color-mix(in srgb, var(--apple-border) 92%, transparent) !important;
+  border-radius: 18px !important;
+  background: color-mix(in srgb, var(--apple-surface) 92%, rgba(255, 255, 255, 0.72) 8%) !important;
+  color: var(--apple-text) !important;
+  box-shadow: var(--apple-shadow) !important;
+  backdrop-filter: saturate(130%) blur(18px) !important;
+}
+
+body.all-page .topbar h1 {
+  letter-spacing: 0 !important;
+  font-weight: 760 !important;
+}
+
+body.all-page .topbar a {
+  min-height: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border: 1px solid var(--apple-border) !important;
+  border-radius: 12px !important;
+  background: color-mix(in srgb, var(--apple-surface) 90%, var(--apple-blue-soft) 10%) !important;
+  color: var(--apple-text) !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+  transition-property: transform, background-color, border-color, box-shadow, color !important;
+  transition-duration: 150ms !important;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+body.all-page .topbar a:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--apple-border) 70%, var(--apple-blue) 30%) !important;
+  background: color-mix(in srgb, var(--apple-surface) 82%, var(--apple-blue-soft) 18%) !important;
+}
+
+body.all-page .topbar a:active,
+body.all-page button:active,
+body.all-page .btn:active {
+  transform: scale(0.96);
+}
+
+body.all-page .all-page-shell,
+body.all-page #allPageShell {
+  width: min(1680px, calc(100vw - 48px)) !important;
+}
+
+body.all-page #newStuMount,
+body.all-page #yoilStats,
+body.all-page #allWrap,
+body.all-page #yoilModal > div,
+body.all-page #progModal > div {
+  border-color: color-mix(in srgb, var(--apple-border) 92%, transparent) !important;
+}
+
+body.all-page #allWrap {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+}
+
+body.all-page #yoilModal,
+body.all-page #progModal {
+  background: rgba(0, 0, 0, 0.42) !important;
+  backdrop-filter: blur(12px);
+}
+
+body.all-page #yoilModal > div,
+body.all-page #progModal > div {
+  border: 1px solid var(--apple-border) !important;
+  border-radius: 20px !important;
+  background: var(--apple-surface) !important;
+  color: var(--apple-text) !important;
+  box-shadow: var(--apple-shadow-float) !important;
+}
+
+body.all-page :where(button, .btn, input, select, textarea, a):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--apple-blue) 28%, transparent) !important;
+  outline-offset: 2px !important;
+}
+
+body.all-page :where(input, select, textarea) {
+  min-height: 40px;
+  border-radius: 12px !important;
+  border-color: var(--apple-border) !important;
+  background: color-mix(in srgb, var(--apple-surface) 94%, #fff 6%) !important;
+  color: var(--apple-text) !important;
+}
+
+body.all-page :where(button, .btn) {
+  min-height: 40px;
+  border-radius: 12px !important;
+  border-color: color-mix(in srgb, var(--apple-blue) 72%, #000 8%) !important;
+  background: var(--apple-blue) !important;
+  color: #ffffff !important;
+  font-weight: 650 !important;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--apple-blue) 20%, transparent) !important;
+  transition-property: transform, background-color, border-color, box-shadow, color !important;
+  transition-duration: 150ms !important;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+body.all-page table {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--apple-border);
+  box-shadow: var(--apple-shadow);
+}
+
+body.all-page #yoilStats table {
+  border-radius: 0 !important;
+  overflow: visible !important;
+}
+
+body.all-page #yoilStats .subject-level-table caption {
+  line-height: 1.45;
+  padding-bottom: 2px;
+}
+
+body.all-page th {
+  background: color-mix(in srgb, var(--apple-surface-soft) 92%, var(--apple-blue-soft) 8%) !important;
+  color: var(--apple-muted) !important;
+}
+
+body.all-page td {
+  border-color: color-mix(in srgb, var(--apple-border) 72%, transparent) !important;
+}
+
+body.all-page #allWrap .studentsTable .dayInputRow,
+body.all-page #allWrap .studentsTable .timeInputRow {
+  display: grid !important;
+  grid-template-columns: repeat(5, 48px);
+  gap: 4px !important;
+  justify-content: center;
+  align-items: center;
+  margin: 0 !important;
+}
+
+body.all-page #allWrap .studentsTable .dayInputRow {
+  margin-bottom: 4px !important;
+}
+
+body.all-page #allWrap .studentsTable .dayInputRow input.dayInput,
+body.all-page #allWrap .studentsTable .timeInputRow input.timeInput {
+  width: 48px !important;
+  min-width: 48px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 6px !important;
+  border-radius: 8px !important;
+  box-sizing: border-box;
+  text-align: center;
+  line-height: 30px;
+}
+
+body.all-page #allWrap .studentsTable .dayInputRow input.dayInput {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+body.all-page #allWrap .studentsTable .timeInputRow input.timeInput {
+  font-size: 11px !important;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  body.all-page {
+    padding: 0 8px 24px !important;
+  }
+
+  body.all-page .topbar,
+  body.all-page .all-page-shell,
+  body.all-page #allPageShell {
+    width: auto !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+  }
+
+  body.all-page .topbar {
+    align-items: flex-start !important;
+    flex-direction: column !important;
+  }
+
+  body.all-page .topbar nav {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  body.all-page #newStuMount,
+  body.all-page #yoilStats,
+  body.all-page #allWrap {
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.all-page #yoilStats,
+  body.all-page #yoilStatsInner,
+  body.all-page #yoilStats section,
+  body.all-page .school-grade-stats {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.all-page #yoilStatsInner {
+    flex-wrap: wrap !important;
+  }
+
+  body.all-page #yoilStats section,
+  body.all-page .school-grade-stats,
+  body.all-page .school-grade-stats > div {
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+  }
+}
+
+/* =========================================
+   Shared service font and control alignment
+   ========================================= */
+body :where(button, input, select, textarea),
+body :where(#progModal, #yoilModal, #miniProgModal, #ctx) {
+  font-family: var(--font-ui) !important;
+  letter-spacing: 0 !important;
+}
+
+body :where(button, .btn, a.btn),
+body.all-page :where(.docOpen, .miniProgBtn, .btn-del-stu, .btn-clone-stu),
+#miniProgModal button,
+#progModal button,
+#yoilModal button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px;
+  box-sizing: border-box;
+  line-height: 1 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+body :where(#setBtn, #submitFeedback, #openTestSubmit) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px;
+  box-sizing: border-box;
+  font-family: var(--font-ui) !important;
+  line-height: 1 !important;
+  text-align: center;
+}
+
+body #setBtn {
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+body #setBtn #badge {
+  top: 1px !important;
+  right: 1px !important;
+}
+
+body.all-page :where(.docOpen, .miniProgBtn, .btn-del-stu, .btn-clone-stu),
+body :where(.delV) {
+  width: 36px;
+  min-width: 36px;
+  height: 34px;
+  padding: 0 !important;
+  gap: 0;
+}
+
+body.all-page #allWrap .studentsTable {
+  min-width: max-content;
+}
+
+body.all-page #allWrap .studentsTable :where(th.col-clone, td.col-clone-cell) {
+  width: 76px !important;
+  min-width: 76px !important;
+  max-width: none !important;
+  overflow: visible !important;
+  padding-left: 10px !important;
+  padding-right: 14px !important;
+  white-space: nowrap;
+}
+
+body.all-page #allWrap .studentsTable .btn-clone-stu {
+  width: auto !important;
+  min-width: 52px !important;
+  padding: 0 10px !important;
+  white-space: nowrap;
+}
+
+body.all-page #allWrap .studentsTable :where(th:nth-child(8), td:nth-child(8)) {
+  width: 212px !important;
+  min-width: 212px !important;
+  max-width: 212px !important;
+}
+
+body.all-page #allWrap .studentsTable td:nth-child(8) {
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+body.all-page #allWrap .studentsTable .docBox {
+  gap: 4px !important;
+  justify-content: stretch;
+}
+
+body.all-page #allWrap .studentsTable .docUrlInput {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+body :where(.btn-del, .btn-toggle, .btn-add-grade) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box;
+  line-height: 1 !important;
+  text-align: center;
+}
+
+body :where(.btn-del, .btn-toggle) {
+  padding: 0 !important;
+}
+
+body :where(.btn-toggle) {
+  min-width: 30px;
+}
+
+@media (max-width: 760px) {
+  #videoSection {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  #vidTable {
+    min-width: 640px;
+  }
+}
+
+:root {
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 10px 24px rgba(15, 23, 42, .07);
+  --accent: #1769aa;
+  --accent-dark: #5fb3f3;
+  --accent-opaque: rgba(23, 105, 170, .12);
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 8px;
+  --ds-radius-xl: 8px;
+}
+
+body {
+  transition-property: background-color, color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+:where(h1, h2, h3) {
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+:where(p, li, .muted) {
+  text-wrap: pretty;
+}
+
+:where(button, .btn, a.btn, input, select, textarea) {
+  border-radius: 8px;
+}
+
+:where(button, .btn, a.btn) {
+  min-height: 40px;
+  transition-property: transform, background-color, border-color, box-shadow, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+:where(button, .btn, a.btn):active {
+  transform: scale(.96);
+}
+
+:where(input, select, textarea) {
+  min-height: 40px;
+  transition-property: border-color, box-shadow, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+
+body.all-page {
+  background:
+    linear-gradient(180deg, #f7f8fa 0%, #eef2f6 100%) !important;
+  color: #20242c;
+}
+
+body.all-page.dark {
+  background: #0e131b !important;
+}
+
+body.all-page .topbar {
+  top: 10px !important;
+  border: 1px solid rgba(148, 163, 184, .32) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow) !important;
+}
+
+body.all-page .topbar a {
+  min-height: 40px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border-radius: 8px !important;
+  transition-property: transform, background-color, border-color, color !important;
+  transition-duration: 150ms !important;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
+}
+
+body.all-page #allPageShell > :where(div, section),
+body.all-page #newStuMount > :where(div, section, form),
+body.all-page #yoilStats > :where(div, section),
+body.all-page #allWrap > :where(div, section, table) {
+  border-radius: 8px;
+}
+
+body.all-page :where(table, .studentsTable) {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+body.all-page :where(th) {
+  background: color-mix(in srgb, var(--ds-surface) 88%, var(--ds-primary-soft) 12%);
+  color: var(--ds-text);
+}
+
+body.all-page :where(th, td) {
+  line-height: 1.35;
+}
+
+body.all-page :where(#yoilModal, #progModal) > div {
+  border-radius: 8px !important;
+  border: 1px solid var(--ds-border) !important;
+  background: var(--ds-surface) !important;
+  color: var(--ds-text) !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
+}
+
+body.all-page :where(#yoilClose, #progSave, #progClose) {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+body.video-manage-page {
+  max-width: min(1680px, calc(100vw - 28px));
+  margin: 14px auto 28px;
+  background:
+    linear-gradient(180deg, #f7f8fa 0%, #eef2f6 100%);
+}
+
+body.video-manage-page > header,
+body.video-manage-page #videoSection {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+body.video-manage-page > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+body.video-manage-page > header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+body.video-manage-page > header p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+body.video-manage-page > header label {
+  margin: 0 !important;
+}
+
+body.video-manage-page #videoSection {
+  padding: 14px;
+  overflow: auto;
+}
+
+body.video-manage-page .video-filter-row {
+  display: grid;
+  grid-template-columns: 180px 180px minmax(320px, 1fr);
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+body.video-manage-page .video-filter-control {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+body.video-manage-page .video-filter-control span {
+  color: #5d6878;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+body.video-manage-page .video-filter-row :where(input, select),
+body.video-manage-page .form-row :where(input, select, button) {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+body.video-manage-page .form-row {
+  display: grid;
+  grid-template-columns:
+    180px
+    180px
+    repeat(3, minmax(54px, .28fr))
+    minmax(64px, .36fr)
+    minmax(160px, 1.15fr)
+    minmax(240px, 1.8fr)
+    minmax(92px, .42fr)
+    minmax(92px, .42fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+body.video-manage-page #vTitle,
+body.video-manage-page #vUrl {
+  grid-column: auto;
+}
+
+body.video-manage-page #exNumHigh,
+body.video-manage-page #exNumMid,
+body.video-manage-page #exNumLow,
+body.video-manage-page #vChap,
+body.video-manage-page #vTitle,
+body.video-manage-page #vUrl {
+  width: 100%;
+}
+
+body.video-manage-page #addVid,
+body.video-manage-page #saveVid {
+  font-weight: 850;
+}
+
+body.video-manage-page #vidTable {
+  min-width: 980px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #ffffff;
+}
+
+body.video-manage-page #vidTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+}
+
+body.video-manage-page #vidTable :where(th, td) {
+  padding: 9px 8px;
+  border-bottom: 1px solid #d8dee8;
+  line-height: 1.35;
+}
+
+body.video-manage-page.dark > header,
+body.video-manage-page.dark #videoSection,
+body.video-manage-page.dark #vidTable {
+  background: #151f2e;
+  border-color: #2a3b55;
+}
+
+body.video-manage-page.dark #vidTable th {
+  background: #1d2a3d;
+}
+
+@media (max-width: 900px) {
+  body.video-manage-page {
+    max-width: calc(100vw - 16px);
+    margin-top: 8px;
+  }
+
+  body.video-manage-page .form-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.video-manage-page .video-filter-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.video-manage-page #vTitle,
+  body.video-manage-page #vUrl {
+    grid-column: 1 / -1;
+  }
 }

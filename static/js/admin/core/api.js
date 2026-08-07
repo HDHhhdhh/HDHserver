@@ -1,5 +1,8 @@
-// 서버 API 핼퍼
+import { fetchJson, fetchJsonChecked, fetchJsonOr, sendJson } from '../../shared/api.js';
+
 export const api = {
-  get: (url) => fetch(url).then(r => r.json()),
-  post: (url, data) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  get: (url, init) => fetchJson(url, init),
+  getStrict: (url, label, init) => fetchJsonChecked(url, label, init),
+  getOr: (url, fallback, init) => fetchJsonOr(url, fallback, init),
+  post: (url, data, init) => sendJson(url, data, init),
 };

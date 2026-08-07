@@ -1,5 +1,6 @@
 ﻿import { toast } from '../core/utils.js';
-import { state } from '../core/state.js';
+import { ensureProgressForSid, state } from '../core/state.js';
+import { localDateKey } from '../core/date.js';
 
 let editingSid = null;
 
@@ -22,11 +23,12 @@ const modal = document.getElementById('progModal');
 const title = document.getElementById('progTitle');
 const zone  = document.getElementById('progZone');
 
-document.addEventListener('click', (e)=>{
+document.addEventListener('click', async (e)=>{
   const btn = e.target.closest('button.showProg');
   if (!btn) return;
 
   editingSid = btn.dataset.id;
+  await ensureProgressForSid(editingSid);
   const tr = btn.closest('tr');
   const cur = (tr?.dataset.curriculum||'').trim();
   const sub = (tr?.dataset.subcurriculum||'').trim();
@@ -40,7 +42,7 @@ document.addEventListener('click', (e)=>{
                  (v.subCurriculum||'').trim().toLowerCase()===subKey)
     .sort((a,b)=>a.chapter-b.chapter);
 
-  const today = new Date().toISOString().slice(0,10);
+  const today = localDateKey();
   const dates = Object.keys(state.progress||{}).filter(d=>d<=today).sort();
   const progEntry = {};
   dates.forEach(d=>{
@@ -74,7 +76,7 @@ document.addEventListener('click', (e)=>{
 
 function save(){
   if (!editingSid) return;
-  const today = new Date().toISOString().slice(0,10);
+  const today = localDateKey();
   const newProg = {};
   zone.querySelectorAll('.progress-cell').forEach(cell=>{
     const st = cell.dataset.state;

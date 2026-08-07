@@ -1,3 +1,5 @@
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
+
 const toast = msg => {
     const d = document.createElement('div');
     d.textContent = msg;
@@ -11,26 +13,6 @@ const toast = msg => {
 
 const $ = id => document.getElementById(id);
 
-(function setupDarkMode() {
-    const b = $('darkToggle');
-    if (!b) return;
-    // 초기 상태 적용
-    if (localStorage.theme === 'dark') {
-        document.body.classList.add('dark');
-        b.checked = true;
-    }
-    // 토글 이벤트
-    b.addEventListener('change', () => {
-        if (b.checked) {
-            document.body.classList.add('dark');
-            localStorage.theme = 'dark';
-        } else {
-            document.body.classList.remove('dark');
-            localStorage.theme = 'light';
-        }
-    });
-})();
-
 (() => {
     const CUR = ['공수1', '공수2', '미적분1', '미적분2', '대수', '기하', '확통'];
     const SUB = {
@@ -42,13 +24,53 @@ const $ = id => document.getElementById(id);
 
     let videos = [];
     const CT = { "Content-Type": "application/json" };
+    const vidTable = $('vidTable');
+    const saveVidBtn = $('saveVid');
+    let autoSaveTimer = null;
+    let autoSaveClick = false;
+    let lastSavedVideoBody = '';
+    let saveInFlight = false;
+    let queuedSaveMode = null;
+
+    function scheduleVideoAutoSave(delay = 800) {
+        if (!saveVidBtn) return;
+        if (autoSaveTimer) clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+            autoSaveTimer = null;
+            autoSaveClick = true;
+            saveVidBtn.click();
+        }, delay);
+    }
+
+    if (vidTable) {
+        vidTable.addEventListener('blur', e => {
+            if (e.target?.matches?.('td[contenteditable]')) scheduleVideoAutoSave();
+        }, true);
+        vidTable.addEventListener('click', e => {
+            if (e.target?.closest?.('.delV')) scheduleVideoAutoSave();
+        });
+    }
 
     function extractKollusMid(url) {
         const raw = String(url || '').trim();
         if (!raw) return '';
+        if (window.__adminDemo?.enabled) {
+            const demoAsset = raw.match(/\/demo-assets\/videos\/([^/?#]+?)(?:\.[A-Za-z0-9]+)?(?:[?#].*)?$/i);
+            if (demoAsset && /^[A-Za-z0-9_-]+$/.test(demoAsset[1])) return demoAsset[1];
+            if (/^demo-[A-Za-z0-9_-]+$/.test(raw)) return raw;
+        }
 
         try {
             const u = new URL(raw, location.origin);
+            if (window.__adminDemo?.enabled && u.hostname === 'demo.invalid') {
+                for (const key of ['mid', 'm', 'media_content_key', 'content_key']) {
+                    const cand = String(u.searchParams.get(key) || '').trim();
+                    if (/^[A-Za-z0-9_-]+$/.test(cand)) return cand;
+                }
+                const parts = u.pathname.split('/').filter(Boolean);
+                const cand = String(parts[parts.length - 1] || '').replace(/\.[A-Za-z0-9]+$/, '');
+                if (/^[A-Za-z0-9_-]+$/.test(cand)) return cand;
+            }
             if (!/kollus\.com$/i.test(u.hostname) && !/\.kollus\.com$/i.test(u.hostname)) return '';
 
             for (const key of ['mid', 'm', 'media_content_key', 'MEDIA_CONTENT_KEY', 'content_key']) {
@@ -132,6 +154,7 @@ const $ = id => document.getElementById(id);
         fetch('/api/videos').then(r => r.json())
     ]).then(([vids]) => {
         videos = vids;
+        lastSavedVideoBody = JSON.stringify(videos);
         drawVid();
     });
 
@@ -139,14 +162,27 @@ const $ = id => document.getElementById(id);
     function drawVid() {
         const curEl = document.getElementById('curriculumFilter');
         const subEl = document.getElementById('subCurriculumFilter');
+        const searchEl = document.getElementById('videoSearch');
         const curSel = curEl ? curEl.value : '';
         const subSel = subEl ? subEl.value : '';
+        const queryText = searchEl ? searchEl.value : '';
+        if (!vidTable) return;
 
         // ② videos 배열에서 필터 적용 (빈 값이면 전체)
         const list = videos
             .filter(v =>
                 (!curSel || v.curriculum === curSel) &&
-                (!subSel || v.subCurriculum === subSel)
+                (!subSel || v.subCurriculum === subSel) &&
+                matchesSearchKey(searchKeyForText([
+                    v.id,
+                    v.curriculum,
+                    v.subCurriculum,
+                    v.chapter,
+                    v.title,
+                    v.url,
+                    v.mid,
+                    JSON.stringify(v.exNum || {}),
+                ].join(' ')), queryText)
             )
             // ③ 커리큘럼→세부과정→챕터 순으로 정렬
             .sort((a, b) => {
@@ -252,21 +288,38 @@ const $ = id => document.getElementById(id);
         'APEX'
     ];
     const filterDiv = document.createElement('div');
-    filterDiv.style.margin = '0.5rem 0';
+    filterDiv.className = 'video-filter-row';
     filterDiv.innerHTML = `
-  <label style="margin-right:0.5rem;">커리큘럼:</label>
-  <select id="curriculumFilter" style="margin-right:1rem;">
-   <option value="">전체</option>
-   ${maincurricula.map(m => `<option value="${m}">${m}</option>`).join('')}
-  </select>
-
-  <label style="margin-right:0.5rem;">세부:</label>
-  <select id="subCurriculumFilter">
-   <option value="">전체</option>
-   ${subCurricula.map(s => `<option value="${s}">${s}</option>`).join('')}
-  </select>
+  <label class="video-filter-control">
+    <span>커리큘럼 선택</span>
+    <select id="curriculumFilter">
+      <option value="">전체</option>
+      ${maincurricula.map(m => `<option value="${m}">${m}</option>`).join('')}
+    </select>
+  </label>
+  <label class="video-filter-control">
+    <span>세부 선택</span>
+    <select id="subCurriculumFilter">
+      <option value="">전체</option>
+      ${subCurricula.map(s => `<option value="${s}">${s}</option>`).join('')}
+    </select>
+  </label>
+  <label class="video-filter-control video-search-control">
+    <span>검색</span>
+    <input id="videoSearch" type="search" autocomplete="off" placeholder="영상 검색 (초성/영타 검색 · 띄어쓰기=AND)">
+  </label>
 `;
     videoSection.prepend(filterDiv);
+    const videoSearch = document.getElementById('videoSearch');
+    applySearchPlaceholder(videoSearch, '영상 검색');
+    videoSearch?.addEventListener('input', drawVid);
+    videoSearch?.addEventListener('search', drawVid);
+    videoSearch?.addEventListener('compositionend', drawVid);
+    videoSearch?.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        videoSearch.value = '';
+        drawVid();
+    });
 
     // 드롭다운 변경 시 drawVid() 재실행
     document.getElementById('curriculumFilter')
@@ -328,11 +381,18 @@ const $ = id => document.getElementById(id);
             drawVid();
         });
     })();
+    document.getElementById('addVid')?.addEventListener('click', () => scheduleVideoAutoSave());
 
 
 
     /* 영상 저장 */
-    saveVid.onclick = () => {
+    saveVidBtn.onclick = () => {
+        const isAutoSave = autoSaveClick;
+        autoSaveClick = false;
+        if (!isAutoSave && autoSaveTimer) {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = null;
+        }
         // ① 테이블 행 순회
         document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
             const i = +tr.dataset.idx;
@@ -369,12 +429,39 @@ const $ = id => document.getElementById(id);
         });
 
         // ④ 서버에 저장
+        const body = JSON.stringify(videos);
+        if (body === lastSavedVideoBody) {
+            if (!isAutoSave) toast('변경사항 없음');
+            return;
+        }
+        if (saveInFlight) {
+            queuedSaveMode = isAutoSave ? (queuedSaveMode || 'auto') : 'manual';
+            return;
+        }
+
+        saveInFlight = true;
         fetch('/api/videos', {
             method: 'POST',
             headers: CT,
-            body: JSON.stringify(videos)
+            body
         })
-            .then(() => toast('영상 저장 완료'));
+            .then(res => {
+                if (!res.ok) throw new Error(`video save failed: ${res.status}`);
+                lastSavedVideoBody = body;
+                toast(isAutoSave ? '영상 자동 저장 완료' : '영상 저장 완료');
+            })
+            .catch(err => {
+                console.error('[video-manage] save failed', err);
+                toast('영상 저장 실패');
+            })
+            .finally(() => {
+                saveInFlight = false;
+                if (!queuedSaveMode) return;
+                const mode = queuedSaveMode;
+                queuedSaveMode = null;
+                autoSaveClick = mode === 'auto';
+                saveVidBtn.click();
+            });
     };
 
 })();

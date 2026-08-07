@@ -28,6 +28,177 @@ try {
   if (window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
 } catch {}
 
+const STUDENT_SEARCH_HELP_TEXT = '초성/영타 검색 · 띄어쓰기=AND';
+const STUDENT_HANGUL_INITIALS = [
+  '\u3131', '\u3132', '\u3134', '\u3137', '\u3138', '\u3139', '\u3141', '\u3142', '\u3143',
+  '\u3145', '\u3146', '\u3147', '\u3148', '\u3149', '\u314a', '\u314b', '\u314c', '\u314d', '\u314e',
+];
+const STUDENT_HANGUL_MEDIALS = [
+  '\u314f', '\u3150', '\u3151', '\u3152', '\u3153', '\u3154', '\u3155',
+  '\u3156', '\u3157', '\u3158', '\u3159', '\u315a', '\u315b', '\u315c',
+  '\u315d', '\u315e', '\u315f', '\u3160', '\u3161', '\u3162', '\u3163',
+];
+const STUDENT_HANGUL_FINALS = [
+  '', '\u3131', '\u3132', '\u3133', '\u3134', '\u3135', '\u3136',
+  '\u3137', '\u3139', '\u313a', '\u313b', '\u313c', '\u313d', '\u313e',
+  '\u313f', '\u3140', '\u3141', '\u3142', '\u3144', '\u3145', '\u3146',
+  '\u3147', '\u3148', '\u314a', '\u314b', '\u314c', '\u314d', '\u314e',
+];
+const STUDENT_DUBEOLSIK_COMPAT_BY_KEY = new Map([
+  ['r', '\u3131'], ['R', '\u3132'], ['s', '\u3134'], ['e', '\u3137'], ['E', '\u3138'],
+  ['f', '\u3139'], ['a', '\u3141'], ['q', '\u3142'], ['Q', '\u3143'], ['t', '\u3145'],
+  ['T', '\u3146'], ['d', '\u3147'], ['w', '\u3148'], ['W', '\u3149'], ['c', '\u314a'],
+  ['z', '\u314b'], ['x', '\u314c'], ['v', '\u314d'], ['g', '\u314e'],
+  ['k', '\u314f'], ['o', '\u3150'], ['i', '\u3151'], ['O', '\u3152'], ['j', '\u3153'],
+  ['p', '\u3154'], ['u', '\u3155'], ['P', '\u3156'], ['h', '\u3157'], ['y', '\u315b'],
+  ['n', '\u315c'], ['b', '\u3160'], ['m', '\u3161'], ['l', '\u3163'],
+]);
+const STUDENT_COMPOUND_INITIALS = new Map([
+  ['\u3133', '\u3131\u3145'],
+  ['\u3135', '\u3134\u3148'],
+  ['\u3136', '\u3134\u314e'],
+  ['\u313a', '\u3139\u3131'],
+  ['\u313b', '\u3139\u3141'],
+  ['\u313c', '\u3139\u3142'],
+  ['\u313d', '\u3139\u3145'],
+  ['\u313e', '\u3139\u314c'],
+  ['\u313f', '\u3139\u314d'],
+  ['\u3140', '\u3139\u314e'],
+  ['\u3144', '\u3142\u3145'],
+]);
+const STUDENT_COMPOUND_VOWEL_BY_PAIR = new Map([
+  ['\u3157\u314f', '\u3158'], ['\u3157\u3150', '\u3159'], ['\u3157\u3163', '\u315a'],
+  ['\u315c\u3153', '\u315d'], ['\u315c\u3154', '\u315e'], ['\u315c\u3163', '\u315f'],
+  ['\u3161\u3163', '\u3162'],
+]);
+const STUDENT_COMPOUND_FINAL_BY_PAIR = new Map(
+  Array.from(STUDENT_COMPOUND_INITIALS, ([compound, expanded]) => [expanded, compound])
+);
+const STUDENT_INITIAL_INDEX = new Map(STUDENT_HANGUL_INITIALS.map((ch, index) => [ch, index]));
+const STUDENT_MEDIAL_INDEX = new Map(STUDENT_HANGUL_MEDIALS.map((ch, index) => [ch, index]));
+const STUDENT_FINAL_INDEX = new Map(STUDENT_HANGUL_FINALS.map((ch, index) => [ch, index]));
+
+function studentSearchPlaceholder(label = '검색') {
+  return window.SearchUtils?.searchPlaceholder?.(label) || `${label} (${STUDENT_SEARCH_HELP_TEXT})`;
+}
+
+function studentNormalizeSearch(value) {
+  if (window.SearchUtils?.normalizeSearch) return window.SearchUtils.normalizeSearch(value);
+  return Array.from(String(value || ''))
+    .map(ch => STUDENT_COMPOUND_INITIALS.get(ch) || ch)
+    .join('')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+function studentSearchTerms(value) {
+  if (window.SearchUtils?.searchTerms) return window.SearchUtils.searchTerms(value);
+  return String(value || '').trim().split(/\s+/).map(studentNormalizeSearch).filter(Boolean);
+}
+
+function studentIsCompatVowel(ch) {
+  return STUDENT_MEDIAL_INDEX.has(ch);
+}
+
+function studentDubeolsikKeysToCompatJamo(value) {
+  return Array.from(String(value || ''))
+    .map(ch => STUDENT_DUBEOLSIK_COMPAT_BY_KEY.get(ch) || ch)
+    .join('');
+}
+
+function studentComposeCompatJamo(value) {
+  const chars = Array.from(String(value || ''));
+  let out = '';
+
+  for (let i = 0; i < chars.length;) {
+    const initialIndex = STUDENT_INITIAL_INDEX.get(chars[i]);
+    if (initialIndex == null || !studentIsCompatVowel(chars[i + 1])) {
+      out += chars[i] || '';
+      i += 1;
+      continue;
+    }
+
+    let medial = chars[i + 1];
+    let consumed = 2;
+    const compoundVowel = STUDENT_COMPOUND_VOWEL_BY_PAIR.get(`${medial}${chars[i + 2] || ''}`);
+    if (compoundVowel) {
+      medial = compoundVowel;
+      consumed = 3;
+    }
+
+    const medialIndex = STUDENT_MEDIAL_INDEX.get(medial);
+    let finalIndex = 0;
+    const finalOne = chars[i + consumed];
+    if (STUDENT_FINAL_INDEX.has(finalOne)) {
+      const finalTwo = chars[i + consumed + 1];
+      const afterFinalTwo = chars[i + consumed + 2];
+      const compoundFinal = STUDENT_COMPOUND_FINAL_BY_PAIR.get(`${finalOne}${finalTwo || ''}`);
+
+      if (studentIsCompatVowel(finalTwo)) {
+        finalIndex = 0;
+      } else if (compoundFinal && !studentIsCompatVowel(afterFinalTwo)) {
+        finalIndex = STUDENT_FINAL_INDEX.get(compoundFinal) || 0;
+        consumed += 2;
+      } else {
+        finalIndex = STUDENT_FINAL_INDEX.get(finalOne) || 0;
+        consumed += 1;
+      }
+    }
+
+    out += String.fromCharCode(0xac00 + ((initialIndex * 21 + medialIndex) * 28) + finalIndex);
+    i += consumed;
+  }
+
+  return out;
+}
+
+function studentSearchTermVariants(value) {
+  const raw = String(value || '');
+  const variants = [studentNormalizeSearch(raw)];
+  if (/^[A-Za-z]+$/.test(raw) && raw.length >= 2) {
+    const jamo = studentDubeolsikKeysToCompatJamo(raw);
+    const lowerJamo = studentDubeolsikKeysToCompatJamo(raw.toLowerCase());
+    variants.push(
+      studentNormalizeSearch(jamo),
+      studentNormalizeSearch(studentComposeCompatJamo(jamo)),
+      studentNormalizeSearch(lowerJamo),
+      studentNormalizeSearch(studentComposeCompatJamo(lowerJamo)),
+    );
+  }
+  return Array.from(new Set(variants.filter(Boolean)));
+}
+
+function studentSearchTermVariantGroups(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .map(studentSearchTermVariants)
+    .filter(group => group.length);
+}
+
+function studentHangulInitials(value) {
+  return Array.from(String(value || '')).map(ch => {
+    const code = ch.charCodeAt(0);
+    if (code < 0xac00 || code > 0xd7a3) return ch;
+    return STUDENT_HANGUL_INITIALS[Math.floor((code - 0xac00) / 588)] || ch;
+  }).join('');
+}
+
+function studentSearchKeyForText(value) {
+  if (window.SearchUtils?.searchKeyForText) return window.SearchUtils.searchKeyForText(value);
+  const raw = String(value || '');
+  return studentNormalizeSearch([raw, studentHangulInitials(raw)].join(' '));
+}
+
+function studentMatchesSearchKey(key, query) {
+  if (window.SearchUtils?.matchesSearchKey) return window.SearchUtils.matchesSearchKey(key, query);
+  const termGroups = studentSearchTermVariantGroups(query);
+  if (!termGroups.length) return true;
+  const hay = String(key || '');
+  return termGroups.every(group => group.some(term => hay.includes(term)));
+}
+
 // ===== [중요] HTML <head>에 아래 스크립트를 추가해야 VG Controller가 동작합니다 =====
 // <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
 
@@ -85,7 +256,7 @@ window.todayLocalKey = function () {
     const last = Math.max(0, Number(entry.last) || 0);
     const dur = Math.max(0, Number(entry.dur) || 0);
     const updatedAt = Math.max(0, Number(entry.updatedAt) || 0);
-    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last: Math.floor(last),
@@ -101,7 +272,7 @@ window.todayLocalKey = function () {
 
     const last = Math.max(a.last, b.last);
     const dur = Math.max(a.dur, b.dur);
-    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.95)));
+    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * 0.90)));
 
     return {
       last,
@@ -199,7 +370,7 @@ window.todayLocalKey = function () {
 
       const pct = snap.dur > 0 ? (snap.last / snap.dur) : 0;
       let status = null;
-      if (pct >= 0.95) status = 'done';
+      if (pct >= 0.90) status = 'done';
       else if (pct >= 0.05) status = 'interrupted';
 
       if (status) {
@@ -512,7 +683,7 @@ window.todayLocalKey = function () {
       ctrl.innerHTML = `
         <div class="crumb" id="matCrumb"></div>
         <div class="right">
-          <input id="matSearch" type="search" placeholder="검색" />
+          <input id="matSearch" type="search" placeholder="${studentSearchPlaceholder('검색')}" />
           <button id="matMode" class="toggle" aria-pressed="false">폴더 보기</button>
         </div>
       `;
@@ -597,15 +768,15 @@ window.todayLocalKey = function () {
     function renderMat() {
       const list = $('matList'); if (!list) return;
       renderCrumb();
-      const q = state.query.toLowerCase();
+      const q = state.query;
 
       if (state.mode === 'tree') {
         const cur = getNode(state.curPath) || tree;
         const folders = Array.from(cur.children.values())
-          .filter(nd => !q || nd.name.toLowerCase().includes(q))
+          .filter(nd => studentMatchesSearchKey(studentSearchKeyForText(nd.name), q))
           .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
         const files = (cur.files || [])
-          .filter(f => !q || (f.title || f.name).toLowerCase().includes(q))
+          .filter(f => studentMatchesSearchKey(studentSearchKeyForText([f.title, f.name].join(' ')), q))
           .sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, 'ko'));
 
         list.innerHTML =
@@ -620,7 +791,9 @@ window.todayLocalKey = function () {
         (function walk(nd, acc = []) {
           for (const f of (nd.files || [])) {
             const t = f.title || f.name;
-            if (!q || t.toLowerCase().includes(q)) all.push({ title: t, url: f.url, path: acc.join('/') });
+            if (studentMatchesSearchKey(studentSearchKeyForText([t, acc.join('/')].join(' ')), q)) {
+              all.push({ title: t, url: f.url, path: acc.join('/') });
+            }
           }
           for (const ch of nd.children.values()) walk(ch, [...acc, ch.name]);
         })(tree, []);
@@ -837,7 +1010,7 @@ window.todayLocalKey = function () {
               const dur = await controller.getDuration?.();
               if (Number.isFinite(pos) && Number.isFinite(dur) && dur > 0) {
                 const pct = (pos / dur) * 100;
-                const ended = pct >= 95 || pos >= dur - 1;
+                const ended = pct >= 90 || pos >= dur - 1;
                 if (Math.abs(pos - lastSent) >= 1) {
                   repost('kollus.progress', { currentTime: pos, duration: dur, ended });
                   lastSent = pos;
@@ -900,7 +1073,7 @@ window.todayLocalKey = function () {
       const dur = Math.max(0, Number(data.duration) || 0);
       const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
       const pct = dur > 0 ? (cur / dur) : 0;
-      const doneByPct = pct >= 0.95;
+      const doneByPct = pct >= 0.90;
       setProgress(data.mid, {
         last: cur,
         dur,
