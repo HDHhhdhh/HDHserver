@@ -790,13 +790,20 @@ function scheduleRulesAutosave() {
   }, 350);
 }
 
-async function saveConfig() {
+async function saveConfig(removedTestIds = []) {
+  const payload = { ...TEST_CFG };
+  if (Array.isArray(removedTestIds) && removedTestIds.length) {
+    payload.__removedTestIds = removedTestIds.map(id => String(id));
+  }
   const res = await fetch('/api/tests-config', {
     method: 'POST',
     headers: CT,
-    body: JSON.stringify(TEST_CFG),
+    body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`tests-config save failed: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 409) await loadConfigAndStats();
+    throw new Error(`tests-config save failed: ${res.status}`);
+  }
 }
 
 function csvCell(value) {
@@ -1695,10 +1702,11 @@ function bindUI() {
     const ref = selectedTestRef();
     const cat = ref?.cat || TEST_CFG.categories[ui.category];
     if (!cat || !Array.isArray(cat.tests)) return;
-    cat.tests = (cat.tests || []).filter(test => String(test.id) !== String(ui.selectedId));
+    const deletedTestId = String(ui.selectedId);
+    cat.tests = (cat.tests || []).filter(test => String(test.id) !== deletedTestId);
     ui.selectedId = '';
     try {
-      await saveConfig();
+      await saveConfig([deletedTestId]);
       alert('삭제 완료');
       await loadConfigAndStats();
     } catch (e) {

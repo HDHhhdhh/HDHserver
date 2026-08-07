@@ -32,6 +32,21 @@ progress.json.*.tmp
 /static/js/test_answer_link_map.js
 /.debug-journal.md
 
+# Local Codex, browser, and QA working artifacts
+/.codex-temp/
+/.omo/frontend-design/
+/.omo/reviews/
+/qa-evidence*/
+/browser-*.png
+/browser-*.jpg
+/task-1-*.txt
+/design-qa.md
+
+# Machine-local backups and one-off system remediation scripts
+/runtime_backup_*/
+/scripts/admin_cleanup_unrelated.ps1
+/scripts/admin_security_finalize.ps1
+
 # Local agent, browser, test, and OCR-lab artifacts
 /.omo/teams/
 /.omo/lazycodex-executor-verify/

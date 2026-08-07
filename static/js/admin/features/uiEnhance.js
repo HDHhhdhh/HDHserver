@@ -62,6 +62,13 @@ function slotGroupsFromRow(row) {
   return groups;
 }
 
+function homeworkSlotFromRow(row) {
+  const groups = slotGroupsFromRow(row);
+  if (groups.has(2)) return 2;
+  if (groups.has(1)) return 1;
+  return null;
+}
+
 function workMinutesBetween(start, end, breaks = []) {
   const from = Math.max(0, start);
   const to = Math.max(from, end);
@@ -86,7 +93,7 @@ function remainingWorkMinutes(slot, now = new Date()) {
 function currentSlotRows(slot) {
   return Array.from(document.querySelectorAll('#todayWrap tr[data-sid], #doneWrap tr[data-sid]'))
     .filter(row => row?.dataset?.selfStudy !== '1')
-    .filter(row => slotGroupsFromRow(row).has(slot));
+    .filter(row => homeworkSlotFromRow(row) === slot);
 }
 
 function renderClock() {

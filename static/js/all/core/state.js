@@ -5,6 +5,7 @@ export const state = {
   videos: [],
   progress: {},
   schoolCal: {},
+  homeworkBooksBySid: {},
 };
 
 const progressLoadedSids = new Set();
@@ -25,20 +26,23 @@ function mergeDateSidMap(target, source) {
 }
 
 export async function loadAll() {
-  const [stu, vid, sch] = await Promise.all([
+  const [stu, vid, sch, homeworkBooks] = await Promise.all([
     getJSON('/api/students'),
     getJSON('/api/videos'),
     getJSONOr('/api/school-calendar', {}),
+    getJSONOr('/api/homework-books', {}),
   ]);
   state.students  = Array.isArray(stu) ? stu : [];
   state.videos    = Array.isArray(vid) ? vid : [];
   state.progress  = state.progress || {};
   state.schoolCal = sch  || {};
+  state.homeworkBooksBySid = homeworkBooks || {};
 
   window.students     = state.students;
   window.videos       = state.videos;
   window.progressData = state.progress;
   window.schoolCal    = state.schoolCal;
+  window.homeworkBooksBySid = state.homeworkBooksBySid;
 
   return state;
 }

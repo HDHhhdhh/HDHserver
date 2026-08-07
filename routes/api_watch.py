@@ -108,15 +108,14 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
-    from routes.api_basic import _load_progress_strict, _progress_lock
+    from routes.api_basic import _load_progress_strict, _progress_lock, _save_progress_strict
 
     with _progress_lock():
-        current = _load_progress_strict()
+        current = dict(_load_progress_strict(PRG_PATH))
 
-        day = current.setdefault(date, {})
-        if not isinstance(day, dict):
-            day = {}
-            current[date] = day
+        current_day = current.get(date)
+        day = dict(current_day) if isinstance(current_day, dict) else {}
+        current[date] = day
 
         sid_key = sid
         cur_sid = None
@@ -139,7 +138,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if not day:
             current.pop(date, None)
 
-        save_atomic(PRG_PATH, current)
+        _save_progress_strict(current, PRG_PATH)
 
     return merged
 

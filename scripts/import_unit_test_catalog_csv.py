@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -33,8 +34,37 @@ def round_answers(row: dict[str, str], round_no: str, problems: int) -> list[str
     return parse_answers(value, problems)
 
 
-def main() -> int:
-    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+def _test_ids(tests: object) -> set[str]:
+    if not isinstance(tests, list):
+        return set()
+    return {
+        str(test.get("id")).strip()
+        for test in tests
+        if isinstance(test, dict) and str(test.get("id") or "").strip()
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Replace UNIT tests from a CSV source.")
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    parser.add_argument("--csv", type=Path, default=CSV_PATH)
+    parser.add_argument(
+        "--backup-confirmed",
+        action="store_true",
+        help="Confirm that a runtime backup was created before writing the live config.",
+    )
+    parser.add_argument(
+        "--allow-unit-removal",
+        action="store_true",
+        help="Explicitly allow existing UNIT test IDs missing from the CSV to be removed.",
+    )
+    args = parser.parse_args(argv)
+    config_path = args.config.resolve()
+    csv_path = args.csv.resolve()
+    if config_path == CONFIG_PATH.resolve() and not args.backup_confirmed:
+        parser.error("live tests-config.json writes require --backup-confirmed")
+
+    cfg = json.loads(config_path.read_text(encoding="utf-8-sig"))
     if not isinstance(cfg, dict):
         cfg = {}
     categories = cfg.setdefault("categories", {})
@@ -49,7 +79,9 @@ def main() -> int:
         cat.setdefault("label", label)
         cat.setdefault("tests", [])
 
-    rows = list(csv.DictReader(CSV_PATH.open("r", encoding="utf-8-sig", newline="")))
+    unit_category = categories.get("UNIT")
+    previous_unit_tests = unit_category.get("tests", []) if isinstance(unit_category, dict) else []
+    rows = list(csv.DictReader(csv_path.open("r", encoding="utf-8-sig", newline="")))
     unit_tests = []
     seen_ids: set[str] = set()
     for idx, row in enumerate(rows):
@@ -79,16 +111,36 @@ def main() -> int:
                 "answerKey": answer_key,
             })
 
+    previous_by_id = {
+        str(test.get("id")).strip(): test
+        for test in previous_unit_tests
+        if isinstance(test, dict) and str(test.get("id") or "").strip()
+    }
+    for index, generated_test in enumerate(unit_tests):
+        previous_test = previous_by_id.get(str(generated_test.get("id") or "").strip())
+        if isinstance(previous_test, dict):
+            merged_test = dict(previous_test)
+            merged_test.update(generated_test)
+            unit_tests[index] = merged_test
+
     unit_cat = categories.setdefault("UNIT", {})
     if not isinstance(unit_cat, dict):
         unit_cat = {}
         categories["UNIT"] = unit_cat
     unit_cat["label"] = "단원평가"
+    missing_ids = _test_ids(previous_unit_tests) - _test_ids(unit_tests)
+    if missing_ids and not args.allow_unit_removal:
+        sample = ", ".join(sorted(missing_ids)[:10])
+        raise SystemExit(
+            "refusing UNIT catalog replacement: "
+            f"{len(missing_ids)} existing test IDs are missing from the CSV "
+            f"(sample: {sample}); use --allow-unit-removal only for an intentional removal"
+        )
     unit_cat["tests"] = unit_tests
 
-    tmp_path = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".tmp")
+    tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp_path, CONFIG_PATH)
+    os.replace(tmp_path, config_path)
     print(f"UNIT tests replaced: {len(unit_tests)}")
     return 0
 

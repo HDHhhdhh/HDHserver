@@ -20,6 +20,7 @@ from core.paths import (
     TESTS_CFG_PATH
 )
 from core.storage import load, save_atomic, nocache_resp, utc_now_isoz, file_lock
+from core.test_config_safety import TestsConfigWriteConflict, merge_tests_config_for_write
 
 bp_api_tests = Blueprint("api_tests", __name__)
 TEST_TYPE_ORDER = ("REVIEW", "UNIT", "TRAINING_PACK", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
@@ -35,6 +36,7 @@ TEST_ASSIGNMENT_TYPE_LABELS = {
 TEST_ASSIGNMENT_ACTIVE_STATUSES = {"assigned", "interrupted"}
 OCR_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 OCR_PHASE2A_REVIEW_ROUTE_ENABLED_ENV = "OCR_PHASE2_REVIEW_ROUTE_ENABLED"
+OCR_PHASE2_NUMERIC_ONLY_ENV = "OCR_PHASE2_NUMERIC_ONLY"
 OCR_PHASE2A_TRUTHY_VALUES = {"1", "true", "yes", "on"}
 OCR_PHASE2A_REVIEW_TEST_ID = "t_unit_daesu_01_lv3_r1"
 OCR_PHASE2A_REVIEW_ROUND = 1
@@ -46,18 +48,7 @@ OCR_PHASE2A_UNIT_REVIEW_ROUNDS: Final[frozenset[int]] = frozenset((1, 2, 3))
 OCR_PHASE2B_IMAGE_FIELD = "image"
 OCR_PHASE2B_ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 OCR_PHASE2B_ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
-OCR_PHASE2A_MOCK_ANSWERS = (
-    "1", "-3", "x=n", "0.5", "2",
-    "ㄴ,ㄹ", "5", "2x+1", "4", "6",
-    "256", "a/2", "5", "1", "-1<x<5",
-    "y=n", "2", "139/2", "x±2=4", "26sqrt(21)",
-)
-OCR_PHASE2A_REVIEW_CANDIDATES = {
-    3: ("x=2", "3", "x=n", "x=?"),
-    10: ("0", "6", "?"),
-    18: ("129/2", "139/2", "?"),
-    19: ("x+2=4", "3", "x±2=4", "x-2=4"),
-}
+OCR_PHASE2E_FRESH_REVIEW_VARIANT = "fresh_live_actionable_review_ui_v1"
 OCR_STUDENT_FORBIDDEN_KEYS = {
     "expected",
     "canonical_answer",
@@ -405,15 +396,15 @@ def _matching_submitted_assignment_labels(tests: dict, record: dict, meta_snapsh
 
 
 def _mark_submitted_assignment_done(date: str, sid: str, record: dict, meta_snapshot: dict) -> bool:
+    from routes.api_basic import _load_progress_strict, _save_progress_strict
+
     date_key = str(date or "").strip()
     sid_key = str(sid or "").strip()
     if not date_key or not sid_key:
         return False
 
     with file_lock(PRG_PATH):
-        progress = load(PRG_PATH)
-        if not isinstance(progress, dict):
-            return False
+        progress = dict(_load_progress_strict(PRG_PATH))
         day = progress.get(date_key)
         if not isinstance(day, dict):
             return False
@@ -437,7 +428,7 @@ def _mark_submitted_assignment_done(date: str, sid: str, record: dict, meta_snap
         day = dict(day)
         day[entry_key] = entry
         progress[date_key] = day
-        save_atomic(PRG_PATH, progress)
+        _save_progress_strict(progress, PRG_PATH)
         return True
 
 
@@ -865,6 +856,15 @@ def _phase2a_review_route_enabled() -> bool:
     return os.environ.get(OCR_PHASE2A_REVIEW_ROUTE_ENABLED_ENV, "").strip().lower() in OCR_PHASE2A_TRUTHY_VALUES
 
 
+def _ocr_phase2_numeric_only_enabled() -> bool:
+    return os.environ.get(OCR_PHASE2_NUMERIC_ONLY_ENV, "").strip().lower() in OCR_PHASE2A_TRUTHY_VALUES
+
+
+def _phase2e_fresh_review_requested(raw_json) -> bool:
+    value = _phase2a_review_request_value(raw_json, "freshPhase2E")
+    return value.strip().lower() in OCR_PHASE2A_TRUTHY_VALUES
+
+
 def _phase2a_review_catalog_allowed_round(test_id: str) -> int | None:
     if not test_id:
         return None
@@ -927,28 +927,6 @@ def _phase2b_validate_uploaded_image():
     if len(data) > OCR_MAX_IMAGE_BYTES:
         return _phase2a_review_error(413, "image_too_large", "answer sheet image is too large")
     return None
-
-
-def _phase2a_review_required_stub_payload(test_id: str, round_no: int) -> dict:
-    items = []
-    for index, answer in enumerate(OCR_PHASE2A_MOCK_ANSWERS, start=1):
-        candidates = OCR_PHASE2A_REVIEW_CANDIDATES.get(index)
-        items.append({
-            "question_no": index,
-            "status": "review_required",
-            "recognized": answer,
-            "warnings": ["cached_or_provider_result_required"],
-            "candidates": list(candidates or ()),
-            "final_answer": None,
-            "source": None,
-        })
-    return {
-        "source": "phase2a_route_stub_review_required",
-        "test_id": test_id,
-        "round": str(round_no),
-        "problem_count": len(OCR_PHASE2A_MOCK_ANSWERS),
-        "items": items,
-    }
 
 
 def _phase2a_forbidden_student_payload_paths(value, path: str = "$") -> list[str]:
@@ -1081,7 +1059,7 @@ def ocr_test_sheet_review():
         pipeline_result.contact_sheet_count,
     )
 
-    review_payload = _phase2a_review_required_stub_payload(test_id, round_no)
+    review_payload = None
     review_meta = {
         "photo_correction": "completed",
         "answer_box_extraction": "completed",
@@ -1094,6 +1072,7 @@ def ocr_test_sheet_review():
         "provider_status": "not_called",
         "provider_call_count": 0,
     }
+    fresh_phase2e_requested = _phase2e_fresh_review_requested(raw_json)
     try:
         from tools.subjective_sheet_lab.phase2d_cached_review_payload_adapter import (
             Phase2DCacheUnavailable,
@@ -1101,6 +1080,8 @@ def ocr_test_sheet_review():
             load_phase2d_cached_review_payload,
         )
 
+        if fresh_phase2e_requested:
+            raise Phase2DCacheUnavailable("fresh_phase2e_requested")
         cached_review = load_phase2d_cached_review_payload(
             Phase2DRequest(
                 sid=sid,
@@ -1119,11 +1100,14 @@ def ocr_test_sheet_review():
             cached_review.cache_path,
         )
     except ImportError:
-        review_meta["cache_status"] = "adapter_unavailable"
         current_app.logger.exception("ocr-test-sheet-review phase2d adapter import failed")
+        return _phase2a_review_error(503, "recognition_unavailable", "OCR review result is unavailable.")
     except Phase2DCacheUnavailable as exc:
         review_meta["cache_status"] = str(exc.reason)
         current_app.logger.info("ocr-test-sheet-review phase2d cache fallback: %s", exc)
+
+        # A live provider is opt-in behind all Phase 2E gates. When explicitly
+        # enabled, prefer its handwriting result over the print-oriented local OCR.
         try:
             from tools.subjective_sheet_lab.phase2e_gemini_live_ocr_adapter import (
                 Phase2ERequest,
@@ -1137,7 +1121,11 @@ def ocr_test_sheet_review():
                     round_no=round_no,
                     pipeline_result=pipeline_result,
                     cache_miss_reason=exc.reason,
-                    request_metadata={"route": "/api/ocr-test-sheet-review"},
+                    request_metadata={
+                        "route": "/api/ocr-test-sheet-review",
+                        "numeric_only": "1" if _ocr_phase2_numeric_only_enabled() else "0",
+                        "cache_variant": OCR_PHASE2E_FRESH_REVIEW_VARIANT if fresh_phase2e_requested else "",
+                    },
                 )
             )
             review_meta["provider_status"] = str(phase2e_result.status.value)
@@ -1151,8 +1139,35 @@ def ocr_test_sheet_review():
             if phase2e_result.review_payload is not None:
                 review_payload = phase2e_result.review_payload
         except ImportError:
-            review_meta["provider_status"] = "adapter_unavailable"
             current_app.logger.exception("ocr-test-sheet-review phase2e adapter import failed")
+            return _phase2a_review_error(503, "recognition_unavailable", "OCR review result is unavailable.")
+
+        if review_payload is None:
+            try:
+                from tools.subjective_sheet_lab.phase2f_local_paddle_review_adapter import (
+                    Phase2FLocalOcrUnavailable,
+                    Phase2FRequest,
+                    load_phase2f_local_review_payload,
+                )
+
+                review_payload = load_phase2f_local_review_payload(
+                    Phase2FRequest(
+                        sid=sid,
+                        test_id=test_id,
+                        round_no=round_no,
+                        pipeline_result=pipeline_result,
+                    )
+                )
+                review_meta["provider_status"] = "local_ocr_succeeded"
+                current_app.logger.info("ocr-test-sheet-review phase2f local OCR succeeded")
+            except ImportError:
+                current_app.logger.exception("ocr-test-sheet-review phase2f adapter import failed")
+            except Phase2FLocalOcrUnavailable as local_exc:
+                review_meta["provider_status"] = str(local_exc.reason)
+                current_app.logger.info("ocr-test-sheet-review phase2f local OCR unavailable: %s", local_exc)
+
+    if review_payload is None:
+        return _phase2a_review_error(503, "recognition_unavailable", "OCR review result is unavailable.")
 
     review_meta = _phase2a_harden_review_meta(review_meta)
     payload = {
@@ -1421,11 +1436,43 @@ def get_tests_config():
 
 @bp_api_tests.post("/api/tests-config")
 def post_tests_config():
-    payload = request.get_json(force=True) or {}
+    payload = request.get_json(force=True, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "invalid payload"}), 400
+    raw_removed_ids = payload.pop("__removedTestIds", [])
+    if not isinstance(raw_removed_ids, list) or not all(
+        isinstance(value, str) for value in raw_removed_ids
+    ):
+        return jsonify({"ok": False, "error": "invalid removed test IDs"}), 400
     with _tests_config_lock():
-        save_atomic(TESTS_CFG_PATH, payload)
+        current = load(TESTS_CFG_PATH)
+        if not isinstance(current, dict):
+            return jsonify({"ok": False, "error": "invalid current config"}), 500
+        try:
+            merged = merge_tests_config_for_write(
+                current,
+                payload,
+                raw_removed_ids,
+            )
+        except TestsConfigWriteConflict as exc:
+            current_app.logger.warning(
+                "tests-config write rejected: existing test IDs omitted",
+                extra={
+                    "missing_test_count": len(exc.missing_test_ids),
+                    "missing_test_ids": list(exc.missing_test_ids[:20]),
+                },
+            )
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "catalog_changed",
+                    "missingTestIds": list(exc.missing_test_ids[:50]),
+                    "missingTestCount": len(exc.missing_test_ids),
+                }
+            ), 409
+        except ValueError:
+            return jsonify({"ok": False, "error": "invalid config"}), 400
+        save_atomic(TESTS_CFG_PATH, merged)
     return jsonify({"ok": True})
 
 def _parse_date(s: str) -> dt.date | None:

@@ -3,23 +3,31 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const filename = 'static/js/admin/features/makeupPending.js';
+const calendarFilename = 'static/js/admin/features/calendar.js';
+const adminCssFilename = 'static/css/admin.css';
 const source = fs.readFileSync(filename, 'utf8')
   .replace(/\bexport function /g, 'function ');
+const calendarSource = fs.readFileSync(calendarFilename, 'utf8');
+const adminCssSource = fs.readFileSync(adminCssFilename, 'utf8');
 const sandbox = { console };
 vm.runInNewContext(`${source}
 globalThis.__exports = {
   buildPendingMakeups,
+  buildActiveScheduledMakeupRows,
   buildScheduledMakeupRows,
   buildScheduledMakeupCalendarSummary,
   formatMakeupDate,
+  formatMakeupCopyText,
   makeupOriginalAbsenceId,
 };`, sandbox, { filename });
 
 const {
   buildPendingMakeups,
+  buildActiveScheduledMakeupRows,
   buildScheduledMakeupRows,
   buildScheduledMakeupCalendarSummary,
   formatMakeupDate,
+  formatMakeupCopyText,
   makeupOriginalAbsenceId,
 } = sandbox.__exports;
 
@@ -41,6 +49,23 @@ const demand = {
 
 assert.equal(makeupOriginalAbsenceId(demand), 'absence|2026-07-03|stu-1|2');
 assert.equal(formatMakeupDate('2026-07-03'), '7/3(금)');
+assert.equal(formatMakeupCopyText({ name: '강규현', absenceDate: '2026-07-11', slot: 1 }), '강규현 7/11 토1 결석 >>');
+assert.equal(formatMakeupCopyText({ name: '김상우', absenceDate: '2026-06-27', slot: 2 }), '김상우 6/27 토2 결석 >>');
+assert.equal(formatMakeupCopyText({ name: '조승연', absenceDate: '2026-07-10', dateOnly: true }), '조승연 7/10 결석 >>');
+assert.match(calendarSource, /data-copy-text="\$\{escapeAttr\(copyText\)\}"/);
+assert.match(calendarSource, /addEventListener\('copy', handleMakeupListCopy\)/);
+assert.match(calendarSource, /clipboardData\.setData\('text\/plain', text\)/);
+assert.match(calendarSource, /const scheduledTimeLabel = slotGroupLabel\(parseSlotNumbers\(item\.scheduledMakeup\?\.makeupTimes\)\)/);
+assert.match(calendarSource, /const scheduledLabel = \[scheduledDate, scheduledTimeLabel\]\.filter\(Boolean\)\.join\(' · '\)/);
+assert.match(calendarSource, /보강 예정: \$\{escapeHtml\(scheduledLabel\)\}/);
+assert.match(calendarSource, /function selectedStudentExistingMakeupLabels\(dateStr\)/);
+assert.match(calendarSource, /getScheduledMakeups\(\)\.forEach\(row =>/);
+assert.match(calendarSource, /row\.originalAbsenceId === selectedOriginalAbsenceId/);
+assert.match(calendarSource, /기존 보강: \$\{\[absenceDate, slotLabel\]\.filter\(Boolean\)\.join\(' · '\)\}/);
+assert.match(calendarSource, /className: 'makeup-existing-schedule'/);
+assert.match(adminCssSource, /\.makeup-conflict-list \.makeup-existing-schedule/);
+assert.match(calendarSource, /const label = `\$\{course\} - \$\{slot\}타임\$\{note\}`/);
+assert.doesNotMatch(calendarSource, /kind === 'makeup' \? '보강' : '정규'/);
 
 const carryover = {
   by_absence: {
@@ -66,6 +91,21 @@ const scheduledRows = buildScheduledMakeupRows({ students, carryover });
 assert.equal(scheduledRows.length, 1);
 assert.equal(scheduledRows[0].originalAbsenceId, 'absence|2026-07-03|stu-1|2');
 assert.equal(scheduledRows[0].scheduledMakeup.makeupDate, '2026-07-24');
+
+const activeScheduledRows = buildActiveScheduledMakeupRows({
+  students,
+  carryover,
+  operatingDate: '2026-07-24',
+});
+assert.equal(activeScheduledRows.length, 1);
+
+const elapsedScheduledRows = buildActiveScheduledMakeupRows({
+  students,
+  carryover,
+  operatingDate: '2026-07-25',
+});
+assert.equal(elapsedScheduledRows.length, 0);
+assert.equal(buildScheduledMakeupRows({ students, carryover }).length, 1);
 
 const pendingRows = buildPendingMakeups({
   students,

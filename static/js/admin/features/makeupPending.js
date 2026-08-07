@@ -130,6 +130,24 @@ export function formatMakeupDate(dateStr) {
   return `${month}/${day}(${yoil})`;
 }
 
+export function formatMakeupCopyText(item = {}) {
+  const name = String(item?.name || item?.student?.name || item?.sid || '-').trim() || '-';
+  const date = normDate(item?.absenceDate);
+  const parts = [name];
+
+  if (date) {
+    const [year, monthNum, dayNum] = date.split('-').map(Number);
+    const d = new Date(year, monthNum - 1, dayNum);
+    parts.push(`${monthNum}/${dayNum}`);
+
+    const slot = item?.dateOnly === true ? '' : (parseSlotNumbers(item?.slot)[0] || '');
+    if (slot) parts.push(`${WCHR[d.getDay()] || ''}${slot}`);
+  }
+
+  parts.push('결석');
+  return `${parts.filter(Boolean).join(' ')} >>`;
+}
+
 function parseSlotNumbers(raw) {
   const values = Array.isArray(raw) ? raw : [raw];
   const slots = values.flatMap(value => {
@@ -399,6 +417,13 @@ export function buildScheduledMakeupRows({ students = [], carryover = {} } = {})
     String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }) ||
     Number(a.slot || 0) - Number(b.slot || 0)
   );
+}
+
+export function buildActiveScheduledMakeupRows({ operatingDate = '', ...input } = {}) {
+  const referenceDate = normDate(operatingDate);
+  const scheduledRows = buildScheduledMakeupRows(input);
+  if (!referenceDate) return scheduledRows;
+  return scheduledRows.filter(row => normDate(row.scheduledMakeup?.makeupDate) >= referenceDate);
 }
 
 export function buildScheduledMakeupCalendarSummary(rows) {

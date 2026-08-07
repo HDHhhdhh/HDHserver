@@ -4,12 +4,15 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
+import { getAttendanceLedgerUrl } from './attendanceLedgerLink.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 import {
   buildPendingMakeups,
+  buildActiveScheduledMakeupRows,
   buildScheduledMakeupRows,
   formatMakeupDate,
+  formatMakeupCopyText,
   makeupOriginalAbsenceId,
 } from './makeupPending.js';
 
@@ -497,6 +500,12 @@ export function initCalendar() {
     return parseSlotNumbers(values);
   }
 
+  function getCountSlots(stu, dateStr) {
+    const sid = String(stu?.id || '');
+    const dateSpecificSlots = parseSlotNumbers(WEEKEND?.[dateStr]?.[sid]);
+    return dateSpecificSlots.length ? dateSpecificSlots : getRegularSlots(stu, dateStr);
+  }
+
   function getMakeupSlots(dateStr, sid) {
     const slots = parseSlotNumbers(WEEKEND?.[dateStr]?.[String(sid)]);
     return slots.length ? slots : [1];
@@ -621,7 +630,7 @@ export function initCalendar() {
     const addLabel = (stu, slot, kind = 'regular', note = '') => {
       if (!MAKEUP_SLOTS.includes(slot)) return;
       const course = studentCourseLabel(stu);
-      const label = `${course} - ${kind === 'makeup' ? '보강' : '정규'} - ${slot}타임${note}`;
+      const label = `${course} - ${slot}타임${note}`;
       const sid = String(stu?.id || '').trim();
       const key = `${sid || normalizeStudentIdentity(stu?.name)}|${course}|${kind}|${slot}|${note}`;
       if (seen.has(key)) return;
@@ -649,6 +658,34 @@ export function initCalendar() {
     return labels;
   }
 
+  function selectedStudentExistingMakeupLabels(dateStr) {
+    if (!makeupSelection || !DATE_RE.test(String(dateStr || ''))) return [];
+    const records = selectedMakeupStudentRecords();
+    const selectedSids = new Set(
+      records.map(stu => String(stu?.id || '').trim()).filter(Boolean)
+    );
+    const selectedSid = String(makeupSelection.sid || '').trim();
+    if (selectedSid) selectedSids.add(selectedSid);
+    if (!selectedSids.size) return [];
+
+    const selectedOriginalAbsenceId = makeupSelection.originalAbsenceId || makeupOriginalAbsenceId(makeupSelection);
+    const labels = [];
+    const seen = new Set();
+    getScheduledMakeups().forEach(row => {
+      if (String(row.scheduledMakeup?.makeupDate || '') !== dateStr) return;
+      if (!selectedSids.has(String(row.sid || '').trim())) return;
+      if (selectedOriginalAbsenceId && row.originalAbsenceId === selectedOriginalAbsenceId) return;
+      const absenceDate = formatMakeupDate(row.absenceDate);
+      const slotLabel = slotGroupLabel(scheduledSlots(row.scheduledMakeup));
+      const label = `기존 보강: ${[absenceDate, slotLabel].filter(Boolean).join(' · ')}`;
+      const key = `${row.originalAbsenceId || makeupItemKey(row)}|${slotLabel}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      labels.push(label);
+    });
+    return labels;
+  }
+
   function refreshMakeupConflictHints() {
     document.querySelectorAll('.makeup-conflict-list').forEach(el => el.remove());
     document.querySelectorAll('.fc-daygrid-day.has-makeup-conflicts').forEach(cell => {
@@ -659,12 +696,18 @@ export function initCalendar() {
     document.querySelectorAll('.fc-daygrid-day').forEach(cell => {
       const dateStr = cell.getAttribute('data-date');
       if (!dateStr) return;
-      const labels = selectedStudentScheduleLabels(dateStr);
+      const labels = [
+        ...selectedStudentScheduleLabels(dateStr).map(text => ({ text, className: '' })),
+        ...selectedStudentExistingMakeupLabels(dateStr).map(text => ({ text, className: 'makeup-existing-schedule' })),
+      ];
       if (!labels.length) return;
       const frame = cell.querySelector('.fc-daygrid-day-frame') || cell;
       const box = document.createElement('div');
       box.className = 'makeup-conflict-list';
-      box.innerHTML = labels.map(label => `<span>${escapeHtml(label)}</span>`).join('');
+      box.innerHTML = labels.map(item => {
+        const classAttr = item.className ? ` class="${escapeAttr(item.className)}"` : '';
+        return `<span${classAttr}>${escapeHtml(item.text)}</span>`;
+      }).join('');
       frame.appendChild(box);
       cell.classList.add('has-makeup-conflicts');
     });
@@ -708,7 +751,7 @@ export function initCalendar() {
 
       (state.students || []).forEach(stu => {
         if (!hasWeekday(stu, wchr)) return;
-        addSlotCounts(slotSets, stu.id, getRegularSlots(stu, dateStr), [1]);
+        addSlotCounts(slotSets, stu.id, getCountSlots(stu, dateStr), [1]);
       });
 
       (EXTRA[dateStr] || []).map(String).forEach(sid => {
@@ -795,6 +838,14 @@ export function initCalendar() {
     return buildScheduledMakeupRows({
       students: state.students || [],
       carryover: normalizeCarryoverPayload(carryover || {}),
+    });
+  }
+
+  function getScheduledMakeupStatusRows(carryover = CARRYOVER) {
+    return buildActiveScheduledMakeupRows({
+      students: state.students || [],
+      carryover: normalizeCarryoverPayload(carryover || {}),
+      operatingDate: getAdminDate(),
     });
   }
 
@@ -1208,6 +1259,76 @@ export function initCalendar() {
     requestAnimationFrame(() => search?.focus());
   }
 
+  function selectedMakeupCopyText(container) {
+    const selection = document.getSelection?.();
+    if (!container || !selection || selection.isCollapsed || selection.rangeCount <= 0) return '';
+    const rows = Array.from(container.querySelectorAll('.makeup-row[data-copy-text]'));
+    return rows
+      .filter(row => {
+        for (let index = 0; index < selection.rangeCount; index += 1) {
+          try {
+            if (selection.getRangeAt(index).intersectsNode(row)) return true;
+          } catch {}
+        }
+        return false;
+      })
+      .map(row => String(row.dataset.copyText || '').trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function handleMakeupListCopy(ev) {
+    const text = selectedMakeupCopyText(ev.currentTarget);
+    if (!text || !ev.clipboardData) return;
+    ev.clipboardData.setData('text/plain', text);
+    ev.preventDefault();
+  }
+
+  async function syncMakeupSheet() {
+    const btn = $('syncMakeupSheet');
+    const sheetUrl = getAttendanceLedgerUrl();
+    if (!sheetUrl) {
+      alert('먼저 시트 설정에서 7월 차트 링크를 넣어주세요.');
+      return;
+    }
+    const previousText = btn?.textContent || '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '동기화 중';
+    }
+    try {
+      const res = await fetch('/api/makeup-sheet-sync', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ sheetUrl, date: getAdminDate() }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || `시트 동기화 실패 (${res.status})`);
+      }
+      CARRYOVER = normalizeCarryoverPayload(data.carryover || {});
+      EXTRA = data.extra || {};
+      WEEKEND = data.weekendSlots || {};
+      state.extra = EXTRA;
+      window.extra = EXTRA;
+      window.weekendSlots = WEEKEND;
+      applyAbsentPayload(data.absent || {});
+      await window.recalcCalendarCounts?.();
+      renderMakeupPlanner();
+      document.dispatchEvent(new CustomEvent('attendance:updated'));
+      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+      toast(`시트 동기화 완료 · 보강 잡기 ${data.opened || 0}건 반영 · 예정 취소 ${data.cancelled || 0}건`);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || '시트 동기화 실패');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = previousText || '시트 동기화';
+      }
+    }
+  }
+
   function ensureMakeupPlanner() {
     if (document.getElementById('makeupPlanner')) return;
     calendarEl.insertAdjacentHTML('afterend', `
@@ -1218,6 +1339,7 @@ export function initCalendar() {
             <div class="makeup-planner-title-row">
               <h4>보강 잡기</h4>
               <div class="makeup-planner-control-group">
+                <button id="syncMakeupSheet" class="btn secondary makeup-export-btn" type="button">시트 동기화</button>
                 <button id="attendanceCheckToggle" class="btn secondary makeup-export-btn" type="button">등원일 확인</button>
                 <button id="openManualMakeup" class="btn secondary makeup-export-btn makeup-add-btn" type="button">결석 추가</button>
               </div>
@@ -1240,6 +1362,7 @@ export function initCalendar() {
 
     const search = $('makeupPlannerSearch');
     applySearchPlaceholder(search, '보강 학생 검색');
+    $('syncMakeupSheet')?.addEventListener('click', syncMakeupSheet);
     $('attendanceCheckToggle')?.addEventListener('click', () => {
       attendanceCheckMode = true;
       attendanceCheckSelection = null;
@@ -1263,6 +1386,8 @@ export function initCalendar() {
       search.value = '';
       renderMakeupPlanner();
     });
+    $('makeupPlannerList')?.addEventListener('copy', handleMakeupListCopy);
+    $('makeupStatusList')?.addEventListener('copy', handleMakeupListCopy);
 
     ensureMakeupFocusGuide();
 
@@ -1306,7 +1431,7 @@ export function initCalendar() {
     $('makeupStatusList')?.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-makeup-action]');
       if (!btn) return;
-      const item = getScheduledMakeups().find(row => makeupItemKey(row) === (btn.dataset.key || ''));
+      const item = getScheduledMakeupStatusRows().find(row => makeupItemKey(row) === (btn.dataset.key || ''));
       if (!item) return;
       if (btn.dataset.makeupAction === 'carryover-scheduled') {
         carryoverScheduledMakeup(item).catch(err => { console.error(err); alert('이월 실패'); });
@@ -1958,7 +2083,7 @@ export function initCalendar() {
 
     const queryText = search?.value || '';
     const pending = getPendingMakeups();
-    const scheduled = getScheduledMakeups();
+    const scheduled = getScheduledMakeupStatusRows();
     const visible = filterRows(pending, queryText);
     const statusVisible = filterRows(scheduled, statusSearch?.value || '');
     const checkToggle = $('attendanceCheckToggle');
@@ -1995,12 +2120,13 @@ export function initCalendar() {
       const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
       const active = key === activeKey ? ' is-active' : '';
       const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
+      const copyText = formatMakeupCopyText(item);
       const secondaryActions = `
             <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>
             <button type="button" class="makeup-carryover-btn" data-makeup-action="carryover" data-key="${escapeAttr(key)}">이월</button>
           `;
       return `
-        <div class="makeup-row${active}" data-key="${escapeAttr(key)}">
+        <div class="makeup-row${active}" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}">
           <div class="makeup-label">
             <span>${escapeHtml(label)}</span>
           </div>
@@ -2020,7 +2146,11 @@ export function initCalendar() {
         const key = makeupItemKey(item);
         const slotLabel = item.dateOnly ? '결석' : `${item.slot || 1}타임 결석`;
         const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)} - ${slotLabel}`;
-        return `<div class="makeup-row" data-key="${escapeAttr(key)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(formatMakeupDate(item.scheduledMakeup?.makeupDate))}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
+        const copyText = formatMakeupCopyText(item);
+        const scheduledDate = formatMakeupDate(item.scheduledMakeup?.makeupDate);
+        const scheduledTimeLabel = slotGroupLabel(parseSlotNumbers(item.scheduledMakeup?.makeupTimes));
+        const scheduledLabel = [scheduledDate, scheduledTimeLabel].filter(Boolean).join(' · ');
+        return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(scheduledLabel)}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
       }).join('');
     }
     const statusHint = $('makeupStatusHint');

@@ -125,6 +125,40 @@ def extract_homework_rows_for_compare(entry: dict) -> list:
     return []
 
 
+def latest_homework_books_by_student(logs: dict) -> dict[str, list[str]]:
+    """Return the newest non-empty registered homework-book list for each SID."""
+    if not isinstance(logs, dict):
+        return {}
+
+    out: dict[str, list[str]] = {}
+    for date_key in sorted(logs, reverse=True):
+        day = logs.get(date_key)
+        if not isinstance(day, dict):
+            continue
+
+        for sid, entry in day.items():
+            sid_key = str(sid).strip()
+            if not sid_key or sid_key in out or not isinstance(entry, dict):
+                continue
+
+            books: list[str] = []
+            seen: set[str] = set()
+            for row in normalize_homework_rows_for_compare(entry.get("homeworkTable")):
+                if row.get("_deleted"):
+                    continue
+                book = str(row.get("book") or "").strip()
+                book_key = "".join(book.split()).lower()
+                if not book or not book_key or book_key in seen:
+                    continue
+                seen.add(book_key)
+                books.append(book)
+
+            if books:
+                out[sid_key] = books
+
+    return out
+
+
 def log_entry_conflicts_with_base(current: dict, base: dict) -> bool:
     if not isinstance(base, dict) or not base:
         return False

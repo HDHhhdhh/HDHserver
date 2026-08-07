@@ -24,6 +24,9 @@ function __setVerifierState(next) {
   if (Object.prototype.hasOwnProperty.call(next, 'submittedIds')) submittedIds = next.submittedIds;
   if (Object.prototype.hasOwnProperty.call(next, 'submittedNames')) submittedNames = next.submittedNames;
 }
+function __getVerifierState() {
+  return { activeDifficulty, activeRound };
+}
 `;
 
 const context = {
@@ -177,6 +180,88 @@ context.__setVerifierState({
 assertEqual(
   'all excluded unit round advances to next round',
   context.defaultRoundFor('UNIT', '공수1', 'Lv.3'),
+  '2'
+);
+
+const levelMatchedRound1 = {
+  ...unitRound1,
+  difficulty: 'Lv.4',
+  round: '1',
+  name: '지수 Lv.4',
+};
+levelMatchedRound1._key = context.testKey(levelMatchedRound1);
+const levelMatchedRound2 = {
+  ...levelMatchedRound1,
+  round: '2',
+  name: '로그 Lv.4',
+};
+levelMatchedRound2._key = context.testKey(levelMatchedRound2);
+const levelMismatchedTest = {
+  ...unitRound1,
+  difficulty: 'Lv.3',
+  round: '1',
+  name: '다항식의 연산1 Lv.3',
+};
+levelMismatchedTest._key = context.testKey(levelMismatchedTest);
+
+context.state.testsConfig = {
+  autoAssignRules: {
+    UNIT: {
+      공수1: {
+        'Lv.3': ['하'],
+        'Lv.4': ['중'],
+      },
+    },
+  },
+};
+context.state.progress = { '2026-06-19': { 'student-1': { tests: {} } } };
+context.state.logs = {};
+context.__setVerifierState({
+  activeCatalog: [levelMismatchedTest, levelMatchedRound1, levelMatchedRound2],
+  catalogByKey: new Map([levelMismatchedTest, levelMatchedRound1, levelMatchedRound2].map(test => [test._key, test])),
+  activeCategory: 'UNIT',
+  activeSubject: '공수1',
+  activeDifficulty: 'Lv.3',
+  activeStudent: { level: '중' },
+  editingDate: '2026-06-19',
+  editingSid: 'student-1',
+  selectedStatuses: new Map(),
+  submittedIds: new Set(),
+  submittedNames: new Set(),
+});
+
+context.applyRuleDefaults('UNIT');
+assertEqual(
+  'untouched popup uses the student-level difficulty first',
+  context.__getVerifierState().activeDifficulty,
+  'Lv.4'
+);
+assertEqual(
+  'untouched popup starts at round one',
+  context.__getVerifierState().activeRound,
+  '1'
+);
+
+context.syncSelectedFromProgress();
+assertEqual(
+  'level-mismatched test is white until explicitly selected',
+  context.statusForKey(levelMismatchedTest._key),
+  ''
+);
+
+context.state.progress = {
+  '2026-06-19': {
+    'student-1': {
+      tests: { [levelMatchedRound2._key]: 'assigned' },
+    },
+  },
+};
+context.__setVerifierState({ selectedStatuses: new Map() });
+context.syncSelectedFromProgress();
+context.applyRuleDefaults('UNIT');
+assertEqual(
+  'existing subject level-round remains the initial popup selection',
+  context.__getVerifierState().activeRound,
   '2'
 );
 

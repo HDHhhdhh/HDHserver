@@ -11,7 +11,9 @@
 //   - alphaSortOnly(가나다 모드)에서는 예외 없이 이름만 정렬
 
 import { state } from '../core/state.js';
+import { api } from '../core/api.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { todayLocalKey } from '../core/utils.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
@@ -53,6 +55,43 @@ function dateQuery(dateKey) {
 
 function isCurrentAdminDate(dateKey) {
   return String(getAdminDate() || '') === String(dateKey || '');
+}
+
+function makeupCountGroupKey(student) {
+  const name = String(student?.name || '').trim();
+  if (!name) return String(student?.id || '').trim();
+  const school = String(student?.school || '').trim();
+  const grade = String(student?.grade || '').trim();
+  return [name, school, grade].filter(Boolean).join('|');
+}
+
+function aggregateMakeupCountsByStudent(students, countsBySid) {
+  const rows = Array.isArray(students) ? students : [];
+  const studentsBySid = new Map(rows.map(student => [String(student?.id || ''), student]));
+  const groupTotals = new Map();
+  const groupBySid = new Map();
+
+  Object.entries(countsBySid || {}).forEach(([sid, rawCount]) => {
+    const count = Number(rawCount || 0) || 0;
+    if (count <= 0) return;
+    const student = studentsBySid.get(String(sid)) || { id: sid };
+    const groupKey = makeupCountGroupKey(student);
+    groupBySid.set(String(sid), groupKey);
+    groupTotals.set(groupKey, (groupTotals.get(groupKey) || 0) + count);
+  });
+
+  rows.forEach(student => {
+    const sid = String(student?.id || '');
+    if (!sid) return;
+    const groupKey = makeupCountGroupKey(student);
+    if (groupTotals.has(groupKey)) groupBySid.set(sid, groupKey);
+  });
+
+  const out = { ...(countsBySid || {}) };
+  groupBySid.forEach((groupKey, sid) => {
+    out[sid] = groupTotals.get(groupKey) || 0;
+  });
+  return out;
 }
 
 function mergeDateSidMap(target, incoming) {
@@ -784,10 +823,28 @@ async function computeTodayList(dateKey) {
 // 공개: 로드 + 렌더
 // ─────────────────────────────────────────────
 let todayRenderSeq = 0;
+let lastAutoAssignmentBoundaryDate = todayLocalKey();
+
+async function refreshUpdatesAtAssignmentBoundary(reason = '') {
+  const realDate = todayLocalKey();
+  const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;
+  if (!boundary) return;
+
+  try {
+    const updates = await api.get('/api/updates', { cache: 'no-store' });
+    if (updates && typeof updates === 'object') state.updates = updates;
+    lastAutoAssignmentBoundaryDate = realDate;
+  } catch {
+    // Rendering can continue with the last stable snapshot; retry on the next
+    // date/visibility refresh rather than creating a client-side assignment.
+  }
+}
 
 export async function loadTodayAndRender(options = {}) {
   ensureAlphaSortBtn();
   updateAlphaSortBtn();
+
+  await refreshUpdatesAtAssignmentBoundary(options.reason || '');
 
   const force = !!options.force;
   const seq = ++todayRenderSeq;
@@ -822,7 +879,7 @@ export async function loadTodayAndRender(options = {}) {
   await ensureProgressHistoryForSids(list.map(s => s.id), { forceHistory: forceDatePayloads });
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
-  const makeupCounts = countPendingMakeupsBySid({
+  const makeupCounts = aggregateMakeupCountsByStudent(state.students || [], countPendingMakeupsBySid({
     students: state.students || [],
     absentByDate: state.absentByDate || {},
     absentSlotsByDate: state.absentSlotsByDate || {},
@@ -830,7 +887,7 @@ export async function loadTodayAndRender(options = {}) {
     weekendSlots: state.weekendSlots || window.weekendSlots || {},
     carryover: _makeupCarryover || {},
     manualMakeups: _makeupCarryover?.manual || {},
-  });
+  }));
 
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = '0';
@@ -885,7 +942,8 @@ function initAdminAutoRefresh() {
   if (window.__adminTodayAutoRefreshStarted) return;
   window.__adminTodayAutoRefreshStarted = true;
 
-  const refresh = () => {
+  const refresh = async () => {
+    await refreshUpdatesAtAssignmentBoundary('auto');
     if (shouldSkipAutoRefresh()) return;
     loadTodayAndRender({ force: true, reason: 'auto' });
   };

@@ -3,6 +3,7 @@ import { state } from '../core/state.js';
 import { ensureProgressForSid } from '../core/state.js';
 import { localDateKey } from '../core/date.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 let tipEl = null;
 let mode = 'hover';          // 'hover' | 'fixed'
@@ -248,8 +249,8 @@ export function initHoverTooltip() {
   function buildTooltipHTML(stu, { includeProgress } = { includeProgress: true }) {
     const name = (stu.name || '').trim();
     const level = stu.level || '';
-    const days = [stu.day1, stu.day2, stu.day3].filter(Boolean).join('·');
-    const subBooks = [stu.subBook1, stu.subBook2].filter(Boolean).join(', ');
+    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
       stu.school ||

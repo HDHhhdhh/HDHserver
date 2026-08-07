@@ -4,7 +4,6 @@ import { loadAll, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
 import { renderTable } from './features/table.js';
 import './features/progressModal.js';
-import { initHoverTooltip } from './features/hoverTooltip.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
 import { hookDeleteButtons } from './features/deleteButtons.js';
@@ -77,7 +76,6 @@ function renderAll() {
   try {
     await loadAll();
     initStudentTestRecordDetails(document);
-    initHoverTooltip();
     renderAll();
 
     document.addEventListener('admin:refresh', () => {

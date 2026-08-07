@@ -1,21 +1,23 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-13 | **Commit:** a6bbd25 | **Branch:** codex/apple-clean-redesign
+**Generated:** 2026-07-16 | **Commit:** 58648c8 | **Branch:** codex/apple-clean-redesign
 
 ## Hierarchy
 - `AGENTS.md`: repo-wide runtime-data, workflow, verification, and Git rules.
-- `core/AGENTS.md`: pure rules, storage, repository, chatbot, and network helpers.
+- `core/AGENTS.md`: pure rules, storage, repository, and network helpers.
 - `routes/AGENTS.md`: Flask API/page blueprint contracts and route-level merge safety.
 - `static/AGENTS.md`: static HTML/CSS shells and frontend asset boundaries.
 - `static/css/AGENTS.md`: broad stylesheet cascade, responsive, modal, and Korean font rules.
-- `static/js/AGENTS.md`: shared JavaScript contracts, student/test pages, generated link maps.
+- `static/js/AGENTS.md`: shared JavaScript contracts, student/test pages, and canonical answer-link map.
 - `static/js/shared/AGENTS.md`: shared fetch, search, calendar, and self-study helpers.
 - `static/js/admin/AGENTS.md`: admin module bootstrap, selected-date behavior, shared API wrapper usage.
 - `static/js/admin/core/AGENTS.md`: admin date, API, state, theme, and view-mode helpers.
+- `static/js/admin/demo/AGENTS.md`: demo-only fetch/store/navigation sandbox and tutorial system.
 - `static/js/admin/features/AGENTS.md`: high-risk admin feature modules and row `data-date` actions.
 - `static/js/all/AGENTS.md`: all-students page modules and API wrapper.
-- `static/js/all/features/AGENTS.md`: all-students table, mutation buttons, roster export, and progress modal.
+- `static/js/all/features/AGENTS.md`: all-students table, mutation buttons, roster export, and mini progress editor.
 - `scripts/AGENTS.md`: verification, backup, import, and generated-output scripts.
+- `tools/subjective_sheet_lab/AGENTS.md`: local ignored OCR-lab safety scope; provider calls, benchmark artifacts, and submit-flow prohibitions.
 
 ## Where To Look
 | Task | Location | Notes |
@@ -24,95 +26,91 @@
 | Core log/progress rules | `core/` | Keep pure rules separate from storage/runtime repair. |
 | Backend APIs | `routes/` | `api_basic.py` is broadest; announcements, auth, tests, files, attendance, watch, and today metadata each have own blueprints. |
 | Admin UI | `static/admin.html`, `static/js/admin/` | Use selected admin date and row `data-date` contracts. |
+| Demo UI | `static/js/admin/demo/` | Loaded before five page entrypoints; must never leak API writes to the live server. |
 | Styling/cascade | `static/css/` | `admin.css`, `student.css`, and `style.css` are broad shared surfaces. |
 | Student UI/tests | `static/student.html`, `static/js/student.js`, `static/js/tests.js` | Preserve bootstrap `assignedTests` shape and answer links. |
 | Runtime checks | `scripts/verify_refactor_safety.py` | Main safety suite and smoke checks. |
+| OCR lab | `tools/subjective_sheet_lab/` | Large ignored local corpus; read its child guide before any scan, provider call, or artifact generation. |
 
-## Project Overview
-- This is a local Flask-based academy operations app.
-- Admin UI: `/admin`, implemented mainly in `static/admin.html` and `static/js/admin/`.
-- Student UI: `/students`, `/student/<sid>`, and related static JS.
-- Backend API routes live in `routes/`; shared helpers live in `core/`.
-- Runtime data is stored locally in JSON files and SQLite. Treat it as real user data, not fixtures.
+## Overview
+- Local Flask academy-operations app with static HTML shells, native ES modules, and large standalone student/test scripts; no Jinja template tree or frontend build system.
+- `app.py:create_app()` installs write/network guards and registers 13 flat blueprints. Runtime state lives beside the code in JSON and SQLite.
 
-## Key Paths
-- `app.py`: Flask app factory, middleware, blueprint registration.
-- `routes/api_basic.py`: students, videos, logs, progress, assignments, and core JSON APIs.
-- `routes/api_attend.py`: today list, attendance, contact, absence APIs.
-- `routes/api_announcements.py`, `routes/api_auth.py`, `routes/api_fs.py`: announcements/surveys, auth accounts/JWT, and material/file management.
-- `routes/api_watch.py`: video watch/progress callbacks.
-- `core/log_repository.py`: class log repository for SQLite + `logs.json` dual-read/dual-write behavior.
-- `core/log_rules.py`: pure class-log merge/conflict rules with no file, SQLite, Flask, or runtime-data access.
-- `static/js/shared/api.js`: shared frontend fetch/API helper for JSON requests and standardized API errors.
-- `static/js/shared/search.js`: Hangul initial, keyboard-layout, and AND-term search helpers.
-- `static/js/admin/main.js`: admin frontend entrypoint.
-- `static/js/admin/core/adminDate.js`: admin selected-date storage and `admin:date-change` broadcast.
-- `static/js/admin/features/logModal.js`: class log, homework, and video progress modal.
-- `static/js/admin/features/today*.js`: today list state and rendering.
-- `static/js/all/features/table.js`: all-students roster renderer and inline edit surface.
-- `scripts/backup_runtime_data.py`: zip backup for runtime data.
+## Structure
+```text
+core/                    # rules, storage, repositories, network gates
+routes/                  # static-page and API blueprints
+static/                  # directly served HTML/CSS/JS shells
+scripts/                 # safety harness plus operational writers/generators
+tools/subjective_sheet_lab/  # ignored OCR lab; separate safety policy
+```
+
+## Code Map
+Codegraph indexed 258 files; Python/JavaScript LSP servers are configured but not installed.
+
+| Symbol | Location | Reach | Role |
+|---|---|---:|---|
+| `create_app` | `app.py:29` | 13 blueprints | Server composition, cross-origin write guard, academy answer-map gate. |
+| `save_atomic` | `core/storage.py:151` | 52 caller symbols | Atomic JSON replace plus best-effort mirror/snapshot; caller owns locking. |
+| `get_log_repository` | `routes/api_basic.py:1315` | 7+ direct sites | Shared factory for log/bootstrap/attendance/test flows. |
+| `LogRepository` | `core/log_repository.py:61` | 4 dependent files | SQLite-primary plus `logs.json` compatibility reads/writes. |
+| `getAdminDate` | `static/js/admin/core/adminDate.js:20` | 44 call sites | Selected admin operating date and change broadcast. |
+| `bootstrap` | `static/js/admin/core/state.js:15` | admin entry | Initial real-today snapshot and compatibility globals. |
+| `loadTodayAndRender` | `static/js/admin/features/today.js:788` | 3+ paths | Date-scoped admin hydration/render/event orchestrator. |
+| `installDemoBootstrap` | `static/js/admin/demo/bootstrap.js:47` | 5 shells | Pre-entrypoint fetch/navigation sandbox for demo routes. |
+| `loadInitialData` / `init` | `static/js/student.js:543,1022` | student shell | Bootstrap aggregation with seven-endpoint legacy fallback. |
+| `main` | `scripts/verify_refactor_safety.py:5072` | 49 checks | Bespoke compile/source/temp-fixture/Node verification hub. |
 
 ## Runtime Data Safety
 - Do not overwrite or reset runtime data files unless the user explicitly asks.
 - Important data files include `students.json`, `videos.json`, `updates.json`, `progress.json`, `logs.json`, `app.sqlite`, `watch.json`, `attendance.json`, `contact.json`, `arrive_time.json`, `extra_attend.json`, `absent.json`, `weekend_slots.json`, `today_order.json`, `school_calendar.json`, and `tests.json`.
 - Treat SQLite sidecars such as `app.sqlite-wal`, `app.sqlite-shm`, `*.db-wal`, `*.db-shm`, root `*.tmp` files, `data/*.json`, `files/`, `instance/`, `_data_mirror/`, `_runtime_backups/`, `.codex_drive_download/`, `generated/`, and generated/downloaded operational outputs as runtime/local data when present.
+- Importing `core.paths` (and therefore importing `app`) can create `files/` plus missing root JSON stores; do not treat import probes as filesystem-pure.
 - Before data migrations or bulk repair, create a backup:
   `python scripts/backup_runtime_data.py`
 - Prefer PATCH-style updates over full-file rewrites.
 - Preserve existing keys and unknown fields when merging log/progress records.
 - Keep JSON as UTF-8. Do not introduce mojibake or replacement text such as `????`.
-- Be careful with "read-only" checks: `GET /api/logs` and `GET /api/logs/entry` may touch SQLite schema/WAL state, `GET /api/updates` may auto-write `updates.json`, and today's `GET /api/student/bootstrap` may auto-write `updates.json`.
+- Be careful with "read-only" checks: log and assistant-note GETs can ensure/migrate SQLite schema or WAL state; `GET /api/updates` may auto-write `updates.json`; today's student bootstrap can do both.
 
 ## Agent Workflow
 - Read this `AGENTS.md` first, then run `git status --short` before edits. Record pre-existing dirty, staged, and untracked files separately from files changed by the current task.
 - Use subagents for broad or risky work only when the current tool policy and user request allow delegated agents. Keep subagents read-only unless a task explicitly gives them an edit scope.
 - The main agent owns final synthesis, file edits, verification, and user-facing conclusions.
 - Before the final response, clean up any open subagents by waiting for useful results or closing them, then report how subagents were used.
+- When investigating Codex/OMO runtime issues, do not recursively search all of `%USERPROFILE%\.codex` or plugin cache folders. Inspect targeted config files, latest hook outputs, and recent sandbox log lines with tight output limits so command-runner pipes are not flooded.
 - After completing work, run the relevant verification commands, check `git status --short`, and separate code changes from runtime-data changes.
 - When the user asks for git registration/staging after completion, stage only the verified files in scope. Do not stage, unstage, revert, or normalize unrelated existing changes.
 
-## Reusable Skills and Subagents
-- Installed Codex skills most relevant here: `omo:init-deep`, `omo:git-master`, `omo:programming`, `omo:debugging`, `omo:visual-qa`, `browser:control-in-app-browser`, `build-web-apps:frontend-testing-debugging`.
-- Project-only prompt-pattern names not installed as Codex skills in this session: `academy-runtime-safety`, `academy-log-progress-guardian`, `admin-ui-date-verifier`.
-- Treat those project-only names as read-only explorer prompt patterns when delegated agents are explicitly allowed; they are not callable skill names.
-- Use the three prompt patterns for runtime data/backups/Git separation, log-homework-progress/bootstrap safety, and `/admin` selected-date plus Korean rendering checks.
-- The repeated user priorities from prior sessions are: protect real local data, preserve merge-safe log/progress contracts, verify admin selected-date behavior, keep Korean text readable, use Browser/UI checks after frontend changes, and keep GitHub versioning code-only unless data backup is explicitly requested.
-
 ## Current Refactor Boundaries
 - Frontend API calls should use the shared helper in `static/js/shared/api.js` when adding or touching admin/all JSON fetch wrappers. Preserve endpoint URLs, payload keys, cache behavior, and existing response shapes.
-- When changing app features, routes, data contracts, admin/student workflows, or safety rules, update the administrator chatbot knowledge in `core/admin_chat.py` and any related chatbot UI copy so `/admin` chatbot answers stay current. Include this in verification notes for feature changes.
 - Class log reads/writes should go through `get_log_repository()` / `LogRepository` instead of open-coding SQLite + `logs.json` merge behavior in route handlers. Keep SQLite and JSON fallback compatibility when changing log flows.
 - Pure class-log rules belong in `core/log_rules.py`. Keep `merge_log_entry_safe`, `log_entry_conflicts_with_base`, homework-row comparison normalization, and `truthy` semantics centralized there.
 - Keep runtime-data repair and hydration separate from pure rules. For example, `_repair_log_entry_placeholders()` currently stays in `routes/api_basic.py` because homework placeholder repair can read `students.json` through student book lookup.
 - Do not merge watch/progress auto-status rules into log rules. `routes/api_basic.py` and `routes/api_watch.py` still contain duplicated watch/progress transition logic; extract it only with focused tests for manual white/skip preservation and automatic watch-progress behavior.
+- Keep assistant-student notes isolated from class-log notes, counseling records, CSV/print exports, and browser storage even though both repositories share `app.sqlite`.
 - When updating test catalog CSV data from the test management page or related import scripts, keep the student personal-page explanation links in sync. For `REVIEW` and `SCHOOL_PAST`, preserve/update `sourceFiles.solutionFileId` or equivalent solution metadata in `tests-config.json`; for `UNIT`, regenerate/update `static/js/test_answer_link_map.json` from the Drive explanation files. Verify `/api/student/bootstrap` returns `assignedTests[].answerUrl` and the student page renders today-test cards as Drive explanation links.
 
-## Development Commands
-- Start local server: `python app.py`
-- Compile backend edits: `python -m compileall -q app.py routes core scripts`
-- Lightweight safety suite: `python scripts/verify_refactor_safety.py`
-- Safe smoke checks: `python scripts/verify_refactor_safety.py --smoke`
-- JavaScript syntax checks: `node --check <edited-file.js>`
-- Use targeted API smoke checks with Flask `app.test_client()` or `Invoke-RestMethod` before browser testing.
+## Commands
+```powershell
+python app.py
+python -m compileall -q app.py routes core scripts
+python scripts/verify_refactor_safety.py
+python scripts/verify_refactor_safety.py --smoke
+node --check <edited-file.js>
+```
+`--smoke` imports the live app and permits WAL/SHM churn; it is not equivalent to a pure unit suite.
 
-## Verification Checklist
-- For admin UI changes, verify `/admin` loads and the target modal/table renders.
-- For log/homework/progress changes, verify both `/api/logs/entry?date=YYYY-MM-DD&sid=<sid>` and `/api/logs?date=YYYY-MM-DD&sid=<sid>`.
-- After any patch that can affect class logs, always run a regression check for the admin log modal:
-  1. Open a known student/date with existing `notes`, video progress, and `homeworkTable`.
-  2. Confirm special notes load as readable Korean or are blank when the source is unrecoverable mojibake; never show `???`/`????`.
-  3. Confirm homework book/current/next fields load without `???`/`????`.
-  4. Toggle one green progress cell to white, save, reload `/admin`, reopen the same modal, and confirm it stays white.
-  5. Confirm automatic watch progress does not override a manual white/skip setting.
-- For video assignment changes, verify `/api/updates`, `/api/progress`, and the student bootstrap flow.
-- For date-sensitive features, use the admin selected date, not the machine's real today, unless the feature explicitly needs real today.
-- For admin row actions such as supplement/absence/contact/homework, use the row's own `data-date` when available. Use live `getAdminDate()` only as a fallback.
-- For assigned tests in student bootstrap, preserve `progress[date][sid].tests` statuses as authoritative. Use log `assignedTests` as metadata/fallback without resurrecting stale cleared assignments.
+## Verification Notes
+- For admin UI changes, reload `/admin`, verify the target modal/table with DOM/API evidence, then run screenshot QA when layout changed.
+- Log/homework/progress work requires both log endpoints plus the browser regression in `static/js/admin/features/AGENTS.md`; a green-to-white manual state must survive reload and automatic watch updates.
+- Video assignment work spans `/api/updates`, `/api/progress`, watch state, and student bootstrap.
+- Student-test work must preserve progress-authoritative statuses, top-level `assignedTests`, answer-link precedence, and academy-network stripping.
+- The default suite is bespoke and incomplete; targeted `--only-*` modes do not replace the full run, and CI does not run live smoke or browser QA.
 
 ## Coding Rules
 - Follow the existing small-module structure rather than adding new frameworks.
 - Keep frontend changes scoped to the relevant `static/js/admin/features/` module.
-- Use `getAdminDate()` for admin operating-date behavior.
 - Use `todayLocalKey()` only when the real local date is intended.
 - Keep save logic merge-safe. Empty values must not erase existing meaningful data unless an explicit clear/delete field is used.
 - Keep student bootstrap response shapes stable. In particular, `assignedTests` is a top-level array; do not change endpoint URLs or payload keys without a dedicated migration plan.
@@ -133,14 +131,8 @@
 - Before pushing, check `git status --short` and summarize runtime-data changes separately from code changes.
 - Before committing, separate staged changes, unstaged changes, untracked files, and runtime/local data. Do not mix unrelated dirty work into the same commit.
 - After verified work is complete and the user wants git registration, add only the intended files with explicit paths.
-
-## GitHub Version Management
-- Use GitHub as the patch-version ledger when the user asks to preserve, publish, or roll back code versions.
-- Before code patches, check `git status --short` and note existing dirty files so unrelated user work is not mixed in or reverted.
 - Runtime data is local operational data. Do not commit or push runtime data files unless the user explicitly asks for a data backup commit.
 - Prefer code-only commits for app patches. Keep local student/video/homework/progress data separate from patch versioning.
-- When the user asks to save a version, commit after verification, push to the configured GitHub remote, and report the branch/commit.
-- When a rollback is needed, roll back code through Git/GitHub while preserving local runtime data unless the user explicitly asks to restore data too.
 - Use branch names with the `codex/` prefix by default for new patch work.
 
 ## Known Risk Areas
@@ -148,3 +140,6 @@
 - `progress.json` is large and date/sid keyed. Avoid full replacement writes from the frontend.
 - Older logs may contain legacy or corrupted text. Repair display and future saves without deleting unrelated fields.
 - The admin page uses both cached frontend state and server refreshes; hydrate date/sid-scoped data before assuming `state` is complete.
+- Live admin today-order routes use `data/today_order.json`, while `core.paths.TODAY_ORDER_PATH` points at the root file; do not assume those stores are unified.
+- `static/main.html`, `static/student copy.html`, and similarly unreferenced assets remain directly servable; confirm external/manual use before deletion.
+- There is no dependency manifest or frontend package runner. CI pins Python 3.11 and Node 20 but only compiles and invokes the custom safety harness.

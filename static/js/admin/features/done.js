@@ -2,6 +2,7 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { patchLog, truthy } from './today.state.js';
+import { completeAssignedTestsForRecordCleanup } from './today.render.js';
 
 export function initClearAll() {
   $('clearAllBtn')?.addEventListener('click', async () => {
@@ -17,7 +18,8 @@ export function initClearAll() {
 
     try {
       for (const [date, sid] of targets) {
-        await patchLog(date, sid, { archived: true });
+        const testPatch = await completeAssignedTestsForRecordCleanup(date, sid);
+        await patchLog(date, sid, { ...testPatch, archived: true });
       }
       toast('선택 날짜의 하원 기록을 정리했습니다.');
       document.dispatchEvent(new CustomEvent('admin:refresh'));

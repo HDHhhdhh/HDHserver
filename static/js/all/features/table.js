@@ -4,12 +4,12 @@
 // - "커리큘럼/세부커리큘럼" 수정 가능 (고정 옵션 셀렉트)
 // - "요일" 밑 "등원시간" 행 추가 (월1~일1=13:00 / 월2~일2=18:00 기본, 수정 가능)
 // - "독스(docUrl)" 인라인 입력/저장 + 새 탭 열기 버튼
-// - 테이블에서 "영상 진도 보기/수정" 팝업
+// - 테이블에서 관리자 상담 기록 팝업(기록 읽기 전용, 영상 진도 우클릭 수정)
 // - 커리별 학생 수(이름+학교 기준으로 중복 제거)
 
 import { $, toast } from '../core/utils.js';
 import { patchField } from '../core/api.js';
-import { ensureProgressForSid, state } from '../core/state.js';
+import { state } from '../core/state.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 import { SELF_STUDY_DAYS_FIELD, isSelfStudyDayField, nextSelfStudyDays } from '../../shared/selfStudy.js';
 
@@ -161,18 +161,6 @@ export function renderTable() {
 
   state.students.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 
-  const bookSet = new Set([
-    ...state.students.flatMap(s => [s.subBook1, s.subBook2]).filter(Boolean),
-    '바이블', '라이트쎈', '고쟁이', '유형반복R',
-    '올림포스', '올림포스 고난도', '1등급의 자격',
-    '마플시너지', '마플교과서', '올포유', '올포고', '올림포스 유형', '라인트쎈'
-  ]);
-
-  const datalist = `
-    <datalist id="bookList">
-      ${[...bookSet].map(v => `<option value="${escapeHtml(v)}"></option>`).join('')}
-    </datalist>`;
-
   const rows = state.students.map(s => {
     const sub = s.subCurriculum || '';
     const level = s.level || '';
@@ -183,6 +171,9 @@ export function renderTable() {
     const schoolValue = normalizeInlineCellText(schoolText);
     const doc = s.docUrl || '';
     const cur = s.curriculum || '';
+    const homeworkBooks = Array.isArray(state.homeworkBooksBySid?.[String(s.id)])
+      ? state.homeworkBooksBySid[String(s.id)]
+      : [];
 
     // 요일/등원시간 렌더용
     const dayInputsHtml = [1, 2, 3, 4, 5].map(n => {
@@ -202,7 +193,7 @@ export function renderTable() {
     }).join('');
 
     return `
-    <tr data-id="${s.id}" data-curriculum="${escapeHtml(cur)}" data-subcurriculum="${escapeHtml(sub)}" data-search-key="${escapeHtml(tableSearchKeyForStudent(s))}">
+    <tr data-id="${s.id}" data-sid="${s.id}" data-date="${todayLocalKey()}" data-curriculum="${escapeHtml(cur)}" data-subcurriculum="${escapeHtml(sub)}" data-search-key="${escapeHtml(tableSearchKeyForStudent(s))}">
       <td class="cell-name">
         <a href="/student/${s.id}" target="_blank" class="stuName"
            data-id="${s.id}" data-grade="${escapeHtml(grade)}"
@@ -276,9 +267,10 @@ export function renderTable() {
 
       <!-- 부교재 -->
       <td>
-        <div class="sbBox">
-          <input type="text" class="subBookInput" list="bookList" data-id="${s.id}" data-field="subBook1" placeholder="부1" value="${escapeHtml(s.subBook1 || '')}">
-          <input type="text" class="subBookInput" list="bookList" data-id="${s.id}" data-field="subBook2" placeholder="부2" value="${escapeHtml(s.subBook2 || '')}">
+        <div class="sbBox linkedHomeworkBooks" title="관리자운영판 숙제 교재 등록과 연동">
+          ${homeworkBooks.length
+            ? homeworkBooks.map(book => `<span class="linkedHomeworkBook">${escapeHtml(book)}</span>`).join('')
+            : '<span class="linkedHomeworkBook is-empty">미등록</span>'}
         </div>
       </td>
 
@@ -289,15 +281,14 @@ export function renderTable() {
                  placeholder="https://docs.google.com/..."
                  value="${escapeHtml(doc)}">
           <button type="button" class="docOpen" title="새 탭에서 열기" data-id="${s.id}">🔗</button>
-          <button type="button" class="miniProgBtn" title="영상 진도 보기/수정" data-id="${s.id}">🎬</button>
+          <button type="button" class="miniProgBtn" title="상담 기록 및 영상 진도 보기" data-id="${s.id}">상담</button>
           <button type="button" class="studentTestRecordBtn" title="테스트 기록 보기" data-test-result-sid="${escapeHtml(s.id)}" data-test-result-name="${escapeHtml(s.name || s.id)}">기록</button>
         </div>
       </td>
     </tr>`;
   }).join('');
 
-  host.innerHTML = `${datalist}
-    <style>
+  host.innerHTML = `<style>
       /* 표 스타일 범위 한정 */
       body.all-page #allWrap {
         overflow-x:hidden !important;
@@ -444,13 +435,24 @@ export function renderTable() {
         gap:6px;
       }
       #allWrap .studentsTable .sbBox {
-        grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+        display:flex;
+        flex-wrap:wrap;
+        gap:4px;
       }
-      #allWrap .studentsTable .subBookInput {
-        width:100% !important;
-        min-width:0 !important;
-        padding-left:8px;
-        padding-right:8px;
+      #allWrap .studentsTable .linkedHomeworkBook {
+        min-width:0;
+        padding:5px 7px;
+        border:1px solid #e5e7eb;
+        border-radius:8px;
+        background:#f8fafc;
+        font-size:11px;
+        line-height:1.25;
+        overflow-wrap:anywhere;
+      }
+      #allWrap .studentsTable .linkedHomeworkBook.is-empty { opacity:.58; }
+      body.dark #allWrap .studentsTable .linkedHomeworkBook {
+        border-color:#334155;
+        background:#0b1220;
       }
       #allWrap .studentsTable .docBox {
         grid-template-columns:minmax(0, 1fr) 34px 34px;
@@ -505,11 +507,26 @@ export function renderTable() {
         border:1px solid #e5e7eb;
         background:#fff;
         cursor:pointer;
+        font-size:10px;
+        font-weight:800;
       }
       body.dark #allWrap .studentsTable .miniProgBtn{
         border-color:#334155;
         background:#0b1220;
         color:#e5e7eb;
+      }
+
+      @media (max-width:900px){
+        body.all-page #allWrap{
+          overflow-x:auto !important;
+          overscroll-behavior-inline:contain;
+        }
+        body.all-page #allWrap .studentsTable,
+        #allWrap .studentsTable{
+          width:1120px !important;
+          min-width:1120px !important;
+          max-width:none !important;
+        }
       }
 
       /* 커리별 집계 박스 */
@@ -600,8 +617,6 @@ export function renderTable() {
   bindAllStudentSearch();
   applyAllStudentSearch();
 
-  // ✅ 테이블 렌더 시점에 미니 진도 모달 준비(1회)
-  ensureMiniProgModal();
 }
 
 function bindAllStudentSearch() {
@@ -701,24 +716,17 @@ document.addEventListener('change', (e) => {
     return;
   }
 
-  // 부교재
-  if (e.target.classList.contains('subBookInput')) { saveSubBook(e.target); return; }
-
   // 독스 URL (change에서도 저장)
   if (e.target.classList.contains('docUrlInput')) { saveDocUrl(e.target); return; }
 });
 
 document.addEventListener('blur', (e) => {
-  if (e.target.classList.contains('subBookInput')) saveSubBook(e.target);
   if (e.target.classList.contains('docUrlInput')) saveDocUrl(e.target);
   if (e.target.classList.contains('timeInput')) saveTimeInput(e.target);
 }, true);
 
 document.addEventListener('keydown', (e) => {
   const t = e.target;
-  if (t.classList.contains('subBookInput') && e.key === 'Enter') {
-    e.preventDefault(); saveSubBook(t); t.blur();
-  }
   if (t.classList.contains('docUrlInput') && e.key === 'Enter') {
     e.preventDefault(); saveDocUrl(t); t.blur();
   }
@@ -744,79 +752,6 @@ document.addEventListener('click', (e) => {
   const href = /^(https?:)?\/\//i.test(url) ? url : ('https://' + url);
   window.open(href, '_blank', 'noopener');
 });
-
-/* ─────────────────────────────────────────
-   ✅ 부교재 저장: 중복/동시 저장 방지(큐잉)
-   - change + blur + Enter로 saveSubBook가 여러 번 불려도
-     "최종 값 1번"만 서버에 저장되게 만든다.
-────────────────────────────────────────── */
-const _subBookSaveState = new Map(); // key -> { inflight:boolean, lastSent:string, pending:string|null, timer:number|null }
-
-function _subBookKey(sid, field) {
-  return `${String(sid)}:${String(field)}`;
-}
-
-function saveSubBook(el) {
-  const sid = el.dataset.id;
-  const field = el.dataset.field;   // subBook1|subBook2
-  if (!sid || !field) return;
-
-  const value = (el.value || '').trim();
-  const key = _subBookKey(sid, field);
-
-  // 로컬 상태는 일단 반영
-  const stu = state.students.find(s => String(s.id) === String(sid));
-  if (stu) stu[field] = value;
-
-  let st = _subBookSaveState.get(key);
-  if (!st) {
-    st = { inflight: false, lastSent: undefined, pending: null, timer: null };
-    _subBookSaveState.set(key, st);
-  }
-
-  // 같은 값이면(이미 보냈거나, 보내려는 값이 동일) 아무것도 안 함
-  if (st.pending === value) return;
-  if (st.lastSent === value && !st.inflight) return;
-
-  // 디바운스: 같은 틱에 change+blur 연달아 와도 1번만 실행
-  if (st.timer) clearTimeout(st.timer);
-  st.pending = value;
-  st.timer = setTimeout(() => flushSubBookSave(sid, field), 0);
-}
-
-async function flushSubBookSave(sid, field) {
-  const key = _subBookKey(sid, field);
-  const st = _subBookSaveState.get(key);
-  if (!st) return;
-
-  if (st.inflight) return; // 이미 저장 중이면 끝난 뒤 pending으로 다시 실행될 것
-  const value = st.pending;
-  if (value == null) return;
-
-  // pending을 비우고, 지금 값을 보낸다
-  st.pending = null;
-  st.inflight = true;
-
-  try {
-    const r = await patchField(sid, field, value);
-    if (!ok(r)) throw r;
-    st.lastSent = value;
-    toast('부교재 저장됨');
-  } catch (e) {
-    // 실패했으면 pending에 다시 넣어서 "다음 트리거" 때 재시도 가능하게 둔다
-    st.pending = value;
-    alert('부교재 저장 실패');
-  } finally {
-    st.inflight = false;
-
-    // 저장 중에 다른 값이 들어왔으면(사용자가 연속 수정) 바로 이어서 한 번 더 저장
-    if (st.pending != null && st.pending !== st.lastSent) {
-      // 다음 턴에 실행
-      if (st.timer) clearTimeout(st.timer);
-      st.timer = setTimeout(() => flushSubBookSave(sid, field), 0);
-    }
-  }
-}
 
 function saveDocUrl(el) {
   const sid = el.dataset.id;
@@ -854,8 +789,7 @@ function tableSearchKeyForStudent(s) {
     s?.day3,
     s?.day4,
     s?.day5,
-    s?.subBook1,
-    s?.subBook2,
+    ...(state.homeworkBooksBySid?.[String(s?.id)] || []),
   ].filter(Boolean).join(' '));
 }
 
@@ -1174,11 +1108,7 @@ function initGradeInlineEdit() {
   });
 }
 
-/* ─────────────────────────────────────────
-   테이블용 "미니 영상 진도 보기/수정"
-   - 전체학생 페이지 저장분은 로그 내보내기 진도 변경분에서 제외되도록 source를 분리
-   - state.progress 최신 누적 상태를 펼쳐 보여주고, 오늘 날짜에 변경분만 PATCH
-────────────────────────────────────────── */
+/* 행의 상담 기록 팝업 날짜는 실제 로컬 오늘을 사용한다. */
 function todayLocalKey() {
   if (typeof window.todayLocalKey === 'function') return window.todayLocalKey();
   const d = new Date();
@@ -1188,239 +1118,46 @@ function todayLocalKey() {
   return `${y}-${m}-${day}`;
 }
 
-function nextProgressState(st) {
-  if (st === 'none') return 'done';
-  if (st === 'done') return 'interrupted';
-  return 'none';
-}
+let studentRecordPopupModulePromise = null;
 
-function ensureMiniProgModal() {
-  if (document.getElementById('miniProgModal')) return;
-
-  const s = document.createElement('style');
-  s.id = 'miniProgStyles';
-  s.textContent = `
-    #miniProgModal{
-      position:fixed; inset:0; z-index:99998;
-      background:rgba(0,0,0,.45);
-      display:none; align-items:center; justify-content:center;
-    }
-    #miniProgModal .card{
-      width:720px; max-width:96vw; max-height:82vh; overflow:auto;
-      padding:12px; border-radius:12px;
-      border:1px solid #e5e7eb; background:#fff; color:#0f172a;
-      box-shadow:0 12px 34px rgba(0,0,0,.34);
-    }
-    body.dark #miniProgModal .card{
-      background:#0f172a; color:#e5e7eb; border-color:#334155;
-    }
-    #miniProgModal .top{
-      display:flex; align-items:center; justify-content:space-between; gap:8px;
-      margin-bottom:10px;
-    }
-    #miniProgModal .title{
-      font-weight:900; font-size:16px;
-    }
-    #miniProgModal button{
-      height:34px; padding:0 12px; border-radius:10px;
-      border:1px solid #e5e7eb; background:#f8fafc; cursor:pointer; font-weight:900;
-    }
-    #miniProgModal button.primary{
-      background:#3b82f6; border-color:#3b82f6; color:#fff;
-    }
-    body.dark #miniProgModal button{
-      border-color:#334155; background:#1f2937; color:#e5e7eb;
-    }
-    body.dark #miniProgModal button.primary{
-      background:#2563eb; border-color:#2563eb; color:#fff;
-    }
-
-    #miniProgGrid{
-      display:grid; grid-template-columns:repeat(auto-fill, minmax(82px,1fr));
-      gap:8px; margin:8px 0 2px;
-    }
-    #miniProgGrid .progress-cell{
-      display:flex; align-items:center; justify-content:center;
-      min-height:44px; padding:8px; border-radius:10px; box-sizing:border-box;
-      border:1px solid #e5e7eb; background:#ffffff; color:#0f172a;
-      font-size:14px; user-select:none; cursor:pointer; position:relative;
-    }
-    #miniProgGrid .progress-cell:hover{ box-shadow:0 0 0 2px rgba(59,130,246,.18); }
-    body.dark #miniProgGrid .progress-cell{ border-color:#334155; background:#0b1220; color:#e5e7eb; }
-
-    #miniProgGrid .progress-cell[data-state="done"]{ background:#10b98122; border-color:#10b98155; }
-    body.dark #miniProgGrid .progress-cell[data-state="done"]{
-      background:color-mix(in srgb, #008558ff 18%, transparent); border-color:#0ea56e;
-    }
-    #miniProgGrid .progress-cell[data-state="interrupted"]{ background:#f59e0b22; border-color:#f59e0b66; }
-    body.dark #miniProgGrid .progress-cell[data-state="interrupted"]{
-      background:color-mix(in srgb, #fffb00ff 20%, transparent); border-color:#d97706;
-    }
-    #miniProgGrid .progress-cell[data-state="skip"]{ background:#ef444422; border-color:#ef444466; color:#111; }
-    body.dark #miniProgGrid .progress-cell[data-state="skip"]{
-      background:color-mix(in srgb, #ff0000ff 20%, transparent); border-color:#b91c1c; color:#fee2e2;
-    }
-    #miniProgModal .hint{
-      margin-top:8px; opacity:.75; font-size:12px;
-    }
-    #miniProgModal .miniProgActions{
-      display:flex; justify-content:flex-end; gap:8px; margin-top:10px;
-    }
-  `;
-  document.head.appendChild(s);
-
-  document.body.insertAdjacentHTML('beforeend', `
-    <div id="miniProgModal">
-      <div class="card">
-        <div class="top">
-          <div class="title" id="miniProgTitle">영상 진도</div>
-          <div class="miniProgActions" style="margin-top:0">
-            <button type="button" id="miniProgSave" class="primary">저장</button>
-            <button type="button" id="miniProgClose">닫기</button>
-          </div>
-        </div>
-        <div id="miniProgGrid"></div>
-        <div class="hint">좌클릭: 흰색 → 초록 → 노랑 → 흰색, 우클릭: 빨강. 저장 시 관리자 운영판 진도와 공유됩니다.</div>
-      </div>
-    </div>
-  `);
-
-  const modal = document.getElementById('miniProgModal');
-  const close = () => { modal.style.display = 'none'; modal.dataset.sid = ''; };
-  document.getElementById('miniProgClose')?.addEventListener('click', close);
-  document.getElementById('miniProgSave')?.addEventListener('click', saveMiniProgress);
-}
-
-function shouldSkipForLow(stu, v) {
-  if (!stu || stu.level !== '하') return false;
-  const ex = v && v.exNum;
-  if (!ex || typeof ex !== 'object') return false;
-  return Number(ex['하']) === 0;
-}
-
-// sid의 누적 progress 최신 상태(오늘까지)를 한 번에 펼쳐서 계산
-function buildLatestProgEntryForSid(sid) {
-  const today = todayLocalKey();
-
-  const dates = Object.keys(state.progress || {})
-    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today)
-    .sort();
-
-  const out = {};
-  dates.forEach(d => {
-    const day = (state.progress?.[d] || {})[sid] || {};
-    Object.entries(day).forEach(([mid, st]) => {
-      if (String(mid).startsWith('__') || mid === 'tests') return;
-      out[String(mid)] = st;
+async function ensureStudentRecordPopupReady() {
+  if (!studentRecordPopupModulePromise) {
+    studentRecordPopupModulePromise = import('./studentRecordPopup.js').catch((error) => {
+      studentRecordPopupModulePromise = null;
+      throw error;
     });
-  });
-  return out;
-}
-
-async function openMiniProgressForSid(sid) {
-  ensureMiniProgModal();
-
-  const stu = state.students.find(x => String(x.id) === String(sid));
-  if (!stu) { alert('학생 없음'); return; }
-  await ensureProgressForSid(sid);
-
-  const modal = document.getElementById('miniProgModal');
-  const title = document.getElementById('miniProgTitle');
-  const grid = document.getElementById('miniProgGrid');
-
-  title.textContent = `${stu.name} – ${stu.curriculum} (영상 진도 보기)`;
-  modal.dataset.sid = String(sid);
-
-  const latest = buildLatestProgEntryForSid(String(sid));
-
-  grid.innerHTML = '';
-  (state.videos || [])
-    .filter(v => v.curriculum === stu.curriculum && v.subCurriculum === stu.subCurriculum)
-    .sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0))
-    .forEach(v => {
-      const cell = document.createElement('div');
-      cell.className = 'progress-cell';
-      cell.textContent = `${v.chapter}차시`;
-      cell.dataset.mid = String(v.mid);
-
-      const autoSkip = shouldSkipForLow(stu, v);
-      const st = latest[String(v.mid)] || (autoSkip ? 'skip' : 'none');
-      cell.dataset.state = st;
-      cell.dataset.initial = st;
-
-      cell.addEventListener('click', () => {
-        const cur = cell.dataset.state || 'none';
-        cell.dataset.state = nextProgressState(cur);
-      });
-      cell.addEventListener('contextmenu', (ev) => {
-        ev.preventDefault();
-        cell.dataset.state = 'skip';
-      });
-
-      grid.appendChild(cell);
-    });
-
-  modal.style.display = 'flex';
-}
-
-async function saveMiniProgress() {
-  const modal = document.getElementById('miniProgModal');
-  const grid = document.getElementById('miniProgGrid');
-  const sid = modal?.dataset.sid;
-  if (!sid || !grid) return;
-
-  const changed = {};
-  grid.querySelectorAll('.progress-cell[data-mid]').forEach(cell => {
-    const mid = String(cell.dataset.mid || '');
-    const st = cell.dataset.state || 'none';
-    const initial = cell.dataset.initial || 'none';
-    if (mid && st !== initial) changed[mid] = st;
-  });
-
-  if (!Object.keys(changed).length) {
-    toast('변경된 진도가 없습니다.');
-    return;
   }
-
-  const date = todayLocalKey();
-  try {
-    const res = await fetch('/api/progress/patch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date,
-        sid: String(sid),
-        progress: changed,
-        source: 'allStudents',
-      }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok || !body?.ok) throw new Error(body?.error || res.status);
-
-    state.progress = state.progress || {};
-    state.progress[date] = state.progress[date] || {};
-    state.progress[date][sid] = body.progress || {
-      ...(state.progress[date][sid] || {}),
-      ...changed,
-    };
-    window.progressData = state.progress;
-
-    grid.querySelectorAll('.progress-cell[data-mid]').forEach(cell => {
-      cell.dataset.initial = cell.dataset.state || 'none';
-    });
-    toast('영상 진도 저장됨');
-    modal.style.display = 'none';
-  } catch (err) {
-    console.error('[all students progress save failed]', err);
-    alert('영상 진도 저장 실패');
-  }
+  const { initAllStudentsRecordPopup } = await studentRecordPopupModulePromise;
+  await initAllStudentsRecordPopup(state);
 }
 
-// 🎬 버튼 핸들러
+// 관리자 통합 팝업은 첫 상담 클릭 때만 불러와 전체학생 초기 렌더를 막지 않는다.
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.miniProgBtn');
   if (!btn) return;
   const sid = btn.dataset.id;
   if (!sid) return;
-  await openMiniProgressForSid(String(sid));
+  const row = btn.closest('tr[data-sid]');
+  if (!row) return;
+
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '로딩…';
+  try {
+    await ensureStudentRecordPopupReady();
+    if (typeof window.openStudentPopupsForRow !== 'function') {
+      throw new Error('unified student popup launcher unavailable');
+    }
+    await window.openStudentPopupsForRow(row, {
+      accessMode: 'all-students-readonly',
+    });
+  } catch (error) {
+    console.error('[all students popup load failed]', error);
+    alert('학생 통합 팝업을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');
+  } finally {
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  }
 });

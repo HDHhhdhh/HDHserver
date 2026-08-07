@@ -49,7 +49,6 @@ let explicitBlankKeys = new Set();
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
-let defaultExclusionsApplied = false;
 let testOpenSeq = 0;
 
 function isUnitCategory(categoryKey) {
@@ -386,14 +385,6 @@ function difficultyBadgeTone(categoryKey, difficulty) {
   return index === 0 ? 'high' : index === 1 ? 'middle' : 'base';
 }
 
-function shouldDefaultExcludeTest(test) {
-  if (!test) return false;
-  if (test.categoryKey === 'ILSAN_PAST') return false;
-  const subject = normalizeSubject(test.curriculum);
-  const allowed = autoAssignRuleAllowsDifficulty(test.categoryKey, subject, test.difficulty, activeStudent);
-  return allowed === false;
-}
-
 function roundOptionsFor(categoryKey, subject, difficulty) {
   if (!isUnitCategory(categoryKey)) return [];
   const rounds = new Set();
@@ -701,26 +692,12 @@ function syncSelectedFromProgress() {
   selectedKeys = new Set();
   selectedStatuses = new Map();
   explicitBlankKeys = new Set();
-  defaultExclusionsApplied = false;
   Object.entries(initialTestMap).forEach(([key, status]) => {
     if (isExplicitBlankTestStatus(status)) {
       explicitBlankKeys.add(key);
       return;
     }
     setTestStatus(key, normalizeAssignmentStatus(status));
-  });
-  const suppressDefaultExclusions = hasCurrentTestClearMarker();
-  activeCatalog.forEach(test => {
-    if (
-      suppressDefaultExclusions ||
-      !test?._key ||
-      selectedStatuses.has(test._key) ||
-      explicitBlankKeys.has(test._key) ||
-      isSubmitted(test) ||
-      !shouldDefaultExcludeTest(test)
-    ) return;
-    setTestStatus(test._key, 'skip');
-    defaultExclusionsApplied = true;
   });
 }
 
@@ -798,11 +775,7 @@ function applyTestRowStatus(row, status) {
   const key = row.dataset.testKey || '';
   const next = normalizeAssignmentStatus(status);
   setTestStatus(key, next);
-  if (!next && shouldDefaultExcludeTest(catalogByKey.get(key))) {
-    explicitBlankKeys.add(key);
-  } else if (next) {
-    explicitBlankKeys.delete(key);
-  }
+  explicitBlankKeys.delete(key);
   row.dataset.state = next || 'none';
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
@@ -1083,7 +1056,6 @@ function closeModal() {
   selectedStatuses = new Map();
   explicitBlankKeys = new Set();
   testSelectionTouched = false;
-  defaultExclusionsApplied = false;
   activeRound = '1';
   activeTerm = defaultTermFromSchoolCalendar();
   if (wasUnified && !document.querySelector('#vidModal.student-work-layout') && !document.querySelector('#logModal.student-work-layout')) {
@@ -1430,7 +1402,7 @@ function applyTestProgressPatchResult(date, sid, progressRes) {
 
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
-  if (!testSelectionTouched && !defaultExclusionsApplied) {
+  if (!testSelectionTouched) {
     const items = selectedAssignmentObjects();
     if (options.showPopup !== false) toast('변경된 테스트 배정이 없습니다');
     return items;
@@ -1459,7 +1431,6 @@ async function saveModal(options = {}) {
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
   testSelectionTouched = false;
-  defaultExclusionsApplied = false;
   return items;
 }
 

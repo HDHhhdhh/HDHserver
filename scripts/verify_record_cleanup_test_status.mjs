@@ -40,6 +40,7 @@ class StubElement {
 }
 
 const todayHost = new StubElement('div');
+const clearAllButton = new StubElement('button');
 
 globalThis.window = {
   addEventListener() {},
@@ -61,7 +62,9 @@ globalThis.document = {
     return new StubElement(tagName);
   },
   getElementById(id) {
-    return id === 'todayWrap' ? todayHost : null;
+    if (id === 'todayWrap') return todayHost;
+    if (id === 'clearAllBtn') return clearAllButton;
+    return null;
   },
   querySelector() {
     return null;
@@ -195,3 +198,38 @@ assert.equal(state.progress[date][sid].tests[testLabel], 'done', 'local progress
 assert.equal(reloads, 1, 'cleanup must reload today table once');
 
 console.log('record cleanup assigned-test status verifier passed');
+
+state.logs = {
+  [date]: {
+    [sid]: {
+      done: true,
+      archived: false,
+    },
+  },
+};
+state.progress = {
+  [date]: {
+    [sid]: {
+      video_1: 'done',
+    },
+  },
+};
+window.progressData = state.progress;
+window.logs = state.logs;
+fetchedAuthoritativeProgress = false;
+progressPatchBodies.length = 0;
+logPatchBodies.length = 0;
+
+const { initClearAll } = await import('../static/js/admin/features/done.js');
+initClearAll();
+
+assert.equal(typeof clearAllButton._listeners.click, 'function', 'bulk cleanup click handler must bind');
+await clearAllButton._listeners.click();
+
+assert.equal(fetchedAuthoritativeProgress, true, 'bulk cleanup must fetch progress when local entry has no tests');
+assert.equal(progressPatchBodies.length, 1, 'bulk cleanup must patch assigned tests to done');
+assert.equal(logPatchBodies.length, 1, 'bulk cleanup must still archive the log row');
+assert.equal(logPatchBodies[0].entry.archived, true, 'bulk cleanup log patch must archive row');
+assert.equal(state.progress[date][sid].tests[testLabel], 'done', 'bulk cleanup local progress cache must become done');
+
+console.log('bulk record cleanup assigned-test status verifier passed');

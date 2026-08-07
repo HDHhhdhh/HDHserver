@@ -188,12 +188,29 @@ export function hwCheckRequestedAt(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];
   return String(e?.hwCheckRequestedAt || '').trim();
 }
+async function assignSelfStudyReviewVideos(dateKey, sid) {
+  const res = await fetch('/api/updates/self-study', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify({ date: dateKey, sid: String(sid) }),
+  });
+  const payload = await res.json();
+  if (!res.ok || !payload?.ok) {
+    throw new Error(payload?.error || `self-study video assignment failed: ${res.status}`);
+  }
+
+  state.updates = state.updates || {};
+  state.updates[dateKey] = state.updates[dateKey] || {};
+  if (payload.assignment) state.updates[dateKey][String(sid)] = payload.assignment;
+  else delete state.updates[dateKey][String(sid)];
+}
 export async function setSelfStudyRemote(dateKey, sid, checked) {
   if (checked) {
     await patchLog(dateKey, sid, {
       selfStudy: true,
       hwCheckRequested: false,
     }, ['hwCheckRequestedAt']);
+    await assignSelfStudyReviewVideos(dateKey, sid);
     return;
   }
   await patchLog(dateKey, sid, { selfStudy: false });

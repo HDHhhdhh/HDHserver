@@ -6,6 +6,7 @@ import {
   saveDemoStore,
 } from './store.js';
 import { createDemoFetch } from './fetch.js';
+import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -26,7 +27,6 @@ const DEMO_ROUTE_MAP = new Map([
 ]);
 const DEMO_RESET_PATH = DEMO_ROOT_PATH;
 const BLOCK_MESSAGE = '데모 모드에서는 실제 관리 화면이나 외부 자료를 열지 않습니다.';
-const CHAT_SOURCE = 'demo:client-bootstrap';
 var toastTimer = null;
 
 const currentPath = normalizePath(window.location.pathname);
@@ -57,7 +57,6 @@ function installDemoBootstrap() {
   demo.fetchLog = Array.isArray(demo.fetchLog) ? demo.fetchLog : [];
   demo.forwardedApiCalls = Array.isArray(demo.forwardedApiCalls) ? demo.forwardedApiCalls : [];
   demo.bootstrapEvents = Array.isArray(demo.bootstrapEvents) ? demo.bootstrapEvents : [];
-  demo.chatRequests = Array.isArray(demo.chatRequests) ? demo.chatRequests : [];
   demo.fetchInstalledBeforeBootstrap = false;
   demo.showMessage = showDemoMessage;
   demo.reset = resetDemoSession;
@@ -181,9 +180,21 @@ async function handleDemoApiRequest(request, input, init, demo) {
   const { method, url } = request;
   const path = normalizePath(url.pathname);
 
-  if (path === '/api/admin/chat') {
-    const body = await readJsonBody(input, init);
-    return demoChatResponse(body, demo);
+  if (isOperationNotesPath(path)) {
+    const body = method === 'GET' ? {} : await readJsonBody(input, init);
+    const store = loadDemoStore();
+    const result = applyOperationNotesRequest({
+      method,
+      path,
+      body,
+      store,
+      createdAt: () => new Date().toISOString(),
+    });
+    if (result.changed) saveDemoStore(store);
+    return demoJson(result.payload, {
+      status: result.status,
+      handler: 'bootstrap-fallback',
+    });
   }
 
   if (method !== 'GET') {
@@ -233,58 +244,6 @@ async function requestBodyText(input) {
   }
 }
 
-function demoChatResponse(body, demo) {
-  const message = String(body?.message || '').trim();
-  const context = body?.context && typeof body.context === 'object' ? body.context : {};
-  const history = Array.isArray(body?.history) ? body.history : [];
-  const store = loadDemoStore();
-  const studentCount = Array.isArray(store.students) ? store.students.length : 15;
-  const selectedDate = context.selectedDate || store.demoDate || '';
-
-  demo.chatRequests.push({
-    at: new Date().toISOString(),
-    message,
-    selectedDate,
-  });
-
-  const answer = [
-    '데모 모드 답변입니다.',
-    `이 화면은 실제 운영 자료가 아니라 더미 학생 ${studentCount}명과 더미 수업 데이터를 기준으로만 답합니다.`,
-    '실제 학생 정보, 문서 링크, 출석부, 영상 주소를 공개하거나 조회할 수 없습니다.',
-  ].join(' ');
-
-  return demoJson({
-    ok: true,
-    answer,
-    cards: [
-      {
-        title: '데모 안전 안내',
-        lines: [
-          `기준일: ${selectedDate || '데모 기준일'}`,
-          '실제 런타임 데이터는 읽지 않습니다.',
-          '외부 자료와 운영 페이지 이동은 차단됩니다.',
-        ],
-      },
-    ],
-    suggestions: [
-      '데모 오늘 운영 요약',
-      '더미 학생 현황',
-      '데모 초기화 방법',
-    ],
-    sources: [CHAT_SOURCE],
-    mode: 'demo',
-    context: {
-      selectedDate,
-      historyCount: history.length,
-      demo: true,
-    },
-    meta: {
-      demo: true,
-      source: CHAT_SOURCE,
-    },
-  }, { handler: 'chat' });
-}
-
 function fallbackPayloadForGet(path, params, store) {
   switch (path) {
     case '/api/students':
@@ -299,6 +258,8 @@ function fallbackPayloadForGet(path, params, store) {
       return cloneDemoValue(filterDateSidMap(store.updates || {}, params));
     case '/api/logs':
       return cloneDemoValue(filterDateSidMap(store.logs || {}, params));
+    case '/api/homework-books':
+      return cloneDemoValue(homeworkBooksBySid(store.logs || {}));
     case '/api/logs/entry':
       return {
         ok: true,
@@ -344,6 +305,27 @@ function fallbackPayloadForGet(path, params, store) {
         message: '데모 모드에서 안전하게 차단된 API입니다.',
       };
   }
+}
+
+function homeworkBooksBySid(logs) {
+  const out = {};
+  Object.keys(logs || {}).sort().reverse().forEach(date => {
+    Object.entries(logs?.[date] || {}).forEach(([sid, entry]) => {
+      if (out[sid]) return;
+      const seen = new Set();
+      const books = (Array.isArray(entry?.homeworkTable) ? entry.homeworkTable : [])
+        .filter(row => row && typeof row === 'object' && !row._deleted)
+        .map(row => String(row.book || '').trim())
+        .filter(book => {
+          const key = book.replace(/\s+/g, '').toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      if (books.length) out[String(sid)] = books;
+    });
+  });
+  return out;
 }
 
 async function handleFallbackMutation(path, input, init) {
@@ -592,6 +574,10 @@ function injectDemoControls() {
     wrap.style.top = '12px';
     wrap.style.right = '12px';
     wrap.style.zIndex = '10000';
+    if (window.matchMedia('(max-width: 520px)').matches) {
+      wrap.style.top = 'auto';
+      wrap.style.bottom = '12px';
+    }
     document.body.appendChild(wrap);
   } else {
     host.insertBefore(wrap, host.firstChild);

@@ -264,6 +264,10 @@ window.todayLocalKey = function () {
 
   // 전역 캐시
   let vidsCache = [];        // /api/videos
+  let reviewVideosCache = []; // server-authorized previous-video membership for this page session
+  const reviewSelection = new Set(); // chooser-only checked MIDs waiting for server registration
+  let registeredReviewMids = []; // ordered, SID/date-scoped server-confirmed selections
+  const REVIEW_PLAYLIST_STORAGE_PREFIX = 'student:review-playlist';
   let updatesCache = {};     // /api/updates
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
@@ -277,6 +281,8 @@ window.todayLocalKey = function () {
   let academyOnlyMessage = "영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.";
   let academyOnlyInitialNoticeShown = false;
   let testSubmissionBlocked = false;
+  let reviewVideosMalformed = false;
+  let ghostStudent = false;
   const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
   window.__ASSIGNED_TESTS__ = [];
   window.__STUDENT_ACCESS__ = {
@@ -561,12 +567,18 @@ window.todayLocalKey = function () {
           await watchReq,
           {
             courseBlocked: b.courseBlocked === true,
+            selfStudy: b.selfStudy === true,
             blockMessage: b.blockMessage || '',
             courseVideosCompleted: b.courseVideosCompleted === true,
             academyAccessAllowed: b.academyAccessAllowed !== false && b.outsideAcademyBlocked !== true && b.networkBlocked !== true,
             academyOnlyMessage: b.academyOnlyMessage || b.academyOnlyNotice || b.restrictedMessage || '',
             assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
             homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
+            reviewVideos: b.reviewVideos,
+            reviewVideosMalformed: !Array.isArray(b.reviewVideos),
+            ghostStudent: b.ghostStudent === true,
+            redirectSid: b.redirectSid || b.recoveredSid || '',
+            recoveryReason: b.recoveryReason || '',
           },
         ];
       }
@@ -586,12 +598,16 @@ window.todayLocalKey = function () {
       watchReq,
       {
         courseBlocked: false,
+        selfStudy: false,
         blockMessage: '',
         courseVideosCompleted: false,
         academyAccessAllowed: true,
         academyOnlyMessage: '',
         assignedTests: [],
         homeworkBooks: [],
+        reviewVideos: [],
+        reviewVideosMalformed: false,
+        ghostStudent: false,
       },
     ]);
   }
@@ -733,6 +749,261 @@ window.todayLocalKey = function () {
     const chapter = String(v?.chapter ?? '').trim();
     const title = String(v?.title || v?.name || '').trim();
     return `${prefix}${chapter ? `${chapter}. ` : ''}${title || String(v?.mid || '')}`.trim();
+  }
+
+  // Bootstrap is the only source of previous-video membership. Do not enrich
+  // or infer this projection from the catalog, progress, watch, or storage.
+  function normalizeReviewVideos(items) {
+    const seen = new Set();
+    const normalized = [];
+    if (!Array.isArray(items)) return normalized;
+    items.forEach(item => {
+      if (!item || typeof item !== 'object') return;
+      const mid = String(item.mid ?? '').trim();
+      const reviewStatus = item.reviewStatus;
+      if (!mid || (reviewStatus !== 'done' && reviewStatus !== 'interrupted') || seen.has(mid)) return;
+      seen.add(mid);
+      normalized.push({ ...item, mid, reviewStatus });
+    });
+    return normalized;
+  }
+
+  function reviewPlaylistStorageKey() {
+    return `${REVIEW_PLAYLIST_STORAGE_PREFIX}:${String(sid)}:${studentDataDateKey()}`;
+  }
+
+  function normalizeStoredReviewMids(value) {
+    const seen = new Set();
+    const normalized = [];
+    if (!Array.isArray(value)) return normalized;
+    value.forEach(raw => {
+      const mid = String(raw ?? '').trim();
+      if (mid && !seen.has(mid)) {
+        seen.add(mid);
+        normalized.push(mid);
+      }
+    });
+    return normalized;
+  }
+
+  function saveRegisteredReviewMids() {
+    try {
+      localStorage.setItem(reviewPlaylistStorageKey(), JSON.stringify(registeredReviewMids));
+    } catch (_) {
+      // Browser storage is a convenience only; the server-authorized chooser remains usable.
+    }
+  }
+
+  function loadRegisteredReviewMids() {
+    let parsed = [];
+    try {
+      const raw = localStorage.getItem(reviewPlaylistStorageKey());
+      if (raw) parsed = JSON.parse(raw);
+    } catch (_) {
+      parsed = [];
+    }
+    const allowed = new Set(reviewVideosCache.map(item => item.mid));
+    const normalized = normalizeStoredReviewMids(parsed);
+    const next = normalized.filter(mid => allowed.has(mid));
+    const changed = JSON.stringify(next) !== JSON.stringify(normalized);
+    registeredReviewMids = next;
+    reviewSelection.clear();
+    if (changed) saveRegisteredReviewMids();
+  }
+
+  function registeredReviewVideos() {
+    if (!academyAccessAllowed || reviewSurfaceBlocked()) return [];
+    const byMid = new Map(reviewVideosCache.map(item => [item.mid, item]));
+    return registeredReviewMids
+      .map(mid => byMid.get(mid))
+      .filter(item => item && item.playbackRestricted !== true);
+  }
+
+  function reviewVideoTitle(item) {
+    const chapter = String(item?.chapter ?? '').trim();
+    const title = String(item?.title || item?.name || '').trim();
+    return `${chapter ? `${chapter}. ` : ''}${title || String(item?.mid || '')}`.trim();
+  }
+
+  function isAbsentOnStudentDate() {
+    const today = studentDataDateKey();
+    const absent = absentByDateCache?.[today] || [];
+    return Array.isArray(absent) && absent.map(String).includes(String(sid));
+  }
+
+  function isArchivedOnStudentDate() {
+    const today = studentDataDateKey();
+    const logsToday = (logsCache || {})[today] || {};
+    const entry = logsToday[String(sid)] || logsToday[sid] || {};
+    return entry.archived === true || entry.archived === 'true';
+  }
+
+  function reviewSurfaceBlocked() {
+    return !stuCache || courseBlocked || ghostStudent || reviewVideosMalformed
+      || isAbsentOnStudentDate() || isArchivedOnStudentDate();
+  }
+
+  function setActiveVideo(mid) {
+    const key = String(mid || '');
+    $('vidList')?.querySelectorAll('li[data-mid]').forEach(item => {
+      item.classList.toggle('active', item.dataset.mid === key);
+    });
+    const reviewItems = [
+      ...($('previousVidList')?.querySelectorAll('button[data-mid]') || []),
+      ...($('previousVidList')?.querySelectorAll('label[data-mid]') || []),
+    ];
+    reviewItems.forEach(item => {
+      const active = item.dataset.mid === key;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-current', String(active));
+    });
+  }
+
+  function syncReviewRegisterControl(register) {
+    if (!register) return;
+    const eligible = new Set(reviewVideosCache.map(item => item.mid));
+    const registered = new Set(registeredReviewMids);
+    const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
+    register.disabled = reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
+  }
+
+  function registerReviewVideos() {
+    if (reviewSurfaceBlocked() || !academyAccessAllowed) return false;
+    const eligible = new Set(reviewVideosCache.map(item => item.mid));
+    const registered = new Set(registeredReviewMids);
+    const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
+    if (!selected.length) return false;
+
+    registeredReviewMids = normalizeStoredReviewMids([...registeredReviewMids, ...selected]);
+    reviewSelection.clear();
+    saveRegisteredReviewMids();
+    void renderAssignedList({ autoPlay: false });
+    renderPreviousVideos();
+    return true;
+  }
+
+  function renderPreviousVideos() {
+    const wrapper = $('previousVideos');
+    const toggle = $('previousVideosToggle');
+    const panel = $('previousVideosPanel');
+    const summary = $('previousVideosSummary');
+    const register = $('previousVideosRegister');
+    const list = $('previousVidList');
+    if (!wrapper || !toggle || !panel || !summary || !list) return;
+
+    if (!toggle.dataset.reviewBound) {
+      toggle.addEventListener('click', () => {
+        if (toggle.disabled) return;
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        panel.hidden = expanded;
+      });
+      toggle.dataset.reviewBound = '1';
+    }
+    if (register && !register.dataset.reviewBound) {
+      register.addEventListener('click', () => { void registerReviewVideos(); });
+      register.dataset.reviewBound = '1';
+    }
+
+    wrapper.hidden = false;
+    wrapper.classList.remove('is-empty', 'is-disabled', 'is-restricted');
+    toggle.textContent = '영상 복습';
+    toggle.disabled = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    panel.hidden = true;
+    summary.textContent = '';
+    summary.classList.remove('is-empty');
+    list.textContent = '';
+    if (register) {
+      register.hidden = false;
+      register.disabled = true;
+    }
+
+    if (reviewSurfaceBlocked()) {
+      wrapper.hidden = true;
+      wrapper.classList.add('is-disabled');
+      return;
+    }
+
+    if (!reviewVideosCache.length) {
+      wrapper.classList.add('is-empty');
+      summary.classList.add('is-empty');
+      summary.textContent = '복습 가능한 영상이 없습니다';
+      panel.hidden = false;
+      if (register) register.hidden = true;
+      return;
+    }
+
+    for (const mid of reviewSelection) {
+      if (!reviewVideosCache.some(item => item.mid === mid) || registeredReviewMids.includes(mid)) {
+        reviewSelection.delete(mid);
+      }
+    }
+    toggle.disabled = false;
+    toggle.textContent = `영상 복습 (${reviewVideosCache.length})`;
+    summary.textContent = '복습할 영상을 선택한 뒤 영상 등록을 누르세요';
+    if (register) {
+      register.hidden = false;
+      syncReviewRegisterControl(register);
+    }
+    reviewVideosCache.forEach(item => {
+      const title = document.createElement('span');
+      const restricted = item.playbackRestricted === true || !academyAccessAllowed;
+      const registered = registeredReviewMids.includes(item.mid);
+
+      // Outside the academy, keep the existing title-only restriction row. It
+      // cannot register or play; clicking it only explains the access rule.
+      if (!academyAccessAllowed) {
+        if (register) register.hidden = true;
+        const row = document.createElement('li');
+        const playButton = document.createElement('button');
+        row.className = 'previous-video-play-row';
+        playButton.type = 'button';
+        playButton.className = 'previous-video-play';
+        playButton.dataset.mid = item.mid;
+        playButton.dataset.playbackRestricted = 'true';
+        playButton.disabled = true;
+        title.className = 'previous-video-title';
+        title.textContent = reviewVideoTitle(item);
+        playButton.setAttribute('aria-label', `${title.textContent} (학원에서만 재생 가능)`);
+        playButton.addEventListener('click', () => showAcademyOnlyNotice());
+        playButton.appendChild(title);
+        row.dataset.mid = item.mid;
+        row.appendChild(playButton);
+        list.appendChild(row);
+        return;
+      }
+
+      const row = document.createElement('label');
+      row.className = 'previous-video-row';
+      const active = currentMid === item.mid;
+      title.className = 'previous-video-title';
+      title.textContent = reviewVideoTitle(item);
+      row.dataset.mid = item.mid;
+      row.classList.toggle('is-active', active);
+      row.setAttribute('aria-current', String(active));
+      row.classList.toggle('is-restricted', restricted);
+      if (restricted) row.setAttribute('aria-disabled', 'true');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.mid = item.mid;
+      checkbox.checked = registered || reviewSelection.has(item.mid);
+      checkbox.disabled = registered || restricted;
+      checkbox.setAttribute('aria-label', registered ? `${title.textContent} 등록됨` : title.textContent);
+      if (registered) checkbox.setAttribute('data-registered', 'true');
+      checkbox.addEventListener('change', () => {
+        if (registered) {
+          checkbox.checked = true;
+          return;
+        }
+        if (checkbox.checked) reviewSelection.add(item.mid);
+        else reviewSelection.delete(item.mid);
+        syncReviewRegisterControl(register);
+      });
+      row.append(checkbox, title);
+      list.appendChild(row);
+    });
+    syncReviewRegisterControl(register);
   }
 
   function normalizeAssignedTestStatus(status) {
@@ -1020,6 +1291,13 @@ window.todayLocalKey = function () {
 
   /* ───────────── main ───────────── */
   async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw, bootstrapMeta]) {
+    const redirectSid = String(bootstrapMeta?.redirectSid || '').trim();
+    if (redirectSid && redirectSid !== String(sid)) {
+      try { localStorage.setItem("studentSid", redirectSid); } catch {}
+      location.replace(`/student/${encodeURIComponent(redirectSid)}`);
+      return;
+    }
+
     let stu = stuArr.find(s => String(s.id) === String(sid));
     if (!stu) {
       const recoveredSid = await recoverStudentSid(stuArr, sid);
@@ -1040,6 +1318,10 @@ window.todayLocalKey = function () {
     logsCache = logsRaw || {};
     assignedTestsCache = normalizeAssignedTests(bootstrapMeta?.assignedTests);
     homeworkBooksCache = normalizeHomeworkBooks(bootstrapMeta?.homeworkBooks);
+    reviewVideosCache = normalizeReviewVideos(bootstrapMeta?.reviewVideos);
+    reviewVideosMalformed = bootstrapMeta?.reviewVideosMalformed === true;
+    loadRegisteredReviewMids();
+    ghostStudent = bootstrapMeta?.ghostStudent === true;
     window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
@@ -1057,6 +1339,7 @@ window.todayLocalKey = function () {
     renderHomeworkBooks();
     renderAssignedTests();
     renderAssignedList();
+    renderPreviousVideos();
 
     const listBox = $('vidList');
     if (listBox) {
@@ -1067,8 +1350,7 @@ window.todayLocalKey = function () {
           showAcademyOnlyNotice();
           return;
         }
-        listBox.querySelectorAll('li').forEach(x => x.classList.remove('active'));
-        li.classList.add('active');
+        setActiveVideo(li.dataset.mid);
         play(li.dataset.mid);
       };
     }
@@ -1362,7 +1644,7 @@ window.todayLocalKey = function () {
   }
 
   // 오늘 배정 리스트 그리는 함수
-  async function renderAssignedList() {
+  async function renderAssignedList(options = {}) {
     if (!stuCache) return;
     const listBox = $('vidList');
     const frame = $('player');
@@ -1409,25 +1691,6 @@ window.todayLocalKey = function () {
     //     수동 배정이 있으면 무조건 보여주고,
     //     자동배정만 ensureTodayAssignmentIfMissing 내부에서 제한한다.
     const chosen = getAssignedVideos(updatesCache, today, sid);
-
-    // 1) 오늘 배정이 아예 없는 경우 → 자동배정 시도 (조건에 맞을 때만)
-    if (!chosen.length) {
-      // ✅ 유령 배정 생성 방지: 학생 페이지에서 자동배정 금지
-      // const fixed = await ensureTodayAssignmentIfMissing();
-      // if (fixed) return renderAssignedList();
-
-      const msg = courseVideosCompleted
-        ? COURSE_VIDEOS_COMPLETED_MESSAGE
-        : "오늘 할당된 영상이 없습니다 문의 부탁";
-      if (listBox) {
-        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
-      }
-      setPlayerEmptyState(msg);
-      return;
-    }
-
-
-    // 2) 여기부터는 chosen에 뭔가 있으니까, 무조건 보여줌 (보강 포함)
     const chosenStrs = new Set(chosen.map(String));
 
     // ✅ [중요] mid/id 불일치로 비는 경우 방지: (mid || id)로 매칭
@@ -1437,19 +1700,7 @@ window.todayLocalKey = function () {
       return (kMid && chosenStrs.has(kMid)) || (kId && chosenStrs.has(kId));
     });
 
-    if (!myVids.length) {
-      // 매칭되는 영상이 정말 하나도 없을 때만 빈 상태 처리
-      if (listBox) {
-        const msg = courseVideosCompleted
-          ? COURSE_VIDEOS_COMPLETED_MESSAGE
-          : "오늘 할당된 영상이 없습니다 문의 부탁";
-        listBox.innerHTML = `<li style='opacity:.65'>${msg}</li>`;
-      }
-      setPlayerEmptyState('오늘 할당된 영상이 없습니다');
-      return;
-    }
-
-    // 보충 영상은 먼저 보여주고, 각 그룹 안에서는 차시 순서를 유지한다.
+    // 보충 영상은 먼저 보여주고, 각 그룹 안에서는 기존 오늘 목록 순서를 유지한다.
     myVids.sort((a, b) => {
       const extraDiff = Number(isSupplementVideo(b)) - Number(isSupplementVideo(a));
       if (extraDiff) return extraDiff;
@@ -1458,19 +1709,36 @@ window.todayLocalKey = function () {
       return String(a.title || a.mid || '').localeCompare(String(b.title || b.mid || ''), 'ko');
     });
 
+    const registeredVids = registeredReviewVideos();
+    const todayMids = new Set(myVids.map(v => String(v?.mid ?? v?.id ?? '').trim()).filter(Boolean));
+    const appendedReviewVids = registeredVids.filter(v => !todayMids.has(String(v.mid).trim()));
+
+    const emptyMessage = courseVideosCompleted
+      ? COURSE_VIDEOS_COMPLETED_MESSAGE
+      : "오늘 할당된 영상이 없습니다 문의 부탁";
+
+    if (!myVids.length && !appendedReviewVids.length) {
+      if (listBox) listBox.innerHTML = `<li style='opacity:.65'>${emptyMessage}</li>`;
+      setPlayerEmptyState(emptyMessage);
+      return;
+    }
+
     if (listBox) {
       listBox.textContent = '';
-      myVids.forEach((v, i) => {
-        const num = v.exNum?.[essayBandOf(stuCache.level)] || '';
-        const prog = getProgress(v.mid);
+      [...myVids, ...appendedReviewVids].forEach((v, index) => {
+        const isRegisteredReview = index >= myVids.length;
+        const num = isRegisteredReview ? '' : (v.exNum?.[essayBandOf(stuCache.level)] || '');
+        const mid = String(v?.mid ?? v?.id ?? '').trim();
+        const prog = getProgress(mid);
         const done = prog?.completed;
         const pct = (prog?.dur > 0)
           ? Math.min(100, Math.round((prog.last || 0) / prog.dur * 100))
           : 0;
 
         const li = document.createElement('li');
-        li.dataset.mid = String(v.mid ?? '');
-        if (i === 0) li.className = 'active';
+        li.dataset.mid = mid;
+        if (!isRegisteredReview && index === 0) li.className = 'active';
+        if (isRegisteredReview) li.dataset.reviewRegistered = 'true';
 
         const main = document.createElement('span');
         main.className = 'video-main';
@@ -1494,12 +1762,15 @@ window.todayLocalKey = function () {
 
         listBox.appendChild(li);
       });
+      if (currentMid) setActiveVideo(currentMid);
     }
 
     const preferMid = getLastMid();
-    const firstMid = (preferMid && myVids.some(x => String(x.mid) === String(preferMid)))
-      ? preferMid
-      : myVids[0]?.mid;
+    const firstMid = myVids.length
+      ? ((preferMid && myVids.some(x => String(x.mid) === String(preferMid)))
+        ? preferMid
+        : myVids[0]?.mid)
+      : null;
 
     if (!academyAccessAllowed) {
       setPlayerEmptyState(academyOnlyMessage);
@@ -1508,13 +1779,8 @@ window.todayLocalKey = function () {
 
     if (firstMid) setPlayerReadyState();
 
-    if (firstMid && firstMid !== currentMid) {
-      const listBox2 = $('vidList');
-      if (listBox2) {
-        listBox2.querySelectorAll('li').forEach(x =>
-          x.classList.toggle('active', x.dataset.mid === String(firstMid))
-        );
-      }
+    if (options.autoPlay !== false && firstMid && firstMid !== currentMid) {
+      setActiveVideo(firstMid);
       play(firstMid);
     }
   }
@@ -1639,20 +1905,24 @@ window.todayLocalKey = function () {
   }
 
   window.addEventListener('message', (e) => {
+    if (e?.source !== window) return;
     const data = e?.data;
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'kollus.ready' && data.mid) {
+    const mid = String(data.mid ?? '').trim();
+    const activeMid = String(currentMid ?? '').trim();
+    if (!mid || !activeMid || mid !== activeMid) return;
+    if (data.type === 'kollus.ready') {
       if (Number.isFinite(Number(data.duration))) {
-        setProgress(data.mid, { dur: Number(data.duration) || undefined });
+        setProgress(mid, { dur: Number(data.duration) || undefined });
       }
     }
-    if (data.type === 'kollus.progress' && data.mid) {
+    if (data.type === 'kollus.progress') {
       const cur = Math.max(0, Number(data.currentTime) || 0);
       const dur = Math.max(0, Number(data.duration) || 0);
       const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
       const pct = dur > 0 ? (cur / dur) : 0;
       const doneByPct = pct >= WATCH_DONE_RATIO;
-      setProgress(data.mid, {
+      setProgress(mid, {
         last: cur,
         dur,
         completed: (ended || doneByPct) || undefined
@@ -2569,6 +2839,7 @@ window.todayLocalKey = function () {
   const CT = { 'Content-Type': 'application/json' };
   const OCR_TEST_SHEET_ENABLED = window.__OCR_TEST_SHEET_ENABLED__ === true;
   const OCR_PHASE2B_REVIEW_ENDPOINT = '/api/ocr-test-sheet-review';
+  const OCR_PHASE2E_FRESH_REVIEW_REQUESTED = OCR_TEST_SHEET_ENABLED && /(?:^|[?&])freshPhase2E=1(?:&|$)/.test(location.search || '');
   const OCR_PHASE1_INELIGIBLE_MESSAGE = '이 시험은 아직 사진 인식 테스트 대상이 아닙니다.';
   const OCR_PHASE2B_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   const OCR_PHASE2B_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -2576,7 +2847,11 @@ window.todayLocalKey = function () {
   const OCR_REVIEW_PROBLEM_COUNT = 20;
   const OCR_REVIEW_FINAL_STATUSES = new Set([
     'safe_auto_grade',
+    'auto_confirm',
     'confirmed',
+    'student_confirmed',
+    'student_edited',
+    'student_entered',
     'student_selected_candidate',
     'student_direct_input',
     'safe_auto_grade_after_retake',
@@ -2592,6 +2867,21 @@ window.todayLocalKey = function () {
     'retake_required',
     'retake_uploaded',
     'data_check_required',
+  ]);
+  const OCR_REVIEW_SELF_REVIEW_STATES = new Set([
+    'auto_confirm',
+    'review_recommended',
+    'direct_input',
+    'retake_required',
+  ]);
+  const OCR_REVIEW_RESOLVED_STATES = new Set([
+    'auto_confirm',
+    'student_confirmed',
+    'student_edited',
+    'student_entered',
+  ]);
+  const OCR_REVIEW_LOCAL_CANDIDATE_SOURCES = new Set([
+    'phase2f_local_paddle_ocr',
   ]);
   const OCR_REVIEW_TRACE_WARNING_CODES = new Set([
     'erased_trace_detected',
@@ -2616,6 +2906,8 @@ window.todayLocalKey = function () {
     'tesseract_candidate_conflict',
     'paddleocr_candidate_conflict',
     'pix2tex_candidate_conflict',
+    'local_ocr_unverified',
+    'local_ocr_low_confidence',
   ]);
   const OCR_REVIEW_BULK_FILL_BLOCKING_WARNING_CODES = new Set([
     'erased_trace_detected',
@@ -2648,6 +2940,12 @@ window.todayLocalKey = function () {
     erased_trace_detected: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
     crossed_out_answer: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
     overwritten_answer: '지운 흔적 또는 덧쓴 흔적이 있어 확인이 필요합니다.',
+    crop_quality_too_small: '답칸이 너무 작게 잡혀 다시 촬영하는 편이 안전합니다.',
+    crop_quality_blurry: '답칸이 흐려 다시 촬영하는 편이 안전합니다.',
+    crop_quality_exposure: '사진 밝기가 불안정해 다시 촬영하는 편이 안전합니다.',
+    crop_quality_low_contrast: '답칸 대비가 낮아 다시 촬영하는 편이 안전합니다.',
+    crop_quality_blank_like: '답칸이 빈칸처럼 보여 직접 확인이 필요합니다.',
+    crop_quality_cutoff_risk: '답칸이 잘렸을 가능성이 있어 다시 촬영하는 편이 안전합니다.',
     multiple_answer_candidates: '여러 답안 흔적이 보여 확인이 필요합니다.',
     unclear_final_answer: '최종 답이 명확하지 않아 확인이 필요합니다.',
     arrow_equal_confusion: '화살표와 등호가 애매해 직접 확인이 필요합니다.',
@@ -2658,28 +2956,80 @@ window.todayLocalKey = function () {
     digit_shape_confusion: '숫자 모양이 애매해 직접 확인이 필요합니다.',
     answer_mode_unverified: '이 시험은 문항 형식표가 아직 없어 직접 확인이 필요합니다.',
     local_checker_blank_conflict: '보조 인식에서는 빈칸처럼 보여 직접 확인이 필요합니다.',
-    local_checker_candidate_conflict: '보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+    local_checker_candidate_conflict: '서로 다른 인식 후보가 보여 직접 확인이 필요합니다.',
     tesseract_blank_like: '보조 인식에서는 빈칸처럼 보여 직접 확인이 필요합니다.',
     tesseract_choice_digit_veto: '보조 인식 결과 선지 번호가 명확하지 않아 직접 확인이 필요합니다.',
     tesseract_multiple_choice_candidates: '보조 인식에서 선지 후보가 여러 개 보여 직접 확인이 필요합니다.',
     tesseract_multiple_candidates: '보조 인식에서 답 후보가 여러 개 보여 직접 확인이 필요합니다.',
     tesseract_answer_value_format_conflict: '보조 인식 결과 답값 형식이 맞지 않아 직접 확인이 필요합니다.',
-    tesseract_candidate_conflict: '보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
-    paddleocr_candidate_conflict: '로컬 보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
-    pix2tex_candidate_conflict: '수식 보조 인식 결과가 자동 인식값과 달라 직접 확인이 필요합니다.',
+    tesseract_candidate_conflict: '서로 다른 인식 후보가 보여 직접 확인이 필요합니다.',
+    paddleocr_candidate_conflict: '서로 다른 인식 후보가 보여 직접 확인이 필요합니다.',
+    pix2tex_candidate_conflict: '서로 다른 수식 인식 후보가 보여 직접 확인이 필요합니다.',
+    local_ocr_unverified: '사진에서 읽은 인식 후보입니다. 답안지와 비교한 뒤 확정해주세요.',
+    local_ocr_low_confidence: '인식 후보가 불확실해 직접 확인이 필요합니다.',
+    auto_confirm_policy_unverified: '자동 인식 근거를 확인할 수 없어 직접 확인이 필요합니다.',
+  };
+  const OCR_REVIEW_WARNING_LABELS = {
+    erased_trace_detected: '지운 흔적',
+    crossed_out_answer: '취소 흔적',
+    overwritten_answer: '덧쓴 흔적',
+    crop_quality_too_small: '답칸이 작음',
+    crop_quality_blurry: '흐림',
+    crop_quality_exposure: '노출 불안정',
+    crop_quality_low_contrast: '대비 낮음',
+    crop_quality_blank_like: '빈칸처럼 보임',
+    crop_quality_cutoff_risk: '답칸 잘림 위험',
+    multiple_answer_candidates: '후보 여러 개',
+    unclear_final_answer: '최종 답 불명확',
+    arrow_equal_confusion: '화살표/등호 애매',
+    relation_symbol_confusion: '부등호/등호 애매',
+    expression_operator_confusion: '연산 기호 애매',
+    choice_number_invalid_for_auto_grade: '선지 형식 확인',
+    answer_value_letter_confusion: '답값 글자 혼동',
+    digit_shape_confusion: '숫자 모양 애매',
+    answer_mode_unverified: '문항 형식 미확인',
+    local_checker_blank_conflict: '보조 인식 빈칸 충돌',
+    local_checker_candidate_conflict: '보조 인식 불일치',
+    tesseract_blank_like: '보조 인식 빈칸 충돌',
+    tesseract_choice_digit_veto: '선지 번호 불명확',
+    tesseract_multiple_choice_candidates: '선지 후보 여러 개',
+    tesseract_multiple_candidates: '답 후보 여러 개',
+    tesseract_answer_value_format_conflict: '답 형식 충돌',
+    tesseract_candidate_conflict: '보조 인식 불일치',
+    paddleocr_candidate_conflict: '보조 인식 불일치',
+    pix2tex_candidate_conflict: '수식 인식 불일치',
+    local_ocr_unverified: '인식 후보 · 확인 필요',
+    local_ocr_low_confidence: '인식 후보 불확실',
+    auto_confirm_policy_unverified: '자동 인식 근거 미확인',
   };
   const OCR_REVIEW_ANSWER_KEY_FIELDS = new Set([
     ['exp', 'ected'].join(''),
     ['canonical', 'answer'].join('_'),
     ['accepted', 'answers'].join('_'),
+    'answer_key',
     'correct',
+    'is_correct',
     'incorrect',
     'score',
     'wrong',
     'pct',
+    'grading',
+    'student_name',
+    'studentName',
+    'student_id',
+    'studentId',
+    'sid',
+    'memo',
+    'path',
+    'file_path',
+    'local_path',
+    'artifact_path',
+    'provider_response',
+    'provider_raw_response',
+    'raw_provider_response',
+    'raw_response',
   ]);
-  const OCR_REVIEW_PRIMARY_KEYPAD_VALUES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', '-', '.', '+', '=', '<', '>', '<=', '>='];
-  const OCR_REVIEW_EXTENDED_KEYPAD_VALUES = ['x', 'y', 'n', '±', ',', '(', ')', '√', 'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ'];
+  const OCR_REVIEW_PRIMARY_KEYPAD_VALUES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '/'];
   const OCR_PHASE1_ANSWER_MODE_BY_TEST_ID = {
     t_unit_daesu_01_lv3_r1: {
       choice_number: new Set([1, 3, 5, 9, 13, 14, 17, 19]),
@@ -3056,9 +3406,12 @@ window.todayLocalKey = function () {
   }
 
   function parseAnswerSpec(text, problems) {
-    const s = String(text ?? '').trim();
+    const normalized = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const s = normalized.trim();
     if (!s) return new Array(problems).fill('');
-    let arr = parseAnswerEntries(s);
+    let arr = normalized.includes('\n')
+      ? normalized.split('\n').map(value => value.trim())
+      : parseAnswerEntries(s);
 
     if (arr.length > problems) arr = arr.slice(0, problems);
     if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(''));
@@ -3068,9 +3421,14 @@ window.todayLocalKey = function () {
   function answerCountValidationMessage(text, problems) {
     const total = Number(problems) || 0;
     if (!total) return '';
-    const entries = parseAnswerEntries(text);
-    if (entries.length === total) return '';
-    return `답안 개수가 현재 시험 문항 수와 맞지 않습니다. 현재 ${entries.length}개 / 필요한 ${total}개입니다. 한 문항당 한 줄로 입력해주세요.`;
+    const normalized = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!normalized.trim()) return '';
+    const entries = normalized.includes('\n')
+      ? normalized.split('\n')
+      : parseAnswerEntries(normalized);
+    while (entries.length > total && !String(entries[entries.length - 1] || '').trim()) entries.pop();
+    if (entries.length <= total) return '';
+    return `답안 줄이 현재 시험 문항 수보다 많습니다. 현재 ${entries.length}줄 / 최대 ${total}줄입니다.`;
   }
 
   function submitAnswerModeForQuestion(testId, questionNo) {
@@ -3094,7 +3452,7 @@ window.todayLocalKey = function () {
 
   function submitAnswerValidationMessage(answer, mode, questionNo) {
     const text = submitCleanOneLineAnswer(answer);
-    if (!text) return `${questionNo}번 문항 답안을 입력해주세요.`;
+    if (!text) return '';
     if (/[\r\n]/.test(text)) return `${questionNo}번 문항 답안은 한 줄이어야 합니다.`;
     if (mode === 'choice_number' && !submitIsChoiceNumberAnswer(text)) {
       return `${questionNo}번 선택형 문항은 선지 번호(1~5)만 입력해야 합니다.`;
@@ -3103,8 +3461,8 @@ window.todayLocalKey = function () {
   }
 
   function answerModeValidationMessageForAnswersText(text, testId, problems) {
-    const entries = parseAnswerEntries(text);
-    const total = Number(problems) || entries.length;
+    const total = Number(problems) || parseAnswerEntries(text).length;
+    const entries = parseAnswerSpec(text, total);
     for (let index = 0; index < Math.min(entries.length, total); index += 1) {
       const questionNo = index + 1;
       const mode = submitAnswerModeForQuestion(testId, questionNo);
@@ -3113,6 +3471,32 @@ window.todayLocalKey = function () {
       if (validationMessage) return validationMessage;
     }
     return '';
+  }
+
+  function submitAnswersTextForRequest(text, problems) {
+    return parseAnswerSpec(text, Number(problems) || 0)
+      .map((answer, index) => ({ questionNo: index + 1, answer: String(answer || '').trim() }))
+      .filter(row => row.answer)
+      .map(row => `${row.questionNo}: ${row.answer}`)
+      .join('\n');
+  }
+
+  function submitBlankAnswerState(text, problems) {
+    const answers = parseAnswerSpec(text, Number(problems) || 0);
+    const blankQuestions = answers
+      .map((answer, index) => String(answer || '').trim() ? null : index + 1)
+      .filter(questionNo => questionNo !== null);
+    if (!blankQuestions.length) return null;
+    const allBlank = blankQuestions.length === answers.length;
+    return {
+      blocked: false,
+      requiresConfirmation: true,
+      count: blankQuestions.length,
+      questionNumbers: blankQuestions,
+      message: allBlank
+        ? '답안이 모두 비어 있습니다. 빈 답안지를 그대로 제출하시겠습니까?'
+        : `${blankQuestions.length}개 문항이 비어 있습니다. 빈칸은 오답으로 처리될 수 있습니다. 그대로 제출하시겠습니까?`,
+    };
   }
 
   function getKeyForRound(test, roundNo) {
@@ -3392,24 +3776,26 @@ window.todayLocalKey = function () {
     s.id = 'test-submit-styles';
     s.textContent = `
     :root{
-      --ts-card-bg:#ffffff; --ts-card-fg:#0f172a; --ts-border:#e5e7eb; --ts-muted:#6b7280;
-      --ts-field-bg:#ffffff; --ts-focus:#2563eb; --ts-primary:#2563eb; --ts-primary-fg:#ffffff;
-      --ts-warning:#b45309; --ts-warning-bg:#fff7ed; --ts-backdrop:rgba(0,0,0,.45);
+      --ts-card-bg:#fff; --ts-card-fg:#191f28; --ts-border:#e5e8eb; --ts-muted:#8b95a1;
+      --ts-field-bg:#fff; --ts-focus:#3182f6; --ts-primary:#3182f6; --ts-primary-fg:#fff;
+      --ts-ocr-tint:#f7f8fa; --ts-ocr-rule:#e5e8eb;
+      --ts-warning:#e66b00; --ts-warning-bg:#fff7ed; --ts-backdrop:rgba(25,31,40,.48);
     }
     body.dark{
       --ts-card-bg:#0f172a; --ts-card-fg:#e5e7eb; --ts-border:#334155; --ts-muted:#94a3b8;
       --ts-field-bg:#0b1220; --ts-focus:#60a5fa; --ts-backdrop:rgba(0,0,0,.55);
-      --ts-primary:#2563eb; --ts-primary-fg:#ffffff; --ts-warning:#f59e0b; --ts-warning-bg:#2a1d0b;
+      --ts-primary:#60a5fa; --ts-primary-fg:#0f172a; --ts-ocr-tint:#14232c; --ts-ocr-rule:#30515d;
+      --ts-warning:#f59e0b; --ts-warning-bg:#2a1d0b;
     }
     #testSubmitModal{ position:fixed; inset:0; z-index:99999; display:none; justify-content:center; align-items:center; background:var(--ts-backdrop); }
-    #testSubmitModal .ts-card{ width:480px; max-width:92vw; border-radius:14px; padding:14px;
-      box-shadow:0 12px 32px rgba(0,0,0,.35); background:var(--ts-card-bg); color:var(--ts-card-fg);
+    #testSubmitModal .ts-card{ width:480px; max-width:92vw; border-radius:18px; padding:20px;
+      box-shadow:0 20px 48px rgba(25,31,40,.2); background:var(--ts-card-bg); color:var(--ts-card-fg);
       border:1px solid var(--ts-border); max-height:80vh; overflow:auto; }
     #testSubmitModal .ts-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
     #testSubmitModal h3{ margin:0; font-size:18px; font-weight:800; }
     #testSubmitModal label{ font-size:12px; color:var(--ts-muted); display:block; margin-bottom:6px; }
     #testSubmitModal select, #testSubmitModal textarea, #testSubmitModal input[type="file"]{
-      width:100%; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:10px;
+      width:100%; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:6px;
       background:var(--ts-field-bg); color:var(--ts-card-fg); outline:none;
     }
     #testSubmitModal select{ height:36px; padding:0 10px; }
@@ -3422,34 +3808,105 @@ window.todayLocalKey = function () {
     #testSubmitModal .ts-row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
     @media (max-width:520px){ #testSubmitModal .ts-row3{ grid-template-columns:1fr; } }
     #testSubmitModal .ts-info{ margin-top:6px; font-size:13px; color:var(--ts-muted); white-space:pre-wrap; }
-    #testSubmitModal .ts-writing-rule{ margin-top:8px; padding:8px 10px; border:1px solid var(--ts-border); border-radius:10px; background:var(--ts-field-bg); color:var(--ts-card-fg); font-size:12px; line-height:1.45; }
+    #testSubmitModal .ts-writing-rule{ margin-top:8px; padding:8px 10px; border:1px solid var(--ts-border); border-radius:6px; background:var(--ts-field-bg); color:var(--ts-card-fg); font-size:12px; line-height:1.45; }
     #testSubmitModal .ts-writing-rule ul{ margin:4px 0 0; padding-left:18px; }
-    #testSubmitModal .ts-ocr-entry{ display:grid; gap:8px; padding:10px; border:1px solid var(--ts-border); border-radius:10px; background:color-mix(in srgb, var(--ts-primary) 4%, var(--ts-card-bg) 96%); }
-    #testSubmitModal .ts-ocr-notice{ display:grid; gap:2px; padding:8px 10px; border:1px solid color-mix(in srgb, var(--ts-primary) 34%, var(--ts-border) 66%); border-radius:10px; background:var(--ts-card-bg); color:var(--ts-card-fg); }
-    #testSubmitModal .ts-ocr-notice strong{ font-size:14px; }
+    #testSubmitModal .ts-ocr-entry{
+      display:grid; gap:14px; padding:16px 0; border-top:1px solid var(--ts-ocr-rule); border-bottom:1px solid var(--ts-ocr-rule);
+      border-radius:0; background:transparent;
+    }
+    #testSubmitModal .ts-ocr-file-control{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:14px; border:0; border-radius:14px; background:var(--ts-ocr-tint); }
+    #testSubmitModal .ts-ocr-file-copy{ display:grid; min-width:0; gap:3px; }
+    #testSubmitModal .ts-ocr-file-label{ color:var(--ts-card-fg); font-size:14px; font-weight:900; letter-spacing:-.01em; }
+    #testSubmitModal .ts-ocr-file-name{ overflow:hidden; color:var(--ts-muted); font-size:12px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
+    #testSubmitModal .ts-ocr-file-input{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip:rect(0 0 0 0); border:0; white-space:nowrap; }
+    #testSubmitModal .ts-ocr-file-pick{ min-height:40px; padding:0 14px; border:1px solid var(--ts-primary); border-radius:10px; background:var(--ts-card-bg); color:var(--ts-primary); cursor:pointer; font-weight:900; white-space:nowrap; }
+    #testSubmitModal .ts-ocr-file-pick:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ts-focus) 30%, transparent); }
     #testSubmitModal .ts-ocr-open, #testSubmitModal .ts-ocr-apply, #testSubmitModal .ts-ocr-confirm{
       min-height:40px; padding:0 14px; border:none; border-radius:10px; cursor:pointer; font-weight:800; font-size:15px;
       background:var(--ts-primary); color:var(--ts-primary-fg); white-space:nowrap;
     }
-    #testSubmitModal .ts-ocr-open{ justify-self:start; }
+    #testSubmitModal .ts-ocr-open{ justify-self:stretch; width:100%; min-height:44px; box-shadow:none; }
+    /* Once a review is open, rerunning recognition is secondary to finishing the answers. */
+    #testSubmitModal .ts-ocr-entry:has(#tsOcrReviewPanel:not([hidden])) .ts-ocr-open{
+      justify-self:start; width:auto; min-height:30px; padding:0; border:0; background:transparent; color:var(--ts-muted);
+      font-size:12px; font-weight:700; text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:3px;
+    }
     #testSubmitModal .ts-ocr-open:disabled, #testSubmitModal .ts-ocr-apply:disabled, #testSubmitModal .ts-ocr-confirm:disabled{ opacity:.55; cursor:not-allowed; }
-    #testSubmitModal .ts-ocr-status{ min-height:18px; font-size:12px; color:var(--ts-muted); white-space:pre-wrap; }
+    #testSubmitModal .ts-ocr-status{ min-height:18px; font-size:12px; color:var(--ts-muted); line-height:1.45; white-space:pre-wrap; }
+    #testSubmitModal .ts-ocr-status:empty{ display:none; }
     #testSubmitModal .ts-ocr-status[data-state="error"]{ color:#dc2626; }
     #testSubmitModal .ts-ocr-status[data-state="ok"]{ color:#059669; }
-    #testSubmitModal .ts-ocr-panel{ display:grid; gap:12px; }
+    #testSubmitModal .ts-ocr-panel{ display:grid; gap:16px; }
     #testSubmitModal .ts-ocr-panel[hidden]{ display:none; }
-    #testSubmitModal .ts-ocr-summary{ display:flex; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--ts-muted); }
-    #testSubmitModal .ts-ocr-pill{ border:1px solid var(--ts-border); border-radius:999px; padding:5px 10px; background:var(--ts-field-bg); line-height:1.35; }
-    #testSubmitModal .ts-ocr-card{ display:grid; gap:12px; border:1px solid var(--ts-border); border-radius:12px; padding:12px; background:var(--ts-field-bg); }
-    #testSubmitModal .ts-ocr-card h4{ margin:0; font-size:16px; line-height:1.25; font-weight:900; color:var(--ts-card-fg); }
-    #testSubmitModal .ts-ocr-mode{ justify-self:start; display:inline-flex; align-items:center; min-height:26px; padding:0 10px; border:1px solid var(--ts-border); border-radius:999px; background:var(--ts-card-bg); color:var(--ts-muted); font-size:13px; font-weight:800; }
-    #testSubmitModal .ts-ocr-recognized{ font-size:14px; line-height:1.5; color:var(--ts-muted); }
-    #testSubmitModal .ts-ocr-prefill-note{ border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-muted); font-size:14px; line-height:1.5; }
-    #testSubmitModal .ts-ocr-warning{ border:1px solid color-mix(in srgb, var(--ts-warning) 45%, var(--ts-border) 55%); border-radius:10px; padding:9px 12px; background:var(--ts-warning-bg); color:var(--ts-warning); font-size:14px; line-height:1.5; }
+    #testSubmitModal .ts-ocr-state-summary{ display:grid; gap:8px; padding:2px 0 14px; border-bottom:1px solid var(--ts-ocr-rule); }
+    #testSubmitModal .ts-ocr-state-summary strong{ font-size:16px; line-height:1.3; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-state-summary p{ margin:0; color:var(--ts-muted); font-size:13px; line-height:1.5; word-break:keep-all; }
+    #testSubmitModal .ts-ocr-state-stats{ display:flex; flex-wrap:wrap; gap:7px; }
+    #testSubmitModal .ts-ocr-state-stats span{ min-height:28px; display:inline-flex; align-items:center; padding:0 9px; border:1px solid var(--ts-border); border-radius:999px; color:var(--ts-muted); font-size:12px; font-weight:800; }
+    #testSubmitModal .ts-ocr-unresolved{
+      display:grid; gap:10px; padding:14px 0; border-top:1px solid var(--ts-ocr-rule); border-bottom:1px solid var(--ts-ocr-rule);
+      border-radius:0; background:transparent;
+    }
+    #testSubmitModal .ts-ocr-unresolved-head{ display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; justify-content:space-between; }
+    #testSubmitModal .ts-ocr-unresolved-title{ font-size:16px; line-height:1.35; font-weight:900; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-unresolved-count{ padding:0; border-radius:0; background:transparent; color:var(--ts-muted); font-size:12px; font-weight:800; }
+    #testSubmitModal .ts-ocr-unresolved-list{ display:flex; flex-wrap:wrap; gap:7px; }
+    #testSubmitModal .ts-ocr-unresolved-question{
+      min-height:32px; min-width:36px; padding:0 8px; border:1px solid var(--ts-ocr-rule); border-radius:5px;
+      background:var(--ts-field-bg); color:var(--ts-primary); cursor:pointer; font-size:12px; font-weight:900;
+    }
+    #testSubmitModal .ts-ocr-unresolved-question:focus-visible,
+    #testSubmitModal .ts-ocr-next-unresolved:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ts-focus) 30%, transparent); }
+    #testSubmitModal .ts-ocr-next-unresolved{
+      min-height:42px; padding:0 14px; border:1px solid var(--ts-primary); border-radius:10px;
+      background:var(--ts-primary); color:var(--ts-primary-fg); cursor:pointer; font-weight:900;
+    }
+    #testSubmitModal .ts-ocr-next-unresolved:disabled{ opacity:.55; cursor:not-allowed; }
+    #testSubmitModal .ts-ocr-card[data-ocr-focus="true"]{ box-shadow:0 0 0 3px color-mix(in srgb, var(--ts-focus) 26%, transparent); }
+    #testSubmitModal .ts-ocr-guide-details{ border-top:1px solid var(--ts-border); border-bottom:1px solid var(--ts-border); border-radius:0; padding:10px 0; background:transparent; }
+    #testSubmitModal .ts-ocr-guide-details summary{ cursor:pointer; font-size:13px; font-weight:900; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-guide-details[open] summary{ margin-bottom:9px; }
+    #testSubmitModal .ts-ocr-guide-list{ display:grid; gap:10px; }
+    #testSubmitModal .ts-ocr-guide{ display:grid; gap:4px; padding:4px 0; border:0; border-radius:0; background:transparent; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-guide strong{ font-size:14px; line-height:1.35; }
+    #testSubmitModal .ts-ocr-guide span{ font-size:13px; line-height:1.5; color:var(--ts-muted); word-break:keep-all; overflow-wrap:anywhere; }
+    #testSubmitModal .ts-ocr-guide[data-tone="warning"]{
+      border-color:color-mix(in srgb, var(--ts-warning) 48%, var(--ts-border) 52%);
+      background:color-mix(in srgb, var(--ts-warning-bg) 72%, var(--ts-card-bg) 28%);
+    }
+    #testSubmitModal .ts-ocr-guide[data-tone="danger"]{
+      border-color:color-mix(in srgb, #dc2626 34%, var(--ts-border) 66%);
+      background:color-mix(in srgb, #dc2626 10%, var(--ts-card-bg) 90%);
+    }
+    #testSubmitModal .ts-ocr-section{ display:grid; gap:12px; }
+    #testSubmitModal .ts-ocr-section h5{ margin:0; padding:0 0 8px; border-bottom:1px solid var(--ts-ocr-rule); font-size:14px; font-weight:900; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-card{ display:grid; gap:12px; border:1px solid var(--ts-border); border-radius:14px; padding:16px; background:var(--ts-field-bg); }
+    #testSubmitModal .ts-ocr-card h4{ margin:0; font-size:16px; line-height:1.3; font-weight:900; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-mode{ justify-self:start; display:inline-flex; align-items:center; min-height:0; padding:0; border:0; border-radius:0; background:transparent; color:var(--ts-muted); font-size:12px; font-weight:800; }
+    #testSubmitModal .ts-ocr-card-help{ margin:0; color:var(--ts-muted); font-size:13px; line-height:1.5; word-break:keep-all; }
+    #testSubmitModal .ts-ocr-card-main{ display:grid; grid-template-columns:minmax(0,1fr) minmax(142px,.65fr); gap:12px; align-items:start; }
+    #testSubmitModal .ts-ocr-card-controls{ display:grid; gap:8px; min-width:0; }
+    #testSubmitModal .ts-ocr-candidate-label{ color:var(--ts-muted); font-size:12px; font-weight:800; }
+    #testSubmitModal .ts-ocr-crop{ min-width:0; border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; background:var(--ts-card-bg); }
+    #testSubmitModal .ts-ocr-crop summary{ cursor:pointer; color:var(--ts-card-fg); font-size:12px; font-weight:800; }
+    #testSubmitModal .ts-ocr-crop[open] summary{ margin-bottom:8px; }
+    #testSubmitModal .ts-ocr-crop img{ display:block; width:100%; max-height:190px; object-fit:contain; border-radius:6px; background:var(--ts-ocr-tint); }
+    #testSubmitModal .ts-ocr-recognized{ padding:0; border-radius:0; background:transparent; color:var(--ts-muted); font-size:14px; line-height:1.5; word-break:keep-all; overflow-wrap:anywhere; }
+    #testSubmitModal .ts-ocr-prefill-note{ border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-muted); font-size:14px; line-height:1.5; word-break:keep-all; overflow-wrap:anywhere; }
+    #testSubmitModal .ts-ocr-warning{ border:1px solid color-mix(in srgb, var(--ts-warning) 45%, var(--ts-border) 55%); border-radius:10px; padding:9px 12px; background:var(--ts-warning-bg); color:var(--ts-warning); font-size:14px; line-height:1.5; word-break:keep-all; overflow-wrap:anywhere; }
+    #testSubmitModal .ts-ocr-reason-row{ display:flex; flex-wrap:wrap; gap:8px; }
+    #testSubmitModal .ts-ocr-reason-chip{
+      display:inline-flex; align-items:center; min-height:28px; padding:0 10px; border:1px solid color-mix(in srgb, var(--ts-warning) 32%, var(--ts-border) 68%);
+      border-radius:999px; background:var(--ts-card-bg); color:var(--ts-warning); font-size:12px; font-weight:800;
+    }
     #testSubmitModal .ts-ocr-candidates{ display:flex; flex-wrap:wrap; gap:8px; }
+    #testSubmitModal .ts-ocr-actions{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    #testSubmitModal .ts-ocr-actions .ts-ocr-candidate, #testSubmitModal .ts-ocr-actions .ts-ocr-confirm{ width:100%; }
+    #testSubmitModal .ts-ocr-actions .ts-ocr-confirm{ grid-column:1 / -1; }
+    #testSubmitModal .ts-ocr-blocked-actions .ts-ocr-candidate{ min-width:0; }
     #testSubmitModal .ts-ocr-candidate, #testSubmitModal .ts-ocr-key{
-      min-height:38px; padding:0 12px; border:1px solid var(--ts-border); border-radius:10px;
-      background:var(--ts-card-bg); color:var(--ts-card-fg); cursor:pointer;
+      min-height:40px; padding:0 12px; border:1px solid var(--ts-border); border-radius:10px;
+      background:var(--ts-card-bg); color:var(--ts-card-fg); cursor:pointer; font-weight:800;
     }
     #testSubmitModal .ts-ocr-choice-grid{ display:grid; grid-template-columns:repeat(5,minmax(48px,1fr)); gap:8px; }
     #testSubmitModal .ts-ocr-choice{
@@ -3457,20 +3914,30 @@ window.todayLocalKey = function () {
       color:var(--ts-card-fg); cursor:pointer; font-weight:900; font-size:17px;
     }
     #testSubmitModal .ts-ocr-choice[aria-pressed="true"]{ border-color:var(--ts-primary); background:var(--ts-primary); color:var(--ts-primary-fg); }
+    #testSubmitModal .ts-ocr-choice[data-candidate="true"]{ border-color:color-mix(in srgb, var(--ts-primary) 55%, var(--ts-border) 45%); }
     #testSubmitModal .ts-ocr-choice:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ts-focus) 30%, transparent); }
-    #testSubmitModal .ts-ocr-current{ width:100%; min-height:42px; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-card-fg); font-size:16px; }
+    #testSubmitModal .ts-ocr-current{ width:100%; min-height:44px; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:10px; padding:9px 12px; background:var(--ts-card-bg); color:var(--ts-card-fg); font-size:16px; }
     #testSubmitModal .ts-ocr-current[hidden]{ display:none; }
     #testSubmitModal .ts-ocr-keypad{ display:grid; grid-template-columns:repeat(auto-fit,minmax(46px,1fr)); gap:8px; }
     #testSubmitModal .ts-ocr-keypad-primary{ grid-template-columns:repeat(5,minmax(0,1fr)); }
-    #testSubmitModal .ts-ocr-keypad-more{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; background:var(--ts-card-bg); }
-    #testSubmitModal .ts-ocr-keypad-more summary{ cursor:pointer; font-size:13px; font-weight:900; color:var(--ts-muted); }
-    #testSubmitModal .ts-ocr-keypad-more[open] summary{ margin-bottom:8px; color:var(--ts-card-fg); }
-    #testSubmitModal .ts-ocr-keypad-extended{ grid-template-columns:repeat(auto-fit,minmax(48px,1fr)); }
-    #testSubmitModal .ts-ocr-safe details{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; }
-    #testSubmitModal .ts-ocr-safe-list{ margin:8px 0 0; padding-left:18px; max-height:120px; overflow:auto; font-size:12px; }
+    #testSubmitModal .ts-ocr-final-summary{ border-top:1px solid var(--ts-ocr-rule); border-bottom:1px solid var(--ts-ocr-rule); padding:10px 0; }
+    #testSubmitModal .ts-ocr-final-summary details{ border:0; padding:0; }
+    #testSubmitModal .ts-ocr-final-summary summary{ cursor:pointer; color:var(--ts-card-fg); font-size:14px; font-weight:900; }
+    #testSubmitModal .ts-ocr-final-list{ display:grid; gap:7px; margin:10px 0 0; padding:0; list-style:none; }
+    #testSubmitModal .ts-ocr-final-row{ display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:8px; align-items:center; }
+    #testSubmitModal .ts-ocr-final-question{ color:var(--ts-card-fg); font-size:13px; font-weight:900; }
+    #testSubmitModal .ts-ocr-final-input{ min-width:0; min-height:36px; box-sizing:border-box; border:1px solid var(--ts-border); border-radius:8px; padding:6px 9px; background:var(--ts-card-bg); color:var(--ts-card-fg); font-size:14px; font-weight:800; }
+    #testSubmitModal .ts-ocr-final-status{ color:var(--ts-muted); font-size:12px; font-weight:800; white-space:nowrap; }
+    #testSubmitModal .ts-ocr-final-row[data-resolution="unresolved"] .ts-ocr-final-status{ color:var(--ts-warning); }
     #testSubmitModal .ts-answer-details{ border:1px solid var(--ts-border); border-radius:10px; padding:8px 10px; background:var(--ts-field-bg); }
     #testSubmitModal .ts-answer-details summary{ cursor:pointer; color:var(--ts-card-fg); font-size:14px; font-weight:900; line-height:1.35; }
     #testSubmitModal .ts-answer-details[open] summary{ margin-bottom:8px; }
+    #testSubmitModal .ts-ocr-fallback{ display:grid; gap:8px; padding:11px 12px; border:1px solid color-mix(in srgb, #dc2626 34%, var(--ts-border) 66%); border-radius:12px; background:color-mix(in srgb, #dc2626 5%, var(--ts-card-bg) 95%); }
+    #testSubmitModal .ts-ocr-fallback[hidden]{ display:none; }
+    #testSubmitModal .ts-ocr-fallback strong{ font-size:14px; color:var(--ts-card-fg); }
+    #testSubmitModal .ts-ocr-fallback p{ margin:0; color:var(--ts-muted); font-size:13px; line-height:1.5; word-break:keep-all; overflow-wrap:anywhere; }
+    #testSubmitModal .ts-ocr-fallback-actions{ display:flex; flex-wrap:wrap; gap:8px; }
+    #testSubmitModal .ts-ocr-fallback-action{ min-height:36px; padding:0 11px; border:1px solid var(--ts-border); border-radius:10px; background:var(--ts-card-bg); color:var(--ts-card-fg); cursor:pointer; font-weight:800; }
     #testSubmitModal .ts-answer-link{ display:none; margin-top:8px; font-size:13px; color:var(--ts-muted); }
     #testSubmitModal .ts-answer-link a{
       display:inline-flex; align-items:center; justify-content:center; height:38px; padding:0 14px;
@@ -3542,6 +4009,11 @@ window.todayLocalKey = function () {
     #testAnswerPreviewModal .ts-preview-loading[hidden]{ display:none; }
     @media (max-width:520px){
       #testSubmitModal .ts-card{ max-height:88vh; }
+      #testSubmitModal .ts-ocr-file-control{ grid-template-columns:1fr; }
+      #testSubmitModal .ts-ocr-file-pick{ width:100%; }
+      #testSubmitModal .ts-ocr-card-main{ grid-template-columns:1fr; }
+      #testSubmitModal .ts-ocr-final-row{ grid-template-columns:40px minmax(0,1fr); }
+      #testSubmitModal .ts-ocr-final-status{ grid-column:2; }
       #testSubmitModal .ts-result-head{ display:grid; }
       #testSubmitModal .ts-result-rate{ text-align:left; }
       #testSubmitModal .ts-result-metrics{ grid-template-columns:1fr; }
@@ -3562,12 +4034,17 @@ window.todayLocalKey = function () {
 
     const ocrMarkup = OCR_TEST_SHEET_ENABLED ? `
             <div class="ts-ocr-entry">
-              <div class="ts-ocr-notice">
-                <strong>OCR 실험 기능</strong>
+              <div id="tsOcrReviewFileControl" class="ts-ocr-file-control">
+                <div class="ts-ocr-file-copy">
+                  <span class="ts-ocr-file-label">답안지 사진</span>
+                  <span id="tsOcrReviewFileName" class="ts-ocr-file-name" aria-live="polite">사진을 선택해 주세요.</span>
+                </div>
+                <button id="tsOcrReviewPick" class="ts-ocr-file-pick" type="button">사진 선택</button>
+                <input id="tsOcrReviewImage" class="ts-ocr-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" tabindex="-1" aria-hidden="true">
               </div>
-              <input id="tsOcrReviewImage" type="file" accept="image/jpeg,image/png,image/webp" capture="environment">
-              <button id="tsOcrReviewOpen" class="ts-ocr-open" type="button">답안 사진 넣기</button>
+              <button id="tsOcrReviewOpen" class="ts-ocr-open" type="button">사진 인식 결과 확인</button>
               <div id="tsOcrStatus" class="ts-ocr-status" aria-live="polite"></div>
+              <div id="tsOcrFallback" class="ts-ocr-fallback" hidden></div>
               <div id="tsOcrReviewPanel" class="ts-ocr-panel" hidden></div>
             </div>
     ` : '';
@@ -3580,6 +4057,7 @@ window.todayLocalKey = function () {
                   <li>예: 객관식은 1~5, 답값형은 12, 64, 1/2처럼 한 답만 씁니다.</li>
                   <li>x=2, 3√2, 1,3처럼 식이나 여러 답을 쓰면 자동 채움이 막힐 수 있습니다.</li>
                   <li>풀이식, 중간식, 선지 내용은 오답 처리될 수 있습니다.</li>
+                  <li>사진 인식은 답안 입력 보조이며, 채점은 기존 제출 버튼에서만 진행됩니다.</li>
                 </ul>
               </div>
     ` : '';
@@ -3615,19 +4093,19 @@ window.todayLocalKey = function () {
               </div>
             </div>
 
+            ${ocrMarkup}
+
             <div class="ts-answer-entry">
               <details id="tsAnswersDetails" class="ts-answer-details">
                 <summary>답 입력 열기</summary>
-                <label>답 입력 (OCR 확인 후 자동 채움 · 수동 입력 가능)</label>
-                <textarea id="tsAnswersText" placeholder="OCR 확인 완료 후 자동으로 채워집니다. 수동 입력도 가능합니다."></textarea>
+                <label>답 입력 (20문항, 한 줄에 하나 · 직접 수정 가능)</label>
+                <textarea id="tsAnswersText" placeholder="1번부터 20번까지 한 줄에 하나씩 직접 입력할 수 있습니다."></textarea>
                 ${writingRuleMarkup}
               </details>
               <div id="tsInfo" class="ts-info"></div>
               <div id="tsAnswerLinkArea" class="ts-answer-link"></div>
               <div id="tsResultPanel" class="ts-result-panel" hidden></div>
             </div>
-
-            ${ocrMarkup}
 
             <div class="ts-memo-entry">
               <label>메모(선택)</label>
@@ -3685,11 +4163,18 @@ window.todayLocalKey = function () {
     const answerPreviewClose = document.getElementById('testAnswerPreviewClose');
     const answerPreviewLoading = document.getElementById('testAnswerPreviewLoading');
     const ocrReviewImageEl = document.getElementById('tsOcrReviewImage');
+    const ocrReviewFileControlEl = document.getElementById('tsOcrReviewFileControl');
+    const ocrReviewFileNameEl = document.getElementById('tsOcrReviewFileName');
+    const btnOcrReviewPick = document.getElementById('tsOcrReviewPick');
     const btnOcrReviewOpen = document.getElementById('tsOcrReviewOpen');
     const ocrStatusEl = document.getElementById('tsOcrStatus');
+    const ocrFallbackEl = document.getElementById('tsOcrFallback');
     const ocrReviewPanel = document.getElementById('tsOcrReviewPanel');
     let ocrReviewPayload = null;
     let ocrReviewLastMeta = null;
+    let ocrReviewNextBlankIndex = 0;
+    let ocrReviewCurrentUnresolvedQuestion = null;
+    let ocrReviewStartedAt = 0;
 
     const currentCur = () => getMyCurriculumFromNamebar();
 
@@ -4034,13 +4519,66 @@ window.todayLocalKey = function () {
       setResultViewMode(true);
     }
 
-    const OCR_PHASE1_READY_MESSAGE = '답안지 사진을 선택한 뒤 답안 사진 넣기 버튼을 눌러주세요.';
+    const OCR_PHASE1_READY_MESSAGE = '답안지 사진을 선택한 뒤 사진 인식 결과 확인 버튼을 눌러주세요.';
 
     function ocrTestSheetSetStatus(message = '', state = '') {
       if (!ocrStatusEl) return;
       ocrStatusEl.textContent = message;
       if (state) ocrStatusEl.dataset.state = state;
       else delete ocrStatusEl.dataset.state;
+    }
+
+    function ocrReviewClearFallback() {
+      if (!ocrFallbackEl) return;
+      ocrFallbackEl.hidden = true;
+      ocrFallbackEl.replaceChildren();
+    }
+
+    function ocrReviewFocusManualAnswers() {
+      const details = document.getElementById('tsAnswersDetails');
+      if (details) details.open = true;
+      ocrReviewEnsureAnswersTextLineCount();
+      try { answersTextEl.focus(); } catch {}
+      try { answersTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+    }
+
+    function ocrReviewRenderFallback(message) {
+      if (!ocrFallbackEl) return;
+      ocrFallbackEl.replaceChildren();
+      const title = document.createElement('strong');
+      title.textContent = '직접 입력으로 계속할 수 있습니다';
+      const copy = document.createElement('p');
+      copy.textContent = '다른 사진을 선택하거나, 20줄 답안칸에 직접 입력해 계속할 수 있습니다.';
+      const actions = document.createElement('div');
+      actions.className = 'ts-ocr-fallback-actions';
+      const chooseImage = document.createElement('button');
+      chooseImage.type = 'button';
+      chooseImage.className = 'ts-ocr-fallback-action';
+      chooseImage.textContent = '다른 사진 선택';
+      chooseImage.addEventListener('click', () => {
+        try { ocrReviewImageEl?.click(); } catch {}
+      });
+      const manualInput = document.createElement('button');
+      manualInput.type = 'button';
+      manualInput.className = 'ts-ocr-fallback-action';
+      manualInput.textContent = '답안 직접 입력';
+      manualInput.addEventListener('click', ocrReviewFocusManualAnswers);
+      actions.append(chooseImage, manualInput);
+      ocrFallbackEl.append(title, copy, actions);
+      ocrFallbackEl.hidden = false;
+    }
+
+    function ocrReviewSafeFailureMessage(message) {
+      const text = String(message || '').trim();
+      if (
+        text.includes('학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다.') ||
+        text.startsWith('인식 요청이') ||
+        text.startsWith('인식 서비스를') ||
+        text.startsWith('사진') ||
+        text.startsWith('답안지') ||
+        text.startsWith('현재 학생')
+      ) return text;
+      return '학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다. 사진을 다시 선택하거나 답안을 직접 입력해 주세요.';
     }
 
     function ocrPhase1CurrentTest() {
@@ -4076,20 +4614,29 @@ window.todayLocalKey = function () {
       return true;
     }
 
-    function ocrReviewApplyAnswersText(result) {
+    function ocrReviewApplyAnswersText(result, options = {}) {
       const current = ocrReviewCurrentSelectionContext();
       const resultTestId = String(result.testId || current.testId);
       const resultRound = String(result.round || current.round);
       if (resultTestId !== current.testId || resultRound !== current.round) {
         throw new Error('사진 인식 결과가 현재 선택한 시험/회차와 맞지 않습니다. 다시 인식해주세요.');
       }
+      const preserveExisting = options.preserveExisting === true;
+      const nextLines = ocrReviewNormalizeAnswerLines(result.answersText);
+      if (preserveExisting) {
+        const currentLines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+        nextLines.forEach((line, index) => {
+          if (String(currentLines[index] || '').trim()) nextLines[index] = currentLines[index];
+        });
+      }
       answersTextEl.dataset.ocrProgrammaticFill = '1';
-      answersTextEl.value = result.answersText;
+      answersTextEl.value = nextLines.join('\n');
       answersTextEl.dataset.ocrFilled = '1';
       answersTextEl.dataset.ocrTestId = resultTestId;
       answersTextEl.dataset.ocrRound = resultRound;
       answersTextEl.dispatchEvent(new Event('input', { bubbles: true }));
       delete answersTextEl.dataset.ocrProgrammaticFill;
+      ocrReviewRefreshUnresolvedSummary();
     }
 
     function ocrPhase1TestEligible(test = null) {
@@ -4115,9 +4662,12 @@ window.todayLocalKey = function () {
         ocrReviewImageEl.hidden = !allowed;
         ocrReviewImageEl.disabled = !allowed;
       }
+      if (ocrReviewFileControlEl) ocrReviewFileControlEl.hidden = !allowed;
+      if (btnOcrReviewPick) btnOcrReviewPick.disabled = !allowed;
       if (!allowed) {
         ocrReviewPayload = null;
         ocrReviewClearPanel();
+        ocrReviewClearFallback();
         ocrTestSheetSetStatus(OCR_PHASE1_INELIGIBLE_MESSAGE, 'error');
       } else {
         const currentStatus = String(ocrStatusEl?.textContent || '').trim();
@@ -4132,14 +4682,17 @@ window.todayLocalKey = function () {
       if (!ocrReviewPanel) return;
       ocrReviewPanel.hidden = true;
       ocrReviewPanel.replaceChildren();
+      ocrReviewStartedAt = 0;
     }
 
     function ocrTestSheetResetControls() {
       ocrReviewPayload = null;
       if (ocrReviewImageEl) ocrReviewImageEl.value = '';
+      ocrReviewUpdateSelectedImageDisplay();
       ocrReviewClearAnswersTextOrigin();
       ocrTestSheetSetStatus();
       ocrReviewClearPanel();
+      ocrReviewClearFallback();
     }
 
     function ocrReviewClone(value) {
@@ -4156,6 +4709,32 @@ window.todayLocalKey = function () {
           const nextPath = `${path}.${key}`;
           if (OCR_REVIEW_ANSWER_KEY_FIELDS.has(key)) out.push(nextPath);
           ocrReviewFindForbiddenKeys(child, nextPath, out);
+        });
+      }
+      return out;
+    }
+
+    function ocrReviewValueLooksLikePath(value) {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      if (/^[a-zA-Z]:[\\/]/.test(text)) return true;
+      if (/^\\\\[^\\]+\\[^\\]+/.test(text)) return true;
+      if (/^file:\/\//i.test(text)) return true;
+      return /^\/(?:Users|home|var|tmp|server|mnt|opt|private)\//.test(text);
+    }
+
+    function ocrReviewFindForbiddenPathValues(value, path = '$', out = []) {
+      if (typeof value === 'string') {
+        if (ocrReviewValueLooksLikePath(value)) out.push(path);
+        return out;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => ocrReviewFindForbiddenPathValues(item, `${path}[${index}]`, out));
+        return out;
+      }
+      if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([key, child]) => {
+          ocrReviewFindForbiddenPathValues(child, `${path}.${key}`, out);
         });
       }
       return out;
@@ -4195,6 +4774,57 @@ window.todayLocalKey = function () {
       });
     }
 
+    function ocrReviewCandidateCanShow(answer, mode) {
+      const text = ocrReviewCleanOneLineAnswer(answer);
+      if (!ocrReviewHasReliableText(text)) return false;
+      if (mode === 'choice_number') return ocrReviewIsChoiceNumberAnswer(text);
+      if (mode === 'answer_value') return ocrReviewIsSimpleFinalAnswer(text);
+      return ocrReviewIsSimpleFinalAnswer(text);
+    }
+
+    function ocrReviewCandidateValuesForItem(item, mode) {
+      const values = ocrReviewNormalizeStringArray(item.candidates, '후보 답안', Number(item.question_no));
+      const out = [];
+      values.forEach(value => {
+        const text = ocrReviewCleanOneLineAnswer(value);
+        if (ocrReviewCandidateCanShow(text, mode) && !out.includes(text)) out.push(text);
+      });
+      return out;
+    }
+
+    function ocrReviewIsLocalCandidateItem(payloadSource, warnings) {
+      if (OCR_REVIEW_LOCAL_CANDIDATE_SOURCES.has(String(payloadSource || '').trim())) return true;
+      return warnings.includes('local_ocr_unverified') || warnings.includes('local_ocr_low_confidence');
+    }
+
+    function ocrReviewApplyLocalCandidatePolicy(item, payloadSource) {
+      if (!ocrReviewIsLocalCandidateItem(payloadSource, item.warnings)) return item;
+      const candidates = [...item.candidates];
+      const recognizedCandidate = ocrReviewCleanOneLineAnswer(item.recognized);
+      if (ocrReviewCandidateCanShow(recognizedCandidate, item.answer_mode) && !candidates.includes(recognizedCandidate)) {
+        candidates.unshift(recognizedCandidate);
+      }
+      if (item.review_state === 'retake_required') {
+        return {
+          ...item,
+          candidates,
+          final_answer: null,
+          resolution: 'unresolved',
+          status: 'retake_required',
+        };
+      }
+      if (ocrReviewIsUserConfirmedStatus(item)) return { ...item, candidates };
+      return {
+        ...item,
+        review_state: 'review_recommended',
+        resolution: 'unresolved',
+        status: 'review_recommended',
+        candidates,
+        final_answer: null,
+        source: null,
+      };
+    }
+
     function ocrReviewHasTraceWarning(warnings) {
       return warnings.some(warning => OCR_REVIEW_TRACE_WARNING_CODES.has(warning));
     }
@@ -4219,12 +4849,20 @@ window.todayLocalKey = function () {
       const text = ocrReviewCleanOneLineAnswer(answer);
       if (!ocrReviewHasReliableText(text)) return false;
       if (mode === 'choice_number') return ocrReviewIsChoiceNumberAnswer(text);
-      if (mode === 'answer_value') return /\d/.test(text);
+      if (mode === 'answer_value') return ocrReviewIsSimpleFinalAnswer(text);
       return ocrReviewIsSimpleFinalAnswer(text);
     }
 
     function ocrReviewDefaultAnswerForReviewInput(item) {
-      const answer = ocrReviewCleanOneLineAnswer(item.final_answer || item.recognized || '');
+      if (item.status === 'review_required') {
+        const candidates = item.candidates
+          .map(candidate => ocrReviewCleanOneLineAnswer(candidate))
+          .filter(candidate => ocrReviewCandidateCanShow(candidate, item.answer_mode));
+        if (candidates.length < 2) return '';
+        const recognized = ocrReviewCleanOneLineAnswer(item.recognized || '');
+        return candidates.includes(recognized) ? recognized : candidates[0];
+      }
+      const answer = ocrReviewCleanOneLineAnswer(item.final_answer || '');
       return ocrReviewAnswerCanPrefill(answer, item.answer_mode) ? answer : '';
     }
 
@@ -4252,6 +4890,11 @@ window.todayLocalKey = function () {
     function ocrReviewHasBulkFillBlockingWarning(item) {
       if (item.warnings.some(warning => OCR_REVIEW_BULK_FILL_BLOCKING_WARNING_CODES.has(warning))) return true;
       return item.warnings.some(warning => /지운|덧쓴|취소|여러|복수|애매|불명확|명확하지|unclear|ambiguous|overwritten|erased|crossed/i.test(String(warning || '')));
+    }
+
+    function ocrReviewCandidatesAreUnambiguous(item, answer) {
+      const candidates = item.candidates.map(candidate => ocrReviewCleanOneLineAnswer(candidate)).filter(Boolean);
+      return !candidates.length || candidates.every(candidate => candidate === answer);
     }
 
     function ocrReviewBulkFillBlockingMessage(item) {
@@ -4282,45 +4925,9 @@ window.todayLocalKey = function () {
         item.warnings.includes('paddleocr_candidate_conflict') ||
         item.warnings.includes('pix2tex_candidate_conflict')
       ) {
-        return `${item.question_no}번 문항은 보조 인식 결과가 자동 인식값과 달라 직접 확정해야 합니다.`;
+        return `${item.question_no}번 문항은 서로 다른 인식 후보가 보여 직접 확정해야 합니다.`;
       }
       return `${item.question_no}번 문항은 지운 흔적, 덧쓴 흔적, 또는 기호 애매함이 있어 직접 확정해야 합니다.`;
-    }
-
-    function ocrReviewCandidatesAreUnambiguous(item, answer) {
-      const candidates = item.candidates.map(candidate => ocrReviewCleanOneLineAnswer(candidate)).filter(Boolean);
-      return !candidates.length || candidates.every(candidate => candidate === answer);
-    }
-
-    function ocrReviewRecognizedAnswerForBulkFill(item) {
-      if (item.status !== 'review_required') return '';
-      if (ocrReviewHasBulkFillBlockingWarning(item)) return '';
-      const answer = ocrReviewCleanOneLineAnswer(item.recognized);
-      if (!ocrReviewAnswerCanPrefill(answer, item.answer_mode)) return '';
-      if (!ocrReviewHasReliableText(answer)) return '';
-      if (!ocrReviewCandidatesAreUnambiguous(item, answer)) return '';
-      if (ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no)) return '';
-      return answer;
-    }
-
-    function ocrReviewMaterializeRecognizedAnswers(payload) {
-      const normalized = ocrReviewNormalizePayload(payload);
-      let recognizedFillCount = 0;
-      const items = normalized.items.map(item => {
-        const recognizedAnswer = ocrReviewRecognizedAnswerForBulkFill(item);
-        if (!recognizedAnswer) {
-          if (!OCR_REVIEW_FINAL_STATUSES.has(item.status)) return item;
-          return { ...item, final_answer: ocrReviewCleanOneLineAnswer(item.final_answer) };
-        }
-        recognizedFillCount += 1;
-        return {
-          ...item,
-          status: 'student_direct_input',
-          source: 'student_direct_input',
-          final_answer: recognizedAnswer,
-        };
-      });
-      return { payload: { ...normalized, items }, recognizedFillCount };
     }
 
     function ocrReviewBlockerMessage(item) {
@@ -4329,7 +4936,6 @@ window.todayLocalKey = function () {
         const validationMessage = ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no);
         if (!ocrReviewHasReliableText(answer)) return `${item.question_no}번 문항 인식값이 명확하지 않습니다. 직접 확인해주세요.`;
         if (ocrReviewHasBulkFillBlockingWarning(item)) return ocrReviewBulkFillBlockingMessage(item);
-        if (!ocrReviewCandidatesAreUnambiguous(item, answer)) return `${item.question_no}번 문항은 후보가 여러 개라 직접 골라야 합니다.`;
         if (validationMessage) return validationMessage;
         return `${item.question_no}번 문항을 먼저 확정해야 합니다.`;
       }
@@ -4364,6 +4970,30 @@ window.todayLocalKey = function () {
       return messages;
     }
 
+    function ocrReviewWarningLabels(item) {
+      const labels = [];
+      item.warnings.forEach(warning => {
+        if (warning === 'local_ocr_unverified' || warning === 'local_ocr_low_confidence') return;
+        const label = OCR_REVIEW_WARNING_LABELS[warning] || warning;
+        if (label && !labels.includes(label)) labels.push(label);
+      });
+      return labels;
+    }
+
+    function ocrReviewRenderReasonChips(item) {
+      const labels = ocrReviewWarningLabels(item);
+      if (!labels.length) return null;
+      const wrap = document.createElement('div');
+      wrap.className = 'ts-ocr-reason-row';
+      labels.forEach(label => {
+        const chip = document.createElement('span');
+        chip.className = 'ts-ocr-reason-chip';
+        chip.textContent = label;
+        wrap.appendChild(chip);
+      });
+      return wrap;
+    }
+
     function ocrReviewRenderWarnings(item) {
       const messages = ocrReviewWarningMessages(item);
       if (!messages.length) return null;
@@ -4373,43 +5003,291 @@ window.todayLocalKey = function () {
       return warning;
     }
 
+    function ocrReviewFindQuestionsByWarning(items, warningCodes) {
+      return items
+        .filter(item => item.warnings.some(warning => warningCodes.has(warning)))
+        .map(item => item.question_no);
+    }
+
+    function ocrReviewGuideEntries(payload, counts, fillPreview) {
+      const entries = [];
+      const overwrittenQuestions = ocrReviewFindQuestionsByWarning(payload.items, new Set(['erased_trace_detected', 'crossed_out_answer', 'overwritten_answer', 'unclear_final_answer']));
+      if (overwrittenQuestions.length) {
+        entries.push({
+          tone: 'warning',
+          title: '지운 흔적 또는 덧쓴 흔적 확인',
+          body: `${ocrReviewQuestionListText(overwrittenQuestions)}은(는) 흔적이 남아 있어 자동으로 채우지 않습니다. 학생이 직접 답을 확정해야 합니다.`,
+        });
+      }
+      const choiceFormatQuestions = ocrReviewFindQuestionsByWarning(payload.items, new Set(['choice_number_invalid_for_auto_grade']));
+      if (choiceFormatQuestions.length) {
+        entries.push({
+          tone: 'warning',
+          title: '선택형 번호 직접 확인',
+          body: `${ocrReviewQuestionListText(choiceFormatQuestions)}은(는) 선택형 번호 형식이 맞지 않아 아래 1~5 버튼으로 다시 골라야 합니다.`,
+        });
+      }
+      const retakeQuestions = payload.items
+        .filter(item => item.status === 'retake_required' || item.status === 'retake_uploaded')
+        .map(item => item.question_no);
+      if (retakeQuestions.length) {
+        entries.push({
+          tone: 'danger',
+          title: '재촬영 또는 재인식 권장',
+          body: `${ocrReviewQuestionListText(retakeQuestions)}은(는) 사진 품질 때문에 학생 화면에서 바로 확정하지 않는 편이 안전합니다.`,
+        });
+      }
+      if (fillPreview.blankQuestions.length) {
+        entries.push({
+          tone: 'default',
+          title: '빈칸으로 남는 문항',
+          body: `${ocrReviewQuestionListText(fillPreview.blankQuestions)}은(는) 답칸 채우기 버튼을 눌러도 비워 둡니다. 확인 카드부터 처리한 뒤 제출 버튼은 마지막에만 사용해주세요.`,
+        });
+      }
+      if (!entries.length && counts.safe) {
+        entries.push({
+          tone: 'default',
+          title: '확인된 답안 채우기 준비 완료',
+          body: `확인 완료 ${counts.safe}개를 답칸에 채울 수 있습니다. 제출은 기존 제출 버튼에서만 진행됩니다.`,
+        });
+      }
+      return entries;
+    }
+
+    function ocrReviewRenderGuideList(payload, counts, fillPreview) {
+      const entries = ocrReviewGuideEntries(payload, counts, fillPreview);
+      if (!entries.length) return null;
+      const wrap = document.createElement('div');
+      wrap.className = 'ts-ocr-guide-list';
+      entries.forEach(entry => {
+        const guide = document.createElement('section');
+        guide.className = 'ts-ocr-guide';
+        if (entry.tone && entry.tone !== 'default') guide.dataset.tone = entry.tone;
+        const title = document.createElement('strong');
+        title.textContent = entry.title;
+        const body = document.createElement('span');
+        body.textContent = entry.body;
+        guide.append(title, body);
+        wrap.appendChild(guide);
+      });
+      return wrap;
+    }
+
+    function ocrReviewRenderSection(titleText, items, renderer) {
+      if (!items.length) return null;
+      const wrap = document.createElement('section');
+      wrap.className = 'ts-ocr-section';
+      const title = document.createElement('h5');
+      title.textContent = titleText;
+      wrap.appendChild(title);
+      items.forEach(item => wrap.appendChild(renderer(item)));
+      return wrap;
+    }
+
+    function ocrReviewLegacyReviewState(item) {
+      const status = String(item?.status || '');
+      if (status === 'retake_required' || status === 'retake_uploaded') return 'retake_required';
+      if (status === 'data_check_required') return 'direct_input';
+      return 'review_recommended';
+    }
+
+    function ocrReviewLegacyResolution(item, reviewState) {
+      const status = String(item?.status || '');
+      if (status === 'confirmed' || status === 'student_selected_candidate' || status === 'student_selected_candidate_after_retake') {
+        return 'student_confirmed';
+      }
+      if (status === 'student_direct_input' || status === 'student_direct_input_after_retake') return 'student_entered';
+      return 'unresolved';
+    }
+
+    function ocrReviewCandidateValuesFromContract(item, answerMode, questionNo) {
+      const rawValues = [];
+      const candidate = item?.candidate;
+      if (typeof candidate === 'string' || typeof candidate === 'number') rawValues.push(candidate);
+      else if (candidate && typeof candidate === 'object') rawValues.push(candidate.value ?? candidate.answer ?? '');
+      if (Array.isArray(item?.candidates)) rawValues.push(...item.candidates);
+      if (!rawValues.some(value => ocrReviewHasReliableText(value))) {
+        rawValues.push(item?.recognized ?? '', item?.final_answer ?? '');
+      }
+      const out = [];
+      rawValues.forEach(value => {
+        const text = ocrReviewCleanOneLineAnswer(value);
+        if (ocrReviewCandidateCanShow(text, answerMode) && !out.includes(text)) out.push(text);
+      });
+      return out;
+    }
+
+    function ocrReviewWarningsFromContract(item, questionNo) {
+      const rawWarnings = item?.warning ?? item?.warnings ?? [];
+      const warnings = Array.isArray(rawWarnings) ? rawWarnings : [rawWarnings];
+      return ocrReviewNormalizeStringArray(warnings, '경고 문구', questionNo).filter(Boolean);
+    }
+
+    function ocrReviewSafeCropPreview(value, questionNo, strict) {
+      if (value == null || value === '') {
+        if (strict) throw new Error(`${questionNo}번 문항 원본 사진 정보가 없습니다.`);
+        return null;
+      }
+      if (typeof value !== 'string') throw new Error(`${questionNo}번 문항 원본 사진 정보가 올바르지 않습니다.`);
+      const preview = value.trim();
+      const dataImage = /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(preview);
+      const sameOriginReviewImage = /^\/api\/ocr-[a-z0-9_\-/]+(?:\?[a-z0-9_=&-]+)?$/i.test(preview);
+      if (!dataImage && !sameOriginReviewImage) throw new Error(`${questionNo}번 문항 원본 사진 정보가 안전하지 않습니다.`);
+      return preview;
+    }
+
+    function ocrReviewHumanRetakeReason(item) {
+      const raw = String(item?.retake_reason || '').trim();
+      if (raw) return raw;
+      const warnings = Array.isArray(item?.warnings) ? item.warnings : [];
+      if (warnings.some(value => /blur|흐림/i.test(String(value)))) return '흐림';
+      if (warnings.some(value => /cutoff|cut|잘림/i.test(String(value)))) return '잘림';
+      if (warnings.some(value => /shadow|exposure|contrast|그림자/i.test(String(value)))) return '그림자';
+      if (warnings.some(value => /overwritten|erased|multiple|겹침/i.test(String(value)))) return '답안 겹침';
+      return '사진 품질 확인 필요';
+    }
+
     function ocrReviewNormalizePayload(raw) {
       const leaks = ocrReviewFindForbiddenKeys(raw);
       if (leaks.length) throw new Error(`학생 화면에 노출할 수 없는 필드가 포함되어 있습니다: ${leaks.join(', ')}`);
-      if (!raw || typeof raw !== 'object') throw new Error('사진 인식 검토 정보가 올바르지 않습니다.');
+      if (!raw || typeof raw !== 'object') throw new Error('학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다. 답안을 직접 입력해 주세요.');
+      const pathLeaks = ocrReviewFindForbiddenPathValues(raw);
+      if (pathLeaks.length) throw new Error('학생 화면에 노출할 수 없는 경로 정보가 포함되어 있습니다.');
       const items = Array.isArray(raw.items) ? raw.items : [];
-      const problemCount = Number(raw.problem_count || OCR_REVIEW_PROBLEM_COUNT);
+      const isSharedFourStateContract = Object.prototype.hasOwnProperty.call(raw, 'case_id') ||
+        Object.prototype.hasOwnProperty.call(raw, 'item_count') ||
+        items.some(item => Object.prototype.hasOwnProperty.call(item || {}, 'requires_action'));
+      if (isSharedFourStateContract) {
+        ['test_id', 'round', 'case_id', 'item_count', 'items'].forEach(field => {
+          if (!Object.prototype.hasOwnProperty.call(raw, field)) throw new Error(`공용 검토 정보에 ${field} 항목이 없습니다.`);
+        });
+        if (typeof raw.case_id !== 'string' || !raw.case_id.trim()) throw new Error('공용 검토 정보의 사례 식별자가 올바르지 않습니다.');
+      }
+      const problemCount = Number(isSharedFourStateContract ? raw.item_count : raw.problem_count || OCR_REVIEW_PROBLEM_COUNT);
       if (problemCount !== OCR_REVIEW_PROBLEM_COUNT) throw new Error('문항 수가 맞지 않습니다.');
       if (items.length !== problemCount) throw new Error('문항 목록이 20개가 아닙니다.');
+      const testId = String(raw.test_id || raw.testId || '');
+      const round = String(raw.round || '');
+      if (!testId || !round) throw new Error('시험 또는 회차 정보가 없습니다.');
       const seen = new Set();
       items.forEach(item => {
         const no = Number(item?.question_no);
         if (!Number.isInteger(no) || no < 1 || no > problemCount) throw new Error('문항 번호가 올바르지 않습니다.');
         if (seen.has(no)) throw new Error(`${no}번 문항이 중복되었습니다.`);
         seen.add(no);
-        const status = String(item.status || '');
+        const isLegacyFourStateContract = !isSharedFourStateContract && Object.prototype.hasOwnProperty.call(item || {}, 'review_state');
+        if (isSharedFourStateContract) {
+          ['status', 'candidate', 'warning', 'crop_preview', 'requires_action', 'allow_edit'].forEach(field => {
+            if (!Object.prototype.hasOwnProperty.call(item || {}, field)) throw new Error(`${no}번 문항 ${field} 정보가 없습니다.`);
+          });
+          const status = String(item.status || '');
+          if (!OCR_REVIEW_SELF_REVIEW_STATES.has(status)) throw new Error(`${no}번 문항 검토 상태가 올바르지 않습니다.`);
+          if (typeof item.allow_edit !== 'boolean' || typeof item.requires_action !== 'boolean') {
+            throw new Error(`${no}번 문항 수정 또는 확인 설정이 올바르지 않습니다.`);
+          }
+          if (!item.allow_edit) throw new Error(`${no}번 문항에 학생 입력 수단이 없습니다.`);
+          if ((status === 'auto_confirm') !== (item.requires_action === false)) {
+            throw new Error(`${no}번 문항 자동 반영 설정이 상태와 맞지 않습니다.`);
+          }
+          ocrReviewSafeCropPreview(item.crop_preview, no, true);
+          return;
+        }
+        if (isLegacyFourStateContract) {
+          ['candidate', 'warning', 'crop_preview', 'allow_edit', 'requires_confirmation', 'retake_reason'].forEach(field => {
+            if (!Object.prototype.hasOwnProperty.call(item, field)) throw new Error(`${no}번 문항 ${field} 정보가 없습니다.`);
+          });
+          if (!OCR_REVIEW_SELF_REVIEW_STATES.has(String(item.review_state || ''))) {
+            throw new Error(`${no}번 문항 검토 상태가 올바르지 않습니다.`);
+          }
+          if (typeof item.allow_edit !== 'boolean' || typeof item.requires_confirmation !== 'boolean') {
+            throw new Error(`${no}번 문항 수정 또는 확인 설정이 올바르지 않습니다.`);
+          }
+          if (!item.allow_edit) throw new Error(`${no}번 문항에 학생 입력 수단이 없습니다.`);
+          if (typeof item.retake_reason !== 'string') throw new Error(`${no}번 문항 재촬영 사유가 올바르지 않습니다.`);
+          return;
+        }
+        const status = String(item?.status || '');
         if (!OCR_REVIEW_FINAL_STATUSES.has(status) && !OCR_REVIEW_BLOCKING_STATUSES.has(status)) {
           throw new Error(`${no}번 문항 상태가 올바르지 않습니다.`);
         }
       });
-      const testId = String(raw.test_id || raw.testId || '');
+      const payloadSource = String(raw.source || 'phase1_local_mock_review_payload');
       return {
-        source: String(raw.source || 'phase1_local_mock_review_payload'),
+        source: payloadSource,
         test_id: testId,
-        round: String(raw.round || '1'),
+        round,
+        ...(isSharedFourStateContract ? {
+          case_id: raw.case_id.trim(),
+          item_count: problemCount,
+        } : {}),
         problem_count: problemCount,
         items: items.map(item => {
           const no = Number(item.question_no);
-          return ocrReviewApplyTraceSafetyPolicy({
+          const answerMode = ocrReviewAnswerModeForQuestion(testId, no);
+          const isLegacyFourStateContract = !isSharedFourStateContract && Object.prototype.hasOwnProperty.call(item, 'review_state');
+          const usesExplicitStateContract = isSharedFourStateContract || isLegacyFourStateContract;
+          const rawReviewState = isSharedFourStateContract
+            ? String(item.status || '')
+            : isLegacyFourStateContract ? String(item.review_state || '') : ocrReviewLegacyReviewState(item);
+          let warnings = ocrReviewWarningsFromContract(item, no);
+          const candidates = isSharedFourStateContract
+            ? ocrReviewCandidateValuesFromContract({ candidate: item.candidate }, answerMode, no)
+            : ocrReviewCandidateValuesFromContract(item, answerMode, no);
+          let reviewState = rawReviewState;
+          const suppliedResolution = String(item.resolution || '');
+          let resolution = isSharedFourStateContract
+            ? reviewState === 'auto_confirm' ? 'auto_confirm' : 'unresolved'
+            : isLegacyFourStateContract && OCR_REVIEW_RESOLVED_STATES.has(suppliedResolution)
+            ? suppliedResolution
+            : isLegacyFourStateContract ? 'unresolved' : ocrReviewLegacyResolution(item, reviewState);
+          let finalAnswer = isSharedFourStateContract || item.final_answer == null ? null : ocrReviewCleanOneLineAnswer(item.final_answer);
+          const candidate = candidates[0] || '';
+          if (!usesExplicitStateContract && OCR_REVIEW_AUTO_GRADE_STATUSES.has(String(item.status || ''))) {
+            warnings = Array.from(new Set([...warnings, 'auto_confirm_policy_unverified']));
+          }
+          if (reviewState === 'auto_confirm') {
+            const automaticAnswer = ocrReviewCleanOneLineAnswer(finalAnswer || candidate);
+            if (!ocrReviewAnswerCanPrefill(automaticAnswer, answerMode) || ocrReviewHasTraceWarning(warnings)) {
+              if (isSharedFourStateContract) throw new Error(`${no}번 문항 자동 반영 정보가 안전하지 않습니다.`);
+              reviewState = 'direct_input';
+              resolution = 'unresolved';
+              finalAnswer = null;
+            } else {
+              finalAnswer = automaticAnswer;
+              resolution = resolution === 'student_edited' ? 'student_edited' : 'auto_confirm';
+            }
+          } else if (OCR_REVIEW_RESOLVED_STATES.has(resolution)) {
+            const resolvedAnswer = ocrReviewCleanOneLineAnswer(finalAnswer || candidate);
+            if (!ocrReviewAnswerCanPrefill(resolvedAnswer, answerMode)) {
+              resolution = 'unresolved';
+              finalAnswer = null;
+            } else {
+              finalAnswer = resolvedAnswer;
+            }
+          } else {
+            finalAnswer = null;
+          }
+          const normalizedItem = {
             question_no: no,
-            answer_mode: ocrReviewAnswerModeForQuestion(testId, no),
-            status: String(item.status || ''),
-            recognized: String(item.recognized || ''),
-            warnings: ocrReviewNormalizeStringArray(item.warnings, '경고 문구', no),
-            candidates: ocrReviewNormalizeStringArray(item.candidates, '후보 답안', no),
-            final_answer: item.final_answer == null ? null : String(item.final_answer),
-            source: item.source == null ? null : String(item.source),
-          });
+            answer_mode: answerMode,
+            review_state: reviewState,
+            resolution,
+            status: resolution === 'unresolved' ? reviewState : resolution,
+            recognized: String(item.recognized || candidate || ''),
+            candidate,
+            warning: warnings,
+            warnings,
+            candidates,
+            crop_preview: ocrReviewSafeCropPreview(item.crop_preview, no, usesExplicitStateContract),
+            allow_edit: usesExplicitStateContract ? item.allow_edit === true : true,
+            requires_confirmation: isSharedFourStateContract ? item.requires_action : isLegacyFourStateContract ? item.requires_confirmation : reviewState !== 'auto_confirm',
+            retake_reason: ocrReviewHumanRetakeReason({ ...item, warnings }),
+            user_modified: false,
+            final_answer: finalAnswer,
+            source: isSharedFourStateContract || item.source == null ? null : String(item.source),
+          };
+          if (usesExplicitStateContract) return normalizedItem;
+          return ocrReviewApplyTraceSafetyPolicy(ocrReviewApplyLocalCandidatePolicy(normalizedItem, payloadSource));
         }).sort((a, b) => a.question_no - b.question_no),
       };
     }
@@ -4423,7 +5301,7 @@ window.todayLocalKey = function () {
         [19, ['x+2=4', '3', 'x±2=4', 'x-2=4']],
       ]);
       return ocrReviewNormalizePayload({
-        source: 'phase1_local_mock_review_payload',
+        source: 'versioned_auto_confirm_mock_review_payload',
         test_id: String(test?.id || selTestId.value || 'mock_subjective_test'),
         round: String(round || '1'),
         problem_count: OCR_REVIEW_PROBLEM_COUNT,
@@ -4433,49 +5311,84 @@ window.todayLocalKey = function () {
           if (candidates) {
             return {
               question_no: questionNo,
-              status: 'review_required',
+              review_state: 'review_recommended',
               recognized: answer,
-              warnings: ['확인이 필요한 인식값입니다.'],
+              candidate: answer,
+              warning: ['확인이 필요한 인식값입니다.'],
               candidates,
+              crop_preview: 'data:image/png;base64,iVBORw0KGgo=',
+              allow_edit: true,
+              requires_confirmation: true,
+              retake_reason: '',
+              resolution: 'unresolved',
               final_answer: null,
               source: null,
             };
           }
           return {
             question_no: questionNo,
-            status: 'safe_auto_grade',
+            review_state: 'auto_confirm',
             recognized: answer,
-            warnings: [],
-            candidates: [],
+            candidate: answer,
+            warning: [],
+            candidates: [answer],
+            crop_preview: 'data:image/png;base64,iVBORw0KGgo=',
+            allow_edit: true,
+            requires_confirmation: false,
+            retake_reason: '',
+            resolution: 'auto_confirm',
             final_answer: answer,
-            source: 'safe_auto_grade',
+            source: 'auto_confirm_mock_fixture',
           };
         }),
       });
     }
 
     function ocrReviewBlockingItems(payload) {
-      return payload.items.filter(item => {
-        if (item.status === 'review_required') return true;
-        return item.status === 'retake_required' || item.status === 'retake_uploaded' || item.status === 'data_check_required';
-      });
+      const stateOrder = {
+        retake_required: 0,
+        direct_input: 1,
+        review_recommended: 2,
+      };
+      return payload.items
+        .filter(item => !ocrReviewIsItemResolved(item))
+        .sort((left, right) => {
+          const leftOrder = stateOrder[ocrReviewEffectiveReviewState(left)] ?? 3;
+          const rightOrder = stateOrder[ocrReviewEffectiveReviewState(right)] ?? 3;
+          return leftOrder - rightOrder || left.question_no - right.question_no;
+        });
     }
 
     function ocrReviewIsUserConfirmedStatus(item) {
-      return item.status === 'confirmed' ||
+      return item.resolution === 'student_confirmed' ||
+        item.resolution === 'student_edited' ||
+        item.resolution === 'student_entered' ||
+        item.status === 'confirmed' ||
         item.status === 'student_selected_candidate' ||
         item.status === 'student_direct_input' ||
         item.status === 'student_selected_candidate_after_retake' ||
         item.status === 'student_direct_input_after_retake';
     }
 
+    function ocrReviewIsItemResolved(item) {
+      return OCR_REVIEW_RESOLVED_STATES.has(String(item?.resolution || item?.status || ''));
+    }
+
+    function ocrReviewResolutionForStudentAnswer(item, answer, intent = 'edit') {
+      const normalized = ocrReviewCleanOneLineAnswer(answer);
+      if (!normalized) return 'unresolved';
+      if (item.review_state === 'auto_confirm') return 'student_edited';
+      if (item.review_state === 'review_recommended' && intent === 'confirm' && normalized === item.candidate) {
+        return 'student_confirmed';
+      }
+      if (item.review_state === 'review_recommended') return 'student_edited';
+      return 'student_entered';
+    }
+
     function ocrReviewAnswerForPartialFill(item) {
-      if (!OCR_REVIEW_FINAL_STATUSES.has(item.status)) return '';
-      const userConfirmed = ocrReviewIsUserConfirmedStatus(item);
-      if (!userConfirmed && ocrReviewHasBulkFillBlockingWarning(item)) return '';
+      if (!ocrReviewIsItemResolved(item)) return '';
       const answer = ocrReviewCleanOneLineAnswer(item.final_answer);
       if (!ocrReviewAnswerCanPrefill(answer, item.answer_mode)) return '';
-      if (!userConfirmed && !ocrReviewCandidatesAreUnambiguous(item, answer)) return '';
       if (ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no)) return '';
       return answer;
     }
@@ -4492,8 +5405,153 @@ window.todayLocalKey = function () {
       return { lines, filledQuestions, blankQuestions };
     }
 
+    function ocrReviewNormalizeAnswerLines(value) {
+      const lines = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').slice(0, OCR_REVIEW_PROBLEM_COUNT);
+      while (lines.length < OCR_REVIEW_PROBLEM_COUNT) lines.push('');
+      return lines;
+    }
+
+    function ocrReviewEnsureAnswersTextLineCount() {
+      const lines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+      const nextValue = lines.join('\n');
+      if (answersTextEl.value !== nextValue) {
+        const selectionStart = answersTextEl.selectionStart ?? nextValue.length;
+        answersTextEl.value = nextValue;
+        const cursor = Math.min(selectionStart, nextValue.length);
+        try { answersTextEl.setSelectionRange(cursor, cursor); } catch {}
+      }
+      return lines;
+    }
+
+    function ocrReviewAnswerLineSummary(lines) {
+      const filledQuestions = [];
+      const blankQuestions = [];
+      lines.forEach((line, index) => {
+        const questionNo = index + 1;
+        if (String(line || '').trim()) filledQuestions.push(questionNo);
+        else blankQuestions.push(questionNo);
+      });
+      return { lines, filledQuestions, blankQuestions };
+    }
+
+    function ocrReviewCurrentAnswerLineSummary(fallbackSummary = null) {
+      const textareaLines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+      const hasTextareaState = textareaLines.some(line => String(line || '').trim()) || answersTextEl.dataset.ocrFilled === '1';
+      if (!hasTextareaState && fallbackSummary) return fallbackSummary;
+      return ocrReviewAnswerLineSummary(textareaLines);
+    }
+
+    function ocrReviewSetAnswerLine(questionNo, answer) {
+      const no = Number(questionNo);
+      if (!Number.isInteger(no) || no < 1 || no > OCR_REVIEW_PROBLEM_COUNT) return;
+      const lines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+      lines[no - 1] = String(answer || '');
+      const current = ocrReviewCurrentSelectionContext();
+      answersTextEl.dataset.ocrProgrammaticFill = '1';
+      answersTextEl.value = lines.join('\n');
+      answersTextEl.dataset.ocrFilled = '1';
+      answersTextEl.dataset.ocrTestId = current.testId;
+      answersTextEl.dataset.ocrRound = current.round;
+      answersTextEl.dispatchEvent(new Event('input', { bubbles: true }));
+      delete answersTextEl.dataset.ocrProgrammaticFill;
+      ocrReviewRefreshUnresolvedSummary();
+    }
+
+    function ocrReviewSetItemAnswer(item, answer, intent = 'edit') {
+      const cleanAnswer = ocrReviewCleanOneLineAnswer(answer);
+      if (!cleanAnswer) {
+        item.final_answer = null;
+        item.resolution = 'unresolved';
+        item.status = item.review_state;
+        ocrReviewSetAnswerLine(item.question_no, '');
+        return false;
+      }
+      const validationMessage = ocrReviewAnswerValidationMessage(cleanAnswer, item.answer_mode, item.question_no);
+      if (validationMessage) {
+        ocrTestSheetSetStatus(validationMessage, 'error');
+        return false;
+      }
+      item.final_answer = cleanAnswer;
+      item.resolution = ocrReviewResolutionForStudentAnswer(item, cleanAnswer, intent);
+      item.user_modified = item.resolution === 'student_edited';
+      item.status = item.resolution;
+      item.source = item.resolution;
+      ocrReviewSetAnswerLine(item.question_no, cleanAnswer);
+      return true;
+    }
+
+    function ocrReviewSyncPayloadFromAnswersText() {
+      if (!ocrReviewPayload) return;
+      const lines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+      ocrReviewPayload.items.forEach(item => {
+        const answer = ocrReviewCleanOneLineAnswer(lines[item.question_no - 1]);
+        if (!answer) {
+          if (item.review_state !== 'auto_confirm' || item.final_answer) {
+            item.final_answer = null;
+            item.resolution = 'unresolved';
+            item.user_modified = false;
+            item.status = item.review_state;
+          }
+          return;
+        }
+        if (ocrReviewAnswerValidationMessage(answer, item.answer_mode, item.question_no)) return;
+        if (item.final_answer !== answer || !ocrReviewIsItemResolved(item)) {
+          item.final_answer = answer;
+          item.resolution = ocrReviewResolutionForStudentAnswer(item, answer, 'edit');
+          item.user_modified = item.resolution === 'student_edited';
+          item.status = item.resolution;
+          item.source = item.resolution;
+        }
+      });
+    }
+
+    function ocrReviewSeedAutoConfirmAnswers(payload) {
+      const lines = ocrReviewNormalizeAnswerLines(answersTextEl.value);
+      let changed = false;
+      payload.items.forEach(item => {
+        if (item.review_state !== 'auto_confirm' || item.resolution !== 'auto_confirm') return;
+        const answer = ocrReviewAnswerForPartialFill(item);
+        if (!answer) return;
+        const index = item.question_no - 1;
+        if (!String(lines[index] || '').trim()) {
+          lines[index] = answer;
+          changed = true;
+          return;
+        }
+        if (ocrReviewCleanOneLineAnswer(lines[index]) !== answer) {
+          item.final_answer = ocrReviewCleanOneLineAnswer(lines[index]);
+          item.resolution = 'student_edited';
+          item.user_modified = true;
+          item.status = 'student_edited';
+        }
+      });
+      if (!changed) return;
+      const current = ocrReviewCurrentSelectionContext();
+      ocrReviewApplyAnswersText({
+        answersText: lines.join('\n'),
+        testId: payload.test_id || current.testId,
+        round: payload.round || current.round,
+      });
+    }
+
+    function ocrReviewSelectAnswersTextLine(questionNo) {
+      const no = Number(questionNo);
+      if (!Number.isInteger(no) || no < 1 || no > OCR_REVIEW_PROBLEM_COUNT) return false;
+      const lines = ocrReviewEnsureAnswersTextLineCount();
+      let start = 0;
+      for (let index = 0; index < no - 1; index += 1) start += lines[index].length + 1;
+      const end = start + lines[no - 1].length;
+      answersTextEl.focus();
+      try { answersTextEl.setSelectionRange(start, end); } catch {}
+      try { answersTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+      return true;
+    }
+
     function ocrReviewPrepareAnswersText(payload) {
-      const normalized = ocrReviewNormalizePayload(payload);
+      const isNormalizedReviewPayload = Array.isArray(payload?.items) && payload.items.length === OCR_REVIEW_PROBLEM_COUNT &&
+        payload.items.every(item => Object.prototype.hasOwnProperty.call(item || {}, 'review_state') &&
+          Object.prototype.hasOwnProperty.call(item || {}, 'answer_mode'));
+      const normalized = isNormalizedReviewPayload ? payload : ocrReviewNormalizePayload(payload);
       const partial = ocrReviewPartialFillSummary(normalized.items);
       if (!partial.filledQuestions.length) throw new Error('사진 인식 결과에서 안전하게 채울 수 있는 문항이 없습니다. 기존 방식으로 직접 입력해주세요.');
       return {
@@ -4511,15 +5569,235 @@ window.todayLocalKey = function () {
       return ocrReviewPrepareAnswersText(payload).answersText;
     }
 
+    function ocrReviewQuestionLabelList(questionNumbers) {
+      if (!questionNumbers.length) return '없음';
+      return ocrReviewQuestionListText(questionNumbers);
+    }
+
+    function ocrReviewFocusQuestion(questionNo) {
+      const no = Number(questionNo);
+      if (!Number.isInteger(no)) return false;
+      ocrReviewPanel?.querySelectorAll('.ts-ocr-card[data-ocr-focus="true"]').forEach(card => {
+        delete card.dataset.ocrFocus;
+      });
+      const card = ocrReviewPanel?.querySelector(`[data-question-no="${no}"]`);
+      if (card) {
+        ocrReviewCurrentUnresolvedQuestion = no;
+        card.dataset.ocrFocus = 'true';
+        try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+        const focusTarget = card.querySelector('.ts-ocr-current:not([hidden])') ||
+          card.querySelector('.ts-ocr-choice') ||
+          card.querySelector('button');
+        try { focusTarget?.focus(); } catch {}
+        ocrTestSheetSetStatus(`${no}번 문항을 확인해주세요.`);
+        return true;
+      }
+      if (ocrReviewSelectAnswersTextLine(no)) {
+        ocrReviewCurrentUnresolvedQuestion = no;
+        ocrTestSheetSetStatus(`${no}번 줄을 직접 입력해주세요.`);
+        return true;
+      }
+      return false;
+    }
+
+    function ocrReviewSubmissionBlockState(testId = selTestId.value, round = selRound.value) {
+      if (!OCR_TEST_SHEET_ENABLED || !ocrReviewPayload) return null;
+      const requestedTestId = String(testId || '');
+      const requestedRound = String(round || '1');
+      if (String(ocrReviewPayload.test_id || '') !== requestedTestId || String(ocrReviewPayload.round || '1') !== requestedRound) {
+        return {
+          blocked: true,
+          reason: 'context_mismatch',
+          count: 0,
+          questionNumbers: [],
+          firstQuestionNo: null,
+          message: '사진 인식 결과가 현재 시험 또는 회차와 맞지 않습니다. 다시 인식하거나 답안을 직접 확인해 주세요.',
+        };
+      }
+      const unresolvedItems = ocrReviewBlockingItems(ocrReviewPayload);
+      if (!unresolvedItems.length) return null;
+      return {
+        blocked: true,
+        requiresConfirmation: false,
+        reason: 'unresolved_ocr_items',
+        count: unresolvedItems.length,
+        questionNumbers: unresolvedItems.map(item => item.question_no),
+        firstQuestionNo: unresolvedItems[0].question_no,
+        message: `아직 확인하지 않은 문항이 ${unresolvedItems.length}개 있습니다. ${ocrReviewQuestionListText(unresolvedItems.map(item => item.question_no))}을(를) 확인하거나 직접 입력한 뒤 제출할 수 있습니다.`,
+      };
+    }
+
+    function ocrReviewFocusAdjacentUnresolved(direction = 1) {
+      const fallbackSummary = ocrReviewPayload ? ocrReviewPartialFillSummary(ocrReviewPayload.items) : null;
+      const summary = ocrReviewCurrentAnswerLineSummary(fallbackSummary);
+      const unresolvedQuestions = ocrReviewPayload
+        ? ocrReviewBlockingItems(ocrReviewPayload).map(item => item.question_no)
+        : summary.blankQuestions;
+      if (!unresolvedQuestions.length) {
+        ocrTestSheetSetStatus('모든 답안을 확인했습니다.', 'ok');
+        ocrReviewRefreshUnresolvedSummary();
+        return;
+      }
+      const currentIndex = unresolvedQuestions.indexOf(ocrReviewCurrentUnresolvedQuestion);
+      const baseIndex = currentIndex >= 0
+        ? currentIndex
+        : direction < 0 ? 0 : -1;
+      const index = (baseIndex + direction + unresolvedQuestions.length) % unresolvedQuestions.length;
+      const questionNo = unresolvedQuestions[index];
+      const previousQuestionNo = ocrReviewCurrentUnresolvedQuestion;
+      ocrReviewFocusQuestion(questionNo);
+      if (previousQuestionNo && previousQuestionNo !== questionNo && unresolvedQuestions.includes(previousQuestionNo)) {
+        ocrTestSheetSetStatus(`${questionNo}번 문항을 확인해주세요. ${previousQuestionNo}번 문항은 아직 확인되지 않았습니다.`, 'error');
+      }
+      ocrReviewRefreshUnresolvedSummary();
+    }
+
+    function ocrReviewFocusNextUnresolved() {
+      ocrReviewFocusAdjacentUnresolved(1);
+    }
+
+    function ocrReviewUpdateUnresolvedNumberList(listEl, blankQuestions) {
+      if (!listEl) return;
+      listEl.replaceChildren();
+      blankQuestions.forEach(questionNo => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ts-ocr-unresolved-question';
+        button.textContent = `${questionNo}번`;
+        button.addEventListener('click', () => {
+          ocrReviewFocusQuestion(questionNo);
+          ocrReviewRefreshUnresolvedSummary();
+        });
+        listEl.appendChild(button);
+      });
+    }
+
+    function ocrReviewRefreshUnresolvedSummary(fallbackSummary = null) {
+      if (!ocrReviewPanel) return null;
+      const summary = ocrReviewCurrentAnswerLineSummary(fallbackSummary);
+      if (typeof ocrReviewPanel.querySelector !== 'function') return summary;
+      const wrap = ocrReviewPanel.querySelector('.ts-ocr-unresolved');
+      if (!wrap) return summary;
+      const filledCount = summary.filledQuestions.length;
+      const blankCount = summary.blankQuestions.length;
+      const unresolvedQuestions = ocrReviewPayload
+        ? ocrReviewBlockingItems(ocrReviewPayload).map(item => item.question_no)
+        : summary.blankQuestions;
+      if (ocrReviewNextBlankIndex >= unresolvedQuestions.length) ocrReviewNextBlankIndex = 0;
+      const title = wrap.querySelector('.ts-ocr-unresolved-title');
+      const count = wrap.querySelector('.ts-ocr-unresolved-count');
+      const progress = wrap.querySelector('.ts-ocr-unresolved-progress');
+      const list = wrap.querySelector('.ts-ocr-unresolved-list');
+      const previousButton = wrap.querySelector('.ts-ocr-prev-unresolved');
+      const nextButton = wrap.querySelector('.ts-ocr-next-unresolved');
+      if (title) title.textContent = unresolvedQuestions.length ? `직접 확인할 문항 ${unresolvedQuestions.length}개` : '모든 답안을 확인했습니다';
+      if (count) count.textContent = `채움 ${filledCount}개 · 빈칸 ${blankCount}개`;
+      if (progress) {
+        const currentIndex = Math.max(0, unresolvedQuestions.indexOf(ocrReviewCurrentUnresolvedQuestion));
+        progress.textContent = unresolvedQuestions.length ? `현재 ${currentIndex + 1} / ${unresolvedQuestions.length}` : '확인 완료';
+      }
+      ocrReviewUpdateUnresolvedNumberList(list, unresolvedQuestions);
+      if (previousButton) previousButton.disabled = unresolvedQuestions.length === 0;
+      if (nextButton) {
+        nextButton.disabled = unresolvedQuestions.length === 0;
+        nextButton.textContent = unresolvedQuestions.length ? '다음 확인 문항' : '확인 완료';
+      }
+      wrap.dataset.blankCount = String(blankCount);
+      wrap.dataset.filledCount = String(filledCount);
+      wrap.dataset.blankQuestions = unresolvedQuestions.join(',');
+      return summary;
+    }
+
+    function ocrReviewRenderUnresolvedNavigator(fillPreview) {
+      const wrap = document.createElement('section');
+      wrap.className = 'ts-ocr-unresolved';
+      const head = document.createElement('div');
+      head.className = 'ts-ocr-unresolved-head';
+      const title = document.createElement('strong');
+      title.className = 'ts-ocr-unresolved-title';
+      const count = document.createElement('span');
+      count.className = 'ts-ocr-unresolved-count';
+      const list = document.createElement('div');
+      list.className = 'ts-ocr-unresolved-list';
+      list.setAttribute('aria-label', '직접 확인할 문항 번호');
+      const progress = document.createElement('span');
+      progress.className = 'ts-ocr-unresolved-progress';
+      const previousButton = document.createElement('button');
+      previousButton.type = 'button';
+      previousButton.className = 'ts-ocr-prev-unresolved';
+      previousButton.textContent = '이전 문항';
+      previousButton.addEventListener('click', () => ocrReviewFocusAdjacentUnresolved(-1));
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.className = 'ts-ocr-next-unresolved';
+      nextButton.addEventListener('click', () => ocrReviewFocusNextUnresolved());
+      head.append(title, count, progress);
+      wrap.append(head, list, previousButton, nextButton);
+      return wrap;
+    }
+
     function ocrReviewCounts(payload) {
       return payload.items.reduce((acc, item) => {
-        if (item.status === 'review_required') acc.review += 1;
-        else if (item.status === 'retake_required') acc.retake += 1;
-        else if (item.status === 'retake_uploaded') acc.pendingRetake += 1;
-        else if (item.status === 'data_check_required') acc.dataCheck += 1;
-        else acc.safe += 1;
+        if (item.review_state === 'auto_confirm') acc.auto += 1;
+        if (!ocrReviewIsItemResolved(item)) {
+          if (item.review_state === 'review_recommended') acc.review += 1;
+          else if (item.review_state === 'direct_input' || item.review_state === 'auto_confirm') acc.direct += 1;
+          else if (item.review_state === 'retake_required') acc.retake += 1;
+        }
         return acc;
-      }, { safe: 0, review: 0, retake: 0, pendingRetake: 0, dataCheck: 0 });
+      }, { auto: 0, review: 0, direct: 0, retake: 0 });
+    }
+
+    function ocrReviewTelemetrySnapshot(payload = ocrReviewPayload) {
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      const stateCounts = ocrReviewCounts({ items });
+      return {
+        total_items: items.length,
+        auto_confirm_count: stateCounts.auto,
+        review_recommended_count: stateCounts.review,
+        direct_input_count: stateCounts.direct,
+        retake_required_count: stateCounts.retake,
+        user_confirmed_count: items.filter(item => item.resolution === 'student_confirmed').length,
+        user_modified_count: items.filter(item => item.user_modified === true).length,
+        direct_input_completed_count: items.filter(item => item.resolution === 'student_entered').length,
+        unresolved_count: ocrReviewBlockingItems({ items }).length,
+        review_duration_ms: ocrReviewStartedAt ? Math.max(0, Date.now() - ocrReviewStartedAt) : 0,
+      };
+    }
+
+    function ocrReviewItemHasActionableReviewControl(item) {
+      if (ocrReviewIsItemResolved(item)) return true;
+      if (item.review_state === 'retake_required') return true;
+      if (item.answer_mode === 'choice_number' || item.answer_mode === 'answer_value') return true;
+      return Boolean(item.allow_edit);
+    }
+
+    function ocrReviewHasActionableItem(payload) {
+      return payload.items.some(item => {
+        if (ocrReviewAnswerForPartialFill(item)) return true;
+        if (ocrReviewItemHasActionableReviewControl(item)) return true;
+        return ocrReviewItemHasActionableReviewControl(item);
+      });
+    }
+
+    function ocrReviewUnusablePayloadMessage(payload) {
+      const normalizedSource = String(payload?.source || '').trim();
+      if (normalizedSource === 'phase2d_cached_recognized') {
+        return '학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다. 답안을 직접 입력해 주세요.';
+      }
+      if (ocrReviewHasActionableItem(payload)) return '';
+      return '학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다. 답안을 직접 입력해 주세요.';
+    }
+
+    function ocrReviewEnsureActionablePayload(payload) {
+      const normalized = ocrReviewNormalizePayload(payload);
+      const current = ocrReviewCurrentSelectionContext();
+      if (normalized.test_id !== current.testId || normalized.round !== current.round) {
+        throw new Error('사진 인식 결과가 현재 시험 또는 회차와 맞지 않습니다. 답안을 직접 입력해 주세요.');
+      }
+      const unusableMessage = ocrReviewUnusablePayloadMessage(normalized);
+      if (unusableMessage) throw new Error(unusableMessage);
+      return normalized;
     }
 
     function ocrReviewAppendKey(input, value) {
@@ -4533,37 +5811,355 @@ window.todayLocalKey = function () {
       input.dataset.answerSource = 'student_direct_input';
     }
 
+    function ocrReviewEffectiveReviewState(item) {
+      if (item.review_state === 'auto_confirm' && !ocrReviewIsItemResolved(item)) return 'direct_input';
+      return item.review_state;
+    }
+
+    function ocrReviewResolutionLabel(item) {
+      if (!ocrReviewIsItemResolved(item)) return '미확정';
+      if (item.resolution === 'auto_confirm') return '자동 인식';
+      if (item.resolution === 'student_confirmed') return '학생 확인';
+      if (item.user_modified || item.resolution === 'student_edited') return '사용자 수정';
+      return '직접 입력';
+    }
+
+    function ocrReviewRenderCropPreview(item) {
+      if (!item.crop_preview) return null;
+      const details = document.createElement('details');
+      details.className = 'ts-ocr-crop';
+      const summary = document.createElement('summary');
+      summary.textContent = '원본 사진 보기';
+      const image = document.createElement('img');
+      image.src = item.crop_preview;
+      image.alt = `${item.question_no}번 답안 사진`;
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      details.append(summary, image);
+      return details;
+    }
+
+    function ocrReviewRenderStateHeader(payload, counts) {
+      const wrap = document.createElement('section');
+      wrap.className = 'ts-ocr-state-summary';
+      const heading = document.createElement('strong');
+      heading.textContent = '답안 입력 검토';
+      const copy = document.createElement('p');
+      copy.textContent = '사진 인식은 답안 입력 보조입니다. 확인이 필요한 문항만 처리해 주세요.';
+      const stats = document.createElement('div');
+      stats.className = 'ts-ocr-state-stats';
+      [
+        ['자동 인식 완료', counts.auto],
+        ['확인 필요', counts.review],
+        ['직접 입력 필요', counts.direct],
+        ['다시 촬영 필요', counts.retake],
+      ].forEach(([label, value]) => {
+        const stat = document.createElement('span');
+        stat.textContent = `${label} ${value}문항`;
+        stats.appendChild(stat);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'ts-ocr-state-actions';
+      const reviewButton = document.createElement('button');
+      reviewButton.type = 'button';
+      reviewButton.className = 'ts-ocr-next-unresolved';
+      reviewButton.textContent = '확인 필요한 문항 검토하기';
+      reviewButton.disabled = counts.review + counts.direct + counts.retake === 0;
+      reviewButton.addEventListener('click', () => ocrReviewFocusNextUnresolved());
+      const summaryButton = document.createElement('button');
+      summaryButton.type = 'button';
+      summaryButton.className = 'ts-ocr-candidate';
+      summaryButton.textContent = '전체 답안 보기';
+      summaryButton.addEventListener('click', () => {
+        const details = ocrReviewPanel?.querySelector('.ts-ocr-final-summary details');
+        if (!details) return;
+        details.open = true;
+        try { details.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+      });
+      actions.append(reviewButton, summaryButton);
+      wrap.append(heading, copy, stats, actions);
+      return wrap;
+    }
+
     function ocrReviewRender() {
       if (!ocrReviewPanel || !ocrReviewPayload) return;
+      if (!ocrReviewStartedAt) ocrReviewStartedAt = Date.now();
+      ocrReviewEnsureAnswersTextLineCount();
+      ocrReviewSeedAutoConfirmAnswers(ocrReviewPayload);
       ocrReviewPanel.replaceChildren();
+      ocrReviewClearFallback();
+      ocrTestSheetSetStatus('검토 준비 완료. 확인이 필요한 문항만 확인해 주세요.', 'ok');
       const counts = ocrReviewCounts(ocrReviewPayload);
       const fillPreview = ocrReviewPartialFillSummary(ocrReviewPayload.items);
       const fillableCount = fillPreview.filledQuestions.length;
-      const blankCount = fillPreview.blankQuestions.length;
-      const summary = document.createElement('div');
-      summary.className = 'ts-ocr-summary';
-      [
-        `자동 인식 완료 ${counts.safe}`,
-        `확인 필요 ${counts.review}`,
-        `답칸 채움 가능 ${fillableCount}`,
-        `빈칸 유지 ${blankCount}`,
-        `재촬영 필요 ${counts.retake}`,
-        `재인식 대기 ${counts.pendingRetake}`,
-        `선생님 확인 ${counts.dataCheck}`,
-      ].forEach(text => {
-        const pill = document.createElement('span');
-        pill.className = 'ts-ocr-pill';
-        pill.textContent = text;
-        summary.appendChild(pill);
-      });
-      ocrReviewPanel.appendChild(summary);
+      ocrReviewPanel.appendChild(ocrReviewRenderStateHeader(ocrReviewPayload, counts));
+      ocrReviewPanel.appendChild(ocrReviewRenderUnresolvedNavigator(fillPreview));
+      ocrReviewRefreshUnresolvedSummary(fillPreview);
 
-      ocrReviewPayload.items.filter(item => item.status === 'review_required').forEach(item => {
-        ocrReviewPanel.appendChild(ocrReviewRenderReviewCard(item));
+      const unresolvedItems = ocrReviewBlockingItems(ocrReviewPayload);
+      const reviewItems = unresolvedItems.filter(item => ocrReviewEffectiveReviewState(item) === 'review_recommended');
+      const directItems = unresolvedItems.filter(item => ocrReviewEffectiveReviewState(item) === 'direct_input');
+      const retakeItems = unresolvedItems.filter(item => ocrReviewEffectiveReviewState(item) === 'retake_required');
+      const retakeSection = ocrReviewRenderSection('다시 촬영 필요', retakeItems, ocrReviewRenderBlockedCard);
+      if (retakeSection) ocrReviewPanel.appendChild(retakeSection);
+      const directSection = ocrReviewRenderSection('직접 입력 필요', directItems, ocrReviewRenderReviewCard);
+      if (directSection) ocrReviewPanel.appendChild(directSection);
+      const reviewSection = ocrReviewRenderSection('확인 필요', reviewItems, ocrReviewRenderReviewCard);
+      if (reviewSection) ocrReviewPanel.appendChild(reviewSection);
+      ocrReviewPanel.appendChild(ocrReviewRenderSafeAutoList());
+
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.className = 'ts-ocr-apply';
+      applyBtn.disabled = fillableCount === 0;
+      applyBtn.textContent = fillableCount
+        ? `확인된 답안 ${fillableCount}개만 답칸 채우기`
+        : '확인된 답안 없음';
+      applyBtn.addEventListener('click', () => {
+        try {
+          const result = ocrReviewPrepareAnswersText(ocrReviewPayload);
+          ocrReviewApplyAnswersText(result, { preserveExisting: true });
+          ocrReviewRefreshUnresolvedSummary();
+          ocrTestSheetSetStatus(`${result.filledLineCount}문항을 답안칸에 반영했습니다. ${result.blankLineCount}문항은 직접 확인해 주세요.`, 'ok');
+        } catch (err) {
+          const first = ocrReviewBlockingItems(ocrReviewPayload)[0];
+          if (first) ocrReviewFocusQuestion(first.question_no);
+          ocrTestSheetSetStatus(err?.message || '아직 처리되지 않은 문항이 있습니다.', 'error');
+        }
       });
-      ocrReviewPayload.items.filter(item => item.status === 'retake_required' || item.status === 'retake_uploaded' || item.status === 'data_check_required').forEach(item => {
-        ocrReviewPanel.appendChild(ocrReviewRenderBlockedCard(item));
+      ocrReviewPanel.appendChild(applyBtn);
+      ocrReviewPanel.hidden = false;
+    }
+
+    function ocrReviewRenderReviewCard(item) {
+      const effectiveState = ocrReviewEffectiveReviewState(item);
+      const card = document.createElement('section');
+      card.className = 'ts-ocr-card';
+      card.dataset.questionNo = String(item.question_no);
+      const title = document.createElement('h4');
+      title.className = 'ts-ocr-card-title';
+      title.textContent = effectiveState === 'review_recommended'
+        ? `${item.question_no}번 문항 확인 필요`
+        : `${item.question_no}번 문항 직접 입력 필요`;
+      const mode = document.createElement('div');
+      mode.className = 'ts-ocr-mode';
+      mode.textContent = ocrReviewAnswerModeLabel(item.answer_mode);
+      const helper = document.createElement('p');
+      helper.className = 'ts-ocr-card-help';
+      helper.textContent = effectiveState === 'review_recommended'
+        ? '내가 쓴 답과 같은지 확인해 주세요.'
+        : '답안을 직접 입력한 뒤 완료를 눌러주세요.';
+      const main = document.createElement('div');
+      main.className = 'ts-ocr-card-main';
+      const controls = document.createElement('div');
+      controls.className = 'ts-ocr-card-controls';
+      const isChoiceNumber = item.answer_mode === 'choice_number';
+      const initialAnswer = effectiveState === 'review_recommended' ? item.candidate : '';
+      const input = document.createElement('input');
+      input.className = 'ts-ocr-current';
+      input.type = isChoiceNumber ? 'hidden' : 'text';
+      input.value = initialAnswer;
+      input.hidden = isChoiceNumber;
+      input.placeholder = effectiveState === 'review_recommended' ? '인식 후보를 확인하거나 수정' : '직접 입력';
+      input.setAttribute('aria-label', `${item.question_no}번 직접 입력`);
+      input.dataset.answerIntent = effectiveState === 'review_recommended' && initialAnswer ? 'confirm' : 'edit';
+      input.addEventListener('input', () => { input.dataset.answerIntent = 'edit'; });
+
+      if (effectiveState === 'review_recommended' && item.candidate && !isChoiceNumber) {
+        const candidateLabel = document.createElement('span');
+        candidateLabel.className = 'ts-ocr-candidate-label';
+        candidateLabel.textContent = '인식 후보';
+        controls.appendChild(candidateLabel);
+      }
+
+      const choiceGrid = document.createElement('div');
+      choiceGrid.className = 'ts-ocr-choice-grid';
+      choiceGrid.setAttribute('role', 'group');
+      choiceGrid.setAttribute('aria-label', `${item.question_no}번 선택형 답 선택`);
+      const syncChoiceButtons = selected => {
+        choiceGrid.querySelectorAll('button').forEach(button => {
+          button.setAttribute('aria-pressed', button.dataset.value === selected ? 'true' : 'false');
+        });
+      };
+      ['1', '2', '3', '4', '5'].forEach(value => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ts-ocr-choice';
+        button.textContent = value;
+        button.dataset.value = value;
+        button.setAttribute('aria-pressed', input.value === value ? 'true' : 'false');
+        button.addEventListener('click', () => {
+          input.value = value;
+          input.dataset.answerIntent = effectiveState === 'review_recommended' && value === item.candidate ? 'confirm' : 'edit';
+          syncChoiceButtons(value);
+        });
+        choiceGrid.appendChild(button);
       });
+
+      if (isChoiceNumber) controls.append(choiceGrid, input);
+      else controls.append(input);
+
+      if (!isChoiceNumber && effectiveState !== 'review_recommended') {
+        const keypad = document.createElement('div');
+        keypad.className = 'ts-ocr-keypad ts-ocr-keypad-primary';
+        OCR_REVIEW_PRIMARY_KEYPAD_VALUES.forEach(value => {
+          const key = document.createElement('button');
+          key.type = 'button';
+          key.className = 'ts-ocr-key';
+          key.textContent = value;
+          key.addEventListener('click', () => ocrReviewAppendKey(input, value));
+          keypad.appendChild(key);
+        });
+        controls.appendChild(keypad);
+      }
+
+      const preview = ocrReviewRenderCropPreview(item);
+      main.append(controls);
+      if (preview) main.append(preview);
+      const actions = document.createElement('div');
+      actions.className = 'ts-ocr-actions';
+      if (effectiveState === 'review_recommended') {
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'ts-ocr-candidate';
+        editButton.textContent = '수정하기';
+        editButton.addEventListener('click', () => {
+          input.dataset.answerIntent = 'edit';
+          try { input.focus(); input.select(); } catch {}
+        });
+        const directButton = document.createElement('button');
+        directButton.type = 'button';
+        directButton.className = 'ts-ocr-candidate';
+        directButton.textContent = '직접 입력';
+        directButton.addEventListener('click', () => {
+          input.value = '';
+          input.dataset.answerIntent = 'edit';
+          if (isChoiceNumber) syncChoiceButtons('');
+          const focusTarget = isChoiceNumber ? choiceGrid.querySelector('.ts-ocr-choice') : input;
+          try { focusTarget?.focus(); } catch {}
+        });
+        actions.append(editButton, directButton);
+      }
+      const confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      confirmBtn.className = 'ts-ocr-confirm';
+      confirmBtn.textContent = effectiveState === 'review_recommended' ? '맞아요' : '입력 완료';
+      confirmBtn.addEventListener('click', () => {
+        const answer = ocrReviewCleanOneLineAnswer(input.value);
+        if (!ocrReviewHasReliableText(answer)) {
+          ocrTestSheetSetStatus(`${item.question_no}번 문항 답안을 선택하거나 입력해주세요.`, 'error');
+          return;
+        }
+        if (!ocrReviewSetItemAnswer(item, answer, input.dataset.answerIntent || 'edit')) return;
+        ocrTestSheetSetStatus(`${item.question_no}번 문항을 반영했습니다.`, 'ok');
+        ocrReviewRender();
+      });
+      actions.appendChild(confirmBtn);
+      card.append(title, mode, helper, main, actions);
+      return card;
+    }
+
+    function ocrReviewRenderBlockedCard(item) {
+      const card = ocrReviewRenderReviewCard(item);
+      const title = card.querySelector('.ts-ocr-card-title');
+      const helper = card.querySelector('.ts-ocr-card-help');
+      if (title) title.textContent = `${item.question_no}번 문항 사진을 다시 확인해 주세요`;
+      if (helper) helper.textContent = `${item.retake_reason} 때문에 재촬영을 권장합니다. 재촬영을 건너뛰면 답안을 직접 입력할 수 있습니다.`;
+      const actions = card.querySelector('.ts-ocr-actions');
+      const retakeButton = document.createElement('button');
+      retakeButton.type = 'button';
+      retakeButton.className = 'ts-ocr-candidate';
+      retakeButton.textContent = '다시 촬영';
+      retakeButton.addEventListener('click', () => {
+        try { ocrReviewImageEl?.click(); } catch {}
+      });
+      const manualButton = document.createElement('button');
+      manualButton.type = 'button';
+      manualButton.className = 'ts-ocr-candidate';
+      manualButton.textContent = '직접 입력';
+      manualButton.addEventListener('click', () => {
+        try { card.querySelector('.ts-ocr-current:not([hidden])')?.focus(); } catch {}
+      });
+      if (actions) actions.append(retakeButton, manualButton);
+      return card;
+    }
+
+    function ocrReviewRenderSafeAutoList() {
+      const wrap = document.createElement('section');
+      wrap.className = 'ts-ocr-final-summary';
+      const details = document.createElement('details');
+      details.open = ocrReviewBlockingItems(ocrReviewPayload).length === 0;
+      const summary = document.createElement('summary');
+      summary.textContent = '전체 답안 요약 · 수정 가능';
+      const list = document.createElement('ol');
+      list.className = 'ts-ocr-final-list';
+      ocrReviewPayload.items.forEach(item => {
+        const row = document.createElement('li');
+        row.className = 'ts-ocr-final-row';
+        row.dataset.summaryQuestion = String(item.question_no);
+        row.dataset.resolution = item.resolution;
+        const question = document.createElement('span');
+        question.className = 'ts-ocr-final-question';
+        question.textContent = `${item.question_no}번`;
+        const input = document.createElement('input');
+        input.className = 'ts-ocr-final-input';
+        input.type = 'text';
+        input.value = item.final_answer || '';
+        input.placeholder = '빈칸';
+        input.setAttribute('aria-label', `${item.question_no}번 최종 답안 수정`);
+        const label = document.createElement('span');
+        label.className = 'ts-ocr-final-status';
+        label.textContent = ocrReviewResolutionLabel(item);
+        input.addEventListener('input', () => {
+          const answer = ocrReviewCleanOneLineAnswer(input.value);
+          if (!answer) {
+            ocrReviewSetItemAnswer(item, '', 'edit');
+          } else if (!ocrReviewSetItemAnswer(item, answer, 'edit')) {
+            return;
+          }
+          row.dataset.resolution = item.resolution;
+          label.textContent = ocrReviewResolutionLabel(item);
+          ocrReviewRefreshUnresolvedSummary();
+        });
+        row.append(question, input, label);
+        list.appendChild(row);
+      });
+      details.append(summary, list);
+      wrap.appendChild(details);
+      return wrap;
+    }
+
+    function ocrReviewRenderLegacy() {
+      if (!ocrReviewPanel || !ocrReviewPayload) return;
+      ocrReviewPanel.replaceChildren();
+      ocrReviewClearFallback();
+      const counts = ocrReviewCounts(ocrReviewPayload);
+      const fillPreview = ocrReviewPartialFillSummary(ocrReviewPayload.items);
+      const fillableCount = fillPreview.filledQuestions.length;
+      ocrReviewPanel.appendChild(ocrReviewRenderUnresolvedNavigator(fillPreview));
+      ocrReviewRefreshUnresolvedSummary(fillPreview);
+      const guideList = ocrReviewRenderGuideList(ocrReviewPayload, counts, fillPreview);
+      if (guideList) {
+        const guideDetails = document.createElement('details');
+        guideDetails.className = 'ts-ocr-guide-details';
+        const guideSummary = document.createElement('summary');
+        guideSummary.textContent = '확인 안내 보기';
+        guideDetails.append(guideSummary, guideList);
+        ocrReviewPanel.appendChild(guideDetails);
+      }
+
+      const reviewSection = ocrReviewRenderSection(
+        `직접 확인할 문항 ${counts.review}개`,
+        ocrReviewPayload.items.filter(item => item.status === 'review_required'),
+        ocrReviewRenderReviewCard,
+      );
+      if (reviewSection) ocrReviewPanel.appendChild(reviewSection);
+      const blockedSection = ocrReviewRenderSection(
+        `재촬영 또는 별도 확인 문항 ${counts.retake + counts.pendingRetake + counts.dataCheck}개`,
+        ocrReviewPayload.items.filter(item => item.status === 'retake_required' || item.status === 'retake_uploaded' || item.status === 'data_check_required'),
+        ocrReviewRenderBlockedCard,
+      );
+      if (blockedSection) ocrReviewPanel.appendChild(blockedSection);
       ocrReviewPanel.appendChild(ocrReviewRenderSafeAutoList());
       const blockingItems = ocrReviewBlockingItems(ocrReviewPayload);
       const firstBlockingItem = blockingItems[0] || null;
@@ -4572,8 +6168,8 @@ window.todayLocalKey = function () {
       applyBtn.className = 'ts-ocr-apply';
       applyBtn.disabled = fillableCount === 0;
       applyBtn.textContent = fillableCount
-        ? `안전한 답안 ${fillableCount}개만 답칸 채우기`
-        : '채울 수 있는 안전 답안 없음';
+        ? `확인된 답안 ${fillableCount}개만 답칸 채우기`
+        : '확인된 답안 없음';
       applyBtn.addEventListener('click', () => {
         if (!fillableCount) {
           const targetCard = firstBlockingItem
@@ -4587,7 +6183,8 @@ window.todayLocalKey = function () {
           const result = ocrReviewPrepareAnswersText(ocrReviewPayload);
           ocrReviewApplyAnswersText(result);
           const lineCount = result.answersText.split('\n').length;
-          ocrTestSheetSetStatus(`검토한 답안 ${lineCount}줄 중 ${result.filledLineCount}개를 채웠고 ${result.blankLineCount}개는 빈칸으로 남겼습니다. 제출은 기존 제출 버튼에서만 진행됩니다.`, 'ok');
+          ocrReviewRefreshUnresolvedSummary();
+          ocrTestSheetSetStatus(`${result.filledLineCount}문항을 답안칸에 반영했습니다. ${result.blankLineCount}문항은 직접 확인해 주세요. 답안은 기존 제출 버튼에서만 제출됩니다.`, 'ok');
         } catch (err) {
           ocrTestSheetSetStatus(err?.message || '아직 처리되지 않은 문항이 있습니다.', 'error');
         }
@@ -4596,49 +6193,40 @@ window.todayLocalKey = function () {
       ocrReviewPanel.hidden = false;
     }
 
-    function ocrReviewRenderReviewCard(item) {
+    function ocrReviewRenderReviewCardLegacy(item) {
       const card = document.createElement('section');
       card.className = 'ts-ocr-card';
       card.dataset.questionNo = String(item.question_no);
       const title = document.createElement('h4');
-      title.textContent = `${item.question_no}번 문항 확인 필요`;
+      title.textContent = `${item.question_no}번 문항 직접 확인 필요`;
       const mode = document.createElement('div');
       mode.className = 'ts-ocr-mode';
       mode.textContent = ocrReviewAnswerModeLabel(item.answer_mode);
-      const recognizedAnswer = ocrReviewCleanOneLineAnswer(item.recognized || '');
-      const hasReliableRecognizedAnswer = ocrReviewHasReliableText(recognizedAnswer);
-      const recognized = document.createElement('div');
-      recognized.className = 'ts-ocr-recognized';
-      recognized.textContent = `자동 인식값: ${hasReliableRecognizedAnswer ? recognizedAnswer : '확인 필요'}`;
-      const warning = ocrReviewRenderWarnings(item);
+      const visibleCandidates = item.candidates.filter(candidate => ocrReviewCandidateCanShow(candidate, item.answer_mode));
       const isChoiceNumber = item.answer_mode === 'choice_number';
-      const hint = document.createElement('div');
-      hint.className = 'ts-ocr-recognized';
-      hint.textContent = isChoiceNumber
-        ? '선택형은 아래 번호 버튼 1~5 중 하나를 누른 뒤 확정해주세요.'
-        : '답값형은 최종 답만 입력한 뒤 확정해주세요.';
       const initialAnswer = ocrReviewDefaultAnswerForReviewInput(item);
-      const prefillNoticeText = ocrReviewPrefillNoticeText(item, recognizedAnswer, initialAnswer);
-      const prefillNotice = document.createElement('div');
-      prefillNotice.className = 'ts-ocr-prefill-note';
-      prefillNotice.textContent = prefillNoticeText;
       const input = document.createElement('input');
       input.className = 'ts-ocr-current';
       input.type = isChoiceNumber ? 'hidden' : 'text';
       input.value = initialAnswer;
-      input.dataset.answerSource = 'student_direct_input';
+      input.dataset.answerSource = item.status === 'review_required' && initialAnswer
+        ? 'student_selected_candidate'
+        : 'student_direct_input';
       input.hidden = isChoiceNumber;
+      input.placeholder = '직접 입력';
+      input.setAttribute('aria-label', `${item.question_no}번 직접 입력`);
 
       const candidates = document.createElement('div');
       candidates.className = 'ts-ocr-candidates';
-      item.candidates.forEach(candidate => {
+      visibleCandidates.forEach(candidate => {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'ts-ocr-candidate';
-        btn.textContent = candidate;
+        btn.textContent = `인식 후보 ${candidate}`;
         btn.addEventListener('click', () => {
           input.value = candidate;
           input.dataset.answerSource = 'student_selected_candidate';
+          if (isChoiceNumber) syncChoiceButtons(candidate);
         });
         candidates.appendChild(btn);
       });
@@ -4681,42 +6269,29 @@ window.todayLocalKey = function () {
         key.addEventListener('click', () => ocrReviewAppendKey(input, value));
         keypad.appendChild(key);
       });
-      const moreKeypad = document.createElement('details');
-      moreKeypad.className = 'ts-ocr-keypad-more';
-      const moreKeypadSummary = document.createElement('summary');
-      moreKeypadSummary.textContent = '기호 더 보기';
-      const extendedKeypad = document.createElement('div');
-      extendedKeypad.className = 'ts-ocr-keypad ts-ocr-keypad-extended';
-      OCR_REVIEW_EXTENDED_KEYPAD_VALUES.forEach(value => {
-        const key = document.createElement('button');
-        key.type = 'button';
-        key.className = 'ts-ocr-key';
-        key.textContent = value;
-        key.addEventListener('click', () => ocrReviewAppendKey(input, value));
-        extendedKeypad.appendChild(key);
-      });
-      moreKeypad.append(moreKeypadSummary, extendedKeypad);
       const actions = document.createElement('div');
-      actions.className = 'ts-ocr-candidates';
-      const clearBtn = document.createElement('button');
-      clearBtn.type = 'button';
-      clearBtn.className = 'ts-ocr-candidate';
-      clearBtn.textContent = '지우기';
-      clearBtn.addEventListener('click', () => {
-        input.value = isChoiceNumber ? '' : input.value.slice(0, -1);
-        input.dataset.answerSource = 'student_direct_input';
-        if (isChoiceNumber) syncChoiceButtons('');
-      });
-      const resetBtn = document.createElement('button');
-      resetBtn.type = 'button';
-      resetBtn.className = 'ts-ocr-candidate';
-      resetBtn.textContent = '초기화';
-      resetBtn.addEventListener('click', () => {
-        const resetValue = ocrReviewCleanOneLineAnswer(item.recognized || '');
-        input.value = ocrReviewAnswerCanPrefill(resetValue, item.answer_mode) ? resetValue : '';
-        input.dataset.answerSource = 'student_direct_input';
-        if (isChoiceNumber) syncChoiceButtons(input.value);
-      });
+      actions.className = 'ts-ocr-actions';
+      if (isChoiceNumber) {
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'ts-ocr-candidate';
+        clearBtn.textContent = '지우기';
+        clearBtn.addEventListener('click', () => {
+          input.value = '';
+          input.dataset.answerSource = 'student_direct_input';
+          syncChoiceButtons('');
+        });
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'ts-ocr-candidate';
+        resetBtn.textContent = '초기화';
+        resetBtn.addEventListener('click', () => {
+          input.value = '';
+          input.dataset.answerSource = 'student_direct_input';
+          syncChoiceButtons('');
+        });
+        actions.append(clearBtn, resetBtn);
+      }
       const confirmBtn = document.createElement('button');
       confirmBtn.type = 'button';
       confirmBtn.className = 'ts-ocr-confirm';
@@ -4739,55 +6314,68 @@ window.todayLocalKey = function () {
         item.status = source;
         item.warnings = [];
         item.candidates = [];
+        ocrReviewSetAnswerLine(item.question_no, answer);
         ocrTestSheetSetStatus(`${item.question_no}번 문항을 확인했습니다.`);
         ocrReviewRender();
       });
-      actions.append(clearBtn, resetBtn, confirmBtn);
-      const children = [title, mode, recognized];
-      if (warning) children.push(warning);
-      if (prefillNoticeText) children.push(prefillNotice);
-      children.push(hint);
-      if (isChoiceNumber) children.push(choiceGrid, input);
+      actions.appendChild(confirmBtn);
+      const children = [title, mode];
+      if (isChoiceNumber) {
+        children.push(choiceGrid, input);
+      }
       else {
-        children.push(candidates, input, keypad, moreKeypad);
+        children.push(candidates, input, keypad);
       }
       children.push(actions);
       card.append(...children);
       return card;
     }
-    function ocrReviewRenderBlockedCard(item) {
+    function ocrReviewRenderBlockedCardLegacy(item) {
       const card = document.createElement('section');
       card.className = 'ts-ocr-card';
       card.dataset.questionNo = String(item.question_no);
       const title = document.createElement('h4');
-      const statusLabel = item.status === 'data_check_required' ? '선생님 확인 필요' : item.status === 'retake_uploaded' ? '재인식 대기' : '재촬영 필요';
+      const statusLabel = item.status === 'data_check_required' ? '선생님 확인 필요' : item.status === 'retake_uploaded' ? '재인식 대기' : '재촬영 권장';
       title.textContent = `${item.question_no}번 문항 ${statusLabel}`;
       const mode = document.createElement('div');
       mode.className = 'ts-ocr-mode';
       mode.textContent = ocrReviewAnswerModeLabel(item.answer_mode);
-      const message = document.createElement('div');
-      message.className = 'ts-ocr-recognized';
-      message.textContent = item.status === 'data_check_required'
-        ? '이 문항은 학생 화면에서 직접 확정할 수 없습니다. 기존 수동 입력으로 제출하거나 선생님 확인이 필요합니다.'
-        : '이 문항은 다시 촬영하거나 재인식해야 합니다. 기존 수동 입력으로 대체해주세요.';
-      const warning = ocrReviewRenderWarnings(item);
-      if (warning) card.append(title, mode, warning, message);
-      else card.append(title, mode, message);
+      const actions = document.createElement('div');
+      actions.className = 'ts-ocr-actions ts-ocr-blocked-actions';
+      const retakeButton = document.createElement('button');
+      retakeButton.type = 'button';
+      retakeButton.className = 'ts-ocr-candidate';
+      retakeButton.textContent = '다른 사진 선택';
+      retakeButton.addEventListener('click', () => {
+        try { ocrReviewImageEl?.click(); } catch {}
+      });
+      const manualButton = document.createElement('button');
+      manualButton.type = 'button';
+      manualButton.className = 'ts-ocr-candidate';
+      manualButton.textContent = '답안 직접 입력';
+      manualButton.addEventListener('click', ocrReviewFocusManualAnswers);
+      actions.append(retakeButton, manualButton);
+      card.append(title, mode, actions);
       return card;
     }
 
-    function ocrReviewRenderSafeAutoList() {
+    function ocrReviewRenderSafeAutoListLegacy() {
       const wrap = document.createElement('div');
       wrap.className = 'ts-ocr-safe';
       const details = document.createElement('details');
       const summary = document.createElement('summary');
-      const safeItems = ocrReviewPayload.items.filter(item => OCR_REVIEW_FINAL_STATUSES.has(item.status));
-      summary.textContent = `자동 인식 완료 문항 ${safeItems.length}개 보기`;
+      summary.textContent = '전체 20문항 상태 보기';
       const list = document.createElement('ol');
       list.className = 'ts-ocr-safe-list';
-      safeItems.forEach(item => {
+      ocrReviewPayload.items.forEach(item => {
         const li = document.createElement('li');
-        li.textContent = `${item.question_no}번 ${ocrReviewAnswerModeLabel(item.answer_mode)}: ${item.final_answer || item.recognized || ''}`;
+        const label = OCR_REVIEW_FINAL_STATUSES.has(item.status)
+          ? `입력 완료${item.final_answer ? ` · ${item.final_answer}` : ''}`
+          : item.status === 'retake_required' ? '재촬영 또는 직접 입력 필요'
+            : item.status === 'retake_uploaded' ? '재인식 대기'
+              : item.status === 'data_check_required' ? '선생님 확인 필요'
+                : '직접 확인 필요';
+        li.textContent = `${item.question_no}번: ${label}`;
         list.appendChild(li);
       });
       details.append(summary, list);
@@ -4798,6 +6386,18 @@ window.todayLocalKey = function () {
     function ocrReviewSelectedImage() {
       const file = ocrReviewImageEl?.files?.[0];
       return file || null;
+    }
+
+    function ocrReviewUpdateSelectedImageDisplay(file = ocrReviewSelectedImage()) {
+      const filename = String(file?.name || '').trim();
+      if (ocrReviewFileNameEl) {
+        ocrReviewFileNameEl.textContent = filename || '사진을 선택해 주세요.';
+        ocrReviewFileNameEl.title = filename;
+      }
+      if (btnOcrReviewPick) {
+        btnOcrReviewPick.textContent = filename ? '다른 사진 선택' : '사진 선택';
+        btnOcrReviewPick.setAttribute('aria-label', filename ? '다른 답안지 사진 선택' : '답안지 사진 선택');
+      }
     }
 
     function ocrReviewImageExtension(filename) {
@@ -4815,9 +6415,17 @@ window.todayLocalKey = function () {
       return '';
     }
 
-    function ocrReviewRouteErrorMessage(code) {
+    function ocrReviewRouteErrorMessage(code, httpStatus = 0) {
       const normalized = String(code || '').trim();
-      if (normalized === 'feature_disabled') return '사진 인식 검토를 아직 사용할 수 없습니다. 기존 방식으로 입력해주세요.';
+      const status = Number(httpStatus) || 0;
+      if (status === 429 || normalized === 'provider_quota_or_rate_limited' || normalized === 'provider_http_429') {
+        return '인식 요청이 많아 잠시 후 다시 시도해주세요. 그동안 답안을 직접 입력할 수 있습니다.';
+      }
+      if (status === 503 || normalized === 'provider_http_503' || normalized === 'provider_unavailable') {
+        return '인식 서비스를 잠시 사용할 수 없습니다. 잠시 후 다시 시도하거나 답안을 직접 입력해주세요.';
+      }
+      if (normalized === 'feature_disabled') return '사진 인식 결과를 사용할 수 없습니다. 답안을 직접 입력해 주세요.';
+      if (normalized === 'recognition_unavailable') return '학생이 확인할 수 있는 인식 결과가 준비되지 않았습니다. 사진을 다시 선택하거나 답안을 직접 입력해 주세요.';
       if (normalized === 'missing_image') return '답안지 사진을 먼저 선택해주세요.';
       if (normalized === 'unsupported_image_type') return 'jpg, jpeg, png, webp 형식의 답안지 사진만 사용할 수 있습니다.';
       if (normalized === 'image_too_large') return '답안지 사진은 8MB 이하만 사용할 수 있습니다.';
@@ -4826,26 +6434,20 @@ window.todayLocalKey = function () {
       if (normalized === 'image_quality_failed') return '\uC0AC\uC9C4\uC774 \uD750\uB9AC\uAC70\uB098 \uADF8\uB9BC\uC790\uAC00 \uAC15\uD574 \uC778\uC2DD\uD558\uAE30 \uC5B4\uB835\uC2B5\uB2C8\uB2E4. \uBC1D\uC740 \uACF3\uC5D0\uC11C \uB2E4\uC2DC \uCD2C\uC601\uD574\uC8FC\uC138\uC694.';
       if (normalized === 'test_not_allowlisted' || normalized === 'blocked_test') return OCR_PHASE1_INELIGIBLE_MESSAGE;
       if (normalized === 'round_not_allowlisted' || normalized === 'wrong_round') return '이 회차는 아직 사진 인식 테스트 대상이 아닙니다. 기존 방식으로 입력해주세요.';
-      if (normalized === 'forbidden_student' || normalized === 'ghost_sid') return '현재 학생 정보에서는 사진 인식 검토를 사용할 수 없습니다. 기존 방식으로 입력해주세요.';
-      return '사진 인식 검토 정보를 불러오지 못했습니다. 기존 방식으로 입력해주세요.';
+      if (normalized === 'forbidden_student' || normalized === 'ghost_sid') return '현재 학생 정보에서는 사진 인식 결과를 사용할 수 없습니다. 답안을 직접 입력해 주세요.';
+      return '사진 인식 결과를 준비하지 못했습니다. 사진을 다시 선택하거나 답안을 직접 입력해 주세요.';
     }
 
     function ocrReviewMetaStatusMessage(meta) {
-      const cacheStatus = String(meta?.cache_status || '');
-      const providerStatus = String(meta?.provider_status || '');
-      if (cacheStatus === 'hit') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC800\uC7A5\uB41C \uC778\uC2DD \uACB0\uACFC\uB85C \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
-      if (providerStatus === 'provider_disabled') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC2E4\uC2DC\uAC04 \uC778\uC2DD\uC740 \uAEBC\uC838 \uC788\uC5B4 \uC0D8\uD50C \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
-      if (providerStatus === 'live_call_succeeded') return '\uC0AC\uC9C4 \uBCF4\uC815\uACFC \uB2F5\uCE78 \uCD94\uCD9C \uC644\uB8CC. \uC778\uC2DD \uACB0\uACFC \uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44\uD588\uC2B5\uB2C8\uB2E4.';
-      return '\uC0AC\uC9C4 \uC778\uC2DD \uAC80\uD1A0 \uC900\uBE44 \uC644\uB8CC. \uD655\uC778 \uD544\uC694\uD55C \uBB38\uD56D\uC744 \uCC98\uB9AC\uD55C \uB4A4 \uB2F5\uCE78\uC744 \uCC44\uC6CC\uC8FC\uC138\uC694.';
+      return '사진 인식 검토 준비를 마쳤습니다. 불확실한 문항만 확인하고 빈칸은 직접 입력해주세요.';
     }
 
     async function ocrReviewRunWithProgress(action) {
       const stages = [
-        '\uC0AC\uC9C4 \uBCF4\uC815 \uC911\uC785\uB2C8\uB2E4...',
-        '\uB2F5\uCE78 \uCD94\uCD9C \uC911\uC785\uB2C8\uB2E4...',
-        '\uC778\uC2DD \uC900\uBE44 \uC911\uC785\uB2C8\uB2E4...',
-        '\uC778\uC2DD \uC911\uC774\uAC70\uB098 cache\uB97C \uD655\uC778 \uC911\uC785\uB2C8\uB2E4...',
-        '\uD655\uC778 \uD654\uBA74\uC744 \uC900\uBE44 \uC911\uC785\uB2C8\uB2E4...',
+        '이미지 업로드 중입니다...',
+        '답안지를 처리 중입니다...',
+        '글자 인식 중입니다...',
+        '검토 화면을 준비 중입니다...',
       ];
       ocrTestSheetSetStatus(stages[0]);
       const timers = stages.slice(1).map((message, index) => setTimeout(() => ocrTestSheetSetStatus(message), 650 + index * 850));
@@ -4861,6 +6463,9 @@ window.todayLocalKey = function () {
       form.append('sid', String(sid || ''));
       form.append('testId', String(test?.id || test?.testId || selTestId.value || ''));
       form.append('round', String(round || '1'));
+      if (OCR_PHASE2E_FRESH_REVIEW_REQUESTED) {
+        form.append('freshPhase2E', '1');
+      }
       form.append('image', imageFile);
       const res = await fetch(OCR_PHASE2B_REVIEW_ENDPOINT, {
         method: 'POST',
@@ -4873,11 +6478,11 @@ window.todayLocalKey = function () {
         throw new Error('학생 화면에 표시할 수 없는 검토 정보가 포함되어 있습니다. 기존 방식으로 입력해주세요.');
       }
       if (!res.ok || data?.ok !== true) {
-        throw new Error(ocrReviewRouteErrorMessage(data?.errorCode || data?.code));
+        throw new Error(ocrReviewRouteErrorMessage(data?.errorCode || data?.code, res.status));
       }
       if (!data.review_payload) throw new Error(ocrReviewRouteErrorMessage('invalid_response'));
       ocrReviewLastMeta = (data.review_meta && typeof data.review_meta === 'object') ? data.review_meta : null;
-      return ocrReviewNormalizePayload(data.review_payload);
+      return ocrReviewEnsureActionablePayload(data.review_payload);
     }
 
     async function ocrReviewOpenRouteFlow() {
@@ -4894,6 +6499,7 @@ window.todayLocalKey = function () {
         if (imageValidationMessage) {
           ocrReviewPayload = null;
           ocrReviewClearPanel();
+          ocrReviewClearFallback();
           ocrTestSheetSetStatus(imageValidationMessage, 'error');
           return;
         }
@@ -4902,18 +6508,21 @@ window.todayLocalKey = function () {
           btnOcrReviewOpen.textContent = '사진 인식 중...';
         }
         ocrReviewLastMeta = null;
+        ocrReviewClearFallback();
         ocrReviewPayload = ocrReviewClone(await ocrReviewRunWithProgress(() => ocrReviewFetchRoutePayload(t, round, imageFile)));
         ocrReviewRender();
         ocrTestSheetSetStatus(ocrReviewMetaStatusMessage(ocrReviewLastMeta));
       } catch (err) {
         ocrReviewPayload = null;
         ocrReviewClearPanel();
-        window.__OCR_PHASE1_LAST_OPEN_ERROR__ = err?.message || String(err || '');
-        ocrTestSheetSetStatus(err?.message || '사진 인식 검토 정보를 열지 못했습니다. 기존 방식으로 입력해주세요.', 'error');
+        const message = ocrReviewSafeFailureMessage(err?.message);
+        window.__OCR_PHASE1_LAST_OPEN_ERROR__ = message;
+        ocrReviewRenderFallback(message);
+        ocrTestSheetSetStatus(message, 'error');
       } finally {
         if (btnOcrReviewOpen) {
           btnOcrReviewOpen.disabled = !ocrPhase1TestEligible(ocrPhase1CurrentTest());
-          btnOcrReviewOpen.textContent = '답안 사진 넣기';
+          btnOcrReviewOpen.textContent = '사진 인식 결과 확인';
         }
       }
     }
@@ -4981,6 +6590,7 @@ window.todayLocalKey = function () {
       renderSelection(preselectTestId);
       answersTextEl.value = '';
       ocrReviewClearAnswersTextOrigin();
+      if (OCR_TEST_SHEET_ENABLED) ocrReviewEnsureAnswersTextLineCount();
       memoEl.value = '';
       ocrTestSheetResetControls();
       ocrPhase1UpdateEligibilityState();
@@ -5011,6 +6621,7 @@ window.todayLocalKey = function () {
       resetResultPanel();
       ocrTestSheetSetStatus();
       ocrReviewClearPanel();
+      ocrReviewClearFallback();
       renderTestOptions();
       ocrReviewClearStaleAnswersText('시험 종류가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
       ocrPhase1UpdateEligibilityState();
@@ -5020,6 +6631,7 @@ window.todayLocalKey = function () {
       resetResultPanel();
       ocrTestSheetSetStatus();
       ocrReviewClearPanel();
+      ocrReviewClearFallback();
       const t = findTestById(selType.value, selTestId.value, currentCur());
       renderRoundOptions(t?.round || selRound.value);
       updateInfo();
@@ -5031,6 +6643,7 @@ window.todayLocalKey = function () {
       resetResultPanel();
       ocrTestSheetSetStatus();
       ocrReviewClearPanel();
+      ocrReviewClearFallback();
       const myCur = currentCur();
       const current = findTestById(selType.value, selTestId.value, myCur);
       const sibling = findSiblingTestByRound(selType.value, current, selRound.value, myCur);
@@ -5047,13 +6660,13 @@ window.todayLocalKey = function () {
         const testId = String(test?.id || test?.testId || test?.label || '');
         if (!open(testId)) return false;
         if (!ocrPhase1UpdateEligibilityState()) return false;
-        ocrTestSheetSetStatus('답안 사진 넣기 버튼을 눌러 사진 인식 검토를 열어 주세요.');
+        ocrTestSheetSetStatus('사진 인식 결과 확인 버튼을 눌러주세요.');
         setTimeout(() => {
           try { btnOcrReviewOpen?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
         }, 0);
         return true;
       } catch {
-        ocrTestSheetSetStatus('사진 인식 검토를 열지 못했습니다. 기존 방식으로 입력해주세요.', 'error');
+        ocrTestSheetSetStatus('사진 인식 결과를 열지 못했습니다. 답안을 직접 입력해 주세요.', 'error');
         return false;
       }
     };
@@ -5070,10 +6683,16 @@ window.todayLocalKey = function () {
         createFixturePayload: createReviewFixturePayloadForTest,
         convertToAnswersText: payload => ocrReviewConvertToAnswersText(payload),
         findForbiddenKeys: payload => ocrReviewFindForbiddenKeys(payload),
+        findForbiddenPathValues: payload => ocrReviewFindForbiddenPathValues(payload),
         parseAnswersTextForTest: (text, problems = OCR_REVIEW_PROBLEM_COUNT) => parseAnswerSpec(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
         answerCountValidationMessage: (text, problems = OCR_REVIEW_PROBLEM_COUNT) => answerCountValidationMessage(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
         answerModeValidationMessage: (text, testId = selTestId.value, problems = OCR_REVIEW_PROBLEM_COUNT) => answerModeValidationMessageForAnswersText(text, testId, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
         submitOffsetGuardMessage: (text, test = findTestById(selType.value, selTestId.value, currentCur()), round = selRound.value) => submitOffsetGuardMessageForAnswersText(text, test, round),
+        validateActionablePayloadForTest: payload => ocrReviewEnsureActionablePayload(payload),
+        getSubmitGuardStateForTest: (testId = selTestId.value, round = selRound.value) => ocrReviewClone(ocrReviewSubmissionBlockState(testId, round)),
+        getSubmitReadinessStateForTest: (testId = selTestId.value, round = selRound.value) => ocrReviewClone(ocrReviewSubmissionBlockState(testId, round)),
+        getBlankAnswerStateForTest: (text = answersTextEl.value, problems = OCR_REVIEW_PROBLEM_COUNT) => ocrReviewClone(submitBlankAnswerState(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT)),
+        serializeAnswersTextForSubmitForTest: (text = answersTextEl.value, problems = OCR_REVIEW_PROBLEM_COUNT) => submitAnswersTextForRequest(text, Number(problems) || OCR_REVIEW_PROBLEM_COUNT),
         getCurrentPayload: () => ocrReviewPayload ? ocrReviewClone(ocrReviewPayload) : null,
         getAssignedCaptureStateForTest: (test = {}) => {
           const requestedTestId = String(test?.id || test?.testId || test?.label || '');
@@ -5093,7 +6712,10 @@ window.todayLocalKey = function () {
         },
         startAssignedCaptureForTest: (test = {}) => window.ocrTestSheetStartCapture(test),
         renderPayloadForTest: payload => {
-          ocrReviewPayload = ocrReviewClone(ocrReviewNormalizePayload(payload));
+          ocrReviewPayload = null;
+          ocrReviewClearPanel();
+          ocrReviewClearFallback();
+          ocrReviewPayload = ocrReviewClone(ocrReviewEnsureActionablePayload(payload));
           ocrReviewRender();
           return ocrReviewPanel;
         },
@@ -5104,6 +6726,67 @@ window.todayLocalKey = function () {
           ocrRound: answersTextEl.dataset.ocrRound || '',
           contextMatches: ocrReviewAnswersTextContextMatches(),
         }),
+        getUnresolvedStateForTest: () => {
+          const fallbackSummary = ocrReviewPayload ? ocrReviewPartialFillSummary(ocrReviewPayload.items) : null;
+          const summary = ocrReviewRefreshUnresolvedSummary(fallbackSummary) || ocrReviewCurrentAnswerLineSummary(fallbackSummary);
+          const wrap = ocrReviewPanel?.querySelector('.ts-ocr-unresolved');
+          return {
+            filledCount: summary.filledQuestions.length,
+            blankCount: summary.blankQuestions.length,
+            blankQuestions: summary.blankQuestions,
+            text: wrap?.textContent || '',
+            title: wrap?.querySelector('.ts-ocr-unresolved-title')?.textContent || '',
+            countText: wrap?.querySelector('.ts-ocr-unresolved-count')?.textContent || '',
+            progressText: wrap?.querySelector('.ts-ocr-unresolved-progress')?.textContent || '',
+            previousButtonDisabled: wrap?.querySelector('.ts-ocr-prev-unresolved')?.disabled === true,
+            nextButtonDisabled: wrap?.querySelector('.ts-ocr-next-unresolved')?.disabled === true,
+          };
+        },
+        getSelfReviewStateForTest: () => {
+          const submissionReadiness = ocrReviewSubmissionBlockState();
+          return {
+            items: ocrReviewPayload ? ocrReviewPayload.items.map(item => ({
+              question_no: item.question_no,
+              review_state: item.review_state,
+              resolution: item.resolution,
+              final_answer: item.final_answer,
+              allow_edit: item.allow_edit,
+              requires_confirmation: item.requires_confirmation,
+              retake_reason: item.retake_reason,
+              user_modified: item.user_modified === true,
+            })) : [],
+            submissionReadiness,
+            submissionBlock: submissionReadiness?.blocked ? submissionReadiness : null,
+            telemetry: ocrReviewTelemetrySnapshot(),
+          };
+        },
+        setReviewAnswerForTest: (questionNo, answer, intent = 'edit') => {
+          const item = ocrReviewPayload?.items.find(entry => entry.question_no === Number(questionNo));
+          if (!item) return false;
+          const updated = ocrReviewSetItemAnswer(item, answer, intent);
+          if (updated) ocrReviewRender();
+          return updated;
+        },
+        focusNextUnresolvedForTest: () => {
+          ocrReviewFocusNextUnresolved();
+          const focusedCard = ocrReviewPanel?.querySelector('.ts-ocr-card[data-ocr-focus="true"]');
+          return {
+            focusedQuestionNo: focusedCard ? Number(focusedCard.dataset.questionNo) : null,
+            status: ocrStatusEl?.textContent || '',
+            state: window.__OCR_PHASE2_REVIEW_TEST_HOOK__?.getUnresolvedStateForTest?.() || null,
+          };
+        },
+        setAnswersTextForTest: text => {
+          answersTextEl.value = String(text || '');
+          answersTextEl.dispatchEvent(new Event('input', { bubbles: true }));
+          return window.__OCR_PHASE2_REVIEW_TEST_HOOK__?.getAnswersTextState?.();
+        },
+        setAnswerLineForTest: (questionNo, answer) => {
+          ocrReviewSetAnswerLine(Number(questionNo), answer);
+          ocrReviewSyncPayloadFromAnswersText();
+          ocrReviewRefreshUnresolvedSummary();
+          return window.__OCR_PHASE2_REVIEW_TEST_HOOK__?.getAnswersTextState?.();
+        },
         applyAnswersTextForTest: payload => {
           const result = ocrReviewPrepareAnswersText(payload);
           ocrReviewApplyAnswersText(result);
@@ -5148,17 +6831,26 @@ window.todayLocalKey = function () {
       hasAnswerPreview: () => Boolean(answerPreviewModal && answerPreviewFrame && answerPreviewOpenExternal),
     };
     ocrPhase1UpdateEligibilityState();
+    ocrReviewUpdateSelectedImageDisplay();
+    btnOcrReviewPick?.addEventListener('click', () => {
+      try { ocrReviewImageEl?.click(); } catch {}
+    });
     ocrReviewImageEl?.addEventListener('change', () => {
       ocrReviewPayload = null;
       ocrReviewClearPanel();
+      ocrReviewClearFallback();
       const file = ocrReviewSelectedImage();
+      ocrReviewUpdateSelectedImageDisplay(file);
       const validationMessage = ocrReviewImageValidationMessage(file);
       if (validationMessage) ocrTestSheetSetStatus(validationMessage, file ? 'error' : '');
-      else ocrTestSheetSetStatus('사진이 선택되었습니다. 답안 사진 넣기 버튼을 눌러주세요.');
+      else ocrTestSheetSetStatus('사진이 선택되었습니다. 사진 인식 결과 확인 버튼을 눌러주세요.');
     });
     answersTextEl.addEventListener('input', () => {
       if (answersTextEl.dataset.ocrProgrammaticFill === '1') return;
+      ocrReviewEnsureAnswersTextLineCount();
       ocrReviewClearAnswersTextOrigin();
+      ocrReviewSyncPayloadFromAnswersText();
+      ocrReviewRefreshUnresolvedSummary();
       resetResultPanel();
     });
     btnOcrReviewOpen?.addEventListener('click', () => { void ocrReviewOpenRouteFlow(); });
@@ -5168,16 +6860,21 @@ window.todayLocalKey = function () {
         showStudentTestSubmissionBlockedNotice();
         return;
       }
+      const reviewBlock = ocrReviewSubmissionBlockState(selTestId.value, selRound.value);
+      if (reviewBlock?.blocked) {
+        if (reviewBlock.firstQuestionNo) ocrReviewFocusQuestion(reviewBlock.firstQuestionNo);
+        alert(reviewBlock.message);
+        return;
+      }
       const type = selType.value;
       const testId = selTestId.value;
-      const answersText = String(answersTextEl.value || '').trim();
+      const answersText = String(answersTextEl.value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       const memo = String(memoEl.value || '').trim();
       const ocrFilledSubmission = answersTextEl.dataset.ocrFilled === '1';
       resetAnswerLink();
       resetResultPanel();
 
       if (!testId) return alert('시험을 선택해주세요.');
-      if (!answersText) return alert('답을 입력해주세요.');
       if (!ocrReviewAnswersTextContextMatches()) {
         return alert('OCR로 채운 답안이 현재 선택한 시험/회차와 맞지 않습니다. 다시 인식하거나 직접 입력해주세요.');
       }
@@ -5188,6 +6885,8 @@ window.todayLocalKey = function () {
       if (answerCountMessage) return alert(answerCountMessage);
       const answerModeMessage = answerModeValidationMessageForAnswersText(answersText, testId, t.problems);
       if (answerModeMessage) return alert(answerModeMessage);
+      const blankAnswerState = submitBlankAnswerState(answersText, t.problems);
+      if (blankAnswerState && !window.confirm(blankAnswerState.message)) return;
       const round = parseInt(t.round || selRound.value, 10) || 1;
       if (selRound) selRound.value = String(round);
       const offsetGuardMessage = submitOffsetGuardMessageForAnswersText(answersText, t, round);
@@ -5199,6 +6898,7 @@ window.todayLocalKey = function () {
 
       // ✅ 1) 서버 자동 채점/저장
       try {
+        const requestAnswersText = submitAnswersTextForRequest(answersText, t.problems);
         const res = await fetch('/api/submit-test', {
           method: 'POST',
           headers: CT,
@@ -5206,7 +6906,7 @@ window.todayLocalKey = function () {
             sid,
             testId,
             round,
-            answersText,
+            answersText: requestAnswersText,
             memo,
             answerSource: ocrFilledSubmission ? 'ocr_review' : 'manual',
             ocrReview: ocrFilledSubmission

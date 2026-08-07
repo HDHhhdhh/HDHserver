@@ -21,6 +21,11 @@ let logOpenSeq = 0;
 let logModalReady = true;
 let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
+let logModalAccessMode = 'full';
+
+function isContextMenuOnlyAccess() {
+  return logModalAccessMode === 'all-students-readonly';
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function nowHHMM() {
@@ -561,6 +566,57 @@ function injectStyles() {
     }
     #logModal .actions #logCompleteBtn{ min-width:180px; }
     body.dark #logModal .actions button{ border-color:#334155; background:#1f2937; color:#e5e7eb; }
+    #logModal [hidden]{ display:none !important; }
+    #logModal[data-access-mode="all-students-readonly"] :where(textarea, input:disabled){ cursor:default; }
+    #logModal[data-access-mode="all-students-readonly"] #logProgress .progress-cell{ cursor:context-menu; }
+    #logModal[data-access-mode="all-students-readonly"] #logNotes{
+      resize:none;
+      background:#f8fafc;
+      border-style:dashed;
+      word-break:keep-all;
+      overflow-wrap:break-word;
+    }
+    body.dark #logModal[data-access-mode="all-students-readonly"] #logNotes{ background:#111827; }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled{
+      opacity:.58;
+      filter:grayscale(1);
+      cursor:default;
+    }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled::-webkit-slider-thumb{
+      background:#94a3b8;
+    }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled::-moz-range-thumb{
+      background:#94a3b8;
+    }
+
+    @media (max-width:520px){
+      #logModal{ align-items:stretch; }
+      #logModal .log-card{
+        width:100%; max-width:100vw; max-height:100dvh;
+        padding:12px; border-radius:0;
+      }
+      #logModal .log-header-row{ display:block; }
+      #logModal h3{
+        margin:0; font-size:24px; line-height:1.2;
+        word-break:keep-all; overflow-wrap:normal;
+      }
+      #logModal .actions{
+        display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px; margin-top:12px;
+      }
+      #logModal .actions button{
+        width:100%; min-width:0; height:44px;
+        padding:0 10px; border-radius:10px; font-size:16px;
+      }
+      #logModal #logNotes{
+        height:40vh; min-height:220px;
+        font-size:20px; line-height:1.45;
+      }
+      #logProgress{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .hwHeaderTop, .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwHeaderBot, .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .thisCell{ grid-template-columns:1fr; }
+    }
   `;
   document.head.appendChild(s);
 }
@@ -1283,6 +1339,26 @@ export function initLogModal() {
   const logClose = $('logClose');
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
+  const applyReadOnlyRecordAccess = () => {
+    const readOnly = isContextMenuOnlyAccess();
+    logModal.dataset.accessMode = logModalAccessMode;
+    logNotes.readOnly = readOnly;
+    logNotes.setAttribute('aria-readonly', readOnly ? 'true' : 'false');
+    document.querySelectorAll('#hwBody input').forEach(input => {
+      input.disabled = readOnly;
+    });
+    document.querySelectorAll('#hwBody .hw-del-btn').forEach(button => {
+      button.hidden = readOnly;
+    });
+    const addRow = $('hwAddRow');
+    if (addRow) addRow.hidden = readOnly;
+    if (logComplete) logComplete.hidden = readOnly;
+    if (logSave) logSave.textContent = readOnly ? '영상 진도 저장' : '저장';
+    const progressLabel = progEl.previousElementSibling;
+    if (progressLabel?.tagName === 'LABEL') {
+      progressLabel.textContent = readOnly ? '진도 (우클릭만 변경 가능)' : '진도';
+    }
+  };
   const resetLogModalScroll = () => {
     const card = logModal?.querySelector('.log-card');
     if (card) card.scrollTop = 0;
@@ -1296,6 +1372,7 @@ export function initLogModal() {
       const btn = e.target.closest('button.hw-del-btn');
       if (!btn) return;
       if (!btn.closest('#logModal')) return;
+      if (isContextMenuOnlyAccess()) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -1315,6 +1392,7 @@ export function initLogModal() {
   }
 
   document.getElementById('hwBody')?.addEventListener('input', (e) => {
+    if (isContextMenuOnlyAccess()) return;
     const t = e.target;
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
@@ -1324,6 +1402,7 @@ export function initLogModal() {
   });
 
   document.getElementById('hwBody')?.addEventListener('change', (e) => {
+    if (isContextMenuOnlyAccess()) return;
     const t = e.target;
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
@@ -1335,6 +1414,7 @@ export function initLogModal() {
   });
 
   $('hwAddRow')?.addEventListener('click', () => {
+    if (isContextMenuOnlyAccess()) return;
     const lastBook = Array.from(document.querySelectorAll('#hwBody .hwBook'))
       .map(i => (i.value || '').trim())
       .filter(Boolean)
@@ -1388,6 +1468,7 @@ export function initLogModal() {
 
   const handleMove = (e) => {
     if (!pointerDown) return;
+    if (isContextMenuOnlyAccess() && dragButton !== 2) return;
     const cell = e.target.closest('.progress-cell');
     if (!cell) return;
 
@@ -1416,6 +1497,7 @@ export function initLogModal() {
 
   progEl.addEventListener('mousedown', (e) => {
     if (e.button !== 0 && e.button !== 2) return;
+    if (isContextMenuOnlyAccess() && e.button !== 2) return;
     const cell = e.target.closest('.progress-cell');
     if (!cell) return;
 
@@ -1437,6 +1519,10 @@ export function initLogModal() {
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingLogSid = tr?.dataset?.sid;
     editingLogDate = tr?.dataset?.date || getAdminDate();
+    logModalAccessMode = opts.accessMode === 'all-students-readonly'
+      ? 'all-students-readonly'
+      : 'full';
+    applyReadOnlyRecordAccess();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
@@ -1564,6 +1650,7 @@ export function initLogModal() {
 
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
     renderHwTable(merged);
+    applyReadOnlyRecordAccess();
 
     logModalSnapshot = {
       // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
@@ -1596,6 +1683,7 @@ export function initLogModal() {
         cell.dataset.cleared = '';
 
         cell.addEventListener('click', () => {
+          if (isContextMenuOnlyAccess()) return;
           if (suppressClickOnce) { suppressClickOnce = false; return; }
           const s = cell.dataset.state || 'none';
           updateCellState(cell, nextStateOf(s));
@@ -1629,18 +1717,9 @@ export function initLogModal() {
 
   window.openRecordPopupForRow = openLogModalForRow;
 
-  document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog,.openStudentPopups');
-    if (!btn) return;
-
-    const tr = btn.closest('tr[data-sid]');
-    if (!tr) return;
-
-    const unified = btn.classList.contains('openStudentPopups');
-    if (!unified) {
-      await openLogModalForRow(tr);
-      return;
-    }
+  async function openStudentPopupsForRow(rowOrButton, opts = {}) {
+    const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
+    if (!tr?.dataset?.sid) return;
 
     if (window.showStudentPopupBackdrop) {
       try { window.showStudentPopupBackdrop(); } catch {}
@@ -1653,8 +1732,14 @@ export function initLogModal() {
       });
     } catch {}
 
+    const logOptions = {
+      layout: 'student-work',
+      tooltipAlreadyShown: true,
+    };
+    if (opts.accessMode) logOptions.accessMode = opts.accessMode;
+
     const openTasks = [
-      openLogModalForRow(tr, { layout: 'student-work', tooltipAlreadyShown: true }).catch((err) => {
+      openLogModalForRow(tr, logOptions).catch((err) => {
         console.warn('[logModal] open log popup failed:', err);
       }),
     ];
@@ -1670,6 +1755,24 @@ export function initLogModal() {
     }
 
     await Promise.allSettled(openTasks);
+  }
+
+  window.openStudentPopupsForRow = openStudentPopupsForRow;
+
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.editLog,.openStudentPopups');
+    if (!btn) return;
+
+    const tr = btn.closest('tr[data-sid]');
+    if (!tr) return;
+
+    const unified = btn.classList.contains('openStudentPopups');
+    if (!unified) {
+      await openLogModalForRow(tr);
+      return;
+    }
+
+    await openStudentPopupsForRow(tr);
   });
 
   const close = () => {
@@ -1683,6 +1786,7 @@ export function initLogModal() {
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     logModalCarriedTestAssignment = null;
+    logModalAccessMode = 'full';
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
     if (wasUnified) {
       try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
@@ -1719,6 +1823,10 @@ export function initLogModal() {
 
     const changedProg = collectChangedProgressPatch();
     await saveChangedProgressPatch(today, sid, changedProg);
+
+    if (isContextMenuOnlyAccess()) {
+      return { allProgressDone: false };
+    }
 
     const oldTotal = collectPriorProgressByMid(today, sid);
     const summary = summarizeProgressPatch(changedProg, oldTotal);
@@ -1816,8 +1924,10 @@ export function initLogModal() {
       if (unified && typeof window.saveTestAssignmentPopup === 'function') {
         await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
       }
-      await reapplyCarriedTestAssignmentForCurrent();
-      toast('수업 기록 저장됨');
+      if (!isContextMenuOnlyAccess()) {
+        await reapplyCarriedTestAssignmentForCurrent();
+      }
+      toast(isContextMenuOnlyAccess() ? '영상 진도 저장됨' : '수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
     } catch (err) {

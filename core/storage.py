@@ -148,7 +148,7 @@ def _mirror_copy(path) -> None:
         return
 
 
-def save_atomic(path, obj: Any) -> None:
+def save_atomic(path, obj: Any, *, compact: bool = False) -> None:
     """
     원자적 쓰기(임시파일 → 교체).
     Windows에서 WinError 32(다른 프로세스가 파일 사용 중) 뜨는 케이스가 있어:
@@ -156,7 +156,11 @@ def save_atomic(path, obj: Any) -> None:
     - os.replace를 짧게 몇 번 재시도
     """
     tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), "utf-8")
+    if compact:
+        serialized = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    else:
+        serialized = json.dumps(obj, ensure_ascii=False, indent=2)
+    tmp.write_text(serialized, "utf-8")
 
     last_err = None
     for _ in range(10):

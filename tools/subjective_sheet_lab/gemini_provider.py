@@ -7,9 +7,9 @@ import mimetypes
 import os
 import re
 import sys
-import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +17,7 @@ from typing import Final, TypeAlias, assert_never
 
 from tools.subjective_sheet_lab.gemini_provider_response import ResponseShapeFailure, ResponseText, response_text_result
 from tools.subjective_sheet_lab.ocr_answer_mode_policy import answer_mode_for_question
+from tools.subjective_sheet_lab.phase2e_stable_cache import deidentified_png_bytes
 
 # noqa: SIZE_OK - legacy lab CLI provider; response shape parsing is split out for new work.
 
@@ -30,8 +31,6 @@ SUPPORTED_SUFFIXES: Final[set[str]] = {".png", ".jpg", ".jpeg", ".webp"}
 QUESTION_RE: Final[re.Pattern[str]] = re.compile(r"q(\d{3})\.(?:png|jpe?g|webp)$", re.IGNORECASE)
 CONTACT_RANGE_RE: Final[re.Pattern[str]] = re.compile(r"q(\d{3})\D+q(\d{3})", re.IGNORECASE)
 JSON_BLOCK_RE: Final[re.Pattern[str]] = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-MAX_RETRY_ATTEMPTS: Final[int] = 2
-RETRY_BACKOFF_SECONDS: Final[float] = 4.0
 CACHE_FILE_NAME: Final[str] = "gemini_provider_cache.json"
 CACHE_STATUS_KEY: Final[str] = "cache_status"
 CACHE_STATUS_RECOGNIZED: Final[str] = "completed_recognized"
@@ -104,6 +103,7 @@ class CliConfig:
     resume: bool
     max_calls: int | None
     test_id: str | None = None
+    numeric_only: bool = False
 
 
 def parse_args() -> CliConfig:
@@ -129,6 +129,7 @@ def parse_args() -> CliConfig:
         resume=bool(args.resume),
         max_calls=int(args.max_calls) if args.max_calls is not None else None,
         test_id=str(args.test_id) if args.test_id else None,
+        numeric_only=False,
     )
 
 
@@ -214,21 +215,21 @@ def question_from_path(path: Path) -> int | None:
 def recognize_from_config(config: CliConfig, api_key: str) -> list[RecognizedItem]:
     if config.crop_dir is not None:
         crops = load_crop_images(config.crop_dir)
-        return recognize_crops(crops, api_key, config.model)
+        return recognize_crops(crops, api_key, config.model, config.numeric_only)
 
     contacts = load_contact_images(config)
     return recognize_contact_sheets(contacts, api_key, config)
 
 
-def recognize_crops(crops: list[CropImage], api_key: str, model: str) -> list[RecognizedItem]:
-    payload = build_gemini_payload(crops)
+def recognize_crops(crops: list[CropImage], api_key: str, model: str, numeric_only: bool = False) -> list[RecognizedItem]:
+    payload = build_gemini_payload(crops, numeric_only)
     response = post_gemini(payload, api_key, model)
     text = extract_response_text(response)
     return parse_recognized_items(text, crops)
 
 
-def build_gemini_payload(crops: list[CropImage]) -> dict[str, JsonValue]:
-    parts: list[JsonValue] = [{"text": prompt_text(crops)}]
+def build_gemini_payload(crops: list[CropImage], numeric_only: bool = False) -> dict[str, JsonValue]:
+    parts: list[JsonValue] = [{"text": prompt_text(crops, numeric_only)}]
     for crop in crops:
         parts.append({"text": f"question={crop.question:03d}, filename={crop.path.name}"})
         parts.append({"inline_data": {"mime_type": crop.mime_type, "data": crop.data_base64}})
@@ -241,8 +242,19 @@ def build_gemini_payload(crops: list[CropImage]) -> dict[str, JsonValue]:
     }
 
 
-def prompt_text(crops: list[CropImage]) -> str:
+def prompt_text(crops: list[CropImage], numeric_only: bool = False) -> str:
     questions = ", ".join(f"{crop.question}" for crop in crops)
+    if numeric_only:
+        return (
+            "Read only the handwritten numeric answer in each crop image. "
+            "Ignore boxes, borders, printed labels, file names, and all non-answer marks. "
+            "Every recognized value must be an ASCII decimal integer made only of digits 0 through 9. "
+            "Never output Korean choices, letters, operators, signs, fractions, equations, spaces, or explanations. "
+            "Do not solve, correct, infer, normalize, or guess. If a digit sequence is not clearly readable, recognized must be ?. "
+            f"Return JSON only for questions: {questions}. "
+            "The JSON schema must be exactly: "
+            "{\"items\":[{\"question\":1,\"recognized\":\"...\"}]}"
+        )
     return (
         "Read only the handwritten math answer in each crop image. "
         "Ignore boxes, borders, printed labels, and file names. "
@@ -299,17 +311,21 @@ def questions_from_contact_path(path: Path) -> tuple[int, ...]:
 def recognize_contact_sheets(contacts: list[ContactImage], api_key: str, config: CliConfig) -> list[RecognizedItem]:
     cached = load_cached_items(config) if config.resume else {}
     recognized_by_question = dict(cached)
+    if config.resume and recognized_by_question:
+        return items_for_contacts(contacts, recognized_by_question)
     pending_contacts = contacts_pending_recognition(contacts, recognized_by_question, config.resume)
     if not pending_contacts:
         return items_for_contacts(contacts, recognized_by_question)
     if config.max_calls is not None and config.max_calls < 1:
         return items_for_contacts(contacts, recognized_by_question)
 
-    payload = build_contact_payload(pending_contacts, config.test_id)
+    payload = build_contact_payload(pending_contacts, config.test_id, config.numeric_only)
     response = post_gemini(payload, api_key, config.model)
     text = extract_response_text(response)
     for item in parse_contact_items(text, pending_contacts):
         recognized_by_question[item.question] = item.recognized
+    for question in known_contact_questions(contacts):
+        recognized_by_question.setdefault(question, "?")
     write_contact_cache(config, contacts, recognized_by_question)
     return items_for_contacts(contacts, recognized_by_question)
 
@@ -320,8 +336,67 @@ def contacts_pending_recognition(contacts: list[ContactImage], recognized_by_que
     return [contact for contact in contacts if not contact.questions or not all(question in recognized_by_question for question in contact.questions)]
 
 
-def build_contact_payload(contacts: list[ContactImage], test_id: str | None = None) -> dict[str, JsonValue]:
-    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts, test_id)}]
+def eligible_second_pass_questions(
+    expected_questions: Iterable[int],
+    recognized_by_question: Mapping[int, str],
+    *,
+    low_confidence_questions: Iterable[int] = (),
+) -> tuple[int, ...]:
+    expected = tuple(sorted(set(expected_questions)))
+    if any(question < 1 or question > 20 for question in expected):
+        raise GeminiProviderError("second-pass questions must be in 1..20", reason="provider_input_rejected")
+    low_confidence = set(low_confidence_questions)
+    if any(question < 1 or question > 20 for question in low_confidence):
+        raise GeminiProviderError("low-confidence questions must be in 1..20", reason="provider_input_rejected")
+    return tuple(
+        question
+        for question in expected
+        if question in low_confidence or not recognized_by_question.get(question, "").strip() or recognized_by_question.get(question, "").strip() == "?"
+    )
+
+
+def recognize_eligible_second_pass_crops(
+    crop_dir: Path,
+    eligible_questions: Iterable[int],
+    api_key: str,
+    model: str,
+    *,
+    numeric_only: bool = False,
+) -> list[RecognizedItem]:
+    questions = tuple(sorted(set(eligible_questions)))
+    if not questions:
+        return []
+    crops = load_deidentified_second_pass_crops(crop_dir, questions)
+    return recognize_crops(crops, api_key, model, numeric_only)
+
+
+def load_deidentified_second_pass_crops(crop_dir: Path, questions: tuple[int, ...]) -> list[CropImage]:
+    if not crop_dir.is_dir():
+        raise GeminiProviderError("second-pass crop directory not found", reason="provider_input_rejected")
+    crops: list[CropImage] = []
+    for question in questions:
+        if question < 1 or question > 20:
+            raise GeminiProviderError("second-pass question must be in 1..20", reason="provider_input_rejected")
+        source = crop_dir / f"q{question:03d}.png"
+        if not source.is_file():
+            raise GeminiProviderError("eligible second-pass crop is missing", reason="provider_input_rejected")
+        try:
+            data = deidentified_png_bytes(source)
+        except OSError as exc:
+            raise GeminiProviderError("eligible second-pass crop is not a safe PNG", reason="provider_input_rejected") from exc
+        crops.append(
+            CropImage(
+                question=question,
+                path=Path(f"answer_sheet_q{question:03d}.png"),
+                mime_type="image/png",
+                data_base64=base64.b64encode(data).decode("ascii"),
+            )
+        )
+    return crops
+
+
+def build_contact_payload(contacts: list[ContactImage], test_id: str | None = None, numeric_only: bool = False) -> dict[str, JsonValue]:
+    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts, test_id, numeric_only)}]
     for contact in contacts:
         label = question_label(contact.questions)
         parts.append({"text": f"contact_sheet={contact.path.name}, questions={label}"})
@@ -335,8 +410,20 @@ def build_contact_payload(contacts: list[ContactImage], test_id: str | None = No
     }
 
 
-def contact_prompt_text(contacts: list[ContactImage], test_id: str | None = None) -> str:
+def contact_prompt_text(contacts: list[ContactImage], test_id: str | None = None, numeric_only: bool = False) -> str:
     questions = question_label(known_contact_questions(contacts))
+    if numeric_only:
+        return (
+            "Read only the handwritten numeric answer in each row of these contact sheet images. "
+            "The large original crop is the primary evidence; the enhanced crop is only secondary reference. "
+            "Ignore borders, boxes, labels, filenames, crop artifacts, and cancelled marks. "
+            "Every recognized value must be an ASCII decimal integer made only of digits 0 through 9. "
+            "Never output Korean choices, letters, operators, signs, fractions, equations, spaces, or explanations. "
+            "Do not solve, correct, infer, normalize, or guess. If a digit sequence is unclear or variants disagree, recognized must be ?. "
+            f"Return JSON only for questions: {questions}. "
+            "The JSON schema must be exactly: "
+            "{\"items\":[{\"question\":1,\"recognized\":\"...\"}]}"
+        )
     mode_guidance = answer_mode_prompt_guidance(known_contact_questions(contacts), test_id)
     return (
         "Read only the handwritten math answers in these contact sheet images. "
@@ -495,15 +582,8 @@ def post_gemini(payload: dict[str, JsonValue], api_key: str, model: str) -> dict
         },
         method="POST",
     )
-    for attempt in range(MAX_RETRY_ATTEMPTS + 1):
-        try:
-            with urllib.request.urlopen(request, timeout=90) as response:
-                decoded = response.read().decode("utf-8")
-            break
-        except urllib.error.HTTPError as exc:
-            if exc.code != 503 or attempt >= MAX_RETRY_ATTEMPTS:
-                raise
-            time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+    with urllib.request.urlopen(request, timeout=90) as response:
+        decoded = response.read().decode("utf-8")
     payload_value = json.loads(decoded)
     if not isinstance(payload_value, dict):
         raise GeminiProviderError("Gemini API response was not a JSON object")

@@ -12,15 +12,20 @@ function normalizeLedgerUrl(value) {
   }
 }
 
+export function getAttendanceLedgerUrl() {
+  const link = document.getElementById('attendanceLedgerLink');
+  return normalizeLedgerUrl(link?.href || window.localStorage.getItem(ATTENDANCE_LEDGER_STORAGE_KEY));
+}
+
 export function initAttendanceLedgerLink() {
   const link = document.getElementById('attendanceLedgerLink');
   if (!link) return;
+  const settingsButton = document.getElementById('attendanceLedgerSettings');
 
   const savedUrl = normalizeLedgerUrl(window.localStorage.getItem(ATTENDANCE_LEDGER_STORAGE_KEY));
   link.href = savedUrl || DEFAULT_ATTENDANCE_LEDGER_URL;
 
-  link.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
+  const editLedgerUrl = () => {
     const next = window.prompt('학원 출석부 링크를 입력하세요. 빈 값으로 저장하면 기본 링크로 돌아갑니다.', link.href);
     if (next == null) return;
 
@@ -36,5 +41,12 @@ export function initAttendanceLedgerLink() {
     } else {
       window.localStorage.setItem(ATTENDANCE_LEDGER_STORAGE_KEY, normalized);
     }
+  };
+
+  link.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    editLedgerUrl();
   });
+
+  settingsButton?.addEventListener('click', editLedgerUrl);
 }

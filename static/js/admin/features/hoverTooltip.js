@@ -2,6 +2,7 @@
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 export function initHoverTooltip() {
   let tipEl = null;
@@ -540,20 +541,23 @@ export function initHoverTooltip() {
   function placeForLogModal() {
     if (!tipEl) return;
 
+    tipEl.style.transform = 'none';
     tipEl.style.maxWidth = 'min(1200px, 94vw)';
-
-    // 저장된 위치 있으면 우선 사용
-    const stored = loadLogTipPos();
-    if (stored) {
-      tipEl.style.left = `${stored.left}px`;
-      tipEl.style.top = `${stored.top}px`;
-      return;
-    }
 
     const pad = 16;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const rect = tipEl.getBoundingClientRect();
+    const maxLeft = Math.max(pad, vw - rect.width - pad);
+    const maxTop = Math.max(pad, vh - rect.height - pad);
+
+    // 저장된 위치 있으면 우선 사용
+    const stored = loadLogTipPos();
+    if (stored) {
+      tipEl.style.left = `${Math.min(Math.max(pad, stored.left), maxLeft)}px`;
+      tipEl.style.top = `${Math.min(Math.max(pad, stored.top), maxTop)}px`;
+      return;
+    }
 
     const card =
       document.querySelector('#logModal .log-card') ||
@@ -581,8 +585,8 @@ export function initHoverTooltip() {
       }
     }
 
-    tipEl.style.left = `${left}px`;
-    tipEl.style.top = `${top}px`;
+    tipEl.style.left = `${Math.min(Math.max(pad, left), maxLeft)}px`;
+    tipEl.style.top = `${Math.min(Math.max(pad, top), maxTop)}px`;
   }
 
   function resetStudentWorkTooltipPlacement() {
@@ -609,12 +613,12 @@ export function initHoverTooltip() {
   // HTML 구성
   // ───────────────────────────────────────────
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = false } = opts;
+    const { includeVideo = true, includeTests = false, includeAssistantNotes = false } = opts;
 
     const name = (stu.name || '').trim();
     const level = stu.level || '';
-    const days = [stu.day1, stu.day2, stu.day3].filter(Boolean).join('·');
-    const subBooks = [stu.subBook1, stu.subBook2].filter(Boolean).join(', ');
+    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
       stu.school ||
@@ -651,7 +655,9 @@ export function initHoverTooltip() {
       ${textbookPublisherBlock}
     `;
 
-    const examDetailMinHeight = !includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px');
+    const examDetailMinHeight = includeAssistantNotes
+      ? '82px'
+      : (!includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px'));
     const examRows = (scheduleEntries.length ? scheduleEntries : [sc]).map((entry, idx) => {
       const exam = pickExam(entry || {}, 'auto');
       const remain = calcRemainingSessions(entry || {}, stu);
@@ -690,20 +696,42 @@ export function initHoverTooltip() {
       ? `<div style="margin-top:10px; font-size:12.5px; font-weight:800; opacity:.9">${examTitle}</div>${examRows}`
       : '<div style="opacity:.8;margin-top:6px;font-size:12px">학교 정보 없음</div>';
 
+    const assistantNotesBlock = includeAssistantNotes ? `
+      <section id="assistantStudentNotes" class="assistant-student-notes" data-student-id="${escHtml(stu.id)}">
+        <div class="assistant-note-heading">
+          <div>
+            <h3>조교 메모방</h3>
+          </div>
+        </div>
+        <div class="assistant-note-author-row" role="group" aria-label="마지막 작성자 선택">
+          <span class="assistant-note-author-label">작성자</span>
+          <div class="assistant-note-author-buttons">
+            <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
+            <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
+            <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
+            <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
+          </div>
+        </div>
+        <div class="assistant-note-meta" data-note-meta>저장된 메모 없음</div>
+        <textarea class="assistant-note-input" data-note-input rows="4" maxlength="5000" placeholder="장기 학습 경향과 진도를 기록하세요."></textarea>
+        <div class="assistant-note-compose-actions">
+          <div class="assistant-note-save-info">
+            <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
+          </div>
+          <button class="assistant-note-save" data-note-save type="button">저장</button>
+        </div>
+      </section>
+    ` : '';
+
     const progBlock = renderProgressTables(stu, { includeVideo, includeTests });
 
-    return `${mainBlock}${examBlock}${progBlock}`;
+    return `${mainBlock}${examBlock}${assistantNotesBlock}${progBlock}`;
   }
 
   function buildTodayNameTipHtml(stu) {
     const name = String(stu?.name || '').trim();
     const level = String(stu?.level || '').trim();
-    const days = Object.keys(stu || {})
-      .filter(k => /^day\d+$/.test(k) && stu[k])
-      .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
-      .map(k => String(stu[k]).trim())
-      .filter(Boolean)
-      .join(' · ');
+    const days = regularAttendanceDaysForStudent(stu).join(' · ');
 
     const schoolName =
       stu.school ||
@@ -760,8 +788,14 @@ export function initHoverTooltip() {
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = variant === 'today'
       ? buildTodayNameTipHtml(stu)
-      : buildTipHtml(stu, { includeVideo, includeTests });
+      : buildTipHtml(stu, { includeVideo, includeTests, includeAssistantNotes: useStudentWorkLayout });
     el.style.display = 'block';
+    const assistantNotesRoot = el.querySelector('#assistantStudentNotes');
+    if (assistantNotesRoot) {
+      document.dispatchEvent(new CustomEvent('admin:assistant-notes-mount', {
+        detail: { root: assistantNotesRoot, studentId: String(stu.id || '') },
+      }));
+    }
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
     if (tipMode === 'fixed') {
@@ -832,7 +866,7 @@ export function initHoverTooltip() {
   // 기존 hover 모드
   // ───────────────────────────────────────────
   function getHoverTooltipHost(el) {
-    return el?.closest?.('#todayWrap, #doneWrap') || null;
+    return el?.closest?.('#todayWrap, #doneWrap, #allWrap') || null;
   }
 
   function onOver(ev) {
@@ -863,7 +897,7 @@ export function initHoverTooltip() {
   }
 
   function bindTooltipHosts() {
-    ['todayWrap', 'doneWrap'].forEach((id) => {
+    ['todayWrap', 'doneWrap', 'allWrap'].forEach((id) => {
       const host = document.getElementById(id);
       if (!host || host._studentTooltipBound) return;
       host._studentTooltipBound = true;

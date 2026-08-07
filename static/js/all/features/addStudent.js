@@ -57,8 +57,6 @@ export function mountNewStudentBar() {
 
     <input class="ns-input" id="ns_school" placeholder="학교">
     <input class="ns-input" id="ns_doc" placeholder="학생 개별 문서 URL(옵션)">
-    <input class="ns-input" id="ns_sb1" placeholder="부교재1">
-    <input class="ns-input" id="ns_sb2" placeholder="부교재2">
 
     <button class="ns-btn" id="ns_add">추가</button>
   </div>`;
@@ -76,9 +74,7 @@ export function mountNewStudentBar() {
 
       level: val('ns_level'),
       school: val('ns_school'),
-      docUrl: val('ns_doc'),
-      subBook1: val('ns_sb1'),
-      subBook2: val('ns_sb2')
+      docUrl: val('ns_doc')
     };
 
     try {

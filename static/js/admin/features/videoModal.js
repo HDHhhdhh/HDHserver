@@ -12,6 +12,7 @@ import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
+import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';
 
 let editingSid = null;
 let editingVideoDate = '';
@@ -28,13 +29,15 @@ let activeExtraQuery = '';
 let activePrimaryVideoMids = new Set();
 let activeVideoNoteHtml = '';
 let videoOpenSeq = 0;
+let studentPopupScrollPosition = null;
 
 const AUTO_ASSIGN_FIELD = 'autoVideoAssignCount';
 const DEFAULT_AUTO_ASSIGN_COUNT = 3;
 const ABLE_AUTO_ASSIGN_COUNT = 1;
 const ABLE_CURRICULUM_KEY = 'a:ble';
 const MIN_AUTO_ASSIGN_COUNT = 1;
-const MAX_AUTO_ASSIGN_COUNT = 10;
+const MAX_AUTO_ASSIGN_COUNT = 6;
+const MAX_EFFECTIVE_AUTO_ASSIGN_COUNT = MAX_AUTO_ASSIGN_COUNT * 2;
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 const WATCH_DONE_RATIO = 0.90;
 const WATCH_INTERRUPTED_RATIO = 0.05;
@@ -94,6 +97,51 @@ function autoAssignCountForStudent(stu) {
   return clampAutoAssignCount(stu?.[AUTO_ASSIGN_FIELD], defaultAutoAssignCountForStudent(stu));
 }
 
+function studentScheduleValues(stu) {
+  return Object.keys(stu || {})
+    .filter(key => /^day\d+$/.test(key) && stu[key])
+    .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)))
+    .map(key => String(stu[key]));
+}
+
+function weekdayCharForDate(dateKey) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
+  if (!match) return '';
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return '일월화수목금토'[date.getDay()] || '';
+}
+
+function scheduledSlotsForDate(stu, dateKey) {
+  const override = state.weekendSlots?.[dateKey]?.[String(stu?.id || '')];
+  if (override !== undefined && override !== null) {
+    const overrideSlots = (Array.isArray(override) ? override : [override])
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value >= 1 && value <= 6);
+    if (overrideSlots.length) return Array.from(new Set(overrideSlots)).sort((a, b) => a - b);
+  }
+
+  const weekday = weekdayCharForDate(dateKey);
+  if (!weekday) return [];
+
+  const slotPattern = new RegExp(`${weekday}\\s*([1-6])(?!\\d|:)`, 'g');
+  const slots = studentScheduleValues(stu).flatMap(value =>
+    Array.from(value.matchAll(slotPattern), match => Number(match[1]))
+  );
+  return Array.from(new Set(slots)).sort((a, b) => a - b);
+}
+
+function hasConsecutiveClassesForDate(stu, dateKey) {
+  const slots = scheduledSlotsForDate(stu, dateKey);
+  return slots.some((slot, index) => index > 0 && slot === slots[index - 1] + 1);
+}
+
+function effectiveAutoAssignCountForStudent(stu, dateKey) {
+  const configured = autoAssignCountForStudent(stu);
+  return hasConsecutiveClassesForDate(stu, dateKey)
+    ? configured * 2
+    : configured;
+}
+
 function escapeHtml(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -131,7 +179,10 @@ function injectStudentPopupLayoutStyles() {
       background:rgba(32,32,36,.66);
       backdrop-filter:brightness(.74) grayscale(.25);
     }
+    html.student-popup-open,
+    body.student-popup-open{ overflow:hidden !important; }
     #studentPopupScrim.is-open{ display:block; }
+    #studentPopupMobileNav{ display:none; }
     #vidModal.student-work-layout,
     #logModal.student-work-layout,
     #testModal.student-work-layout{
@@ -196,6 +247,11 @@ function injectStudentPopupLayoutStyles() {
     #vidModal .vid-save-btn:disabled{
       cursor:default;
       opacity:.72;
+    }
+    #vidModal .auto-count-btn{
+      height:30px !important;
+      min-height:30px !important;
+      border-radius:999px !important;
     }
     #vidSavePopup{
       position:fixed;
@@ -350,6 +406,10 @@ function injectStudentPopupLayoutStyles() {
     #testModal.student-work-layout .test-card > *{
       zoom:var(--student-popup-content-zoom) !important;
     }
+    @media (min-width: 601px){
+      #vidModal.student-work-layout #autoAssignControl strong{ font-size:22px !important; }
+      #vidModal.student-work-layout #autoAssignCountLabel{ font-size:20px !important; }
+    }
     #logModal.student-work-layout .log-card{
       position:fixed !important;
       top:var(--student-popup-top) !important;
@@ -400,6 +460,66 @@ function injectStudentPopupLayoutStyles() {
     }
     #logModal.student-work-layout .log-card{ padding:10px !important; }
     #testModal.student-work-layout .test-card{ padding:14px !important; }
+    @media (max-width: 900px){
+      #studentPopupMobileNav.is-open{
+        position:fixed;
+        top:8px;
+        left:12px;
+        right:12px;
+        z-index:99999;
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:4px;
+        padding:4px;
+        border:1px solid rgba(148,163,184,.6);
+        border-radius:12px;
+        background:rgba(15,23,42,.94);
+        box-shadow:0 10px 28px rgba(0,0,0,.36);
+        backdrop-filter:blur(10px);
+      }
+      #studentPopupMobileNav button{
+        min-width:0;
+        height:34px;
+        padding:0 4px;
+        border:1px solid transparent;
+        border-radius:8px;
+        background:transparent;
+        color:#cbd5e1;
+        font-size:12px;
+        font-weight:900;
+        white-space:nowrap;
+        cursor:pointer;
+      }
+      #studentPopupMobileNav button[aria-pressed="true"]{
+        border-color:#60a5fa;
+        background:#2563eb;
+        color:#fff;
+      }
+      #vidModal.student-work-layout .vid-card,
+      #logModal.student-work-layout .log-card,
+      #testModal.student-work-layout .test-card,
+      #adminSchoolTip.student-work-layout{
+        top:54px !important;
+        left:12px !important;
+        right:auto !important;
+        width:calc(100vw - 24px) !important;
+        max-width:calc(100vw - 24px) !important;
+        height:calc(100vh - 66px) !important;
+        max-height:calc(100vh - 66px) !important;
+      }
+      #adminSchoolTip.student-work-layout{
+        overflow:auto !important;
+      }
+      #vidModal.student-work-layout .vid-card > *{
+        zoom:1 !important;
+      }
+      html:not([data-student-popup-active="video"]) #vidModal.student-work-layout .vid-card,
+      html:not([data-student-popup-active="log"]) #logModal.student-work-layout .log-card,
+      html:not([data-student-popup-active="test"]) #testModal.student-work-layout .test-card,
+      html:not([data-student-popup-active="student"]) #adminSchoolTip.student-work-layout{
+        display:none !important;
+      }
+    }
   `;
   document.head.appendChild(s);
   syncStudentPopupLayoutVars();
@@ -452,16 +572,63 @@ function ensureStudentPopupScrim() {
     el.id = 'studentPopupScrim';
     document.body.appendChild(el);
   }
+  let nav = document.getElementById('studentPopupMobileNav');
+  if (!nav) {
+    nav = document.createElement('nav');
+    nav.id = 'studentPopupMobileNav';
+    nav.setAttribute('aria-label', '학생 통합 팝업');
+    nav.innerHTML = `
+      <button type="button" data-student-popup-target="video" aria-pressed="false">영상</button>
+      <button type="button" data-student-popup-target="log" aria-pressed="true">상담</button>
+      <button type="button" data-student-popup-target="test" aria-pressed="false">테스트</button>
+      <button type="button" data-student-popup-target="student" aria-pressed="false">학생정보</button>
+    `;
+    nav.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-student-popup-target]');
+      if (!button) return;
+      setStudentPopupMobileActive(button.dataset.studentPopupTarget);
+    });
+    document.body.appendChild(nav);
+  }
   return el;
 }
 
+function setStudentPopupMobileActive(target = 'log') {
+  const allowed = new Set(['video', 'log', 'test', 'student']);
+  const active = allowed.has(target) ? target : 'log';
+  document.documentElement.dataset.studentPopupActive = active;
+  document.querySelectorAll('#studentPopupMobileNav [data-student-popup-target]').forEach((button) => {
+    button.setAttribute('aria-pressed', button.dataset.studentPopupTarget === active ? 'true' : 'false');
+  });
+}
+
 function showStudentPopupScrim() {
+  if (!studentPopupScrollPosition) {
+    studentPopupScrollPosition = {
+      x: window.scrollX || 0,
+      y: window.scrollY || 0,
+    };
+  }
   syncStudentPopupLayoutVars();
   ensureStudentPopupScrim().classList.add('is-open');
+  document.documentElement.classList.add('student-popup-open');
+  document.body.classList.add('student-popup-open');
+  document.getElementById('studentPopupMobileNav')?.classList.add('is-open');
+  setStudentPopupMobileActive('log');
 }
 
 function hideStudentPopupScrim() {
   document.getElementById('studentPopupScrim')?.classList.remove('is-open');
+  document.documentElement.classList.remove('student-popup-open');
+  document.body.classList.remove('student-popup-open');
+  document.getElementById('studentPopupMobileNav')?.classList.remove('is-open');
+  delete document.documentElement.dataset.studentPopupActive;
+
+  const scrollPosition = studentPopupScrollPosition;
+  studentPopupScrollPosition = null;
+  if (scrollPosition && typeof window.scrollTo === 'function') {
+    window.scrollTo(scrollPosition.x, scrollPosition.y);
+  }
 }
 
 function scrollVideoPopupToFirstChecked() {
@@ -532,9 +699,10 @@ function unwrapOkPayload(data, keyHint) {
 }
 
 /* ───────────── 최소 hydrate (결석 제외) ───────────── */
-async function hydrateUpdates() {
+async function hydrateUpdates({ readOnly = false } = {}) {
   try {
-    const { res, data } = await getJSON('/api/updates');
+    const url = readOnly ? '/api/updates?readOnly=1' : '/api/updates';
+    const { res, data } = await getJSON(url);
     if (!res.ok) return false;
 
     const obj = unwrapOkPayload(data, 'updates');
@@ -607,7 +775,7 @@ async function hydrateProgressMaybe() {
 
 async function hydrateForVideoModal(today, sid) {
   await Promise.allSettled([
-    hydrateUpdates(),
+    hydrateUpdates({ readOnly: true }),
     hydrateLogsEntry(today, sid),
     hydrateExtraAttend(today),
     hydrateProgressMaybe(),
@@ -936,7 +1104,7 @@ function isManualVideoAssignment(value) {
     value &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
-    (value.source === 'manual' || value.manual === true || value.manualVideoAssign === true)
+    (value.source === 'manual' || value.source === 'selfStudy' || value.manual === true || value.manualVideoAssign === true)
   );
 }
 
@@ -950,12 +1118,15 @@ function writeAssignFor(updates, day, sid, arr, source = 'auto') {
 
   dmap[k] = {
     videos: arr.map(String),
-    source: source === 'manual' ? 'manual' : 'auto',
+    source: source === 'manual' || source === 'selfStudy' ? source : 'auto',
   };
 }
 
 function pickAutoVideos(curVids, blocked, count) {
-  const maxAssign = clampAutoAssignCount(count);
+  const parsedCount = Number(count);
+  const maxAssign = Number.isFinite(parsedCount)
+    ? Math.max(MIN_AUTO_ASSIGN_COUNT, Math.min(MAX_EFFECTIVE_AUTO_ASSIGN_COUNT, Math.round(parsedCount)))
+    : DEFAULT_AUTO_ASSIGN_COUNT;
   const picked = [];
   for (const v of curVids || []) {
     const mid = String(v?.mid || '').trim();
@@ -1104,7 +1275,7 @@ function resolveVideoAssignmentSaveSource(options = {}) {
 }
 
 function shouldWriteExplicitAssignment(selected, source) {
-  return selected.length > 0 || source === 'manual';
+  return selected.length > 0 || source === 'manual' || source === 'selfStudy';
 }
 
 function applyVideoAssignmentState(updates, day, sid, selected, source) {
@@ -1130,17 +1301,21 @@ function renderAutoAssignControl(stu) {
   if (!host) return;
 
   const current = autoAssignCountForStudent(stu);
-  const counts = [1, 2, 3, 4, 5];
-  if (!counts.includes(current)) counts.push(current);
-  counts.sort((a, b) => a - b);
+  const effective = effectiveAutoAssignCountForStudent(stu, editingVideoDate || getAdminDate());
 
-  if (label) label.textContent = `${current}개`;
-  host.innerHTML = counts.map((n) => `
-    <button type="button" class="auto-count-btn" data-count="${n}" aria-pressed="${n === current ? 'true' : 'false'}"
-            style="height:30px;min-width:42px;padding:0 10px;border-radius:999px;border:1px solid ${n === current ? '#2563eb' : '#cbd5e1'};background:${n === current ? '#2563eb' : '#fff'};color:${n === current ? '#fff' : '#0f172a'};font-weight:800;cursor:pointer">
-      ${n}개
-    </button>
-  `).join('');
+  if (label) {
+    label.textContent = effective === current
+      ? `${current}개`
+      : `${current}개 설정 · 연강 자동 ${effective}개`;
+  }
+  host.innerHTML = `
+    ${[1, 2, 3, 4, 5, 6].map((count) => `
+      <button type="button" class="auto-count-btn" data-count="${count}" aria-pressed="${count === current ? 'true' : 'false'}"
+              style="height:30px;min-width:42px;padding:0 10px;border-radius:999px;border:1px solid ${count === current ? '#2563eb' : '#cbd5e1'};background:${count === current ? '#2563eb' : '#fff'};color:${count === current ? '#fff' : '#0f172a'};font-weight:800;cursor:pointer">
+        ${count}개
+      </button>
+    `).join('')}
+  `;
 }
 
 async function saveAutoAssignCountForCurrent(count) {
@@ -1165,7 +1340,11 @@ async function saveAutoAssignCountForCurrent(count) {
   if (!activeAllowAutoAssign || !activeAutoGenerated) return;
 
   const today = editingVideoDate || getAdminDate();
-  const assigned = pickAutoVideos(activeVideoList, activeBlockedMids, nextCount);
+  const assigned = pickAutoVideos(
+    activeVideoList,
+    activeBlockedMids,
+    effectiveAutoAssignCountForStudent(stu, today)
+  );
   setCheckedMids(assigned);
 
   state.updates = state.updates || {};
@@ -1190,12 +1369,7 @@ function isTodayStudent(stu, dateKey = getAdminDate()) {
   const sid = String(stu.id ?? '');
   if (!sid) return false;
 
-  const dayValues = (s) => Object.keys(s || {})
-    .filter(k => /^day\d+$/.test(k) && s[k])
-    .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
-    .map(k => String(s[k]));
-
-  const hasWeekday = (s, w) => dayValues(s).some(v => String(v).startsWith(w));
+  const hasWeekday = (s, w) => studentScheduleValues(s).some(v => String(v).startsWith(w));
 
   // ✅ 결석 제외: 영상 모달은 state.absentByDate를 "읽기만" 한다
   const absentByDate = (state.absentByDate && typeof state.absentByDate === 'object') ? state.absentByDate : {};
@@ -1204,7 +1378,12 @@ function isTodayStudent(stu, dateKey = getAdminDate()) {
 
   // ✅ 오늘 done:true 제외
   const logsToday = (state.logs && state.logs[today]) ? state.logs[today] : {};
-  if (logsToday?.[sid]?.done === true) return false;
+  const logEntry = logsToday?.[sid] || {};
+  if (logEntry?.done === true) return false;
+  if (Object.prototype.hasOwnProperty.call(logEntry, 'selfStudy')) {
+    return !(logEntry.selfStudy === true || logEntry.selfStudy === 'true' || logEntry.selfStudy === 1 || logEntry.selfStudy === '1');
+  }
+  if (isSelfStudyScheduledForDate(stu, today)) return false;
 
   // 정규 등원 or 보강이면 포함
   const regular = hasWeekday(stu, wchr);
@@ -1296,43 +1475,33 @@ export function initVideoModal() {
     ensureExtraVideoFilters(stu);
 
     const rawAssignment = readAssignValueFor(state.updates, today, editingSid);
-    let assigned = readAssignFor(state.updates, today, editingSid);
-    const hadAssignedOnOpen = assigned.length > 0;
+    const assigned = readAssignFor(state.updates, today, editingSid);
     activeAssignmentManual = isManualVideoAssignment(rawAssignment);
+    const existingAssignmentAuto = !!(
+      !activeAssignmentManual &&
+      ((Array.isArray(rawAssignment) && rawAssignment.length > 0) ||
+        (rawAssignment &&
+          typeof rawAssignment === 'object' &&
+          !Array.isArray(rawAssignment) &&
+          rawAssignment.source === 'auto'))
+    );
     activeVideoSelectionDirty = false;
-    const courseProgressComplete = isCourseProgressComplete(curVids, editingSid, today);
-    if (shouldClearCompletedAutoAssignment(courseProgressComplete, activeAssignmentManual)) assigned = [];
+    // Opening the popup is read-only. The server owns date/makeup/consecutive
+    // assignment events, so progress changes cannot re-pick this snapshot.
 
     // ✅ 자동배정 허용 조건: "오늘 학생 표(오늘 수업 대상)"인 경우에만
     const allowAutoAssign = isTodayStudent(stu, today);
 
-    // ② 기본 자동 추천 (비어 있을 때만) + 오늘 수업 대상일 때만
     activeVideoList = curVids;
     activeAllowAutoAssign = allowAutoAssign;
     activeBlockedMids = {};
-    activeAutoGenerated = false;
+    activeAutoGenerated = existingAssignmentAuto;
 
-    if (!courseProgressComplete && assigned.length === 0 && allowAutoAssign) {
+    if (allowAutoAssign && existingAssignmentAuto) {
       const progressStatus = latestAutoAssignStatusForSid(editingSid, today);
       const watchByMid = await fetchLatestWatchForSid(editingSid);
       const lastStatus = applyWatchStatusForAutoAssign(progressStatus, watchByMid);
-      const blocked = blockedMidsForAutoAssign(lastStatus);
-
-      activeBlockedMids = blocked;
-
-      const toAssign = pickAutoVideos(curVids, blocked, autoAssignCountForStudent(stu));
-
-      assigned = toAssign;
-      activeAutoGenerated = !hadAssignedOnOpen;
-
-      // ✅ 배열 포맷으로 저장
-      state.updates = state.updates || {};
-      writeAssignFor(state.updates, today, editingSid, assigned, 'auto');
-      fetch('/api/updates/patch', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify({ date: today, sid: String(editingSid), entry: { videos: assigned, source: 'auto' } })
-      }).catch(() => {});
+      activeBlockedMids = blockedMidsForAutoAssign(lastStatus);
     }
 
     // ③ 체크박스 렌더
@@ -1548,7 +1717,7 @@ export function initVideoModal() {
     });
     if (!res.ok) throw new Error('video assignment save failed');
 
-    const u = await fetch('/api/updates', { cache: 'no-store' }).then(r => r.json());
+    const u = await fetch('/api/updates?readOnly=1', { cache: 'no-store' }).then(r => r.json());
     const obj = unwrapOkPayload(u, 'updates') || u;
     if (obj && typeof obj === 'object') state.updates = obj;
     await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);

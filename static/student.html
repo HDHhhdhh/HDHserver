@@ -76,6 +76,15 @@
             <ul id="vidList">
               <li class="muted">영상을 불러오는 중...</li>
             </ul>
+            <section id="previousVideos" class="previous-videos" aria-labelledby="previousVideosToggle">
+              <button id="previousVideosToggle" class="previous-videos-toggle" type="button" disabled
+                aria-expanded="false" aria-controls="previousVideosPanel">영상 복습</button>
+              <div id="previousVideosPanel" class="previous-videos-panel" hidden>
+                <p id="previousVideosSummary" class="previous-videos-summary" role="status" aria-live="polite"></p>
+                <button id="previousVideosRegister" class="previous-videos-register" type="button" disabled>영상 등록</button>
+                <ul id="previousVidList" class="previous-videos-list"></ul>
+              </div>
+            </section>
           </aside>
         </div>
       </section>

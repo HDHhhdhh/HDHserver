@@ -575,9 +575,17 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
     makeupCarryover: dayMaps.makeupCarryover,
     schoolCalendar: createSchoolCalendar(currentDate),
     announcements: createAnnouncements(currentDate, students),
-    adminChat: {
-      greeting: '데모 관리자 화면입니다. 모든 답변은 합성 데이터만 기준으로 합니다.',
-      sampleAnswer: '현재 데모 학생은 15명이며 실제 운영 데이터는 사용하지 않습니다.',
-    },
+    operationNotes: [
+      {
+        id: 2,
+        content: '공지 답장 확인',
+        created_at: isoAt(currentDate, '09:20'),
+      },
+      {
+        id: 1,
+        content: '보강 일정 다시 점검',
+        created_at: isoAt(currentDate, '09:10'),
+      },
+    ],
   };
 }

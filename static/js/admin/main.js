@@ -18,8 +18,9 @@ import { initAbsentRecovery } from './features/absentRecovery.js';
 import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
-import { initAdminChatbot } from './features/adminChatbot.js';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
+import { initAssistantStudentNotes } from './features/assistantStudentNotes.js';
+import { initAdminOperationNotes } from './features/adminOperationNotes.js';
 
 
 // 1) 공통 초기화
@@ -38,6 +39,8 @@ try {
 
 // 3) 기능 초기화(순서 중요하지 않은 것들)
 initHoverTooltip();
+initAssistantStudentNotes();
+initAdminOperationNotes();
 initVideoModal();
 initLogModal();
 initExtraModal();
@@ -52,7 +55,6 @@ initAbsentRecovery();
 initTimeGraph();
 initAdminDateBar({ mountId: 'adminDateMount' });
 initAdminUiEnhance();
-initAdminChatbot();
 initStudentTestRecordDetails(document);
 
 
