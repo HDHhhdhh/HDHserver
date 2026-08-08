@@ -383,6 +383,49 @@ body.student-page #vidList .badge-done {
   font-weight: 600;
 }
 
+body.student-page #vidList li[data-review-registered="true"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.student-page #vidList li[data-review-registered="true"] .video-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+body.student-page .playlist-review-cancel {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--stu-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+body.student-page .playlist-review-cancel:hover:not(:disabled),
+body.student-page .playlist-review-cancel:focus-visible {
+  border-color: var(--stu-accent);
+  color: var(--stu-accent);
+  background: color-mix(in srgb, var(--stu-accent) 10%, transparent);
+}
+
+body.student-page .playlist-review-cancel:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+body.student-page #vidList li.active .playlist-review-cancel {
+  border-color: rgb(255 255 255 / 60%);
+  color: #f8fcff;
+}
+
 /* =========================================
    Assigned Tests
    ========================================= */

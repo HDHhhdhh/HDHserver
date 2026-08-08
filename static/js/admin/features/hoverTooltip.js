@@ -699,26 +699,30 @@ export function initHoverTooltip() {
     const assistantNotesBlock = includeAssistantNotes ? `
       <section id="assistantStudentNotes" class="assistant-student-notes" data-student-id="${escHtml(stu.id)}">
         <div class="assistant-note-heading">
-          <div>
-            <h3>조교 메모방</h3>
-          </div>
+          <h3>조교 메모방</h3>
+          <span class="assistant-note-count" data-note-count>댓글 0개</span>
         </div>
-        <div class="assistant-note-author-row" role="group" aria-label="마지막 작성자 선택">
-          <span class="assistant-note-author-label">작성자</span>
-          <div class="assistant-note-author-buttons">
-            <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
-            <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
-            <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
-            <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
-          </div>
+        <div class="assistant-note-thread" data-note-list role="log" aria-label="조교 댓글 목록" aria-live="polite">
+          <p class="assistant-note-empty">불러오는 중...</p>
         </div>
-        <div class="assistant-note-meta" data-note-meta>저장된 메모 없음</div>
-        <textarea class="assistant-note-input" data-note-input rows="4" maxlength="5000" placeholder="장기 학습 경향과 진도를 기록하세요."></textarea>
-        <div class="assistant-note-compose-actions">
-          <div class="assistant-note-save-info">
-            <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
+        <div class="assistant-note-compose">
+          <div class="assistant-note-author-row" role="group" aria-label="댓글 작성자 선택">
+            <span class="assistant-note-author-label">댓글 작성자</span>
+            <div class="assistant-note-author-buttons">
+              <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
+              <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
+              <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
+              <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
+            </div>
           </div>
-          <button class="assistant-note-save" data-note-save type="button">저장</button>
+          <textarea class="assistant-note-input" data-note-input rows="3" maxlength="5000" placeholder="작성자를 선택한 뒤 새 댓글을 입력하세요."></textarea>
+          <div class="assistant-note-compose-actions">
+            <div class="assistant-note-save-info">
+              <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
+              <span class="assistant-note-shortcut">Ctrl+Enter로 등록</span>
+            </div>
+            <button class="assistant-note-save" data-note-save type="button">댓글 등록</button>
+          </div>
         </div>
       </section>
     ` : '';

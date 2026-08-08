@@ -3,13 +3,13 @@
 
 <head>
   <meta charset="utf-8">
-  <title>�н� ������</title>
+  <title>학생 페이지</title>
 
-  <!-- �⺻ ���� ��Ÿ�� -->
+  <!-- 기본 공통 스타일 -->
   <link rel="stylesheet" href="/css/style.css">
 
   <style>
-    /* ������ 1. �÷��̾� + ������ ���̾ƿ� ������ */
+    /* 레이아웃 1. 플레이어 + 재생목록 영역 */
     #playerBox {
       display: flex;
       gap: 1.2rem;
@@ -17,7 +17,7 @@
       flex-wrap: nowrap;
     }
 
-    /* �÷��̾� ī�� */
+    /* 플레이어 카드 */
     .player-card {
       flex: 0 0 900px;
       border-radius: 20px;
@@ -32,10 +32,10 @@
       background: #000;
     }
 
-    /* ��� ��� */
+    /* 재생 목록 */
     #vidList {
       flex: 0 0 300px;
-      /* ������ 200px  */
+      /* 기존에는 200px */
       width: 300px;
       max-height: 506px;
       list-style: none;
@@ -79,7 +79,7 @@
       color: #fff !important;
     }
 
-    /* �� 700px �̸������� ���� ��ġ */
+    /* 폭 700px 이하에서는 세로 배치 */
     @media(max-width:700px) {
       #playerBox {
         flex-direction: column;
@@ -92,7 +92,7 @@
       }
     }
 
-    /* ������ 2. ����(??) �г� ������ */
+    /* 레이아웃 2. 상단 설정 패널 */
     .topbar {
       display: flex;
       justify-content: space-between;
@@ -172,7 +172,7 @@
       background: #475569
     }
 
-    /* ������ 3. �ڷ� �ٿ�ε� ��� ������ */
+    /* 레이아웃 3. 자료 다운로드 목록 */
     #matList {
       margin-top: .4rem;
       padding-left: 0
@@ -209,17 +209,18 @@
   <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js"
     crossorigin="anonymous"></script>
 
-  <!-- ���� -->
-  <script defer src="/js/student copy.js"></script></head>
+  <!-- 스크립트 -->
+  <script defer src="/js/student copy.js"></script>
+</head>
 
 <body>
-  <!-- ������ ��� : �ð� + ���� ��ư ������ -->
+  <!-- 상단바: 시간 + 설정 버튼 -->
   <header class="topbar">
     <div id="clock" class="clock-header"></div>
 
-    <!-- ����(??) ��ư: �����ܸ� ���δ� span �߰� -->
+    <!-- 설정 버튼: 알림 배지를 올리는 span 포함 -->
     <button id="setBtn" style="position: relative;">
-      ??
+      설정
       <span id="badge" style="
     display: none;
     position: absolute;
@@ -236,28 +237,28 @@
     </button>
   </header>
 
-  <!-- ���� �г� -->
+  <!-- 설정 패널 -->
   <div id="setPanel">
     <label class="row">
-      ?? ��ũ���
+      다크 모드
       <input type="checkbox" id="darkToggle">
     </label>
     <div style="margin-top: 1rem">
-      <textarea id="feedbackBox" placeholder="?? ���� ���� ��Ź�帳�ϴ�."
+      <textarea id="feedbackBox" placeholder="건의사항을 편하게 남겨주세요."
         style="width:100%; height:100px; resize: none; padding:5px; font-size: 0.9rem;"></textarea>
-      <button id="submitFeedback" style="margin-top:5px; width:100%">���ǻ��� ����</button>
+      <button id="submitFeedback" style="margin-top:5px; width:100%">건의사항 보내기</button>
     </div>
   </div>
 
-  <!-- �л� �̸� -->
+  <!-- 학생 이름 -->
   <div class="namebar">
     <h2 id="stuName" class="namebar-title" style="margin:.8rem 0 1rem;font-size:2.5rem;font-weight:600"></h2>
-    <button id="openTestSubmit" class="ts-btn">?? �׽�Ʈ ���� ����</button>
+    <button id="openTestSubmit" class="ts-btn">테스트 결과 제출</button>
   </div>
 
-  <!-- ���������� ���� ���� ���������� -->
+  <!-- 오늘 영상 -->
   <section>
-    <h2>���� ����</h2>
+    <h2>오늘 영상</h2>
 
     <div id="playerBox">
       <article class="player-card">
@@ -269,10 +270,10 @@
     </div>
   </section>
 
-  <!-- ���������� �ڷ� �ٿ�ε� ���������� -->
-  <h3 style="margin:1.4rem 0 .6rem">�ڷ� �ٿ�ε�</h3>
+  <!-- 자료 다운로드 -->
+  <h3 style="margin:1.4rem 0 .6rem">자료 다운로드</h3>
   <ul id="matList">
-    <li>Loading��</li>
+    <li>불러오는 중...</li>
   </ul>
   <div id="announceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
      align-items:center;justify-content:center;z-index:9999">
@@ -289,8 +290,8 @@
       </div>
 
       <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
-        <button id="annSubmit">����</button>
-        <button id="annConfirm">Ȯ��</button>
+        <button id="annSubmit">제출</button>
+        <button id="annConfirm">확인</button>
       </div>
     </div>
 
@@ -299,7 +300,7 @@
         if (document.getElementById('announce-dark-style')) return;
         const css = `
   :root{
-    --modal-bg:#ffffff;        /* ����Ʈ �⺻ */
+    --modal-bg:#ffffff;        /* 라이트 기본 */
     --modal-fg:#111827;
     --modal-border:#e5e7eb;
     --input-bg:#ffffff;
@@ -308,7 +309,7 @@
     --muted:#6b7280;
   }
   body.dark{
-    --modal-bg:#0b1220;        /* ��ũ �⺻ */
+    --modal-bg:#0b1220;        /* 다크 기본 */
     --modal-fg:#e5e7eb;
     --modal-border:#374151;
     --input-bg:#0f172a;
@@ -317,7 +318,7 @@
     --muted:#9ca3af;
   }
 
-  /* ���� �ۼ� ��� (admin) */
+  /* 공지 작성 모달 (admin) */
   #annModal > div{
     background:var(--modal-bg) !important;
     color:var(--modal-fg) !important;
@@ -333,7 +334,7 @@
   }
   #annModal small{ color:var(--muted); }
 
-  /* �л� �˾� ��� (student) */
+  /* 학생 팝업 모달 (student) */
   #announceModal > div{
     background:var(--modal-bg) !important;
     color:var(--modal-fg) !important;
@@ -344,20 +345,20 @@
     color:var(--input-fg);
     border:1px solid var(--input-border);
   }
-  /* ��ǥ/���� �ڽ� �׵θ� */
+  /* 투표/설문 박스 테두리 */
   #announceModal #annPoll,
   #announceModal #annSurvey{
     border-color:var(--modal-border) !important;
   }
 
-  /* üũ�ڽ�/���� ������ */
+  /* 체크박스/라디오 포인트 */
   body.dark #annModal input[type="checkbox"],
   body.dark #announceModal input[type="checkbox"],
   body.dark #announceModal input[type="radio"]{
     accent-color:#60a5fa;
   }
 
-  /* ��ư ������(����Ʈ/��ũ ����) */
+  /* 버튼 공통 (라이트/다크 동일) */
   #annModal button, #announceModal button{
     background:#3b82f6;color:#fff;border:none;border-radius:8px;
     padding:6px 12px;cursor:pointer;
@@ -371,7 +372,8 @@
         style.textContent = css;
         document.head.appendChild(style);
       })();
-    </script>`r`n</body>
+    </script>
+</body>
 
 </html>
 

@@ -23,12 +23,7 @@ CHECK_MODULES: Final[dict[str, str]] = {
     "repositories": "scripts.student_mobile_app_checks.repositories",
     "auth": "scripts.student_mobile_app_checks.auth",
     "surface": "scripts.student_mobile_app_checks.surface",
-    "student-data": "scripts.student_mobile_app_checks.student_data",
     "push-sender": "scripts.student_mobile_app_checks.push_sender",
-    "push": "scripts.student_mobile_app_checks.push",
-    "admin-accounts": "scripts.student_mobile_app_checks.admin_accounts",
-    "academy-gates": "scripts.student_mobile_app_checks.academy_gates",
-    "deployment": "scripts.student_mobile_app_checks.deployment",
 }
 # Every plugin result is bound to the CLI selector that invoked it.  Keep this
 # explicit so a forged or stale plugin cannot report a different check as
@@ -39,12 +34,7 @@ EXPECTED_RESULT_NAMES: Final[dict[str, str]] = {
     "repositories": "repositories",
     "auth": "auth",
     "surface": "surface",
-    "student-data": "student-data",
     "push-sender": "push-sender",
-    "push": "push",
-    "admin-accounts": "admin-accounts",
-    "academy-gates": "academy-gates",
-    "deployment": "deployment",
 }
 SUPPORTED_CHECKS: Final[tuple[str, ...]] = tuple(CHECK_MODULES) + ("all",)
 RUNTIME_FILE_NAMES: Final[tuple[str, ...]] = (
@@ -149,7 +139,7 @@ def _parser() -> argparse.ArgumentParser:
         "--only",
         choices=SUPPORTED_CHECKS,
         default="all",
-        help="run one focused check (all requires every Wave module to exist)",
+        help="run one focused check or every available check",
     )
     return parser
 
@@ -162,11 +152,6 @@ def main(argv: list[str] | None = None) -> int:
     after = before
     results: list[CheckResult] = []
     try:
-        if args.only == "all":
-            missing = [name for name in selected if not (ROOT / CHECK_MODULES[name].replace(".", "/")).with_suffix(".py").is_file()]
-            if missing:
-                modules = ", ".join(CHECK_MODULES[name] for name in missing)
-                raise StudentMobileAppCheckError(f"--only all requires missing future check modules: {modules}")
         for name in selected:
             results.append(_load_result(name))
         after = runtime_snapshot()

@@ -2875,6 +2875,7 @@ function bindAnnouncementBoard() {
   });
 
   $('annComposeExpand')?.addEventListener('click', openComposeExpandModal);
+  $('annComposeCompactOpen')?.addEventListener('click', openComposeExpandModal);
   $('annComposeExpandClose')?.addEventListener('click', () => closeComposeExpandModal());
   $('annComposeExpandModal')?.addEventListener('pointerdown', (ev) => {
     composeBackdropPointerDown = ev.target === $('annComposeExpandModal');

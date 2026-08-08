@@ -19,8 +19,9 @@ import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
-import { initAssistantStudentNotes } from './features/assistantStudentNotes.js';
+import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260808-assistant-note-colors';
 import { initAdminOperationNotes } from './features/adminOperationNotes.js';
+import { initStudentLogs } from './features/studentLogs.js';
 
 
 // 1) 공통 초기화
@@ -41,6 +42,7 @@ try {
 initHoverTooltip();
 initAssistantStudentNotes();
 initAdminOperationNotes();
+initStudentLogs();
 initVideoModal();
 initLogModal();
 initExtraModal();

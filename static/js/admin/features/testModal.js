@@ -24,12 +24,15 @@ const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
+const STUDENT_TEST_LEVEL_DEFAULTS_FIELD = 'testLevelDefaults';
+const STUDENT_LEVEL_SETTING_CATEGORY = 'UNIT';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '완료',
   interrupted: '배부',
   skip: '제외',
 };
+const TEST_KEYBOARD_STATUS_ORDER = ['', 'interrupted', 'assigned', 'done', 'skip'];
 
 let initialized = false;
 let editingSid = null;
@@ -40,11 +43,13 @@ let activeSubject = '공수1';
 let activeDifficulty = 'Lv.3';
 let activeRound = '1';
 let activeTerm = DEFAULT_TERM;
+let levelSettingOpen = false;
 let activeCatalog = [];
 let catalogByKey = new Map();
 let initialTestMap = {};
 let selectedKeys = new Set();
 let selectedStatuses = new Map();
+let multiSelectedKeys = new Set();
 let explicitBlankKeys = new Set();
 let submittedIds = new Set();
 let submittedNames = new Set();
@@ -249,6 +254,14 @@ function nextExcludedStatusOf(status) {
   return normalizeAssignmentStatus(status) === 'skip' ? '' : 'skip';
 }
 
+function nextKeyboardStatusOf(status, direction = 1) {
+  const normalized = normalizeAssignmentStatus(status);
+  const currentIndex = Math.max(0, TEST_KEYBOARD_STATUS_ORDER.indexOf(normalized));
+  const step = Number(direction) < 0 ? -1 : 1;
+  const nextIndex = (currentIndex + step + TEST_KEYBOARD_STATUS_ORDER.length) % TEST_KEYBOARD_STATUS_ORDER.length;
+  return TEST_KEYBOARD_STATUS_ORDER[nextIndex];
+}
+
 function statusForKey(key) {
   return normalizeAssignmentStatus(selectedStatuses.get(key));
 }
@@ -352,6 +365,8 @@ function autoAssignRuleAllowsDifficulty(categoryKey, subject, difficulty, studen
 function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) {
   const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
   const difficulties = def?.difficulties || [];
+  const studentDefault = studentTestLevelDefault(categoryKey, subject, student);
+  if (studentDefault) return [studentDefault];
   if (categoryKey === 'ILSAN_PAST') return difficulties.slice();
   const level = canonText(student?.level);
   const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
@@ -362,6 +377,58 @@ function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) 
     if (hits.length) return hits;
   }
   return difficulties[0] ? [difficulties[0]] : [];
+}
+
+function studentTestLevelDefault(categoryKey, subject, student = activeStudent) {
+  const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
+  const stored = student?.[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  const categoryDefaults = stored && typeof stored === 'object' && !Array.isArray(stored)
+    ? stored[categoryKey]
+    : null;
+  const difficulty = categoryDefaults && typeof categoryDefaults === 'object'
+    ? String(categoryDefaults[normalizeSubject(subject)] || '').trim()
+    : '';
+  return difficulties.includes(difficulty) ? difficulty : '';
+}
+
+function copyStudentTestLevelDefaults(student = activeStudent) {
+  const stored = student?.[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  return Object.fromEntries(Object.entries(stored).map(([categoryKey, values]) => [
+    categoryKey,
+    values && typeof values === 'object' && !Array.isArray(values) ? { ...values } : values,
+  ]));
+}
+
+async function saveStudentTestLevelDefault(categoryKey, subject, difficulty) {
+  const sid = String(editingSid || '').trim();
+  const student = activeStudent;
+  if (!sid || !student) throw new Error('학생별 테스트 레벨 기본값을 저장할 학생이 없습니다.');
+
+  const previous = student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  const next = copyStudentTestLevelDefaults(student);
+  const categoryDefaults = next[categoryKey] && typeof next[categoryKey] === 'object' && !Array.isArray(next[categoryKey])
+    ? { ...next[categoryKey] }
+    : {};
+  categoryDefaults[normalizeSubject(subject)] = difficulty;
+  next[categoryKey] = categoryDefaults;
+  student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD] = next;
+
+  try {
+    const { ensureOk, sendJson } = await import('../../shared/api.js');
+    const response = await sendJson('/api/update', {
+      id: sid,
+      field: STUDENT_TEST_LEVEL_DEFAULTS_FIELD,
+      value: next,
+    }, { cache: 'no-store' });
+    await ensureOk(response, '학생별 테스트 레벨 기본값 저장');
+  } catch (error) {
+    if (previous === undefined) delete student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+    else student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD] = previous;
+    throw error;
+  }
+
+  return next;
 }
 
 function visibleDifficultyValues() {
@@ -691,6 +758,7 @@ function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
   selectedKeys = new Set();
   selectedStatuses = new Map();
+  multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
   Object.entries(initialTestMap).forEach(([key, status]) => {
     if (isExplicitBlankTestStatus(status)) {
@@ -701,6 +769,68 @@ function syncSelectedFromProgress() {
   });
 }
 
+function selectedTestCount() {
+  return Array.from(multiSelectedKeys).filter(key => {
+    const test = catalogByKey.get(key);
+    return test && !isSubmitted(test);
+  }).length;
+}
+
+function renderMultiSelectionMeta() {
+  const meta = $('testSelectionMeta');
+  if (!meta) return;
+  const count = selectedTestCount();
+  meta.textContent = count
+    ? `선택 ${count}개 · ←/→로 상태 변경`
+    : 'Ctrl+클릭으로 다중 선택 · ←/→로 상태 변경';
+}
+
+function applyTestRowSelection(row) {
+  if (!row) return;
+  const selected = multiSelectedKeys.has(row.dataset.testKey || '');
+  row.classList.toggle('is-multi-selected', selected);
+  row.dataset.selection = selected ? 'selected' : 'none';
+  row.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
+
+function toggleMultiSelection(row) {
+  if (!row || row.disabled) return;
+  const key = row.dataset.testKey || '';
+  if (!key) return;
+  if (multiSelectedKeys.has(key)) multiSelectedKeys.delete(key);
+  else multiSelectedKeys.add(key);
+  applyTestRowSelection(row);
+  renderMultiSelectionMeta();
+}
+
+function clearMultiSelection() {
+  multiSelectedKeys.clear();
+  document.querySelectorAll('#testAssignList .test-row').forEach(applyTestRowSelection);
+  renderMultiSelectionMeta();
+}
+
+function applyKeyboardStatusToSelection(direction) {
+  const keys = Array.from(multiSelectedKeys).filter(key => {
+    const test = catalogByKey.get(key);
+    return test && !isSubmitted(test);
+  });
+  if (!keys.length) return false;
+
+  keys.forEach(key => {
+    setTestStatus(key, nextKeyboardStatusOf(statusForKey(key), direction));
+    explicitBlankKeys.delete(key);
+  });
+
+  document.querySelectorAll('#testAssignList .test-row').forEach(row => {
+    if (multiSelectedKeys.has(row.dataset.testKey || '') && !row.disabled) {
+      applyTestRowStatus(row, statusForKey(row.dataset.testKey || ''));
+    }
+  });
+  testSelectionTouched = true;
+  renderMultiSelectionMeta();
+  return true;
+}
+
 function renderCategories() {
   const host = $('testCategoryTabs');
   if (!host) return;
@@ -709,6 +839,40 @@ function renderCategories() {
       ${escapeHtml(def.short)}
     </button>
   `).join('');
+}
+
+function syncLevelSettingButton() {
+  const button = $('testDifficultyOverride');
+  if (!button) return;
+  button.disabled = false;
+  button.classList.toggle('is-active', levelSettingOpen);
+  button.setAttribute('aria-pressed', levelSettingOpen ? 'true' : 'false');
+  button.title = levelSettingOpen
+    ? '학생별 기본 레벨을 고르세요'
+    : '학생별 기본 테스트 레벨 설정';
+}
+
+function renderLevelSettingPanel() {
+  const panel = $('testLevelSettingPanel');
+  const optionsHost = $('testLevelSettingOptions');
+  if (!panel || !optionsHost) return;
+
+  const levels = CATEGORY_BY_KEY[STUDENT_LEVEL_SETTING_CATEGORY]?.difficulties || ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'];
+  const stored = studentTestLevelDefault(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, activeStudent);
+  const effective = stored || ruleDefaultDifficulty(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, activeStudent);
+  panel.hidden = !levelSettingOpen;
+  optionsHost.innerHTML = levels.map(level => {
+    const active = level === effective;
+    return `
+      <button type="button" class="test-level-setting-option${active ? ' is-active' : ''}"
+        data-test-level-setting="${escapeHtml(level)}" aria-pressed="${active ? 'true' : 'false'}">
+        ${escapeHtml(level)}
+      </button>
+    `;
+  }).join('');
+
+  const current = $('testLevelSettingCurrent');
+  if (current) current.textContent = effective ? `현재 기본값: ${effective}` : '기본값을 선택하세요.';
 }
 
 function renderFilters() {
@@ -722,15 +886,18 @@ function renderFilters() {
     ).join('');
   }
 
-  const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
+  const allDifficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
+  const difficulties = allDifficulties;
   if (!difficulties.includes(activeDifficulty)) {
-    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent);
+    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent) || allDifficulties[0] || '';
   }
   if (difficultySel) {
     difficultySel.innerHTML = difficulties.map(diff =>
       `<option value="${escapeHtml(diff)}"${diff === activeDifficulty ? ' selected' : ''}>${escapeHtml(diff)}</option>`
     ).join('');
   }
+
+  syncLevelSettingButton();
 
   const rounds = roundOptionsFor(activeCategory, activeSubject, activeDifficulty);
   if (roundSel) {
@@ -768,6 +935,7 @@ function renderFilters() {
 
   const metaEl = $('testStudentMeta');
   if (metaEl) metaEl.textContent = `학생 레벨: ${activeStudent?.level || '-'}`;
+  renderLevelSettingPanel();
 }
 
 function applyTestRowStatus(row, status) {
@@ -789,6 +957,7 @@ function renderList() {
   const tests = visibleTests();
   const count = $('testVisibleCount');
   if (count) count.textContent = `${tests.length}개`;
+  renderMultiSelectionMeta();
 
   if (!tests.length) {
     list.innerHTML = `
@@ -805,6 +974,7 @@ function renderList() {
     const checked = done || !!rowStatus;
     const stateName = done ? 'done' : (rowStatus || 'none');
     const status = testStatusLabel(rowStatus, done);
+    const multiSelected = multiSelectedKeys.has(test._key);
     const baseMeta = [
       categoryLabel(test.categoryKey),
       test.curriculum,
@@ -815,8 +985,9 @@ function renderList() {
     ].filter(Boolean).join(' · ');
     const tone = difficultyBadgeTone(test.categoryKey, test.difficulty);
     return `
-      <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}"
+      <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}${multiSelected ? ' is-multi-selected' : ''}"
         data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}"
+        data-selection="${multiSelected ? 'selected' : 'none'}" aria-selected="${multiSelected ? 'true' : 'false'}"
         data-category="${escapeHtml(test.categoryKey)}" data-curriculum="${escapeHtml(test.curriculum)}"
         data-difficulty="${escapeHtml(test.difficulty)}" data-term="${escapeHtml(test.term || '')}"
         data-round="${escapeHtml(test.round || '')}" ${done ? ' disabled' : ''}>
@@ -828,7 +999,10 @@ function renderList() {
             ${tailMeta ? `<span class="test-meta-text">${escapeHtml(tailMeta)}</span>` : ''}
           </span>
         </span>
-        <span class="test-status">${escapeHtml(status)}</span>
+        <span class="test-row-statuses">
+          <span class="test-selection-status">선택</span>
+          <span class="test-status">${escapeHtml(status)}</span>
+        </span>
       </button>
     `;
   }).join('');
@@ -879,14 +1053,43 @@ function ensureStyles() {
     body.dark #testModal .test-tab{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
     body.dark #testModal .test-tab.is-active{ background:#2563eb; color:#fff; border-color:#2563eb; }
     #testModal .test-filter-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
-    #testModal .test-field label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
-    body.dark #testModal .test-field label{ color:#94a3b8; }
+    #testModal .test-field label,
+    #testModal .test-field-label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
+    body.dark #testModal .test-field label,
+    body.dark #testModal .test-field-label{ color:#94a3b8; }
     #testModal select{
       width:100%; height:34px; border-radius:8px; border:1px solid #cbd5e1;
       background:#fff; color:#0f172a; padding:0 8px; box-sizing:border-box;
     }
     body.dark #testModal select{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
+    #testModal .test-override-btn{
+      width:100%; height:34px; border-radius:8px; border:1px solid #cbd5e1;
+      background:#f8fafc; color:#334155; font-weight:900; cursor:pointer;
+    }
+    #testModal .test-override-btn.is-active{ border-color:#7c3aed; background:#7c3aed; color:#fff; }
+    body.dark #testModal .test-override-btn{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
+    body.dark #testModal .test-override-btn.is-active{ background:#8b5cf6; border-color:#8b5cf6; color:#fff; }
+    #testModal .test-level-setting-panel{
+      display:flex; flex-direction:column; gap:7px; padding:9px 10px;
+      border:1px solid #c4b5fd; border-radius:9px; background:#f5f3ff;
+    }
+    #testModal .test-level-setting-panel[hidden]{ display:none; }
+    body.dark #testModal .test-level-setting-panel{ border-color:#6d28d9; background:#2e1065; }
+    #testModal .test-level-setting-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    #testModal .test-level-setting-head strong{ font-size:12px; }
+    #testModal .test-level-setting-options{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+    #testModal .test-level-setting-option{
+      height:32px; border:1px solid #c4b5fd; border-radius:8px; background:#fff;
+      color:#5b21b6; font-weight:900; cursor:pointer;
+    }
+    #testModal .test-level-setting-option.is-active{ border-color:#7c3aed; background:#7c3aed; color:#fff; }
+    #testModal .test-level-setting-option:disabled{ cursor:wait; opacity:.65; }
+    body.dark #testModal .test-level-setting-option{ border-color:#8b5cf6; background:#1e1b4b; color:#ddd6fe; }
+    body.dark #testModal .test-level-setting-option.is-active{ border-color:#8b5cf6; background:#8b5cf6; color:#fff; }
     #testModal .test-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+    #testModal .test-toolbar-copy{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+    #testModal .test-selection-meta{ color:#7c3aed; font-size:11px; font-weight:900; line-height:1.3; }
+    body.dark #testModal .test-selection-meta{ color:#c4b5fd; }
     #testModal .test-mini-actions{ display:flex; gap:6px; flex-wrap:wrap; }
     #testModal .test-mini-actions button{
       min-height:30px; padding:0 9px; border:1px solid #cbd5e1; border-radius:8px;
@@ -910,6 +1113,7 @@ function ensureStyles() {
     #testModal .test-row[data-state="interrupted"]{ background:#f59e0b22; border-color:#f59e0b70; }
     #testModal .test-row[data-state="skip"]{ background:#ef444422; border-color:#ef444470; }
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
+    #testModal .test-row[data-selection="selected"]{ outline:2px solid #7c3aed; outline-offset:1px; }
     #testModal .test-row-main{ min-width:0; display:flex; flex-direction:column; gap:2px; }
     #testModal .test-row-main strong{ font-size:13px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #testModal .test-row-meta{
@@ -929,10 +1133,15 @@ function ensureStyles() {
     body.dark #testModal .test-difficulty-badge{ border-color:#475569; background:#111827; color:#cbd5e1; }
     body.dark #testModal .test-difficulty-badge.is-high{ border-color:#1d4ed8; background:#1e3a8a66; color:#bfdbfe; }
     body.dark #testModal .test-difficulty-badge.is-middle{ border-color:#c2410c; background:#7c2d1266; color:#fed7aa; }
+    #testModal .test-row-statuses{ justify-self:end; display:flex; align-items:center; gap:5px; }
+    #testModal .test-selection-status,
     #testModal .test-status{
       justify-self:end; padding:3px 7px; border-radius:999px; background:#f1f5f9; color:#334155;
       font-size:11px; font-weight:900; white-space:nowrap;
     }
+    #testModal .test-selection-status{ display:none; background:#7c3aed; color:#fff; }
+    #testModal .test-row[data-selection="selected"] .test-selection-status{ display:inline-flex; }
+    body.dark #testModal .test-selection-status{ background:#8b5cf6; color:#fff; }
     body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
     #testModal .test-row[data-state="assigned"] .test-status{ background:#10b981; color:#fff; }
     #testModal .test-row[data-state="done"] .test-status{ background:#2563eb; color:#fff; }
@@ -949,6 +1158,7 @@ function ensureStyles() {
     body.dark #testModal .test-empty{ border-color:#475569; color:#94a3b8; }
     @media (max-width:560px){
       #testModal .test-filter-grid{ grid-template-columns:1fr; }
+      #testModal .test-level-setting-options{ grid-template-columns:repeat(2,minmax(0,1fr)); }
     }
   `;
   document.head.appendChild(s);
@@ -992,10 +1202,25 @@ function ensureModal() {
               <label for="testRound">회차</label>
               <select id="testRound"></select>
             </div>
+            <div class="test-field">
+              <span class="test-field-label">학생 기본 레벨</span>
+              <button id="testDifficultyOverride" class="test-override-btn" type="button" aria-pressed="false" title="학생별 기본 테스트 레벨을 설정">레벨 설정</button>
+            </div>
+          </div>
+
+          <div id="testLevelSettingPanel" class="test-level-setting-panel" hidden>
+            <div class="test-level-setting-head">
+              <strong>학생별 기본 테스트 레벨</strong>
+              <span id="testLevelSettingCurrent" class="test-sub"></span>
+            </div>
+            <div id="testLevelSettingOptions" class="test-level-setting-options"></div>
           </div>
 
           <div class="test-toolbar">
-            <div class="test-sub">색상 표시된 항목이 오늘 선택 날짜에 배정됩니다.</div>
+            <div class="test-toolbar-copy">
+              <div class="test-sub">색상 표시된 항목이 오늘 선택 날짜에 배정됩니다.</div>
+              <div id="testSelectionMeta" class="test-selection-meta" aria-live="polite">Ctrl+클릭으로 다중 선택 · ←/→로 상태 변경</div>
+            </div>
             <div class="test-mini-actions">
               <button id="testPickAll" type="button">목록 전체 선택</button>
               <button id="testPickNone" type="button">선택 해제</button>
@@ -1029,6 +1254,8 @@ function renderLoadingState(student) {
   if (title) title.textContent = student ? `${student.name || ''} 테스트 배정` : '테스트 배정';
   if (meta) meta.textContent = '불러오는 중...';
   if (count) count.textContent = '';
+  const selectionMeta = $('testSelectionMeta');
+  if (selectionMeta) selectionMeta.textContent = '';
   if (save) save.disabled = true;
   const tabs = $('testCategoryTabs');
   if (tabs) tabs.innerHTML = '<button type="button" class="test-tab is-active" disabled>불러오는 중</button>';
@@ -1038,6 +1265,14 @@ function renderLoadingState(student) {
     el.disabled = true;
     el.innerHTML = '<option>불러오는 중</option>';
   });
+  const overrideBtn = $('testDifficultyOverride');
+  if (overrideBtn) {
+    overrideBtn.disabled = true;
+    overrideBtn.classList.remove('is-active');
+    overrideBtn.setAttribute('aria-pressed', 'false');
+  }
+  levelSettingOpen = false;
+  renderLevelSettingPanel();
   const list = $('testAssignList');
   if (list) list.innerHTML = '<div class="test-empty">테스트 목록을 불러오는 중...</div>';
 }
@@ -1049,11 +1284,13 @@ function closeModal() {
   editingSid = null;
   editingDate = null;
   activeStudent = null;
+  levelSettingOpen = false;
   activeCatalog = [];
   catalogByKey = new Map();
   initialTestMap = {};
   selectedKeys = new Set();
   selectedStatuses = new Map();
+  multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
   testSelectionTouched = false;
   activeRound = '1';
@@ -1096,6 +1333,7 @@ async function openModalForRow(rowOrButton, opts = {}) {
   }
 
   activeSubject = normalizeSubject(activeStudent.curriculum);
+  levelSettingOpen = false;
   renderLoadingState(activeStudent);
   setModalOpen(true, opts.layout);
   await hydrateForTestPopup(editingDate, editingSid);
@@ -1112,6 +1350,8 @@ async function openModalForRow(rowOrButton, opts = {}) {
     const el = $(id);
     if (el) el.disabled = false;
   });
+  const overrideBtn = $('testDifficultyOverride');
+  if (overrideBtn) overrideBtn.disabled = false;
   const termEl = $('testTerm');
   if (termEl) termEl.disabled = !isTermCategory(activeCategory);
   const roundEl = $('testRound');
@@ -1484,9 +1724,50 @@ function bindEventsOnce() {
   }
 
   document.body.addEventListener('click', async (e) => {
+    const levelSettingButton = e.target.closest('#testDifficultyOverride');
+    if (levelSettingButton) {
+      levelSettingOpen = !levelSettingOpen;
+      syncLevelSettingButton();
+      renderLevelSettingPanel();
+      return;
+    }
+
+    const levelOption = e.target.closest('#testLevelSettingOptions [data-test-level-setting]');
+    if (levelOption) {
+      const difficulty = String(levelOption.dataset.testLevelSetting || '').trim();
+      const levels = CATEGORY_BY_KEY[STUDENT_LEVEL_SETTING_CATEGORY]?.difficulties || [];
+      if (!levels.includes(difficulty)) return;
+
+      const settingOpenSeq = testOpenSeq;
+      const optionsHost = $('testLevelSettingOptions');
+      optionsHost?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      try {
+        await saveStudentTestLevelDefault(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, difficulty);
+        if (settingOpenSeq !== testOpenSeq) return;
+        levelSettingOpen = false;
+        syncLevelSettingButton();
+        renderLevelSettingPanel();
+        toast(`학생별 기본 테스트 레벨을 ${difficulty}로 저장했습니다.`);
+      } catch (error) {
+        if (settingOpenSeq !== testOpenSeq) return;
+        console.error(error);
+        toast('학생별 기본 테스트 레벨 저장에 실패했습니다.');
+        renderLevelSettingPanel();
+      } finally {
+        if (settingOpenSeq === testOpenSeq && levelSettingOpen) {
+          $('testLevelSettingOptions')?.querySelectorAll('button').forEach(button => {
+            button.disabled = false;
+          });
+        }
+      }
+      return;
+    }
+
     const categoryBtn = e.target.closest('#testCategoryTabs .test-tab');
     if (categoryBtn) {
       activeCategory = categoryBtn.dataset.category || activeCategory;
+      levelSettingOpen = false;
+      clearMultiSelection();
       applyRuleDefaults(activeCategory);
       renderAll();
       return;
@@ -1528,6 +1809,10 @@ function bindEventsOnce() {
 
     const row = testRowFromTarget(e.target);
     if (row && !row.disabled) {
+      if (e.ctrlKey || e.metaKey) {
+        toggleMultiSelection(row);
+        return;
+      }
       if (suppressClickOnce) {
         suppressClickOnce = false;
         return;
@@ -1542,6 +1827,7 @@ function bindEventsOnce() {
     if (e.button !== 0 && e.button !== 2) return;
     const row = testRowFromTarget(e.target);
     if (!row || row.disabled) return;
+    if (e.ctrlKey || e.metaKey) return;
     if (e.button === 2) e.preventDefault();
 
     rebuildDragRows();
@@ -1587,6 +1873,8 @@ function bindEventsOnce() {
   document.body.addEventListener('change', (e) => {
     if (e.target?.id === 'testSubject') {
       activeSubject = normalizeSubject(e.target.value);
+      levelSettingOpen = false;
+      clearMultiSelection();
       applyRuleDefaults(activeCategory);
       renderAll();
       return;
@@ -1594,6 +1882,7 @@ function bindEventsOnce() {
 
     if (e.target?.id === 'testDifficulty') {
       activeDifficulty = e.target.value || activeDifficulty;
+      clearMultiSelection();
       activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
       renderAll();
       return;
@@ -1601,13 +1890,28 @@ function bindEventsOnce() {
 
     if (e.target?.id === 'testTerm') {
       activeTerm = TERM_OPTIONS.includes(e.target.value) ? e.target.value : defaultTermFromSchoolCalendar();
+      clearMultiSelection();
       renderList();
       return;
     }
 
     if (e.target?.id === 'testRound') {
       activeRound = String(e.target.value || '1');
+      clearMultiSelection();
       renderList();
+    }
+  });
+
+  document.body.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const modal = $('testModal');
+    if (!modal || modal.style.display === 'none' || !multiSelectedKeys.size) return;
+    if (!modal.contains(document.activeElement)) return;
+    if (document.activeElement?.matches?.('#testModal select, #testModal input, #testModal textarea, #testModal button:not(.test-row), [contenteditable="true"]')) return;
+
+    if (applyKeyboardStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)) {
+      e.preventDefault();
+      e.stopPropagation();
     }
   });
 

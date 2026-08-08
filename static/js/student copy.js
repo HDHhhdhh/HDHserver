@@ -530,7 +530,10 @@ window.todayLocalKey = function () {
       const raw = perDay[sidStr] ?? (sidNum != null ? perDay[sidNum] : undefined);
       if (!raw) continue;
       if (Array.isArray(raw)) return raw.slice();
-      if (raw && Array.isArray(raw.videos)) return raw.videos.slice();
+      if (raw && Array.isArray(raw.videos)) {
+        const source = String(raw.source || '').trim().toLowerCase();
+        if (!source || source === 'auto') return raw.videos.slice();
+      }
     }
     return null;
   }
@@ -550,16 +553,33 @@ window.todayLocalKey = function () {
     const last = getLastAssignedVideosForSid(sid, updatesCache);
     if (!last || !last.length) return false;
 
-    const nextUpdates = { ...(updatesCache || {}) };
-    const todayMap = { ...(nextUpdates[today] || {}) };
-    todayMap[sidStr] = last.map(String);
-    nextUpdates[today] = todayMap;
-
-    await fetch('/api/updates', {
+    const res = await fetch('/api/updates/patch', {
       method: 'POST',
       headers: CT,
-      body: JSON.stringify(nextUpdates)
+      body: JSON.stringify({
+        date: today,
+        sid: sidStr,
+        entry: { videos: last.map(String), source: 'auto' },
+      })
     });
+    let payload = null;
+    try { payload = await res.json(); } catch {}
+    if (!res.ok || payload?.ok === false) return false;
+
+    const assignment = payload?.assignment;
+    const assigned = Array.isArray(assignment)
+      ? assignment
+      : (Array.isArray(assignment?.videos) ? assignment.videos : []);
+    const nextUpdates = { ...(updatesCache || {}) };
+    const todayMap = { ...(nextUpdates[today] || {}) };
+    if (!assigned.length) {
+      delete todayMap[sidStr];
+      if (!Object.keys(todayMap).length) delete nextUpdates[today];
+      updatesCache = nextUpdates;
+      return false;
+    }
+    todayMap[sidStr] = assignment;
+    nextUpdates[today] = todayMap;
 
     updatesCache = nextUpdates;
     return true;

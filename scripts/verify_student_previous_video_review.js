@@ -566,6 +566,7 @@ async function runStudentFixture(options = {}) {
     students: [student],
     videos: options.videos || [],
     reviewVideos: options.reviewVideos,
+    registeredReviewVideos: options.registeredReviewVideos,
     updates: { [date]: { [sid]: options.assignment || [] } },
     materials: {},
     assigns: { [sid]: [] },
@@ -579,6 +580,17 @@ async function runStudentFixture(options = {}) {
     academyOnlyMessage: '학원 Wi-Fi에서만 영상을 볼 수 있습니다.',
   };
   const bootstrap = options.bootstrap === undefined ? defaultBootstrap : options.bootstrap;
+  let assignmentState = Array.isArray(options.assignment)
+    ? { videos: options.assignment.map(String), source: 'auto' }
+    : (options.assignment && typeof options.assignment === 'object'
+      ? {
+        ...options.assignment,
+        videos: Array.isArray(options.assignment.videos) ? options.assignment.videos.map(String) : [],
+        ...(Array.isArray(options.assignment.reviewVideos)
+          ? { reviewVideos: options.assignment.reviewVideos.map(String) }
+          : {}),
+      }
+      : { videos: [], source: 'auto' });
   const window = {
     __STU_SID__: sid,
     __OCR_TEST_SHEET_ENABLED__: false,
@@ -616,6 +628,41 @@ async function runStudentFixture(options = {}) {
     if (target.startsWith('/api/watch')) return makeResponse({ ok: true });
     if (target.startsWith('/api/students')) return makeResponse([student]);
     if (target.startsWith('/api/videos')) return makeResponse(options.legacyVideos || options.videos || []);
+    if (target.startsWith('/api/updates/review')) {
+      const body = init.body ? JSON.parse(String(init.body)) : {};
+      const current = assignmentState || { videos: [], source: 'auto' };
+      const currentVideos = Array.isArray(current.videos) ? current.videos.map(String) : [];
+      const currentReview = Array.isArray(current.reviewVideos) ? current.reviewVideos.map(String) : [];
+      const requested = Array.isArray(body.videos) ? body.videos.map(String) : [];
+      const isCancel = body.remove === true
+        || ['remove', 'cancel', 'unregister'].includes(String(body.action || '').toLowerCase());
+      if (isCancel) {
+        const removeSet = new Set(requested.filter(mid => currentReview.includes(mid)));
+        const nextReview = currentReview.filter(mid => !removeSet.has(mid));
+        const nextVideos = currentVideos.filter(mid => !removeSet.has(mid));
+        let assignment = {
+          ...current,
+          videos: nextVideos,
+        };
+        if (nextReview.length) assignment.reviewVideos = nextReview;
+        else delete assignment.reviewVideos;
+        if ((!nextVideos.length || assignment.source === 'studentReview') && !nextReview.length) {
+          assignment = null;
+        }
+        assignmentState = assignment;
+        return makeResponse({ ok: true, assignment, reviewVideos: nextReview });
+      }
+      const nextVideos = Array.from(new Set([...currentVideos, ...requested]));
+      const nextReview = Array.from(new Set([...currentReview, ...requested]));
+      const assignment = {
+        ...current,
+        videos: nextVideos,
+        source: current.source || 'studentReview',
+        reviewVideos: nextReview,
+      };
+      assignmentState = assignment;
+      return makeResponse({ ok: true, assignment, reviewVideos: nextReview });
+    }
     if (target.startsWith('/api/updates')) return makeResponse({ [date]: { [sid]: options.assignment || [] } });
     if (target.startsWith('/api/materials')) return makeResponse({});
     if (target.startsWith('/api/mat-assign')) return makeResponse({ [sid]: [] });
@@ -730,7 +777,9 @@ async function runDomContractCurrent() {
     null,
   ];
   const source = readStudentBootstrapSource();
-  for (const token of ['/api/updates/' + 'self-study', 'updateTodayAssignmentCache', 'isSelfStudyOnStudentDate']) {
+  assert(source.includes("fetch('/api/updates/review'"),
+    'student registration flow must use the server-backed review assignment endpoint', checks);
+  for (const token of ['updateTodayAssignmentCache', 'isSelfStudyOnStudentDate', 'localStorage.setItem(reviewPlaylistStorageKey()']) {
     assert(!source.includes(token), `student registration flow must not contain ${token}`, checks);
   }
 
@@ -775,8 +824,9 @@ async function runDomContractCurrent() {
   const requestCountBeforeRegistration = fixture.requestLog.length;
   register.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert(fixture.requestLog.length === requestCountBeforeRegistration,
-    'local registration must not write or fetch a server assignment', checks);
+  assert(fixture.requestLog.length === requestCountBeforeRegistration + 1
+    && fixture.requestLog.at(-1)?.url === '/api/updates/review',
+    'registration must write the selected review MID through the server assignment endpoint', checks);
   assert(register.disabled === true, 'register must disable after the checked MID is registered', checks);
   const registeredRows = reviewRows(fixture.document);
   assert(registeredRows.length === rows.length
@@ -790,10 +840,6 @@ async function runDomContractCurrent() {
   const registeredMids = fixture.document.getElementById('vidList')
     .querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
   assert(registeredMids.includes('orange-mid'), 'registration must append the checked review MID to the playlist', checks);
-  const reviewStorageKey = 'student:review-playlist:7:2026-08-03';
-  assert(fixture.storage.get(reviewStorageKey)
-    && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'orange-mid',
-  'registered review selection must persist under the SID/date-scoped localStorage key', checks);
   const registrationRequestCount = fixture.requestLog.length;
   register.click();
   await new Promise(resolve => setImmediate(resolve));
@@ -801,6 +847,33 @@ async function runDomContractCurrent() {
     'repeated registration must be idempotent with no additional requests', checks);
   assert(fixture.document.getElementById('vidList').querySelectorAll('li[data-mid]').length === registeredMids.length,
     'repeated registration must not duplicate playlist rows', checks);
+
+  const registeredPlaylistRow = [...fixture.document.getElementById('vidList').querySelectorAll('li[data-review-registered="true"]')]
+    .find(row => row.dataset.mid === 'orange-mid');
+  const cancelButton = registeredPlaylistRow?.querySelector('button[data-review-cancel]');
+  assert(cancelButton?.type === 'button'
+    && cancelButton.dataset.mid === 'orange-mid'
+    && cancelButton.getAttribute('aria-label')?.includes('복습 영상 등록 취소'),
+  'registered review playlist rows must expose an accessible direct cancel button', checks);
+  const getUrlBeforeCancel = requestCount(fixture.requestLog, '/api/get-url');
+  const requestCountBeforeCancel = fixture.requestLog.length;
+  cancelButton.click();
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelRequest = fixture.requestLog.at(-1);
+  const cancelBody = cancelRequest?.body ? JSON.parse(String(cancelRequest.body)) : {};
+  assert(fixture.requestLog.length === requestCountBeforeCancel + 1
+    && cancelRequest?.url === '/api/updates/review'
+    && cancelBody.action === 'cancel'
+    && cancelBody.videos?.join('|') === 'orange-mid',
+  'playlist cancel must use the review assignment endpoint without a playback request', checks);
+  assert(![...fixture.document.getElementById('vidList').querySelectorAll('li[data-mid]')]
+    .some(row => row.dataset.mid === 'orange-mid')
+    && requestCount(fixture.requestLog, '/api/get-url') === getUrlBeforeCancel,
+  'cancelling a registered review must remove only the review playlist row and preserve playback state', checks);
+  const cancelledChooserCheckbox = reviewRows(fixture.document)
+    .find(row => row.dataset.mid === 'orange-mid')?.querySelector('input[type="checkbox"]');
+  assert(cancelledChooserCheckbox?.checked === false && cancelledChooserCheckbox.disabled === false,
+    'cancelled review videos must become selectable again in the chooser', checks);
 
   const regular = await runStudentFixture({ selfStudy: false, reviewVideos: rowsFixture });
   const regularRows = reviewRows(regular.document);
@@ -816,16 +889,16 @@ async function runDomContractCurrent() {
 
   const staleStorageKey = 'student:review-playlist:7:2026-08-03';
   const stale = await runStudentFixture({
-    assignment: ['today-mid'],
+    assignment: { videos: ['today-mid', 'fresh-mid'], source: 'auto', reviewVideos: ['fresh-mid'] },
     videos: [{ mid: 'today-mid', title: 'Today', chapter: '1' }],
     reviewVideos: [{ mid: 'fresh-mid', title: 'Fresh', chapter: '2', reviewStatus: 'done' }],
     initialStorage: { [staleStorageKey]: JSON.stringify(['stale-mid', 'fresh-mid', 'fresh-mid']) },
   });
   const stalePlaylistMids = stale.document.getElementById('vidList').querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
   assert(stalePlaylistMids.join('|') === 'today-mid|fresh-mid',
-    'fresh server review membership may append from localStorage even without today assignment', checks);
-  assert(JSON.parse(stale.storage.get(staleStorageKey)).join('|') === 'fresh-mid',
-    'localStorage-only or duplicate MIDs must be pruned against the fresh server review set', checks);
+    'server review membership must append without depending on localStorage', checks);
+  assert(JSON.parse(stale.storage.get(staleStorageKey)).join('|') === 'stale-mid|fresh-mid|fresh-mid',
+    'legacy review playlist localStorage must not override server membership', checks);
 
   const ordered = await runStudentFixture({
     assignment: ['today-mid'],
@@ -845,7 +918,8 @@ async function runDomContractCurrent() {
   const orderedPlaylistMids = ordered.document.getElementById('vidList').querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
   assert(orderedPlaylistMids.join('|') === 'today-mid|second-mid|first-mid',
     'registration must append in checkbox selection order after today rows', checks);
-  assert(ordered.requestLog.length === orderedRequestLogBefore
+  assert(ordered.requestLog.length === orderedRequestLogBefore + 1
+    && ordered.requestLog.at(-1)?.url === '/api/updates/review'
     && requestCount(ordered.requestLog, '/api/get-url') === orderedGetUrlBefore,
     'registration must preserve current autoplay state without a new playback request', checks);
 
@@ -861,8 +935,10 @@ async function runDomContractCurrent() {
   await new Promise(resolve => setImmediate(resolve));
   const standalonePlaylist = noToday.document.getElementById('vidList').querySelectorAll('li[data-mid]');
   assert(standalonePlaylist.length === 1 && standalonePlaylist[0].dataset.mid === 'standalone-mid'
-    && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0,
-    'local registration must append a standalone review MID without server or playback requests', checks);
+    && noToday.requestLog.length === noTodayBefore + 1
+    && noToday.requestLog.at(-1)?.url === '/api/updates/review'
+    && requestCount(noToday.requestLog, '/api/get-url') === 0,
+    'registration must append a standalone review MID through the server without playback requests', checks);
 
   const missing = await runStudentFixture({ videos: [{ mid: 'catalog-only', title: 'Catalog only' }], reviewVideos: [] });
   assert(missing.document.getElementById('previousVideos').hidden === false
@@ -945,7 +1021,7 @@ async function runDomContractCurrent() {
     mode: 'dom',
     checks,
     rows: rows.map(row => row.dataset.mid),
-    stored: JSON.parse(fixture.storage.get('student:review-playlist:7:2026-08-03')),
+    registered: fixture.requestLog.some(entry => entry.url === '/api/updates/review'),
     orderedPlaylist: orderedPlaylistMids,
     todayAutoPlayGetUrlCount: requestCount(current.requestLog, '/api/get-url'),
   };

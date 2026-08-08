@@ -5,6 +5,7 @@ import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { initTestModal } from './testModal.js';
+import { createStudentLog } from './studentLogs.js';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
@@ -589,6 +590,116 @@ function injectStyles() {
       background:#94a3b8;
     }
 
+    .hwHeader{ position:relative; }
+    .hwHeaderActions{
+      display:flex;
+      justify-content:flex-end;
+      margin-top:8px;
+    }
+    .hw-insufficient-btn{
+      min-height:34px;
+      padding:0 10px;
+      border:1px solid #93c5fd;
+      border-radius:10px;
+      background:#eff6ff;
+      color:#1d4ed8;
+      cursor:pointer;
+      font-size:12px;
+      font-weight:900;
+    }
+    .hw-insufficient-btn:hover{ background:#dbeafe; }
+    .hw-insufficient-btn:disabled{ cursor:default; opacity:.5; }
+    body.dark .hw-insufficient-btn{
+      border-color:#365d91;
+      background:#172554;
+      color:#bfdbfe;
+    }
+
+    #homeworkInsufficientModal{
+      position:fixed;
+      inset:0;
+      z-index:100010;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      background:rgba(2,6,23,.68);
+    }
+    #homeworkInsufficientModal[hidden]{ display:none !important; }
+    .homework-insufficient-card{
+      width:min(480px, calc(100vw - 32px));
+      padding:20px;
+      border:1px solid #dbe4ef;
+      border-radius:14px;
+      background:#fff;
+      color:#0f172a;
+      box-shadow:0 24px 70px rgba(0,0,0,.34);
+    }
+    .homework-insufficient-card h3{
+      margin:0 0 12px;
+      font-size:18px;
+      font-weight:900;
+      line-height:1.25;
+    }
+    .homework-insufficient-form{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:8px;
+      align-items:center;
+    }
+    .homework-insufficient-form input{
+      width:100%;
+      min-height:42px;
+      box-sizing:border-box;
+      padding:0 12px;
+      border:1px solid #cbd5e1;
+      border-radius:10px;
+      background:#fff;
+      color:#0f172a;
+      outline:none;
+      font:inherit;
+      font-size:14px;
+    }
+    .homework-insufficient-form input:focus-visible{
+      border-color:#3b82f6;
+      box-shadow:0 0 0 3px rgba(59,130,246,.18);
+    }
+    .homework-insufficient-form button{
+      min-height:42px;
+      padding:0 15px;
+      border:1px solid #2563eb;
+      border-radius:10px;
+      background:#2563eb;
+      color:#fff;
+      cursor:pointer;
+      font:inherit;
+      font-size:14px;
+      font-weight:900;
+    }
+    .homework-insufficient-form button:disabled{ cursor:wait; opacity:.55; }
+    .homework-insufficient-cancel{
+      display:block;
+      margin:10px auto 0;
+      border:0;
+      background:transparent;
+      color:#64748b;
+      cursor:pointer;
+      font:inherit;
+      font-size:12px;
+      font-weight:800;
+    }
+    body.dark .homework-insufficient-card{
+      border-color:#334155;
+      background:#0f172a;
+      color:#e5e7eb;
+    }
+    body.dark .homework-insufficient-form input{
+      border-color:#475569;
+      background:#0b1220;
+      color:#e5e7eb;
+    }
+    body.dark .homework-insufficient-cancel{ color:#94a3b8; }
+
     @media (max-width:520px){
       #logModal{ align-items:stretch; }
       #logModal .log-card{
@@ -653,6 +764,9 @@ function modalTemplateHTML() {
                   <div class="h">다음 숙제</div>
                   <div class="h h-del"></div>
                 </div>
+                <div class="hwHeaderActions">
+                  <button type="button" id="hwInsufficientBtn" class="hw-insufficient-btn">숙제 미흡 알림</button>
+                </div>
               </div>
               <div id="hwBody" aria-label="숙제 목록"></div>
             </div>
@@ -666,10 +780,25 @@ function modalTemplateHTML() {
       </div>`;
 }
 
+function homeworkInsufficientModalTemplateHTML() {
+  return `
+      <div id="homeworkInsufficientModal" hidden aria-label="숙제 미흡 알림 입력">
+        <section class="homework-insufficient-card" role="dialog" aria-modal="true" aria-labelledby="homeworkInsufficientTitle">
+          <h3 id="homeworkInsufficientTitle">숙제 미흡 알림</h3>
+          <form id="homeworkInsufficientForm" class="homework-insufficient-form">
+            <input id="homeworkInsufficientInput" type="text" maxlength="300" autocomplete="off" placeholder="간단한 코멘트를 입력하세요" aria-label="숙제 미흡 코멘트">
+            <button id="homeworkInsufficientConfirm" type="submit">확인</button>
+          </form>
+          <button id="homeworkInsufficientCancel" class="homework-insufficient-cancel" type="button">취소</button>
+        </section>
+      </div>`;
+}
+
 function ensureModal() {
   document.getElementById('logModal')?.remove();
+  document.getElementById('homeworkInsufficientModal')?.remove();
   injectStyles();
-  document.body.insertAdjacentHTML('beforeend', modalTemplateHTML());
+  document.body.insertAdjacentHTML('beforeend', `${modalTemplateHTML()}${homeworkInsufficientModalTemplateHTML()}`);
 }
 
 function shouldSkipForLow(stu, v) {
@@ -1339,6 +1468,11 @@ export function initLogModal() {
   const logClose = $('logClose');
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
+  const homeworkInsufficientModal = $('homeworkInsufficientModal');
+  const homeworkInsufficientForm = $('homeworkInsufficientForm');
+  const homeworkInsufficientInput = $('homeworkInsufficientInput');
+  const homeworkInsufficientConfirm = $('homeworkInsufficientConfirm');
+  const homeworkInsufficientBtn = $('hwInsufficientBtn');
   const applyReadOnlyRecordAccess = () => {
     const readOnly = isContextMenuOnlyAccess();
     logModal.dataset.accessMode = logModalAccessMode;
@@ -1353,6 +1487,10 @@ export function initLogModal() {
     const addRow = $('hwAddRow');
     if (addRow) addRow.hidden = readOnly;
     if (logComplete) logComplete.hidden = readOnly;
+    if (homeworkInsufficientBtn) {
+      homeworkInsufficientBtn.hidden = readOnly;
+      homeworkInsufficientBtn.disabled = readOnly;
+    }
     if (logSave) logSave.textContent = readOnly ? '영상 진도 저장' : '저장';
     const progressLabel = progEl.previousElementSibling;
     if (progressLabel?.tagName === 'LABEL') {
@@ -1365,6 +1503,67 @@ export function initLogModal() {
     if (logModal) logModal.scrollTop = 0;
     if (logNotes) logNotes.scrollTop = 0;
   };
+
+  const closeHomeworkInsufficientModal = ({ clearInput = true } = {}) => {
+    if (homeworkInsufficientModal) homeworkInsufficientModal.hidden = true;
+    if (clearInput && homeworkInsufficientInput) homeworkInsufficientInput.value = '';
+    if (homeworkInsufficientConfirm) homeworkInsufficientConfirm.disabled = false;
+  };
+
+  const openHomeworkInsufficientModal = () => {
+    if (isContextMenuOnlyAccess() || !logModalReady || !editingLogSid) return;
+    if (!homeworkInsufficientModal || !homeworkInsufficientInput) return;
+    homeworkInsufficientInput.value = '';
+    homeworkInsufficientModal.hidden = false;
+    requestAnimationFrame(() => homeworkInsufficientInput.focus());
+  };
+
+  const submitHomeworkInsufficientLog = async () => {
+    const sid = String(editingLogSid || '').trim();
+    const stu = state.students.find(x => String(x.id) === sid);
+    const comment = String(homeworkInsufficientInput?.value || '').replace(/\s+/g, ' ').trim();
+    if (!sid || !stu || !comment || !editingLogDate) return;
+    if (homeworkInsufficientConfirm) homeworkInsufficientConfirm.disabled = true;
+    try {
+      const log = await createStudentLog({
+        sid,
+        studentName: String(stu.name || sid).trim() || sid,
+        kind: 'homework_insufficient',
+        comment,
+        date: editingLogDate,
+      });
+      closeHomeworkInsufficientModal();
+      window.dispatchEvent(new CustomEvent('student-log:created', { detail: log }));
+      toast('학생 로그를 등록했습니다.');
+    } catch (error) {
+      console.error('[logModal] homework insufficient log failed:', error);
+      if (homeworkInsufficientConfirm) homeworkInsufficientConfirm.disabled = false;
+      alert(error?.message || '학생 로그를 등록하지 못했습니다.');
+    }
+  };
+
+  homeworkInsufficientBtn?.addEventListener('click', openHomeworkInsufficientModal);
+  homeworkInsufficientForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void submitHomeworkInsufficientLog();
+  });
+  homeworkInsufficientInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    void submitHomeworkInsufficientLog();
+  });
+  homeworkInsufficientModal?.addEventListener('click', (event) => {
+    if (event.target === homeworkInsufficientModal) closeHomeworkInsufficientModal();
+  });
+  homeworkInsufficientModal?.querySelector('#homeworkInsufficientCancel')?.addEventListener('click', () => {
+    closeHomeworkInsufficientModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && homeworkInsufficientModal && !homeworkInsufficientModal.hidden) {
+      event.preventDefault();
+      closeHomeworkInsufficientModal();
+    }
+  }, true);
 
   if (!window.__hwDelDelegatedBound) {
     window.__hwDelDelegatedBound = true;
@@ -1777,6 +1976,7 @@ export function initLogModal() {
 
   const close = () => {
     logOpenSeq += 1;
+    closeHomeworkInsufficientModal();
     const wasUnified = logModal.classList.contains('student-work-layout');
     logModal.style.display = 'none';
     logModal.classList.remove('student-work-layout');

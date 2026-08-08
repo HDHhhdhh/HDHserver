@@ -58,6 +58,7 @@ progress.json.*.tmp
 /homework_excel_*.txt
 /homework_excel_*_notepad.md
 /tools/subjective_sheet_lab/*
+/serverr.zip
 
 # Python/runtime artifacts
 __pycache__/

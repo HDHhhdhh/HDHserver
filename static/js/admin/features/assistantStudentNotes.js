@@ -2,17 +2,24 @@ import { api } from '../core/api.js';
 
 const MAX_NOTE_LENGTH = 5000;
 const AUTHORS = ['귤', '세빈', '동훈', '하영'];
-const AUTHOR_TAGS = {
+const AUTHOR_LABELS = {
   귤: '규리',
   세빈: '세빈',
   동훈: '동훈',
   하영: '하영',
 };
 
-function formatMemoDate(value) {
+function formatNoteDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || '');
-  return `${date.getMonth() + 1}.${date.getDate()}`;
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 async function sendRequest(url, method, body) {
@@ -31,63 +38,103 @@ function setStatus(root, message, kind = '') {
   status.className = `assistant-note-status${kind ? ` is-${kind}` : ''}`;
 }
 
-function setMeta(root, note) {
-  const meta = root.querySelector('[data-note-meta]');
-  if (!meta) return;
-  if (!note) {
-    meta.textContent = '저장된 메모 없음';
-    return;
-  }
-  const savedAuthor = String(note.updated_by || note.created_by || '');
-  const authorTag = AUTHOR_TAGS[savedAuthor];
-  const dateLabel = formatMemoDate(note.updated_at || note.created_at);
-  meta.textContent = authorTag
-    ? `마지막 저장 ${dateLabel} [${authorTag}]`
-    : `마지막 저장 ${dateLabel}`;
-}
-
 function setSelectedAuthor(root, author) {
   if (AUTHORS.includes(author)) {
     root.dataset.noteSelectedAuthor = author;
   } else {
     delete root.dataset.noteSelectedAuthor;
   }
-  root.querySelectorAll('[data-note-author]').forEach((button) => {
+  root.querySelectorAll('.assistant-note-author-buttons [data-note-author]').forEach((button) => {
     const selected = button.dataset.noteAuthor === author;
     button.classList.toggle('is-selected', selected);
     button.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
 }
 
-function setNoteColorAuthor(root, author) {
-  if (AUTHORS.includes(author)) {
-    root.dataset.noteColorAuthor = author;
-  } else {
-    delete root.dataset.noteColorAuthor;
+function setComposerDisabled(input, saveButton, authorButtons, disabled) {
+  input.disabled = disabled;
+  saveButton.disabled = disabled;
+  authorButtons.forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function renderNotes(root, notes, { scrollToLatest = true, onDelete = null } = {}) {
+  const list = root.querySelector('[data-note-list]');
+  const count = root.querySelector('[data-note-count]');
+  if (!list || !count) return;
+
+  list.replaceChildren();
+  count.textContent = `댓글 ${notes.length}개`;
+
+  if (!notes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'assistant-note-empty';
+    empty.textContent = '아직 등록된 댓글이 없습니다.';
+    list.appendChild(empty);
+    return;
+  }
+
+  notes.slice().reverse().forEach((note) => {
+    const author = String(note.updated_by || note.created_by || '');
+    const article = document.createElement('article');
+    article.className = 'assistant-note-item';
+    article.dataset.noteId = String(note.id || '');
+    if (AUTHORS.includes(author)) article.dataset.noteAuthor = author;
+
+    const header = document.createElement('div');
+    header.className = 'assistant-note-item-header';
+
+    const authorName = document.createElement('strong');
+    authorName.className = 'assistant-note-item-author';
+    const authorLabel = AUTHOR_LABELS[author] || author || '이전 메모';
+    authorName.textContent = authorLabel;
+
+    const time = document.createElement('time');
+    time.className = 'assistant-note-item-time';
+    const savedAt = String(note.updated_at || note.created_at || '');
+    if (savedAt) time.dateTime = savedAt;
+    time.textContent = formatNoteDate(savedAt);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'assistant-note-delete';
+    deleteButton.dataset.noteDelete = String(note.id || '');
+    deleteButton.setAttribute('aria-label', `${authorLabel} 댓글 삭제`);
+    deleteButton.title = '댓글 삭제';
+    deleteButton.textContent = '삭제';
+    deleteButton.addEventListener('click', () => onDelete?.(note, deleteButton));
+
+    const meta = document.createElement('div');
+    meta.className = 'assistant-note-item-meta';
+    meta.append(time, deleteButton);
+
+    const content = document.createElement('p');
+    content.className = 'assistant-note-item-content';
+    content.textContent = String(note.content || '') || '내용 없는 이전 메모';
+
+    header.append(authorName, meta);
+    article.append(header, content);
+    list.appendChild(article);
+  });
+
+  if (scrollToLatest) {
+    requestAnimationFrame(() => {
+      if (list.isConnected) list.scrollTop = list.scrollHeight;
+    });
   }
 }
 
-function syncAuthorTag(input, author, previousAuthor = '', now = new Date()) {
-  const tagName = AUTHOR_TAGS[author];
-  if (!tagName) return false;
-  const tag = `${formatMemoDate(now)} [${tagName}]`;
-  const value = input.value || '';
-  const hasExistingContent = Boolean(value.trim());
-  const switchesAuthor = hasExistingContent && author !== previousAuthor;
-  const nextValue = !hasExistingContent
-    ? `${tag} `
-    : switchesAuthor
-      ? `${value}${value.endsWith('\n') ? '' : '\n'}${tag} `
-      : value;
-
-  if (nextValue.length > MAX_NOTE_LENGTH) return false;
-  input.value = nextValue;
-  input.focus();
-  const cursorPosition = switchesAuthor || !hasExistingContent
-    ? nextValue.length
-    : value.length;
-  input.setSelectionRange(cursorPosition, cursorPosition);
-  return true;
+function renderLoadError(root) {
+  const list = root.querySelector('[data-note-list]');
+  const count = root.querySelector('[data-note-count]');
+  if (!list || !count) return;
+  list.replaceChildren();
+  count.textContent = '불러오기 실패';
+  const message = document.createElement('p');
+  message.className = 'assistant-note-empty is-error';
+  message.textContent = '댓글을 불러오지 못했습니다.';
+  list.appendChild(message);
 }
 
 async function mountMemo(root, studentId) {
@@ -97,29 +144,44 @@ async function mountMemo(root, studentId) {
   const input = root.querySelector('[data-note-input]');
   const saveButton = root.querySelector('[data-note-save]');
   const authorButtons = [...root.querySelectorAll('[data-note-author]')];
-  let currentNote = null;
+  let notes = [];
   let selectedAuthor = '';
-  let savedAuthor = '';
-  let draftAuthor = '';
 
   if (!input || !saveButton || authorButtons.length !== AUTHORS.length) return;
-  input.disabled = true;
-  saveButton.disabled = true;
+  setComposerDisabled(input, saveButton, authorButtons, true);
   const isCurrent = () => root.isConnected && root.dataset.mountKey === mountKey;
+
+  const deleteNote = async (note, deleteButton) => {
+    const noteId = Number(note?.id);
+    if (!Number.isInteger(noteId) || noteId < 1 || !isCurrent()) return;
+    if (!window.confirm('이 댓글을 삭제할까요?\n삭제 후 되돌릴 수 없습니다.')) return;
+
+    deleteButton.disabled = true;
+    setStatus(root, '댓글 삭제 중...', 'saving');
+    try {
+      await sendRequest(`/api/assistant-student-notes/${noteId}`, 'DELETE', {
+        student_id: studentId,
+      });
+      if (!isCurrent()) return;
+      notes = notes.filter((item) => Number(item.id) !== noteId);
+      renderNotes(root, notes, { onDelete: deleteNote });
+      setStatus(root, '댓글이 삭제되었습니다.', 'success');
+    } catch (error) {
+      if (isCurrent()) {
+        deleteButton.disabled = false;
+        setStatus(root, '댓글 삭제 실패. 다시 시도해 주세요.', 'error');
+      }
+    }
+  };
 
   authorButtons.forEach((button) => {
     button.addEventListener('click', () => {
       const author = String(button.dataset.noteAuthor || '');
       if (!AUTHORS.includes(author)) return;
-      if (!syncAuthorTag(input, author, draftAuthor)) {
-        setStatus(root, '메모가 너무 길어 작성자 이름을 추가할 수 없습니다.', 'error');
-        return;
-      }
       selectedAuthor = author;
-      draftAuthor = author;
       setSelectedAuthor(root, author);
-      if (!currentNote) setNoteColorAuthor(root, author);
       setStatus(root, '');
+      input.focus();
     });
   });
 
@@ -130,38 +192,45 @@ async function mountMemo(root, studentId) {
       authorButtons[0].focus();
       return;
     }
+    if (!content) {
+      setStatus(root, '댓글 내용을 입력해 주세요.', 'error');
+      input.focus();
+      return;
+    }
+    if (content.length > MAX_NOTE_LENGTH) {
+      setStatus(root, '댓글은 5,000자까지 등록할 수 있습니다.', 'error');
+      input.focus();
+      return;
+    }
 
-    input.disabled = true;
-    saveButton.disabled = true;
-    setStatus(root, '저장 중...', 'saving');
+    setComposerDisabled(input, saveButton, authorButtons, true);
+    setStatus(root, '댓글 등록 중...', 'saving');
     try {
-      const url = currentNote
-        ? `/api/assistant-student-notes/${currentNote.id}`
-        : '/api/assistant-student-notes';
-      const method = currentNote ? 'PATCH' : 'POST';
-      const data = await sendRequest(url, method, {
+      const data = await sendRequest('/api/assistant-student-notes', 'POST', {
         student_id: studentId,
         content,
         author: selectedAuthor,
       });
       if (!isCurrent()) return;
-      currentNote = data.note;
-      input.value = currentNote.content;
-      savedAuthor = String(currentNote.updated_by || currentNote.created_by || '');
-      selectedAuthor = AUTHORS.includes(savedAuthor) ? savedAuthor : selectedAuthor;
-      draftAuthor = '';
-      setSelectedAuthor(root, selectedAuthor);
-      setNoteColorAuthor(root, savedAuthor);
-      setMeta(root, currentNote);
-      setStatus(root, '저장 완료', 'success');
+      notes = [data.note, ...notes.filter((note) => note.id !== data.note?.id)];
+      renderNotes(root, notes, { onDelete: deleteNote });
+      input.value = '';
+      selectedAuthor = '';
+      setSelectedAuthor(root, '');
+      setStatus(root, '새 댓글이 등록되었습니다.', 'success');
     } catch (error) {
-      if (isCurrent()) setStatus(root, '저장 실패. 다시 시도해 주세요.', 'error');
+      if (isCurrent()) setStatus(root, '댓글 등록 실패. 다시 시도해 주세요.', 'error');
     } finally {
       if (isCurrent()) {
-        input.disabled = false;
-        saveButton.disabled = false;
+        setComposerDisabled(input, saveButton, authorButtons, false);
       }
     }
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    if (!saveButton.disabled) saveButton.click();
   });
 
   setStatus(root, '불러오는 중...', 'loading');
@@ -172,22 +241,17 @@ async function mountMemo(root, studentId) {
       { cache: 'no-store' },
     );
     if (!isCurrent()) return;
-    const notes = Array.isArray(data?.notes) ? data.notes : [];
-    currentNote = notes[0] || null;
-    input.value = currentNote?.content || '';
-    savedAuthor = String(currentNote?.updated_by || currentNote?.created_by || '');
-    selectedAuthor = AUTHORS.includes(savedAuthor) ? savedAuthor : '';
-    draftAuthor = '';
-    setSelectedAuthor(root, selectedAuthor);
-    setNoteColorAuthor(root, savedAuthor);
-    setMeta(root, currentNote);
+    notes = Array.isArray(data?.notes) ? data.notes : [];
+    renderNotes(root, notes, { onDelete: deleteNote });
+    input.value = '';
+    selectedAuthor = '';
+    setSelectedAuthor(root, '');
     setStatus(root, '');
-    input.disabled = false;
-    saveButton.disabled = false;
+    setComposerDisabled(input, saveButton, authorButtons, false);
   } catch (error) {
     if (!isCurrent()) return;
-    setMeta(root, null);
-    setStatus(root, '메모를 불러오지 못했습니다. 새로고침해 주세요.', 'error');
+    renderLoadError(root);
+    setStatus(root, '댓글을 불러오지 못했습니다. 새로고침해 주세요.', 'error');
   }
 }
 

@@ -267,7 +267,10 @@ window.todayLocalKey = function () {
   let reviewVideosCache = []; // server-authorized previous-video membership for this page session
   const reviewSelection = new Set(); // chooser-only checked MIDs waiting for server registration
   let registeredReviewMids = []; // ordered, SID/date-scoped server-confirmed selections
-  const REVIEW_PLAYLIST_STORAGE_PREFIX = 'student:review-playlist';
+  let trainingPackVideosCache = []; // subject-wide training-pack catalog for this page session
+  const trainingPackSelection = new Set(); // chooser-only checked MIDs waiting for server registration
+  let registeredTrainingPackMids = []; // ordered, SID/date-scoped server-confirmed selections
+  let assignedTrainingPackMids = []; // all training-pack MIDs already present in today's assignment
   let updatesCache = {};     // /api/updates
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
@@ -282,6 +285,7 @@ window.todayLocalKey = function () {
   let academyOnlyInitialNoticeShown = false;
   let testSubmissionBlocked = false;
   let reviewVideosMalformed = false;
+  let trainingPackVideosMalformed = false;
   let ghostStudent = false;
   const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
   window.__ASSIGNED_TESTS__ = [];
@@ -576,6 +580,10 @@ window.todayLocalKey = function () {
             homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
             reviewVideos: b.reviewVideos,
             reviewVideosMalformed: !Array.isArray(b.reviewVideos),
+            trainingPackVideos: b.trainingPackVideos,
+            trainingPackVideosMalformed: !Array.isArray(b.trainingPackVideos),
+            registeredTrainingPackVideos: b.registeredTrainingPackVideos,
+            assignedTrainingPackVideos: b.assignedTrainingPackVideos,
             ghostStudent: b.ghostStudent === true,
             redirectSid: b.redirectSid || b.recoveredSid || '',
             recoveryReason: b.recoveryReason || '',
@@ -607,6 +615,10 @@ window.todayLocalKey = function () {
         homeworkBooks: [],
         reviewVideos: [],
         reviewVideosMalformed: false,
+        trainingPackVideos: [],
+        trainingPackVideosMalformed: false,
+        registeredTrainingPackVideos: [],
+        assignedTrainingPackVideos: [],
         ghostStudent: false,
       },
     ]);
@@ -768,11 +780,7 @@ window.todayLocalKey = function () {
     return normalized;
   }
 
-  function reviewPlaylistStorageKey() {
-    return `${REVIEW_PLAYLIST_STORAGE_PREFIX}:${String(sid)}:${studentDataDateKey()}`;
-  }
-
-  function normalizeStoredReviewMids(value) {
+  function normalizeReviewMids(value) {
     const seen = new Set();
     const normalized = [];
     if (!Array.isArray(value)) return normalized;
@@ -786,35 +794,108 @@ window.todayLocalKey = function () {
     return normalized;
   }
 
-  function saveRegisteredReviewMids() {
-    try {
-      localStorage.setItem(reviewPlaylistStorageKey(), JSON.stringify(registeredReviewMids));
-    } catch (_) {
-      // Browser storage is a convenience only; the server-authorized chooser remains usable.
-    }
+  function normalizeTrainingPackVideos(items) {
+    const seen = new Set();
+    const normalized = [];
+    if (!Array.isArray(items)) return normalized;
+    items.forEach(item => {
+      if (!item || typeof item !== 'object') return;
+      const mid = String(item.mid ?? '').trim();
+      const subCurriculum = String(item.subCurriculum ?? '').trim().toLowerCase();
+      if (!mid || subCurriculum !== '트팩' || seen.has(mid)) return;
+      seen.add(mid);
+      normalized.push({ ...item, mid, isTrainingPack: true });
+    });
+    return normalized;
   }
 
-  function loadRegisteredReviewMids() {
-    let parsed = [];
-    try {
-      const raw = localStorage.getItem(reviewPlaylistStorageKey());
-      if (raw) parsed = JSON.parse(raw);
-    } catch (_) {
-      parsed = [];
-    }
-    const allowed = new Set(reviewVideosCache.map(item => item.mid));
-    const normalized = normalizeStoredReviewMids(parsed);
-    const next = normalized.filter(mid => allowed.has(mid));
-    const changed = JSON.stringify(next) !== JSON.stringify(normalized);
-    registeredReviewMids = next;
+  function normalizeTrainingPackMids(value) {
+    const seen = new Set();
+    const normalized = [];
+    if (!Array.isArray(value)) return normalized;
+    value.forEach(raw => {
+      const mid = String(raw ?? '').trim();
+      if (mid && !seen.has(mid)) {
+        seen.add(mid);
+        normalized.push(mid);
+      }
+    });
+    return normalized;
+  }
+
+  function reviewAssignmentFor(updatesObj, date, sidVal) {
+    const dayMap = (updatesObj && updatesObj[date]) ? updatesObj[date] : {};
+    const sidStr = String(sidVal);
+    const sidNum = Number.isFinite(+sidVal) ? String(+sidVal) : null;
+    return dayMap[sidStr] ?? (sidNum != null ? dayMap[sidNum] : undefined);
+  }
+
+  function setRegisteredReviewMids(value) {
+    registeredReviewMids = normalizeReviewMids(value);
     reviewSelection.clear();
-    if (changed) saveRegisteredReviewMids();
+  }
+
+  function setRegisteredTrainingPackMids(value) {
+    registeredTrainingPackMids = normalizeTrainingPackMids(value);
+    trainingPackSelection.clear();
+  }
+
+  function setAssignedTrainingPackMids(value) {
+    assignedTrainingPackMids = normalizeTrainingPackMids(value);
+    trainingPackSelection.clear();
+  }
+
+  function loadRegisteredReviewMids(serverMids) {
+    const assignment = reviewAssignmentFor(updatesCache, studentDataDateKey(), sid);
+    const assignmentMids = assignment && typeof assignment === 'object'
+      ? assignment.reviewVideos
+      : [];
+    setRegisteredReviewMids(
+      Array.isArray(serverMids) ? serverMids : assignmentMids,
+    );
+  }
+
+  function loadRegisteredTrainingPackMids(serverMids, serverAssignedMids) {
+    const assignment = reviewAssignmentFor(updatesCache, studentDataDateKey(), sid);
+    const registeredAssignmentMids = assignment && typeof assignment === 'object'
+      ? (
+        Array.isArray(assignment.studentTrainingPackVideos)
+          ? assignment.studentTrainingPackVideos
+          : (assignment.source === 'studentTrainingPack' ? assignment.trainingPackVideos : [])
+      )
+      : [];
+    const assignedAssignmentMids = assignment && typeof assignment === 'object'
+      ? assignment.trainingPackVideos
+      : [];
+    setRegisteredTrainingPackMids(
+      Array.isArray(serverMids) ? serverMids : registeredAssignmentMids,
+    );
+    setAssignedTrainingPackMids(
+      Array.isArray(serverAssignedMids) ? serverAssignedMids : assignedAssignmentMids,
+    );
+  }
+
+  function updateReviewAssignmentInCache(assignment) {
+    const date = studentDataDateKey();
+    const dayMap = { ...(updatesCache?.[date] || {}) };
+    const sidKey = String(sid);
+    if (assignment && typeof assignment === 'object') dayMap[sidKey] = assignment;
+    else delete dayMap[sidKey];
+    updatesCache = { ...(updatesCache || {}), [date]: dayMap };
   }
 
   function registeredReviewVideos() {
     if (!academyAccessAllowed || reviewSurfaceBlocked()) return [];
     const byMid = new Map(reviewVideosCache.map(item => [item.mid, item]));
     return registeredReviewMids
+      .map(mid => byMid.get(mid))
+      .filter(item => item && item.playbackRestricted !== true);
+  }
+
+  function registeredTrainingPackVideos() {
+    if (!academyAccessAllowed || trainingPackSurfaceBlocked()) return [];
+    const byMid = new Map(trainingPackVideosCache.map(item => [item.mid, item]));
+    return registeredTrainingPackMids
       .map(mid => byMid.get(mid))
       .filter(item => item && item.playbackRestricted !== true);
   }
@@ -843,6 +924,16 @@ window.todayLocalKey = function () {
       || isAbsentOnStudentDate() || isArchivedOnStudentDate();
   }
 
+  function trainingPackStudentEligible() {
+    const level = String(stuCache?.level || '').trim();
+    const subCurriculum = String(stuCache?.subCurriculum || '').trim().toLowerCase();
+    return ['중', '하'].includes(level) && ['a:ble', 'apex'].includes(subCurriculum);
+  }
+
+  function trainingPackSurfaceBlocked() {
+    return reviewSurfaceBlocked() || trainingPackVideosMalformed || !trainingPackStudentEligible();
+  }
+
   function setActiveVideo(mid) {
     const key = String(mid || '');
     $('vidList')?.querySelectorAll('li[data-mid]').forEach(item => {
@@ -851,6 +942,8 @@ window.todayLocalKey = function () {
     const reviewItems = [
       ...($('previousVidList')?.querySelectorAll('button[data-mid]') || []),
       ...($('previousVidList')?.querySelectorAll('label[data-mid]') || []),
+      ...($('trainingPackVideosList')?.querySelectorAll('button[data-mid]') || []),
+      ...($('trainingPackVideosList')?.querySelectorAll('label[data-mid]') || []),
     ];
     reviewItems.forEach(item => {
       const active = item.dataset.mid === key;
@@ -864,22 +957,99 @@ window.todayLocalKey = function () {
     const eligible = new Set(reviewVideosCache.map(item => item.mid));
     const registered = new Set(registeredReviewMids);
     const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    register.disabled = reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
+    register.disabled = reviewRegistrationPending || reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
   }
 
-  function registerReviewVideos() {
+  let reviewRegistrationPending = false;
+  const reviewCancellationPendingMids = new Set();
+
+  async function registerReviewVideos() {
     if (reviewSurfaceBlocked() || !academyAccessAllowed) return false;
     const eligible = new Set(reviewVideosCache.map(item => item.mid));
     const registered = new Set(registeredReviewMids);
     const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    if (!selected.length) return false;
+    if (!selected.length || reviewRegistrationPending) return false;
 
-    registeredReviewMids = normalizeStoredReviewMids([...registeredReviewMids, ...selected]);
-    reviewSelection.clear();
-    saveRegisteredReviewMids();
-    void renderAssignedList({ autoPlay: false });
-    renderPreviousVideos();
-    return true;
+    reviewRegistrationPending = true;
+    try {
+      const date = studentDataDateKey();
+      const res = await fetch('/api/updates/review', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ date, sid: String(sid), videos: selected }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error || '복습 영상 등록에 실패했습니다.');
+      }
+
+      updateReviewAssignmentInCache(payload.assignment);
+      setRegisteredReviewMids(payload.reviewVideos || payload.assignment?.reviewVideos || selected);
+      void renderAssignedList({ autoPlay: false });
+      renderPreviousVideos();
+      return true;
+    } catch (err) {
+      alert(err?.message || '복습 영상 등록에 실패했습니다.');
+      return false;
+    } finally {
+      reviewRegistrationPending = false;
+      syncReviewRegisterControl($('previousVideosRegister'));
+    }
+  }
+
+  async function cancelRegisteredReviewVideo(mid) {
+    const midKey = String(mid ?? '').trim();
+    if (!midKey || !registeredReviewMids.includes(midKey)
+      || reviewSurfaceBlocked() || !academyAccessAllowed
+      || reviewCancellationPendingMids.has(midKey)) return false;
+
+    reviewCancellationPendingMids.add(midKey);
+    const cancelButton = [...($('vidList')?.querySelectorAll('button[data-review-cancel]') || [])]
+      .find(button => button.dataset.mid === midKey);
+    if (cancelButton) {
+      cancelButton.disabled = true;
+      cancelButton.textContent = '취소 중…';
+    }
+
+    try {
+      const date = studentDataDateKey();
+      const res = await fetch('/api/updates/review', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({
+          date,
+          sid: String(sid),
+          videos: [midKey],
+          action: 'cancel',
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error || '복습 영상 취소에 실패했습니다.');
+      }
+
+      updateReviewAssignmentInCache(payload.assignment);
+      const nextReviewMids = Array.isArray(payload.reviewVideos)
+        ? payload.reviewVideos
+        : (Array.isArray(payload.assignment?.reviewVideos)
+          ? payload.assignment.reviewVideos
+          : registeredReviewMids.filter(item => item !== midKey));
+      setRegisteredReviewMids(nextReviewMids);
+      await renderAssignedList({ autoPlay: false });
+      renderPreviousVideos();
+      return true;
+    } catch (err) {
+      alert(err?.message || '복습 영상 취소에 실패했습니다.');
+      return false;
+    } finally {
+      reviewCancellationPendingMids.delete(midKey);
+      const retryButton = [...($('vidList')?.querySelectorAll('button[data-review-cancel]') || [])]
+        .find(button => button.dataset.mid === midKey);
+      if (retryButton) {
+        retryButton.disabled = false;
+        retryButton.textContent = '취소';
+      }
+    }
   }
 
   function renderPreviousVideos() {
@@ -1004,6 +1174,191 @@ window.todayLocalKey = function () {
       list.appendChild(row);
     });
     syncReviewRegisterControl(register);
+  }
+
+  function syncTrainingPackRegisterControl(register) {
+    if (!register) return;
+    const eligible = new Set(trainingPackVideosCache.map(item => item.mid));
+    const registered = new Set(registeredTrainingPackMids);
+    const assigned = new Set(assignedTrainingPackMids);
+    const selected = [...trainingPackSelection].filter(
+      mid => eligible.has(mid) && !registered.has(mid) && !assigned.has(mid),
+    );
+    register.disabled = trainingPackRegistrationPending || trainingPackSurfaceBlocked()
+      || !academyAccessAllowed || selected.length === 0;
+  }
+
+  let trainingPackRegistrationPending = false;
+
+  async function registerTrainingPackVideos() {
+    if (trainingPackSurfaceBlocked() || !academyAccessAllowed) return false;
+    const eligible = new Set(trainingPackVideosCache.map(item => item.mid));
+    const registered = new Set(registeredTrainingPackMids);
+    const assigned = new Set(assignedTrainingPackMids);
+    const selected = [...trainingPackSelection].filter(
+      mid => eligible.has(mid) && !registered.has(mid) && !assigned.has(mid),
+    );
+    if (!selected.length || trainingPackRegistrationPending) return false;
+
+    trainingPackRegistrationPending = true;
+    try {
+      const date = studentDataDateKey();
+      const res = await fetch('/api/updates/training-pack', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ date, sid: String(sid), videos: selected }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error || '트레이닝팩 영상 등록에 실패했습니다.');
+      }
+
+      updateReviewAssignmentInCache(payload.assignment);
+      setRegisteredTrainingPackMids(
+        payload.trainingPackVideos || payload.assignment?.studentTrainingPackVideos || [
+          ...registeredTrainingPackMids,
+          ...selected,
+        ],
+      );
+      setAssignedTrainingPackMids(
+        payload.assignedTrainingPackVideos || payload.assignment?.trainingPackVideos || [
+          ...assignedTrainingPackMids,
+          ...selected,
+        ],
+      );
+      void renderAssignedList({ autoPlay: false });
+      renderTrainingPackVideos();
+      return true;
+    } catch (err) {
+      alert(err?.message || '트레이닝팩 영상 등록에 실패했습니다.');
+      return false;
+    } finally {
+      trainingPackRegistrationPending = false;
+      syncTrainingPackRegisterControl($('trainingPackVideosRegister'));
+    }
+  }
+
+  function renderTrainingPackVideos() {
+    const wrapper = $('trainingPackVideos');
+    const toggle = $('trainingPackVideosToggle');
+    const panel = $('trainingPackVideosPanel');
+    const summary = $('trainingPackVideosSummary');
+    const register = $('trainingPackVideosRegister');
+    const list = $('trainingPackVideosList');
+    if (!wrapper || !toggle || !panel || !summary || !list) return;
+
+    if (!toggle.dataset.trainingPackBound) {
+      toggle.addEventListener('click', () => {
+        if (toggle.disabled) return;
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        panel.hidden = expanded;
+      });
+      toggle.dataset.trainingPackBound = '1';
+    }
+    if (register && !register.dataset.trainingPackBound) {
+      register.addEventListener('click', () => { void registerTrainingPackVideos(); });
+      register.dataset.trainingPackBound = '1';
+    }
+
+    wrapper.hidden = true;
+    wrapper.classList.remove('is-empty', 'is-disabled', 'is-restricted');
+    toggle.textContent = '트레이닝팩';
+    toggle.disabled = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    panel.hidden = true;
+    summary.textContent = '';
+    summary.classList.remove('is-empty');
+    list.textContent = '';
+    if (register) {
+      register.hidden = false;
+      register.disabled = true;
+    }
+
+    // The catalog itself controls visibility: no training-pack videos means
+    // no button. The server has already limited this list to the student's
+    // subject and the eligible level/course combination.
+    if (trainingPackSurfaceBlocked() || !trainingPackVideosCache.length) return;
+
+    wrapper.hidden = false;
+    toggle.disabled = false;
+    toggle.textContent = `트레이닝팩 (${trainingPackVideosCache.length})`;
+    const registered = new Set(registeredTrainingPackMids);
+    const assigned = new Set(assignedTrainingPackMids);
+    const pending = trainingPackVideosCache.some(
+      item => !registered.has(item.mid) && !assigned.has(item.mid),
+    );
+    summary.textContent = pending
+      ? '영상을 선택한 뒤 영상 등록을 누르세요'
+      : '트레이닝팩 영상이 오늘 영상 목록에 포함되어 있습니다';
+    if (!pending && register) register.hidden = true;
+
+    for (const item of trainingPackVideosCache) {
+      const title = document.createElement('span');
+      const restricted = item.playbackRestricted === true || !academyAccessAllowed;
+      const isRegistered = registered.has(item.mid);
+      const isAssigned = assigned.has(item.mid);
+      title.className = 'previous-video-title';
+      title.textContent = reviewVideoTitle(item);
+
+      if (!academyAccessAllowed) {
+        const row = document.createElement('li');
+        const playButton = document.createElement('button');
+        row.className = 'previous-video-play-row';
+        playButton.type = 'button';
+        playButton.className = 'previous-video-play';
+        playButton.dataset.mid = item.mid;
+        playButton.dataset.playbackRestricted = 'true';
+        playButton.disabled = true;
+        playButton.setAttribute('aria-label', `${title.textContent} (학원에서만 재생 가능)`);
+        playButton.appendChild(title);
+        row.dataset.mid = item.mid;
+        row.appendChild(playButton);
+        list.appendChild(row);
+        continue;
+      }
+
+      const row = document.createElement('label');
+      row.className = 'previous-video-row';
+      row.dataset.mid = item.mid;
+      row.classList.toggle('is-active', currentMid === item.mid);
+      row.setAttribute('aria-current', String(currentMid === item.mid));
+      row.classList.toggle('is-restricted', restricted);
+      if (restricted) row.setAttribute('aria-disabled', 'true');
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.mid = item.mid;
+      checkbox.checked = isRegistered || isAssigned || trainingPackSelection.has(item.mid);
+      checkbox.disabled = isRegistered || isAssigned || restricted;
+      checkbox.setAttribute(
+        'aria-label',
+        isRegistered
+          ? `${title.textContent} 학생 등록됨`
+          : (isAssigned ? `${title.textContent} 오늘 영상에 배정됨` : title.textContent),
+      );
+      if (isRegistered) checkbox.setAttribute('data-registered', 'true');
+      if (isAssigned) checkbox.setAttribute('data-assigned', 'true');
+      checkbox.addEventListener('change', () => {
+        if (isRegistered) {
+          checkbox.checked = true;
+          return;
+        }
+        if (checkbox.checked) trainingPackSelection.add(item.mid);
+        else trainingPackSelection.delete(item.mid);
+        syncTrainingPackRegisterControl(register);
+      });
+      if (isRegistered || isAssigned) {
+        row.addEventListener('click', (event) => {
+          if (event.target === checkbox) return;
+          setActiveVideo(item.mid);
+          void play(item.mid);
+        });
+      }
+      row.append(checkbox, title);
+      list.appendChild(row);
+    }
+    syncTrainingPackRegisterControl(register);
   }
 
   function normalizeAssignedTestStatus(status) {
@@ -1320,7 +1675,13 @@ window.todayLocalKey = function () {
     homeworkBooksCache = normalizeHomeworkBooks(bootstrapMeta?.homeworkBooks);
     reviewVideosCache = normalizeReviewVideos(bootstrapMeta?.reviewVideos);
     reviewVideosMalformed = bootstrapMeta?.reviewVideosMalformed === true;
-    loadRegisteredReviewMids();
+    trainingPackVideosCache = normalizeTrainingPackVideos(bootstrapMeta?.trainingPackVideos);
+    trainingPackVideosMalformed = bootstrapMeta?.trainingPackVideosMalformed === true;
+    loadRegisteredReviewMids(bootstrapMeta?.registeredReviewVideos);
+    loadRegisteredTrainingPackMids(
+      bootstrapMeta?.registeredTrainingPackVideos,
+      bootstrapMeta?.assignedTrainingPackVideos,
+    );
     ghostStudent = bootstrapMeta?.ghostStudent === true;
     window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
@@ -1340,10 +1701,12 @@ window.todayLocalKey = function () {
     renderAssignedTests();
     renderAssignedList();
     renderPreviousVideos();
+    renderTrainingPackVideos();
 
     const listBox = $('vidList');
     if (listBox) {
       listBox.onclick = e => {
+        if (e.target.closest('button[data-review-cancel]')) return;
         const li = e.target.closest('li[data-mid]');
         if (!li) return;
         if (!academyAccessAllowed) {
@@ -1710,14 +2073,16 @@ window.todayLocalKey = function () {
     });
 
     const registeredVids = registeredReviewVideos();
+    const registeredTrainingPackVids = registeredTrainingPackVideos();
     const todayMids = new Set(myVids.map(v => String(v?.mid ?? v?.id ?? '').trim()).filter(Boolean));
     const appendedReviewVids = registeredVids.filter(v => !todayMids.has(String(v.mid).trim()));
+    const appendedTrainingPackVids = registeredTrainingPackVids.filter(v => !todayMids.has(String(v.mid).trim()));
 
     const emptyMessage = courseVideosCompleted
       ? COURSE_VIDEOS_COMPLETED_MESSAGE
       : "오늘 할당된 영상이 없습니다 문의 부탁";
 
-    if (!myVids.length && !appendedReviewVids.length) {
+    if (!myVids.length && !appendedReviewVids.length && !appendedTrainingPackVids.length) {
       if (listBox) listBox.innerHTML = `<li style='opacity:.65'>${emptyMessage}</li>`;
       setPlayerEmptyState(emptyMessage);
       return;
@@ -1725,10 +2090,21 @@ window.todayLocalKey = function () {
 
     if (listBox) {
       listBox.textContent = '';
-      [...myVids, ...appendedReviewVids].forEach((v, index) => {
-        const isRegisteredReview = index >= myVids.length;
-        const num = isRegisteredReview ? '' : (v.exNum?.[essayBandOf(stuCache.level)] || '');
+      const supplementalStart = myVids.length;
+      const trainingPackStart = supplementalStart + appendedReviewVids.length;
+      const registeredReviewMidSet = new Set(registeredReviewMids);
+      const registeredTrainingPackMidSet = new Set(registeredTrainingPackMids);
+      const assignedTrainingPackMidSet = new Set(assignedTrainingPackMids);
+      [...myVids, ...appendedReviewVids, ...appendedTrainingPackVids].forEach((v, index) => {
         const mid = String(v?.mid ?? v?.id ?? '').trim();
+        const isRegisteredReview = (index >= supplementalStart && index < trainingPackStart)
+          || registeredReviewMidSet.has(mid);
+        const isRegisteredTrainingPack = index >= trainingPackStart
+          || registeredTrainingPackMidSet.has(mid);
+        const isAssignedTrainingPack = isRegisteredTrainingPack
+          || assignedTrainingPackMidSet.has(mid);
+        const isRegisteredSupplement = isRegisteredReview || isAssignedTrainingPack;
+        const num = isRegisteredSupplement ? '' : (v.exNum?.[essayBandOf(stuCache.level)] || '');
         const prog = getProgress(mid);
         const done = prog?.completed;
         const pct = (prog?.dur > 0)
@@ -1739,6 +2115,8 @@ window.todayLocalKey = function () {
         li.dataset.mid = mid;
         if (!isRegisteredReview && index === 0) li.className = 'active';
         if (isRegisteredReview) li.dataset.reviewRegistered = 'true';
+        if (isRegisteredTrainingPack) li.dataset.trainingPackRegistered = 'true';
+        if (isAssignedTrainingPack) li.dataset.trainingPackAssigned = 'true';
 
         const main = document.createElement('span');
         main.className = 'video-main';
@@ -1758,6 +2136,24 @@ window.todayLocalKey = function () {
           essay.className = 'essay-badge';
           essay.textContent = `[서술형 ${num}번]`;
           li.appendChild(essay);
+        }
+
+        if (isRegisteredReview) {
+          const cancelButton = document.createElement('button');
+          cancelButton.type = 'button';
+          cancelButton.className = 'playlist-review-cancel';
+          cancelButton.dataset.reviewCancel = 'true';
+          cancelButton.dataset.mid = mid;
+          cancelButton.textContent = reviewCancellationPendingMids.has(mid) ? '취소 중…' : '취소';
+          cancelButton.disabled = reviewCancellationPendingMids.has(mid);
+          cancelButton.title = '복습 영상 등록 취소';
+          cancelButton.setAttribute('aria-label', `${assignedVideoTitle(v)} 복습 영상 등록 취소`);
+          cancelButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            void cancelRegisteredReviewVideo(mid);
+          });
+          li.appendChild(cancelButton);
         }
 
         listBox.appendChild(li);

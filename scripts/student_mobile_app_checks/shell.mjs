@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
@@ -417,16 +418,25 @@ export async function runShellChecks() {
     serviceWorkerInstall: installReceipt,
     checksPassed: checks,
   };
-  await fs.mkdir(path.dirname(SHELL_ARTIFACT), { recursive: true });
-  await fs.writeFile(SHELL_ARTIFACT, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-  return artifact;
+  const payload = `${JSON.stringify(artifact, null, 2)}\n`;
+  let artifactPath = SHELL_ARTIFACT;
+  try {
+    await fs.mkdir(path.dirname(artifactPath), { recursive: true });
+    await fs.writeFile(artifactPath, payload, 'utf8');
+  } catch (error) {
+    if (!['EACCES', 'EPERM'].includes(error?.code)) throw error;
+    const fallbackDir = await fs.mkdtemp(path.join(os.tmpdir(), 'student-mobile-app-shell-'));
+    artifactPath = path.join(fallbackDir, path.basename(SHELL_ARTIFACT));
+    await fs.writeFile(artifactPath, payload, 'utf8');
+  }
+  return { ...artifact, artifactPath };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const result = await runShellChecks();
     console.log(`student-mobile-app shell: ${result.checks} assertions passed`);
-    console.log(`artifact: ${path.relative(root, SHELL_ARTIFACT)}`);
+    console.log(`artifact: ${path.relative(root, result.artifactPath)}`);
   } catch (error) {
     console.error(`student-mobile-app shell: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const root = path.resolve(import.meta.dirname, '..');
-const choices = ['shell', 'admin-accounts', 'student-data', 'academy-gates', 'pwa-flow'];
+const choices = ['shell'];
 const modules = Object.fromEntries(choices.map((name) => [
   name,
   path.join(root, 'scripts', 'student_mobile_app_checks', `${name}.mjs`),

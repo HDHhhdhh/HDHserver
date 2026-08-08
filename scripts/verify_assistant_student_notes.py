@@ -85,6 +85,7 @@ def route_checks() -> None:
                 empty.status_code == 201 and empty.get_json()["note"]["content"] == "",
                 "empty note must be saved as a blank memo",
             )
+            empty_note = empty.get_json()["note"]
 
             invalid_author = client.post(
                 "/api/assistant-student-notes",
@@ -105,7 +106,12 @@ def route_checks() -> None:
                 "/api/assistant-student-notes?student_id=student-a",
                 headers=admin_headers,
             )
-            check(listed.status_code == 200 and listed.get_json()["notes"][0]["id"] == note["id"], "note list failed")
+            listed_notes = listed.get_json()["notes"]
+            check(listed.status_code == 200 and listed_notes[0]["id"] == note["id"], "note list failed")
+            check(
+                {item["id"] for item in listed_notes} >= {empty_note["id"], note["id"]},
+                "creating a new note must not replace an existing note",
+            )
 
             wrong_student = client.patch(
                 f"/api/assistant-student-notes/{note['id']}",
@@ -113,6 +119,13 @@ def route_checks() -> None:
                 headers=admin_headers,
             )
             check(wrong_student.status_code == 404, "student_id and note id must be verified together")
+
+            wrong_delete = client.delete(
+                f"/api/assistant-student-notes/{note['id']}",
+                json={"student_id": "student-b"},
+                headers=admin_headers,
+            )
+            check(wrong_delete.status_code == 404, "cross-student delete must fail")
 
             updated = client.patch(
                 f"/api/assistant-student-notes/{note['id']}",
@@ -127,6 +140,15 @@ def route_checks() -> None:
                 headers=admin_headers,
             )
             check(deleted.status_code == 200, "route delete failed")
+            remaining = client.get(
+                "/api/assistant-student-notes?student_id=student-a",
+                headers=admin_headers,
+            ).get_json()["notes"]
+            check(
+                all(item["id"] != note["id"] for item in remaining)
+                and any(item["id"] == empty_note["id"] for item in remaining),
+                "delete must remove only the requested note",
+            )
         finally:
             api_assistant_notes.get_repository = original_factory
             api_assistant_notes.student_exists = original_student_exists
@@ -141,29 +163,59 @@ def source_boundary_checks() -> None:
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
     check("assistantStudentNotes" in tooltip_source, "student sidebar must mount assistant notes")
-    check("메모 추가" not in tooltip_source and "data-note-save" in tooltip_source, "assistant memo must use one editable save field")
     check("조교 메모방" in tooltip_source, "assistant memo title is missing")
+    check('data-note-list role="log"' in tooltip_source, "scrollable assistant comment thread is missing")
+    check("댓글 등록" in tooltip_source and "data-note-save" in tooltip_source, "comment composer is missing")
     check('data-note-author="귤" aria-pressed="false">규리</button>' in tooltip_source, "gyuri author button label is missing")
-    check("textContent" in notes_source, "note text must use safe text rendering")
+    check(
+        "content.textContent = String(note.content || '')" in notes_source,
+        "note text must use safe text rendering",
+    )
     check("localStorage" not in notes_source and "sessionStorage" not in notes_source, "assistant notes must not use browser storage")
     for author in ("귤", "세빈", "동훈", "하영"):
         check(f'data-note-author="{author}"' in tooltip_source, f"missing author button: {author}")
         check(f'button[data-note-author="{author}"]' in admin_css, f"missing author color style: {author}")
         check(
-            f'.assistant-student-notes[data-note-color-author="{author}"] .assistant-note-input' in admin_css,
-            f"missing persisted note color style: {author}",
+            f'.assistant-student-notes[data-note-selected-author="{author}"] .assistant-note-input' in admin_css,
+            f"missing selected-author composer color: {author}",
         )
+        check(
+            f'.assistant-note-item[data-note-author="{author}"]' in admin_css,
+            f"missing comment author color: {author}",
+        )
+    check(
+        ".assistant-note-item-content" in admin_css
+        and "color: var(--assistant-note-item-color);" in admin_css,
+        "comment content must retain its author's assigned color",
+    )
     check("author: selectedAuthor" in notes_source, "selected author must be included in save requests")
     check("root.dataset.noteSelectedAuthor" in notes_source, "selected author must drive the pressed author button")
-    check("root.dataset.noteColorAuthor" in notes_source, "saved author must independently drive persisted note color")
-    check("const AUTHOR_TAGS" in notes_source and "귤: '규리'" in notes_source, "author tags must include 규리")
-    check("formatMemoDate(now)" in notes_source, "author tag must include the current month and day")
-    check("syncAuthorTag(input, author, draftAuthor)" in notes_source, "first author click must insert a dated author tag")
-    check("draftAuthor = ''" in notes_source, "loaded saved author must not suppress the first dated tag")
-    check("switchesAuthor" in notes_source and "value.endsWith('\\n')" in notes_source, "author handoff must append a new tagged line")
-    check("빈 내용은 저장할 수 없습니다." not in notes_source, "blank memo saves must not be blocked in the UI")
-    check("마지막 저장" in notes_source and "AUTHOR_TAGS[savedAuthor]" in notes_source, "last saved date and author must be displayed")
-    check("${createdBy}-${updatedBy}" not in notes_source, "author handoff trail must not be displayed")
+    check(
+        ".assistant-note-author-buttons [data-note-author]" in notes_source,
+        "author selection must not treat rendered comment cards as author buttons",
+    )
+    check("article.dataset.noteAuthor = author" in notes_source, "saved author must label each rendered comment")
+    check("const AUTHOR_LABELS" in notes_source and "귤: '규리'" in notes_source, "author labels must include 규리")
+    check(
+        "sendRequest('/api/assistant-student-notes', 'POST'" in notes_source,
+        "comment registration must always create a new note",
+    )
+    check("'PATCH'" not in notes_source and "currentNote" not in notes_source, "comment UI must not overwrite an existing note")
+    check("deleteButton.dataset.noteDelete" in notes_source, "each comment must expose a delete button")
+    check(
+        "sendRequest(`/api/assistant-student-notes/${noteId}`, 'DELETE'" in notes_source,
+        "delete button must call the student-scoped delete endpoint",
+    )
+    check("window.confirm('이 댓글을 삭제할까요?" in notes_source, "delete must require confirmation")
+    check("notes = notes.filter((item) => Number(item.id) !== noteId)" in notes_source, "delete must remove only one comment")
+    check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
+    check("notes.slice().reverse()" in notes_source, "existing notes must render from oldest to newest")
+    check("list.scrollTop = list.scrollHeight" in notes_source, "comment thread must scroll to the latest note")
+    check("notes = [data.note, ...notes.filter" in notes_source, "new comments must be added to the loaded thread")
+    check("if (!content)" in notes_source, "blank comments must be blocked in the composer")
+    check("input.value = ''" in notes_source, "the composer must stay separate from saved comments")
+    check("max-height: 210px" in admin_css and "overflow-y: auto" in admin_css, "comment thread must be scrollable")
+    check("white-space: pre-wrap" in admin_css, "comment line breaks must be preserved")
 
 
 def main() -> int:
