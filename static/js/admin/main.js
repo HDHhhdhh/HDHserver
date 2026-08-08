@@ -19,7 +19,7 @@ import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
-import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260808-assistant-note-colors';
+import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260808-assistant-note-pin';
 import { initAdminOperationNotes } from './features/adminOperationNotes.js';
 import { initStudentLogs } from './features/studentLogs.js';
 

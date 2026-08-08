@@ -46,6 +46,7 @@ class AssistantStudentNoteRepository:
             "content TEXT NOT NULL,"
             "created_by TEXT NOT NULL,"
             "updated_by TEXT NOT NULL DEFAULT '',"
+            "pinned INTEGER NOT NULL DEFAULT 0,"
             "created_at TEXT NOT NULL,"
             "updated_at TEXT NOT NULL"
             ");"
@@ -57,6 +58,8 @@ class AssistantStudentNoteRepository:
         columns = {str(row["name"]) for row in con.execute("PRAGMA table_info(assistant_student_notes);")}
         if "updated_by" not in columns:
             con.execute("ALTER TABLE assistant_student_notes ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''; ")
+        if "pinned" not in columns:
+            con.execute("ALTER TABLE assistant_student_notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0; ")
         con.execute("UPDATE assistant_student_notes SET updated_by=created_by WHERE updated_by='';")
 
     @staticmethod
@@ -69,6 +72,7 @@ class AssistantStudentNoteRepository:
             "content": str(row["content"]),
             "created_by": str(row["created_by"]),
             "updated_by": str(row["updated_by"]),
+            "pinned": bool(row["pinned"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }
@@ -80,7 +84,7 @@ class AssistantStudentNoteRepository:
     def list_for_student(self, student_id: str) -> list[dict]:
         with closing(self._connect()) as con:
             rows = con.execute(
-                "SELECT id, student_id, content, created_by, updated_by, created_at, updated_at "
+                "SELECT id, student_id, content, created_by, updated_by, pinned, created_at, updated_at "
                 "FROM assistant_student_notes WHERE student_id=? "
                 "ORDER BY created_at DESC, id DESC;",
                 (student_id,),
@@ -94,12 +98,12 @@ class AssistantStudentNoteRepository:
             try:
                 cur = con.execute(
                     "INSERT INTO assistant_student_notes("
-                    "student_id, content, created_by, updated_by, created_at, updated_at"
-                    ") VALUES(?,?,?,?,?,?);",
-                    (student_id, content, created_by, created_by, now, now),
+                    "student_id, content, created_by, updated_by, pinned, created_at, updated_at"
+                    ") VALUES(?,?,?,?,?,?,?);",
+                    (student_id, content, created_by, created_by, 0, now, now),
                 )
                 row = con.execute(
-                    "SELECT id, student_id, content, created_by, updated_by, created_at, updated_at "
+                    "SELECT id, student_id, content, created_by, updated_by, pinned, created_at, updated_at "
                     "FROM assistant_student_notes WHERE id=? AND student_id=?;",
                     (cur.lastrowid, student_id),
                 ).fetchone()
@@ -125,7 +129,29 @@ class AssistantStudentNoteRepository:
                 row = None
                 if cur.rowcount:
                     row = con.execute(
-                        "SELECT id, student_id, content, created_by, updated_by, created_at, updated_at "
+                        "SELECT id, student_id, content, created_by, updated_by, pinned, created_at, updated_at "
+                        "FROM assistant_student_notes WHERE id=? AND student_id=?;",
+                        (note_id, student_id),
+                    ).fetchone()
+                con.execute("COMMIT;")
+            except Exception:
+                con.execute("ROLLBACK;")
+                raise
+        return self._row_to_note(row)
+
+    def set_pinned(self, student_id: str, note_id: int, pinned: bool) -> dict | None:
+        with closing(self._connect()) as con:
+            con.execute("BEGIN IMMEDIATE;")
+            try:
+                cur = con.execute(
+                    "UPDATE assistant_student_notes SET pinned=? "
+                    "WHERE id=? AND student_id=?;",
+                    (1 if pinned else 0, note_id, student_id),
+                )
+                row = None
+                if cur.rowcount:
+                    row = con.execute(
+                        "SELECT id, student_id, content, created_by, updated_by, pinned, created_at, updated_at "
                         "FROM assistant_student_notes WHERE id=? AND student_id=?;",
                         (note_id, student_id),
                     ).fetchone()

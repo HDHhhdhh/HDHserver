@@ -1,5 +1,6 @@
 import { cloneDemoValue, loadDemoStore, saveDemoStore } from './store.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
+import { applyStudentLogsRequest } from './studentLogsContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -581,6 +582,25 @@ function setWholeMap(store, key, body) {
   return clone(store[key]);
 }
 
+function patchTodayOrder(store, body) {
+  const date = String(body?.date || '').trim();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    return { error: 'invalid date' };
+  }
+
+  const remove = body?.remove === true;
+  if (!remove && !Array.isArray(body?.order)) return { error: 'order must be a list' };
+
+  const order = remove
+    ? []
+    : Array.from(new Set(body.order.map(value => String(value).trim()).filter(Boolean)));
+  store.todayOrder = store.todayOrder && typeof store.todayOrder === 'object' ? store.todayOrder : {};
+  if (remove) delete store.todayOrder[date];
+  else store.todayOrder[date] = order;
+  return { date, order, removed: remove };
+}
+
 function mergeWholeMap(store, key, body) {
   store[key] = store[key] && typeof store[key] === 'object' ? store[key] : {};
   if (body && typeof body === 'object') {
@@ -816,6 +836,16 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/tests') return responseJson(root, clone(store.tests || {}));
   if (path === '/api/tests-stats') return testsStatsResponse(root, store, url);
   if (path === '/api/tests-records') return testsRecordsResponse(root, store, url);
+  const studentLogsResult = applyStudentLogsRequest({
+    method: 'GET',
+    path,
+    store,
+    createdAt: nowIso,
+    today: store.demoDate,
+  });
+  if (studentLogsResult) {
+    return responseJson(root, clone(studentLogsResult.payload), studentLogsResult.status);
+  }
   const operationNotesResult = applyOperationNotesRequest({
     method: 'GET',
     path,
@@ -844,6 +874,19 @@ async function handleWrite(root, ctx, store) {
     } catch {
       return badRequest(root, 'invalid json body');
     }
+  }
+
+  const studentLogsResult = applyStudentLogsRequest({
+    method,
+    path,
+    body,
+    store,
+    createdAt: nowIso,
+    today: store.demoDate,
+  });
+  if (studentLogsResult) {
+    if (studentLogsResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(studentLogsResult.payload), studentLogsResult.status);
   }
 
   if (PATCH_METHODS.has(method) && path === '/api/update') {
@@ -981,6 +1024,13 @@ async function handleWrite(root, ctx, store) {
     const next = setWholeMap(store, 'todayOrder', body);
     saveDemoStore(store);
     return ok(root, next);
+  }
+
+  if (method === 'POST' && path === '/api/today_order/patch') {
+    const result = patchTodayOrder(store, body);
+    if (result.error) return badRequest(root, result.error);
+    saveDemoStore(store);
+    return ok(root, { ok: true, ...result });
   }
 
   if (method === 'POST' && path === '/api/makeup-carryover') {

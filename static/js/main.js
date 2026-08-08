@@ -109,7 +109,7 @@ $("logoutBtn").addEventListener("click", () => {
 });
 
 (async () => {
-  const token = await requireLogin();
+  let token = await requireLogin();
   if (!token) return;
 
   $("pwBtn").addEventListener("click", async () => {
@@ -117,9 +117,15 @@ $("logoutBtn").addEventListener("click", () => {
     const newPassword = ($("newPw").value || "").trim();
     if (!oldPassword || !newPassword) { msg("비번 입력해.", "err"); return; }
 
-    const r = await api("/api/auth/change-password", { oldPassword, newPassword }, token);
-    if (r.ok && r.data?.ok) msg("비밀번호 변경됨", "ok");
-    else msg(r.data?.error === "bad old password" ? "현재 비번 틀림." : "변경 실패.", "err");
+    const r = await api("/api/auth/change", { curPw: oldPassword, newPw: newPassword }, token);
+    if (r.ok && r.data?.ok) {
+      if (r.data?.token) {
+        token = r.data.token;
+        localStorage.setItem(LS_TOKEN, token);
+      }
+      msg("비밀번호 변경됨", "ok");
+    }
+    else msg(r.data?.error === "bad password" ? "현재 비번 틀림." : "변경 실패.", "err");
   });
 
   $("idBtn").addEventListener("click", async () => {
@@ -127,16 +133,17 @@ $("logoutBtn").addEventListener("click", () => {
     const newId = ($("newId").value || "").trim();
     if (!password || !newId) { msg("비번/새 아이디 입력해.", "err"); return; }
 
-    const r = await api("/api/auth/change-id", { password, newId }, token);
+    const r = await api("/api/auth/change", { curPw: password, newId }, token);
     if (r.ok && r.data?.ok && r.data?.token) {
-      localStorage.setItem(LS_TOKEN, r.data.token);
+      token = r.data.token;
+      localStorage.setItem(LS_TOKEN, token);
       $("sidText").textContent = r.data.sid;
       msg("아이디 변경됨", "ok");
     } else {
       const e = r.data?.error;
       msg(
         e === "bad newId format" ? "새 아이디 형식이 이상함." :
-        e === "newId already exists" ? "이미 있는 아이디." :
+        e === "id taken" ? "이미 있는 아이디." :
         e === "bad password" ? "비번 틀림." :
         "아이디 변경 실패.",
         "err"

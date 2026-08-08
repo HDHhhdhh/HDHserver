@@ -7,6 +7,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 | Task | Location | Notes |
 |---|---|---|
 | Runtime backup | `backup_runtime_data.py` | Run before migrations, repair jobs, or bulk runtime-data changes. |
+| Today-order migration | `migrate_today_order_store.py` | Dry-run by default; archives a conflict-free legacy root store on `--apply`. |
 | Safety suite | `verify_refactor_safety.py` | Compile, JS checks, unit checks, optional safe smoke checks. |
 | Assistant-note verifier | `verify_assistant_student_notes.py` | Temp SQLite/API/source checks; standalone behavior check, not part of the default suite. |
 | Unit-test link map | `build_unit_test_answer_link_map_from_gdown.py` | Regenerates `static/js/test_answer_link_map.json`. |

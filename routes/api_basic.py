@@ -15,8 +15,14 @@ from flask import Blueprint, abort, jsonify, request
 from core.paths import (
     BASE,
     STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH,
-    EXTRA_PATH, LOGS_PATH, CLINIC_PATH, TODAY_ORDER_PATH, WEEKEND_SLOTS_PATH,
-    WATCH_PATH, TESTS_CFG_PATH,
+    EXTRA_PATH, LOGS_PATH, CLINIC_PATH, WEEKEND_SLOTS_PATH,
+    WATCH_PATH, TESTS_CFG_PATH, PAGE_FOLDERS_PATH,
+)
+from core.material_state import (
+    load_material_state,
+    load_material_state_locked,
+    material_state_lock,
+    replace_material_state_component,
 )
 from core.ghost_student import (
     GHOST_STUDENT_ID,
@@ -41,7 +47,7 @@ from core.progress_rules import (
     watch_auto_status as _watch_auto_status,
 )
 from core.video_review_rules import resolve_video_review_states_before_date
-from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
+from core.storage import InterProcessFileLock, file_lock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
 bp_api_basic = Blueprint("api_basic", __name__)
@@ -72,8 +78,24 @@ def crud(path):
     if request.method == "GET":
         return jsonify(load(path))
     obj = request.get_json(force=True)
-    save_atomic(path, obj)
+    with file_lock(path):
+        save_atomic(path, obj)
     return "", 204
+
+
+def _allocate_student_id(students, name_slug: str, *, start: int | None = None) -> str:
+    """Allocate the legacy three-digit suffix without reusing an existing SID."""
+    existing = {
+        str(student.get("id") or "").strip()
+        for student in (students or [])
+        if isinstance(student, dict)
+    }
+    first = random.randint(0, 999) if start is None else int(start) % 1000
+    for offset in range(1000):
+        candidate = f"{name_slug}{(first + offset) % 1000:03d}"
+        if candidate not in existing:
+            return candidate
+    raise ValueError("student id space exhausted")
 
 
 def _progress_file_signature(path=None) -> tuple[str, int, int] | None:
@@ -261,7 +283,35 @@ def _progress_status_rank(status: str) -> int:
 def _merge_progress_status(existing: str, incoming: str) -> str:
     a = str(existing or "").strip()
     b = str(incoming or "").strip()
+    if not a:
+        return b
+    if not b:
+        return a
     return a if _progress_status_rank(a) >= _progress_status_rank(b) else b
+
+
+def _replace_mid_in_list(values, old_mid: str, new_mid: str) -> tuple[list, bool]:
+    if not isinstance(values, list):
+        return values, False
+
+    out = []
+    target_seen = False
+    changed = False
+    for value in values:
+        value_key = str(value)
+        if value_key not in {old_mid, new_mid}:
+            out.append(value)
+            continue
+
+        next_value = new_mid if value_key == old_mid else value
+        if value_key == old_mid:
+            changed = True
+        if target_seen:
+            changed = True
+            continue
+        target_seen = True
+        out.append(next_value)
+    return out, changed
 
 
 def _replace_mid_in_updates(data, old_mid: str, new_mid: str) -> bool:
@@ -271,16 +321,28 @@ def _replace_mid_in_updates(data, old_mid: str, new_mid: str) -> bool:
             continue
         for sid, raw in list(by_day.items()):
             if isinstance(raw, list):
-                next_raw = [new_mid if str(x) == old_mid else x for x in raw]
-                if next_raw != raw:
+                next_raw, item_changed = _replace_mid_in_list(raw, old_mid, new_mid)
+                if item_changed:
                     by_day[sid] = next_raw
                     changed = True
-            elif isinstance(raw, dict) and isinstance(raw.get("videos"), list):
-                videos = raw.get("videos") or []
-                next_videos = [new_mid if str(x) == old_mid else x for x in videos]
-                if next_videos != videos:
-                    next_raw = dict(raw)
-                    next_raw["videos"] = next_videos
+            elif isinstance(raw, dict):
+                next_raw = dict(raw)
+                item_changed = False
+                for key in (
+                    "videos",
+                    REVIEW_VIDEO_ASSIGNMENT_KEY,
+                    TRAINING_PACK_ASSIGNMENT_KEY,
+                    STUDENT_TRAINING_PACK_ASSIGNMENT_KEY,
+                ):
+                    next_values, key_changed = _replace_mid_in_list(
+                        next_raw.get(key),
+                        old_mid,
+                        new_mid,
+                    )
+                    if key_changed:
+                        next_raw[key] = next_values
+                        item_changed = True
+                if item_changed:
                     by_day[sid] = next_raw
                     changed = True
     return changed
@@ -288,16 +350,59 @@ def _replace_mid_in_updates(data, old_mid: str, new_mid: str) -> bool:
 
 def _replace_mid_in_progress(data, old_mid: str, new_mid: str) -> bool:
     changed = False
+    meta_keys = (
+        PROGRESS_ALL_STUDENTS_META_KEY,
+        WATCH_AUTO_PROGRESS_META_KEY,
+        PROGRESS_MANUAL_META_KEY,
+    )
     for by_day in (data.values() if isinstance(data, dict) else []):
         if not isinstance(by_day, dict):
             continue
         for sid, per_sid in list(by_day.items()):
-            if not isinstance(per_sid, dict) or old_mid not in per_sid:
+            if not isinstance(per_sid, dict):
                 continue
-            old_status = str(per_sid.pop(old_mid) or "").strip()
-            new_status = _merge_progress_status(per_sid.get(new_mid), old_status)
-            if new_status:
-                per_sid[new_mid] = new_status
+
+            has_old_status = old_mid in per_sid
+            has_old_meta = any(
+                isinstance(per_sid.get(key), dict) and old_mid in per_sid[key]
+                for key in meta_keys
+            )
+            if not has_old_status and not has_old_meta:
+                continue
+
+            if has_old_status:
+                old_status = str(per_sid.pop(old_mid) or "").strip()
+                new_status = _merge_progress_status(per_sid.get(new_mid), old_status)
+                if new_status:
+                    per_sid[new_mid] = new_status
+                else:
+                    per_sid.pop(new_mid, None)
+
+            for key in meta_keys:
+                meta = per_sid.get(key)
+                if not isinstance(meta, dict) or old_mid not in meta:
+                    continue
+                old_value = meta.pop(old_mid)
+                if new_mid not in meta:
+                    meta[new_mid] = old_value
+                elif key == WATCH_AUTO_PROGRESS_META_KEY:
+                    meta[new_mid] = _merge_progress_status(meta.get(new_mid), old_value)
+                elif bool(old_value):
+                    meta[new_mid] = True
+                if not meta:
+                    per_sid.pop(key, None)
+
+            manual_meta = per_sid.get(PROGRESS_MANUAL_META_KEY)
+            auto_meta = per_sid.get(WATCH_AUTO_PROGRESS_META_KEY)
+            if (
+                isinstance(manual_meta, dict)
+                and manual_meta.get(new_mid)
+                and isinstance(auto_meta, dict)
+            ):
+                auto_meta.pop(new_mid, None)
+                if not auto_meta:
+                    per_sid.pop(WATCH_AUTO_PROGRESS_META_KEY, None)
+
             changed = True
             if not per_sid:
                 by_day.pop(sid, None)
@@ -345,25 +450,29 @@ def _migrate_video_mid_references(prev_videos, next_videos):
     if not replacements:
         return
 
-    updates = load(UPD_PATH) or {}
-    progress = load(PRG_PATH)
-    watch = load(WATCH_PATH) or {}
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        updates_changed = False
+        for old_mid, new_mid in replacements:
+            updates_changed = _replace_mid_in_updates(updates, old_mid, new_mid) or updates_changed
+        if updates_changed:
+            save_atomic(UPD_PATH, updates)
 
-    updates_changed = False
-    progress_changed = False
-    watch_changed = False
+    with _progress_lock():
+        progress = load(PRG_PATH)
+        progress_changed = False
+        for old_mid, new_mid in replacements:
+            progress_changed = _replace_mid_in_progress(progress, old_mid, new_mid) or progress_changed
+        if progress_changed:
+            _save_progress_strict(progress)
 
-    for old_mid, new_mid in replacements:
-        updates_changed = _replace_mid_in_updates(updates, old_mid, new_mid) or updates_changed
-        progress_changed = _replace_mid_in_progress(progress, old_mid, new_mid) or progress_changed
-        watch_changed = _replace_mid_in_watch(watch, old_mid, new_mid) or watch_changed
-
-    if updates_changed:
-        save_atomic(UPD_PATH, updates)
-    if progress_changed:
-        _save_progress_strict(progress)
-    if watch_changed:
-        save_atomic(WATCH_PATH, watch)
+    with file_lock(WATCH_PATH):
+        watch = load(WATCH_PATH) or {}
+        watch_changed = False
+        for old_mid, new_mid in replacements:
+            watch_changed = _replace_mid_in_watch(watch, old_mid, new_mid) or watch_changed
+        if watch_changed:
+            save_atomic(WATCH_PATH, watch)
 
 
 # ─────────────────────────────────────────────
@@ -440,6 +549,60 @@ def _normalize_video_assign_list(value) -> list[str]:
         out.append(mid)
         seen.add(mid)
     return out
+
+
+def _video_assignment_mid_aliases(videos) -> dict[str, str]:
+    """Build a read-only alias map for legacy numeric video assignments."""
+    aliases: dict[str, str] = {}
+    catalog = [video for video in (videos or []) if isinstance(video, dict)]
+
+    for video in catalog:
+        mid = str(video.get("mid") or "").strip()
+        if mid:
+            aliases.setdefault(mid, mid)
+
+    for video in catalog:
+        mid = str(video.get("mid") or "").strip()
+        if not mid:
+            continue
+        for key in ("id", "videoId", "video_id"):
+            alias = str(video.get(key) or "").strip()
+            if alias:
+                aliases.setdefault(alias, mid)
+    return aliases
+
+
+def _canonicalize_video_assignment_mids(assignment, videos):
+    """Project legacy video IDs to catalog MIDs without mutating stored updates."""
+    aliases = _video_assignment_mid_aliases(videos)
+
+    def canonicalize(value) -> list[str]:
+        out = []
+        seen = set()
+        for raw in _normalize_video_assign_list(value):
+            mid = aliases.get(raw, raw)
+            if mid and mid not in seen:
+                out.append(mid)
+                seen.add(mid)
+        return out
+
+    if isinstance(assignment, list):
+        return canonicalize(assignment)
+    if not isinstance(assignment, dict):
+        return assignment
+
+    projected = dict(assignment)
+    if "videos" in projected:
+        projected["videos"] = canonicalize(projected)
+    for key, normalizer in (
+        (REVIEW_VIDEO_ASSIGNMENT_KEY, _normalize_review_video_mids),
+        (TRAINING_PACK_ASSIGNMENT_KEY, _normalize_training_pack_video_mids),
+        (STUDENT_TRAINING_PACK_ASSIGNMENT_KEY, _normalize_student_training_pack_video_mids),
+    ):
+        if key not in projected:
+            continue
+        projected[key] = canonicalize(normalizer(projected.get(key)))
+    return projected
 
 
 def _normalize_review_video_mids(value) -> list[str]:
@@ -2372,8 +2535,22 @@ def _ensure_today_auto_assign(
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
 
         cur = _sid_lookup(updates[today], sid)
-        if not _student_is_today_auto_target(stu, sid, today, extra=extra, absent=absent, logs=logs):
-            continue
+        is_today_target = _student_is_today_auto_target(
+            stu,
+            sid,
+            today,
+            extra=extra,
+            absent=absent,
+            logs=logs,
+        )
+        if not is_today_target:
+            can_reconcile_existing = (
+                existing_only
+                and cur is not None
+                and not _is_manual_video_assignment(cur)
+            )
+            if not can_reconcile_existing:
+                continue
 
         blocked = _auto_assignment_blocked_mids_for_student(
             stu,
@@ -2420,12 +2597,20 @@ def _ensure_today_auto_assign(
             continue
 
         had_existing_assignment = cur is not None
+        reconciled_from_finished = False
+        reconciled_assignment_changed = False
         if cur is not None and not _is_manual_video_assignment(cur):
             is_auto_snapshot = isinstance(cur, list) or (
                 isinstance(cur, dict)
                 and str(cur.get("source") or "").strip().casefold() == "auto"
             )
-            if is_auto_snapshot and (not isinstance(cur, list) or cur):
+            assigned_before_reconcile = set(_normalize_video_assign_list(cur))
+            has_blocked_assigned = bool(assigned_before_reconcile & blocked)
+            if (
+                is_auto_snapshot
+                and (not isinstance(cur, list) or cur)
+                and has_blocked_assigned
+            ):
                 reconciled = _sanitize_auto_assignment_for_write(
                     cur,
                     stu,
@@ -2434,22 +2619,35 @@ def _ensure_today_auto_assign(
                     progress,
                     watch or {},
                 )
-                if reconciled is None and isinstance(cur, dict):
-                    # Preserve assignment metadata while allowing the normal
-                    # candidate picker to replace blocked videos.
-                    reconciled = dict(cur)
-                    reconciled["videos"] = []
-                    reconciled.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-                    reconciled.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
-                    reconciled.pop(STUDENT_TRAINING_PACK_ASSIGNMENT_KEY, None)
+                if isinstance(reconciled, list) and assigned_before_reconcile and not reconciled:
+                    # Legacy list snapshots have no metadata container to
+                    # preserve. Treat an all-finished list like an empty
+                    # automatic snapshot so the next eligible videos can be
+                    # selected immediately.
+                    reconciled_from_finished = True
+                    reconciled = None
+                if reconciled is None:
+                    reconciled_from_finished = True
+                    if isinstance(cur, dict):
+                        # Preserve assignment metadata while allowing the
+                        # normal candidate picker to replace blocked videos.
+                        reconciled = dict(cur)
+                        reconciled["videos"] = []
+                        reconciled.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
+                        reconciled.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
+                        reconciled.pop(STUDENT_TRAINING_PACK_ASSIGNMENT_KEY, None)
                 if reconciled != cur:
                     _write_sid_mapping(updates[today], sid, reconciled)
                     cur = reconciled
                     changed = True
+                    reconciled_assignment_changed = True
 
         completion_videos = cur_vids or completion_videos
         if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
             # Completion blocks new work after finished videos are removed.
+            if reconciled_from_finished and cur is not None and not _normalize_video_assign_list(cur):
+                _write_sid_mapping(updates[today], sid, None)
+                changed = True
             continue
 
         if cur is not None:
@@ -2457,7 +2655,11 @@ def _ensure_today_auto_assign(
                 isinstance(cur, dict)
                 and str(cur.get("source") or "").strip().casefold() == "auto"
             )
-            if is_auto_snapshot and (not isinstance(cur, list) or cur):
+            if (
+                is_auto_snapshot
+                and (not isinstance(cur, list) or cur)
+                and (reconciled_from_finished or reconciled_assignment_changed)
+            ):
                 expanded, expanded_changed = _append_auto_assignment_videos(
                     cur,
                     cur_vids,
@@ -2468,6 +2670,10 @@ def _ensure_today_auto_assign(
                     _write_sid_mapping(updates[today], sid, expanded)
                     cur = expanded
                     changed = True
+            if reconciled_from_finished and cur is not None and not _normalize_video_assign_list(cur):
+                _write_sid_mapping(updates[today], sid, None)
+                cur = None
+                changed = True
             continue
 
         if existing_only and not had_existing_assignment:
@@ -2479,6 +2685,76 @@ def _ensure_today_auto_assign(
             changed = True
 
     return updates
+
+
+def _reconcile_auto_assignment_after_progress(
+    date_key: str,
+    sid: str,
+    progress=None,
+    watch=None,
+) -> bool:
+    """Reconcile one existing automatic snapshot after progress changes.
+
+    Progress writes are explicit mutation events, so they may remove finished
+    videos from an existing automatic assignment. The existing-only flag keeps
+    this hook from creating a brand-new assignment for a date that had none.
+    """
+    date_key = str(date_key or "").strip()
+    sid = str(sid or "").strip()
+    if not date_key or not sid or not DATE_RE.match(date_key):
+        return False
+
+    students = load(STU_PATH) or []
+    student = next(
+        (
+            row for row in students
+            if isinstance(row, dict) and str(row.get("id") or "").strip() == sid
+        ),
+        None,
+    )
+    if not isinstance(student, dict):
+        return False
+
+    videos = load(VID_PATH) or []
+    progress = progress if isinstance(progress, dict) else _load_progress_strict()
+    watch = watch if isinstance(watch, dict) else load(WATCH_PATH) or {}
+    try:
+        logs = get_log_repository().read_logs(date_key)
+    except Exception:
+        logs = {}
+    try:
+        extra = load(EXTRA_PATH) or {}
+    except Exception:
+        extra = {}
+    try:
+        absent = load_absent()
+    except Exception:
+        absent = {}
+    try:
+        weekend_slots = load(WEEKEND_SLOTS_PATH) or {}
+    except Exception:
+        weekend_slots = {}
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        before = _json_stable(updates)
+        fixed = _ensure_today_auto_assign(
+            updates,
+            [student],
+            videos,
+            progress,
+            date_key=date_key,
+            watch=watch,
+            logs=logs,
+            extra=extra,
+            absent=absent,
+            weekend_slots=weekend_slots,
+            existing_only=True,
+        )
+        changed = _json_stable(fixed) != before
+        if changed:
+            save_atomic(UPD_PATH, fixed)
+        return changed
 
 
 def _json_stable(obj) -> str:
@@ -2701,10 +2977,11 @@ def api_videos():
     if request.method == "GET":
         return jsonify(load(VID_PATH))
 
-    prev_videos = load(VID_PATH)
-    next_videos = _normalize_video_mid_fields(request.get_json(force=True))
-    save_atomic(VID_PATH, next_videos)
-    _migrate_video_mid_references(prev_videos, next_videos)
+    with file_lock(VID_PATH):
+        prev_videos = load(VID_PATH)
+        next_videos = _normalize_video_mid_fields(request.get_json(force=True))
+        save_atomic(VID_PATH, next_videos)
+        _migrate_video_mid_references(prev_videos, next_videos)
     return "", 204
 
 
@@ -2792,6 +3069,18 @@ def api_progress_patch():
                 current.pop(date, None)
 
             _save_progress_strict(current)
+
+        try:
+            _reconcile_auto_assignment_after_progress(
+                date,
+                sid,
+                progress=current,
+                watch=load(WATCH_PATH) or {},
+            )
+        except Exception as exc:
+            # A progress save must remain successful even if assignment
+            # reconciliation is temporarily unavailable.
+            print("[progress] auto-assignment reconcile failed:", exc, flush=True)
 
         return jsonify({"ok": True, "progress": merged})
     except TimeoutError as e:
@@ -3418,7 +3707,10 @@ def api_student_bootstrap():
     else:
         updates = load(UPD_PATH) or {}
     day_updates = updates.get(date) if isinstance(updates, dict) else {}
-    assignment = _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
+    assignment = _canonicalize_video_assignment_mids(
+        _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid),
+        videos_all,
+    )
     response_assignment = assignment
     watch_all = load(WATCH_PATH) or {}
     eligible_mids = _student_eligible_review_video_mids(
@@ -3491,10 +3783,17 @@ def api_student_bootstrap():
         if mid in training_pack_catalog_mids
     ]
 
-    assigns = load(ASN_PATH) or {}
+    with material_state_lock(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH):
+        material_catalog, assigns, _page_folders = load_material_state_locked(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+            _loader=load,
+        )
+    assigns = assigns or {}
     material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
     assigned_materials = _assigned_material_list(material_assignment)
-    materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
+    materials = _filter_materials_for_assignment(material_catalog or {}, assigned_materials)
 
     json_logs_for_assigned = log_repo.read_json_map()
 
@@ -3538,14 +3837,41 @@ def api_student_bootstrap():
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
 def api_mat_assign():
-    return crud(ASN_PATH)
+    if request.method == "GET":
+        _materials, assignments, _page_folders = load_material_state(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+            _loader=load,
+        )
+        return jsonify(assignments)
+    replace_material_state_component(
+        MAT_PATH,
+        ASN_PATH,
+        PAGE_FOLDERS_PATH,
+        "assignments",
+        request.get_json(force=True),
+    )
+    return "", 204
 
 
 @bp_api_basic.route("/api/materials", methods=["GET", "POST"])
 def api_materials():
     if request.method == "GET":
-        return jsonify(load(MAT_PATH))
-    save_atomic(MAT_PATH, request.get_json(force=True))
+        materials, _assignments, _page_folders = load_material_state(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+            _loader=load,
+        )
+        return jsonify(materials)
+    replace_material_state_component(
+        MAT_PATH,
+        ASN_PATH,
+        PAGE_FOLDERS_PATH,
+        "materials",
+        request.get_json(force=True),
+    )
     return "", 204
 
 
@@ -3554,21 +3880,27 @@ def api_school_calendar():
     if request.method == "GET":
         return nocache_resp(load(CAL_PATH))
     data = request.get_json(force=True) or {}
-    with _InterProcessFileLock(str(CAL_PATH) + ".lock", timeout_sec=4.0, poll_sec=0.05):
+    with file_lock(CAL_PATH, timeout_sec=4.0):
         save_atomic(CAL_PATH, data)
     return jsonify(data)
 
 
 @bp_api_basic.post("/api/add-student")
 def api_add_student():
-    students: List[dict] = load(STU_PATH)
     data = request.get_json(force=True) or {}
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
-    data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
-    _apply_able_auto_video_assign_default(data)
-    students.append(data)
-    save_atomic(STU_PATH, students)
+    with file_lock(STU_PATH):
+        students: List[dict] = load(STU_PATH)
+        if not isinstance(students, list):
+            return jsonify({"ok": False, "error": "invalid student store"}), 500
+        try:
+            data["id"] = _allocate_student_id(students, name_slug)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        _apply_able_auto_video_assign_default(data)
+        students.append(data)
+        save_atomic(STU_PATH, students)
     return jsonify({"id": data["id"]})
 
 
@@ -3577,9 +3909,11 @@ def api_feedback():
     import json as _json
     from core.paths import BASE
     data = request.get_json(force=True) or {}
-    with open(BASE / "feedbacks.json", "a", encoding="utf-8") as f:
-        _json.dump(data, f, ensure_ascii=False)
-        f.write("\n")
+    feedback_path = BASE / "feedbacks.json"
+    with file_lock(feedback_path):
+        with open(feedback_path, "a", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False)
+            f.write("\n")
     return "", 204
 
 
@@ -3591,10 +3925,11 @@ def api_extra_attend():
     body = request.get_json(force=True) or {}
     if mapping_contains_ghost_student_sid(body):
         return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
-    previous = load(EXTRA_PATH) or {}
-    previous_map = previous if isinstance(previous, dict) else {}
     body_map = body if isinstance(body, dict) else {}
-    save_atomic(EXTRA_PATH, body_map)
+    with file_lock(EXTRA_PATH):
+        previous = load(EXTRA_PATH) or {}
+        previous_map = previous if isinstance(previous, dict) else {}
+        save_atomic(EXTRA_PATH, body_map)
 
     changed_dates = {
         str(date_key)
@@ -3615,30 +3950,31 @@ def api_weekend_slots():
     if request.method == "GET":
         return jsonify(load(WEEKEND_SLOTS_PATH))
     body = request.get_json(force=True) or {}
-    cur = load(WEEKEND_SLOTS_PATH)
-    if not isinstance(cur, dict):
-        cur = {}
-    for date, mapping in (body.items() if isinstance(body, dict) else []):
-        if not isinstance(mapping, dict):
-            continue
-
-        def norm(v):
-            if isinstance(v, list):
-                return [int(x) for x in v if str(x).isdigit()]
-            if str(v).isdigit():
-                return int(v)
-            return v
-
-        day = cur.setdefault(date, {})
-        for k, v in mapping.items():
-            sid = str(k)
-            if v is None or v is False or v == []:
-                day.pop(sid, None)
+    with file_lock(WEEKEND_SLOTS_PATH):
+        cur = load(WEEKEND_SLOTS_PATH)
+        if not isinstance(cur, dict):
+            cur = {}
+        for date, mapping in (body.items() if isinstance(body, dict) else []):
+            if not isinstance(mapping, dict):
                 continue
-            day[sid] = norm(v)
-        if not day:
-            cur.pop(date, None)
-    save_atomic(WEEKEND_SLOTS_PATH, cur)
+
+            def norm(v):
+                if isinstance(v, list):
+                    return [int(x) for x in v if str(x).isdigit()]
+                if str(v).isdigit():
+                    return int(v)
+                return v
+
+            day = cur.setdefault(date, {})
+            for k, v in mapping.items():
+                sid = str(k)
+                if v is None or v is False or v == []:
+                    day.pop(sid, None)
+                    continue
+                day[sid] = norm(v)
+            if not day:
+                cur.pop(date, None)
+        save_atomic(WEEKEND_SLOTS_PATH, cur)
     for date, mapping in (body.items() if isinstance(body, dict) else []):
         if not isinstance(mapping, dict) or not DATE_RE.match(str(date)):
             continue
@@ -3796,12 +4132,15 @@ def api_logs_patch():
 # ─────────────────────────────────────────────
 @bp_api_basic.delete("/api/students/<string:sid>")
 def api_delete_student(sid: str):
-    students: List[dict] = load(STU_PATH)
-    for i, s in enumerate(students):
-        if str(s.get("id")) == str(sid):
-            del students[i]
-            save_atomic(STU_PATH, students)
-            return "", 204
+    with file_lock(STU_PATH):
+        students: List[dict] = load(STU_PATH)
+        if not isinstance(students, list):
+            return jsonify({"ok": False, "error": "invalid student store"}), 500
+        for i, s in enumerate(students):
+            if str(s.get("id")) == str(sid):
+                del students[i]
+                save_atomic(STU_PATH, students)
+                return "", 204
     abort(404, description="학생을 찾을 수 없습니다.")
 
 
@@ -3815,9 +4154,14 @@ def api_update_student_field():
     if not sid or not field:
         abort(400)
 
-    students: List[dict] = load(STU_PATH)
-    for s in students:
-        if str(s.get("id")) == str(sid):
+    updated_students = None
+    with file_lock(STU_PATH):
+        students: List[dict] = load(STU_PATH)
+        if not isinstance(students, list):
+            return jsonify({"ok": False, "error": "invalid student store"}), 500
+        for s in students:
+            if str(s.get("id")) != str(sid):
+                continue
             was_able = _student_uses_able_curriculum(s)
             if field == AUTO_VIDEO_ASSIGN_FIELD:
                 value = _coerce_auto_video_assign_count(value)
@@ -3829,20 +4173,23 @@ def api_update_student_field():
             ):
                 _apply_able_auto_video_assign_default(s)
             save_atomic(STU_PATH, students)
-            if field == "selfStudyDays":
-                _load_updates_with_auto_assign(students=students)
-            elif re.fullmatch(r"day\d+", str(field)):
-                # A schedule edit is the explicit non-consecutive ->
-                # consecutive transition. Expand an existing automatic
-                # snapshot only; the regular initializer remains create-only.
-                _reconcile_consecutive_auto_assignment(
-                    _today_kst_iso(),
-                    str(sid),
-                    students=students,
-                )
-                _load_updates_with_auto_assign(students=students)
-            return "OK"
-    abort(404)
+            updated_students = students
+            break
+
+    if updated_students is None:
+        abort(404)
+    if field == "selfStudyDays":
+        _load_updates_with_auto_assign(students=updated_students)
+    elif re.fullmatch(r"day\d+", str(field)):
+        # A schedule edit is the explicit non-consecutive -> consecutive
+        # transition. Run assignment reconciliation after releasing STU_PATH.
+        _reconcile_consecutive_auto_assignment(
+            _today_kst_iso(),
+            str(sid),
+            students=updated_students,
+        )
+        _load_updates_with_auto_assign(students=updated_students)
+    return "OK"
 
 
 @bp_api_basic.get("/api/ping")

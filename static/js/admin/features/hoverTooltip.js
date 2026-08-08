@@ -1,7 +1,7 @@
 // /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
 import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 export function initHoverTooltip() {
@@ -225,7 +225,7 @@ export function initHoverTooltip() {
   }
 
   function filterScheduleEntriesForStudent(scheduleEntries, stu) {
-    if (!scheduleEntries.length) return scheduleEntries;
+    if (!Array.isArray(scheduleEntries) || !scheduleEntries.length) return [];
 
     const curriculumKey = normalizeSubjectKey(stu?.curriculum);
     if (!curriculumKey) return scheduleEntries;
@@ -240,13 +240,13 @@ export function initHoverTooltip() {
       return phaseKey && (phaseKey.includes(curriculumKey) || curriculumKey.includes(phaseKey));
     });
 
-    return loose.length ? loose : scheduleEntries;
+    // A student tooltip must never fall back to another subject's schedule.
+    // Keep a single unambiguous decorated match, otherwise show no subject schedule.
+    return loose.length === 1 ? loose : [];
   }
 
-  function buildTextbookPublisherHtml(scheduleEntries, fallbackEntry) {
-    const sourceEntries = scheduleEntries.length
-      ? scheduleEntries
-      : (fallbackEntry && Object.keys(fallbackEntry).length ? [fallbackEntry] : []);
+  function buildTextbookPublisherHtml(scheduleEntries) {
+    const sourceEntries = Array.isArray(scheduleEntries) ? scheduleEntries : [];
     const items = [];
     const seen = new Set();
 
@@ -266,7 +266,7 @@ export function initHoverTooltip() {
     if (!items.length) return '';
 
     return `
-      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0 8px; font-size:12.5px">
+      <div class="student-tooltip-publisher">
         ${items.map(({ label, textbook }) => `
           <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 8px;
                        border:1px solid rgba(255,255,255,.14); border-radius:999px;
@@ -613,7 +613,7 @@ export function initHoverTooltip() {
   // HTML 구성
   // ───────────────────────────────────────────
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = false, includeAssistantNotes = false } = opts;
+    const { includeAssistantNotes = false } = opts;
 
     const name = (stu.name || '').trim();
     const level = stu.level || '';
@@ -627,8 +627,7 @@ export function initHoverTooltip() {
 
     const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
     const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
-    const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
-    const textbookPublisherBlock = buildTextbookPublisherHtml(scheduleEntries, sc);
+    const textbookPublisherBlock = buildTextbookPublisherHtml(scheduleEntries);
 
     const badgeColor =
       level === '상' ? '#2563eb' :
@@ -644,56 +643,51 @@ export function initHoverTooltip() {
       : '';
 
     const mainBlock = `
-      <div style="font-weight:900;font-size:17px; margin-bottom:6px">
+      <div class="student-tooltip-identity-row">
+        <div class="student-tooltip-name">
         ${name}${levelBadge}
+        </div>
+        ${textbookPublisherBlock}
       </div>
       ${schoolName ? `<div style="font-size:14px; font-weight:600; margin-bottom:6px">${schoolName}</div>` : ''}
       <div style="font-size:13px; margin-bottom:4px">
         ${days ? `<span style="margin-right:8px">📅 ${days}</span>` : ''}
         ${subBooks ? `<span style="margin-right:8px">📘 ${subBooks}</span>` : ''}
       </div>
-      ${textbookPublisherBlock}
     `;
 
-    const examDetailMinHeight = includeAssistantNotes
-      ? '82px'
-      : (!includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px'));
-    const examRows = (scheduleEntries.length ? scheduleEntries : [sc]).map((entry, idx) => {
+    const examRows = scheduleEntries.map((entry, idx) => {
       const exam = pickExam(entry || {}, 'auto');
       const remain = calcRemainingSessions(entry || {}, stu);
       const remainInline = (remain != null)
-        ? `<div style="font-size:16px;font-weight:900;margin-left:10px;white-space:nowrap;">
+        ? `<div style="font-size:14px;font-weight:900;margin-left:10px;white-space:nowrap;">
              시험 전 출석 : ${remain}회
            </div>`
         : '';
 
       const phase = String(entry?.phase || '').trim();
       const examSubject = phase || '수학';
-      const rowGrade = String(entry?.grade || stu.grade || '').trim();
-      const rowLabel = phase
-        ? (rowGrade ? `${rowGrade} · ${phase}` : phase)
-        : (scheduleEntries.length > 1 ? (rowGrade || `트랙 ${idx + 1}`) : '');
 
       return `
         <div style="margin-top:${idx === 0 ? 6 : 10}px; display:block; font-size:12px; max-width:100%">
-          ${rowLabel ? `<div style="margin-bottom:6px; font-size:11.5px; font-weight:800; opacity:.86">${rowLabel}</div>` : ''}
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:0; max-width:100%">
             ${pill(exam.label, exam.date || '-')}
             ${pill(`${examSubject} 시험일`, exam.math || '-', { big: true })}
             ${remainInline}
           </div>
-          <div style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:12px; min-height:${examDetailMinHeight}">
-            <div style="font-weight:800; margin-bottom:4px">${exam.label} 범위/특이사항</div>
-            ${em('범위', exam.range)}
-            ${em('비고', exam.note)}
-          </div>
+          <details class="student-exam-details">
+            <summary>${exam.label} 범위/특이사항</summary>
+            <div class="student-exam-details-body">
+              ${em('범위', exam.range)}
+              ${em('비고', exam.note)}
+            </div>
+          </details>
         </div>
       `;
     }).join('');
 
-    const examTitle = scheduleEntries.length > 1 ? '학사일정 (과목/트랙별)' : '학사일정';
     const examBlock = schoolName
-      ? `<div style="margin-top:10px; font-size:12.5px; font-weight:800; opacity:.9">${examTitle}</div>${examRows}`
+      ? examRows
       : '<div style="opacity:.8;margin-top:6px;font-size:12px">학교 정보 없음</div>';
 
     const assistantNotesBlock = includeAssistantNotes ? `
@@ -707,7 +701,6 @@ export function initHoverTooltip() {
         </div>
         <div class="assistant-note-compose">
           <div class="assistant-note-author-row" role="group" aria-label="댓글 작성자 선택">
-            <span class="assistant-note-author-label">댓글 작성자</span>
             <div class="assistant-note-author-buttons">
               <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
               <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
@@ -719,7 +712,6 @@ export function initHoverTooltip() {
           <div class="assistant-note-compose-actions">
             <div class="assistant-note-save-info">
               <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
-              <span class="assistant-note-shortcut">Ctrl+Enter로 등록</span>
             </div>
             <button class="assistant-note-save" data-note-save type="button">댓글 등록</button>
           </div>
@@ -727,9 +719,8 @@ export function initHoverTooltip() {
       </section>
     ` : '';
 
-    const progBlock = renderProgressTables(stu, { includeVideo, includeTests });
-
-    return `${mainBlock}${examBlock}${assistantNotesBlock}${progBlock}`;
+    // Curriculum/video progress belongs to the assignment and special-notes surfaces.
+    return `${mainBlock}${examBlock}${assistantNotesBlock}`;
   }
 
   function buildTodayNameTipHtml(stu) {
@@ -744,8 +735,7 @@ export function initHoverTooltip() {
 
     const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
     const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
-    const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
-    const remain = (scheduleEntries.length ? scheduleEntries : [sc])
+    const remain = scheduleEntries
       .map(entry => calcRemainingSessions(entry || {}, stu))
       .find(value => value != null);
     const remainText = remain == null ? '-' : `${remain}회`;

@@ -2,22 +2,20 @@
 from __future__ import annotations
 
 import json
-import os
+from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict
 
 from flask import Blueprint, request, jsonify
+
+from core.paths import DATA_DIR, TODAY_ORDER_PATH
+from core.storage import file_lock
 
 bp_api_todaymeta = Blueprint("bp_api_todaymeta", __name__)
 
 # ✅ JSON 저장 위치
 # - 환경변수 DATA_DIR 있으면 거기 사용
 # - 없으면 프로젝트 루트의 data/ 폴더 사용 (없으면 생성)
-BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
 def _read_json(path: Path, default: Any) -> Any:
     try:
         if not path.exists():
@@ -163,14 +161,14 @@ def api_arrive_time():
 # /api/today_order
 # - GET  /api/today_order -> { "YYYY-MM-DD": ["sid",...], ... }
 # - POST /api/today_order body: 위와 동일(전체맵 저장)
+# - POST /api/today_order/patch body: { date, order } 또는 { date, remove: true }
 # ─────────────────────────────────────────────
 @bp_api_todaymeta.route("/api/today_order", methods=["GET", "POST"])
 def api_today_order():
-    p = DATA_DIR / "today_order.json"
-    all_map: Dict[str, list] = _read_json(p, {})
+    p = TODAY_ORDER_PATH
 
     if request.method == "GET":
-        return jsonify(all_map)
+        return jsonify(_read_json(p, {}))
 
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
@@ -182,5 +180,58 @@ def api_today_order():
             continue
         if isinstance(arr, list):
             cleaned[d] = [str(x) for x in arr if str(x).strip()]
-    _write_json(p, cleaned)
+    with file_lock(p):
+        _write_json(p, cleaned)
     return jsonify({"ok": True})
+
+
+def _parse_iso_date(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    try:
+        parsed = date_cls.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw if parsed.isoformat() == raw else None
+
+
+def _clean_order_ids(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        sid = str(item).strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        result.append(sid)
+    return result
+
+
+@bp_api_todaymeta.route("/api/today_order/patch", methods=["POST"])
+def api_today_order_patch():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "bad body"}), 400
+
+    date = _parse_iso_date(payload.get("date"))
+    if not date:
+        return jsonify({"ok": False, "error": "invalid date"}), 400
+
+    remove = payload.get("remove") is True
+    order = [] if remove else _clean_order_ids(payload.get("order"))
+    if order is None:
+        return jsonify({"ok": False, "error": "order must be a list"}), 400
+
+    p = TODAY_ORDER_PATH
+    with file_lock(p):
+        all_map = _read_json(p, {})
+        if not isinstance(all_map, dict):
+            all_map = {}
+        if remove:
+            all_map.pop(date, None)
+        else:
+            all_map[date] = order
+        _write_json(p, all_map)
+
+    return jsonify({"ok": True, "date": date, "order": order, "removed": remove})

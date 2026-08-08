@@ -39,6 +39,9 @@ def repository_checks() -> None:
         updated = repo.update("student-a", first["id"], "수정됨\n쉼표, 유지", "세빈")
         check(updated is not None and updated["content"] == "수정됨\n쉼표, 유지", "update failed")
         check(updated["created_by"] == "귤" and updated["updated_by"] == "세빈", "last editor must be tracked separately")
+        pinned = repo.set_pinned("student-a", first["id"], True)
+        check(pinned is not None and pinned["pinned"] is True, "pinning a note failed")
+        check(repo.set_pinned("student-b", first["id"], True) is None, "cross-student pin must fail")
         check(repo.delete("student-b", first["id"]) is False, "cross-student delete must fail")
 
         reloaded = AssistantStudentNoteRepository(db_path=str(db_path)).list_for_student("student-a")
@@ -47,7 +50,7 @@ def repository_checks() -> None:
         with closing(sqlite3.connect(db_path)) as con:
             columns = {row[1] for row in con.execute("PRAGMA table_info(assistant_student_notes)")}
         check(
-            {"id", "student_id", "content", "created_by", "updated_by", "created_at", "updated_at"}.issubset(columns),
+            {"id", "student_id", "content", "created_by", "updated_by", "pinned", "created_at", "updated_at"}.issubset(columns),
             "assistant_student_notes schema is incomplete",
         )
 
@@ -127,6 +130,27 @@ def route_checks() -> None:
             )
             check(wrong_delete.status_code == 404, "cross-student delete must fail")
 
+            wrong_pin = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/pin",
+                json={"student_id": "student-b", "pinned": True},
+                headers=admin_headers,
+            )
+            check(wrong_pin.status_code == 404, "cross-student pin must fail")
+
+            invalid_pin = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/pin",
+                json={"student_id": "student-a", "pinned": "true"},
+                headers=admin_headers,
+            )
+            check(invalid_pin.status_code == 400, "pin value must be a boolean")
+
+            pinned = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/pin",
+                json={"student_id": "student-a", "pinned": True},
+                headers=admin_headers,
+            )
+            check(pinned.status_code == 200 and pinned.get_json()["note"]["pinned"] is True, "route pin failed")
+
             updated = client.patch(
                 f"/api/assistant-student-notes/{note['id']}",
                 json={"student_id": "student-a", "content": "수정 완료", "author": "세빈"},
@@ -195,12 +219,18 @@ def source_boundary_checks() -> None:
         "author selection must not treat rendered comment cards as author buttons",
     )
     check("article.dataset.noteAuthor = author" in notes_source, "saved author must label each rendered comment")
+    check("article.dataset.notePinned = pinned ? 'true' : 'false'" in notes_source, "pin state must label each rendered comment")
+    check("pinButton.dataset.notePin" in notes_source and "메모 고정" in notes_source, "each comment must expose a pin control")
     check("const AUTHOR_LABELS" in notes_source and "귤: '규리'" in notes_source, "author labels must include 규리")
     check(
         "sendRequest('/api/assistant-student-notes', 'POST'" in notes_source,
         "comment registration must always create a new note",
     )
-    check("'PATCH'" not in notes_source and "currentNote" not in notes_source, "comment UI must not overwrite an existing note")
+    check("currentNote" not in notes_source, "comment UI must not overwrite an existing note")
+    check(
+        "sendRequest(`/api/assistant-student-notes/${noteId}/pin`, 'PATCH'" in notes_source,
+        "pin control must call the student-scoped pin endpoint",
+    )
     check("deleteButton.dataset.noteDelete" in notes_source, "each comment must expose a delete button")
     check(
         "sendRequest(`/api/assistant-student-notes/${noteId}`, 'DELETE'" in notes_source,
@@ -209,6 +239,8 @@ def source_boundary_checks() -> None:
     check("window.confirm('이 댓글을 삭제할까요?" in notes_source, "delete must require confirmation")
     check("notes = notes.filter((item) => Number(item.id) !== noteId)" in notes_source, "delete must remove only one comment")
     check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
+    check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
+    check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
     check("notes.slice().reverse()" in notes_source, "existing notes must render from oldest to newest")
     check("list.scrollTop = list.scrollHeight" in notes_source, "comment thread must scroll to the latest note")
     check("notes = [data.note, ...notes.filter" in notes_source, "new comments must be added to the loaded thread")

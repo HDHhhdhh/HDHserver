@@ -59,6 +59,12 @@ def create_student_log():
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "JSON object is required"}), 400
 
+    for field in ("sid", "studentName", "kind", "comment"):
+        if not isinstance(payload.get(field), str):
+            return jsonify({"ok": False, "error": f"{field} must be text"}), 400
+    if payload.get("date") is not None and not isinstance(payload.get("date"), str):
+        return jsonify({"ok": False, "error": "date must be text"}), 400
+
     sid = _clean_text(payload.get("sid"))
     student_name = _clean_text(payload.get("studentName"))
     kind = _clean_text(payload.get("kind"))

@@ -7,6 +7,7 @@ import {
 } from './store.js';
 import { createDemoFetch } from './fetch.js';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
+import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -267,6 +268,8 @@ function fallbackPayloadForGet(path, params, store) {
       };
     case '/api/logs/unarchived-summary':
       return { total: 0, byDate: [] };
+    case '/api/student-logs':
+      return { ok: true, logs: cloneDemoValue(store.studentOperationLogs || []) };
     case '/api/progress':
       return cloneDemoValue(filterDateSidMap(store.progress || {}, params));
     case '/api/extra-attend':
@@ -330,6 +333,41 @@ function homeworkBooksBySid(logs) {
 
 async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
+
+  if (path === '/api/student-logs') {
+    const store = loadDemoStore();
+    const result = applyStudentLogsRequest({
+      method: String(init?.method || input?.method || 'POST').toUpperCase(),
+      path,
+      body,
+      store,
+      createdAt: () => new Date().toISOString(),
+      today: store.demoDate,
+    });
+    if (result.changed) saveDemoStore(store);
+    return { demo: true, ...result.payload };
+  }
+
+  if (path === '/api/today_order/patch') {
+    const date = String(body?.date || '').trim();
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      return { ok: false, demo: true, error: 'invalid date' };
+    }
+    const remove = body?.remove === true;
+    if (!remove && !Array.isArray(body?.order)) {
+      return { ok: false, demo: true, error: 'order must be a list' };
+    }
+    const store = loadDemoStore();
+    const todayOrder = store.todayOrder && typeof store.todayOrder === 'object' ? store.todayOrder : {};
+    const order = remove
+      ? []
+      : Array.from(new Set(body.order.map(value => String(value).trim()).filter(Boolean)));
+    if (remove) delete todayOrder[date];
+    else todayOrder[date] = order;
+    saveDemoStore({ ...store, todayOrder });
+    return { ok: true, demo: true, date, order, removed: remove };
+  }
 
   if (path === '/api/today_order') {
     saveDemoStore({ ...loadDemoStore(), todayOrder: body && typeof body === 'object' ? body : {} });

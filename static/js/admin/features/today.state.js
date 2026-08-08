@@ -491,22 +491,43 @@ export function applySavedOrder(list, dateKey) {
   for (const s of list) if (!used.has(String(s.id))) ordered.push(s);
   return ordered;
 }
+
+async function patchTodayOrder(payload) {
+  const response = await fetch('/api/today_order/patch', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify(payload),
+  });
+  if (response.ok) return;
+  if (response.status !== 404) {
+    throw new Error(`/api/today_order/patch failed: ${response.status}`);
+  }
+
+  // Rolling-deploy compatibility: a running worker may still expose only the
+  // legacy whole-map route until it is restarted with the new backend.
+  const legacyLoad = await fetch('/api/today_order', { cache: 'no-store' });
+  if (!legacyLoad.ok) throw new Error(`/api/today_order load failed: ${legacyLoad.status}`);
+  const latest = await legacyLoad.json();
+  const next = latest && typeof latest === 'object' && !Array.isArray(latest) ? latest : {};
+  if (payload.remove === true) delete next[payload.date];
+  else next[payload.date] = payload.order;
+  const legacySave = await fetch('/api/today_order', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify(next),
+  });
+  if (!legacySave.ok) throw new Error(`/api/today_order save failed: ${legacySave.status}`);
+}
+
 export async function saveOrder(dateKey, newOrderIds) {
-  let latest;
-  try { latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
-  catch { latest = {}; }
-  latest[dateKey] = newOrderIds.map(String);
-  await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-  _orderMap = latest;
+  const order = newOrderIds.map(String);
+  await patchTodayOrder({ date: dateKey, order });
+  _orderMap = { ...(_orderMap || {}), [dateKey]: order };
 }
 export async function clearTodayOrder(dateKey) {
   try {
-    const latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (latest && latest[dateKey]) {
-      delete latest[dateKey];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-      _orderMap = latest;
-    }
+    await patchTodayOrder({ date: dateKey, remove: true });
+    if (_orderMap) delete _orderMap[dateKey];
   } catch {}
 }
 

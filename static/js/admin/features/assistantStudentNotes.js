@@ -59,7 +59,15 @@ function setComposerDisabled(input, saveButton, authorButtons, disabled) {
   });
 }
 
-function renderNotes(root, notes, { scrollToLatest = true, onDelete = null } = {}) {
+function isNotePinned(note) {
+  return note?.pinned === true || note?.pinned === 1 || note?.pinned === '1';
+}
+
+function renderNotes(
+  root,
+  notes,
+  { scrollToLatest = true, scrollTop = null, onDelete = null, onTogglePin = null } = {},
+) {
   const list = root.querySelector('[data-note-list]');
   const count = root.querySelector('[data-note-count]');
   if (!list || !count) return;
@@ -75,11 +83,20 @@ function renderNotes(root, notes, { scrollToLatest = true, onDelete = null } = {
     return;
   }
 
-  notes.slice().reverse().forEach((note) => {
+  const chronological = notes.slice().reverse();
+  const displayNotes = [
+    ...chronological.filter((note) => isNotePinned(note)),
+    ...chronological.filter((note) => !isNotePinned(note)),
+  ];
+
+  displayNotes.forEach((note) => {
     const author = String(note.updated_by || note.created_by || '');
+    const pinned = isNotePinned(note);
     const article = document.createElement('article');
     article.className = 'assistant-note-item';
     article.dataset.noteId = String(note.id || '');
+    article.dataset.notePinned = pinned ? 'true' : 'false';
+    article.classList.toggle('is-pinned', pinned);
     if (AUTHORS.includes(author)) article.dataset.noteAuthor = author;
 
     const header = document.createElement('div');
@@ -89,6 +106,24 @@ function renderNotes(root, notes, { scrollToLatest = true, onDelete = null } = {
     authorName.className = 'assistant-note-item-author';
     const authorLabel = AUTHOR_LABELS[author] || author || '이전 메모';
     authorName.textContent = authorLabel;
+
+    const pinButton = document.createElement('button');
+    pinButton.type = 'button';
+    pinButton.className = 'assistant-note-pin';
+    pinButton.dataset.notePin = String(note.id || '');
+    pinButton.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+    pinButton.setAttribute('aria-label', pinned ? `${authorLabel} 메모 고정 해제` : `${authorLabel} 메모 고정`);
+    pinButton.title = pinned ? '메모 고정 해제' : '메모 고정';
+    pinButton.innerHTML = `
+      <svg class="assistant-note-pin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M8 3h8l1 5 2 2v1H5v-1l2-2 1-5Z"></path>
+        <path d="M12 11v10"></path>
+      </svg>`;
+    pinButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onTogglePin?.(note, pinButton);
+    });
 
     const time = document.createElement('time');
     time.className = 'assistant-note-item-time';
@@ -113,12 +148,20 @@ function renderNotes(root, notes, { scrollToLatest = true, onDelete = null } = {
     content.className = 'assistant-note-item-content';
     content.textContent = String(note.content || '') || '내용 없는 이전 메모';
 
-    header.append(authorName, meta);
+    const authorGroup = document.createElement('div');
+    authorGroup.className = 'assistant-note-item-author-group';
+    authorGroup.append(authorName, pinButton);
+
+    header.append(authorGroup, meta);
     article.append(header, content);
     list.appendChild(article);
   });
 
-  if (scrollToLatest) {
+  if (scrollTop !== null && Number.isFinite(Number(scrollTop))) {
+    requestAnimationFrame(() => {
+      if (list.isConnected) list.scrollTop = Number(scrollTop);
+    });
+  } else if (scrollToLatest) {
     requestAnimationFrame(() => {
       if (list.isConnected) list.scrollTop = list.scrollHeight;
     });
@@ -164,12 +207,43 @@ async function mountMemo(root, studentId) {
       });
       if (!isCurrent()) return;
       notes = notes.filter((item) => Number(item.id) !== noteId);
-      renderNotes(root, notes, { onDelete: deleteNote });
+      renderNotes(root, notes, { onDelete: deleteNote, onTogglePin: togglePin });
       setStatus(root, '댓글이 삭제되었습니다.', 'success');
     } catch (error) {
       if (isCurrent()) {
         deleteButton.disabled = false;
         setStatus(root, '댓글 삭제 실패. 다시 시도해 주세요.', 'error');
+      }
+    }
+  };
+
+  const togglePin = async (note, pinButton) => {
+    const noteId = Number(note?.id);
+    if (!Number.isInteger(noteId) || noteId < 1 || !isCurrent()) return;
+
+    const nextPinned = !isNotePinned(note);
+    const list = root.querySelector('[data-note-list]');
+    const previousScrollTop = list?.scrollTop || 0;
+    pinButton.disabled = true;
+    setStatus(root, nextPinned ? '메모를 고정하는 중...' : '메모 고정을 해제하는 중...', 'saving');
+    try {
+      const data = await sendRequest(`/api/assistant-student-notes/${noteId}/pin`, 'PATCH', {
+        student_id: studentId,
+        pinned: nextPinned,
+      });
+      if (!isCurrent()) return;
+      notes = notes.map((item) => Number(item.id) === noteId ? data.note : item);
+      renderNotes(root, notes, {
+        scrollToLatest: false,
+        scrollTop: nextPinned ? 0 : previousScrollTop,
+        onDelete: deleteNote,
+        onTogglePin: togglePin,
+      });
+      setStatus(root, nextPinned ? '메모를 고정했습니다.' : '메모 고정을 해제했습니다.', 'success');
+    } catch (error) {
+      if (isCurrent()) {
+        pinButton.disabled = false;
+        setStatus(root, '메모 고정 변경 실패. 다시 시도해 주세요.', 'error');
       }
     }
   };
@@ -213,7 +287,7 @@ async function mountMemo(root, studentId) {
       });
       if (!isCurrent()) return;
       notes = [data.note, ...notes.filter((note) => note.id !== data.note?.id)];
-      renderNotes(root, notes, { onDelete: deleteNote });
+      renderNotes(root, notes, { onDelete: deleteNote, onTogglePin: togglePin });
       input.value = '';
       selectedAuthor = '';
       setSelectedAuthor(root, '');
@@ -242,7 +316,7 @@ async function mountMemo(root, studentId) {
     );
     if (!isCurrent()) return;
     notes = Array.isArray(data?.notes) ? data.notes : [];
-    renderNotes(root, notes, { onDelete: deleteNote });
+    renderNotes(root, notes, { onDelete: deleteNote, onTogglePin: togglePin });
     input.value = '';
     selectedAuthor = '';
     setSelectedAuthor(root, '');

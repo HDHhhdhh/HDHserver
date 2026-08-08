@@ -367,10 +367,15 @@ function injectStyles() {
     #logModal #logNotes{
       height:min(48vh, var(--student-log-notes-h, 416px));
       min-height:260px;
+      overflow-y:auto;
       resize:vertical;
       font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','맑은 고딕',sans-serif;
       font-size:28px;
       line-height:1.35;
+    }
+    #logModal.student-work-layout #logNotes{
+      height:min(42vh, var(--student-log-notes-h, 416px));
+      max-height:min(42vh, var(--student-log-notes-h, 416px));
     }
 
     #logProgress{
@@ -410,7 +415,12 @@ function injectStyles() {
     body.dark #hwBox{ border-color:#334155; background:#0b1220; }
 
     .hwHeader{
-      padding:10px 10px;
+      height:50px;
+      min-height:50px;
+      box-sizing:border-box;
+      display:flex;
+      align-items:center;
+      padding:8px 10px;
       background:#f8fafc;
       border-bottom:1px solid #e5e7eb;
     }
@@ -418,23 +428,6 @@ function injectStyles() {
       background:#0b1220;
       border-bottom-color:#334155;
     }
-
-    .hwHeaderTop, .hwHeaderBot{
-      display:grid;
-      gap:8px 12px;
-      align-items:start;
-    }
-    .hwHeaderTop{ grid-template-columns: 1.1fr 1fr 44px; }
-    .hwHeaderBot{ grid-template-columns: 1fr 1fr 44px; margin-top:8px; }
-
-    .hwHeader .h{
-      font-size:12px;
-      color:#64748b;
-      font-weight:900;
-      white-space:nowrap;
-    }
-    body.dark .hwHeader .h{ color:#94a3b8; }
-    .hwHeader .h-del{ text-align:right; opacity:.65; }
 
     #hwBody{
       padding:10px 10px;
@@ -592,9 +585,10 @@ function injectStyles() {
 
     .hwHeader{ position:relative; }
     .hwHeaderActions{
+      width:100%;
       display:flex;
       justify-content:flex-end;
-      margin-top:8px;
+      margin-top:0;
     }
     .hw-insufficient-btn{
       min-height:34px;
@@ -724,8 +718,8 @@ function injectStyles() {
         font-size:20px; line-height:1.45;
       }
       #logProgress{ grid-template-columns:repeat(3,minmax(0,1fr)); }
-      .hwHeaderTop, .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
-      .hwHeaderBot, .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
       .thisCell{ grid-template-columns:1fr; }
     }
   `;
@@ -754,16 +748,6 @@ function modalTemplateHTML() {
           <div id="hwWrap">
             <div id="hwBox">
               <div class="hwHeader" aria-label="숙제 헤더">
-                <div class="hwHeaderTop">
-                  <div class="h">교재</div>
-                  <div class="h">이번 숙제 / 진행률</div>
-                  <div class="h h-del"></div>
-                </div>
-                <div class="hwHeaderBot">
-                  <div class="h">코멘트</div>
-                  <div class="h">다음 숙제</div>
-                  <div class="h h-del"></div>
-                </div>
                 <div class="hwHeaderActions">
                   <button type="button" id="hwInsufficientBtn" class="hw-insufficient-btn">숙제 미흡 알림</button>
                 </div>

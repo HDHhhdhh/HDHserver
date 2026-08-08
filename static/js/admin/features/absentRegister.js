@@ -1,18 +1,8 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { setAttended, setContacted } from './today.state.js';
+import { clearTodayOrder, setAttended, setContacted } from './today.state.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
-
-async function clearTodayOrder(dateStr) {
-  try {
-    const map = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (map && map[dateStr]) {
-      delete map[dateStr];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(map) });
-    }
-  } catch { /* ignore */ }
-}
 
 function ensureWindowStateAlias() {
   window.state = window.state || state;

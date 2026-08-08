@@ -587,5 +587,6 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
         created_at: isoAt(currentDate, '09:10'),
       },
     ],
+    studentOperationLogs: [],
   };
 }

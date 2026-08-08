@@ -109,7 +109,12 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
-    from routes.api_basic import _load_progress_strict, _progress_lock, _save_progress_strict
+    from routes.api_basic import (
+        _load_progress_strict,
+        _progress_lock,
+        _save_progress_strict,
+        _reconcile_auto_assignment_after_progress,
+    )
 
     with _progress_lock():
         current = dict(_load_progress_strict(PRG_PATH))
@@ -149,6 +154,18 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
             current.pop(date, None)
 
         _save_progress_strict(current, PRG_PATH)
+
+    try:
+        _reconcile_auto_assignment_after_progress(
+            date,
+            sid,
+            progress=current,
+            watch=load(WATCH_PATH) or {},
+        )
+    except Exception as exc:
+        # Playback progress must not fail because assignment cleanup is
+        # temporarily unavailable.
+        print("[watch] auto-assignment reconcile failed:", exc, flush=True)
 
     return merged
 

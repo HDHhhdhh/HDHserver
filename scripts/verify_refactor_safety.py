@@ -255,7 +255,7 @@ CORE_IMPORT_RUNTIME_FILES = [
     "materials.json",
     "mat_assign.json",
     "updates.json",
-    "today_order.json",
+    "data/today_order.json",
     "extra_attend.json",
     "logs.json",
     "tests.json",
@@ -1068,8 +1068,622 @@ def run_progress_read_cache_unit_checks() -> None:
             )
         finally:
             api_basic.PRG_PATH = original_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
-            api_basic._PROGRESS_CACHE_DATA = original_data
+        api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
+        api_basic._PROGRESS_CACHE_DATA = original_data
+
+
+def run_video_mid_migration_unit_checks() -> None:
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"
+    updates = {
+        date: {
+            "legacy-list": ["old-mid", "new-mid", "keep-mid"],
+            "rich": {
+                "videos": ["old-mid", "keep-mid"],
+                "reviewVideos": ["old-mid", "new-mid"],
+                "trainingPackVideos": ["old-mid"],
+                "studentTrainingPackVideos": ["old-mid"],
+                "note": "preserve metadata",
+            },
+        },
+    }
+    _assert_unit(
+        api_basic._replace_mid_in_updates(updates, "old-mid", "new-mid"),
+        "video MID migration should update assignment snapshots",
+    )
+    _assert_unit(
+        updates[date]["legacy-list"] == ["new-mid", "keep-mid"],
+        "legacy assignment migration deduplicates the replacement MID",
+    )
+    _assert_unit(
+        updates[date]["rich"] == {
+            "videos": ["new-mid", "keep-mid"],
+            "reviewVideos": ["new-mid"],
+            "trainingPackVideos": ["new-mid"],
+            "studentTrainingPackVideos": ["new-mid"],
+            "note": "preserve metadata",
+        },
+        "all MID-bearing assignment lists migrate without dropping metadata",
+    )
+
+    progress = {
+        date: {
+            "manual-clear": {
+                "old-mid": "none",
+                "__manualProgressMids": {"old-mid": True},
+                "__autoWatchProgressMids": {"old-mid": "interrupted"},
+            },
+            "merged": {
+                "old-mid": "interrupted",
+                "new-mid": "done",
+                "__autoWatchProgressMids": {
+                    "old-mid": "interrupted",
+                    "new-mid": "done",
+                },
+                "__allStudentsProgressMids": {"old-mid": True},
+            },
+        },
+    }
+    _assert_unit(
+        api_basic._replace_mid_in_progress(progress, "old-mid", "new-mid"),
+        "video MID migration should update progress records",
+    )
+    manual_clear = progress[date]["manual-clear"]
+    _assert_unit(
+        manual_clear.get("new-mid") == "none"
+        and manual_clear.get("__manualProgressMids") == {"new-mid": True}
+        and "__autoWatchProgressMids" not in manual_clear,
+        "explicit manual clears survive MID migration and remain authoritative",
+    )
+    merged = progress[date]["merged"]
+    _assert_unit(
+        merged.get("new-mid") == "done"
+        and merged.get("__autoWatchProgressMids") == {"new-mid": "done"}
+        and merged.get("__allStudentsProgressMids") == {"new-mid": True}
+        and "old-mid" not in merged,
+        "progress status and ownership metadata migrate together",
+    )
+
+    watch = {
+        date: {
+            "s1": {
+                "old-mid": {"last": 10, "dur": 100, "updatedAt": 1},
+                "new-mid": {"last": 90, "dur": 100, "updatedAt": 2},
+            },
+        },
+    }
+    _assert_unit(
+        api_basic._replace_mid_in_watch(watch, "old-mid", "new-mid")
+        and set(watch[date]["s1"]) == {"new-mid"}
+        and watch[date]["s1"]["new-mid"]["completed"] is True,
+        "watch MID migration merges playback evidence under the replacement MID",
+    )
+
+    students = [{"id": "student000"}, {"id": "student001"}]
+    _assert_unit(
+        api_basic._allocate_student_id(students, "student", start=0) == "student002",
+        "student ID allocation skips existing suffix collisions",
+    )
+    try:
+        api_basic._allocate_student_id(
+            [{"id": f"student{index:03d}"} for index in range(1000)],
+            "student",
+            start=0,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("student ID allocation must fail closed when the suffix space is exhausted")
+
+
+def run_today_order_patch_unit_checks() -> None:
+    from flask import Flask
+
+    import routes.api_todaymeta as api_todaymeta
+
+    original_data_dir = api_todaymeta.DATA_DIR
+    original_today_order_path = api_todaymeta.TODAY_ORDER_PATH
+    try:
+        with tempfile.TemporaryDirectory(prefix="today-order-patch-") as tmpdir:
+            api_todaymeta.DATA_DIR = pathlib.Path(tmpdir)
+            api_todaymeta.TODAY_ORDER_PATH = pathlib.Path(tmpdir) / "today_order.json"
+            app = Flask(__name__)
+            app.register_blueprint(api_todaymeta.bp_api_todaymeta)
+            client = app.test_client()
+
+            response = client.post(
+                "/api/today_order",
+                json={"2026-06-06": ["s1"], "2026-06-07": ["s2"]},
+            )
+            _assert_unit(response.status_code == 200, "legacy today-order whole-map write remains compatible")
+
+            response = client.post(
+                "/api/today_order/patch",
+                json={"date": "2026-06-06", "order": [" s3 ", "s3", "", "s1"]},
+            )
+            payload = response.get_json()
+            _assert_unit(
+                response.status_code == 200
+                and payload.get("order") == ["s3", "s1"]
+                and payload.get("removed") is False,
+                "today-order patch normalizes one date without duplicate student IDs",
+            )
+            current = client.get("/api/today_order").get_json()
+            _assert_unit(
+                current == {"2026-06-06": ["s3", "s1"], "2026-06-07": ["s2"]},
+                "today-order patch preserves concurrent data for every other date",
+            )
+
+            response = client.post(
+                "/api/today_order/patch",
+                json={"date": "2026-06-06", "remove": True},
+            )
+            _assert_unit(response.status_code == 200 and response.get_json().get("removed") is True, "today-order patch removes one date")
+            _assert_unit(
+                client.get("/api/today_order").get_json() == {"2026-06-07": ["s2"]},
+                "today-order removal leaves other dates untouched",
+            )
+
+            for body in (
+                {"date": "2026-02-30", "order": []},
+                {"date": "2026-06-08", "order": "s1"},
+            ):
+                response = client.post("/api/today_order/patch", json=body)
+                _assert_unit(response.status_code == 400, "today-order patch rejects malformed input")
+    finally:
+        api_todaymeta.DATA_DIR = original_data_dir
+        api_todaymeta.TODAY_ORDER_PATH = original_today_order_path
+
+
+def run_today_order_migration_unit_checks() -> None:
+    from scripts.migrate_today_order_store import (
+        TodayOrderConflictError,
+        migrate_today_order_store,
+    )
+
+    with tempfile.TemporaryDirectory(prefix="today-order-migration-") as tmpdir:
+        root = pathlib.Path(tmpdir)
+        legacy_path = root / "today_order.json"
+        canonical_path = root / "data" / "today_order.json"
+        backup_dir = root / "backups"
+        canonical_path.parent.mkdir()
+
+        legacy = {
+            "2026-06-06": ["s1"],
+            "2026-06-07": ["s2"],
+        }
+        canonical = {
+            "2026-06-06": ["s1"],
+            "2026-06-07": ["s2"],
+            "2026-06-08": ["s3"],
+        }
+        legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+        canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
+
+        dry_run = migrate_today_order_store(
+            legacy_path,
+            canonical_path,
+            backup_dir,
+        )
+        _assert_unit(
+            dry_run["conflictingDates"] == 0
+            and dry_run["canonicalOnlyDates"] == 1
+            and legacy_path.exists(),
+            "today-order migration dry-run reports overlap without changing runtime data",
+        )
+
+        applied = migrate_today_order_store(
+            legacy_path,
+            canonical_path,
+            backup_dir,
+            apply=True,
+        )
+        _assert_unit(
+            applied["applied"] is True
+            and not legacy_path.exists()
+            and json.loads(canonical_path.read_text(encoding="utf-8")) == canonical,
+            "today-order migration keeps the newer canonical map and removes only the redundant legacy file",
+        )
+        archives = list(backup_dir.glob("today_order-legacy-*.json"))
+        _assert_unit(
+            len(archives) == 1
+            and json.loads(archives[0].read_text(encoding="utf-8")) == legacy,
+            "today-order migration archives the legacy store before removal",
+        )
+
+        legacy_path.write_text(
+            json.dumps({"2026-06-06": ["different"]}),
+            encoding="utf-8",
+        )
+        try:
+            migrate_today_order_store(
+                legacy_path,
+                canonical_path,
+                backup_dir,
+                apply=True,
+            )
+        except TodayOrderConflictError:
+            pass
+        else:
+            raise AssertionError("today-order migration must fail closed on conflicting dates")
+        _assert_unit(
+            legacy_path.exists()
+            and json.loads(canonical_path.read_text(encoding="utf-8")) == canonical,
+            "today-order migration conflict leaves both stores unchanged",
+        )
+
+
+def run_material_state_transaction_unit_checks() -> None:
+    import core.material_state as material_state
+
+    with tempfile.TemporaryDirectory(prefix="material-state-transaction-") as tmpdir:
+        root = pathlib.Path(tmpdir)
+        materials_path = root / "materials.json"
+        assignments_path = root / "mat_assign.json"
+        page_folders_path = root / "page_folders.json"
+        journal_path = root / material_state.MATERIAL_STATE_JOURNAL_NAME
+
+        old_state = ({"m-old": {"url": "/files/old.pdf"}}, {"s1": ["m-old"]}, {"materials": "old"})
+        new_state = ({"m-new": {"url": "/files/new.pdf"}}, {"s1": ["m-new"]}, {"materials": "new"})
+        for path, value in zip(
+            (materials_path, assignments_path, page_folders_path),
+            old_state,
+        ):
+            path.write_text(json.dumps(value), encoding="utf-8")
+
+        writes = 0
+
+        def interrupted_writer(path: pathlib.Path, value) -> None:
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise OSError("simulated interruption")
+            material_state.save_atomic(path, value)
+
+        try:
+            with material_state.material_state_lock(
+                materials_path,
+                assignments_path,
+                page_folders_path,
+            ):
+                material_state.save_material_state_locked(
+                    materials_path,
+                    assignments_path,
+                    page_folders_path,
+                    *new_state,
+                    _target_writer=interrupted_writer,
+                )
+        except OSError as exc:
+            _assert_unit(str(exc) == "simulated interruption", "material-state test interrupted the intended write")
+        else:
+            raise AssertionError("material-state transaction interruption was not raised")
+
+        _assert_unit(
+            journal_path.exists()
+            and json.loads(materials_path.read_text(encoding="utf-8")) == new_state[0]
+            and json.loads(assignments_path.read_text(encoding="utf-8")) == old_state[1],
+            "interrupted material-state commit leaves a durable recovery journal",
+        )
+
+        recovered = material_state.load_material_state(
+            materials_path,
+            assignments_path,
+            page_folders_path,
+        )
+        _assert_unit(
+            recovered == new_state and not journal_path.exists(),
+            "material-state read completes an interrupted three-file commit",
+        )
+
+        replacement = {"s2": ["m-new"]}
+        material_state.replace_material_state_component(
+            materials_path,
+            assignments_path,
+            page_folders_path,
+            "assignments",
+            replacement,
+        )
+        _assert_unit(
+            material_state.load_material_state(
+                materials_path,
+                assignments_path,
+                page_folders_path,
+            ) == (new_state[0], replacement, new_state[2]),
+            "single material-state replacements preserve both sibling stores",
+        )
+
+
+def run_today_order_demo_behavior_checks() -> None:
+    fallback_source = (ROOT / "static/js/admin/demo/bootstrap.js").read_text("utf-8")
+    _assert_unit(
+        "path === '/api/today_order/patch'" in fallback_source
+        and "delete todayOrder[date]" in fallback_source
+        and "todayOrder[date] = order" in fallback_source,
+        "demo fallback must keep the date-scoped today-order contract inside the sandbox",
+    )
+
+    driver = r"""
+class MemoryStorage {
+  constructor() { this.values = new Map(); }
+  getItem(key) { return this.values.has(String(key)) ? this.values.get(String(key)) : null; }
+  setItem(key, value) { this.values.set(String(key), String(value)); }
+  removeItem(key) { this.values.delete(String(key)); }
+}
+const ok = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+globalThis.sessionStorage = new MemoryStorage();
+const { createDemoFetch } = await import('./static/js/admin/demo/fetch.js');
+let forwarded = 0;
+const originalFetch = async () => {
+  forwarded += 1;
+  return new Response('{}', { status: 500 });
+};
+const root = {
+  fetch: originalFetch,
+  location: {
+    href: 'http://localhost/demo/rh3123',
+    origin: 'http://localhost',
+    pathname: '/demo/rh3123',
+  },
+};
+const demoFetch = createDemoFetch({ window: root, originalFetch });
+await demoFetch('/api/today_order', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ '2026-06-06': ['s1'], '2026-06-07': ['s2'] }),
+});
+const patchResponse = await demoFetch('/api/today_order/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: '2026-06-06', order: [' s3 ', 's3', 's1'] }),
+});
+const patched = await patchResponse.json();
+ok(patchResponse.ok && JSON.stringify(patched.order) === JSON.stringify(['s3', 's1']), 'demo patch normalization failed');
+let current = await (await demoFetch('/api/today_order')).json();
+ok(
+  JSON.stringify(current) === JSON.stringify({ '2026-06-06': ['s3', 's1'], '2026-06-07': ['s2'] }),
+  'demo patch overwrote another date',
+);
+await demoFetch('/api/today_order/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: '2026-06-06', remove: true }),
+});
+current = await (await demoFetch('/api/today_order')).json();
+ok(JSON.stringify(current) === JSON.stringify({ '2026-06-07': ['s2'] }), 'demo removal changed another date');
+const invalid = await demoFetch('/api/today_order/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: '2026-02-30', order: [] }),
+});
+ok(invalid.status === 400, 'demo patch accepted an invalid date');
+ok(forwarded === 0, 'demo today-order request reached the live fetch implementation');
+console.log('today order demo behavior PASS');
+"""
+    cmd = ["node", "--input-type=module", "-e", driver]
+    print("$ node --input-type=module -e <today-order-demo-driver>")
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "today-order demo behavior driver failed")
+
+
+def run_student_logs_demo_behavior_checks() -> None:
+    fallback_source = (ROOT / "static/js/admin/demo/bootstrap.js").read_text("utf-8")
+    _assert_unit(
+        "applyStudentLogsRequest" in fallback_source
+        and "case '/api/student-logs':" in fallback_source
+        and "path === '/api/student-logs'" in fallback_source,
+        "demo fallback must intercept student-log reads and writes",
+    )
+
+    driver = r"""
+class MemoryStorage {
+  constructor() { this.values = new Map(); }
+  getItem(key) { return this.values.has(String(key)) ? this.values.get(String(key)) : null; }
+  setItem(key, value) { this.values.set(String(key), String(value)); }
+  removeItem(key) { this.values.delete(String(key)); }
+}
+const ok = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+globalThis.sessionStorage = new MemoryStorage();
+const { createDemoFetch } = await import('./static/js/admin/demo/fetch.js');
+let forwarded = 0;
+const originalFetch = async () => {
+  forwarded += 1;
+  return new Response('{}', { status: 500 });
+};
+const root = {
+  fetch: originalFetch,
+  location: {
+    href: 'http://localhost/demo/rh3123',
+    origin: 'http://localhost',
+    pathname: '/demo/rh3123',
+  },
+};
+const demoFetch = createDemoFetch({ window: root, originalFetch });
+let listed = await (await demoFetch('/api/student-logs')).json();
+ok(listed.ok && Array.isArray(listed.logs), 'demo student-log list failed');
+const createResponse = await demoFetch('/api/student-logs', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    sid: 'demo-s001',
+    studentName: '김하늘',
+    kind: 'homework_insufficient',
+    comment: '  오답   노트 미제출  ',
+    date: '2026-06-17',
+  }),
+});
+const created = await createResponse.json();
+ok(
+  createResponse.status === 201
+    && created.log?.student_name === '김하늘'
+    && created.log?.comment === '오답 노트 미제출',
+  'demo student-log create contract failed',
+);
+listed = await (await demoFetch('/api/student-logs')).json();
+ok(listed.logs.length === 1 && listed.logs[0].id === created.log.id, 'demo student-log did not persist');
+const invalid = await demoFetch('/api/student-logs', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sid: 'demo-s001', studentName: '김하늘', kind: 'wrong', comment: 'x' }),
+});
+ok(invalid.status === 400, 'demo student-log accepted an unsupported kind');
+const cleared = await (await demoFetch('/api/student-logs', { method: 'DELETE' })).json();
+ok(cleared.ok && cleared.deleted === 1, 'demo student-log clear failed');
+listed = await (await demoFetch('/api/student-logs')).json();
+ok(listed.logs.length === 0, 'demo student-log clear did not persist');
+ok(forwarded === 0, 'demo student-log request reached the live fetch implementation');
+console.log('student logs demo behavior PASS');
+"""
+    cmd = ["node", "--input-type=module", "-e", driver]
+    print("$ node --input-type=module -e <student-logs-demo-driver>")
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student-logs demo behavior driver failed")
+
+
+def run_file_reference_route_unit_checks() -> None:
+    from flask import Flask
+
+    import routes.api_fs as api_fs
+
+    original = {
+        "FILES_DIR": api_fs.FILES_DIR,
+        "FILES_ROOT": api_fs.FILES_ROOT,
+        "MAT_PATH": api_fs.MAT_PATH,
+        "ASN_PATH": api_fs.ASN_PATH,
+        "PAGE_FOLDERS_PATH": api_fs.PAGE_FOLDERS_PATH,
+    }
+
+    def write_json(path: pathlib.Path, value) -> None:
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+    def read_json(path: pathlib.Path):
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="file-reference-route-") as tmpdir:
+            root = pathlib.Path(tmpdir)
+            files_dir = root / "files"
+            files_dir.mkdir()
+            mat_path = root / "materials.json"
+            assign_path = root / "mat_assign.json"
+            page_path = root / "page_folders.json"
+            api_fs.FILES_DIR = files_dir
+            api_fs.FILES_ROOT = files_dir.resolve()
+            api_fs.MAT_PATH = mat_path
+            api_fs.ASN_PATH = assign_path
+            api_fs.PAGE_FOLDERS_PATH = page_path
+
+            source_file = files_dir / "교재" / "단원" / "문제.pdf"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("fixture", encoding="utf-8")
+            write_json(mat_path, {"m1": {"url": "/files/교재/단원/문제.pdf", "title": "문제"}})
+            write_json(
+                assign_path,
+                {
+                    "s1": [
+                        "m1",
+                        "/files/교재/단원/문제.pdf",
+                        "교재/단원/문제.pdf",
+                        "DIR:교재",
+                    ],
+                },
+            )
+            write_json(page_path, {"materials": "교재/단원"})
+
+            app = Flask(__name__)
+            app.register_blueprint(api_fs.bp_api_fs)
+            client = app.test_client()
+
+            response = client.post(
+                "/api/fs/rename",
+                json={"src": "교재", "new_name": "수학 교재"},
+            )
+            _assert_unit(response.status_code == 200, "folder rename accepts a safe Korean name")
+            _assert_unit(
+                (files_dir / "수학 교재" / "단원" / "문제.pdf").exists(),
+                "folder rename preserves the nested file",
+            )
+            _assert_unit(
+                read_json(mat_path)["m1"]["url"] == "/files/수학 교재/단원/문제.pdf",
+                "folder rename rewrites descendant material URLs",
+            )
+            _assert_unit(
+                read_json(assign_path)["s1"]
+                == [
+                    "m1",
+                    "/files/수학 교재/단원/문제.pdf",
+                    "수학 교재/단원/문제.pdf",
+                    "DIR:수학 교재",
+                ],
+                "folder rename rewrites URL, relative, and directory assignment tokens",
+            )
+            _assert_unit(
+                read_json(page_path) == {"materials": "수학 교재/단원"},
+                "folder rename rewrites page-folder descendants",
+            )
+
+            response = client.post(
+                "/api/fs/delete",
+                json={"paths": ["수학 교재/단원"]},
+            )
+            _assert_unit(response.status_code == 200, "nested folder delete succeeds")
+            _assert_unit(read_json(mat_path) == {}, "folder delete removes descendant material metadata")
+            _assert_unit(
+                read_json(assign_path)["s1"] == ["DIR:수학 교재"],
+                "folder delete removes descendant IDs and path assignments but preserves its parent directory token",
+            )
+            _assert_unit(
+                read_json(page_path) == {"materials": ""},
+                "folder delete clears a page-folder reference to the deleted subtree",
+            )
+
+            move_file = files_dir / "자료" / "하위" / "이동.pdf"
+            move_file.parent.mkdir(parents=True)
+            move_file.write_text("fixture", encoding="utf-8")
+            write_json(mat_path, {"m2": {"url": "/files/자료/하위/이동.pdf"}})
+            write_json(assign_path, {"s2": ["DIR:자료", "/files/자료/하위/이동.pdf"]})
+            write_json(page_path, {"materials": "자료/하위"})
+
+            response = client.post(
+                "/api/fs/move",
+                json={"paths": ["자료"], "dst": "보관"},
+            )
+            _assert_unit(response.status_code == 200, "folder move succeeds")
+            _assert_unit(
+                (files_dir / "보관" / "자료" / "하위" / "이동.pdf").exists()
+                and read_json(mat_path)["m2"]["url"] == "/files/보관/자료/하위/이동.pdf"
+                and read_json(assign_path)["s2"]
+                == ["DIR:보관/자료", "/files/보관/자료/하위/이동.pdf"]
+                and read_json(page_path) == {"materials": "보관/자료/하위"},
+                "folder move rewrites every descendant reference",
+            )
+
+            response = client.post(
+                "/api/fs/move",
+                json={"paths": "보관/자료", "dst": "다른곳"},
+            )
+            _assert_unit(response.status_code == 400, "folder move rejects a scalar paths payload")
+    finally:
+        for name, value in original.items():
+            setattr(api_fs, name, value)
 
 
 def run_video_completion_unit_checks() -> None:
@@ -1112,8 +1726,8 @@ def run_video_completion_unit_checks() -> None:
         watch={},
     )
     _assert_unit(
-        api_basic._sid_lookup(fixed.get(date, {}), "s1") == updates[date]["s1"],
-        "completed course must preserve the existing automatic video snapshot",
+        api_basic._sid_lookup(fixed.get(date, {}), "s1") is None,
+        "completed course must remove the finished automatic video snapshot",
     )
 
     manual_updates = {date: {"s1": {"videos": ["m1"], "source": "manual"}}}
@@ -1465,8 +2079,33 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         weekend_slots={},
     )
     _assert_unit(
-        after_progress[date]["scheduled"] == stable_snapshot,
-        "progress/watch updates do not mutate an existing automatic snapshot",
+        after_progress[date]["scheduled"] == {
+            "videos": ["m3", "m4"],
+            "source": "auto",
+            "note": "keep metadata",
+        },
+        "progress/watch updates remove finished videos and fill the automatic snapshot",
+    )
+
+    legacy_snapshot = {date: {"scheduled": ["m1", "m2"]}}
+    api_basic._ensure_today_auto_assign(
+        legacy_snapshot,
+        [scheduled],
+        videos,
+        {date: {"scheduled": {"m1": "done", "m2": "skip"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(legacy_snapshot[date], "scheduled") == {
+            "videos": ["m3", "m4"],
+            "source": "auto",
+        },
+        "legacy list snapshots replace finished videos with the next automatic videos",
     )
 
     makeup_snapshot = {"videos": ["m5"], "source": "auto", "note": "makeup snapshot"}
@@ -1503,8 +2142,8 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         weekend_slots={},
     )
     _assert_unit(
-        completed[date]["scheduled"] == completed_snapshot,
-        "course completion blocks new work without deleting today's snapshot",
+        api_basic._sid_lookup(completed.get(date, {}), "scheduled") is None,
+        "course completion removes the finished automatic snapshot",
     )
 
     completed_without_snapshot = {}
@@ -1826,6 +2465,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "UPD_PATH": api_basic.UPD_PATH,
         "load": api_basic.load,
         "save_atomic": api_basic.save_atomic,
+        "file_lock": api_basic.file_lock,
         "load_updates": api_basic._load_updates_with_auto_assign,
         "reconcile": api_basic._reconcile_consecutive_auto_assignment,
         "today": api_basic._today_kst_iso,
@@ -1860,6 +2500,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         store["students"] = [{"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"}]
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
+        api_basic.file_lock = lambda *args, **kwargs: contextlib.nullcontext()
         api_basic._today_kst_iso = lambda: "2026-06-06"
         api_basic._load_updates_with_auto_assign = lambda **kwargs: init_calls.append(kwargs) or {}
         api_basic._reconcile_consecutive_auto_assignment = lambda *args, **kwargs: expand_calls.append((args, kwargs)) or False
@@ -1919,6 +2560,133 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     finally:
         for name, value in original.items():
             setattr(api_basic, name, value)
+
+
+def run_auto_assignment_progress_reconcile_unit_checks() -> None:
+    from copy import deepcopy
+
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"
+    sid = "progress-hook"
+    students_path = object()
+    videos_path = object()
+    extra_path = object()
+    weekend_path = object()
+    updates_path = object()
+    state = {
+        "students": [{
+            "id": sid,
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "autoVideoAssignCount": 2,
+        }],
+        "videos": [
+            {"mid": f"m{index}", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": str(index)}
+            for index in range(1, 4)
+        ],
+        "extra": {date: [sid]},
+        "weekend": {},
+        "updates": {
+            date: {
+                sid: {
+                    "videos": ["m1", "m2"],
+                    "source": "auto",
+                    "note": "keep",
+                },
+            },
+        },
+        "absent": {"by_date": {}, "by_student": {}},
+        "logs": {date: {}},
+    }
+    progress = {date: {sid: {"m1": "done"}}}
+    watch = {}
+
+    class FakeLogRepository:
+        def read_logs(self, requested_date):
+            return deepcopy(state["logs"])
+
+    original = {
+        "STU_PATH": api_basic.STU_PATH,
+        "VID_PATH": api_basic.VID_PATH,
+        "EXTRA_PATH": api_basic.EXTRA_PATH,
+        "WEEKEND_SLOTS_PATH": api_basic.WEEKEND_SLOTS_PATH,
+        "UPD_PATH": api_basic.UPD_PATH,
+        "load": api_basic.load,
+        "save_atomic": api_basic.save_atomic,
+        "load_absent": api_basic.load_absent,
+        "get_log_repository": api_basic.get_log_repository,
+        "updates_lock": api_basic._updates_lock,
+    }
+
+    def fake_load(path):
+        if path is students_path:
+            return deepcopy(state["students"])
+        if path is videos_path:
+            return deepcopy(state["videos"])
+        if path is extra_path:
+            return deepcopy(state["extra"])
+        if path is weekend_path:
+            return deepcopy(state["weekend"])
+        if path is updates_path:
+            return deepcopy(state["updates"])
+        return {}
+
+    def fake_save(path, value, **kwargs):
+        if path is updates_path:
+            state["updates"] = deepcopy(value)
+
+    try:
+        api_basic.STU_PATH = students_path
+        api_basic.VID_PATH = videos_path
+        api_basic.EXTRA_PATH = extra_path
+        api_basic.WEEKEND_SLOTS_PATH = weekend_path
+        api_basic.UPD_PATH = updates_path
+        api_basic.load = fake_load
+        api_basic.save_atomic = fake_save
+        api_basic.load_absent = lambda: deepcopy(state["absent"])
+        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_basic._updates_lock = lambda: contextlib.nullcontext()
+
+        changed = api_basic._reconcile_auto_assignment_after_progress(
+            date,
+            sid,
+            progress=progress,
+            watch=watch,
+        )
+        _assert_unit(changed, "progress reconciliation should write a changed automatic snapshot")
+        _assert_unit(
+            state["updates"][date][sid] == {
+                "videos": ["m2", "m3"],
+                "source": "auto",
+                "note": "keep",
+            },
+            "progress reconciliation removes the finished video and fills the freed slot",
+        )
+
+        unchanged = api_basic._reconcile_auto_assignment_after_progress(
+            date,
+            sid,
+            progress=progress,
+            watch=watch,
+        )
+        _assert_unit(not unchanged, "repeated progress reconciliation should be idempotent")
+
+        state["updates"] = {date: {}}
+        missing_snapshot = api_basic._reconcile_auto_assignment_after_progress(
+            date,
+            sid,
+            progress=progress,
+            watch=watch,
+        )
+        _assert_unit(not missing_snapshot, "progress reconciliation must not create a new snapshot")
+        _assert_unit(state["updates"] == {date: {}}, "missing snapshots remain absent after progress reconciliation")
+    finally:
+        for name, value in original.items():
+            if name == "updates_lock":
+                setattr(api_basic, "_updates_lock", value)
+            else:
+                setattr(api_basic, name, value)
 
 
 def run_self_study_assignment_route_unit_checks() -> None:
@@ -2502,6 +3270,7 @@ def run_video_assignment_boundary_source_checks() -> None:
 
 def run_legacy_html_text_integrity_checks() -> None:
     main_html = (ROOT / "static/main.html").read_text("utf-8")
+    main_js = (ROOT / "static/js/main.js").read_text("utf-8")
     student_copy_html = (ROOT / "static/student copy.html").read_text("utf-8")
 
     for label, source in (
@@ -2521,6 +3290,14 @@ def run_legacy_html_text_integrity_checks() -> None:
     _assert_unit(
         all(value in student_copy_html for value in ("학생 페이지", "오늘 영상", "자료 다운로드", "건의사항 보내기")),
         "legacy student page must retain readable Korean learning controls",
+    )
+    _assert_unit(
+        main_js.count('api("/api/auth/change"') == 2
+        and '"/api/auth/change-password"' not in main_js
+        and '"/api/auth/change-id"' not in main_js
+        and "let token = await requireLogin();" in main_js
+        and "token = r.data.token;" in main_js,
+        "legacy account controls must use the canonical auth endpoint and retain refreshed tokens",
     )
 
 
@@ -3446,6 +4223,8 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "_sid_keys",
         "_sid_lookup",
         "_normalize_video_assign_list",
+        "_video_assignment_mid_aliases",
+        "_canonicalize_video_assignment_mids",
         "_normalize_review_video_mids",
         "_review_video_mids_for_assignment",
         "_is_training_pack_video",
@@ -3714,7 +4493,9 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "UPD_PATH": "fixture-updates",
         "ASN_PATH": "fixture-assigns",
         "MAT_PATH": "fixture-materials",
+        "PAGE_FOLDERS_PATH": "fixture-page-folders",
         "WATCH_PATH": "fixture-watch",
+        "material_state_lock": lambda *_args: contextlib.nullcontext(),
     })
 
     class FixtureRequest:
@@ -3754,7 +4535,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "day1": "월 13:00",
     }
     base_videos = [
-        {"mid": "m1", "title": "Assigned", "chapter": "1", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m1"},
+        {"mid": "m1", "id": 101, "title": "Assigned", "chapter": "1", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m1"},
         {"mid": "m2", "title": "Interrupted", "chapter": "2", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m2"},
         {"mid": "m3", "title": "Three", "chapter": "3", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m3"},
         {"mid": "m5", "title": "Five", "chapter": "5", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m5"},
@@ -3815,6 +4596,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
             return {route_state["date"]: {route_state["sid"]: deepcopy(route_state["log_entry"])}}
 
     route_namespace["load"] = fixture_load
+    route_namespace["load_material_state_locked"] = lambda *_args, **_kwargs: (
+        fixture_load(route_namespace["MAT_PATH"]),
+        fixture_load(route_namespace["ASN_PATH"]),
+        {},
+    )
     route_namespace["load_absent"] = lambda: deepcopy(route_state["absent"])
     route_namespace["_load_progress_strict"] = lambda: deepcopy(route_state["progress"])
     route_namespace["get_log_repository"] = lambda: FixtureRepository()
@@ -3879,6 +4665,18 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     )
     _assert_unit(regular_payload["updates"] == regular_persisted, "regular assignment response must remain unchanged")
     _assert_unit(route_state["log_reads"] == 1, "bootstrap route must reuse one date-log read")
+
+    route_state = make_route_state()
+    route_state["updates"] = {base_date: {base_sid: {"videos": [101], "source": "auto"}}}
+    numeric_persisted = deepcopy(route_state["updates"])
+    numeric_payload, numeric_status = invoke_route()
+    assert_success_shape("numeric ID", numeric_payload, numeric_status)
+    _assert_unit(
+        [item.get("mid") for item in numeric_payload["videos"]] == ["m1"]
+        and numeric_payload["updates"][base_date][base_sid]["videos"] == ["m1"],
+        "numeric video IDs must project to catalog MIDs for bootstrap rendering",
+    )
+    _assert_unit(route_state["updates"] == numeric_persisted, "numeric ID projection must not mutate persisted updates")
 
     route_state["academy_allowed"] = False
     restricted_payload, restricted_status = invoke_route()
@@ -7178,9 +7976,55 @@ globalThis.__state = {
 let calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  return response({ ok: true });
+};
+const stateOrderSave = await loadStateModule('today-order-save');
+await stateOrderSave.saveOrder('2026-06-06', ['s2', 's1']);
+ok(calls.length === 1, 'today order save avoids a stale whole-map GET');
+ok(
+  calls[0].url === '/api/today_order/patch'
+    && calls[0].method === 'POST'
+    && calls[0].body?.date === '2026-06-06'
+    && JSON.stringify(calls[0].body?.order) === JSON.stringify(['s2', 's1']),
+  'today order save sends only the selected date and order',
+);
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  const call = { url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null };
+  calls.push(call);
+  if (call.url === '/api/today_order/patch') return response({}, 404);
+  if (call.url === '/api/today_order' && call.method === 'GET') {
+    return response({ '2026-06-07': ['other'] });
+  }
+  if (call.url === '/api/today_order' && call.method === 'POST') return response({ ok: true });
+  return response({});
+};
+const stateOrderLegacy = await loadStateModule('today-order-legacy-fallback');
+await stateOrderLegacy.saveOrder('2026-06-06', ['s2', 's1']);
+ok(
+  calls.length === 3
+    && calls[0].url === '/api/today_order/patch'
+    && calls[1].url === '/api/today_order'
+    && calls[1].method === 'GET'
+    && calls[2].url === '/api/today_order'
+    && calls[2].method === 'POST',
+  'today order save falls back only when an older worker returns 404',
+);
+ok(
+  JSON.stringify(calls[2].body) === JSON.stringify({
+    '2026-06-07': ['other'],
+    '2026-06-06': ['s2', 's1'],
+  }),
+  'legacy today order fallback preserves every other date',
+);
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } }, 503);
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url) === '/api/today_order/patch') return response({ ok: true });
   return response({});
 };
 const stateGetNonOk = await loadStateModule('weekend-get-non-ok');
@@ -7199,7 +8043,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) throw new Error('offline');
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url) === '/api/today_order/patch') return response({ ok: true });
   return response({});
 };
 const stateGetReject = await loadStateModule('weekend-get-reject');
@@ -7222,7 +8066,7 @@ globalThis.fetch = async (url, init = {}) => {
     text: async () => '',
   };
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url) === '/api/today_order/patch') return response({ ok: true });
   return response({});
 };
 const stateGetBadJson = await loadStateModule('weekend-get-bad-json');
@@ -7241,7 +8085,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('save failed', 500);
-  if (String(url) === '/api/today_order') return response({ '2026-06-06': ['other'] });
+  if (String(url) === '/api/today_order/patch') return response({ ok: true });
   return response({});
 };
 const statePostNonOk = await loadStateModule('weekend-post-non-ok');
@@ -7253,15 +8097,14 @@ try {
   ok(String(err?.message || '').includes('/api/weekend-slots'), 'POST non-ok error names weekend slots endpoint');
 }
 ok(postNonOkRejected, 'weekend slots POST non-ok rejects');
-ok(!calls.some(call => call.url === '/api/today_order'), 'weekend slots POST non-ok must not clear today order');
+ok(!calls.some(call => call.url === '/api/today_order/patch'), 'weekend slots POST non-ok must not clear today order');
 
 calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-06-06': ['s1'] });
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response({ ok: true });
+  if (String(url) === '/api/today_order/patch' && init.method === 'POST') return response({ ok: true });
   return response({});
 };
 const stateSuccess = await loadStateModule('weekend-success');
@@ -7271,7 +8114,14 @@ ok(weekendPost, 'weekend slots success posts');
 ok(Array.isArray(weekendPost.body?.['2026-06-06']?.s1), 'weekend slots success writes sid slots');
 ok(weekendPost.body['2026-06-06'].s1[0] === 2, 'weekend slots success keeps parsed slot');
 ok(Array.isArray(weekendPost.body['2026-06-06'].other), 'weekend slots success preserves same-day existing sid');
-const orderIndex = calls.findIndex(call => call.url === '/api/today_order');
+const orderCall = calls.find(call => call.url === '/api/today_order/patch');
+ok(
+  orderCall?.method === 'POST'
+    && orderCall.body?.date === '2026-06-06'
+    && orderCall.body?.remove === true,
+  'today order clear uses a date-scoped patch payload',
+);
+const orderIndex = calls.findIndex(call => call.url === '/api/today_order/patch');
 const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
 ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
 
@@ -7291,8 +8141,7 @@ globalThis.fetch = async (url, init = {}) => {
     currentWeekendSlots = { ...currentWeekendSlots, ...call.body };
     return response('', 204);
   }
-  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-07-05': ['s1'] });
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response('', 204);
+  if (String(url) === '/api/today_order/patch' && init.method === 'POST') return response('', 204);
   return response({});
 };
 const stateWidenCompact = await loadStateModule('weekend-widen-compact-label');
@@ -7314,8 +8163,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({});
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order' && !init.method) return response({});
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response({ ok: true });
+  if (String(url) === '/api/today_order/patch' && init.method === 'POST') return response({ ok: true });
   return response({});
 };
 const stateSlot3Save = await loadStateModule('weekend-slot3-save');
@@ -7549,9 +8397,17 @@ def run_unit_checks() -> bool:
         run_student_previous_video_review_rule_unit_checks,
         run_progress_batch_sids_unit_checks,
         run_progress_read_cache_unit_checks,
+        run_video_mid_migration_unit_checks,
+        run_today_order_patch_unit_checks,
+        run_today_order_migration_unit_checks,
+        run_today_order_demo_behavior_checks,
+        run_student_logs_demo_behavior_checks,
+        run_material_state_transaction_unit_checks,
+        run_file_reference_route_unit_checks,
         run_video_completion_unit_checks,
         run_video_assignment_snapshot_unit_checks,
         run_video_assignment_route_hook_unit_checks,
+        run_auto_assignment_progress_reconcile_unit_checks,
         run_self_study_assignment_route_unit_checks,
         run_student_review_video_route_unit_checks,
         run_student_training_pack_route_unit_checks,

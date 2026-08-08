@@ -68,6 +68,13 @@ def _validated_author(body: dict) -> tuple[str, tuple | None]:
     return author, None
 
 
+def _validated_pinned(body: dict) -> tuple[bool, tuple | None]:
+    pinned = body.get("pinned")
+    if not isinstance(pinned, bool):
+        return False, (jsonify({"ok": False, "error": "pinned must be a boolean"}), 400)
+    return pinned, None
+
+
 def _validate_student(student_id: str):
     if not student_id:
         return jsonify({"ok": False, "error": "missing student_id"}), 400
@@ -116,6 +123,22 @@ def update_note(note_id: int):
     if author_error:
         return author_error
     note = get_repository().update(student_id, note_id, content, author)
+    if note is None:
+        return jsonify({"ok": False, "error": "note not found"}), 404
+    return jsonify({"ok": True, "note": note})
+
+
+@bp_api_assistant_notes.patch("/api/assistant-student-notes/<int:note_id>/pin")
+def pin_note(note_id: int):
+    body = _request_body()
+    student_id = _student_id_from(body)
+    error = _validate_student(student_id)
+    if error:
+        return error
+    pinned, pinned_error = _validated_pinned(body)
+    if pinned_error:
+        return pinned_error
+    note = get_repository().set_pinned(student_id, note_id, pinned)
     if note is None:
         return jsonify({"ok": False, "error": "note not found"}), 404
     return jsonify({"ok": True, "note": note})
