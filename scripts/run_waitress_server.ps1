@@ -12,6 +12,7 @@ param(
     [string]$CanarySidsOverride = "",
     [string]$VapidSubjectOverride = "",
     [string]$VapidPrivateKeyPathOverride = "",
+    [string]$AdminCredentialFileOverride = "",
     [string]$RuntimeRootOverride = "",
     [switch]$DevelopmentIsolation
 )
@@ -72,6 +73,36 @@ if ($DevelopmentIsolation) {
             Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
         }
     }
+}
+
+if ($AdminCredentialFileOverride) {
+    $adminRuntimeRoot = if ($RuntimeRootOverride) { [IO.Path]::GetFullPath($RuntimeRootOverride) } else { "" }
+    if (-not $DevelopmentIsolation -or
+        $Listen -ne "127.0.0.1:8004" -or
+        $PublicHostOverride.Trim().ToLowerInvariant() -ne "dev-app.5a-math.com" -or
+        $PublicEnabledOverride -ne "1" -or
+        $CanarySidsOverride.Trim() -ne "dev-student-001" -or
+        $adminRuntimeRoot -ne [IO.Path]::GetFullPath($serverRoot)) {
+        throw "AdminCredentialFileOverride requires exact loopback development isolation."
+    }
+    $adminCredentialPath = (Resolve-Path -LiteralPath $AdminCredentialFileOverride -ErrorAction Stop).Path
+    $developmentInstanceRoot = [IO.Path]::GetFullPath((Join-Path $serverRoot "instance"))
+    $expectedAdminCredentialPath = [IO.Path]::GetFullPath((Join-Path $developmentInstanceRoot "student-app-dev-admin-auth.json"))
+    if (-not $adminCredentialPath.Equals($expectedAdminCredentialPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Development admin credentials must use the exact ignored file inside the repository instance directory."
+    }
+    $adminCredential = Get-Content -Raw -LiteralPath $adminCredentialPath | ConvertFrom-Json
+    $adminUsername = [string]$adminCredential.username
+    $adminPasswordHash = [string]$adminCredential.passwordHash
+    if ($adminCredential.schemaVersion -ne 1 -or
+        $adminCredential.scope -ne "development-local-admin" -or
+        [string]::IsNullOrWhiteSpace($adminUsername) -or
+        $adminUsername -ne $adminUsername.Trim() -or
+        $adminPasswordHash -notmatch '^(?:scrypt|pbkdf2):[^$]+\$[^$]+\$[^$]+$') {
+        throw "Development admin credential file is malformed."
+    }
+    $env:ACADEMY_ADMIN_USERNAME = $adminUsername
+    $env:ACADEMY_ADMIN_PASSWORD_HASH = $adminPasswordHash
 }
 
 if ($PublicHostOverride) {

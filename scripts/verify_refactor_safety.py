@@ -5522,6 +5522,21 @@ def run_student_mobile_deployment_contract_checks() -> None:
     print(f"student mobile deployment contract ({mode}): {assertions} assertions passed; process state restored")
 
 
+def run_local_dual_role_contract_checks() -> None:
+    """Run the temp-only dual-role provisioner contract with its normal dependencies."""
+    from scripts.student_mobile_app_checks import local_dual_role
+
+    local_result = local_dual_role.run_checks()
+    _assert_unit(local_result.get("name") == "local-dual-role", "local dual-role receipt identity mismatch")
+    _assert_unit(local_result.get("passed") is True, "local dual-role provisioning contract did not pass")
+    local_assertions = local_result.get("assertions")
+    _assert_unit(
+        isinstance(local_assertions, int) and not isinstance(local_assertions, bool) and local_assertions > 0,
+        "local dual-role receipt must contain positive assertions",
+    )
+    print(f"local dual-role provisioning contract: {local_assertions} assertions passed")
+
+
 def run_student_mobile_python_result_contract_checks() -> None:
     from types import ModuleType
 
@@ -8209,6 +8224,7 @@ def run_unit_checks() -> bool:
         run_student_mobile_pwa_flow_checks,
         run_student_mobile_deployment_guard_unit_checks,
         run_student_mobile_deployment_contract_checks,
+        run_local_dual_role_contract_checks,
         run_student_mobile_python_result_contract_checks,
         run_refactor_notes_contract_source_checks,
         run_admin_calendar_test_completion_source_checks,
@@ -8478,6 +8494,11 @@ def main() -> int:
         help="Run only temp-only student-app deployment and rollback contract checks.",
     )
     parser.add_argument(
+        "--only-local-dual-role",
+        action="store_true",
+        help="Run only temp-only local admin/student dual-role provisioning checks.",
+    )
+    parser.add_argument(
         "--only-legacy-test-record-cache",
         action="store_true",
         help="Run only legacy logs test-record projection cache checks.",
@@ -8641,6 +8662,8 @@ def main() -> int:
     if args.only_student_mobile_deployment:
         selected_checks.append(run_student_mobile_deployment_guard_unit_checks)
         selected_checks.append(run_student_mobile_deployment_contract_checks)
+    if args.only_local_dual_role:
+        selected_checks.append(run_local_dual_role_contract_checks)
     if args.only_legacy_test_record_cache:
         selected_checks.append(run_legacy_test_record_cache_unit_checks)
     if args.only_admin_weekend_slot_behavior:
