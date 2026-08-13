@@ -6,7 +6,7 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260814phase17">
+  <link rel="stylesheet" href="/css/admin.css?v=20260814phase19">
 
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
@@ -59,6 +59,12 @@
           </label>
         </div>
       </header>
+
+      <nav id="adminSectionNav" class="admin-section-nav" aria-label="관리자 주요 섹션">
+        <button class="admin-section-nav__button" type="button" data-ui-action="scroll-today" aria-controls="todaySection">오늘 학생</button>
+        <button class="admin-section-nav__button" type="button" data-ui-action="scroll-done" aria-controls="doneSection">하원</button>
+        <button class="admin-section-nav__button" type="button" data-ui-action="scroll-calendar" aria-controls="calendarSection">캘린더</button>
+      </nav>
 
       <div class="global-links" aria-label="관리 링크">
         <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/10cpoU0OxFx7DwGO3VBAFhPJx68kHIX_ugRzOong9IGs/edit?gid=1803596204#gid=1803596204" class="btn secondary link-ledger" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원출석부</a>
@@ -587,6 +593,6 @@
   </div>
 
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
-  <script type="module" src="/js/admin/main.js?v=20260814-phase18"></script>
+  <script type="module" src="/js/admin/main.js?v=20260814-phase19"></script>
 </body>
 </html>
