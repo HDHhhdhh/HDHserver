@@ -52,6 +52,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/absentRecovery.js",
     ROOT / "static/js/admin/features/absentRegister.js",
     ROOT / "static/js/admin/features/calendar.js",
+    ROOT / "static/js/admin/features/calendarSnapshotCoordinator.js",
     ROOT / "static/js/admin/features/exportLogFormat.js",
     ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/extraModal.js",

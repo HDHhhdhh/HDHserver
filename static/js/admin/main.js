@@ -9,7 +9,7 @@ import { initExtraModal } from './features/extraModal.js';
 import { initAbsentRegister } from './features/absentRegister.js';
 //import { initMaterials } from './features/materials.js';
 import { initAssignModal } from './features/assignModal.js';
-import { initCalendar } from './features/calendar.js';
+import { initCalendar } from './features/calendar.js?v=20260814-phase18';
 import { initExport } from './features/exportLogs.js?v=20260813-phase12';
 import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js';
