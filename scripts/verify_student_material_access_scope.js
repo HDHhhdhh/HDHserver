@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const sourcePath = path.join(root, 'static', 'js', 'student.js');
@@ -356,11 +357,24 @@ function createBaseDocument() {
     'studentHomeworkBooks',
     'player',
     'vidList',
+    'previousVideos',
+    'previousVideosToggle',
+    'previousVideosPanel',
+    'previousVideosSummary',
+    'previousVidList',
     'assignedTestsPanel',
     'assignedTestList',
     'matList',
   ].forEach(id => {
-    const tag = id === 'player' ? 'iframe' : id.endsWith('List') || id === 'vidList' ? 'ul' : 'div';
+    const tag = id === 'player'
+      ? 'iframe'
+      : id === 'previousVideosToggle'
+        ? 'button'
+        : id === 'previousVideosSummary'
+          ? 'p'
+          : id.endsWith('List') || id === 'vidList'
+            ? 'ul'
+            : 'div';
     const element = document.createElement(tag);
     element.id = id;
     document.body.appendChild(element);
@@ -368,7 +382,27 @@ function createBaseDocument() {
   return document;
 }
 
-async function main() {
+function runPreviousVideoVerifier() {
+  const verifierPath = path.join(__dirname, 'verify_student_previous_video_review.js');
+  const result = spawnSync(process.execPath, [verifierPath, '--contract=all'], {
+    cwd: root,
+    stdio: ['ignore', 'inherit', 'inherit'],
+    timeout: 30000,
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw new Error(`previous-video verifier spawn failed: ${result.error.message}`);
+  }
+  if (result.signal) {
+    throw new Error(`previous-video verifier terminated by ${result.signal}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`previous-video verifier exited with status ${result.status}`);
+  }
+}
+
+async function main(options = {}) {
+  const legacyFallback = options.legacyFallback === true;
   const alerts = [];
   const document = createBaseDocument();
   const storage = new Map();
@@ -389,6 +423,13 @@ async function main() {
     students: [{ id: SID, name: '브라우저검증', curriculum: '대수', level: '중', day1: '토1' }],
     student: { id: SID, name: '브라우저검증', curriculum: '대수', level: '중', day1: '토1' },
     videos: [{ mid: 'qa-video-1', title: '제한 영상', curriculum: '대수', chapter: 1 }],
+    reviewVideos: [{
+      mid: 'qa-review-1',
+      title: 'restricted review',
+      chapter: 2,
+      reviewStatus: 'interrupted',
+      playbackRestricted: true,
+    }],
     updates: { [TODAY]: { [SID]: ['qa-video-1'] } },
     materials: { 'mat-1': { title: '모바일 다운로드 확인.pdf', url: MATERIAL_URL } },
     assigns: { [SID]: ['mat-1'] },
@@ -410,6 +451,7 @@ async function main() {
   };
 
   const fetchCalls = [];
+  const watchMutations = [];
   const quietConsole = Object.create(console);
   quietConsole.warn = (...args) => {
     const message = args.map(String).join(' ');
@@ -428,12 +470,32 @@ async function main() {
       removeItem: key => storage.delete(String(key)),
     },
     alert: message => alerts.push(String(message)),
-    fetch: async url => {
+    fetch: async (url, init = {}) => {
       const text = String(url);
+      const method = String(init.method || 'GET').toUpperCase();
       fetchCalls.push(text);
-      if (text.startsWith('/api/student/bootstrap')) return makeResponse(bootstrap);
-      if (text.startsWith('/api/watch/latest')) return makeResponse({ ok: true, watch: {} });
-      if (text.startsWith('/api/get-url')) return makeResponse('academy network required', 403);
+      if (text.startsWith('/api/watch') && method !== 'GET') watchMutations.push({ text, method });
+      if (text.startsWith('/api/student/bootstrap')) {
+        return makeResponse(bootstrap, legacyFallback ? 404 : 200);
+      }
+      if (text.startsWith('/api/watch/latest')) {
+        return makeResponse({
+          ok: true,
+          watch: legacyFallback ? { 'qa-video-1': { last: 100, dur: 100 } } : {},
+        });
+      }
+      if (legacyFallback && text.startsWith('/api/students')) return makeResponse([bootstrap.student]);
+      if (legacyFallback && text.startsWith('/api/videos')) return makeResponse(bootstrap.videos);
+      if (legacyFallback && text.startsWith('/api/updates')) return makeResponse(bootstrap.updates);
+      if (legacyFallback && text.startsWith('/api/materials')) return makeResponse(bootstrap.materials);
+      if (legacyFallback && text.startsWith('/api/mat-assign')) return makeResponse(bootstrap.assigns);
+      if (legacyFallback && text.startsWith('/api/absent')) return makeResponse(bootstrap.absent);
+      if (legacyFallback && text.startsWith('/api/logs')) return makeResponse(bootstrap.logs);
+      if (text.startsWith('/api/get-url')) {
+        return legacyFallback
+          ? makeResponse('https://video.example.test/embed')
+          : makeResponse('academy network required', 403);
+      }
       if (text.startsWith('/js/test_answer_link_map')) return makeResponse('academy network required', 403);
       return makeResponse({});
     },
@@ -494,6 +556,23 @@ async function main() {
 
   const videoRow = document.getElementById('vidList').querySelector('li[data-mid]');
   if (!videoRow) throw new Error('restricted video row did not render');
+  const reviewToggle = document.getElementById('previousVideosToggle');
+  const reviewPanel = document.getElementById('previousVideosPanel');
+  const reviewList = document.getElementById('previousVidList');
+  if (!reviewToggle || !reviewPanel || !reviewList) {
+    throw new Error('restricted review fixture must expose the previous-video controls');
+  }
+  if (legacyFallback) {
+    if (!fetchCalls.some(url => String(url).startsWith('/api/videos'))) {
+      throw new Error('legacy bootstrap fallback must fetch /api/videos for today assignment compatibility');
+    }
+    if (!reviewToggle.disabled || reviewList.querySelector('button[data-mid]')) {
+      throw new Error('legacy bootstrap fallback must keep previous-video review disabled and empty');
+    }
+    console.log('student legacy bootstrap review fallback contract ok');
+    return;
+  }
+
   const player = document.getElementById('player');
   if (!player?.hidden) throw new Error('restricted student page should hide the empty video player');
   if (fetchCalls.some(url => String(url).startsWith('/js/test_answer_link_map'))) {
@@ -512,10 +591,51 @@ async function main() {
     throw new Error(`restricted test click did not show academy alert: ${JSON.stringify(alerts)}`);
   }
 
+  const reviewRow = reviewList.querySelector('button[data-mid]');
+  if (!reviewRow) throw new Error('restricted review metadata row did not render');
+  const reviewTitles = reviewRow.querySelectorAll('.previous-video-title');
+  if (reviewTitles.length !== 1 || reviewTitles[0].textContent !== '2. restricted review'
+    || reviewRow.children.length !== 1 || reviewRow.children[0] !== reviewTitles[0]) {
+    throw new Error('restricted review row must contain exactly one title child/text');
+  }
+  if (reviewRow.querySelectorAll('.previous-video-meta').length
+    || reviewRow.querySelectorAll('.previous-video-status').length
+    || reviewRow.querySelectorAll('input').length
+    || reviewRow.querySelectorAll('[type="checkbox"]').length
+    || reviewRow.querySelectorAll('[type="radio"]').length) {
+    throw new Error('restricted review row leaked status/meta/input controls');
+  }
+  if (/완료|시청\s*중단?|차시\s*\d+/.test(reviewRow.textContent)) {
+    throw new Error('restricted review row leaked visible status/chapter text');
+  }
+  if (reviewRow.dataset.playbackRestricted !== 'true') {
+    throw new Error('restricted review row must expose only a playback restriction marker');
+  }
+  for (const field of ['href', 'src', 'data-url', 'data-playback-url', 'target']) {
+    if (reviewRow.getAttribute(field) !== null) {
+      throw new Error(`restricted review row leaked playback field ${field}`);
+    }
+  }
+  const beforeReviewToggle = fetchCalls.length;
+  reviewToggle.click();
+  if (reviewPanel.hidden !== false || fetchCalls.length !== beforeReviewToggle) {
+    throw new Error('restricted review toggle must only reveal metadata without requests');
+  }
+  const beforeReviewGetUrl = fetchCalls.filter(url => String(url).startsWith('/api/get-url')).length;
+  const beforeReviewWatchMutation = watchMutations.length;
+  reviewRow.click();
+  const afterReviewGetUrl = fetchCalls.filter(url => String(url).startsWith('/api/get-url')).length;
+  if (!alerts.includes(BLOCK_MESSAGE) || afterReviewGetUrl !== beforeReviewGetUrl || watchMutations.length !== beforeReviewWatchMutation) {
+    throw new Error('restricted review activation must show academy notice without get-url/watch mutation');
+  }
+
   console.log('student material access runtime contract ok');
 }
 
-main().catch(error => {
+runPreviousVideoVerifier();
+main()
+  .then(() => main({ legacyFallback: true }))
+  .catch(error => {
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);
-});
+  });

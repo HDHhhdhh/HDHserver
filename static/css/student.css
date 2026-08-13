@@ -383,6 +383,49 @@ body.student-page #vidList .badge-done {
   font-weight: 600;
 }
 
+body.student-page #vidList li[data-review-registered="true"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.student-page #vidList li[data-review-registered="true"] .video-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+body.student-page .playlist-review-cancel {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--stu-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+body.student-page .playlist-review-cancel:hover:not(:disabled),
+body.student-page .playlist-review-cancel:focus-visible {
+  border-color: var(--stu-accent);
+  color: var(--stu-accent);
+  background: color-mix(in srgb, var(--stu-accent) 10%, transparent);
+}
+
+body.student-page .playlist-review-cancel:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+body.student-page #vidList li.active .playlist-review-cancel {
+  border-color: rgb(255 255 255 / 60%);
+  color: #f8fcff;
+}
+
 /* =========================================
    Assigned Tests
    ========================================= */
@@ -2720,6 +2763,24 @@ body.student-page {
   --stu-accent: #1769aa;
   --stu-accent-2: #16835d;
   --stu-ok: #16835d;
+  --stu-review-gap: 8px;
+  --stu-review-tight-gap: 6px;
+  --stu-review-section-space: 12px;
+  --stu-review-mobile-section-space: 10px;
+  --stu-review-tap-min-height: 44px;
+  --stu-review-control-pad-block: 9px;
+  --stu-review-control-pad-inline: 12px;
+  --stu-review-item-pad-block: 8px;
+  --stu-review-item-pad-inline: 10px;
+  --stu-review-title-size: 13px;
+  --stu-review-summary-size: 12px;
+  --stu-review-summary-weight: 600;
+  --stu-review-summary-line-height: 1.45;
+  --stu-review-copy-line-height: 1.35;
+  --stu-review-control-weight: 750;
+  --stu-review-focus-width: 3px;
+  --stu-review-focus-offset: 2px;
+  --stu-review-mobile-control-pad-inline: 10px;
   --stu-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
   --stu-shadow-soft: 0 1px 2px rgba(15, 23, 42, .05), 0 8px 18px rgba(15, 23, 42, .06);
   --stu-radius-xl: 8px;
@@ -2920,4 +2981,218 @@ body.student-page #announceHistoryModal .announce-close {
   body.student-page .playlist-wrap {
     max-height: none;
   }
+}
+
+/* =========================================
+   Previous-video review disclosure
+   - Server-authorized rows only; no auto-play or decorative motion.
+   ========================================= */
+body.student-page .previous-videos {
+  min-width: 0;
+  display: grid;
+  gap: var(--stu-review-gap);
+  margin-top: var(--stu-review-section-space);
+  padding-top: var(--stu-review-section-space);
+  border-top: 1px solid var(--stu-line);
+  color: var(--stu-text);
+}
+
+body.student-page .previous-videos-toggle {
+  width: 100%;
+  min-height: var(--stu-review-tap-min-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stu-review-gap);
+  padding: var(--stu-review-control-pad-block) var(--stu-review-control-pad-inline);
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card);
+  color: var(--stu-text);
+  font: inherit;
+  font-weight: var(--stu-review-control-weight);
+  line-height: var(--stu-review-copy-line-height);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+body.student-page .previous-videos-toggle:hover:not(:disabled):not([aria-disabled="true"]),
+body.student-page .previous-videos-toggle[aria-expanded="true"] {
+  border-color: var(--stu-accent);
+  background: color-mix(in srgb, var(--stu-card) 88%, var(--stu-accent) 12%);
+}
+
+body.student-page .previous-videos-toggle:disabled,
+body.student-page .previous-videos-toggle.is-disabled,
+body.student-page .previous-videos-toggle[aria-disabled="true"],
+body.student-page .previous-videos.is-empty .previous-videos-toggle {
+  cursor: not-allowed;
+  border-color: var(--stu-line);
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+}
+
+body.student-page .previous-videos-toggle:focus-visible,
+body.student-page .previous-videos-register:focus-visible,
+body.student-page .previous-video-row input:focus-visible {
+  outline: var(--stu-review-focus-width) solid color-mix(in srgb, var(--stu-accent) 72%, transparent);
+  outline-offset: var(--stu-review-focus-offset);
+}
+
+body.student-page .previous-videos-panel {
+  min-width: 0;
+  display: grid;
+  gap: var(--stu-review-gap);
+}
+
+body.student-page .previous-videos-summary {
+  min-width: 0;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: var(--stu-review-summary-size);
+  font-weight: var(--stu-review-summary-weight);
+  line-height: var(--stu-review-summary-line-height);
+  overflow-wrap: anywhere;
+}
+
+body.student-page .previous-videos-register {
+  min-height: var(--stu-review-tap-min-height);
+  justify-self: end;
+  padding: var(--stu-review-control-pad-block) var(--stu-review-control-pad-inline);
+  border: 1px solid var(--stu-accent);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-accent);
+  color: var(--stu-card);
+  font: inherit;
+  font-weight: var(--stu-review-control-weight);
+  line-height: var(--stu-review-copy-line-height);
+  cursor: pointer;
+}
+
+body.student-page .previous-videos-register:disabled {
+  border-color: var(--stu-line);
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+  cursor: not-allowed;
+}
+
+body.student-page .previous-videos-summary.is-empty,
+body.student-page .previous-videos.is-empty .previous-videos-summary,
+body.student-page .previous-videos.is-disabled .previous-videos-summary {
+  color: var(--stu-muted);
+}
+
+body.student-page .previous-videos-list {
+  min-width: 0;
+  display: grid;
+  gap: var(--stu-review-tight-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.student-page .previous-video-row {
+  min-width: 0;
+  min-height: var(--stu-review-tap-min-height);
+  display: flex;
+  align-items: center;
+  gap: var(--stu-review-gap);
+  padding: var(--stu-review-item-pad-block) var(--stu-review-item-pad-inline);
+  border: 1px solid transparent;
+  border-radius: var(--stu-radius-md);
+  color: var(--stu-text);
+  line-height: var(--stu-review-copy-line-height);
+  cursor: default;
+}
+
+body.student-page .previous-video-row:hover,
+body.student-page .previous-video-row.is-active {
+  background: color-mix(in srgb, var(--stu-accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--stu-accent);
+}
+
+body.student-page .previous-video-row input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--stu-accent);
+}
+
+body.student-page .previous-video-row.is-restricted {
+  border-style: dashed;
+  border-color: var(--stu-line-strong);
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+}
+
+body.student-page .previous-video-row input:disabled {
+  cursor: not-allowed;
+  opacity: .7;
+}
+
+body.student-page .previous-video-play-row {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.student-page .previous-video-play {
+  width: 100%;
+  min-height: var(--stu-review-tap-min-height);
+  display: flex;
+  align-items: center;
+  padding: var(--stu-review-item-pad-block) var(--stu-review-item-pad-inline);
+  border: 1px solid transparent;
+  border-radius: var(--stu-radius-md);
+  background: transparent;
+  color: var(--stu-text);
+  font: inherit;
+  line-height: var(--stu-review-copy-line-height);
+  text-align: left;
+  cursor: pointer;
+}
+
+body.student-page .previous-video-play:hover:not(:disabled),
+body.student-page .previous-video-play:focus-visible:not(:disabled),
+body.student-page .previous-video-play.is-active {
+  border-color: var(--stu-line-strong);
+  background: color-mix(in srgb, var(--stu-accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--stu-accent);
+}
+
+body.student-page .previous-video-play:disabled {
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+  cursor: not-allowed;
+  opacity: .72;
+}
+
+body.student-page .previous-video-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+  display: block;
+  color: inherit;
+  font-size: var(--stu-review-title-size);
+  line-height: var(--stu-review-copy-line-height);
+}
+
+body.student-page .previous-videos.is-restricted .previous-videos-summary,
+body.student-page .previous-video-row.is-restricted .previous-video-title {
+  color: var(--stu-muted);
+}
+
+@media (max-width: 760px) {
+  body.student-page .previous-videos {
+    margin-top: var(--stu-review-mobile-section-space);
+    padding-top: var(--stu-review-mobile-section-space);
+  }
+
+  body.student-page .previous-videos-toggle {
+    padding-right: var(--stu-review-mobile-control-pad-inline);
+    padding-left: var(--stu-review-mobile-control-pad-inline);
+  }
+
 }

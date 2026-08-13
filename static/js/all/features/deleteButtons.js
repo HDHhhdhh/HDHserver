@@ -48,6 +48,7 @@ document.addEventListener('click', async (e)=>{
     if (!res.ok) throw new Error(`서버 응답 ${res.status}`);
     if (Array.isArray(window.students)) window.students = window.students.filter(s=>String(s.id)!==String(sid));
     tr.remove();
+    document.dispatchEvent(new CustomEvent('all:student-deleted', { detail: { sid, name } }));
     (window.toast ? toast('삭제 완료') : alert('삭제 완료'));
   }catch(err){ console.error(err); alert('삭제 실패: '+err.message); }
 });

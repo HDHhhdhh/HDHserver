@@ -53,12 +53,6 @@ export const PAGE_FEATURES = {
         target: ['button[data-action*="test"]', '.test-btn', '.btn-test', '#testModal'],
       },
       {
-        id: 'admin-chat',
-        title: '관리자 챗봇 활용',
-        body: '데모 챗봇은 합성 데이터만 기준으로 답합니다. 운영 질문 예시를 연습하세요.',
-        target: ['#adminChatbot', '#adminChatPanel', '#adminChatToggle', '.admin-chatbot'],
-      },
-      {
         id: 'admin-nav',
         title: '연계 페이지 이동',
         body: '전체학생, 학교일정, 영상관리, 테스트관리도 같은 더미 데이터로 이어집니다.',

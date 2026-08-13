@@ -71,8 +71,6 @@ function buildCloneBody(stu) {
     visitTime3: '',
     visitTime4: '',
     visitTime5: '',
-    subBook1: '',
-    subBook2: '',
   };
 }
 
@@ -132,11 +130,17 @@ function injectCloneColumn() {
 }
 
 async function refreshAfterClone() {
+  const searchQuery = document.getElementById('allStudentSearchInput')?.value || '';
   if (typeof onClonedCallback === 'function') {
     await onClonedCallback();
-    return;
+  } else {
+    await loadAll();
   }
-  await loadAll();
+  const searchInput = document.getElementById('allStudentSearchInput');
+  if (searchInput) {
+    searchInput.value = searchQuery;
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 }
 
 export function hookCloneButtons({ onCloned } = {}) {

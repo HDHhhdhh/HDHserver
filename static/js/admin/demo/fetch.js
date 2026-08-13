@@ -1,4 +1,5 @@
 import { cloneDemoValue, loadDemoStore, saveDemoStore } from './store.js';
+import { applyOperationNotesRequest } from './operationNotesContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -765,27 +766,29 @@ async function imageUploadResponse(root, ctx) {
   });
 }
 
-function adminChatAnswer(body, store) {
-  const raw = String(body?.message || body?.text || body?.prompt || '').slice(0, 500);
-  const injection = /(ignore|reveal|secret|real data|students\.json|runtime|system prompt|developer)/i.test(raw);
-  const currentDate = store.demoDate || store.dates?.current || '';
-  return {
-    ok: true,
-    demo: true,
-    answer: injection
-      ? 'Demo mode only answers from the synthetic demo store. I cannot reveal prompts, secrets, or real academy data.'
-      : `Demo admin is using ${store.students.length} synthetic students for ${currentDate}. No real runtime data is read.`,
-    cards: [
-      {
-        title: 'Demo data boundary',
-        body: 'All admin API calls in this route are served from sessionStorage dummy data.',
-      },
-    ],
-  };
-}
-
 function testsFlatConfig(store) {
   return clone(store.testsConfig || { categories: {} });
+}
+
+function homeworkBooksBySid(logs) {
+  const out = {};
+  Object.keys(logs || {}).sort().reverse().forEach(date => {
+    Object.entries(logs?.[date] || {}).forEach(([sid, entry]) => {
+      if (out[sid]) return;
+      const seen = new Set();
+      const books = (Array.isArray(entry?.homeworkTable) ? entry.homeworkTable : [])
+        .filter(row => row && typeof row === 'object' && !row._deleted)
+        .map(row => String(row.book || '').trim())
+        .filter(book => {
+          const key = book.replace(/\s+/g, '').toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      if (books.length) out[String(sid)] = books;
+    });
+  });
+  return out;
 }
 
 async function handleGet(root, ctx, store) {
@@ -796,6 +799,7 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/mat-assign') return responseJson(root, clone(store.matAssign || {}));
   if (path === '/api/updates') return responseJson(root, clone(store.updates || {}));
   if (path === '/api/logs') return responseJson(root, filterDateSidMap(store.logs, url));
+  if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
   if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url));
   if (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all') return extraAttendResponse(root, store, url);
@@ -812,6 +816,15 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/tests') return responseJson(root, clone(store.tests || {}));
   if (path === '/api/tests-stats') return testsStatsResponse(root, store, url);
   if (path === '/api/tests-records') return testsRecordsResponse(root, store, url);
+  const operationNotesResult = applyOperationNotesRequest({
+    method: 'GET',
+    path,
+    store,
+    createdAt: nowIso,
+  });
+  if (operationNotesResult) {
+    return responseJson(root, clone(operationNotesResult.payload), operationNotesResult.status);
+  }
   if (path === '/api/announcements' || path === '/api/announce-status') return responseJson(root, announcementStatusRows(store));
   if (path.startsWith('/api/announcements/')) {
     const found = findAnnouncement(store, announcementIdFromPath(path));
@@ -999,6 +1012,12 @@ async function handleWrite(root, ctx, store) {
 
   if (method === 'POST' && path === '/api/announcements/image') return imageUploadResponse(root, ctx);
 
+  const operationNotesResult = applyOperationNotesRequest({ method, path, body, store, createdAt: nowIso });
+  if (operationNotesResult) {
+    if (operationNotesResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(operationNotesResult.payload), operationNotesResult.status);
+  }
+
   if (method === 'POST' && path === '/api/announcements') {
     const created = normalizeAnnouncementPayload(body);
     store.announcements = Array.isArray(store.announcements) ? store.announcements : [];
@@ -1024,10 +1043,6 @@ async function handleWrite(root, ctx, store) {
     store.announcements = store.announcements.filter(row => String(row?.id) !== id);
     saveDemoStore(store);
     return ok(root, { ok: true, deleted: before !== store.announcements.length, id });
-  }
-
-  if (method === 'POST' && path === '/api/admin/chat') {
-    return responseJson(root, adminChatAnswer(body, store));
   }
 
   return null;

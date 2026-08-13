@@ -450,6 +450,32 @@ function _slotGroupsFromLabelAndArrive(labelText, arriveTime, dateKey = '') {
   return Array.from(new Set(nums)).sort((a, b) => a - b).join(',');
 }
 
+const HOMEWORK_LEAVE_SLOT_BOUNDARY_MINUTES = 18 * 60;
+
+function currentOpsSlot(now = new Date()) {
+  const minutes = (now.getHours() * 60) + now.getMinutes();
+  return minutes < HOMEWORK_LEAVE_SLOT_BOUNDARY_MINUTES ? 1 : 2;
+}
+
+function homeworkLeaveSlotNumbers(row) {
+  return Array.from(new Set(
+    String(row?.dataset?.slotGroup || '')
+      .split(',')
+      .map(value => Number(value.trim()))
+      .filter(value => value === 1 || value === 2 || value === 3),
+  )).sort((a, b) => a - b);
+}
+
+function shouldIncludeHomeworkLeaveRow(row, currentSlot = currentOpsSlot()) {
+  const homeworkChecked = row?.dataset?.hw === '1';
+  const selfStudy = row?.dataset?.selfStudy === '1';
+  if (!homeworkChecked && !selfStudy) return false;
+
+  const slots = homeworkLeaveSlotNumbers(row);
+  const isConsecutive = slots.length >= 2 && slots.includes(1);
+  return !(currentSlot === 1 && isConsecutive);
+}
+
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
@@ -734,7 +760,7 @@ async function fetchProgressEntryForCleanup(dateKey, sid) {
   return entry;
 }
 
-async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
+export async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
   if (isSidAbsentOn(dateKey, sid)) return {};
 
   const logEntry = await fetchLogEntryForCleanup(dateKey, sid);
@@ -1805,11 +1831,13 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     document.addEventListener('click', async (e) => {
       const homeworkLeaveBtn = e.target.closest('#homeworkLeaveBtn');
       if (homeworkLeaveBtn) {
-        const rows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid][data-hw="1"]:not([data-self-study="1"])'));
+        const currentSlot = currentOpsSlot();
+        const rows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid]'));
         const seen = new Set();
         const targets = [];
 
         for (const tr of rows) {
+          if (!shouldIncludeHomeworkLeaveRow(tr, currentSlot)) continue;
           const sid = rowSid(tr);
           const dateKey = rowDateKey(tr);
           if (!sid || !dateKey) continue;
@@ -1893,8 +1921,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         document.dispatchEvent(new CustomEvent('attendance:updated'));
 
         try {
-          await patchFlagRemote('att', dateKey, sid, false);
-          await patchFlagRemote('contact', dateKey, sid, false);
+          await Promise.all([
+            patchFlagRemote('att', dateKey, sid, false),
+            patchFlagRemote('contact', dateKey, sid, false),
+          ]);
         } catch (syncErr) {
           console.error(syncErr);
           setAttended(dateKey, sid, prevAttended);
@@ -1924,6 +1954,9 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         }
 
         ensureWindowStateAlias();
+        void loadTodayAndRender().catch(err => {
+          console.error('[today] optimistic absence render failed:', err);
+        });
 
         try {
           const res = await fetch('/api/absent', {

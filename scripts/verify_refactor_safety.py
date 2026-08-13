@@ -31,10 +31,12 @@ PYTHON_FILES = [
     ROOT / "scripts/admin_tests_record_detail_fixtures.py",
     ROOT / "scripts/verify_admin_tests_record_details.py",
     ROOT / "scripts/verify_submit_test_assignment_round_matching.py",
+    ROOT / "scripts/verify_assistant_student_notes.py",
 ]
 
 JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
+    ROOT / "static/js/admin/features/assistantStudentNotes.js",
     ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/logModal.js",
     ROOT / "static/js/admin/features/today.js",
@@ -96,8 +98,8 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
     ),
     (
         5,
-        "student bootstrap assignedTests contract and chatbot docs stay aligned",
-        ("run_student_bootstrap_unit_checks", "run_admin_chat_contract_source_checks"),
+        "student bootstrap assignedTests contract stays aligned",
+        ("run_student_bootstrap_unit_checks", "run_refactor_notes_contract_source_checks"),
         (
             "assignedTests bootstrap authority contract must keep assignedTests as a top-level array",
             "student bootstrap must not resurrect previous assigned tests",
@@ -108,7 +110,7 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
     (
         6,
         "admin today row actions prefer row data-date before selected date",
-        ("run_admin_wave_b_source_checks", "run_admin_wave_b_behavior_checks", "run_admin_chat_contract_source_checks"),
+        ("run_admin_wave_b_source_checks", "run_admin_wave_b_behavior_checks"),
         (
             "homework save uses row date",
             "contact save uses row date before selected admin date",
@@ -368,13 +370,17 @@ def _run_captured(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 def run_python_compile() -> bool:
     ok = True
-    for path in PYTHON_FILES:
-        try:
-            py_compile.compile(str(path), doraise=True)
-            print(f"py_compile ok: {rel(path)}")
-        except Exception as exc:
-            ok = False
-            print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
+    with tempfile.TemporaryDirectory(prefix="verify-refactor-pycompile-") as tmp:
+        compile_root = pathlib.Path(tmp)
+        for path in PYTHON_FILES:
+            try:
+                target = (compile_root / path.relative_to(ROOT)).with_suffix(".pyc")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                py_compile.compile(str(path), cfile=str(target), doraise=True)
+                print(f"py_compile ok: {rel(path)}")
+            except Exception as exc:
+                ok = False
+                print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
     return ok
 
 
@@ -453,7 +459,11 @@ def run_app_import_smoke_checks() -> None:
 
 
 def run_log_rules_unit_checks() -> None:
-    from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
+    from core.log_rules import (
+        latest_homework_books_by_student,
+        log_entry_conflicts_with_base,
+        merge_log_entry_safe,
+    )
 
     current = {
         "notes": "keep notes",
@@ -473,12 +483,119 @@ def run_log_rules_unit_checks() -> None:
         "notes mismatch must be a log conflict",
     )
 
+    linked_books = latest_homework_books_by_student({
+        "2026-07-18": {
+            "s1": {"homeworkTable": [{"book": "old book"}]},
+            "s2": {"homeworkTable": [{"book": "keep me"}]},
+        },
+        "2026-07-20": {
+            "s1": {
+                "homeworkTable": [
+                    {"book": "new book"},
+                    {"book": " new book "},
+                    {"book": "deleted", "_deleted": True},
+                ],
+            },
+        },
+    })
+    _assert_unit(
+        linked_books == {"s1": ["new book"], "s2": ["keep me"]},
+        "all-students homework books must use each student's latest registered log books",
+    )
+
+
+def run_all_students_linked_books_and_log_popup_source_checks() -> None:
+    table_js = (ROOT / "static/js/all/features/table.js").read_text("utf-8")
+    hover_js = (ROOT / "static/js/all/features/hoverTooltip.js").read_text("utf-8")
+    state_js = (ROOT / "static/js/all/core/state.js").read_text("utf-8")
+    main_js = (ROOT / "static/js/all/main.js").read_text("utf-8")
+    record_popup_js = (ROOT / "static/js/all/features/studentRecordPopup.js").read_text("utf-8")
+    admin_hover_js = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8")
+    log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
+    add_student_js = (ROOT / "static/js/all/features/addStudent.js").read_text("utf-8")
+
+    _assert_unit(
+        "getJSONOr('/api/homework-books', {})" in state_js,
+        "all-students bootstrap must load linked homework books",
+    )
+    _assert_unit(
+        "state.homeworkBooksBySid" in table_js and "subBookInput" not in table_js,
+        "all-students table must render linked homework books without legacy sub-book inputs",
+    )
+    _assert_unit(
+        "state.homeworkBooksBySid" in hover_js and "stu.subBook" not in hover_js,
+        "all-students hover tooltip must render the same linked homework books",
+    )
+    _assert_unit(
+        "accessMode: 'all-students-readonly'" in table_js
+        and "window.openStudentPopupsForRow(row" in table_js
+        and "window.openRecordPopupForRow(row" not in table_js,
+        "the all-students counseling action must use the shared admin unified popup launcher",
+    )
+    _assert_unit(
+        "studentRecordPopup.js" not in main_js
+        and "initAllStudentsRecordPopup(state)" not in main_js
+        and "import('./studentRecordPopup.js')" in table_js
+        and "await initAllStudentsRecordPopup(state)" in table_js,
+        "all-students startup must defer the admin popup module graph until the counseling action",
+    )
+    _assert_unit(
+        "ADMIN_POPUP_STYLESHEETS" in record_popup_js
+        and "'/css/main.css?v=20260417a'" in record_popup_js
+        and "'/css/admin.css?v=20260527chat'" in record_popup_js
+        and "document.body.classList.add('admin')" in record_popup_js
+        and "allStudentsBaseStyleSuspended" in record_popup_js
+        and "document.body.classList.remove('all-page')" in record_popup_js
+        and "releaseAdminPopupSkin" in record_popup_js,
+        "all-students popups must temporarily use the exact admin stylesheet stack and release it after close",
+    )
+    _assert_unit(
+        "initializationPromise" in record_popup_js
+        and "initializeAllStudentsRecordPopup().catch" in record_popup_js
+        and "installReadOnlyAssignmentGuard" in record_popup_js
+        and "#vidModal.student-work-layout .vid-save-btn" in record_popup_js
+        and "#testModal.student-work-layout .test-save-btn" in record_popup_js,
+        "all-students popup initialization must be single-flight and assignment writes must remain blocked",
+    )
+    _assert_unit(
+        "initHoverTooltip as initAdminHoverTooltip" in record_popup_js
+        and "initAdminHoverTooltip();" in record_popup_js
+        and "initVideoModal();" in record_popup_js
+        and "#todayWrap, #doneWrap, #allWrap" in admin_hover_js,
+        "all-students record popup must initialize the shared admin tooltip and assignment popups",
+    )
+    _assert_unit(
+        "adminState.homeworkBooksBySid = allState.homeworkBooksBySid" in record_popup_js
+        and "state.homeworkBooksBySid" in admin_hover_js
+        and "stu.subBook" not in admin_hover_js,
+        "the shared admin tooltip must preserve linked homework books on the all-students page",
+    )
+    _assert_unit(
+        "all-students-readonly" in log_modal_js
+        and "isContextMenuOnlyAccess" in log_modal_js
+        and "applyReadOnlyRecordAccess" in log_modal_js
+        and "window.openStudentPopupsForRow = openStudentPopupsForRow" in log_modal_js,
+        "admin unified popup launcher must preserve read-only records and context-menu-only progress edits",
+    )
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    _assert_unit(
+        "studentPopupMobileNav" in video_modal_js
+        and "data-student-popup-active" in video_modal_js
+        and "@media (max-width: 900px)" in video_modal_js,
+        "the shared unified popup layout must keep all four surfaces accessible on compact and tablet screens",
+    )
+    _assert_unit(
+        "ns_sb1" not in add_student_js and "subBook1" not in add_student_js,
+        "new students must not recreate the retired legacy sub-book fields",
+    )
+
 
 def run_progress_rule_unit_checks() -> None:
     from core.progress_rules import (
         PROGRESS_ALL_STUDENTS_META_KEY,
         PROGRESS_MANUAL_META_KEY,
         WATCH_AUTO_PROGRESS_META_KEY,
+        has_completed_video_before_date,
         merge_progress_day_sid,
         merge_watch_entry,
         watch_auto_status,
@@ -533,6 +650,27 @@ def run_progress_rule_unit_checks() -> None:
     auto_done_preserved = merge_progress_day_sid(auto_done, {"m5": ""}, source="auto")
     _assert_unit(auto_done_preserved.get("m5") == "done", "auto empty update must not downgrade done")
 
+    historical_done = has_completed_video_before_date(
+        {"2026-06-05": {"007": {"m9": "done"}}},
+        {},
+        sid_keys=("007", "7"),
+        mid="m9",
+        before_date="2026-06-06",
+    )
+    _assert_unit(historical_done, "historical done progress must survive replay on a later date")
+
+    historical_cleared = has_completed_video_before_date(
+        {
+            "2026-06-04": {"007": {"m9": "done"}},
+            "2026-06-05": {"007": {"m9": "none"}},
+        },
+        {},
+        sid_keys=("007", "7"),
+        mid="m9",
+        before_date="2026-06-06",
+    )
+    _assert_unit(not historical_cleared, "explicit historical white must clear completion history")
+
     manual_clear = merge_progress_day_sid(auto_done, {"m5": ""})
     _assert_unit("m5" not in manual_clear, "manual empty update should clear progress")
     _assert_unit(
@@ -568,6 +706,199 @@ def run_progress_rule_unit_checks() -> None:
     _assert_unit(merged_watch["last"] == 80, "watch merge must keep furthest position")
     _assert_unit(merged_watch["dur"] == 120, "watch merge must keep longest duration")
     _assert_unit(merged_watch["updatedAt"] == 20, "watch merge must keep newest timestamp")
+
+
+def run_student_previous_video_review_rule_unit_checks() -> None:
+    """Exercise the pure pre-date review-state projection with adversarial fixtures."""
+    from copy import deepcopy
+
+    from core.video_review_rules import resolve_video_review_states_before_date
+
+    sid_keys = ("s1", "007", "7")
+    progress = {
+        "2026-05-30": {
+            "s1": {
+                "m1": "done",
+                "m2": "interrupted",
+                "m3": "skip",
+                "m4": "none",
+                "m9": "none",
+                "m15": "none",
+                "m16": "skip",
+                "m10": "interrupted",
+                "m11": "done",
+                "m14": "interrupted",
+                "m-later-skip": "done",
+                "m-malformed": {"nested": "bad"},
+                "tests": {"unit-1": "done"},
+                "__manualProgressMids": {"m9": True, "m15": True, "m16": True},
+            },
+            "7": {"m7": "done"},
+            "s1-malformed": "not-a-day-map",
+        },
+        "2026-05-31": {
+            "s1": {"m1": "none", "m2": "done", "m-later-skip": "skip"},
+            "7": {"m9": "skip"},
+        },
+        "2026-06-01": {"s1": {"m-current": "done"}},
+        "2026-02-30": {"s1": {"m-invalid": "done"}},
+        "not-a-date": {"s1": {"m-invalid-key": "done"}},
+        "__metadata": {"s1": {"m-meta": "done"}},
+        "2026-05-29": "malformed-day",
+    }
+    watch = {
+        "2026-05-30": {
+            "s1": {
+                "m1": {"last": 100, "dur": 100},
+                "m2": {"last": 100, "dur": 100},
+                "m8": {"last": 10, "dur": 100},
+                "m9": {"last": 100, "dur": 100},
+                "m10": {"last": 10, "dur": 100},
+                "m11": {"last": 4, "dur": 100},
+                "m12": {"last": 5, "dur": 100},
+                "m13": {"last": 4, "dur": 100},
+                "m14": {"last": 100, "dur": 100},
+                "m-malformed": {"last": 100, "dur": 100},
+                "m-watch-malformed": "not-a-watch-entry",
+            },
+            "7": {"m7": {"last": 4, "dur": 100}},
+        },
+        "2026-05-31": {
+            "s1": {
+                "m8": {"last": 90, "dur": 100},
+                "m9": {"last": 90, "dur": 100},
+                "m15": {"last": 100, "dur": 100},
+                "m16": {"last": 100, "dur": 100},
+                "m10": {"last": 90, "dur": 100},
+                "m11": {"last": 90, "dur": 100},
+            },
+            "7": {"m7": {"last": 100, "dur": 100}},
+        },
+        "2026-06-01": {"s1": {"m-future": {"last": 100, "dur": 100}}},
+        "2026-02-30": {"s1": {"m-invalid": {"last": 100, "dur": 100}}},
+        "__metadata": {"s1": {"m-meta": {"last": 100, "dur": 100}}},
+    }
+    progress_before = deepcopy(progress)
+    watch_before = deepcopy(watch)
+
+    result = resolve_video_review_states_before_date(
+        progress,
+        watch,
+        sid_keys=sid_keys,
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        result == {
+            "m2": {"status": "done", "eventDate": "2026-05-31"},
+            "m8": {"status": "done", "eventDate": "2026-05-31"},
+            "m10": {"status": "done", "eventDate": "2026-05-31"},
+            "m11": {"status": "done", "eventDate": "2026-05-31"},
+            "m12": {"status": "interrupted", "eventDate": "2026-05-30"},
+            "m14": {"status": "interrupted", "eventDate": "2026-05-30"},
+        },
+        "pre-date review resolver must apply strict cutoffs and latest authoritative statuses",
+    )
+    _assert_unit("m1" not in result, "later none must remove an older done review")
+    _assert_unit("m-later-skip" not in result, "later skip must remove an older done review")
+    _assert_unit("m3" not in result and "m4" not in result, "skip/none are never review members")
+    _assert_unit("m9" not in result, "same-day progress presence must block a watch fallback")
+    _assert_unit("m15" not in result and "m16" not in result, "manual white/skip overrides must survive later watch-only updates")
+    _assert_unit("m13" not in result, "watch below five percent must not qualify")
+    _assert_unit("m-current" not in result and "m-future" not in result, "same-day/future events are excluded")
+    _assert_unit("m-invalid" not in result and "m-meta" not in result, "invalid and metadata dates are excluded")
+    _assert_unit("m-malformed" not in result and "m-watch-malformed" not in result, "malformed progress/watch values are excluded")
+
+    canonical_skip = resolve_video_review_states_before_date(
+        {"2026-05-30": {"007": {"m-alias": "skip"}, "7": {"m-alias": "done"}}},
+        {},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit("m-alias" not in canonical_skip, "canonical skip must not be overridden by a fallback alias")
+
+    canonical_none = resolve_video_review_states_before_date(
+        {"2026-05-30": {"007": {"m-alias": "none"}, "7": {"m-alias": "done"}}},
+        {},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit("m-alias" not in canonical_none, "canonical none must not be overridden by a fallback alias")
+
+    canonical_done = resolve_video_review_states_before_date(
+        {"2026-05-30": {"007": {"m-alias": "done"}, "7": {"m-alias": "none"}}},
+        {},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        canonical_done.get("m-alias") == {"status": "done", "eventDate": "2026-05-30"},
+        "canonical done must not be cleared by a fallback alias",
+    )
+
+    alias_fallback = resolve_video_review_states_before_date(
+        {"2026-05-30": {"7": {"m-alias": "done"}}},
+        {},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        alias_fallback.get("m-alias") == {"status": "done", "eventDate": "2026-05-30"},
+        "a fallback alias must remain usable when the canonical SID map is absent",
+    )
+
+    canonical_progress_clear = resolve_video_review_states_before_date(
+        {"2026-05-30": {"007": {"m-alias": "none"}}},
+        {"2026-05-30": {"7": {"m-alias": {"last": 100, "dur": 100}}}},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        "m-alias" not in canonical_progress_clear,
+        "canonical progress presence must block a watch fallback alias",
+    )
+
+    malformed_watch = resolve_video_review_states_before_date(
+        {},
+        {"2026-05-30": {"007": {"m-watch": {"completed": "false", "last": 0, "dur": 0}}}},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit("m-watch" not in malformed_watch, "watch completed string false must not qualify as done")
+
+    boolean_watch = resolve_video_review_states_before_date(
+        {},
+        {"2026-05-30": {"007": {"m-watch": {"completed": True, "last": 0, "dur": 0}}}},
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        boolean_watch.get("m-watch") == {"status": "done", "eventDate": "2026-05-30"},
+        "actual boolean watch completion must qualify as done",
+    )
+
+    ratio_watch = resolve_video_review_states_before_date(
+        {},
+        {
+            "2026-05-30": {
+                "007": {
+                    "m-interrupted": {"completed": "false", "last": 5, "dur": 100},
+                    "m-done": {"completed": "false", "last": 90, "dur": 100},
+                },
+            },
+        },
+        sid_keys=("007", "7"),
+        before_date="2026-06-01",
+    )
+    _assert_unit(
+        ratio_watch == {
+            "m-interrupted": {"status": "interrupted", "eventDate": "2026-05-30"},
+            "m-done": {"status": "done", "eventDate": "2026-05-30"},
+        },
+        "ratio thresholds must remain authoritative when completion metadata is malformed",
+    )
+
+    _assert_unit(progress == progress_before, "resolver must not mutate progress inputs")
+    _assert_unit(watch == watch_before, "resolver must not mutate watch inputs")
 
 
 def run_progress_batch_sids_unit_checks() -> None:
@@ -698,6 +1029,42 @@ def run_progress_read_cache_unit_checks() -> None:
                 third == {"2026-06-02": {"s2": {"m2": "interrupted"}, "s3": {"m3": "skip"}}},
                 "progress read cache must return the new file contents after reload",
             )
+
+            import concurrent.futures
+
+            class SlowProgressPath:
+                def __init__(self, path: pathlib.Path):
+                    self.path = path
+                    self.read_count = 0
+
+                def stat(self):
+                    return self.path.stat()
+
+                def read_text(self, encoding: str):
+                    self.read_count += 1
+                    time.sleep(0.05)
+                    return self.path.read_text(encoding=encoding)
+
+            slow_path = SlowProgressPath(progress_path)
+            api_basic.PRG_PATH = slow_path
+            api_basic._PROGRESS_CACHE_SIGNATURE = None
+            api_basic._PROGRESS_CACHE_DATA = None
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                concurrent_reads = list(pool.map(lambda _: api_basic._load_progress_strict(), range(2)))
+            _assert_unit(
+                slow_path.read_count == 1 and concurrent_reads[0] is concurrent_reads[1],
+                "concurrent cold progress reads must share one JSON parse",
+            )
+
+            api_basic.PRG_PATH = progress_path
+            saved = {"2026-06-03": {"s4": {"tests": {"unit-1": "assigned"}}}}
+            api_basic._save_progress_strict(saved)
+            saved_text = progress_path.read_text(encoding="utf-8")
+            _assert_unit("\n" not in saved_text, "progress writes must use compact JSON on the hot path")
+            _assert_unit(
+                api_basic._load_progress_strict() is saved,
+                "progress writes must publish the saved object to the read cache",
+            )
         finally:
             api_basic.PRG_PATH = original_path
             api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
@@ -713,6 +1080,7 @@ def run_video_completion_unit_checks() -> None:
         "curriculum": "ALG",
         "subCurriculum": "BASE",
         "autoVideoAssignCount": 2,
+        "day1": "토1",
     }
     videos = [
         {"mid": "m1", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1"},
@@ -743,8 +1111,8 @@ def run_video_completion_unit_checks() -> None:
         watch={},
     )
     _assert_unit(
-        api_basic._sid_lookup(fixed.get(date, {}), "s1") is None,
-        "completed course must clear existing auto video assignment",
+        api_basic._sid_lookup(fixed.get(date, {}), "s1") == updates[date]["s1"],
+        "completed course must preserve the existing automatic video snapshot",
     )
 
     manual_updates = {date: {"s1": {"videos": ["m1"], "source": "manual"}}}
@@ -761,9 +1129,62 @@ def run_video_completion_unit_checks() -> None:
         "completed course must preserve explicit manual video assignment",
     )
 
+    review_videos = [
+        {"mid": f"m{chapter}", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": str(chapter)}
+        for chapter in range(1, 8)
+    ]
+    auto_new_progress = {date: {"s1": {"videos": ["m5", "m6", "m7"], "source": "auto"}}}
+    self_study_progress = {
+        "2026-06-05": {
+            "s1": {"m1": "done", "m2": "done", "m3": "done", "m4": "done"},
+        },
+    }
+    self_study_daily = api_basic._ensure_today_auto_assign(
+        auto_new_progress,
+        [student],
+        review_videos,
+        self_study_progress,
+        date_key=date,
+        watch={},
+        logs={date: {"s1": {"selfStudy": True}}},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(self_study_daily.get(date, {}), "s1") == {
+            "videos": ["m2", "m3", "m4"],
+            "source": "selfStudy",
+        },
+        "daily self-study must replace auto new progress with the previous three videos",
+    )
+
+    scheduled_self_study_student = {
+        **student,
+        "day1": "토",
+        "selfStudyDays": {"day1": True},
+    }
+    previous_progress = {
+        "2026-06-05": {
+            "s1": {"m1": "done", "m2": "done", "m3": "done", "m4": "done"},
+        },
+    }
+    self_study_scheduled = api_basic._ensure_today_auto_assign(
+        {},
+        [scheduled_self_study_student],
+        review_videos,
+        previous_progress,
+        date_key=date,
+        watch={},
+        logs={date: {}},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(self_study_scheduled.get(date, {}), "s1") == {
+            "videos": ["m2", "m3", "m4"],
+            "source": "selfStudy",
+        },
+        "scheduled self-study must receive the three videos before the next automatic progress video",
+    )
+
 
 def run_video_completion_source_checks() -> None:
-    admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
     log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
 
@@ -788,9 +1209,1219 @@ def run_video_completion_source_checks() -> None:
         "cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state))" in log_modal_js,
         "log modal cleanup must count green done plus red skip",
     )
+
+
+def run_video_assignment_snapshot_unit_checks() -> None:
+    from core.progress_rules import PROGRESS_MANUAL_META_KEY
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"  # Saturday
+    videos = [
+        {"mid": f"m{index}", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": str(index)}
+        for index in range(1, 8)
+    ]
+    scheduled = {
+        "id": "scheduled",
+        "curriculum": "ALG",
+        "subCurriculum": "BASE",
+        "autoVideoAssignCount": 2,
+        "day1": "토1",
+    }
+    not_today = {**scheduled, "id": "not-today", "day1": "월1"}
+    makeup = {**scheduled, "id": "makeup", "day1": "월1"}
+    consecutive_initial = {**scheduled, "id": "consecutive-initial", "day2": "토2"}
+    empty_absent = {"by_date": {}, "by_student": {}}
+
+    created = api_basic._ensure_today_auto_assign(
+        {},
+        [scheduled, not_today, makeup, consecutive_initial],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={date: ["makeup"]},
+        absent=empty_absent,
+        weekend_slots={},
+    )
     _assert_unit(
-        "초록(done) 또는 빨강(skip)" in admin_chat_py and "자동 영상 배정은 멈춥니다" in admin_chat_py,
-        "admin chatbot video-progress knowledge must mention green/red completion and stopped auto assignment",
+        api_basic._sid_lookup(created[date], "scheduled")["videos"] == ["m1", "m2"],
+        "date initialization assigns the configured count to a Today student",
+    )
+    _assert_unit(
+        api_basic._sid_lookup(created[date], "makeup")["videos"] == ["m1", "m2"],
+        "makeup registration makes an extra student eligible for initial assignment",
+    )
+    makeup_consecutive = {}
+    api_basic._ensure_today_auto_assign(
+        makeup_consecutive,
+        [makeup],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={date: ["makeup"]},
+        absent=empty_absent,
+        weekend_slots={date: {"makeup": [1, 2]}},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(makeup_consecutive[date], "makeup")["videos"] == ["m1", "m2", "m3", "m4"],
+        "makeup registration honors a date-specific consecutive slot override",
+    )
+    _assert_unit(
+        api_basic._sid_lookup(created[date], "not-today") is None,
+        "non-Today students never receive automatic video assignments",
+    )
+    _assert_unit(
+        len(api_basic._sid_lookup(created[date], "consecutive-initial")["videos"]) == 4,
+        "date initialization applies the double count to consecutive classes",
+    )
+
+    weekend_initial = {}
+    api_basic._ensure_today_auto_assign(
+        weekend_initial,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={date: {"scheduled": [1, 2]}},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(weekend_initial[date], "scheduled")["videos"] == ["m1", "m2", "m3", "m4"],
+        "date-specific consecutive slots double the first assignment count",
+    )
+
+    low_level = {
+        **scheduled,
+        "id": "low-level",
+        "level": "하",
+        "autoVideoAssignCount": 1,
+        "day2": "토2",
+    }
+    low_level_videos = [
+        {"mid": "low-red", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1", "exNum": {"하": 0}},
+        {"mid": "low-green", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "2", "exNum": {"하": 1}},
+        {"mid": "low-next", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "3", "exNum": {"하": 1}},
+    ]
+    low_level_initial = {}
+    api_basic._ensure_today_auto_assign(
+        low_level_initial,
+        [low_level],
+        low_level_videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={date: {"low-level": [1, 2]}},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(low_level_initial[date], "low-level")["videos"] == ["low-green", "low-next"],
+        "consecutive auto assignment skips low-level videos excluded from the progress grid",
+    )
+
+    low_level_expansion = {
+        date: {"low-level": {"videos": ["low-green"], "source": "auto"}},
+    }
+    _assert_unit(
+        api_basic._expand_consecutive_auto_assignment_in_updates(
+            low_level_expansion,
+            date,
+            "low-level",
+            [low_level],
+            low_level_videos,
+            {},
+            watch={},
+            weekend_slots={date: {"low-level": [1, 2]}},
+            extra={},
+            absent=empty_absent,
+            logs={date: {}},
+        )
+        and low_level_expansion[date]["low-level"]["videos"] == ["low-green", "low-next"],
+        "consecutive expansion skips low-level progress-excluded videos",
+    )
+
+    absent_updates = {}
+    api_basic._ensure_today_auto_assign(
+        absent_updates,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent={"by_date": {date: ["scheduled"]}, "by_student": {}},
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(absent_updates[date], "scheduled") is None,
+        "absent students are excluded from date initialization",
+    )
+
+    done_log_updates = {}
+    api_basic._ensure_today_auto_assign(
+        done_log_updates,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {"scheduled": {"done": True}}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(done_log_updates[date], "scheduled") is None,
+        "students with a completed class log are excluded from date initialization",
+    )
+
+    blocked_updates = {}
+    api_basic._ensure_today_auto_assign(
+        blocked_updates,
+        [scheduled],
+        videos,
+        {"2026-06-05": {"scheduled": {"m1": "done", "m2": "skip"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(blocked_updates[date], "scheduled")["videos"] == ["m3", "m4"],
+        "finished progress statuses block candidates during initial assignment",
+    )
+
+    watch_blocked_updates = {}
+    api_basic._ensure_today_auto_assign(
+        watch_blocked_updates,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={"2026-06-05": {"scheduled": {"m1": {"completed": True}}}},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(watch_blocked_updates[date], "scheduled")["videos"] == ["m2", "m3"],
+        "completed watch history blocks candidates during initial assignment",
+    )
+
+    manual_clear_updates = {}
+    api_basic._ensure_today_auto_assign(
+        manual_clear_updates,
+        [scheduled],
+        videos,
+        {
+            "2026-06-05": {
+                "scheduled": {
+                    "m1": "done",
+                    "m2": "none",
+                    PROGRESS_MANUAL_META_KEY: {"m2": True},
+                }
+            }
+        },
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(manual_clear_updates[date], "scheduled")["videos"] == ["m2", "m3"],
+        "manual white progress can make a previously blocked candidate eligible again",
+    )
+
+    stable_snapshot = {
+        "videos": ["m1", "m2"],
+        "source": "auto",
+        "note": "keep metadata",
+    }
+    stable_updates = {date: {"scheduled": stable_snapshot}}
+    after_progress = api_basic._ensure_today_auto_assign(
+        stable_updates,
+        [scheduled],
+        videos,
+        {date: {"scheduled": {"m1": "done"}}},
+        date_key=date,
+        watch={date: {"scheduled": {"m2": {"completed": True}}}},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        after_progress[date]["scheduled"] == stable_snapshot,
+        "progress/watch updates do not mutate an existing automatic snapshot",
+    )
+
+    makeup_snapshot = {"videos": ["m5"], "source": "auto", "note": "makeup snapshot"}
+    makeup_stable_updates = {date: {"makeup": dict(makeup_snapshot)}}
+    api_basic._ensure_today_auto_assign(
+        makeup_stable_updates,
+        [makeup],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={date: ["makeup"]},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        makeup_stable_updates[date]["makeup"] == makeup_snapshot,
+        "makeup registration does not re-pick an existing automatic snapshot",
+    )
+
+    completed_snapshot = {"videos": ["m1", "m2"], "source": "auto"}
+    completed_updates = {date: {"scheduled": dict(completed_snapshot)}}
+    completed = api_basic._ensure_today_auto_assign(
+        completed_updates,
+        [scheduled],
+        videos[:2],
+        {date: {"scheduled": {"m1": "done", "m2": "skip"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        completed[date]["scheduled"] == completed_snapshot,
+        "course completion blocks new work without deleting today's snapshot",
+    )
+
+    completed_without_snapshot = {}
+    api_basic._ensure_today_auto_assign(
+        completed_without_snapshot,
+        [scheduled],
+        videos[:2],
+        {date: {"scheduled": {"m1": "done", "m2": "skip"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(completed_without_snapshot[date], "scheduled") is None,
+        "course completion blocks a first assignment when no snapshot exists",
+    )
+
+    manual_empty = {date: {"scheduled": {"videos": [], "source": "manual"}}}
+    api_basic._ensure_today_auto_assign(
+        manual_empty,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        manual_empty[date]["scheduled"] == {"videos": [], "source": "manual"},
+        "an explicit empty manual assignment is not resurrected",
+    )
+
+    self_study = {date: {"scheduled": {"videos": ["m1"], "source": "selfStudy"}}}
+    api_basic._ensure_today_auto_assign(
+        self_study,
+        [scheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {"scheduled": {"selfStudy": True}}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        self_study[date]["scheduled"] == {"videos": ["m1"], "source": "selfStudy"},
+        "self-study assignments remain protected from automatic reconciliation",
+    )
+
+    self_study_unscheduled = {
+        **scheduled,
+        "id": "self-study-unscheduled",
+        "day1": "월1",
+    }
+    self_study_auto = {
+        date: {
+            "self-study-unscheduled": {
+                "videos": ["m3"],
+                "source": "auto",
+            },
+        },
+    }
+    api_basic._ensure_today_auto_assign(
+        self_study_auto,
+        [self_study_unscheduled],
+        videos,
+        {"2026-06-05": {"self-study-unscheduled": {"m1": "done", "m2": "interrupted"}}},
+        date_key=date,
+        watch={},
+        logs={date: {"self-study-unscheduled": {"selfStudy": True}}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        self_study_auto[date]["self-study-unscheduled"] == {
+            "videos": ["m1", "m2"],
+            "source": "selfStudy",
+        },
+        "self-study must reconcile an existing automatic snapshot even without a regular class registration",
+    )
+
+    scheduled_self_study = {
+        **scheduled,
+        "id": "self-study-scheduled",
+        "day1": "토1",
+        "selfStudyDays": ["day1"],
+    }
+    scheduled_self_study_updates = {
+        date: {
+            "self-study-scheduled": {
+                "videos": ["m3"],
+                "source": "auto",
+            },
+        },
+    }
+    api_basic._ensure_today_auto_assign(
+        scheduled_self_study_updates,
+        [scheduled_self_study],
+        videos,
+        {"2026-06-05": {"self-study-scheduled": {"m1": "done", "m2": "interrupted"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        scheduled_self_study_updates[date]["self-study-scheduled"] == {
+            "videos": ["m1", "m2"],
+            "source": "selfStudy",
+        },
+        "scheduled self-study must use the same review replacement path without a daily log flag",
+    )
+
+    self_study_no_history = {
+        date: {
+            "self-study-unscheduled": {
+                "videos": ["m3"],
+                "source": "auto",
+            },
+        },
+    }
+    api_basic._ensure_today_auto_assign(
+        self_study_no_history,
+        [self_study_unscheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {"self-study-unscheduled": {"selfStudy": True}}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(self_study_no_history[date], "self-study-unscheduled") is None,
+        "self-study must cancel an automatic assignment when no eligible review anchor exists",
+    )
+
+    self_study_absent = {
+        date: {
+            "self-study-unscheduled": {
+                "videos": ["m3"],
+                "source": "auto",
+            },
+        },
+    }
+    api_basic._ensure_today_auto_assign(
+        self_study_absent,
+        [self_study_unscheduled],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {"self-study-unscheduled": {"selfStudy": True}}},
+        extra={},
+        absent={"by_date": {date: ["self-study-unscheduled"]}, "by_student": {}},
+        weekend_slots={},
+    )
+    _assert_unit(
+        self_study_absent[date]["self-study-unscheduled"] == {
+            "videos": ["m3"],
+            "source": "auto",
+        },
+        "absence must keep automatic reconciliation disabled even when self-study is selected",
+    )
+
+    consecutive_student = {**scheduled, "id": "consecutive"}
+    consecutive_updates = {
+        date: {"consecutive": {"videos": ["m1", "m2"], "source": "auto", "custom": "keep"}}
+    }
+    weekend_slots = {date: {"consecutive": [1, 2]}}
+    expanded = api_basic._expand_consecutive_auto_assignment_in_updates(
+        consecutive_updates,
+        date,
+        "consecutive",
+        [consecutive_student],
+        videos,
+        {date: {"consecutive": {"m2": "done"}}},
+        watch={},
+        weekend_slots=weekend_slots,
+    )
+    _assert_unit(expanded, "consecutive transition expands an existing automatic assignment")
+    _assert_unit(
+        consecutive_updates[date]["consecutive"] == {
+            "videos": ["m1", "m2", "m3", "m4"],
+            "source": "auto",
+            "custom": "keep",
+        },
+        "consecutive expansion preserves the prefix and appends unblocked videos",
+    )
+    _assert_unit(
+        not api_basic._expand_consecutive_auto_assignment_in_updates(
+            consecutive_updates,
+            date,
+            "consecutive",
+            [consecutive_student],
+            videos,
+            {date: {"consecutive": {"m2": "done"}}},
+            watch={},
+            weekend_slots=weekend_slots,
+        ),
+        "repeated consecutive events are idempotent",
+    )
+    narrowed = {date: {"consecutive": dict(consecutive_updates[date]["consecutive"])}}
+    _assert_unit(
+        not api_basic._expand_consecutive_auto_assignment_in_updates(
+            narrowed,
+            date,
+            "consecutive",
+            [consecutive_student],
+            videos,
+            {},
+            watch={},
+            weekend_slots={date: {"consecutive": [1]}},
+        )
+        and narrowed == {date: {"consecutive": consecutive_updates[date]["consecutive"]}},
+        "reversing a consecutive schedule never shrinks the snapshot",
+    )
+    non_today_existing = {date: {"not-today": {"videos": ["m1"], "source": "auto"}}}
+    _assert_unit(
+        not api_basic._expand_consecutive_auto_assignment_in_updates(
+            non_today_existing,
+            date,
+            "not-today",
+            [not_today],
+            videos,
+            {},
+            watch={},
+            weekend_slots={date: {"not-today": [1, 2]}},
+        ),
+        "consecutive expansion remains limited to Today students",
+    )
+
+    nonconsecutive_existing = {date: {"scheduled": {"videos": ["m1", "m2"], "source": "auto"}}}
+    _assert_unit(
+        not api_basic._expand_consecutive_auto_assignment_in_updates(
+            nonconsecutive_existing,
+            date,
+            "scheduled",
+            [scheduled],
+            videos,
+            {},
+            watch={},
+            weekend_slots={date: {"scheduled": [1, 3]}},
+            extra={},
+            absent=empty_absent,
+            logs={date: {}},
+        ),
+        "non-consecutive date slots do not trigger a double assignment",
+    )
+
+    for protected_source in ("manual", "selfStudy"):
+        protected_updates = {
+            date: {"scheduled": {"videos": ["m1"], "source": protected_source}}
+        }
+        _assert_unit(
+            not api_basic._expand_consecutive_auto_assignment_in_updates(
+                protected_updates,
+                date,
+                "scheduled",
+                [scheduled],
+                videos,
+                {},
+                watch={},
+                weekend_slots={date: {"scheduled": [1, 2]}},
+                extra={},
+                absent=empty_absent,
+                logs={date: {}},
+            )
+            and protected_updates[date]["scheduled"]["videos"] == ["m1"],
+            f"{protected_source} assignments are protected from consecutive expansion",
+        )
+
+    legacy_updates = {date: {"scheduled": ["m1", "m2"]}}
+    _assert_unit(
+        api_basic._expand_consecutive_auto_assignment_in_updates(
+            legacy_updates,
+            date,
+            "scheduled",
+            [scheduled],
+            videos,
+            {},
+            watch={},
+            weekend_slots={date: {"scheduled": [1, 2]}},
+            extra={},
+            absent=empty_absent,
+            logs={date: {}},
+        )
+        and legacy_updates[date]["scheduled"] == ["m1", "m2", "m3", "m4"],
+        "legacy list assignments expand without changing their storage shape",
+    )
+
+
+def run_video_assignment_route_hook_unit_checks() -> None:
+    from flask import Flask
+    import routes.api_basic as api_basic
+
+    extra_path = object()
+    weekend_path = object()
+    students_path = object()
+    updates_path = object()
+    store = {"extra": {}, "weekend": {}, "students": [], "updates": {}}
+    init_calls = []
+    expand_calls = []
+    original = {
+        "EXTRA_PATH": api_basic.EXTRA_PATH,
+        "WEEKEND_SLOTS_PATH": api_basic.WEEKEND_SLOTS_PATH,
+        "STU_PATH": api_basic.STU_PATH,
+        "UPD_PATH": api_basic.UPD_PATH,
+        "load": api_basic.load,
+        "save_atomic": api_basic.save_atomic,
+        "load_updates": api_basic._load_updates_with_auto_assign,
+        "reconcile": api_basic._reconcile_consecutive_auto_assignment,
+        "today": api_basic._today_kst_iso,
+    }
+
+    def fake_load(path):
+        if path is extra_path:
+            return store["extra"]
+        if path is weekend_path:
+            return store["weekend"]
+        if path is students_path:
+            return store["students"]
+        if path is updates_path:
+            return store["updates"]
+        return {}
+
+    def fake_save(path, value, **kwargs):
+        if path is extra_path:
+            store["extra"] = value
+        elif path is weekend_path:
+            store["weekend"] = value
+        elif path is students_path:
+            store["students"] = value
+        elif path is updates_path:
+            store["updates"] = value
+
+    try:
+        api_basic.EXTRA_PATH = extra_path
+        api_basic.WEEKEND_SLOTS_PATH = weekend_path
+        api_basic.STU_PATH = students_path
+        api_basic.UPD_PATH = updates_path
+        store["students"] = [{"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"}]
+        api_basic.load = fake_load
+        api_basic.save_atomic = fake_save
+        api_basic._today_kst_iso = lambda: "2026-06-06"
+        api_basic._load_updates_with_auto_assign = lambda **kwargs: init_calls.append(kwargs) or {}
+        api_basic._reconcile_consecutive_auto_assignment = lambda *args, **kwargs: expand_calls.append((args, kwargs)) or False
+
+        app = Flask(__name__)
+        app.register_blueprint(api_basic.bp_api_basic)
+        client = app.test_client()
+        date = "2026-06-06"
+
+        store["updates"] = {date: {"s1": {"videos": ["m1"], "source": "auto"}}}
+        init_calls.clear()
+        response = client.get("/api/updates?readOnly=1")
+        _assert_unit(response.status_code == 200 and response.get_json() == store["updates"], "read-only updates fetch returns the stable snapshot")
+        _assert_unit(not init_calls, "read-only updates fetch never invokes automatic assignment")
+        response = client.get("/api/updates")
+        _assert_unit(response.status_code == 200 and init_calls, "the normal updates fetch keeps the date-boundary initializer")
+        init_calls.clear()
+
+        response = client.post("/api/extra-attend", json={date: ["s1"]})
+        _assert_unit(response.status_code == 204, "extra-attend hook request succeeds")
+        _assert_unit(
+            [call.get("date_key") for call in init_calls] == [date],
+            "new makeup registration initializes that date exactly once",
+        )
+
+        init_calls.clear()
+        response = client.post("/api/extra-attend", json={date: ["s1"]})
+        _assert_unit(response.status_code == 204 and not init_calls, "unchanged makeup registration is idempotent")
+
+        init_calls.clear()
+        response = client.post("/api/extra-attend", json={})
+        _assert_unit(response.status_code == 204, "makeup removal hook request succeeds")
+        _assert_unit(
+            [call.get("date_key") for call in init_calls] == [date],
+            "removing a makeup registration rechecks that date without touching other dates",
+        )
+
+        response = client.post("/api/weekend-slots", json={date: {"s1": [1, 2], "s2": None}})
+        _assert_unit(response.status_code == 204, "weekend-slots hook request succeeds")
+        _assert_unit(
+            [args[:2] for args, _ in expand_calls] == [(date, "s1"), (date, "s2")],
+            "weekend slot writes reconcile every affected student",
+        )
+
+        expand_calls.clear()
+        init_calls.clear()
+        response = client.post(
+            "/api/update",
+            json={"id": "s1", "field": "day2", "value": "토2"},
+        )
+        _assert_unit(response.status_code == 200, "schedule update hook request succeeds")
+        _assert_unit(
+            expand_calls and expand_calls[-1][0][:2] == (date, "s1"),
+            "regular schedule edits reconcile the current student",
+        )
+        _assert_unit(init_calls and init_calls[-1].get("students") == store["students"], "schedule edits initialize newly eligible students")
+    finally:
+        for name, value in original.items():
+            setattr(api_basic, name, value)
+
+
+def run_self_study_assignment_route_unit_checks() -> None:
+    from copy import deepcopy
+    from flask import Flask
+
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"
+    sid = "self-study-route"
+    students_path = object()
+    videos_path = object()
+    watch_path = object()
+    updates_path = object()
+    state = {
+        "students": [{
+            "id": sid,
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "autoVideoAssignCount": 2,
+            "day1": "월1",
+        }],
+        "videos": [
+            {"mid": f"m{index}", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": str(index)}
+            for index in range(1, 4)
+        ],
+        "watch": {},
+        "updates": {date: {sid: {"videos": ["m3"], "source": "auto"}}},
+        "progress": {"2026-06-05": {sid: {"m1": "done", "m2": "interrupted"}}},
+        "absent": {"by_date": {}, "by_student": {}},
+    }
+
+    original = {
+        "STU_PATH": api_basic.STU_PATH,
+        "VID_PATH": api_basic.VID_PATH,
+        "WATCH_PATH": api_basic.WATCH_PATH,
+        "UPD_PATH": api_basic.UPD_PATH,
+        "load": api_basic.load,
+        "save_atomic": api_basic.save_atomic,
+        "load_absent": api_basic.load_absent,
+        "_load_progress_strict": api_basic._load_progress_strict,
+        "get_log_repository": api_basic.get_log_repository,
+        "updates_lock": api_basic._updates_lock,
+    }
+
+    def fake_load(path):
+        if path is students_path:
+            return deepcopy(state["students"])
+        if path is videos_path:
+            return deepcopy(state["videos"])
+        if path is watch_path:
+            return deepcopy(state["watch"])
+        if path is updates_path:
+            return deepcopy(state["updates"])
+        return {}
+
+    def fake_save(path, value, **_kwargs):
+        if path is updates_path:
+            state["updates"] = deepcopy(value)
+
+    class FakeLogRepository:
+        def read_logs(self, _date, _sid):
+            return {_date: {_sid: {"selfStudy": True}}}
+
+    try:
+        api_basic.STU_PATH = students_path
+        api_basic.VID_PATH = videos_path
+        api_basic.WATCH_PATH = watch_path
+        api_basic.UPD_PATH = updates_path
+        api_basic.load = fake_load
+        api_basic.save_atomic = fake_save
+        api_basic.load_absent = lambda: deepcopy(state["absent"])
+        api_basic._load_progress_strict = lambda: deepcopy(state["progress"])
+        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_basic._updates_lock = lambda: contextlib.nullcontext()
+
+        app = Flask("verify-self-study-assignment-route")
+        app.register_blueprint(api_basic.bp_api_basic)
+        client = app.test_client()
+
+        response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
+        payload = response.get_json() or {}
+        _assert_unit(response.status_code == 200 and payload.get("ok") is True, "self-study assignment route must return success")
+        _assert_unit(
+            payload.get("assignment") == {"videos": ["m1", "m2"], "source": "selfStudy"}
+            and state["updates"][date][sid] == payload["assignment"],
+            "self-study route must replace an automatic snapshot with eligible review videos",
+        )
+
+        state["updates"] = {date: {sid: {"videos": ["m1"], "source": "selfStudy"}}}
+        response = client.post(
+            "/api/updates/self-study",
+            json={"date": date, "sid": sid, "videos": ["m2"], "append": True},
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment") == {"videos": ["m1", "m2"], "source": "selfStudy"}
+            and state["updates"][date][sid] == payload["assignment"],
+            "self-study route must append an eligible review video without losing existing selections",
+        )
+
+        persisted = deepcopy(state["updates"])
+        response = client.post(
+            "/api/updates/self-study",
+            json={"date": date, "sid": sid, "videos": ["m3"], "append": True},
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 409
+            and payload.get("error") == "video is not eligible for self-study review"
+            and state["updates"] == persisted,
+            "self-study route must reject a video without completed/interrupted prior progress",
+        )
+
+        response = client.post(
+            "/api/updates/self-study",
+            json={"date": date, "sid": sid, "videos": "m2"},
+        )
+        _assert_unit(response.status_code == 400, "self-study route must reject non-array video selections")
+
+        state["updates"] = {date: {sid: {"videos": ["m3"], "source": "auto"}}}
+        persisted = deepcopy(state["updates"])
+        state["absent"] = {"by_date": {date: [sid]}, "by_student": {}}
+        response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 409
+            and payload.get("error") == "student is absent"
+            and state["updates"] == persisted,
+            "self-study route must keep absence blocked without mutating the assignment",
+        )
+
+        state["absent"] = {"by_date": {}, "by_student": {}}
+        state["progress"] = {}
+        state["updates"] = {date: {sid: {"videos": ["m3"], "source": "auto"}}}
+        response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment") is None
+            and sid not in state["updates"].get(date, {}),
+            "self-study route must remove the automatic snapshot when no review video is eligible",
+        )
+        response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment") is None
+            and sid not in state["updates"].get(date, {}),
+            "repeated self-study reconciliation must not resurrect a cancelled automatic snapshot",
+        )
+    finally:
+        for name, value in original.items():
+            setattr(api_basic, name, value)
+
+
+def run_student_review_video_route_unit_checks() -> None:
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from flask import Flask
+
+    import routes.api_basic as api_basic
+
+    date = "2026-06-06"
+    sid = "student-review-route"
+    students_path = object()
+    videos_path = object()
+    watch_path = object()
+    updates_path = object()
+    state = {
+        "students": [{
+            "id": sid,
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "level": "\ud558",
+            "day1": "토1",
+        }],
+        "videos": [
+            {"mid": "m1", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1", "title": "복습 1"},
+            {"mid": "m2", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "2", "title": "복습 2"},
+            {"mid": "m3", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "3", "title": "오늘 영상"},
+        ],
+        "watch": {},
+        "updates": {
+            date: {
+                sid: {
+                    "videos": ["m3"],
+                    "source": "auto",
+                    "unknownAssignmentField": "preserve-me",
+                },
+            },
+        },
+        "progress": {"2026-06-05": {sid: {"m1": "done", "m2": "interrupted"}}},
+        "absent": {"by_date": {}, "by_student": {}},
+    }
+    state["videos"].append({
+        "mid": "m-red",
+        "curriculum": "ALG",
+        "subCurriculum": "BASE",
+        "chapter": "2.5",
+        "title": "excluded",
+        "exNum": {"\ud558": 0},
+    })
+    sync_calls = []
+
+    class FakeLogRepository:
+        def __init__(self):
+            self.entry = {}
+
+        def read_logs(self, _date, _sid):
+            return {_date: {_sid: deepcopy(self.entry)}}
+
+        def read_entry(self, _date, _sid):
+            return SimpleNamespace(source="fake", entry=deepcopy(self.entry))
+
+        def patch_entry(self, _date, _sid, entry, _base):
+            next_entry = deepcopy(self.entry)
+            for key in entry.get("__clear", []) if isinstance(entry, dict) else []:
+                next_entry.pop(key, None)
+            for key, value in (entry or {}).items():
+                if key != "__clear":
+                    next_entry[key] = deepcopy(value)
+            self.entry = next_entry
+            return SimpleNamespace(
+                merged=deepcopy(next_entry),
+                sqlite_ok=True,
+                json_ok=True,
+                json_conflict_entry=None,
+            )
+
+    repository = FakeLogRepository()
+    original = {
+        "STU_PATH": api_basic.STU_PATH,
+        "VID_PATH": api_basic.VID_PATH,
+        "WATCH_PATH": api_basic.WATCH_PATH,
+        "UPD_PATH": api_basic.UPD_PATH,
+        "load": api_basic.load,
+        "save_atomic": api_basic.save_atomic,
+        "load_absent": api_basic.load_absent,
+        "_load_progress_strict": api_basic._load_progress_strict,
+        "get_log_repository": api_basic.get_log_repository,
+        "_updates_lock": api_basic._updates_lock,
+        "_student_is_registered_on_date": api_basic._student_is_registered_on_date,
+        "_sync_review_video_registration_log": api_basic._sync_review_video_registration_log,
+    }
+
+    def fake_load(path):
+        if path is students_path:
+            return deepcopy(state["students"])
+        if path is videos_path:
+            return deepcopy(state["videos"])
+        if path is watch_path:
+            return deepcopy(state["watch"])
+        if path is updates_path:
+            return deepcopy(state["updates"])
+        return {}
+
+    def fake_save(path, value, **_kwargs):
+        if path is updates_path:
+            state["updates"] = deepcopy(value)
+
+    try:
+        api_basic.STU_PATH = students_path
+        api_basic.VID_PATH = videos_path
+        api_basic.WATCH_PATH = watch_path
+        api_basic.UPD_PATH = updates_path
+        api_basic.load = fake_load
+        api_basic.save_atomic = fake_save
+        api_basic.load_absent = lambda: deepcopy(state["absent"])
+        api_basic._load_progress_strict = lambda: deepcopy(state["progress"])
+        api_basic.get_log_repository = lambda: repository
+        api_basic._updates_lock = lambda: contextlib.nullcontext()
+        api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
+        api_basic._sync_review_video_registration_log = lambda review_date, review_sid, mids: sync_calls.append(
+            (review_date, review_sid, list(mids))
+        ) or {}
+
+        app = Flask("verify-student-review-video-route")
+        app.register_blueprint(api_basic.bp_api_basic)
+        client = app.test_client()
+
+        response = client.post(
+            "/api/updates/review",
+            json={"date": date, "sid": sid, "videos": ["m1", "m2", "m1"]},
+        )
+        payload = response.get_json() or {}
+        expected = {
+            "videos": ["m3", "m1", "m2"],
+            "source": "auto",
+            "unknownAssignmentField": "preserve-me",
+            "reviewVideos": ["m1", "m2"],
+        }
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment") == expected
+            and state["updates"][date][sid] == expected
+            and sync_calls[-1] == (date, sid, ["m1", "m2"]),
+            "student review registration must merge eligible videos and preserve assignment metadata",
+        )
+
+        response = client.post(
+            "/api/updates/patch",
+            json={
+                "date": date,
+                "sid": sid,
+                "entry": {"videos": ["m3", "m2"], "source": "auto", "reviewVideos": ["m2"]},
+            },
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment", {}).get("reviewVideos") == ["m2"],
+            "admin video assignment patch must keep selected gray review metadata",
+        )
+
+        response = client.post(
+            "/api/updates/patch",
+            json={
+                "date": date,
+                "sid": sid,
+                "entry": {"videos": ["m3"], "source": "auto", "reviewVideos": []},
+            },
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and "reviewVideos" not in (payload.get("assignment") or {})
+            and state["updates"][date][sid]["videos"] == ["m3"]
+            and sync_calls[-1] == (date, sid, []),
+            "unchecking gray review videos must cancel their registration without deleting unrelated assignment data",
+        )
+
+        state["updates"][date][sid] = {
+            "videos": ["m3", "m1"],
+            "source": "auto",
+            "reviewVideos": ["m1"],
+        }
+        _assert_unit(
+            api_basic.record_review_video_watch(date, sid, "m1") is True
+            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCHED_MIDS_KEY) == ["m1"]
+            and api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY in repository.entry
+            and "복습 영상 시청" in repository.entry.get("notes", ""),
+            "watching a registered review video must append a counseling record",
+        )
+        previous_log = deepcopy(repository.entry)
+        _assert_unit(
+            api_basic.record_review_video_watch(date, sid, "m3") is False
+            and repository.entry == previous_log,
+            "watching a non-review assigned video must not append a review counseling record",
+        )
+
+        response = client.post(
+            "/api/updates/review",
+            json={"date": date, "sid": sid, "videos": ["m1"], "action": "cancel"},
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("reviewVideos") == []
+            and payload.get("assignment", {}).get("videos") == ["m3"]
+            and "reviewVideos" not in (payload.get("assignment") or {})
+            and sync_calls[-1] == (date, sid, [])
+            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCHED_MIDS_KEY) == ["m1"]
+            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY)
+                == previous_log.get(api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY)
+            and repository.entry.get("notes") == previous_log.get("notes"),
+            "cancelling a registered review must preserve its existing counseling watch record",
+        )
+    finally:
+        for name, value in original.items():
+            setattr(api_basic, name, value)
+
+
+def run_video_assignment_boundary_source_checks() -> None:
+    today_js = (ROOT / "static/js/admin/features/today.js").read_text("utf-8")
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
+    student_copy_js = (ROOT / "static/js/student copy.js").read_text("utf-8")
+
+    _assert_unit(
+        "async function refreshUpdatesAtAssignmentBoundary" in today_js,
+        "today refresh must centralize date-boundary assignment hydration",
+    )
+    _assert_unit(
+        "const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;" in today_js,
+        "today refresh must initialize assignments only for a real/date-change boundary",
+    )
+    _assert_unit(
+        "const updates = await api.get('/api/updates', { cache: 'no-store' });" in today_js,
+        "date-boundary refresh must use the normal initializing updates endpoint",
+    )
+    _assert_unit(
+        "document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));" in today_js,
+        "admin date changes must enter the assignment boundary path",
+    )
+    _assert_unit(
+        "hydrateUpdates({ readOnly: true })" in video_modal_js
+        and "'/api/updates?readOnly=1'" in video_modal_js,
+        "video progress popup hydration must use a read-only updates snapshot",
+    )
+    _assert_unit(
+        "'/api/updates?readOnly=1'" in export_logs_js,
+        "roster export updates hydration must not initialize or re-pick videos",
+    )
+    _assert_unit(
+        "fetch('/api/updates/patch'" in student_copy_js
+        and "entry: { videos: last.map(String), source: 'auto' }" in student_copy_js
+        and "body: JSON.stringify(nextUpdates)" not in student_copy_js,
+        "legacy student auto-assignment fallback must use the guarded single-assignment patch endpoint",
+    )
+
+
+def run_self_study_video_assignment_source_checks() -> None:
+    api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+    api_watch_py = (ROOT / "routes/api_watch.py").read_text("utf-8")
+    today_state_js = (ROOT / "static/js/admin/features/today.state.js").read_text("utf-8")
+    export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+
+    _assert_unit(
+        "@bp_api_basic.post(\"/api/updates/self-study\")" in api_basic_py,
+        "self-study review assignment must have a dedicated updates endpoint",
+    )
+    _assert_unit(
+        "@bp_api_basic.post(\"/api/updates/review\")" in api_basic_py
+        and 'STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE = "studentReview"' in api_basic_py
+        and 'REVIEW_VIDEO_ASSIGNMENT_KEY = "reviewVideos"' in api_basic_py,
+        "student review registration must persist distinguishable assignment metadata",
+    )
+    _assert_unit(
+        "record_review_video_watch" in api_watch_py
+        and "REVIEW_VIDEO_REGISTRATION_NOTE_KEY" in api_basic_py
+        and "REVIEW_VIDEO_WATCH_NOTE_KEY" in api_basic_py,
+        "registered review watching must flow into counseling notes",
+    )
+    _assert_unit(
+        "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in api_basic_py,
+        "self-study review assignment must remain distinguishable from new automatic progress",
+    )
+    _assert_unit(
+        "def _student_eligible_review_video_mids" in api_basic_py
+        and "video is not eligible for self-study review" in api_basic_py,
+        "self-study review registration must be server-authorized by prior progress",
+    )
+    _assert_unit(
+        "_student_has_scheduled_self_study_on_date" in api_basic_py,
+        "scheduled self-study must use the same backend automatic assignment path",
+    )
+    _assert_unit(
+        "if _student_absent_on_date(absent, date_key, sid):" in api_basic_py
+        and "if _student_is_self_study_on_date(logs, date_key, sid, stu):" in api_basic_py,
+        "self-study auto reconciliation must allow explicit self-study while keeping absence first",
+    )
+    _assert_unit(
+        "if (not registered_today and not self_study_day) or absent_today:" in api_basic_py,
+        "student bootstrap must allow self-study on a non-scheduled date but keep absence blocked",
+    )
+    student_js = (ROOT / "static/js/student.js").read_text("utf-8")
+    _assert_unit(
+        "|| isAbsentOnStudentDate() || isArchivedOnStudentDate();" in student_js,
+        "student review surface must keep the absence/archive guard",
+    )
+    _assert_unit(
+        "selfStudy: b.selfStudy === true" in student_js
+        and "async function registerReviewVideos()" in student_js
+        and "async function cancelRegisteredReviewVideo(mid)" in student_js
+        and "fetch('/api/updates/review'" in student_js
+        and "action: 'cancel'" in student_js
+        and "playlist-review-cancel" in student_js
+        and "registeredReviewVideos" in student_js
+        and "localStorage.setItem(reviewPlaylistStorageKey()" not in student_js
+        and "/api/updates/self-study" not in student_js,
+        "student review rows must use the server-backed date/SID assignment",
+    )
+    review_surface_start = student_js.find("function reviewSurfaceBlocked()")
+    review_surface_end = student_js.find("\n  }", review_surface_start)
+    review_surface_body = student_js[review_surface_start:review_surface_end] if review_surface_start >= 0 else ""
+    _assert_unit(
+        review_surface_start >= 0 and "selfStudy" not in review_surface_body,
+        "student review surface must not add a self-study block",
+    )
+    _assert_unit(
+        "await assignSelfStudyReviewVideos(dateKey, sid);" in today_state_js,
+        "today self-study toggle must immediately replace the automatic assignment",
+    )
+    _assert_unit(
+        "'/api/updates/self-study'" in today_state_js,
+        "today self-study toggle must use the dedicated assignment endpoint",
+    )
+    _assert_unit(
+        "!truthy((logsDay[String(stu?.id)] || {}).selfStudy)" in export_logs_js,
+        "roster export must remove self-study students",
+    )
+    _assert_unit(
+        "isSelfStudyScheduledForDate(stu, today)" in video_modal_js,
+        "video modal must not create new automatic progress for scheduled self-study",
+    )
+    _assert_unit(
+        "is-review-registered" in video_modal_js
+        and "accent-color:#9ca3af" in video_modal_js
+        and "reviewVideos: reviewMids" in video_modal_js
+        and "activeRegisteredReviewMids" in video_modal_js,
+        "video assignment popup must distinguish and persist gray student review selections",
     )
 
 
@@ -800,14 +2431,12 @@ def run_watch_route_progress_unit_checks() -> None:
     import routes.api_basic as api_basic
     import routes.api_watch as api_watch
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
     old_watch_path = api_watch.WATCH_PATH
     old_network_allowed = api_watch.academy_network_allowed
 
-    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-") as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         watch_path = pathlib.Path(tmpdir) / "watch.json"
         progress_path.write_text("{}", "utf-8")
@@ -836,6 +2465,59 @@ def run_watch_route_progress_unit_checks() -> None:
 
             merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
             _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
+
+            progress_path.write_text(
+                json.dumps(
+                    {"2026-06-06": {"007": {"m1": "done"}}},
+                    ensure_ascii=False,
+                ),
+                "utf-8",
+            )
+            merged = api_watch._save_progress_status("2026-06-07", "007", "m1", "interrupted")
+            _assert_unit(
+                merged.get("m1") == "done",
+                "later replay must preserve a previously completed progress status",
+            )
+
+            progress_path.write_text("{}", "utf-8")
+            watch_path.write_text(
+                json.dumps(
+                    {
+                        "2026-06-06": {
+                            "007": {
+                                "m4": {
+                                    "last": 95,
+                                    "dur": 100,
+                                    "completed": True,
+                                    "updatedAt": 1,
+                                }
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "utf-8",
+            )
+            merged = api_watch._save_progress_status("2026-06-07", "007", "m4", "interrupted")
+            _assert_unit(
+                merged.get("m4") == "done",
+                "later replay must preserve a previously completed watch status",
+            )
+
+            progress_path.write_text(
+                json.dumps(
+                    {
+                        "2026-06-06": {
+                            "007": {
+                                "m2": "none",
+                                PROGRESS_MANUAL_META_KEY: {"m2": True},
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "utf-8",
+            )
 
             app = Flask("verify_watch_status")
             app.register_blueprint(api_watch.bp_api_watch)
@@ -914,9 +2596,7 @@ def run_log_repository_unit_checks() -> None:
     from core.log_repository import LogRepository
     from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-logrepo-", dir=temp_base) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="verify-logrepo-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         logs_path = tmp / "logs.json"
         db_path = tmp / "app.sqlite"
@@ -1491,6 +3171,568 @@ def run_student_answer_link_precedence_unit_checks() -> None:
         api_basic._load_test_answer_link_map = original_map_loader
 
 
+def run_student_previous_video_review_bootstrap_unit_checks() -> None:
+    """Exercise the extracted bootstrap projection with isolated in-memory fixtures."""
+    import ast
+    from copy import deepcopy
+
+    from core.video_review_rules import resolve_video_review_states_before_date
+
+    api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+
+    tree = ast.parse(api_basic_py)
+    names = {
+        "_sid_keys",
+        "_sid_lookup",
+        "_normalize_video_assign_list",
+        "_normalize_review_video_mids",
+        "_review_video_mids_for_assignment",
+        "_is_training_pack_video",
+        "_is_training_pack_student",
+        "_student_training_pack_videos",
+        "_normalize_training_pack_video_mids",
+        "_training_pack_video_mids_for_assignment",
+        "_chap_num",
+        "_academy_restricted_student_videos",
+        "_student_completion_videos",
+        "_student_primary_video_mids",
+        "_student_review_states_before_date",
+        "_student_eligible_review_video_mids",
+        "_filter_self_study_assignment_for_response",
+        "_student_review_video_projection",
+        "_student_training_pack_projection",
+        "_self_study_review_video_mids",
+        "_student_absent_on_date",
+        "_active_student_alias_sid",
+    }
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    extracted = {node.name for node in nodes}
+    _assert_unit(extracted == names, "bootstrap fixture must extract every route review helper")
+    namespace = {
+        "__name__": "student_previous_video_review_fixture",
+        "deepcopy": deepcopy,
+        "resolve_video_review_states_before_date": resolve_video_review_states_before_date,
+        "DEFAULT_AUTO_VIDEO_ASSIGN_COUNT": 3,
+        "REVIEW_VIDEO_ASSIGNMENT_KEY": "reviewVideos",
+        "TRAINING_PACK_VIDEO_SUBCURRICULUM": "트팩",
+        "TRAINING_PACK_ASSIGNMENT_KEY": "trainingPackVideos",
+    }
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "routes/api_basic.py", "exec"), namespace)
+
+    student = {
+        "id": "007",
+        "curriculum": "ALG",
+        "subCurriculum": "BASE",
+    }
+    videos = [
+        {
+            "mid": "m1",
+            "title": "One",
+            "chapter": "1",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "url": "https://video.example/m1",
+            "eventDate": "must-not-leak",
+            "unknownField": {"keep": True},
+        },
+        {
+            "mid": "m2",
+            "title": "Two duplicate later",
+            "chapter": "2",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+        },
+        {
+            "mid": "m2",
+            "title": "Two duplicate first",
+            "chapter": "2",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+        },
+        {
+            "mid": "m3",
+            "title": "Three",
+            "chapter": "3",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+        },
+        {
+            "mid": "m5",
+            "title": "Five",
+            "chapter": "5",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "link": "https://video.example/m5",
+            "src": "https://video.example/m5-src",
+            "playUrl": "https://video.example/m5-play",
+            "stream_url": "https://video.example/m5-stream",
+            "embed_url": "https://video.example/m5-embed",
+            "progress": {"raw": "must-not-leak"},
+            "watch": {"raw": "must-not-leak"},
+        },
+        {
+            "mid": "m-skip",
+            "title": "Skipped",
+            "chapter": "6",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+        },
+        {
+            "mid": "m4",
+            "title": "Other sub-curriculum",
+            "chapter": "4",
+            "curriculum": "ALG",
+            "subCurriculum": "OTHER",
+        },
+        {
+            "mid": "m-old",
+            "title": "Old course",
+            "chapter": "9",
+            "curriculum": "OLD",
+            "subCurriculum": "BASE",
+        },
+    ]
+    progress = {
+        "2026-05-29": {
+            "007": {
+                "m1": "done",
+                "m2": "interrupted",
+                "m-old": "done",
+                "m-deleted": "done",
+                "m-skip": "skip",
+                "__manualProgressMids": {"m-white": True},
+            },
+        },
+        "2026-05-30": {"7": {"m2": "done", "m3": "done"}},
+        "2026-05-31": {"007": {"m4": "done", "m-current": "done"}},
+        "2026-06-02": {"007": {"m5": "done"}},
+        "malformed": {"007": {"m3": "done"}},
+    }
+    watch = {
+        "2026-05-29": {
+            "007": {
+                "m1": {"last": 100, "dur": 100},
+                "m-white": {"last": 100, "dur": 100},
+                "m-below": {"last": 4, "dur": 100},
+            },
+        },
+        "2026-05-30": {"7": {"m5": {"last": 100, "dur": 100}}},
+        "2026-05-31": {"007": {"m3": {"last": 100, "dur": 100}}},
+        "2026-06-02": {"007": {"m2": {"last": 100, "dur": 100}}},
+    }
+    progress_before = deepcopy(progress)
+    watch_before = deepcopy(watch)
+
+    projection = namespace["_student_review_video_projection"](
+        student,
+        videos,
+        progress,
+        watch,
+        "2026-06-01",
+        {"m1"},
+        True,
+    )
+    _assert_unit(
+        [item.get("mid") for item in projection] == ["m3", "m5", "m2"],
+        "review projection must sort recent event date then chapter and MID descending",
+    )
+    _assert_unit(
+        {item.get("mid"): item.get("reviewStatus") for item in projection}
+        == {"m5": "done", "m3": "done", "m2": "done"},
+        "review projection must expose only done/interrupted statuses",
+    )
+    _assert_unit("m1" not in {item.get("mid") for item in projection}, "current assignment MID must be excluded")
+    _assert_unit("m-old" not in {item.get("mid") for item in projection}, "other curriculum MID must be excluded")
+    _assert_unit("m4" not in {item.get("mid") for item in projection}, "current-date MID must be excluded")
+    _assert_unit("m-skip" not in {item.get("mid") for item in projection}, "skip MID must be excluded")
+    _assert_unit("m-deleted" not in {item.get("mid") for item in projection}, "deleted MID must be excluded")
+    _assert_unit(all("eventDate" not in item for item in projection), "review item must hide eventDate")
+    _assert_unit(
+        all("progress" not in item and "watch" not in item for item in projection),
+        "review item must not expose raw progress/watch maps",
+    )
+    m2_item = next(item for item in projection if item.get("mid") == "m2")
+    _assert_unit(
+        m2_item.get("title") == "Two duplicate later",
+        "duplicate catalog selection must keep one canonical MID projection",
+    )
+
+    restricted = namespace["_student_review_video_projection"](
+        student,
+        videos,
+        progress,
+        watch,
+        "2026-06-01",
+        set(),
+        False,
+    )
+    blocked_keys = {
+        "url", "link", "src", "source", "playUrl", "play_url", "streamUrl", "stream_url",
+        "embedUrl", "embed_url",
+    }
+    _assert_unit(
+        restricted and all(not blocked_keys.intersection(item) and item.get("playbackRestricted") is True for item in restricted),
+        "outside-academy review projection must strip playback fields last",
+    )
+
+    fallback_student = {"id": "007", "curriculum": "ALG", "subCurriculum": "MISSING"}
+    fallback = namespace["_student_review_video_projection"](
+        fallback_student,
+        videos,
+        {"2026-05-30": {"007": {"m4": "done"}}},
+        {},
+        "2026-06-01",
+        set(),
+        True,
+    )
+    _assert_unit([item.get("mid") for item in fallback] == ["m4"], "curriculum-only fallback must remain available")
+
+    assignment = {
+        "videos": ["m1", "m5", "m-unwatched"],
+        "source": "selfStudy",
+        "futureField": {"keep": "yes"},
+    }
+    assignment_before = deepcopy(assignment)
+    filtered = namespace["_filter_self_study_assignment_for_response"](assignment, {"m1", "m5"})
+    _assert_unit(filtered == {"videos": ["m1", "m5"], "source": "selfStudy", "futureField": {"keep": "yes"}}, "self-study response must preserve unknown fields")
+    _assert_unit(assignment == assignment_before, "self-study response filter must not mutate persisted assignment")
+    legacy = namespace["_filter_self_study_assignment_for_response"](["m5", "m-unwatched"], {"m5"})
+    _assert_unit(legacy == ["m5"], "legacy self-study list must filter unwatched MIDs")
+
+    mids = [
+        {"mid": f"m{index}", "chapter": str(index), "curriculum": "ALG", "subCurriculum": "BASE"}
+        for index in range(1, 7)
+    ]
+    _assert_unit(
+        namespace["_self_study_review_video_mids"](
+            mids,
+            ["m6"],
+            [],
+            {"m1", "m3", "m5"},
+        ) == ["m1", "m3", "m5"],
+        "self-study auto replacement must choose the last three eligible videos before the anchor",
+    )
+    _assert_unit(
+        namespace["_self_study_review_video_mids"](mids, [], [], set()) == [],
+        "self-study must persist no auto review assignment without an eligible anchor/history",
+    )
+    _assert_unit(progress == progress_before and watch == watch_before, "bootstrap fixtures must remain immutable")
+
+    _assert_unit(api_basic_py.count('"reviewVideos": []') >= 2, "ghost and course-blocked bootstrap shapes must return empty review arrays")
+    _assert_unit(
+        "if not absent_today and not archived:" in api_basic_py,
+        "absent and archived bootstrap shapes must return empty review arrays",
+    )
+
+    route_node = next(
+        (
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "api_student_bootstrap"
+        ),
+        None,
+    )
+    _assert_unit(route_node is not None, "bootstrap fixture must extract the actual api_student_bootstrap route body")
+    route_node = deepcopy(route_node)
+    route_node.decorator_list = []
+
+    from types import SimpleNamespace
+
+    route_namespace = dict(namespace)
+    route_namespace.update({
+        "DATE_RE": DATE_RE,
+        "ACADEMY_ACCESS_MESSAGE": "academy-only",
+        "STUDENT_COURSE_BLOCK_MESSAGE": "course-blocked",
+        "SELF_STUDY_VIDEO_ASSIGN_SOURCE": "selfStudy",
+        "STU_PATH": "fixture-students",
+        "VID_PATH": "fixture-videos",
+        "PRG_PATH": "fixture-progress",
+        "UPD_PATH": "fixture-updates",
+        "ASN_PATH": "fixture-assigns",
+        "MAT_PATH": "fixture-materials",
+        "WATCH_PATH": "fixture-watch",
+    })
+
+    class FixtureRequest:
+        args: dict[str, str]
+
+        def __init__(self) -> None:
+            self.args = {}
+
+    route_namespace["request"] = FixtureRequest()
+    route_namespace["jsonify"] = lambda payload: payload
+    route_namespace["nocache_resp"] = lambda payload: payload
+    route_namespace["_today_kst_iso"] = lambda: "2099-01-01"
+    route_namespace["_is_ghost_student_sid"] = lambda sid: str(sid) == "ghost"
+    route_namespace["_ghost_student_bootstrap"] = lambda date: {
+        "ok": True,
+        "date": date,
+        "reviewVideos": [],
+        "ghostStudent": True,
+    }
+    route_namespace["_log_rules"] = SimpleNamespace(truthy=lambda value: bool(value))
+    route_namespace["_build_latest_status_by_sid"] = lambda _progress: {}
+    route_namespace["_course_videos_completed"] = lambda *_args: False
+    route_namespace["_student_homework_book_names_from_log"] = lambda _entry: []
+    route_namespace["_assigned_material_list"] = lambda value: value.get("materials", []) if isinstance(value, dict) else []
+    route_namespace["_filter_materials_for_assignment"] = lambda materials, _assigned: materials if isinstance(materials, dict) else {}
+    route_namespace["_student_assigned_tests_for_date"] = lambda *_args: []
+    route_namespace["_filter_assigned_tests_for_student_curriculum"] = lambda items, _student: items
+    route_namespace["_academy_restricted_assigned_tests"] = lambda items, _allowed: items
+
+    base_date = "2026-06-01"
+    base_sid = "007"
+    base_student = {
+        "id": base_sid,
+        "name": "Fixture Student",
+        "curriculum": "ALG",
+        "subCurriculum": "BASE",
+        "day1": "월 13:00",
+    }
+    base_videos = [
+        {"mid": "m1", "title": "Assigned", "chapter": "1", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m1"},
+        {"mid": "m2", "title": "Interrupted", "chapter": "2", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m2"},
+        {"mid": "m3", "title": "Three", "chapter": "3", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m3"},
+        {"mid": "m5", "title": "Five", "chapter": "5", "curriculum": "ALG", "subCurriculum": "BASE", "url": "https://v/m5"},
+        {"mid": "m-skip", "title": "Skipped", "chapter": "6", "curriculum": "ALG", "subCurriculum": "BASE"},
+        {"mid": "m-current", "title": "Current", "chapter": "7", "curriculum": "ALG", "subCurriculum": "BASE"},
+        {"mid": "m4", "title": "Fallback only", "chapter": "4", "curriculum": "ALG", "subCurriculum": "OTHER"},
+        {"mid": "m-old", "title": "Old course", "chapter": "8", "curriculum": "OLD", "subCurriculum": "BASE"},
+    ]
+    base_progress = {
+        "2026-05-29": {base_sid: {"m1": "done", "m2": "interrupted", "m-old": "done", "m-deleted": "done", "m-skip": "skip"}},
+        "2026-05-30": {"7": {"m3": "done"}},
+        base_date: {base_sid: {"m-current": "done"}},
+        "2026-06-02": {base_sid: {"m5": "done"}},
+    }
+    base_watch = {"2026-05-30": {"7": {"m5": {"last": 100, "dur": 100}}}}
+
+    def make_route_state() -> dict:
+        return {
+            "date": base_date,
+            "sid": base_sid,
+            "student": deepcopy(base_student),
+            "videos": deepcopy(base_videos),
+            "progress": deepcopy(base_progress),
+            "watch": deepcopy(base_watch),
+            "updates": {base_date: {base_sid: {"videos": ["m1"], "source": "auto"}}},
+            "materials": {},
+            "assigns": {},
+            "absent": {"by_date": {}, "by_student": {}},
+            "log_entry": {},
+            "academy_allowed": True,
+            "registered": True,
+            "log_reads": 0,
+        }
+
+    route_state = make_route_state()
+
+    def fixture_load(path):
+        if path == route_namespace["STU_PATH"]:
+            return [deepcopy(route_state["student"])]
+        if path == route_namespace["VID_PATH"]:
+            return deepcopy(route_state["videos"])
+        if path == route_namespace["UPD_PATH"]:
+            return deepcopy(route_state["updates"])
+        if path == route_namespace["WATCH_PATH"]:
+            return deepcopy(route_state["watch"])
+        if path == route_namespace["ASN_PATH"]:
+            return deepcopy(route_state["assigns"])
+        if path == route_namespace["MAT_PATH"]:
+            return deepcopy(route_state["materials"])
+        return {}
+
+    class FixtureRepository:
+        def read_entry(self, _date: str, _sid: str):
+            route_state["log_reads"] += 1
+            return SimpleNamespace(entry=deepcopy(route_state["log_entry"]))
+
+        def read_json_map(self):
+            return {route_state["date"]: {route_state["sid"]: deepcopy(route_state["log_entry"])}}
+
+    route_namespace["load"] = fixture_load
+    route_namespace["load_absent"] = lambda: deepcopy(route_state["absent"])
+    route_namespace["_load_progress_strict"] = lambda: deepcopy(route_state["progress"])
+    route_namespace["get_log_repository"] = lambda: FixtureRepository()
+    route_namespace["academy_network_allowed"] = lambda: bool(route_state["academy_allowed"])
+    route_namespace["_student_is_registered_on_date"] = lambda *_args: bool(route_state["registered"])
+    route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
+    route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
+
+    exec(compile(ast.Module(body=[route_node], type_ignores=[]), "routes/api_basic.py", "exec"), route_namespace)
+    route_fn = route_namespace["api_student_bootstrap"]
+
+    def invoke_route(sid: str = base_sid) -> tuple[dict, int]:
+        route_namespace["request"].args = {"sid": sid, "date": route_state["date"]}
+        result = route_fn()
+        if isinstance(result, tuple):
+            body, status = result
+            return body, int(status)
+        return result, 200
+
+    def assert_success_shape(label: str, payload: dict, status: int = 200) -> None:
+        _assert_unit(status == 200 and payload.get("ok") is True, f"{label} route response must be successful")
+        _assert_unit(isinstance(payload.get("reviewVideos"), list), f"{label} success shape must contain reviewVideos array")
+
+    regular_persisted = deepcopy(route_state["updates"])
+    regular_payload, regular_status = invoke_route()
+    assert_success_shape("regular", regular_payload, regular_status)
+    regular_review = regular_payload["reviewVideos"]
+    regular_review_mids = {item.get("mid") for item in regular_review}
+    _assert_unit(
+        "m-current" not in regular_review_mids,
+        "actual bootstrap route must exclude current-date review MID",
+    )
+    _assert_unit(
+        "m-skip" not in regular_review_mids,
+        "actual bootstrap route must exclude skip review MID",
+    )
+    _assert_unit(
+        [item.get("mid") for item in regular_review] == ["m5", "m3", "m2"],
+        "actual bootstrap route must wire exact-curriculum review ordering and SID aliases",
+    )
+    _assert_unit(
+        [item.get("reviewStatus") for item in regular_review] == ["done", "done", "interrupted"],
+        "actual bootstrap route must preserve done/interrupted review status",
+    )
+    _assert_unit(
+        "m1" not in regular_review_mids
+        and "m-current" not in regular_review_mids
+        and "m-skip" not in regular_review_mids
+        and "m-old" not in {item.get("mid") for item in regular_review}
+        and "m-deleted" not in {item.get("mid") for item in regular_review},
+        "actual bootstrap route must exclude current assignment, current-date, skip, old-curriculum, and deleted MIDs",
+    )
+    _assert_unit(
+        all(
+            item.get("reviewStatus") in {"done", "interrupted"}
+            and "eventDate" not in item
+            and "progress" not in item
+            and "watch" not in item
+            for item in regular_review
+        ),
+        "actual bootstrap route must expose only the public review schema",
+    )
+    _assert_unit(regular_payload["updates"] == regular_persisted, "regular assignment response must remain unchanged")
+    _assert_unit(route_state["log_reads"] == 1, "bootstrap route must reuse one date-log read")
+
+    route_state["academy_allowed"] = False
+    restricted_payload, restricted_status = invoke_route()
+    assert_success_shape("restricted", restricted_payload, restricted_status)
+    restricted_keys = {"url", "link", "src", "source", "playUrl", "play_url", "streamUrl", "stream_url", "embedUrl", "embed_url"}
+    _assert_unit(
+        restricted_payload["reviewVideos"]
+        and all(not restricted_keys.intersection(item) and item.get("playbackRestricted") is True for item in restricted_payload["reviewVideos"]),
+        "actual bootstrap route must apply restricted playback stripping after review projection",
+    )
+
+    route_state = make_route_state()
+    route_state["log_entry"] = {"selfStudy": True}
+    route_state["updates"] = {
+        base_date: {
+            base_sid: {
+                "videos": ["m1", "unwatched"],
+                "source": "selfStudy",
+                "unknown": {"keep": True},
+            },
+        },
+    }
+    self_study_persisted = deepcopy(route_state["updates"])
+    self_study_payload, self_study_status = invoke_route()
+    assert_success_shape("selfStudy manual", self_study_payload, self_study_status)
+    _assert_unit(
+        self_study_payload["updates"][base_date][base_sid]["videos"] == ["m1"]
+        and self_study_payload["updates"][base_date][base_sid]["unknown"] == {"keep": True}
+        and [item.get("mid") for item in self_study_payload["videos"]] == ["m1"],
+        "actual bootstrap route must filter unwatched self-study response videos while preserving unknown fields",
+    )
+    _assert_unit(route_state["updates"] == self_study_persisted, "self-study response filtering must not mutate persisted updates")
+    _assert_unit("m1" not in {item.get("mid") for item in self_study_payload["reviewVideos"]}, "self-study response assignment MIDs must be excluded from review")
+
+    route_state = make_route_state()
+    route_state["log_entry"] = {"selfStudy": True}
+    route_state["updates"] = {base_date: {base_sid: ["m1", "unwatched"]}}
+    legacy_persisted = deepcopy(route_state["updates"])
+    legacy_payload, legacy_status = invoke_route()
+    assert_success_shape("selfStudy legacy", legacy_payload, legacy_status)
+    _assert_unit(legacy_payload["updates"][base_date][base_sid] == ["m1"], "legacy self-study assignment must be filtered in response")
+    _assert_unit(route_state["updates"] == legacy_persisted, "legacy self-study response filter must preserve persisted snapshot")
+
+    route_state = make_route_state()
+    route_state["registered"] = False
+    route_state["log_entry"] = {"selfStudy": True}
+    route_state["updates"] = {
+        base_date: {
+            base_sid: {
+                "videos": ["m1"],
+                "source": "selfStudy",
+            },
+        },
+    }
+    unscheduled_self_study_payload, unscheduled_self_study_status = invoke_route()
+    assert_success_shape("unscheduled selfStudy", unscheduled_self_study_payload, unscheduled_self_study_status)
+    _assert_unit(
+        unscheduled_self_study_payload.get("courseBlocked") is not True
+        and unscheduled_self_study_payload.get("selfStudy") is True
+        and [item.get("mid") for item in unscheduled_self_study_payload["videos"]] == ["m1"]
+        and unscheduled_self_study_payload["reviewVideos"],
+        "self-study on a non-scheduled date must open the student page and expose assigned/review videos",
+    )
+
+    route_state = make_route_state()
+    route_state["registered"] = False
+    route_state["log_entry"] = {"selfStudy": True}
+    route_state["absent"]["by_date"][base_date] = [base_sid]
+    route_state["updates"] = {
+        base_date: {
+            base_sid: {
+                "videos": ["m1"],
+                "source": "selfStudy",
+            },
+        },
+    }
+    absent_self_study_payload, absent_self_study_status = invoke_route()
+    assert_success_shape("absent selfStudy", absent_self_study_payload, absent_self_study_status)
+    _assert_unit(
+        absent_self_study_payload.get("courseBlocked") is True
+        and absent_self_study_payload.get("selfStudy") is True
+        and absent_self_study_payload["videos"] == []
+        and absent_self_study_payload["reviewVideos"] == [],
+        "absence must remain fully blocked even when self-study is selected",
+    )
+
+    route_state = make_route_state()
+    route_state["absent"]["by_date"][base_date] = [base_sid]
+    absent_payload, absent_status = invoke_route()
+    assert_success_shape("absent", absent_payload, absent_status)
+    _assert_unit(absent_payload["reviewVideos"] == [], "absent student bootstrap must return empty reviewVideos")
+
+    route_state = make_route_state()
+    route_state["log_entry"] = {"archived": True}
+    archived_payload, archived_status = invoke_route()
+    assert_success_shape("archived", archived_payload, archived_status)
+    _assert_unit(archived_payload["reviewVideos"] == [], "archived student bootstrap must return empty reviewVideos")
+
+    route_state = make_route_state()
+    route_state["registered"] = False
+    blocked_payload, blocked_status = invoke_route()
+    assert_success_shape("courseBlocked", blocked_payload, blocked_status)
+    _assert_unit(blocked_payload.get("courseBlocked") is True and blocked_payload["reviewVideos"] == [], "course-blocked bootstrap must return empty reviewVideos")
+
+    route_state = make_route_state()
+    ghost_payload, ghost_status = invoke_route("ghost")
+    assert_success_shape("ghost", ghost_payload, ghost_status)
+    _assert_unit(ghost_payload.get("ghostStudent") is True and ghost_payload["reviewVideos"] == [], "ghost bootstrap must return empty reviewVideos")
+
+    route_state = make_route_state()
+    route_state["student"]["subCurriculum"] = "MISSING"
+    route_state["videos"] = [{"mid": "fallback", "title": "Fallback", "chapter": "4", "curriculum": "ALG", "subCurriculum": "OTHER", "url": "https://v/fallback"}]
+    route_state["progress"] = {"2026-05-30": {"7": {"fallback": "done"}}}
+    route_state["updates"] = {base_date: {base_sid: []}}
+    fallback_payload, fallback_status = invoke_route()
+    assert_success_shape("fallback", fallback_payload, fallback_status)
+    _assert_unit([item.get("mid") for item in fallback_payload["reviewVideos"]] == ["fallback"], "actual bootstrap route must use curriculum-only fallback when exact sub-curriculum is absent")
+
+
 def run_student_bootstrap_unit_checks() -> None:
     from flask import Flask
     from types import SimpleNamespace
@@ -1608,6 +3850,7 @@ def run_student_bootstrap_unit_checks() -> None:
         return {}
 
     original_load = api_basic.load
+    original_load_progress = api_basic._load_progress_strict
     original_load_absent = api_basic.load_absent
     original_get_log_repository = api_basic.get_log_repository
     original_academy_network_allowed = api_basic.academy_network_allowed
@@ -1616,10 +3859,11 @@ def run_student_bootstrap_unit_checks() -> None:
     original_map_loader = api_basic._load_test_answer_link_map
 
     api_basic.load = fake_load
+    api_basic._load_progress_strict = lambda _path=None: json.loads(json.dumps(progress))
     api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
     api_basic.get_log_repository = lambda: FakeLogRepository()
     api_basic.academy_network_allowed = lambda: True
-    api_basic._student_is_registered_on_date = lambda _student, _sid, _date: True
+    api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
     api_basic._load_tests_config_for_answer_links = lambda: tests_config
     api_basic._load_test_answer_link_map = lambda: {
         "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}}
@@ -1677,6 +3921,7 @@ def run_student_bootstrap_unit_checks() -> None:
         _assert_unit(missing_payload.get("error") == "missing sid", "student bootstrap missing sid must return missing sid")
     finally:
         api_basic.load = original_load
+        api_basic._load_progress_strict = original_load_progress
         api_basic.load_absent = original_load_absent
         api_basic.get_log_repository = original_get_log_repository
         api_basic.academy_network_allowed = original_academy_network_allowed
@@ -1738,6 +3983,7 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
     original_tests_cfg_path = api_tests.TESTS_CFG_PATH
     original_progress_path = getattr(api_tests, "PRG_PATH", None)
     original_basic_load = api_basic.load
+    original_basic_load_progress = api_basic._load_progress_strict
     original_basic_load_absent = api_basic.load_absent
     original_basic_get_log_repository = api_basic.get_log_repository
     original_basic_academy_network_allowed = api_basic.academy_network_allowed
@@ -1788,10 +4034,11 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
         api_tests.TESTS_CFG_PATH = tests_cfg_path
         api_tests.PRG_PATH = progress_path
         api_basic.load = fake_load
+        api_basic._load_progress_strict = lambda _path=None: json.loads(progress_path.read_text("utf-8"))
         api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
         api_basic.get_log_repository = lambda: FakeLogRepository()
         api_basic.academy_network_allowed = lambda: True
-        api_basic._student_is_registered_on_date = lambda _student, _sid, _date: True
+        api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
         api_basic._load_tests_config_for_answer_links = lambda: tests_config
         api_basic._load_test_answer_link_map = lambda: {}
 
@@ -1849,6 +4096,7 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
             else:
                 api_tests.PRG_PATH = original_progress_path
             api_basic.load = original_basic_load
+            api_basic._load_progress_strict = original_basic_load_progress
             api_basic.load_absent = original_basic_load_absent
             api_basic.get_log_repository = original_basic_get_log_repository
             api_basic.academy_network_allowed = original_basic_academy_network_allowed
@@ -2044,9 +4292,7 @@ def run_catalog_script_temp_file_behavior_checks() -> None:
         live_map: fingerprint(live_map),
     }
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-", dir=temp_base) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         config_path = tmp / "tests-config.json"
         config_path.write_text(json.dumps({"categories": {}}, ensure_ascii=False), encoding="utf-8")
@@ -2206,7 +4452,6 @@ def _admin_css_selector_is_scoped(selector: str) -> bool:
         "html body.admin",
         ".admin-shell",
         ".admin-workspace",
-        "#adminChatPanel",
         "#logModal",
         "#vidModal",
         "#testModal",
@@ -2415,46 +4660,8 @@ def run_frontend_evidence_inventory_checks() -> None:
         _assert_unit(snippet in cleanup_receipt, f"server cleanup receipt must record {snippet}")
 
 
-def run_admin_chat_contract_source_checks() -> None:
-    admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
+def run_refactor_notes_contract_source_checks() -> None:
     refactor_notes_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
-
-    required_groups = [
-        (
-            "row data-date fallback contract",
-            ["tr.dataset.date", "getAdminDate()"],
-        ),
-        (
-            "assignedTests bootstrap authority contract",
-            ["assignedTests는 top-level 배열", "progress[date][sid].tests", "authoritative", "메타데이터/폴백"],
-        ),
-        (
-            "test answer link sync contract",
-            [
-                "sourceFiles.solutionFileId",
-                "static/js/test_answer_link_map.json",
-                "assignedTests[].answerUrl",
-                "Drive explanation",
-            ],
-        ),
-        (
-            "admin test record detail contract",
-            [
-                "/tests의 테스트 통계 행을 클릭하면",
-                "전체 답지 링크",
-                "오답별 내 답/정답 비교",
-                "submittedAnswers가 없는 기존 제출 기록",
-            ],
-        ),
-        (
-            "logs patch json warning contract",
-            ["json:false", "warning", "SQLite", "legacy logs.json"],
-        ),
-    ]
-
-    for label, snippets in required_groups:
-        missing = [snippet for snippet in snippets if snippet not in admin_chat_py]
-        _assert_unit(not missing, f"admin chat docs must describe {label}; missing: {', '.join(missing)}")
 
     required_note_groups = [
         (
@@ -2480,7 +4687,6 @@ def run_admin_calendar_test_completion_source_checks() -> None:
     calendar_js = (ROOT / "static/js/admin/features/calendar.js").read_text("utf-8-sig")
     hover_tooltip_js = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8")
     today_render_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
-    admin_chat_py = (ROOT / "core/admin_chat.py").read_text("utf-8")
 
     for snippet in [
         "const examSubjectForRow = (row) => String(",
@@ -2529,13 +4735,6 @@ def run_admin_calendar_test_completion_source_checks() -> None:
         and "await patchLog(date, sid, { ...testPatch, archived: true });" in record_cleanup_block,
         "기록 정리 must remain the path that completes assigned tests",
     )
-    _assert_unit(
-        "하원/숙검하원은 테스트 배정 상태를 유지" in admin_chat_py
-        and "기록 정리만 결석 학생을 제외한 assigned 테스트를 done" in admin_chat_py,
-        "admin chatbot docs must describe assigned-test completion only on record cleanup",
-    )
-
-
 def run_admin_wave_b_source_checks() -> None:
     state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
     main_js = (ROOT / "static/js/admin/main.js").read_text("utf-8")
@@ -2733,12 +4932,13 @@ def run_all_page_progress_lazy_source_checks() -> None:
     )
 
     _assert_unit(
-        "import { ensureProgressForSid, state } from '../core/state.js';" in table_js,
-        "all-students mini progress popup must import lazy progress loading",
+        "ensureProgressForSid" not in table_js,
+        "all-students table must not retain the removed mini progress popup loader",
     )
     _assert_unit(
-        "await ensureProgressForSid(sid);" in table_js,
-        "all-students mini progress popup must load progress for the selected sid",
+        "window.openStudentPopupsForRow(row" in table_js
+        and "accessMode: 'all-students-readonly'" in table_js,
+        "all-students row action must open the shared unified popup set with read-only counseling access",
     )
     _assert_unit(
         "import { ensureProgressForSid } from '../core/state.js';" in hover_js,
@@ -3084,7 +5284,8 @@ const sourcePath = path.join(process.cwd(), 'static/js/admin/features/testModal.
 const source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
-  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';");
+  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';")
+  .replace("import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';", "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');");
 const harness = `
 export function __setHarnessState(input) {
   editingDate = input.editingDate;
@@ -3101,7 +5302,6 @@ export function __setHarnessState(input) {
   selectedStatuses = new Map(input.selectedStatuses || []);
   selectedKeys = new Set(Array.from(selectedStatuses.keys()));
   testSelectionTouched = input.testSelectionTouched !== false;
-  defaultExclusionsApplied = !!input.defaultExclusionsApplied;
 }
 export {
   patchLogAssignment as __patchLogAssignment,
@@ -3280,13 +5480,14 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "latest log preflight must happen before /api/updates/patch",
     )
     _assert_unit(
-        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);" in save_block,
-        "extra video log patch must receive the same latest entry used for preflight",
+        "const latestEntryForExtra = activeRegisteredReviewMids.size || reviewMids.length" in save_block
+        and "await patchExtraVideoLogAssignment(today, sid, selected, latestEntryForExtra);" in save_block,
+        "extra video log patch must use the latest entry after review metadata changes",
     )
     for snippet in [
         "fetch('/api/updates/patch'",
-        "body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))",
-        "fetch('/api/updates', { cache: 'no-store' })",
+        "body: JSON.stringify(buildVideoAssignmentPatchBody(",
+        "fetch('/api/updates?readOnly=1', { cache: 'no-store' })",
         "body.base = { notes: prevNotes.trim() };",
     ]:
         _assert_unit(snippet in save_block or snippet in patch_block, f"video assignment source shape must remain: {snippet}")
@@ -3299,11 +5500,31 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "options.forceEmpty === true",
         "function applyVideoAssignmentState",
         "function buildVideoAssignmentPatchBody",
-        "return { date: day, sid, entry: { videos: selected, source } };",
+        "reviewVideos: reviewMids",
         "return { date: day, sid, remove: true };",
         "activeAssignmentManual = source === 'manual';",
     ]:
         _assert_unit(snippet in video_modal_js, f"video assignment policy helper must remain: {snippet}")
+
+
+def run_admin_student_popup_scroll_source_checks() -> None:
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+
+    _assert_unit(
+        "let studentPopupScrollPosition = null;" in video_modal_js,
+        "student popup must keep a scroll position while the root scroll lock is active",
+    )
+    _assert_unit(
+        "x: window.scrollX || 0" in video_modal_js
+        and "y: window.scrollY || 0" in video_modal_js,
+        "student popup scroll lock must capture both document scroll axes",
+    )
+    _assert_unit(
+        "const scrollPosition = studentPopupScrollPosition;" in video_modal_js
+        and "studentPopupScrollPosition = null;" in video_modal_js
+        and "window.scrollTo(scrollPosition.x, scrollPosition.y);" in video_modal_js,
+        "student popup close must restore and clear the captured document scroll position",
+    )
 
 
 def _run_admin_video_modal_preflight_driver(scenario: str) -> None:
@@ -3336,7 +5557,8 @@ const source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-05';")
-  .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();");
+  .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
 const harness = `
 export function __setHarnessState(input) {
   editingSid = input.sid || 's1';
@@ -3514,7 +5736,7 @@ if (scenario === 'failures') {
   await mod.__saveHarness({ showPopup: false, refresh: false, manual: true });
   const latestIndex = calls.findIndex((call) => call.url.startsWith('/api/logs/entry?'));
   const updatesPatchIndex = calls.findIndex((call) => call.url === '/api/updates/patch');
-  const updatesReload = calls.find((call) => call.url === '/api/updates' && call.method === 'GET');
+  const updatesReload = calls.find((call) => call.url.startsWith('/api/updates') && call.method === 'GET');
   const logPatchIndex = calls.findIndex((call) => call.url === '/api/logs/patch');
   const updatesPatch = calls[updatesPatchIndex];
   const logPatch = calls[logPatchIndex];
@@ -3700,7 +5922,8 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-07';")
-  .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();");
+  .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
 const harness = `
 export function __initHarness() {
   initVideoModal();
@@ -3736,6 +5959,20 @@ export async function __saveHarness(options = {}) {
   if (typeof window.saveVideoAssignmentPopup !== 'function') throw new Error('save harness not installed');
   return window.saveVideoAssignmentPopup(options);
 }
+export function __effectiveAutoAssignCountHarness(stu, date) {
+  return effectiveAutoAssignCountForStudent(stu, date);
+}
+export function __renderAutoAssignControlHarness(stu, date) {
+  editingVideoDate = date;
+  renderAutoAssignControl(stu);
+  return globalThis.__elements.autoAssignCountToggle.innerHTML;
+}
+export function __pickAutoVideosHarness(videos, blocked, count, student = null) {
+  return pickAutoVideos(videos, blocked, count, student);
+}
+export async function __saveAutoAssignCountHarness(count) {
+  return saveAutoAssignCountForCurrent(count);
+}
 `;
 const moduleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'video-modal-assignment-policy-'));
 const modulePath = path.join(moduleDir, 'videoModal-harness.mjs');
@@ -3755,11 +5992,143 @@ const videos = [
   { mid: 'extra-1', title: '확장 영상', chapter: '7', curriculum: 'ALG', subCurriculum: 'EXTRA' },
 ];
 
+const regularStudent = { autoVideoAssignCount: 2, day1: '금1', day2: '월2' };
+const consecutiveStudent = { autoVideoAssignCount: 2, day1: '금1', day2: '금2' };
+const compactConsecutiveStudent = { autoVideoAssignCount: 3, day1: '금1금2' };
+const nonConsecutiveStudent = { autoVideoAssignCount: 3, day1: '금1', day2: '금3' };
+const maxConsecutiveStudent = { autoVideoAssignCount: 6, day1: '금1', day2: '금2' };
+ok(mod.__effectiveAutoAssignCountHarness(regularStudent, '2026-06-05') === 2, 'regular class keeps configured auto assignment count');
+ok(mod.__effectiveAutoAssignCountHarness(consecutiveStudent, '2026-06-05') === 4, 'two configured videos become four for consecutive classes');
+ok(mod.__effectiveAutoAssignCountHarness(compactConsecutiveStudent, '2026-06-05') === 6, 'three configured videos become six for compact consecutive class labels');
+ok(mod.__effectiveAutoAssignCountHarness(nonConsecutiveStudent, '2026-06-05') === 3, 'non-consecutive slots do not increase auto assignment count');
+ok(mod.__effectiveAutoAssignCountHarness(maxConsecutiveStudent, '2026-06-05') === 12, 'six configured videos become twelve for consecutive classes');
+const autoAssignControlHtml = mod.__renderAutoAssignControlHarness(consecutiveStudent, '2026-06-05');
+ok(!autoAssignControlHtml.includes('type="range"'), 'auto assignment count no longer uses a range control');
+ok((autoAssignControlHtml.match(/class="auto-count-btn/g) || []).length === 6, 'auto assignment count renders six choice buttons');
+ok(autoAssignControlHtml.includes('data-count="1"') && autoAssignControlHtml.includes('data-count="6"'), 'auto assignment buttons support one through six');
+ok(/data-count="2" aria-pressed="true"/.test(autoAssignControlHtml), 'configured count button exposes its selected state');
+ok(autoAssignControlHtml.includes('border-radius:999px'), 'auto assignment choices preserve the original pill button shape');
+ok(autoAssignControlHtml.includes('1개') && autoAssignControlHtml.includes('6개'), 'auto assignment choices preserve the original count labels');
+ok(/data-count="2" aria-pressed="true"[\s\S]*background:#2563eb/.test(autoAssignControlHtml), 'configured count button preserves the original selected fill');
+ok(
+  source.includes('#vidModal .auto-count-btn')
+    && source.includes('min-height:30px !important')
+    && source.includes('border-radius:999px !important'),
+  'popup layout overrides the global admin button normalization with the original computed pill dimensions'
+);
+ok(source.includes('@media (max-width: 900px)'), 'tablet-width unified popups use the readable single-card layout');
+
 let calls = [];
+const boundaryVideos = Array.from({ length: 12 }, (_, index) => ({
+  mid: `boundary-${index + 1}`,
+  title: `경계 영상 ${index + 1}`,
+  chapter: String(index + 1),
+  curriculum: 'ALG',
+  subCurriculum: 'BASE',
+}));
+ok(mod.__pickAutoVideosHarness(boundaryVideos, {}, 12).length === 12, 'effective consecutive count is not reclamped to the six-setting maximum');
+const lowExcludedVideos = [
+  { mid: 'low-red', exNum: { '하': 0 } },
+  { mid: 'low-green', exNum: { '하': 1 } },
+  { mid: 'low-next', exNum: { '하': 1 } },
+];
+ok(
+  JSON.stringify(mod.__pickAutoVideosHarness(lowExcludedVideos, {}, 2, { level: '하' })) === JSON.stringify(['low-green', 'low-next']),
+  'video modal auto re-pick skips low-level progress-excluded videos',
+);
+ok(
+  JSON.stringify(mod.__pickAutoVideosHarness(lowExcludedVideos, {}, 2, { level: '중' })) === JSON.stringify(['low-red', 'low-green']),
+  'video modal auto re-pick keeps progress-excluded videos for other levels',
+);
+globalThis.__checkboxes = boundaryVideos.map(video => ({
+  value: video.mid,
+  checked: false,
+  closest: () => null,
+}));
+mod.__setHarnessState({
+  sid: 'boundary-student',
+  date: '2026-06-05',
+  students: [{ id: 'boundary-student', autoVideoAssignCount: 2, day1: '금1', day2: '금2' }],
+  videos: boundaryVideos,
+  activeVideoList: boundaryVideos,
+  activeBlockedMids: {},
+  allowAutoAssign: true,
+  autoGenerated: true,
+});
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  return response({ ok: true });
+};
+await mod.__saveAutoAssignCountHarness(6);
+const countUpdate = calls.find(call => call.url === '/api/update');
+const boundaryPatch = calls.find(call => call.url === '/api/updates/patch');
+ok(countUpdate?.body?.value === 6, 'button selection persists the configured maximum of six');
+ok(boundaryPatch?.body?.entry?.videos?.length === 12, 'button selection re-picks and saves twelve videos for consecutive classes');
+
+calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push(callRecord(url, init));
   const value = String(url);
-  if (value === '/api/updates') {
+  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: { '2026-06-05': { 'auto-existing': { videos: ['boundary-1', 'boundary-2'], source: 'auto' } } } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-05': [] } });
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: { 'boundary-1': { completed: true } } });
+  if (value === '/api/updates/patch') return response({ ok: true });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: 'auto-existing',
+  date: '2026-06-05',
+  students: [{
+    id: 'auto-existing',
+    curriculum: 'ALG',
+    subCurriculum: 'BASE',
+    autoVideoAssignCount: 2,
+    day1: '금1',
+    day2: '금2',
+  }],
+  videos: boundaryVideos,
+  updates: {},
+});
+await mod.__openHarness(makeRow('auto-existing', '2026-06-05'));
+const existingAutoRefreshPatch = calls.find(call => call.url === '/api/updates/patch');
+ok(!existingAutoRefreshPatch, 'opening an existing automatic assignment is read-only');
+ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-1" checked'), 'existing automatic assignment keeps its first video checked');
+ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-2" checked'), 'existing automatic assignment keeps its second video checked');
+
+calls = [];
+globalThis.__checkboxes = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: { '2026-06-06': {} } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-06': [] } });
+  if (value === '/api/progress') return response({ ok: true, progress: {} });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: '007',
+  date: '2026-06-06',
+  students,
+  videos,
+  updates: {},
+  progress: {},
+});
+await mod.__openHarness(makeRow());
+const emptyAssignmentHtml = globalThis.__elements.chkZone.innerHTML;
+ok(!emptyAssignmentHtml.includes(' checked'), 'opening a student with no snapshot does not invent checked videos');
+ok(!calls.some((call) => call.url === '/api/updates/patch'), 'opening a student with no snapshot never writes an assignment');
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
     return response({ ok: true, updates: { '2026-06-06': { '007': { videos: ['m1'], source: 'manual' } } } });
   }
   if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
@@ -3790,7 +6159,7 @@ globalThis.fetch = async (url, init = {}) => {
     return response({ ok: true, entry: { notes: '상담 유지', extraVideoAssignmentNote: '', assignedExtraVideos: [] } });
   }
   if (value === '/api/updates/patch') return response({ ok: true });
-  if (value === '/api/updates') {
+  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
     return response({ ok: true, updates: { '2026-06-06': { '007': { videos: ['extra-1'], source: 'manual' } } } });
   }
   if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
@@ -3817,13 +6186,55 @@ ok(updatesPatch.body?.entry?.source === 'manual', 'manual save preserves manual 
 ok(updatesPatch.body?.entry?.videos?.[0] === 'extra-1', 'manual save keeps selected video');
 
 calls = [];
+globalThis.__checkboxes = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: {
+      '2026-06-06': {
+        'review-existing': { videos: ['m1', 'm2'], source: 'auto', reviewVideos: ['m1'] },
+      },
+    } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-06': [] } });
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
+  if (value === '/api/updates/patch') return response({ ok: true });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: 'review-existing',
+  date: '2026-06-06',
+  students: [{ id: 'review-existing', curriculum: 'ALG', subCurriculum: 'BASE', day1: '湲?' }],
+  videos,
+  updates: {},
+});
+await mod.__openHarness(makeRow('review-existing', '2026-06-06'));
+const reviewAssignmentHtml = globalThis.__elements.chkZone.innerHTML;
+ok(reviewAssignmentHtml.includes('is-review-registered')
+  && reviewAssignmentHtml.includes('data-review-registered="true"')
+  && reviewAssignmentHtml.includes('회색 체크박스'),
+  'registered review videos render a distinct gray-checkbox legend and marker');
+globalThis.__checkboxes = [
+  { value: 'm1', checked: false },
+  { value: 'm2', checked: true },
+];
+await mod.__saveHarness({ showPopup: false, refresh: false });
+updatesPatch = calls.find((call) => call.url === '/api/updates/patch');
+ok(updatesPatch.body?.entry?.source === 'auto', 'unchecking a gray review video preserves the automatic source');
+ok(JSON.stringify(updatesPatch.body?.entry?.videos) === JSON.stringify(['m2']), 'gray review cancellation preserves unrelated assigned videos');
+ok(Array.isArray(updatesPatch.body?.entry?.reviewVideos) && updatesPatch.body.entry.reviewVideos.length === 0,
+  'gray review cancellation sends an empty review metadata list');
+
+calls = [];
 globalThis.__checkboxes = [{ value: 'm1', checked: true }];
 globalThis.fetch = async (url, init = {}) => {
   calls.push(callRecord(url, init));
   const value = String(url);
   if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
   if (value === '/api/updates/patch') return response({ ok: true });
-  if (value === '/api/updates') {
+  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
     return response({ ok: true, updates: { '2026-06-06': { '007': { videos: [], source: 'manual' } } } });
   }
   if (value === '/api/logs/patch') return response({ ok: true, entry: { saved: true } });
@@ -4867,14 +7278,23 @@ def run_unit_checks() -> bool:
     checks = [
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
+        run_all_students_linked_books_and_log_popup_source_checks,
         run_progress_rule_unit_checks,
+        run_student_previous_video_review_rule_unit_checks,
         run_progress_batch_sids_unit_checks,
         run_progress_read_cache_unit_checks,
         run_video_completion_unit_checks,
+        run_video_assignment_snapshot_unit_checks,
+        run_video_assignment_route_hook_unit_checks,
+        run_self_study_assignment_route_unit_checks,
+        run_student_review_video_route_unit_checks,
+        run_video_assignment_boundary_source_checks,
         run_video_completion_source_checks,
+        run_self_study_video_assignment_source_checks,
         run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
         run_student_answer_link_precedence_unit_checks,
+        run_student_previous_video_review_bootstrap_unit_checks,
         run_student_bootstrap_unit_checks,
         run_submit_test_assignment_completion_unit_checks,
         run_admin_tests_record_detail_contract_checks,
@@ -4894,7 +7314,7 @@ def run_unit_checks() -> bool:
         run_shared_css_scope_source_checks,
         run_refactor_contract_evidence_source_checks,
         run_frontend_evidence_inventory_checks,
-        run_admin_chat_contract_source_checks,
+        run_refactor_notes_contract_source_checks,
         run_admin_calendar_test_completion_source_checks,
         run_admin_wave_b_source_checks,
         run_admin_api_wrapper_usage_source_checks,
@@ -4905,6 +7325,7 @@ def run_unit_checks() -> bool:
         run_admin_test_modal_persistence_bridge_source_checks,
         run_admin_test_modal_assignment_behavior_checks,
         run_admin_video_modal_preflight_source_checks,
+        run_admin_student_popup_scroll_source_checks,
         run_admin_video_modal_preflight_failure_behavior_checks,
         run_admin_video_modal_preflight_happy_behavior_checks,
         run_admin_video_modal_assignment_policy_behavior_checks,
@@ -5081,6 +7502,11 @@ def main() -> int:
         help="Run only video modal latest-entry preflight source checks.",
     )
     parser.add_argument(
+        "--only-admin-student-popup-scroll-source",
+        action="store_true",
+        help="Run only administrator student popup scroll restoration source checks.",
+    )
+    parser.add_argument(
         "--only-video-modal-preflight-failures",
         action="store_true",
         help="Run only video modal latest-entry failure behavior checks.",
@@ -5195,22 +7621,17 @@ def main() -> int:
         action="store_true",
         help="Run only log modal save policy behavior checks.",
     )
-    parser.add_argument(
-        "--only-admin-chat-contract-docs",
-        action="store_true",
-        help="Run only admin chatbot contract documentation source checks.",
-    )
     args = parser.parse_args()
 
     selected_checks = []
     if args.only_admin_weekend_slot_behavior:
         selected_checks.append(run_admin_weekend_slot_behavior_checks)
-    if args.only_admin_chat_contract_docs:
-        selected_checks.append(run_admin_chat_contract_source_checks)
     if args.only_admin_calendar_test_completion_source:
         selected_checks.append(run_admin_calendar_test_completion_source_checks)
     if args.only_video_modal_preflight_source:
         selected_checks.append(run_admin_video_modal_preflight_source_checks)
+    if args.only_admin_student_popup_scroll_source:
+        selected_checks.append(run_admin_student_popup_scroll_source_checks)
     if args.only_video_modal_preflight_failures:
         selected_checks.append(run_admin_video_modal_preflight_failure_behavior_checks)
     if args.only_video_modal_preflight_happy:

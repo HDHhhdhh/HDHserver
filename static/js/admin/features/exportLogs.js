@@ -984,6 +984,7 @@ async function loadRosterStudents(dateStr) {
   await ensureLogsForRosterDate(dateStr);
   const logsDay = state.logs?.[dateStr] || {};
   list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).done));
+  list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).selfStudy));
 
   return list.sort((a, b) => {
     const aSlots = rosterSlots(dateStr, a.id);
@@ -1064,7 +1065,7 @@ async function exportRosterCsv() {
     const [students, videos, updates, progress] = await Promise.all([
       fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch('/api/videos', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => null),
-      fetch('/api/updates', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => null),
+      fetch('/api/updates?readOnly=1', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => null),
       fetch(`/api/progress?date=${encodeURIComponent(dateStr)}`, { cache: 'no-store' })
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .catch(() => null),

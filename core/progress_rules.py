@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -133,6 +134,90 @@ def watch_rank(entry: Any) -> tuple[int, float, int, int]:
         normalized["last"],
         normalized["updatedAt"],
     )
+
+
+def _is_before_date_key(raw_date: Any, cutoff: str) -> bool:
+    date_key = str(raw_date or "").strip()
+    if (
+        len(date_key) != 10
+        or date_key[4] != "-"
+        or date_key[7] != "-"
+        or not date_key[:4].isdigit()
+        or not date_key[5:7].isdigit()
+        or not date_key[8:].isdigit()
+    ):
+        return False
+    return date_key < cutoff
+
+
+def _sid_entry_for_date(day: Any, sid_keys: tuple[str, ...]) -> dict:
+    if not isinstance(day, dict):
+        return {}
+    for sid in sid_keys:
+        entry = day.get(sid)
+        if isinstance(entry, dict):
+            return entry
+    return {}
+
+
+def has_completed_video_before_date(
+    progress: Any,
+    watch: Any,
+    *,
+    sid_keys: Iterable[str],
+    mid: str,
+    before_date: str,
+) -> bool:
+    """Return whether a video was completed before a later playback date.
+
+    Automatic interrupted updates are intentionally non-revoking: once a video
+    is complete, replaying it on a later date must not turn that day's automatic
+    progress orange. Explicit progress clears and manual interrupted overrides
+    still reset the historical completion. Progress is authoritative over watch
+    data when both stores contain the same MID on a date.
+    """
+    cutoff = str(before_date or "").strip()
+    mid_key = str(mid or "").strip()
+    aliases = tuple(dict.fromkeys(str(sid).strip() for sid in sid_keys if str(sid).strip()))
+    if not cutoff or not mid_key or not aliases:
+        return False
+
+    event_dates = set()
+    for source in (progress, watch):
+        if isinstance(source, dict):
+            event_dates.update(
+                str(raw_date)
+                for raw_date in source
+                if _is_before_date_key(raw_date, cutoff)
+            )
+
+    completed = False
+    for date_key in sorted(event_dates):
+        progress_entry = _sid_entry_for_date(
+            progress.get(date_key) if isinstance(progress, dict) else None,
+            aliases,
+        )
+        progress_has_mid = mid_key in progress_entry
+        if progress_has_mid:
+            status = str(progress_entry.get(mid_key) or "").strip()
+            manual_meta = progress_entry.get(PROGRESS_MANUAL_META_KEY)
+            manual_override = isinstance(manual_meta, dict) and bool(manual_meta.get(mid_key))
+
+            if status == "done":
+                completed = True
+            elif status == "none" or (manual_override and status in {"interrupted", "skip"}):
+                completed = False
+            # Automatic interrupted/skip entries do not revoke a prior completion.
+            continue
+
+        watch_entry = _sid_entry_for_date(
+            watch.get(date_key) if isinstance(watch, dict) else None,
+            aliases,
+        ).get(mid_key)
+        if watch_auto_status(watch_entry) == "done":
+            completed = True
+
+    return completed
 
 
 def merge_progress_day_sid(

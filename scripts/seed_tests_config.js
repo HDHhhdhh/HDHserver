@@ -2,6 +2,11 @@
 const path = require('path');
 
 const cfgPath = path.resolve(__dirname, '..', 'tests-config.json');
+const cliArgs = new Set(process.argv.slice(2));
+if (!cliArgs.has('--backup-confirmed')) {
+  console.error('refusing live tests-config.json write: pass --backup-confirmed after creating a runtime backup');
+  process.exit(1);
+}
 
 const TARGET_SPECS = {
   '공수1': {
@@ -249,11 +254,24 @@ function buildTests(curriculum, spec) {
 }
 
 cfg.categories.UNIT.label = String(cfg.categories.UNIT.label || '단원평가');
-cfg.categories.UNIT.tests = [
+const nextUnitTests = [
   ...keepUnitTests,
   ...buildTests('공수1', TARGET_SPECS['공수1']),
   ...buildTests('대수', TARGET_SPECS['대수']),
 ];
+const testIds = (tests) => new Set(
+  tests.map((test) => String(test.id || '').trim()).filter(Boolean),
+);
+const nextUnitTestIds = testIds(nextUnitTests);
+const missingIds = [...testIds(currentUnitTests)].filter((id) => !nextUnitTestIds.has(id));
+if (missingIds.length && !cliArgs.has('--allow-unit-removal')) {
+  console.error(
+    `refusing UNIT catalog replacement: ${missingIds.length} existing test IDs are missing `
+      + `from the generated catalog (sample: ${missingIds.slice(0, 10).join(', ')})`,
+  );
+  process.exit(1);
+}
+cfg.categories.UNIT.tests = nextUnitTests;
 
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
 console.log(JSON.stringify({

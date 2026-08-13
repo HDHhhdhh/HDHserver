@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from flask import Blueprint, abort, jsonify, request
 
+from core.makeup_sheet_sync import sync_makeups_from_sheet
 from core.paths import BASE
 from core.storage import load, save_atomic, file_lock
 
@@ -198,3 +199,22 @@ def api_makeup_carryover_post():
     with file_lock(MAKEUP_CARRYOVER_PATH):
         save_atomic(MAKEUP_CARRYOVER_PATH, normalized)
     return jsonify(normalized)
+
+
+@bp_api_makeup_carryover.post("/api/makeup-sheet-sync")
+def api_makeup_sheet_sync_post():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, description="Invalid JSON body")
+    sheet_url = str(payload.get("sheetUrl") or payload.get("sheet_url") or "").strip()
+    date_key = _norm_date(payload.get("date") or dt.date.today().isoformat())
+    if not sheet_url:
+        abort(400, description="Missing sheetUrl")
+    with file_lock(MAKEUP_CARRYOVER_PATH):
+        current = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
+        try:
+            result = sync_makeups_from_sheet(sheet_url, date_key, current)
+        except RuntimeError as exc:
+            abort(400, description=str(exc))
+        save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
+    return jsonify(result)

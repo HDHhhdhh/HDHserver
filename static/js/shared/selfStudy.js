@@ -40,6 +40,18 @@ export function isSelfStudyDayField(student, field) {
   return truthyFlag(selfStudyDaysForStudent(student)[key]);
 }
 
+export function regularAttendanceDaysForStudent(student, maxDays = 4) {
+  const limit = Number.isFinite(Number(maxDays))
+    ? Math.max(0, Math.floor(Number(maxDays)))
+    : 4;
+
+  return DAY_FIELDS
+    .filter((field) => !isSelfStudyDayField(student, field))
+    .map((field) => String(student?.[field] || '').trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 export function nextSelfStudyDays(student, field, enabled) {
   const key = String(field || '').trim();
   const next = { ...selfStudyDaysForStudent(student) };

@@ -2,6 +2,7 @@
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 export function initHoverTooltip() {
   let tipEl = null;
@@ -239,7 +240,7 @@ export function initHoverTooltip() {
       return phaseKey && (phaseKey.includes(curriculumKey) || curriculumKey.includes(phaseKey));
     });
 
-    return loose.length ? loose : scheduleEntries;
+    return loose.length ? loose : [];
   }
 
   function buildTextbookPublisherHtml(scheduleEntries, fallbackEntry) {
@@ -265,7 +266,7 @@ export function initHoverTooltip() {
     if (!items.length) return '';
 
     return `
-      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0 8px; font-size:12.5px">
+      <span class="student-tooltip-publisher" style="display:inline-flex; gap:6px; flex-wrap:wrap; align-items:center; margin:0; max-width:100%; font-size:12.5px; vertical-align:middle">
         ${items.map(({ label, textbook }) => `
           <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 8px;
                        border:1px solid rgba(255,255,255,.14); border-radius:999px;
@@ -275,7 +276,7 @@ export function initHoverTooltip() {
             <span>${escHtml(textbook)}</span>
           </span>
         `).join('')}
-      </div>
+      </span>
     `;
   }
 
@@ -540,20 +541,23 @@ export function initHoverTooltip() {
   function placeForLogModal() {
     if (!tipEl) return;
 
+    tipEl.style.transform = 'none';
     tipEl.style.maxWidth = 'min(1200px, 94vw)';
-
-    // 저장된 위치 있으면 우선 사용
-    const stored = loadLogTipPos();
-    if (stored) {
-      tipEl.style.left = `${stored.left}px`;
-      tipEl.style.top = `${stored.top}px`;
-      return;
-    }
 
     const pad = 16;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const rect = tipEl.getBoundingClientRect();
+    const maxLeft = Math.max(pad, vw - rect.width - pad);
+    const maxTop = Math.max(pad, vh - rect.height - pad);
+
+    // 저장된 위치 있으면 우선 사용
+    const stored = loadLogTipPos();
+    if (stored) {
+      tipEl.style.left = `${Math.min(Math.max(pad, stored.left), maxLeft)}px`;
+      tipEl.style.top = `${Math.min(Math.max(pad, stored.top), maxTop)}px`;
+      return;
+    }
 
     const card =
       document.querySelector('#logModal .log-card') ||
@@ -581,8 +585,8 @@ export function initHoverTooltip() {
       }
     }
 
-    tipEl.style.left = `${left}px`;
-    tipEl.style.top = `${top}px`;
+    tipEl.style.left = `${Math.min(Math.max(pad, left), maxLeft)}px`;
+    tipEl.style.top = `${Math.min(Math.max(pad, top), maxTop)}px`;
   }
 
   function resetStudentWorkTooltipPlacement() {
@@ -608,13 +612,27 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // HTML 구성
   // ───────────────────────────────────────────
+  function nextRegularAttendanceDate(student) {
+    const days = regularAttendanceDaysForStudent(student);
+    if (!days.length) return '';
+    const weekdayChars = '\uC77C\uC6D4\uD654\uC218\uBAA9\uAE08\uD1A0';
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    for (let offset = 1; offset <= 7; offset += 1) {
+      const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+      const weekday = weekdayChars[candidate.getDay()];
+      if (!days.some((value) => String(value || '').includes(weekday))) continue;
+      return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}`;
+    }
+    return '';
+  }
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = false } = opts;
+    const { includeVideo = true, includeTests = false, includeAssistantNotes = false } = opts;
 
     const name = (stu.name || '').trim();
     const level = stu.level || '';
-    const days = [stu.day1, stu.day2, stu.day3].filter(Boolean).join('·');
-    const subBooks = [stu.subBook1, stu.subBook2].filter(Boolean).join(', ');
+    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
       stu.school ||
@@ -623,7 +641,10 @@ export function initHoverTooltip() {
 
     const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
     const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
-    const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
+    const fallbackScheduleEntry = !allScheduleEntries.length
+      ? resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade)
+      : {};
+    const sc = scheduleEntries[0] || fallbackScheduleEntry;
     const textbookPublisherBlock = buildTextbookPublisherHtml(scheduleEntries, sc);
 
     const badgeColor =
@@ -633,77 +654,116 @@ export function initHoverTooltip() {
             '#ef4444';
 
     const levelBadge = level
-      ? `<span style="display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;
-                      background:${badgeColor}; color:#fff; font-size:12px; font-weight:700; vertical-align:middle;">
-           ${level}
+      ? `<span class="student-tooltip-level-badge" style="padding:2px 8px;border-radius:999px;
+                      background:${badgeColor}; color:#fff; font-size:12px; font-weight:700;">
+           ${escHtml(level)}
          </span>`
       : '';
 
     const mainBlock = `
-      <div style="font-weight:900;font-size:17px; margin-bottom:6px">
-        ${name}${levelBadge}
+      <div class="student-tooltip-identity-row">
+        <span class="student-tooltip-name-group">
+          <span class="student-tooltip-name">${escHtml(name)}</span>${levelBadge}
+        </span>
+        ${textbookPublisherBlock}
       </div>
       ${schoolName ? `<div style="font-size:14px; font-weight:600; margin-bottom:6px">${schoolName}</div>` : ''}
       <div style="font-size:13px; margin-bottom:4px">
         ${days ? `<span style="margin-right:8px">📅 ${days}</span>` : ''}
         ${subBooks ? `<span style="margin-right:8px">📘 ${subBooks}</span>` : ''}
       </div>
-      ${textbookPublisherBlock}
     `;
 
-    const examDetailMinHeight = !includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px');
-    const examRows = (scheduleEntries.length ? scheduleEntries : [sc]).map((entry, idx) => {
+    const examDetailMinHeight = includeAssistantNotes
+      ? '82px'
+      : (!includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px'));
+    const examEntries = scheduleEntries.length
+      ? scheduleEntries
+      : (sc && Object.keys(sc).length ? [sc] : []);
+    const examRows = examEntries.map((entry, idx) => {
       const exam = pickExam(entry || {}, 'auto');
       const remain = calcRemainingSessions(entry || {}, stu);
       const remainInline = (remain != null)
-        ? `<div style="font-size:16px;font-weight:900;margin-left:10px;white-space:nowrap;">
+        ? `<div style="font-size:14px;font-weight:900;margin-left:10px;white-space:nowrap;">
              시험 전 출석 : ${remain}회
            </div>`
         : '';
 
       const phase = String(entry?.phase || '').trim();
       const examSubject = phase || '수학';
-      const rowGrade = String(entry?.grade || stu.grade || '').trim();
-      const rowLabel = phase
-        ? (rowGrade ? `${rowGrade} · ${phase}` : phase)
-        : (scheduleEntries.length > 1 ? (rowGrade || `트랙 ${idx + 1}`) : '');
 
       return `
         <div style="margin-top:${idx === 0 ? 6 : 10}px; display:block; font-size:12px; max-width:100%">
-          ${rowLabel ? `<div style="margin-bottom:6px; font-size:11.5px; font-weight:800; opacity:.86">${rowLabel}</div>` : ''}
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:0; max-width:100%">
             ${pill(exam.label, exam.date || '-')}
             ${pill(`${examSubject} 시험일`, exam.math || '-', { big: true })}
             ${remainInline}
           </div>
-          <div style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:12px; min-height:${examDetailMinHeight}">
-            <div style="font-weight:800; margin-bottom:4px">${exam.label} 범위/특이사항</div>
-            ${em('범위', exam.range)}
-            ${em('비고', exam.note)}
-          </div>
+          <details class="student-exam-details" style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:10px 12px">
+            <summary style="cursor:pointer; font-weight:800">${exam.label} 범위/특이사항</summary>
+            <div class="student-exam-details-body" style="padding-top:8px; min-height:${examDetailMinHeight}">
+              ${em('범위', exam.range)}
+              ${em('비고', exam.note)}
+            </div>
+          </details>
         </div>
       `;
     }).join('');
 
-    const examTitle = scheduleEntries.length > 1 ? '학사일정 (과목/트랙별)' : '학사일정';
     const examBlock = schoolName
-      ? `<div style="margin-top:10px; font-size:12.5px; font-weight:800; opacity:.9">${examTitle}</div>${examRows}`
+      ? examRows
       : '<div style="opacity:.8;margin-top:6px;font-size:12px">학교 정보 없음</div>';
+
+    const nextReminderDate = nextRegularAttendanceDate(stu);
+
+    const assistantNotesBlock = includeAssistantNotes ? `
+      <section id="assistantStudentNotes" class="assistant-student-notes" data-student-id="${escHtml(stu.id)}" data-next-reminder-date="${escHtml(nextReminderDate)}" data-note-mode="general">
+        <div class="assistant-note-heading">
+          <h3>조교 메모</h3>
+          <span class="assistant-note-count" data-note-count>댓글 0개</span>
+        </div>
+        <div class="assistant-note-thread" data-note-list role="log" aria-label="조교 댓글 목록" aria-live="polite">
+          <p class="assistant-note-empty">불러오는 중...</p>
+        </div>
+        <div class="assistant-note-compose">
+          <div class="assistant-note-mode-tabs" role="tablist" aria-label="메모 종류">
+            <button type="button" class="assistant-note-mode-button is-selected" data-note-mode="general" role="tab" aria-selected="true">일반 메모</button>
+            <button type="button" class="assistant-note-mode-button" data-note-mode="reminder" role="tab" aria-selected="false">확인일 메모</button>
+          </div>
+          <div class="assistant-note-author-row" role="group" aria-label="댓글 작성자 선택">
+            <div class="assistant-note-author-buttons">
+              <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
+              <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
+              <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
+              <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
+            </div>
+          </div>
+          <div class="assistant-note-compose-reminder" data-note-reminder-fields hidden>
+            <label class="assistant-note-compose-reminder-label">
+              <span>&#54869;&#51064;&#51068;</span>
+              <input class="assistant-note-remind-input" data-note-remind-input type="date" aria-label="&#54869;&#51064;&#51068;">
+            </label>
+          </div>
+          <textarea class="assistant-note-input" data-note-input rows="3" maxlength="5000" placeholder="작성자를 선택한 뒤 새 댓글을 입력하세요."></textarea>
+          <div class="assistant-note-compose-actions">
+            <div class="assistant-note-save-info">
+              <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
+            </div>
+            <button class="assistant-note-save" data-note-save type="button">댓글 등록</button>
+          </div>
+        </div>
+      </section>
+    ` : '';
 
     const progBlock = renderProgressTables(stu, { includeVideo, includeTests });
 
-    return `${mainBlock}${examBlock}${progBlock}`;
+    return `${mainBlock}${examBlock}${assistantNotesBlock}${progBlock}`;
   }
 
   function buildTodayNameTipHtml(stu) {
     const name = String(stu?.name || '').trim();
     const level = String(stu?.level || '').trim();
-    const days = Object.keys(stu || {})
-      .filter(k => /^day\d+$/.test(k) && stu[k])
-      .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
-      .map(k => String(stu[k]).trim())
-      .filter(Boolean)
-      .join(' · ');
+    const days = regularAttendanceDaysForStudent(stu).join(' · ');
 
     const schoolName =
       stu.school ||
@@ -712,8 +772,14 @@ export function initHoverTooltip() {
 
     const allScheduleEntries = resolveSchoolCalendarEntries(state.schoolCal, schoolName, stu.grade);
     const scheduleEntries = filterScheduleEntriesForStudent(allScheduleEntries, stu);
-    const sc = scheduleEntries[0] || resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade);
-    const remain = (scheduleEntries.length ? scheduleEntries : [sc])
+    const fallbackScheduleEntry = !allScheduleEntries.length
+      ? resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade)
+      : {};
+    const sc = scheduleEntries[0] || fallbackScheduleEntry;
+    const remainEntries = scheduleEntries.length
+      ? scheduleEntries
+      : (sc && Object.keys(sc).length ? [sc] : []);
+    const remain = remainEntries
       .map(entry => calcRemainingSessions(entry || {}, stu))
       .find(value => value != null);
     const remainText = remain == null ? '-' : `${remain}회`;
@@ -760,8 +826,14 @@ export function initHoverTooltip() {
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = variant === 'today'
       ? buildTodayNameTipHtml(stu)
-      : buildTipHtml(stu, { includeVideo, includeTests });
+      : buildTipHtml(stu, { includeVideo, includeTests, includeAssistantNotes: useStudentWorkLayout });
     el.style.display = 'block';
+    const assistantNotesRoot = el.querySelector('#assistantStudentNotes');
+    if (assistantNotesRoot) {
+      document.dispatchEvent(new CustomEvent('admin:assistant-notes-mount', {
+        detail: { root: assistantNotesRoot, studentId: String(stu.id || '') },
+      }));
+    }
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
     if (tipMode === 'fixed') {
@@ -832,7 +904,7 @@ export function initHoverTooltip() {
   // 기존 hover 모드
   // ───────────────────────────────────────────
   function getHoverTooltipHost(el) {
-    return el?.closest?.('#todayWrap, #doneWrap') || null;
+    return el?.closest?.('#todayWrap, #doneWrap, #allWrap') || null;
   }
 
   function onOver(ev) {
@@ -863,7 +935,7 @@ export function initHoverTooltip() {
   }
 
   function bindTooltipHosts() {
-    ['todayWrap', 'doneWrap'].forEach((id) => {
+    ['todayWrap', 'doneWrap', 'allWrap'].forEach((id) => {
       const host = document.getElementById(id);
       if (!host || host._studentTooltipBound) return;
       host._studentTooltipBound = true;

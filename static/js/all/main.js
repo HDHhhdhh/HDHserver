@@ -4,7 +4,6 @@ import { loadAll, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
 import { renderTable } from './features/table.js';
 import './features/progressModal.js';
-import { initHoverTooltip } from './features/hoverTooltip.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
 import { hookDeleteButtons } from './features/deleteButtons.js';
@@ -73,11 +72,19 @@ function renderAll() {
   decorateStudentTestRecordButtons(document).catch(console.warn);
 }
 
+document.addEventListener('all:student-deleted', (event) => {
+  const sid = String(event.detail?.sid || '').trim();
+  if (!sid) return;
+  state.students = state.students.filter(student => String(student?.id || '') !== sid);
+  window.students = state.students;
+  updateAllCount();
+  renderYoilStats();
+});
+
 (async function init() {
   try {
     await loadAll();
     initStudentTestRecordDetails(document);
-    initHoverTooltip();
     renderAll();
 
     document.addEventListener('admin:refresh', () => {

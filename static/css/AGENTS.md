@@ -22,6 +22,11 @@ Shared stylesheets live here. `admin.css`, `student.css`, and `style.css` are br
 ## Anti-Patterns
 - Do not add unscoped global selectors in `admin.css` or `style.css` unless every affected page is intentional.
 - Do not remove body-page classes or wrapper selectors from existing rules; they are blast-radius controls.
-- Do not solve one modal overlap by raising z-index blindly above the admin chat and modal backdrop layers.
+- Do not solve one modal overlap by raising z-index blindly above the modal backdrop layers.
 - Do not replace Korean-capable font stacks with Latin-only system stacks.
 - Do not hand-edit generated screenshots or QA artifacts into this directory.
+
+## Verification
+- Check every shell sharing the edited stylesheet; `admin.css` also affects the tests page.
+- Verify light/dark themes, mobile breakpoints, modal stacking, and Korean fallback fonts where relevant.
+- Use DOM/computed-style evidence before screenshots when diagnosing cascade or z-index changes.

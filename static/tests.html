@@ -784,13 +784,38 @@
     body.admin.tests-page .rule-check {
       width: 24px;
       height: 24px;
+      margin: 0;
       cursor: pointer;
       accent-color: var(--accent);
+    }
+
+    body.admin.tests-page .rule-check-target {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      cursor: pointer;
     }
 
     body.admin.tests-page .rule-check:focus-visible {
       outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
       outline-offset: 3px;
+    }
+
+    @media (max-width: 1024px) {
+      body.admin.tests-page :where(
+        button,
+        a,
+        input:not([type="checkbox"]):not([type="radio"]),
+        select,
+        textarea
+      ) {
+        min-height: 44px !important;
+      }
     }
 
     body.admin.tests-page .rule-save-toast {

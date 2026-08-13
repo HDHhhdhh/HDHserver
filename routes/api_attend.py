@@ -291,9 +291,9 @@ def _progress_test_items(tests: Any) -> list[dict]:
 def _collect_absence_test_carryovers(pairs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
     if not pairs:
         return {}
-    from routes.api_basic import _sid_lookup, get_log_repository
+    from routes.api_basic import _load_progress_strict, _sid_lookup, get_log_repository
 
-    progress = load(PRG_PATH) or {}
+    progress = _load_progress_strict(PRG_PATH)
     if not isinstance(progress, dict):
         progress = {}
     repo = get_log_repository()
@@ -405,13 +405,12 @@ def _clear_absence_update_assignments(pairs: set[tuple[str, str]]) -> None:
 def _clear_absence_progress_tests(pairs: set[tuple[str, str]]) -> None:
     if not pairs:
         return
-    from routes.api_basic import _sid_lookup, _write_sid_mapping
+    from routes.api_basic import _load_progress_strict, _save_progress_strict, _sid_lookup, _write_sid_mapping
 
     changed = False
     with file_lock(PRG_PATH, timeout_sec=8.0):
-        progress = load(PRG_PATH) or {}
-        if not isinstance(progress, dict):
-            return
+        progress = dict(_load_progress_strict(PRG_PATH))
+        copied_dates: set[str] = set()
 
         for date_key, sid in sorted(pairs):
             day = progress.get(date_key)
@@ -430,6 +429,10 @@ def _clear_absence_progress_tests(pairs: set[tuple[str, str]]) -> None:
             }
             if next_tests == tests:
                 continue
+            if date_key not in copied_dates:
+                day = dict(day)
+                progress[date_key] = day
+                copied_dates.add(date_key)
             next_entry = dict(entry)
             if next_tests:
                 next_entry["tests"] = next_tests
@@ -441,7 +444,7 @@ def _clear_absence_progress_tests(pairs: set[tuple[str, str]]) -> None:
             changed = True
 
         if changed:
-            save_atomic(PRG_PATH, progress)
+            _save_progress_strict(progress, PRG_PATH)
 
 
 def _clear_absence_log_assignments(

@@ -499,4 +499,33 @@ assertEqual(
   );
 }
 
+(async () => {
+  const date = '2026-06-03';
+  const context = makeContext({
+    students: [
+      { id: 'self-study', name: '자습 학생' },
+      { id: 'class', name: '수업 학생' },
+    ],
+    logs: {
+      [date]: {
+        'self-study': { selfStudy: true },
+        class: { selfStudy: false },
+      },
+    },
+    progress: {},
+    videos: [],
+    updates: {},
+  });
+  context.fetch = async () => ({ json: async () => ({}) });
+  const rows = await context.loadRosterStudents(date);
+  assertEqual(
+    'self-study students are excluded from roster exports',
+    rows.map(student => student.id),
+    ['class'],
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+
 console.log('Roster export regression checks passed.');

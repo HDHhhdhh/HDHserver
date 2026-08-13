@@ -11,15 +11,18 @@ Browser behavior is split between admin modules, all-page modules, shared helper
 | Admin entry | `admin/main.js` | Admin bootstrap and feature initialization. |
 | Student page | `student.js` | Monolithic student bootstrap, watch sync, announcements, tests, answer links. |
 | Test management page | `tests.js` | Admin test catalog editing and CSV import UI. |
+| Calendar/files pages | `school-cal.js`, `file-manage.js` | Standalone full-map editors with their own compatibility contracts. |
 | All-students page | `all/main.js` | All-page bootstrap. |
-| Answer-link maps | `test_answer_link_map.json`, `test_answer_link_map.js` | Generated or derived test explanation links. |
+| Demo sandbox | `admin/demo/` | Pre-entrypoint synthetic API, session store, navigation guard, and help tutorial. |
+| Answer-link map | `test_answer_link_map.json` | Tracked canonical generated explanation map. The ignored `.js` sibling is legacy/unreferenced. |
 
 ## Conventions
 - When adding or touching JSON request wrappers, prefer `shared/api.js` or page-specific wrappers over fresh ad hoc fetch helpers.
 - Preserve endpoint URLs, payload keys, credentials/cache options, and existing response shapes.
 - `todayLocalKey()` means real local date. Admin selected-date behavior belongs in `static/js/admin/core/adminDate.js`.
-- Keep generated `test_answer_link_map*` files in sync with test catalog/import work.
-- Student bootstrap `assignedTests` stays a top-level array; answer links can come from assignment item, test config, Drive file ids, or generated link map.
+- Student bootstrap `assignedTests` stays a top-level array. Preserve every server access flag when projecting bootstrap data into `window.__ASSIGNED_TESTS__` and `window.__STUDENT_ACCESS__`.
+- Answer precedence is assignment/config direct URL, `sourceFiles.solutionFileId`, then canonical JSON map. Academy-network gating strips/blocks every layer.
+- `tests.js` POSTs the whole test config. Never save a network-stripped GET representation or drop source metadata, unknown fields, or answer rounds.
 - Do not introduce mojibake or placeholder `????` text.
 
 ## Anti-Patterns
@@ -27,3 +30,4 @@ Browser behavior is split between admin modules, all-page modules, shared helper
 - Do not hand-edit generated link maps when a script should regenerate them.
 - Do not make broad changes to `student.js` without testing the student page surface.
 - Do not replace shared helper behavior with one-off fetch wrappers.
+- Do not treat bootstrap fallback as equivalent: its legacy multi-GET path supplies no assigned tests.

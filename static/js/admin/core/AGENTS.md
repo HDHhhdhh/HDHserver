@@ -16,9 +16,11 @@ Admin core modules own the selected date, bootstrap state, shared API wrapper, t
 ## Conventions
 - Admin operating-date behavior uses `getAdminDate()`; real local date belongs only where explicitly intended.
 - `setAdminDate()` should keep the `YYYY-MM-DD` guard and broadcast `admin:date-change` unless `silent` is requested.
-- Bootstrap writes date-scoped maps into `state` without normalizing unrelated runtime records.
+- Bootstrap loads a real-local-today baseline before selected-date initialization. Treat it as initial compatibility state; each selected-date feature hydrates its active date.
+- Date-scoped refreshes merge into `state` without normalizing or replacing unrelated runtime records.
 - Keep compatibility globals in sync while legacy feature modules still read `window.logs`, `window.progressData`, `window.students`, or similar names.
 - New admin JSON helpers should pass through `api.js` so shared error and fallback behavior stays consistent.
+- `utils.js` installs global rejection/error handlers on import and still exposes legacy direct-fetch helpers. Do not assume `api.js` is the only request or side-effect path.
 - Date-bar style changes must stay scoped to `#adminDateMount`.
 
 ## Anti-Patterns

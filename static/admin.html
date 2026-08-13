@@ -6,7 +6,7 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260527chat">
+  <link rel="stylesheet" href="/css/admin.css?v=20260808-assistant-note-colors">
 
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
@@ -67,7 +67,7 @@
         <a href="/video-manage" class="btn secondary link-video" target="_blank" rel="noopener noreferrer">영상관리</a>
         <a href="/tests" class="btn secondary link-tests" target="_blank" rel="noopener noreferrer">테스트관리</a>
         <a href="/file-manage" class="btn secondary link-files" target="_blank" rel="noopener noreferrer">파일관리</a>
-        <button id="adminChatOpen" class="btn secondary link-chat admin-chat-open" type="button" aria-controls="adminChatPanel" aria-expanded="false">챗봇</button>
+        <button id="attendanceLedgerSettings" class="btn secondary link-ledger link-ledger-settings" type="button" title="학원출석부 시트 링크 수정">시트 설정</button>
       </div>
 
       <section class="hero-panel">
@@ -143,6 +143,21 @@
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
           <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
         </div>
+
+        <article id="adminOperationNotes" class="card admin-operation-notes" aria-labelledby="adminOperationNotesTitle">
+          <header class="admin-operation-notes-head">
+            <h3 id="adminOperationNotesTitle">관리자 메모</h3>
+            <p>오늘 신경 쓸 목표를 간단히 남겨두세요.</p>
+          </header>
+          <ul id="adminOperationNoteList" class="admin-operation-note-list" aria-live="polite">
+            <li class="admin-operation-note-empty">메모를 불러오는 중입니다.</li>
+          </ul>
+          <p id="adminOperationNoteStatus" class="admin-operation-note-status" role="status" aria-live="polite"></p>
+          <form id="adminOperationNoteForm" class="admin-operation-note-form">
+            <input id="adminOperationNoteInput" type="text" maxlength="300" autocomplete="off" aria-label="관리자 메모 내용" placeholder="신경 쓸 목표를 입력하세요">
+            <button id="adminOperationNoteSubmit" class="btn" type="submit" disabled>등록</button>
+          </form>
+        </article>
 
         <article id="announcementSection" class="card announcement-section" aria-labelledby="announcement-title">
           <div class="card-head between announcement-head">
@@ -401,23 +416,6 @@
     </div>
   </div>
 
-  <aside id="adminChatPanel" class="admin-chat-panel" aria-labelledby="adminChatTitle" hidden>
-    <header class="admin-chat-head">
-      <div>
-        <span class="admin-chat-kicker">LOCAL HYBRID</span>
-        <h3 id="adminChatTitle">운영 AI 어시스턴트</h3>
-        <p class="admin-chat-subtitle">선택 날짜와 최근 대화를 참고해 답합니다.</p>
-      </div>
-      <button id="adminChatClose" class="admin-chat-icon-btn" type="button" aria-label="챗봇 닫기">×</button>
-    </header>
-    <div id="adminChatMessages" class="admin-chat-messages" aria-live="polite"></div>
-    <div id="adminChatSuggestions" class="admin-chat-suggestions" aria-label="챗봇 추천 질문"></div>
-    <form id="adminChatForm" class="admin-chat-form" autocomplete="off">
-      <textarea id="adminChatInput" rows="2" maxlength="600" placeholder="학생, 날짜, 기능, 운영 질문을 자연스럽게 입력"></textarea>
-      <button class="btn admin-chat-send" type="submit">보내기</button>
-    </form>
-  </aside>
-
   <div id="attendModal" class="modal-backdrop">
     <div class="modal-panel narrow">
       <button id="attendClose" class="modal-close" type="button">×</button>
@@ -469,6 +467,6 @@
   </div>
 
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
-  <script type="module" src="/js/admin/main.js?v=20260527chat"></script>
+  <script type="module" src="/js/admin/main.js?v=20260810-legacy-merge1"></script>
 </body>
 </html>

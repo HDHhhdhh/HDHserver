@@ -12,6 +12,7 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_progress_day_sid,
     merge_watch_entry,
+    has_completed_video_before_date,
     normalize_watch_entry,
     watch_auto_status,
     watch_rank,
@@ -108,15 +109,23 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
-    from routes.api_basic import _load_progress_strict, _progress_lock
+    from routes.api_basic import _load_progress_strict, _progress_lock, _save_progress_strict
 
     with _progress_lock():
-        current = _load_progress_strict()
+        current = dict(_load_progress_strict(PRG_PATH))
 
-        day = current.setdefault(date, {})
-        if not isinstance(day, dict):
-            day = {}
-            current[date] = day
+        if status == "interrupted" and has_completed_video_before_date(
+            current,
+            load(WATCH_PATH),
+            sid_keys=_sid_keys(sid),
+            mid=mid,
+            before_date=date,
+        ):
+            status = "done"
+
+        current_day = current.get(date)
+        day = dict(current_day) if isinstance(current_day, dict) else {}
+        current[date] = day
 
         sid_key = sid
         cur_sid = None
@@ -139,7 +148,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         if not day:
             current.pop(date, None)
 
-        save_atomic(PRG_PATH, current)
+        _save_progress_strict(current, PRG_PATH)
 
     return merged
 
@@ -221,6 +230,14 @@ def api_watch():
     merged = _save_watch_entry(date, sid, mid, incoming)
     status = watch_auto_status(merged)
     progress = _save_progress_status(date, sid, mid, status) if status else {}
+    if status:
+        try:
+            from routes.api_basic import record_review_video_watch
+
+            record_review_video_watch(date, sid, mid)
+        except Exception as exc:
+            # A counseling-note side effect must never make a valid watch save fail.
+            print("[watch] review counseling sync failed:", exc, flush=True)
 
     return jsonify({"ok": True, "watch": merged, "progress": progress})
 
@@ -256,5 +273,12 @@ def api_watch_status():
             pass
 
     merged = _save_progress_status(date, sid, mid, status)
+    if status in {"interrupted", "done"}:
+        try:
+            from routes.api_basic import record_review_video_watch
+
+            record_review_video_watch(date, sid, mid)
+        except Exception as exc:
+            print("[watch-status] review counseling sync failed:", exc, flush=True)
 
     return jsonify({"ok": True, "progress": merged})
