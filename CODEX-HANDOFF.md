@@ -6,7 +6,7 @@
 - 제외: 학생 앱/PWA 구현, 참조 없는 `material_state`, 기존 복습·트레이닝팩·시청 동기화를 후퇴시키는 서버 export 변경.
 - 런타임 JSON/SQLite/업로드 파일: 포함하지 않음.
 - SQL migration과 `migrate_today_order_store.py --apply`: 실행하지 않음.
-- `ACADEMY_ADMIN_USERNAME` 및 `ACADEMY_ADMIN_PASSWORD_HASH` Machine 환경 변수가 없으면 관리자 페이지는 401로 닫힙니다.
+- 관리자 페이지군은 학원 외부 네트워크에서도 Basic 인증 후 접속할 수 있습니다. `ACADEMY_ADMIN_USERNAME` 및 `ACADEMY_ADMIN_PASSWORD_HASH` Machine 환경 변수가 없으면 401로 닫히며, 학생 영상·답지의 학원 Wi-Fi 제한은 유지됩니다.
 
 배포 전 `python scripts/backup_runtime_data.py`로 별도 백업하고, 프록시/직접 접속 구조와 위 환경 변수를 확인해야 합니다. 삭제 대상 학생 앱/PWA 경로는 `CODEX-REMOVALS.txt`에 기록되어 있으며, 디렉터리 단위 재귀 삭제용 목록이 아닙니다.
 

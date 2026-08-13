@@ -30,6 +30,7 @@ Flask blueprints live here. Routes are the boundary between static frontends, ru
 - Manual test submission reconciles an active progress assignment to done; OCR review does not unless that transition is explicitly authorized.
 - Existing private cross-blueprint seams are deliberate cycle-avoidance: tests/watch/attendance import from `api_basic`, and Kollus imports watch writers. Verify every consumer before renaming or moving those helpers.
 - `/api/tests-config` POST replaces the whole config. Never POST a network-stripped GET representation or drop `sourceFiles`, source ids, unknown fields, or answer rounds.
+- Admin-family pages in `pages.py:_ADMIN_PAGE_PATHS` are network-independent but fail closed behind environment-backed HTTP Basic authentication. Keep student video and answer-link academy-network restrictions separate.
 
 ## Runtime Data
 - Runtime files are real local data: `students.json`, `videos.json`, `updates.json`, `progress.json`, `logs.json`, `watch.json`, `tests.json`, `tests-config.json`, `app.sqlite`, and related sidecars.
