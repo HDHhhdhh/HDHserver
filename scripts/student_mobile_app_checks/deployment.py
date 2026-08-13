@@ -130,6 +130,8 @@ def _backup_contract(state: list[int], temp_root: Path) -> None:
     _write(runtime / "instance" / "student-test-push-approval.json", "approval")
     _write(runtime / "instance" / "student-test-push-approval.json.tmp", "approval-temp")
     _write(runtime / "instance" / "student-test-push-approval.json.consumed.opaque", "approval-consumed")
+    _write(runtime / "instance" / "student-app-dev-admin-auth.json", "admin-credential")
+    _write(runtime / "instance" / "student-app-dev-admin-auth.json.tmp", "admin-credential-temp")
     _write(runtime / "instance" / "other-runtime.txt", "keep")
     selected = {path.relative_to(runtime).as_posix() for path in backup_runtime_data.iter_runtime_files(runtime)}
     _check(state, "instance/student-app-vapid-private.pem" not in selected, "private key entered backup selection")
@@ -137,6 +139,8 @@ def _backup_contract(state: list[int], temp_root: Path) -> None:
     _check(state, "instance/student-test-push-approval.json" not in selected, "test Push approval entered backup selection")
     _check(state, "instance/student-test-push-approval.json.tmp" not in selected, "test Push approval temp entered backup selection")
     _check(state, "instance/student-test-push-approval.json.consumed.opaque" not in selected, "consumed test Push approval entered backup selection")
+    _check(state, "instance/student-app-dev-admin-auth.json" not in selected, "development admin credential entered backup selection")
+    _check(state, "instance/student-app-dev-admin-auth.json.tmp" not in selected, "development admin credential temp entered backup selection")
     _check(state, "instance/student-app-vapid-public.txt" in selected, "public key output was incorrectly excluded")
     _check(state, "instance/other-runtime.txt" in selected, "unrelated instance data was excluded")
     original_root = backup_runtime_data.ROOT
@@ -154,6 +158,8 @@ def _backup_contract(state: list[int], temp_root: Path) -> None:
     _check(state, "instance/student-test-push-approval.json" not in names | manifest_names, "archive contains test Push approval")
     _check(state, "instance/student-test-push-approval.json.tmp" not in names | manifest_names, "archive contains test Push approval temp")
     _check(state, "instance/student-test-push-approval.json.consumed.opaque" not in names | manifest_names, "archive contains consumed test Push approval")
+    _check(state, "instance/student-app-dev-admin-auth.json" not in names | manifest_names, "archive contains development admin credential")
+    _check(state, "instance/student-app-dev-admin-auth.json.tmp" not in names | manifest_names, "archive contains development admin credential temp")
     _check(state, {"auth_accounts.json", "app.sqlite", "instance/other-runtime.txt"} <= names, "archive lost runtime files")
 
 
@@ -222,6 +228,10 @@ def _static_contract(state: list[int]) -> None:
     _check(state, "exact DNS hostname" in waitress_source, "Waitress runner does not reject malformed host overrides")
     _check(state, "VAPID overrides must be provided together" in waitress_source, "Waitress runner permits partial VAPID overrides")
     _check(state, "repository instance directory" in waitress_source, "development VAPID key is not isolated to the instance directory")
+    _check(state, "AdminCredentialFileOverride requires exact loopback development isolation" in waitress_source, "development admin credentials can escape isolation")
+    for isolated_value in ("127.0.0.1:8004", "dev-app.5a-math.com", "dev-student-001"):
+        _check(state, isolated_value in waitress_source, f"development admin isolation omitted {isolated_value}")
+    _check(state, "student-app-dev-admin-auth.json" in waitress_source and "development-local-admin" in waitress_source, "Waitress runner omitted the private development admin credential contract")
     for option in ("--trusted-proxy=127.0.0.1", "--trusted-proxy-count=1", "--trusted-proxy-headers=x-forwarded-proto", "--clear-untrusted-proxy-headers"):
         _check(state, option in waitress_source, f"Waitress runner omitted {option}")
     _check(state, "--trusted-proxy-headers=x-forwarded-for" not in waitress_source, "Waitress bypasses CF client identity validation")

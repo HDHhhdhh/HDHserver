@@ -32,7 +32,7 @@ $archive = & "$serverRoot\venv\Scripts\python.exe" "$serverRoot\scripts\backup_r
 if ($LASTEXITCODE -ne 0) { throw 'backup failed' }
 ```
 
-archive의 `MANIFEST.json`에서 현재 존재하는 `auth_accounts.json`, `app.sqlite`, `app.sqlite-wal`, `app.sqlite-shm`가 모두 포함됐는지 확인한다. `instance/student-app-vapid-private.pem`과 `instance/student-app-vapid-private.pem.*`는 archive와 manifest에 없어야 한다. `scripts/backup_runtime_data.py`가 이 exact exclusion을 적용하므로 key 생성 뒤에도 같은 backup 절차를 계속 사용할 수 있다. archive 이름과 SHA-256만 Todo 14 기록에 남기고 내용은 evidence로 복사하지 않는다.
+archive의 `MANIFEST.json`에서 현재 존재하는 `auth_accounts.json`, `app.sqlite`, `app.sqlite-wal`, `app.sqlite-shm`가 모두 포함됐는지 확인한다. `instance/student-app-vapid-private.pem`, `instance/student-test-push-approval.json`, `instance/student-app-dev-admin-auth.json`과 각 sidecar는 archive와 manifest에 없어야 한다. `scripts/backup_runtime_data.py`가 이 exact exclusion을 적용하므로 key나 개발 전용 인증 파일 생성 뒤에도 같은 backup 절차를 계속 사용할 수 있다. archive 이름과 SHA-256만 Todo 14 기록에 남기고 내용은 evidence로 복사하지 않는다.
 
 ## 2. dependency 설치와 version 확인
 
@@ -127,6 +127,19 @@ fail-closed로 거부한다.
 disabled 상태를 유지한다. 준비 확인은 동일 인자를 사용한
 `run_student_push_worker.ps1 -DryRun`으로만 수행한다. `STUDENT_APP_REMINDERS_ENABLED=0`이어도 legacy 공지 worker는
 실제 outbox를 전송할 수 있으므로, 구독 대상과 outbox를 확인하지 않은 non-dry 실행은 금지한다.
+
+개발용 로컬 관리자와 합성 학생이 한 자격 증명을 공유해야 할 때는
+`scripts/provision_local_dual_role_account.py`를 사용한다. 도구는 비밀번호를 대화형으로만 받고
+`dev-student-001`의 `synthetic:true`를 잠금 안에서 재확인한 뒤 계정 JSON은 merge-preserving lock으로,
+관리자 hash는 ignored `instance\student-app-dev-admin-auth.json`으로 각각 저장한다. 발급 전
+계정 JSON과 SQLite session을 외부 private backup에 보존하고 재발급 대상의 기존 session을 폐기한다.
+관리자 파일은 일반 runtime backup에서 제외된다. 개발 Waitress task에는 아래 경로 인자만 추가하며 hash나 평문
+비밀번호를 Task XML/명령줄에 넣지 않는다. `-DevelopmentIsolation`이 없거나 exact instance 파일이
+아니면 runner가 거부한다. production task에는 이 옵션을 전달하지 않는다.
+
+```powershell
+-AdminCredentialFileOverride <development-root>\instance\student-app-dev-admin-auth.json
+```
 
 공지나 기존 outbox를 만들지 않는 개발 실기기 1회 검증은 전용 도구만 사용한다. 이 도구는
 `dev-student-001` 합성 학생, 현재 계정/세션 바인딩, 전체 활성 구독 정확히 1개, legacy/generic

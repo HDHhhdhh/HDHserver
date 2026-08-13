@@ -35,6 +35,7 @@ CHECK_MODULES: Final[dict[str, str]] = {
     "admin-accounts": "scripts.student_mobile_app_checks.admin_accounts",
     "academy-gates": "scripts.student_mobile_app_checks.academy_gates",
     "deployment": "scripts.student_mobile_app_checks.deployment",
+    "local-dual-role": "scripts.student_mobile_app_checks.local_dual_role",
 }
 # Every plugin result is bound to the CLI selector that invoked it.  Keep this
 # explicit so a forged or stale plugin cannot report a different check as
@@ -57,6 +58,7 @@ EXPECTED_RESULT_NAMES: Final[dict[str, str]] = {
     "admin-accounts": "admin-accounts",
     "academy-gates": "academy-gates",
     "deployment": "deployment",
+    "local-dual-role": "local-dual-role",
 }
 SUPPORTED_CHECKS: Final[tuple[str, ...]] = tuple(CHECK_MODULES) + ("all",)
 RUNTIME_FILE_NAMES: Final[tuple[str, ...]] = (

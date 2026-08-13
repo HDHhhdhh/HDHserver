@@ -5521,6 +5521,18 @@ def run_student_mobile_deployment_contract_checks() -> None:
     mode = "windows-full" if full_windows_contract else "portable-static"
     print(f"student mobile deployment contract ({mode}): {assertions} assertions passed; process state restored")
 
+    from scripts.student_mobile_app_checks import local_dual_role
+
+    local_result = local_dual_role.run_checks()
+    _assert_unit(local_result.get("name") == "local-dual-role", "local dual-role receipt identity mismatch")
+    _assert_unit(local_result.get("passed") is True, "local dual-role provisioning contract did not pass")
+    local_assertions = local_result.get("assertions")
+    _assert_unit(
+        isinstance(local_assertions, int) and not isinstance(local_assertions, bool) and local_assertions > 0,
+        "local dual-role receipt must contain positive assertions",
+    )
+    print(f"local dual-role provisioning contract: {local_assertions} assertions passed")
+
 
 def run_student_mobile_python_result_contract_checks() -> None:
     from types import ModuleType

@@ -25,6 +25,7 @@ ROOT_DATA_SUFFIXES = {
 DATA_DIRS = {"data", "files", "instance"}
 VAPID_PRIVATE_PATH = "instance/student-app-vapid-private.pem"
 TEST_PUSH_APPROVAL_PATH = "instance/student-test-push-approval.json"
+DEV_ADMIN_CREDENTIAL_PATH = "instance/student-app-dev-admin-auth.json"
 
 
 def is_excluded_secret(path: Path, root: Path) -> bool:
@@ -32,7 +33,7 @@ def is_excluded_secret(path: Path, root: Path) -> bool:
     relative = path.relative_to(root).as_posix()
     return any(
         relative == prefix or relative.startswith(f"{prefix}.")
-        for prefix in (VAPID_PRIVATE_PATH, TEST_PUSH_APPROVAL_PATH)
+        for prefix in (VAPID_PRIVATE_PATH, TEST_PUSH_APPROVAL_PATH, DEV_ADMIN_CREDENTIAL_PATH)
     )
 
 

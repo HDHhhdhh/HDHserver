@@ -10,6 +10,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 | Safety suite | `verify_refactor_safety.py` | Compile, JS checks, unit checks, optional safe smoke checks. |
 | Student mobile verification | `verify_student_mobile_app.py`, `verify_student_mobile_app.mjs`, `student_mobile_app_checks/` | Temp/pure contracts; the default refactor suite runs the PWA install-guide boot/interaction flow with a temp receipt. |
 | Student deployment verification | `student_mobile_app_checks/deployment.py`, `verify_student_app_deployment.ps1` | Windows CI runs the full isolated-mutex temp fixture; non-Windows CI runs portable source/backup contracts. Neither is rollout evidence. |
+| Local dual-role test access | `provision_local_dual_role_account.py`, `student_mobile_app_checks/local_dual_role.py` | Interactive-password, synthetic-SID-only provisioning; keeps the dev admin hash in ignored `instance` and out of normal runtime backups. |
 | Class-log export verifier | `verify_export_log_format.mjs` | Pure options/TXT/CSV/privacy/source contract; no app import or runtime reads. |
 | Assistant-note verifier | `verify_assistant_student_notes.py` | Temp SQLite/API/source checks; standalone behavior check, not part of the default suite. |
 | Unit-test link map | `build_unit_test_answer_link_map_from_gdown.py` | Regenerates `static/js/test_answer_link_map.json`. |
@@ -40,6 +41,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - The tracked canonical answer map is `static/js/test_answer_link_map.json` with `sourceId -> round -> entry`; the ignored `.js` sibling is a stale legacy artifact.
 - SQL files in `migrations/` are manual artifacts, not an executable chain. The current assistant-note create/add-column files conflict if applied sequentially; reconcile them before any live migration.
 - Browser evidence under `.omo/evidence/` is ignored local QA output and is validated only through the explicit `--only-frontend-evidence-inventory` selector; the default safety suite must remain reproducible without it.
+- Local dual-role provisioning must use an external private backup directory and the exact `dev-student-001` synthetic roster row. Never add a plaintext-password argument or repoint an existing real/cross-SID account.
 - `tests-config.json` is ignored runtime data. The default safety suite uses a synthetic UNIT grading/answer-link contract; validate the current local catalog separately with `--only-unit-test-grading-readiness`.
 
 ## Anti-Patterns
