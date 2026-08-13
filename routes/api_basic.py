@@ -3081,6 +3081,7 @@ def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
 
 @bp_api_basic.get("/api/logs/unarchived-summary")
 def api_logs_unarchived_summary():
+    """Return stale-record counts and each student's latest unarchived done log."""
     exclude_date = str(
         request.args.get("exclude_date")
         or request.args.get("excludeDate")
@@ -3088,7 +3089,7 @@ def api_logs_unarchived_summary():
     ).strip()
     if exclude_date and not DATE_RE.match(exclude_date):
         return jsonify({"ok": False, "error": "bad date"}), 400
-    return jsonify(_summarize_unarchived_done_logs(exclude_date))
+    return nocache_resp(_summarize_unarchived_done_logs(exclude_date))
 
 
 @bp_api_basic.get("/api/homework-books")

@@ -342,7 +342,7 @@ def _schedule_hooks(state: list[int]) -> None:
     _check(state, basic.index("save_atomic(STU_PATH, incoming)")
            < basic.index("enqueue_current_schedule_changes(affected)")
            and "before_pairs ^ after_pairs" in attend
-           and attend.index("save_absent(payload)") < attend.index("enqueue_current_schedule_changes(")
+           and attend.index("save_absent(payload, locked=True)") < attend.index("enqueue_current_schedule_changes(")
            and basic.count("enqueue_current_schedule_changes(") >= 4,
            "student/absence schedule hooks are missing or run before persistence")
     update_route = basic[basic.index('def api_update_student_field():'):]

@@ -352,7 +352,7 @@ function attachSortable(dateKey, alphaSortOnly) {
     .self-study-toggle[data-on="1"]{background:rgba(100,116,139,.13);border-color:rgba(100,116,139,.55)}
     body.dark .self-study-toggle{background:rgba(2,6,23,.55);border-color:#334155}
     #todayWrap table.today-table{min-width:1228px;table-layout:fixed;font-size:15px}
-    #doneWrap table.done-table{min-width:776px;table-layout:fixed;font-size:15px}
+    #doneWrap table.done-table{min-width:880px;table-layout:fixed;font-size:15px}
     .today-table th,.today-table td,.done-table th,.done-table td{overflow:hidden;text-overflow:ellipsis}
     .done-table th,.done-table td{text-align:center;vertical-align:middle}
     .today-table th{font-size:14px}
@@ -496,6 +496,13 @@ function renderEditableSlotLabel(labelText) {
   return `<span class="slotLabel" contenteditable="true" spellcheck="false"
           data-orig="${escapeAttr(label)}"
           style="display:inline-block;min-width:48px;padding:2px 6px;border-radius:6px;border:1px solid transparent">
+    ${escapeAttr(label)}
+  </span>`;
+}
+
+function renderReadonlySlotLabel(labelText) {
+  const label = String(labelText || '').trim();
+  return `<span class="slotLabelReadonly" title="과거 날짜 기록은 해당 날짜를 선택한 뒤 편집할 수 있습니다.">
     ${escapeAttr(label)}
   </span>`;
 }
@@ -945,11 +952,12 @@ function _ensureDoneTableIfMissing() {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
+        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
         <col style="width:112px"><col style="width:268px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
+          <th>날짜</th>
           <th>구분</th>
           <th title="등원시간">등원</th>
           <th>이름</th>
@@ -1010,14 +1018,18 @@ function _bindDoneWrapInlineEditOnce() {
     const oldBase = plannedTimeBase(date, sid) || '';
     const oldOv = (getArriveOverride(date, sid) || '').trim();
 
+    let slotSaveResult;
     try {
-      await saveWeekendSlotsFromLabel(sid, cleaned, date);
+      slotSaveResult = await saveWeekendSlotsFromLabel(sid, cleaned, date);
     } catch (e) {
       el.textContent = prevOrig;
       el.dataset.orig = prevOrig;
       try { toast('주말 슬롯 저장 실패'); } catch {}
       alert('주말 슬롯 저장 실패');
       return;
+    }
+    if (slotSaveResult?.orderReset === false) {
+      toast('슬롯은 저장됐지만 오늘표 순서 초기화에 실패했습니다.');
     }
 
     el.dataset.orig = cleaned;
@@ -1071,6 +1083,7 @@ function _bindDoneWrapInlineEditOnce() {
 
     const prev = (el.dataset.orig || '').trim();
     const txt = (el.textContent || '').trim();
+    if (txt === prev) return;
     setArriveOverride(date, sid, txt);
 
     try {
@@ -1123,7 +1136,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   const nameLink = tr.querySelector('a.stuName');
   const nameCellHtml = nameLink
     ? nameLink.outerHTML
-    : `<span class="stuName">${(tr.querySelector('.stuName')?.textContent || '').trim()}</span>`;
+    : `<span class="stuName">${escapeAttr((tr.querySelector('.stuName')?.textContent || '').trim())}</span>`;
 
   const school = (tr.querySelector('.today-school-cell')?.textContent || '').trim();
   const curLabel = (tr.querySelector('.today-curriculum-cell')?.textContent || '').trim();
@@ -1141,6 +1154,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   if (tr.dataset.hw === '1') newRow.dataset.hw = '1';
   if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
   newRow.innerHTML = `
+    <td class="done-date-cell">${escapeAttr(dateKey)}</td>
     <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
     <td class="att-time done-arrive-cell">
       <span class="arriveLabel" contenteditable="true" spellcheck="false"
@@ -1151,8 +1165,8 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
       </span>
     </td>
     <td class="today-name-cell">${nameCellHtml}</td>
-    <td class="today-school-cell">${school || ''}</td>
-    <td class="today-curriculum-cell">${curLabel || ''}</td>
+    <td class="today-school-cell">${escapeAttr(school || '')}</td>
+    <td class="today-curriculum-cell">${escapeAttr(curLabel || '')}</td>
     <td class="done-action-cell">
       <div class="today-actions">
       <button class="openStudentPopups" title="상담 기록">🧾</button>
@@ -1163,7 +1177,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
       <button class="clearDone" title="기록 정리" style="margin-left:6px">🧹</button>
       </div>
     </td>
-    <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${docUrl}" title="문서 열기">📄</button></td>
+    <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${escapeAttr(docUrl)}" title="문서 열기">📄</button></td>
   `;
 
   tbDone.prepend(newRow);
@@ -1353,52 +1367,62 @@ export function renderDone(doneEntries) {
   }
 
   const rows = doneEntries.map(([sid, entry, date]) => {
+    const sidKey = String(sid || '').trim();
+    const dateKey = String(date || '').trim();
     const s =
-      (window?.state?.students || []).find?.(x => String(x.id) === String(sid))
-      || (document?.defaultView?.state?.students || []).find?.(x => String(x.id) === String(sid))
+      (window?.state?.students || []).find?.(x => String(x.id) === sidKey)
+      || (document?.defaultView?.state?.students || []).find?.(x => String(x.id) === sidKey)
       || null;
 
-    const name = s?.name || String(sid);
+    const name = s?.name || sidKey;
     const curLabel = s ? (s.curriculum + (s.subCurriculum ? ' ' + s.subCurriculum : '')) : '';
     const school = s ? (s.school ?? s.schoolName ?? s.highSchool ?? s.middleSchool ?? s.high ?? s.middle ?? '') : '';
     const docUrl = s?.docUrl || '';
 
-    const arriveTime = plannedTimeFor(date, sid);
-    const label = labelFor(date, sid);
-    const slotGroup = _slotGroupsFromLabelAndArrive(label, arriveTime, date);
+    const isSelectedDate = dateKey === String(getAdminDate() || '');
+    const arriveTime = isSelectedDate ? plannedTimeFor(dateKey, sidKey) : '';
+    const label = isSelectedDate ? labelFor(dateKey, sidKey) : '';
+    const slotGroup = isSelectedDate ? _slotGroupsFromLabelAndArrive(label, arriveTime, dateKey) : '';
     const hwChecked = truthy(entry?.hwChecked);
-    const selfStudy = truthy(entry?.selfStudy) || isSelfStudy(date, sid);
-    const arriveTitle = isAttended(date, sid) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
-
-    return `
-      <tr data-sid="${sid}" data-date="${date}" ${slotGroup ? `data-slot-group="${slotGroup}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
-        <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
-        <td class="att-time done-arrive-cell">
-          <span class="arriveLabel" contenteditable="true" spellcheck="false"
+    const selfStudy = truthy(entry?.selfStudy) || isSelfStudy(dateKey, sidKey);
+    const arriveTitle = isSelectedDate
+      ? (isAttended(dateKey, sidKey) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT)
+      : '과거 날짜 기록은 해당 날짜를 선택한 뒤 편집할 수 있습니다.';
+    const slotMarkup = isSelectedDate ? renderEditableSlotLabel(label) : renderReadonlySlotLabel('—');
+    const arriveMarkup = isSelectedDate
+      ? `<span class="arriveLabel" contenteditable="true" spellcheck="false"
                 data-orig="${escapeAttr(arriveTime || '')}"
-                title="${arriveTitle}"
+                title="${escapeAttr(arriveTitle)}"
                 style="display:inline-block;min-width:44px;padding:2px 4px;border-radius:6px;border:1px solid transparent">
             ${escapeAttr(arriveTime || '')}
-          </span>
+          </span>`
+      : `<span class="arriveLabelReadonly" title="${escapeAttr(arriveTitle)}">—</span>`;
+
+    return `
+      <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
+        <td class="done-date-cell">${escapeAttr(dateKey)}</td>
+        <td class="today-slot-cell">${slotMarkup}</td>
+        <td class="att-time done-arrive-cell">
+          ${arriveMarkup}
         </td>
         <td class="today-name-cell">
-          ${s ? `<a href="/student/${s.id}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${name}</a>`
-              : `<span class="stuName">${name}</span>`
+          ${s ? `<a href="/student/${encodeURIComponent(String(s.id))}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${escapeAttr(name)}</a>`
+              : `<span class="stuName">${escapeAttr(name)}</span>`
           }
         </td>
-        <td class="today-school-cell">${school || ''}</td>
-        <td class="today-curriculum-cell">${curLabel}</td>
+        <td class="today-school-cell">${escapeAttr(school || '')}</td>
+        <td class="today-curriculum-cell">${escapeAttr(curLabel)}</td>
         <td class="done-action-cell">
           <div class="today-actions">
           <button class="openStudentPopups" title="상담 기록">🧾</button>
-          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sid)}" data-test-result-name="${escapeAttr(name || sid)}" title="테스트 기록 보기">기록</button>
+          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sidKey)}" data-test-result-name="${escapeAttr(name || sidKey)}" title="테스트 기록 보기">기록</button>
           <button class="markAbsent" title="결석">🚫</button>
           <button class="markLeave" title="하원">🏠</button>
           <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
           <button class="clearDone" title="기록 정리" style="margin-left:6px">🧹</button>
           </div>
         </td>
-        <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${docUrl}" title="문서 열기">📄</button></td>
+        <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${escapeAttr(docUrl)}" title="문서 열기">📄</button></td>
       </tr>
     `;
   }).join('');
@@ -1406,11 +1430,12 @@ export function renderDone(doneEntries) {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
+        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
         <col style="width:112px"><col style="width:268px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
+          <th>날짜</th>
           <th>구분</th>
           <th title="등원시간">등원</th>
           <th>이름</th>
@@ -1482,14 +1507,18 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     const oldBase = plannedTimeBase(dateKey, sid) || '';
     const oldOv = (getArriveOverride(dateKey, sid) || '').trim();
 
+    let slotSaveResult;
     try {
-      await saveWeekendSlotsFromLabel(sid, cleaned, dateKey);
+      slotSaveResult = await saveWeekendSlotsFromLabel(sid, cleaned, dateKey);
     } catch (e) {
       el.textContent = prevOrig;
       el.dataset.orig = prevOrig;
       try { toast('주말 슬롯 저장 실패'); } catch {}
       alert('주말 슬롯 저장 실패');
       return;
+    }
+    if (slotSaveResult?.orderReset === false) {
+      toast('슬롯은 저장됐지만 오늘표 순서 초기화에 실패했습니다.');
     }
 
     el.dataset.orig = cleaned;
@@ -1935,6 +1964,30 @@ export function bindTodayTableEvents(loadTodayAndRender) {
           return;
         }
 
+        let absenceRevision = '';
+        try {
+          const latestRes = await fetch('/api/absent', { cache: 'no-store' });
+          if (!latestRes.ok) throw new Error(`/api/absent ${latestRes.status}`);
+          const latest = await latestRes.json();
+          absenceRevision = String(latestRes.headers.get('X-Absence-Revision') || '').trim();
+          state.absences = normalizeAbsencesByStudent(latest?.by_student || {});
+          state.absentByDate = normalizeAbsentByDateMap(latest?.by_date || {});
+          state.absentSlotsByDate = normalizeAbsentSlotMap(latest?.by_slot || {});
+        } catch (latestError) {
+          console.error(latestError);
+          setAttended(dateKey, sid, prevAttended);
+          setContacted(dateKey, sid, prevContacted);
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
+          try {
+            await patchFlagRemote('att', dateKey, sid, prevAttended);
+            await patchFlagRemote('contact', dateKey, sid, prevContacted);
+          } catch (rollbackError) {
+            console.error(rollbackError);
+          }
+          alert('최신 결석 정보를 불러오지 못했습니다.');
+          return;
+        }
+
         // Update local absence maps first so the UI stays consistent.
         state.absences = state.absences && typeof state.absences === 'object' ? state.absences : {};
         state.absentByDate = looksLikeAbsentByDateMap(state.absentByDate) ? state.absentByDate : {};
@@ -1961,7 +2014,10 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         try {
           const res = await fetch('/api/absent', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(absenceRevision ? { 'If-Match': absenceRevision } : {}),
+            },
             body: JSON.stringify({
               by_date: state.absentByDate,
               by_student: state.absences,

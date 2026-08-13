@@ -6,8 +6,8 @@ from typing import Any
 
 from core.absent import load_absent, save_absent
 from core.makeup_sheet_reader import read_sheet_makeup_rows, sheet_cell
-from core.paths import EXTRA_PATH, STU_PATH, WEEKEND_SLOTS_PATH
-from core.storage import load, save_atomic
+from core.paths import ABS_PATH, EXTRA_PATH, STU_PATH, WEEKEND_SLOTS_PATH
+from core.storage import file_lock, load, save_atomic
 
 
 WEEKDAY_CHARS = "월화수목금토일"
@@ -59,7 +59,15 @@ def sync_makeups_from_sheet(sheet_url: str, date_key: str, carryover: dict[str, 
         changes,
     )
 
-    save_absent(absent)
+    # Sheet parsing can take long enough for an administrator to recover an
+    # unrelated absence. Rebase only this sheet's additive star cells onto the
+    # newest absence snapshot while holding the same lock as the API writers.
+    with file_lock(ABS_PATH):
+        latest_absent = load_absent()
+        for absence_date, sid, slot in sorted(sheet_star_keys):
+            _ensure_absent_slot(latest_absent, absence_date, sid, slot, [])
+        save_absent(latest_absent, locked=True)
+        absent = load_absent()
     save_atomic(EXTRA_PATH, extra)
     save_atomic(WEEKEND_SLOTS_PATH, weekend)
 

@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List
 
 from core.paths import ABS_PATH
-from core.storage import load, save_atomic
+from core.storage import load, save_atomic, file_lock
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -115,7 +115,7 @@ def load_absent() -> Dict[str, Any]:
     return {"by_date": {}, "by_student": {}, "by_slot": {}}
 
 
-def save_absent(obj: Dict[str, Any]) -> None:
+def _save_absent_unlocked(obj: Dict[str, Any]) -> None:
     """
     어떤 형태가 들어와도 표준 포맷으로 정규화해서 저장.
     """
@@ -132,3 +132,11 @@ def save_absent(obj: Dict[str, Any]) -> None:
     }
 
     save_atomic(ABS_PATH, out)
+
+
+def save_absent(obj: Dict[str, Any], *, locked: bool = False) -> None:
+    if locked:
+        _save_absent_unlocked(obj)
+        return
+    with file_lock(ABS_PATH):
+        _save_absent_unlocked(obj)

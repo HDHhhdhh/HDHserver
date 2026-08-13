@@ -765,7 +765,7 @@ body.admin tbody td {
 }
 
 body.admin #doneWrap table.done-table {
-  min-width: 776px;
+  min-width: 880px;
   table-layout: fixed;
 }
 

@@ -46,11 +46,18 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
     ROOT / "static/js/all/main.js",
     ROOT / "static/js/admin/core/adminDate.js",
+    ROOT / "static/js/admin/demo/bootstrap.js",
+    ROOT / "static/js/admin/demo/fetch.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
+    ROOT / "static/js/admin/features/absentRecovery.js",
+    ROOT / "static/js/admin/features/absentRegister.js",
+    ROOT / "static/js/admin/features/calendar.js",
     ROOT / "static/js/admin/features/exportLogFormat.js",
     ROOT / "static/js/admin/features/exportLogs.js",
+    ROOT / "static/js/admin/features/extraModal.js",
     ROOT / "static/js/admin/features/logModal.js",
     ROOT / "static/js/admin/features/today.js",
+    ROOT / "static/js/admin/features/todayDoneSummary.js",
     ROOT / "static/js/admin/features/today.state.js",
     ROOT / "static/js/admin/features/today.render.js",
     ROOT / "static/js/admin/features/testModal.js",
@@ -69,6 +76,9 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
     ROOT / "scripts/verify_hover_tooltip_performance.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
+    ROOT / "scripts/verify_absence_recovery_sort.mjs",
+    ROOT / "scripts/verify_phase16_demo_contract.mjs",
+    ROOT / "scripts/verify_today_unarchived_done.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
     ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
@@ -611,6 +621,74 @@ def run_export_log_format_checks() -> None:
         (["node", "scripts/verify_roster_export_logic.js"], "roster export regression contract failed"),
     ]
     for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_today_completion_checks() -> None:
+    today_order_driver = r"""
+import json
+import os
+import pathlib
+import tempfile
+
+from flask import Flask
+
+with tempfile.TemporaryDirectory(prefix="verify-today-order-") as tmpdir:
+    os.environ["DATA_DIR"] = tmpdir
+    import routes.api_todaymeta as todaymeta
+
+    app = Flask("verify-today-order")
+    app.register_blueprint(todaymeta.bp_api_todaymeta)
+    client = app.test_client()
+    path = pathlib.Path(tmpdir) / "today_order.json"
+
+    seeded = client.post("/api/today_order", json={
+        "2026-08-13": ["keep"],
+        "2026-08-14": ["old"],
+    })
+    assert seeded.status_code == 200
+    patched = client.patch("/api/today_order", json={
+        "date": "2026-08-14",
+        "order": [" a ", "a", "b", ""],
+    })
+    assert patched.status_code == 200
+    assert patched.get_json()["order"] == ["a", "b"]
+    stored = json.loads(path.read_text("utf-8"))
+    assert stored["2026-08-13"] == ["keep"]
+    assert stored["2026-08-14"] == ["a", "b"]
+
+    deleted = client.delete("/api/today_order?date=2026-08-14")
+    assert deleted.status_code == 200 and deleted.get_json()["cleared"] is True
+    repeated = client.delete("/api/today_order?date=2026-08-14")
+    assert repeated.status_code == 200 and repeated.get_json()["cleared"] is False
+    assert json.loads(path.read_text("utf-8")) == {"2026-08-13": ["keep"]}
+    assert client.patch("/api/today_order", json={"date": "2026-02-31", "order": []}).status_code == 400
+
+    path.write_text("{broken", "utf-8")
+    blocked = client.patch("/api/today_order", json={"date": "2026-08-14", "order": ["x"]})
+    assert blocked.status_code == 409
+    assert path.read_text("utf-8") == "{broken"
+
+print("today order date-scoped mutation checks passed")
+"""
+    command_groups = [
+        ([sys.executable, "-X", "utf8", "-c", today_order_driver], "date-scoped today order contract failed"),
+    ]
+    commands = [
+        (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
+        (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
+        (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
+    ]
+    for cmd, failure_message in [*command_groups, *commands]:
         print("$ " + " ".join(cmd))
         try:
             proc = _run_captured(cmd)
@@ -2696,6 +2774,95 @@ def run_log_repository_unit_checks() -> None:
             "read_logs json fallback must fill missing date/sid entries",
         )
 
+        summary_logs_path = tmp / "logs-summary.json"
+        summary_db_path = tmp / "app-summary.sqlite"
+        summary_logs_path.write_text(
+            json.dumps(
+                {
+                    "2026-06-01": {
+                        "s1": {"done": True, "marker": "json-old"},
+                        "s2": {"done": "true", "marker": "json-excluded"},
+                    },
+                    "2026-06-03": {"s1": {"done": 1, "hwChecked": True, "notes": "private"}},
+                    "2026-06-04": {"archived": {"done": True, "archived": True}},
+                    "2026-06-10": {"  s3  ": {"done": True}},
+                    "2026-99-99": {"future-bad": {"done": True}},
+                    "not-a-date": {"bad": {"done": True}},
+                },
+                ensure_ascii=False,
+            ),
+            "utf-8",
+        )
+        summary_repo = LogRepository(
+            logs_path=summary_logs_path,
+            db_path=str(summary_db_path),
+            merge_entry=merge_log_entry_safe,
+            entry_conflicts=log_entry_conflicts_with_base,
+            today_key=lambda: "2026-06-10",
+        )
+        con = summary_repo._connect()
+        try:
+            summary_repo._ensure_schema(con)
+            summary_repo._sqlite_upsert_entry(
+                con, "2026-06-02", "s1", {"done": True, "marker": "sqlite-middle"},
+            )
+            summary_repo._sqlite_upsert_entry(
+                con, "2026-06-05", "s2", {"done": True, "selfStudy": True, "notes": "private"},
+            )
+        finally:
+            con.close()
+
+        unarchived_summary = summary_repo.summarize_unarchived_done("2026-06-01")
+        latest_rows = {row["sid"]: row for row in unarchived_summary.get("rows", [])}
+        _assert_unit(set(latest_rows) == {"s1", "s2", "s3"}, "summary rows must include every unarchived student once")
+        _assert_unit(latest_rows["s1"]["date"] == "2026-06-03", "summary must keep the latest date per sid")
+        _assert_unit(
+            latest_rows["s1"]["entry"] == {"done": True, "archived": False, "hwChecked": True},
+            "summary rows must project only render-safe JSON booleans",
+        )
+        _assert_unit(latest_rows["s2"]["date"] == "2026-06-05", "newer SQLite rows must win by date")
+        _assert_unit(
+            latest_rows["s2"]["entry"] == {"done": True, "archived": False, "selfStudy": True},
+            "summary rows must not expose SQLite notes or unrelated metadata",
+        )
+        _assert_unit(latest_rows["s3"]["sid"] == "s3", "summary SIDs must be trimmed before dedupe/actions")
+        _assert_unit(unarchived_summary.get("rowsAvailable") is True, "healthy dual-store summary must be authoritative")
+        _assert_unit(unarchived_summary.get("total") == 3, "excludeDate must affect stale counts only")
+        _assert_unit(unarchived_summary.get("students") == 2, "stale summary student count must stay distinct")
+        _assert_unit(
+            all(row.get("date") != "not-a-date" for row in unarchived_summary.get("rows", [])),
+            "malformed dates must not enter latest rows",
+        )
+        _assert_unit(
+            all(row.get("date") != "2026-99-99" for row in unarchived_summary.get("rows", [])),
+            "impossible calendar dates must not enter latest rows",
+        )
+
+        fallback_logs_path = tmp / "logs-summary-fallback.json"
+        fallback_logs_path.write_text(
+            json.dumps({"2026-06-07": {"fallback": {"done": True, "notes": "private"}}}),
+            "utf-8",
+        )
+        fallback_repo = LogRepository(logs_path=fallback_logs_path, db_path=str(tmp / "missing.sqlite"))
+        fallback_repo._connect = lambda: (_ for _ in ()).throw(RuntimeError("sqlite unavailable"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            fallback_summary = fallback_repo.summarize_unarchived_done()
+        _assert_unit(fallback_summary.get("rowsAvailable") is True, "valid JSON fallback remains authoritative")
+        _assert_unit(
+            fallback_summary.get("rows") == [{
+                "date": "2026-06-07",
+                "sid": "fallback",
+                "entry": {"done": True, "archived": False},
+            }],
+            "SQLite degradation must use the minimal JSON projection without leaked notes",
+        )
+
+        fallback_logs_path.write_text("{broken", "utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            degraded_summary = fallback_repo.summarize_unarchived_done()
+        _assert_unit(degraded_summary.get("rowsAvailable") is False, "dual-source failure must be non-authoritative")
+        _assert_unit("rows" not in degraded_summary, "degraded summary must not erase valid local done rows")
+
         import core.log_repository as log_repository_module
 
         fail_date = "2026-06-06"
@@ -3215,6 +3382,7 @@ def run_student_assigned_tests_unit_checks() -> None:
 
 def run_absence_test_assignment_transition_unit_checks() -> None:
     import routes.api_attend as api_attend
+    from flask import Flask
 
     sid = "s1"
     date = "2026-06-07"
@@ -3266,6 +3434,81 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     _assert_unit(next_assigned[assigned_label] == "interrupted", "absence must turn cumulative assigned log tests into 배부")
     _assert_unit(next_assigned[completed_label] == "done", "absence must preserve cumulative completed log tests")
     _assert_unit("[테스트 배정]" not in str(next_entry.get("notes") or ""), "absence must still remove generated note blocks")
+
+    runtime_absent = {
+        "by_date": {
+            date: [sid, "keep-sid"],
+            "2026-06-08": [sid, "other-date"],
+        },
+        "by_student": {sid: date, "keep-sid": date, "other-date": "2026-06-08"},
+        "by_slot": {
+            date: {sid: [1, 2], "keep-sid": [2]},
+            "2026-06-08": {sid: [1], "other-date": [2]},
+        },
+    }
+    notifications: list[tuple[str, ...]] = []
+    locked_saves: list[bool] = []
+    original_abs_path = api_attend.ABS_PATH
+    original_load_absent = api_attend.load_absent
+    original_save_absent = api_attend.save_absent
+    original_enqueue = api_attend.enqueue_current_schedule_changes
+
+    with tempfile.TemporaryDirectory(prefix="verify-absence-recover-") as tmpdir:
+        api_attend.ABS_PATH = pathlib.Path(tmpdir) / "absent.json"
+        api_attend.load_absent = lambda: json.loads(json.dumps(runtime_absent))
+
+        def save_absent_fixture(payload, *, locked=False):
+            locked_saves.append(bool(locked))
+            runtime_absent.clear()
+            runtime_absent.update(json.loads(json.dumps(payload)))
+
+        api_attend.save_absent = save_absent_fixture
+        api_attend.enqueue_current_schedule_changes = lambda sids: notifications.append(tuple(sids)) or 0
+        try:
+            app = Flask("verify-absence-recover-route")
+            app.register_blueprint(api_attend.bp_api_attend)
+            client = app.test_client()
+            response = client.post("/api/absent/recover", json={"date": date, "sids": [sid, sid]})
+            payload = response.get_json() or {}
+            _assert_unit(response.status_code == 200, "narrow absence recovery must return HTTP 200")
+            _assert_unit(payload["by_date"][date] == ["keep-sid"], "recovery removes only the selected date/sid")
+            _assert_unit(payload["by_date"]["2026-06-08"] == [sid, "other-date"], "other-date absence rows survive")
+            _assert_unit(sid not in payload["by_student"], "matching by_student mapping is removed")
+            _assert_unit(payload["by_slot"][date] == {"keep-sid": [2]}, "matching by_slot mapping is removed")
+            _assert_unit(payload["by_slot"]["2026-06-08"][sid] == [1], "other-date slot mapping survives")
+            _assert_unit(notifications == [(sid,)], "recovery notification projection deduplicates selected SIDs")
+            _assert_unit(locked_saves == [True], "narrow recovery must save while holding the shared absence lock")
+
+            repeat = client.post("/api/absent/recover", json={"date": date, "sids": [sid]})
+            _assert_unit(repeat.status_code == 200, "narrow absence recovery must be idempotent")
+            _assert_unit((repeat.get_json() or {}).get("by_date", {}).get(date) == ["keep-sid"], "retry keeps canonical state")
+            _assert_unit(
+                client.post("/api/absent/recover", json={"date": "bad", "sids": [sid]}).status_code == 400,
+                "recovery rejects invalid dates",
+            )
+            _assert_unit(
+                client.post("/api/absent/recover", json={"date": date, "sids": []}).status_code == 400,
+                "recovery rejects empty SID selections",
+            )
+            _assert_unit(
+                client.post("/api/absent", json=runtime_absent).status_code == 428,
+                "whole-map absence writes require a revision",
+            )
+            current = client.get("/api/absent")
+            revision = current.headers.get("X-Absence-Revision")
+            _assert_unit(bool(revision), "absence GET must expose a no-store revision")
+            _assert_unit(
+                client.post("/api/absent", json=runtime_absent, headers={"If-Match": "stale"}).status_code == 409,
+                "stale whole-map absence writes must fail closed",
+            )
+            accepted = client.post("/api/absent", json=runtime_absent, headers={"If-Match": revision})
+            _assert_unit(accepted.status_code == 200, "current-revision absence write must succeed")
+            _assert_unit(locked_saves[-1] is True, "accepted whole-map writes must save under the shared lock")
+        finally:
+            api_attend.ABS_PATH = original_abs_path
+            api_attend.load_absent = original_load_absent
+            api_attend.save_absent = original_save_absent
+            api_attend.enqueue_current_schedule_changes = original_enqueue
 
 
 def run_student_answer_link_precedence_unit_checks() -> None:
@@ -7486,7 +7729,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } }, 503);
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
   return response({});
 };
 const stateGetNonOk = await loadStateModule('weekend-get-non-ok');
@@ -7505,7 +7748,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) throw new Error('offline');
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
   return response({});
 };
 const stateGetReject = await loadStateModule('weekend-get-reject');
@@ -7528,7 +7771,7 @@ globalThis.fetch = async (url, init = {}) => {
     text: async () => '',
   };
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order') return response({});
+  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
   return response({});
 };
 const stateGetBadJson = await loadStateModule('weekend-get-bad-json');
@@ -7547,7 +7790,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('save failed', 500);
-  if (String(url) === '/api/today_order') return response({ '2026-06-06': ['other'] });
+  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
   return response({});
 };
 const statePostNonOk = await loadStateModule('weekend-post-non-ok');
@@ -7559,15 +7802,14 @@ try {
   ok(String(err?.message || '').includes('/api/weekend-slots'), 'POST non-ok error names weekend slots endpoint');
 }
 ok(postNonOkRejected, 'weekend slots POST non-ok rejects');
-ok(!calls.some(call => call.url === '/api/today_order'), 'weekend slots POST non-ok must not clear today order');
+ok(!calls.some(call => call.url.startsWith('/api/today_order')), 'weekend slots POST non-ok must not clear today order');
 
 calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-06-06': ['s1'] });
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response({ ok: true });
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: true });
   return response({});
 };
 const stateSuccess = await loadStateModule('weekend-success');
@@ -7577,9 +7819,45 @@ ok(weekendPost, 'weekend slots success posts');
 ok(Array.isArray(weekendPost.body?.['2026-06-06']?.s1), 'weekend slots success writes sid slots');
 ok(weekendPost.body['2026-06-06'].s1[0] === 2, 'weekend slots success keeps parsed slot');
 ok(Array.isArray(weekendPost.body['2026-06-06'].other), 'weekend slots success preserves same-day existing sid');
-const orderIndex = calls.findIndex(call => call.url === '/api/today_order');
+const orderIndex = calls.findIndex(call => call.url.startsWith('/api/today_order') && call.method === 'DELETE');
 const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
 ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': {} });
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ error: 'busy' }, 503);
+  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-06-07': ['keep'] });
+  return response({});
+};
+const statePartialOrder = await loadStateModule('weekend-partial-order-reset');
+const originalWarn = console.warn;
+console.warn = () => {};
+let partialOrderResult;
+try {
+  partialOrderResult = await statePartialOrder.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
+} finally {
+  console.warn = originalWarn;
+}
+ok(partialOrderResult?.saved === true, 'weekend slot save remains committed when order reset fails');
+ok(partialOrderResult?.orderReset === false, 'weekend slot save reports partial order-reset failure');
+ok(calls.some(call => call.url === '/api/weekend-slots' && call.method === 'POST'), 'partial result follows a committed slot POST');
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/today_order' && init.method === 'PATCH') {
+    return response({ ok: true, date: init.body ? JSON.parse(String(init.body)).date : '', order: ['s2', 's1'] });
+  }
+  return response({});
+};
+const stateOrderPatch = await loadStateModule('today-order-patch');
+const savedOrder = await stateOrderPatch.saveOrder('2026-06-06', ['s2', 's1', 's2']);
+ok(JSON.stringify(savedOrder) === JSON.stringify(['s2', 's1']), 'saveOrder returns the canonical date-scoped order');
+ok(calls.length === 1 && calls[0].method === 'PATCH', 'saveOrder uses one PATCH without whole-map GET/POST');
+ok(calls[0].body?.date === '2026-06-06', 'saveOrder PATCH binds the selected date');
 
 calls = [];
 let currentWeekendSlots = { '2026-07-05': { s1: [1] } };
@@ -7597,8 +7875,7 @@ globalThis.fetch = async (url, init = {}) => {
     currentWeekendSlots = { ...currentWeekendSlots, ...call.body };
     return response('', 204);
   }
-  if (String(url) === '/api/today_order' && !init.method) return response({ '2026-07-05': ['s1'] });
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response('', 204);
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: true });
   return response({});
 };
 const stateWidenCompact = await loadStateModule('weekend-widen-compact-label');
@@ -7620,8 +7897,7 @@ globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url) === '/api/weekend-slots' && !init.method) return response({});
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url) === '/api/today_order' && !init.method) return response({});
-  if (String(url) === '/api/today_order' && init.method === 'POST') return response({ ok: true });
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: false });
   return response({});
 };
 const stateSlot3Save = await loadStateModule('weekend-slot3-save');
@@ -7853,6 +8129,7 @@ def run_unit_checks() -> bool:
         run_test_catalog_search_sort_checks,
         run_hover_tooltip_performance_checks,
         run_export_log_format_checks,
+        run_today_completion_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
@@ -8141,6 +8418,11 @@ def main() -> int:
         help="Run only class-log export format customization and roster regression checks.",
     )
     parser.add_argument(
+        "--only-today-completion",
+        action="store_true",
+        help="Run only absence recovery convergence and all-date unarchived done checks.",
+    )
+    parser.add_argument(
         "--only-student-install-guide",
         action="store_true",
         help="Run only the student-app install-guide boot and interaction flow checks.",
@@ -8303,6 +8585,8 @@ def main() -> int:
         selected_checks.append(run_hover_tooltip_performance_checks)
     if args.only_export_log_format:
         selected_checks.append(run_export_log_format_checks)
+    if args.only_today_completion:
+        selected_checks.append(run_today_completion_checks)
     if args.only_student_install_guide:
         selected_checks.append(run_student_mobile_pwa_flow_checks)
     if args.only_student_mobile_deployment:

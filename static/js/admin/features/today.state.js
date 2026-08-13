@@ -492,22 +492,37 @@ export function applySavedOrder(list, dateKey) {
   return ordered;
 }
 export async function saveOrder(dateKey, newOrderIds) {
-  let latest;
-  try { latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
-  catch { latest = {}; }
-  latest[dateKey] = newOrderIds.map(String);
-  await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-  _orderMap = latest;
+  const date = String(dateKey || '').trim();
+  const order = Array.from(new Set((Array.isArray(newOrderIds) ? newOrderIds : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)));
+  const response = await fetch('/api/today_order', {
+    method: 'PATCH',
+    headers: CT,
+    body: JSON.stringify({ date, order }),
+  });
+  if (!response.ok) throw new Error(`/api/today_order save failed: ${response.status}`);
+  const payload = await response.json();
+  const savedOrder = Array.isArray(payload?.order) ? payload.order.map(String) : order;
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap, [date]: savedOrder };
+  } else {
+    _orderMap = null;
+  }
+  return savedOrder;
 }
 export async function clearTodayOrder(dateKey) {
-  try {
-    const latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (latest && latest[dateKey]) {
-      delete latest[dateKey];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-      _orderMap = latest;
-    }
-  } catch {}
+  const date = String(dateKey || '').trim();
+  const response = await fetch(`/api/today_order?${new URLSearchParams({ date }).toString()}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(`/api/today_order clear failed: ${response.status}`);
+  const payload = await response.json();
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap };
+    delete _orderMap[date];
+  }
+  return payload?.cleared === true;
 }
 
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
@@ -542,9 +557,16 @@ export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
     throw new Error(`/api/weekend-slots save failed: ${saveRes.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
   }
 
-  await clearTodayOrder(dateStr);
+  let orderReset = true;
+  try {
+    await clearTodayOrder(dateStr);
+  } catch (error) {
+    orderReset = false;
+    console.warn('[weekend slots] today order reset failed:', error);
+  }
   await loadWeekendSlots();
-  await loadOrderMap();
+  await loadOrderMap({ force: true });
+  return { saved: true, orderReset };
 }
 
 // ─────────────────────────────────────────────

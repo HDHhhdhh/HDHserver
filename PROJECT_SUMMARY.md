@@ -47,3 +47,5 @@
 - [x] exportLogs 포맷 사용자 커스터마이즈 (Phase 12: TXT/CSV 선택, TXT 항목 선택, CSV 고정 스키마·수식 중화)
 - [x] 학생 PWA 설치 안내 진입 UX (Phase 13: 초기 닫힘, 명시적 버튼 열기, 설치 완료·Escape·포커스 정리)
 - [x] 학생 앱 배포 계약 자동검증 (Phase 14: Todo 14 temp fixture를 기본 suite+Windows CI에 편입, snapshot 완전성·격리 mutex·실패 경로 process/runtime 불변)
+- [x] 오늘표 결석 복구 수렴 (Phase 16: 서버 잠금 연산으로 by_date/by_student/by_slot 동시 제거, 응답 유실 재조회 수렴, 날짜 단위 today_order 초기화·부분 성공 표시)
+- [x] 자유의 몸 전체 학생 표시 (Phase 16: 날짜 무관 done=true/archived!=true 학생별 최신 1건을 최소 불리언 요약으로 표시, 과거 날짜 행은 읽기 전용)

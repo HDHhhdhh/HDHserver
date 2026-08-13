@@ -22,6 +22,9 @@ import {
   studentSearchKey as sharedStudentSearchKey,
 } from '../../shared/search.js';
 import { countPendingMakeupsBySid } from './makeupPending.js';
+import { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
+
+export { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
 
 import {
   loadWeekendSlots,
@@ -339,19 +342,16 @@ function renderStaleDoneWarning(summary) {
   el.textContent = `정리 필요: 어제까지 하원 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
 }
 
-let staleSummaryRequestSeq = 0;
-async function refreshStaleDoneWarning(dateKey) {
-  const seq = ++staleSummaryRequestSeq;
+async function fetchUnarchivedDoneSummary(dateKey) {
   try {
     const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
     const res = await fetch(`/api/logs/unarchived-summary?${qs.toString()}`, { cache: 'no-store' });
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = await res.json();
-    if (seq !== staleSummaryRequestSeq) return;
-    if (!isCurrentAdminDate(dateKey)) return;
-    renderStaleDoneWarning(data);
+    return data && typeof data === 'object' ? data : null;
   } catch (err) {
     console.warn('[today] stale done summary failed:', err);
+    return null;
   }
 }
 
@@ -825,6 +825,21 @@ async function computeTodayList(dateKey) {
 let todayRenderSeq = 0;
 let lastAutoAssignmentBoundaryDate = todayLocalKey();
 
+function renderDoneSummaryWhenIdle(entries, seq, dateKey) {
+  const apply = () => {
+    if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
+    const wrap = document.getElementById('doneWrap');
+    const active = document.activeElement;
+    if (wrap && active && wrap.contains(active)) {
+      wrap.addEventListener('focusout', () => queueMicrotask(apply), { once: true });
+      return;
+    }
+    renderDone(sortDoneEntries(entries));
+    applyTodaySearchFilter();
+  };
+  apply();
+}
+
 async function refreshUpdatesAtAssignmentBoundary(reason = '') {
   const realDate = todayLocalKey();
   const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;
@@ -865,9 +880,7 @@ export async function loadTodayAndRender(options = {}) {
 
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
-  const doneEntries = sortDoneEntries(
-    collectUnarchivedLogsByDate(dateKey),
-  );
+  const localDoneEntries = sortDoneEntries(collectUnarchivedLogsByDate(dateKey));
 
   const [{ list: raw }] = await Promise.all([
     computeTodayList(dateKey),
@@ -892,14 +905,21 @@ export async function loadTodayAndRender(options = {}) {
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = '0';
 
-  renderDone(doneEntries);
+  renderDone(localDoneEntries);
   renderToday(list, dateKey, false, makeupCounts);
   applyTodaySearchFilter();
   renderStaleDoneWarning({ total: 0, byDate: [] });
-  void refreshStaleDoneWarning(dateKey);
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));
+
+  void (async () => {
+    const unarchivedSummary = await fetchUnarchivedDoneSummary(dateKey);
+    if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
+    const summaryDoneEntries = doneEntriesFromUnarchivedSummary(unarchivedSummary);
+    if (summaryDoneEntries !== null) renderDoneSummaryWhenIdle(summaryDoneEntries, seq, dateKey);
+    renderStaleDoneWarning(unarchivedSummary || { total: 0, byDate: [] });
+  })();
 }
 
 // 이벤트 바인딩(1회)

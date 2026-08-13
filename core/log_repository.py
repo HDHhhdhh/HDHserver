@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import pathlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -199,6 +200,22 @@ class LogRepository:
         except Exception:
             return {}
         return logs if isinstance(logs, dict) else {}
+
+    def _read_json_map_with_status(self) -> tuple[dict, str]:
+        """Return the compatibility map plus an explicit availability state.
+
+        A missing compatibility file is an acceptable SQLite-only deployment.
+        An existing but unreadable/malformed file is different: treating it as
+        an authoritative empty fallback could hide rows that still exist there.
+        """
+        path = pathlib.Path(self.logs_path)
+        try:
+            raw = json.loads(path.read_text("utf-8-sig"))
+        except FileNotFoundError:
+            return {}, "missing"
+        except Exception:
+            return {}, "invalid"
+        return (raw, "available") if isinstance(raw, dict) else ({}, "invalid")
 
     def _filter_json_map(self, data: dict, date_filter: str = "", sid_filter: str = "") -> dict:
         if not isinstance(data, dict):
@@ -630,33 +647,69 @@ class LogRepository:
 
     def summarize_unarchived_done(self, exclude_date: str = "") -> dict:
         entries: Dict[str, Dict[str, dict]] = {}
-        sqlite_keys = set()
+        sqlite_keys: set[tuple[str, str]] = set()
+        sqlite_available = False
         con = None
+
+        def valid_date(value: Any) -> str:
+            date_s = str(value or "").strip()
+            if not DATE_KEY_RE.fullmatch(date_s):
+                return ""
+            try:
+                dt.date.fromisoformat(date_s)
+            except ValueError:
+                return ""
+            return date_s
+
+        def projected_entry(value: Any) -> dict | None:
+            if not isinstance(value, dict):
+                return None
+            if not self.truthy(value.get("done")) or self.truthy(value.get("archived")):
+                return None
+            out = {"done": True, "archived": False}
+            if self.truthy(value.get("hwChecked")):
+                out["hwChecked"] = True
+            if self.truthy(value.get("selfStudy")):
+                out["selfStudy"] = True
+            return out
 
         try:
             con = self._connect()
             self._ensure_schema(con)
-            for row in con.execute("SELECT date, sid FROM logs;").fetchall():
-                sqlite_keys.add((str(row["date"]), str(row["sid"])))
+            candidate_keys: set[tuple[str, str]] = set()
+            for row in con.execute("SELECT date, sid FROM logs ORDER BY date, sid;").fetchall():
+                date = valid_date(row["date"])
+                sid = str(row["sid"] or "").strip()
+                if date and sid:
+                    candidate_keys.add((date, sid))
 
             rows = con.execute(
                 """
                 SELECT date, sid, entry_json
                 FROM logs
-                WHERE json_extract(entry_json, ?) IN (1, 'true')
-                  AND COALESCE(json_extract(entry_json, ?), 0) NOT IN (1, 'true');
+                WHERE json_extract(entry_json, ?) IN (1, '1', 'true')
+                  AND COALESCE(json_extract(entry_json, ?), 0) NOT IN (1, '1', 'true')
+                ORDER BY date, sid;
                 """,
                 ("$.done", "$.archived"),
             ).fetchall()
+            candidate_entries: Dict[str, Dict[str, dict]] = {}
             for row in rows:
-                date = str(row["date"])
-                sid = str(row["sid"])
+                date = valid_date(row["date"])
+                sid = str(row["sid"] or "").strip()
+                if not date or not sid:
+                    continue
                 try:
                     entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
                 except Exception:
                     entry = {}
-                if isinstance(entry, dict):
-                    entries.setdefault(date, {})[sid] = self.repair_entry(entry, sid)
+                projected = projected_entry(entry)
+                if projected is None:
+                    continue
+                candidate_entries.setdefault(date, {})[sid] = projected
+            sqlite_keys = candidate_keys
+            entries = candidate_entries
+            sqlite_available = True
         except Exception as exc:
             print("[logs.unarchived-summary] sqlite failed:", exc, flush=True)
         finally:
@@ -666,19 +719,48 @@ class LogRepository:
             except Exception:
                 pass
 
-        json_map = self.read_json_map()
+        json_map, json_status = self._read_json_map_with_status()
         for date, by_sid in json_map.items():
             if not isinstance(by_sid, dict):
                 continue
-            date_s = str(date)
+            date_s = valid_date(date)
+            if not date_s:
+                continue
             day = entries.setdefault(date_s, {})
             for sid, entry in by_sid.items():
-                sid_s = str(sid)
-                if (date_s, sid_s) in sqlite_keys or sid_s in day or not isinstance(entry, dict):
+                sid_s = str(sid or "").strip()
+                if not sid_s or (date_s, sid_s) in sqlite_keys or sid_s in day:
+                    continue
+                projected = projected_entry(entry)
+                if projected is None:
+                    continue
+                day[sid_s] = projected
+
+        latest_by_sid: Dict[str, tuple[str, dict]] = {}
+        for date, by_sid in entries.items():
+            date_s = str(date)
+            if not valid_date(date_s):
+                continue
+            if not isinstance(by_sid, dict):
+                continue
+            for sid, entry in by_sid.items():
+                if not isinstance(entry, dict):
                     continue
                 if not self.truthy(entry.get("done")) or self.truthy(entry.get("archived")):
                     continue
-                day[sid_s] = self.repair_entry(entry, sid_s)
+                sid_s = str(sid or "").strip()
+                if not sid_s:
+                    continue
+                previous = latest_by_sid.get(sid_s)
+                if previous is None or date_s > previous[0]:
+                    latest_by_sid[sid_s] = (date_s, entry)
+
+        latest_rows = [
+            {"date": date, "sid": sid, "entry": entry}
+            for sid, (date, entry) in latest_by_sid.items()
+        ]
+        latest_rows.sort(key=lambda row: str(row["sid"]))
+        latest_rows.sort(key=lambda row: str(row["date"]), reverse=True)
 
         by_date: Dict[str, int] = {}
         students = set()
@@ -686,6 +768,8 @@ class LogRepository:
         today = self.today_key()
         for date, by_sid in entries.items():
             date_s = str(date)
+            if not valid_date(date_s):
+                continue
             if exclude_date and date_s == exclude_date:
                 continue
             if date_s >= today:
@@ -695,13 +779,16 @@ class LogRepository:
             for sid, entry in by_sid.items():
                 if not isinstance(entry, dict):
                     continue
+                sid_s = str(sid or "").strip()
+                if not sid_s:
+                    continue
                 if not self.truthy(entry.get("done")) or self.truthy(entry.get("archived")):
                     continue
                 by_date[date_s] = by_date.get(date_s, 0) + 1
-                students.add(str(sid))
+                students.add(sid_s)
                 total += 1
 
-        return {
+        result = {
             "ok": True,
             "excludeDate": exclude_date,
             "total": total,
@@ -710,7 +797,14 @@ class LogRepository:
                 {"date": date, "count": by_date[date]}
                 for date in sorted(by_date.keys(), reverse=True)
             ],
+            "rowsAvailable": bool(
+                (sqlite_available and json_status != "invalid")
+                or (not sqlite_available and json_status == "available")
+            ),
         }
+        if result["rowsAvailable"]:
+            result["rows"] = latest_rows
+        return result
 
 
 class _NullContext:

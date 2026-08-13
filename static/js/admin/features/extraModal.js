@@ -3,20 +3,8 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { setArriveOverride } from './today.state.js';
+import { clearTodayOrder, setArriveOverride } from './today.state.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
-
-// ────────────────────────────────────────────
-// (선택) 오늘 순서 캐시 삭제 → 새 보강 추가 시 하단 고정 현상 방지
-async function clearTodayOrder(dateStr) {
-  try {
-    const map = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (map && map[dateStr]) {
-      delete map[dateStr];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(map) });
-    }
-  } catch { /* ignore */ }
-}
 
 function ensure() {
   if ($('#extraModal')) return;
@@ -319,6 +307,7 @@ export function initExtraModal() {
   // 열기
   btn.addEventListener('click', async () => {
     const today = getAdminDate();
+    exModal.dataset.date = today;
 
     const slotMap = await loadDaySlots();
     const perDay = slotMap[today] || {};
@@ -403,7 +392,11 @@ export function initExtraModal() {
     const saveBtn = e.target.closest?.('#extraModal .ex-save');
     if (!saveBtn) return;
 
-    const today = getAdminDate();
+    const today = String(exModal.dataset.date || '').trim();
+    if (!today) {
+      toast('보강 날짜를 다시 선택해 주세요.');
+      return;
+    }
 
     // 선택 학생
     const rows = Array.from(document.querySelectorAll('#exZone .row'));
@@ -459,9 +452,14 @@ export function initExtraModal() {
     }
 
     // 3) 오늘 사용자 정렬 캐시 초기화 → 자동 정렬 반영
-    await clearTodayOrder(today);
+    let orderReset = true;
+    try { await clearTodayOrder(today); }
+    catch (orderError) {
+      orderReset = false;
+      console.warn('[extra attendance] today order reset failed:', orderError);
+    }
 
-    toast('보강 저장');
+    toast(orderReset ? '보강 저장' : '보강은 저장됐지만 오늘표 순서 초기화 실패');
     exModal.style.display = 'none';
     document.dispatchEvent(new CustomEvent('admin:refresh'));
     if (typeof window.recalcCalendarCounts === 'function') window.recalcCalendarCounts();

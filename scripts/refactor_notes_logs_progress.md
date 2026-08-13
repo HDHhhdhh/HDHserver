@@ -343,6 +343,33 @@ refactors. It is documentation only; do not treat it as a migration plan.
   evidence; those remain blocked until approved devices and infrastructure are
   available.
 
+## Today Absence Recovery And Unarchived Students (Phase 16 Complete)
+
+- Absence recovery is a narrow, idempotent server operation that holds the
+  canonical absence-file lock while removing the selected SID/date from
+  `by_date`, `by_student`, and `by_slot` together. Client state changes only
+  after an accepted normalized response; if the response is lost after commit,
+  a no-store read reconciles the final state before reporting failure. Legacy
+  whole-map writers require the revision returned by `GET /api/absent`, and the
+  sheet sync rebases only its additive cells under the same lock.
+- After a successful recovery, the selected date's manual `today_order` is
+  cleared through the locked date-scoped `DELETE /api/today_order` operation so
+  unrelated dates are preserved and the returning student is placed by the
+  canonical Today sorting rules. If only that secondary reset fails, the
+  completed absence save is reported as partial success and the forced server
+  refresh still runs. Drag saves likewise use a single date-scoped `PATCH`.
+- `/api/logs/unarchived-summary` keeps its historical cleanup counts and now
+  also returns the latest `done=true`, `archived!=true` log per SID across all
+  real canonical dates. Each row contains only the render booleans (`done`,
+  `archived`, optional `hwChecked`/`selfStudy`), never log notes, homework, or
+  test metadata. A `rowsAvailable` marker distinguishes an authoritative empty
+  result from storage degradation; the latter falls back to the selected
+  date's existing local records. Historical rows display their date and keep
+  slot/arrival controls read-only until that date is selected.
+- Demo primary/fallback fetch interceptors implement the same response shape.
+  Run the focused, runtime-free contract with
+  `python scripts/verify_refactor_safety.py --only-today-completion`.
+
 ## Verification Contract
 
 Safe default checks:

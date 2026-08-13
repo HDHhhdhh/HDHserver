@@ -25,6 +25,20 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function canonicalDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function projectedDoneEntry(entry) {
+  const out = { done: true, archived: false };
+  if (entry?.hwChecked === true || entry?.hwChecked === 1 || entry?.hwChecked === '1' || entry?.hwChecked === 'true') out.hwChecked = true;
+  if (entry?.selfStudy === true || entry?.selfStudy === 1 || entry?.selfStudy === '1' || entry?.selfStudy === 'true') out.selfStudy = true;
+  return out;
+}
+
 function stripTrailingSlash(pathname) {
   const value = String(pathname || '/');
   return value.length > 1 ? value.replace(/\/+$/, '') : value;
@@ -639,6 +653,33 @@ function mergeAbsent(store, body) {
   return clone(store.absent);
 }
 
+function recoverAbsent(store, body) {
+  const date = canonicalDate(body?.date);
+  const sids = Array.from(new Set((Array.isArray(body?.sids) ? body.sids : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)));
+  if (!date || !sids.length) {
+    return { error: 'missing date or sids' };
+  }
+
+  const absent = clone(store.absent && typeof store.absent === 'object'
+    ? store.absent
+    : { by_date: {}, by_student: {}, by_slot: {} });
+  absent.by_date = absent.by_date && typeof absent.by_date === 'object' ? absent.by_date : {};
+  absent.by_student = absent.by_student && typeof absent.by_student === 'object' ? absent.by_student : {};
+  absent.by_slot = absent.by_slot && typeof absent.by_slot === 'object' ? absent.by_slot : {};
+  const selected = new Set(sids);
+  absent.by_date[date] = (absent.by_date?.[date] || [])
+    .filter(sid => !selected.has(String(sid)));
+  sids.forEach(sid => {
+    if (String(absent.by_student?.[sid] || '') === date) delete absent.by_student[sid];
+    if (absent.by_slot?.[date]) delete absent.by_slot[date][sid];
+  });
+  if (absent.by_slot?.[date] && !Object.keys(absent.by_slot[date]).length) delete absent.by_slot[date];
+  store.absent = absent;
+  return clone(absent);
+}
+
 function dayMapResponse(root, store, key, url) {
   const date = String(url.searchParams.get('date') || '').trim();
   const source = store[key] && typeof store[key] === 'object' ? store[key] : {};
@@ -690,23 +731,47 @@ function watchLatestResponse(root, store, url) {
 }
 
 function unarchivedSummaryResponse(root, store, url) {
-  const date = dateParam(url, store);
-  const rows = [];
-  const bySid = store.logs?.[date] || {};
-  Object.entries(bySid).forEach(([sid, entry]) => {
-    if (!entry || typeof entry !== 'object') return;
-    if (entry.done === true && entry.archived !== true) {
-      const student = (store.students || []).find(row => String(row?.id) === String(sid)) || {};
-      rows.push({
-        date,
-        sid,
-        name: student.name || sid,
-        leaveTime: entry.leaveTime || entry.doneTime || '',
-        notes: entry.notes || '',
-      });
-    }
+  const excludeDate = String(
+    url.searchParams.get('exclude_date') || url.searchParams.get('excludeDate') || '',
+  ).trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const latestBySid = new Map();
+  const byDate = new Map();
+  const staleStudents = new Set();
+  let total = 0;
+
+  Object.keys(store.logs || {}).sort().forEach((date) => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey) return;
+    Object.entries(store.logs?.[date] || {}).forEach(([sid, entry]) => {
+      const sidKey = String(sid || '').trim();
+      if (!sidKey) return;
+      if (!entry || typeof entry !== 'object') return;
+      const done = entry.done === true || entry.done === 1 || entry.done === '1' || entry.done === 'true';
+      const archived = entry.archived === true || entry.archived === 1 || entry.archived === '1' || entry.archived === 'true';
+      if (!done || archived) return;
+
+      latestBySid.set(sidKey, { date: dateKey, sid: sidKey, entry: projectedDoneEntry(entry) });
+      if ((excludeDate && dateKey === excludeDate) || (today && dateKey >= today)) return;
+      byDate.set(dateKey, (byDate.get(dateKey) || 0) + 1);
+      staleStudents.add(sidKey);
+      total += 1;
+    });
   });
-  return responseJson(root, { ok: true, date, rows, count: rows.length });
+
+  const rows = Array.from(latestBySid.values())
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid)));
+  return responseJson(root, {
+    ok: true,
+    excludeDate,
+    total,
+    students: staleStudents.size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows,
+  });
 }
 
 function normalizeAnnouncementPayload(payload, previous = {}) {
@@ -1065,6 +1130,28 @@ async function handleWrite(root, ctx, store) {
     return ok(root, next);
   }
 
+  if (method === 'PATCH' && path === '/api/today_order') {
+    const date = canonicalDate(body?.date);
+    if (!date || !Array.isArray(body?.order)) return badRequest(root, 'invalid date or order');
+    const order = Array.from(new Set(body.order.map(value => String(value || '').trim()).filter(Boolean)));
+    const latest = loadDemoStore();
+    latest.todayOrder = latest.todayOrder && typeof latest.todayOrder === 'object' ? latest.todayOrder : {};
+    latest.todayOrder[date] = order;
+    saveDemoStore(latest);
+    return ok(root, { ok: true, date, order: clone(order) });
+  }
+
+  if (method === 'DELETE' && path === '/api/today_order') {
+    const date = canonicalDate(ctx.url.searchParams.get('date'));
+    if (!date) return badRequest(root, 'invalid date');
+    const latest = loadDemoStore();
+    latest.todayOrder = latest.todayOrder && typeof latest.todayOrder === 'object' ? latest.todayOrder : {};
+    const cleared = Object.prototype.hasOwnProperty.call(latest.todayOrder, date);
+    delete latest.todayOrder[date];
+    saveDemoStore(latest);
+    return ok(root, { ok: true, date, cleared });
+  }
+
   if (method === 'POST' && path === '/api/makeup-carryover') {
     const next = setWholeMap(store, 'makeupCarryover', body);
     saveDemoStore(store);
@@ -1075,6 +1162,16 @@ async function handleWrite(root, ctx, store) {
     const result = mergeAbsent(store, body);
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
+    return ok(root, result);
+  }
+
+  if (method === 'POST' && path === '/api/absent/recover') {
+    // The request body is read asynchronously. Reload immediately before the
+    // narrow mutation so concurrent demo recoveries cannot publish a stale map.
+    const latest = loadDemoStore();
+    const result = recoverAbsent(latest, body);
+    if (result.error) return badRequest(root, result.error);
+    saveDemoStore(latest);
     return ok(root, result);
   }
 

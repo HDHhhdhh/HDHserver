@@ -115,6 +115,20 @@ function onReady(fn) {
   }
 }
 
+function canonicalDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function projectedDoneEntry(entry) {
+  const out = { done: true, archived: false };
+  if (entry?.hwChecked === true || entry?.hwChecked === 1 || entry?.hwChecked === '1' || entry?.hwChecked === 'true') out.hwChecked = true;
+  if (entry?.selfStudy === true || entry?.selfStudy === 1 || entry?.selfStudy === '1' || entry?.selfStudy === 'true') out.selfStudy = true;
+  return out;
+}
+
 function installFetchGuard(demo) {
   if (demo.fetchGuardInstalled) return;
 
@@ -218,7 +232,10 @@ async function handleDemoApiRequest(request, input, init, demo) {
 
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
-    return demoJson(mutation, { handler: 'bootstrap-fallback' });
+    return demoJson(mutation, {
+      status: mutation?.ok === false ? 400 : 200,
+      handler: 'bootstrap-fallback',
+    });
   }
 
   const store = loadDemoStore();
@@ -285,7 +302,7 @@ function fallbackPayloadForGet(path, params, store) {
         entry: cloneDemoValue(entryForDateSid(store.logs || {}, params)),
       };
     case '/api/logs/unarchived-summary':
-      return { total: 0, byDate: [] };
+      return unarchivedDoneSummary(store, params);
     case '/api/progress':
       return cloneDemoValue(filterDateSidMap(store.progress || {}, params));
     case '/api/extra-attend':
@@ -332,6 +349,51 @@ function fallbackPayloadForGet(path, params, store) {
   }
 }
 
+function unarchivedDoneSummary(store, params) {
+  const excludeDate = String(params.get('exclude_date') || params.get('excludeDate') || '').trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const latestBySid = new Map();
+  const byDate = new Map();
+  const staleStudents = new Set();
+  let total = 0;
+
+  Object.keys(store.logs || {}).sort().forEach(date => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey) return;
+    Object.entries(store.logs?.[date] || {}).forEach(([sid, entry]) => {
+      const sidKey = String(sid || '').trim();
+      if (!sidKey) return;
+      if (!entry || typeof entry !== 'object') return;
+      const done = entry.done === true || entry.done === 1 || entry.done === '1' || entry.done === 'true';
+      const archived = entry.archived === true || entry.archived === 1 || entry.archived === '1' || entry.archived === 'true';
+      if (!done || archived) return;
+
+      latestBySid.set(sidKey, {
+        date: dateKey,
+        sid: sidKey,
+        entry: projectedDoneEntry(entry),
+      });
+      if ((excludeDate && dateKey === excludeDate) || (today && dateKey >= today)) return;
+      byDate.set(dateKey, (byDate.get(dateKey) || 0) + 1);
+      staleStudents.add(sidKey);
+      total += 1;
+    });
+  });
+
+  return {
+    ok: true,
+    excludeDate,
+    total,
+    students: staleStudents.size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows: Array.from(latestBySid.values())
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid))),
+  };
+}
+
 function homeworkBooksBySid(logs) {
   const out = {};
   Object.keys(logs || {}).sort().reverse().forEach(date => {
@@ -355,8 +417,55 @@ function homeworkBooksBySid(logs) {
 
 async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
+  const request = normalizeFetchRequest(input, init);
+  const method = request?.method || String(init?.method || 'POST').toUpperCase();
 
-  if (path === '/api/today_order') {
+  if (path === '/api/absent/recover') {
+    const date = canonicalDate(body?.date);
+    const selected = new Set((Array.isArray(body?.sids) ? body.sids : [])
+      .map(value => String(value || '').trim())
+      .filter(Boolean));
+    if (!date || !selected.size) {
+      return { ok: false, demo: true, error: 'missing date or sids' };
+    }
+    const store = loadDemoStore();
+    const absent = cloneDemoValue(store.absent || { by_date: {}, by_student: {}, by_slot: {} });
+    absent.by_date ||= {};
+    absent.by_student ||= {};
+    absent.by_slot ||= {};
+    absent.by_date[date] = (absent.by_date[date] || []).filter(sid => !selected.has(String(sid)));
+    selected.forEach(sid => {
+      if (String(absent.by_student[sid] || '') === date) delete absent.by_student[sid];
+      if (absent.by_slot[date]) delete absent.by_slot[date][sid];
+    });
+    if (absent.by_slot[date] && !Object.keys(absent.by_slot[date]).length) delete absent.by_slot[date];
+    saveDemoStore({ ...store, absent });
+    return cloneDemoValue(absent);
+  }
+
+  if (path === '/api/today_order' && method === 'PATCH') {
+    const date = canonicalDate(body?.date);
+    if (!date || !Array.isArray(body?.order)) return { ok: false, demo: true, error: 'invalid date or order' };
+    const order = Array.from(new Set(body.order.map(value => String(value || '').trim()).filter(Boolean)));
+    const store = loadDemoStore();
+    store.todayOrder = store.todayOrder && typeof store.todayOrder === 'object' ? store.todayOrder : {};
+    store.todayOrder[date] = order;
+    saveDemoStore(store);
+    return { ok: true, demo: true, date, order };
+  }
+
+  if (path === '/api/today_order' && method === 'DELETE') {
+    const date = canonicalDate(request?.url?.searchParams?.get('date'));
+    if (!date) return { ok: false, demo: true, error: 'invalid date' };
+    const store = loadDemoStore();
+    store.todayOrder = store.todayOrder && typeof store.todayOrder === 'object' ? store.todayOrder : {};
+    const cleared = Object.prototype.hasOwnProperty.call(store.todayOrder, date);
+    delete store.todayOrder[date];
+    saveDemoStore(store);
+    return { ok: true, demo: true, date, cleared };
+  }
+
+  if (path === '/api/today_order' && method === 'POST') {
     saveDemoStore({ ...loadDemoStore(), todayOrder: body && typeof body === 'object' ? body : {} });
     return { ok: true, demo: true };
   }

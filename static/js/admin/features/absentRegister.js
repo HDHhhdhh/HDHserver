@@ -1,18 +1,10 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { setAttended, setContacted } from './today.state.js';
+import { clearTodayOrder, setAttended, setContacted } from './today.state.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 
-async function clearTodayOrder(dateStr) {
-  try {
-    const map = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (map && map[dateStr]) {
-      delete map[dateStr];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(map) });
-    }
-  } catch { /* ignore */ }
-}
+let absenceRevision = '';
 
 function ensureWindowStateAlias() {
   window.state = window.state || state;
@@ -75,12 +67,16 @@ function applyAbsentPayload(payload) {
   ensureWindowStateAlias();
 }
 
-async function loadAbsentPayload() {
+async function loadAbsentPayload(options = {}) {
   try {
-    const payload = await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json());
+    const response = await fetch('/api/absent', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`/api/absent ${response.status}`);
+    const payload = await response.json();
+    absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
     applyAbsentPayload(payload);
     return payload;
-  } catch {
+  } catch (error) {
+    if (options.required) throw error;
     return {
       by_date: state.absentByDate || {},
       by_student: state.absences || {},
@@ -134,10 +130,10 @@ function collectAbsenceCandidates(dateStr, extraMap) {
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
 }
 
-async function postJSON(url, body) {
+async function postJSON(url, body, options = {}) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: CT,
+    headers: { ...CT, ...(options.headers || {}) },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${url} ${res.status}`);
@@ -359,6 +355,7 @@ export function initAbsentRegister() {
 
   btn.addEventListener('click', async () => {
     const dateKey = getAdminDate();
+    modal.dataset.date = dateKey;
     await loadAbsentPayload();
     const extraMap = await loadExtraAttendMap();
     const candidates = collectAbsenceCandidates(dateKey, extraMap);
@@ -406,7 +403,11 @@ export function initAbsentRegister() {
     const saveBtn = e.target.closest?.('#absentRegisterModal .absent-save');
     if (!saveBtn) return;
 
-    const dateKey = getAdminDate();
+    const dateKey = String(modal.dataset.date || '').trim();
+    if (!dateKey) {
+      toast('결석 등록 날짜를 다시 선택해 주세요.');
+      return;
+    }
     const rows = Array.from(document.querySelectorAll('#absentZone .row'));
     const selectedIds = rows
       .filter(r => r.querySelector('.chk-sid')?.checked)
@@ -427,7 +428,7 @@ export function initAbsentRegister() {
         setContacted(dateKey, sid, false);
       }
 
-      const latest = await loadAbsentPayload();
+      const latest = await loadAbsentPayload({ required: true });
       const byDate = normalizeAbsentByDateMap(latest?.by_date || {});
       const byStudent = normalizeAbsencesByStudent(latest?.by_student || {});
       const bySlot = normalizeAbsentSlotMap(latest?.by_slot || {});
@@ -445,13 +446,22 @@ export function initAbsentRegister() {
         by_date: byDate,
         by_student: byStudent,
         by_slot: bySlot,
+      }, {
+        headers: absenceRevision ? { 'If-Match': absenceRevision } : {},
       });
       const saved = await res.json().catch(() => ({ by_date: byDate, by_student: byStudent, by_slot: bySlot }));
       applyAbsentPayload(saved);
 
-      await clearTodayOrder(dateKey);
+      let orderReset = true;
+      try { await clearTodayOrder(dateKey); }
+      catch (orderError) {
+        orderReset = false;
+        console.warn('[absence register] today order reset failed:', orderError);
+      }
 
-      toast(`${selectedIds.length}명 결석 등록`);
+      toast(orderReset
+        ? `${selectedIds.length}명 결석 등록`
+        : `${selectedIds.length}명 결석 등록됨 · 오늘표 순서 초기화 실패`);
       modal.style.display = 'none';
       document.dispatchEvent(new CustomEvent('attendance:updated'));
       document.dispatchEvent(new CustomEvent('admin:refresh'));

@@ -26,9 +26,30 @@ export function initCalendar() {
   const MAKEUP_SLOTS = [1, 2];
   const MAIN_WEEK_INDEX = 2;
   const MAKEUP_ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
+  let absenceRevision = '';
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const yoil = dateStr => WCHR[new Date(dateStr).getDay()];
   const isWeekend = dateStr => ['토', '일'].includes(yoil(dateStr));
+
+  async function fetchAbsentSnapshot() {
+    const response = await fetch('/api/absent', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`/api/absent ${response.status}`);
+    const payload = await response.json();
+    absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
+    return payload;
+  }
+
+  async function postAbsentSnapshot(payload) {
+    const response = await fetch('/api/absent', {
+      method: 'POST',
+      headers: { ...CT, ...(absenceRevision ? { 'If-Match': absenceRevision } : {}) },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(`/api/absent ${response.status}`);
+    absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
+    return data || payload;
+  }
 
   function toSafeDate(year, month, day) {
     const y = Number.parseInt(String(year), 10);
@@ -725,7 +746,7 @@ export function initCalendar() {
     try { EXTRA = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch { EXTRA = {}; }
     try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
     try { CARRYOVER = await fetch('/api/makeup-carryover', { cache: 'no-store' }).then(r => r.json()); } catch { CARRYOVER = {}; }
-    try { applyAbsentPayload(await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json())); } catch {}
+    try { applyAbsentPayload(await fetchAbsentSnapshot()); } catch {}
     state.extra = EXTRA || {};
     window.extra = state.extra;
     CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
@@ -1557,9 +1578,7 @@ export function initCalendar() {
       return;
     }
 
-    const latestRes = await fetch('/api/absent', { cache: 'no-store' });
-    const latest = await latestRes.json().catch(() => null);
-    if (!latestRes.ok) throw new Error(`/api/absent ${latestRes.status}`);
+    const latest = await fetchAbsentSnapshot();
 
     const byDateSource = latest?.by_date || latest?.absentByDate || state.absentByDate || {};
     const byStudentSource = latest?.by_student || latest?.absences || state.absences || {};
@@ -1595,13 +1614,7 @@ export function initCalendar() {
     else delete byDate[absenceDate];
     if (String(byStudent[sid] || '') === absenceDate) delete byStudent[sid];
 
-    const res = await fetch('/api/absent', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({ by_date: byDate, by_student: byStudent, by_slot: bySlot }),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/absent ${res.status}`);
+    const data = await postAbsentSnapshot({ by_date: byDate, by_student: byStudent, by_slot: bySlot });
 
     applyAbsentPayload(data || { by_date: byDate, by_student: byStudent, by_slot: bySlot });
     if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
@@ -2954,6 +2967,13 @@ export function initCalendar() {
 
     // ── 결석 처리 ──
     if (mode === 'absent') {
+      try {
+        applyAbsentPayload(await fetchAbsentSnapshot());
+      } catch (error) {
+        console.error(error);
+        alert('최신 결석 정보를 불러오지 못했습니다.');
+        return;
+      }
       state.absences = state.absences && typeof state.absences === 'object' ? state.absences : {};
       state.absentByDate = state.absentByDate && typeof state.absentByDate === 'object' ? state.absentByDate : {};
       state.absentSlotsByDate = state.absentSlotsByDate && typeof state.absentSlotsByDate === 'object' ? state.absentSlotsByDate : {};
@@ -2994,17 +3014,11 @@ export function initCalendar() {
       else delete state.absentSlotsByDate[dateStr];
 
       try {
-        const res = await fetch('/api/absent', {
-          method: 'POST', headers: CT,
-          body: JSON.stringify({
-            by_date: state.absentByDate,
-            by_student: state.absences,
-            by_slot: state.absentSlotsByDate,
-          })
+        const data = await postAbsentSnapshot({
+          by_date: state.absentByDate,
+          by_student: state.absences,
+          by_slot: state.absentSlotsByDate,
         });
-        let data = null;
-        try { data = await res.json(); } catch { }
-        if (!res.ok) throw new Error(`/api/absent ${res.status}`);
         applyAbsentPayload(data);
         await markAbsenceMakeupOpen(dateStr, openedDemands);
         alert('결석 처리 완료');
