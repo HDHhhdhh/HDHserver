@@ -29,6 +29,10 @@ pip show flask >nul 2>&1 || (
 
 REM 5) 서버 백그라운드 실행
 echo [INFO] 서버 실행...
+set "TRUST_PROXY_HEADERS=1"
+set "STUDENT_APP_PUBLIC_ENABLED=1"
+set "STUDENT_APP_PUBLIC_HOST=app.5a-math.com"
+set "STUDENT_APP_REDIRECT_HOST=5a-math.com"
 start "" /B py -3 app.py
 
 REM 6) 3초 대기 후 브라우저 열기

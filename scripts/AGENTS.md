@@ -7,7 +7,6 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 | Task | Location | Notes |
 |---|---|---|
 | Runtime backup | `backup_runtime_data.py` | Run before migrations, repair jobs, or bulk runtime-data changes. |
-| Today-order migration | `migrate_today_order_store.py` | Dry-run by default; archives a conflict-free legacy root store on `--apply`. |
 | Safety suite | `verify_refactor_safety.py` | Compile, JS checks, unit checks, optional safe smoke checks. |
 | Assistant-note verifier | `verify_assistant_student_notes.py` | Temp SQLite/API/source checks; standalone behavior check, not part of the default suite. |
 | Unit-test link map | `build_unit_test_answer_link_map_from_gdown.py` | Regenerates `static/js/test_answer_link_map.json`. |
@@ -36,7 +35,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - REVIEW/SCHOOL_PAST imports and the answer-map builder support temp paths and enforce `--backup-confirmed` for live outputs.
 - UNIT replacement import and `seed_tests_config.js` now require explicit backup confirmation and reject implicit ID removals; `--allow-unit-removal` is required for an intentional shrink. Append/sort remain live mutators, so back up first and do not assume every script accepts temp-path or confirmation flags.
 - The tracked canonical answer map is `static/js/test_answer_link_map.json` with `sourceId -> round -> entry`; the ignored `.js` sibling is a stale legacy artifact.
-- SQL files in `migrations/` are manual artifacts, not an executable runner. Inspect the current schema before applying them; the assistant-note create file intentionally precedes the `updated_by` add-column file.
+- SQL files in `migrations/` are manual artifacts, not an executable chain. The current assistant-note create/add-column files conflict if applied sequentially; reconcile them before any live migration.
 - CI installs no dependencies and depends on ignored evidence files, so a green local run does not prove a clean runner is reproducible.
 
 ## Anti-Patterns

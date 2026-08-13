@@ -126,6 +126,23 @@ class StudentOperationLogRepository:
             "created_at": created_at,
         }
 
+    def delete_one(self, log_id: int) -> bool:
+        log_id = int(log_id)
+        if log_id <= 0:
+            return False
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE;")
+            try:
+                cursor = connection.execute(
+                    "DELETE FROM student_operation_logs WHERE id = ?;",
+                    (log_id,),
+                )
+                connection.execute("COMMIT;")
+            except sqlite3.Error:
+                connection.execute("ROLLBACK;")
+                raise
+        return bool(cursor.rowcount)
+
     def clear_all(self) -> int:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE;")

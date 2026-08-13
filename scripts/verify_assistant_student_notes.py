@@ -42,6 +42,13 @@ def repository_checks() -> None:
         pinned = repo.set_pinned("student-a", first["id"], True)
         check(pinned is not None and pinned["pinned"] is True, "pinning a note failed")
         check(repo.set_pinned("student-b", first["id"], True) is None, "cross-student pin must fail")
+        reminded = repo.set_remind_on("student-a", first["id"], "2026-08-15")
+        check(reminded is not None and reminded["remind_on"] == "2026-08-15", "setting a reminder date failed")
+        completed = repo.set_completed("student-a", first["id"], True)
+        check(completed is not None and completed["completed_at"], "completing a reminder failed")
+        reopened = repo.set_completed("student-a", first["id"], False)
+        check(reopened is not None and reopened["completed_at"] == "", "clearing completed state failed")
+        check(repo.set_remind_on("student-b", first["id"], "2026-08-16") is None, "cross-student reminder must fail")
         check(repo.delete("student-b", first["id"]) is False, "cross-student delete must fail")
 
         reloaded = AssistantStudentNoteRepository(db_path=str(db_path)).list_for_student("student-a")
@@ -50,7 +57,7 @@ def repository_checks() -> None:
         with closing(sqlite3.connect(db_path)) as con:
             columns = {row[1] for row in con.execute("PRAGMA table_info(assistant_student_notes)")}
         check(
-            {"id", "student_id", "content", "created_by", "updated_by", "pinned", "created_at", "updated_at"}.issubset(columns),
+            {"id", "student_id", "content", "created_by", "updated_by", "pinned", "remind_on", "completed_at", "created_at", "updated_at"}.issubset(columns),
             "assistant_student_notes schema is incomplete",
         )
 
@@ -104,6 +111,7 @@ def route_checks() -> None:
             )
             check(created.status_code == 201, "note create failed")
             note = created.get_json()["note"]
+            check(note["remind_on"] == "" and note["completed_at"] == "", "new notes must expose empty reminder state")
 
             listed = client.get(
                 "/api/assistant-student-notes?student_id=student-a",
@@ -143,6 +151,34 @@ def route_checks() -> None:
                 headers=admin_headers,
             )
             check(invalid_pin.status_code == 400, "pin value must be a boolean")
+
+            invalid_reminder = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/reminder",
+                json={"student_id": "student-a", "remind_on": "2026-8-15"},
+                headers=admin_headers,
+            )
+            check(invalid_reminder.status_code == 400, "invalid reminder date must be rejected")
+
+            reminded = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/reminder",
+                json={"student_id": "student-a", "remind_on": "2026-08-15"},
+                headers=admin_headers,
+            )
+            check(reminded.status_code == 200 and reminded.get_json()["note"]["remind_on"] == "2026-08-15", "route reminder update failed")
+
+            completed = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/complete",
+                json={"student_id": "student-a", "completed": True},
+                headers=admin_headers,
+            )
+            check(completed.status_code == 200 and completed.get_json()["note"]["completed_at"], "route completion failed")
+
+            reopened = client.patch(
+                f"/api/assistant-student-notes/{note['id']}/complete",
+                json={"student_id": "student-a", "completed": False},
+                headers=admin_headers,
+            )
+            check(reopened.status_code == 200 and reopened.get_json()["note"]["completed_at"] == "", "route completion clear failed")
 
             pinned = client.patch(
                 f"/api/assistant-student-notes/{note['id']}/pin",
@@ -187,7 +223,10 @@ def source_boundary_checks() -> None:
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
     check("assistantStudentNotes" in tooltip_source, "student sidebar must mount assistant notes")
-    check("조교 메모방" in tooltip_source, "assistant memo title is missing")
+    check("<h3>조교 메모</h3>" in tooltip_source, "assistant memo title is missing")
+    check("조교 메모방" not in tooltip_source, "legacy assistant memo title remains")
+    check("data-note-remind-input" in tooltip_source and "assistant-note-compose-reminder" in tooltip_source, "confirmation-date composer is missing")
+
     check('data-note-list role="log"' in tooltip_source, "scrollable assistant comment thread is missing")
     check("댓글 등록" in tooltip_source and "data-note-save" in tooltip_source, "comment composer is missing")
     check('data-note-author="귤" aria-pressed="false">규리</button>' in tooltip_source, "gyuri author button label is missing")
@@ -242,6 +281,31 @@ def source_boundary_checks() -> None:
     check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
     check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
     check("notes.slice().reverse()" in notes_source, "existing notes must render from oldest to newest")
+    check(
+        "remind_on" in notes_source
+        and "assistant-note-reminder-info" in notes_source
+        and "assistant-note-reminder-dates" in notes_source
+        and "assistant-note-reminder-arrow" in notes_source,
+        "saved reminder notes must render compact written-to-target dates",
+    )
+    check(
+        "assistant-note-followup" not in notes_source
+        and "assistant-note-followup" not in admin_css
+        and "assistant-note-complete" not in notes_source
+        and "assistant-note-complete" not in admin_css,
+        "saved reminder cards must not contain inline date or completion controls",
+    )
+    check(
+        "editButton.dataset.noteEdit" in notes_source
+        and "assistant-note-edit-save" in notes_source,
+        "each comment must support compact content editing",
+    )
+    check(
+        ".assistant-note-item.has-reminder .assistant-note-action-group" in admin_css
+        and "flex-direction: column;" in admin_css,
+        "reminder edit button must stack below delete when dates need the row",
+    )
+    check("assistant-note-compose-reminder" in admin_css, "confirmation-date composer style is missing")
     check("list.scrollTop = list.scrollHeight" in notes_source, "comment thread must scroll to the latest note")
     check("notes = [data.note, ...notes.filter" in notes_source, "new comments must be added to the loaded thread")
     check("if (!content)" in notes_source, "blank comments must be blocked in the composer")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
@@ -75,6 +76,30 @@ def _validated_pinned(body: dict) -> tuple[bool, tuple | None]:
     return pinned, None
 
 
+def _validated_remind_on(body: dict) -> tuple[str, tuple | None]:
+    remind_on = body.get("remind_on", "")
+    if remind_on is None:
+        remind_on = ""
+    if not isinstance(remind_on, str):
+        return "", (jsonify({"ok": False, "error": "remind_on must be an ISO date"}), 400)
+    remind_on = remind_on.strip()
+    if remind_on:
+        try:
+            parsed = dt.date.fromisoformat(remind_on)
+        except ValueError:
+            return "", (jsonify({"ok": False, "error": "remind_on must be an ISO date"}), 400)
+        if parsed.isoformat() != remind_on:
+            return "", (jsonify({"ok": False, "error": "remind_on must be an ISO date"}), 400)
+    return remind_on, None
+
+
+def _validated_completed(body: dict) -> tuple[bool, tuple | None]:
+    completed = body.get("completed")
+    if not isinstance(completed, bool):
+        return False, (jsonify({"ok": False, "error": "completed must be a boolean"}), 400)
+    return completed, None
+
+
 def _validate_student(student_id: str):
     if not student_id:
         return jsonify({"ok": False, "error": "missing student_id"}), 400
@@ -105,7 +130,10 @@ def create_note():
     author, author_error = _validated_author(body)
     if author_error:
         return author_error
-    note = get_repository().create(student_id, content, author)
+    remind_on, remind_error = _validated_remind_on(body)
+    if remind_error:
+        return remind_error
+    note = get_repository().create(student_id, content, author, remind_on)
     return jsonify({"ok": True, "note": note}), 201
 
 
@@ -139,6 +167,39 @@ def pin_note(note_id: int):
     if pinned_error:
         return pinned_error
     note = get_repository().set_pinned(student_id, note_id, pinned)
+    if note is None:
+        return jsonify({"ok": False, "error": "note not found"}), 404
+    return jsonify({"ok": True, "note": note})
+
+
+@bp_api_assistant_notes.patch("/api/assistant-student-notes/<int:note_id>/reminder")
+@bp_api_assistant_notes.patch("/api/assistant-student-notes/<int:note_id>/remind")
+def remind_note(note_id: int):
+    body = _request_body()
+    student_id = _student_id_from(body)
+    error = _validate_student(student_id)
+    if error:
+        return error
+    remind_on, remind_error = _validated_remind_on(body)
+    if remind_error:
+        return remind_error
+    note = get_repository().set_remind_on(student_id, note_id, remind_on)
+    if note is None:
+        return jsonify({"ok": False, "error": "note not found"}), 404
+    return jsonify({"ok": True, "note": note})
+
+
+@bp_api_assistant_notes.patch("/api/assistant-student-notes/<int:note_id>/complete")
+def complete_note(note_id: int):
+    body = _request_body()
+    student_id = _student_id_from(body)
+    error = _validate_student(student_id)
+    if error:
+        return error
+    completed, completed_error = _validated_completed(body)
+    if completed_error:
+        return completed_error
+    note = get_repository().set_completed(student_id, note_id, completed)
     if note is None:
         return jsonify({"ok": False, "error": "note not found"}), 404
     return jsonify({"ok": True, "note": note})

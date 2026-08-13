@@ -12,7 +12,6 @@ Shared backend helpers live here. Keep pure merge rules, persistence wrappers, p
 | Assistant notes | `assistant_student_notes.py` | Student-scoped SQLite repository; separate from class logs despite sharing `app.sqlite`. |
 | Runtime paths | `paths.py` | Canonical JSON/SQLite path constants. |
 | JSON storage/locks | `storage.py` | Atomic replace, mirror/snapshot copies, and interprocess locks. |
-| Material metadata transaction | `material_state.py` | Three-store lock, write-ahead journal, and interrupted-commit recovery. |
 | Network gating | `network_access.py` | Answer-link and academy-network visibility behavior. |
 | Ghost student guards | `ghost_student.py` | Blocks writes for synthetic/placeholder students. |
 | OCR split | `ocr_answer_parse.py`, `ocr_test_sheet.py` | Pure answer parsing versus subprocess/temp/runtime OCR adapter. |

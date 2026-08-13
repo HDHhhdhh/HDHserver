@@ -2,7 +2,7 @@ import { bootstrap, state } from './core/state.js';
 import { initDarkmode } from './core/darkmode.js';
 import { initAdminViewMode } from './core/viewMode.js';
 import { initEscClose } from './features/escClose.js';
-import { initHoverTooltip } from './features/hoverTooltip.js';
+import { initHoverTooltip } from './features/hoverTooltip.js?v=20260810-legacy-merge1';
 import { initVideoModal } from './features/videoModal.js';
 import { initLogModal } from './features/logModal.js';
 import { initExtraModal } from './features/extraModal.js';
@@ -19,7 +19,7 @@ import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
-import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260808-assistant-note-pin';
+import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260810-legacy-merge1';
 import { initAdminOperationNotes } from './features/adminOperationNotes.js';
 import { initStudentLogs } from './features/studentLogs.js';
 

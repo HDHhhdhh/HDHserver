@@ -11,7 +11,6 @@ from core.network_access import (
     academy_network_allowed,
     client_ip_from_request,
 )
-from core.student_public_surface import install_student_public_surface
 from routes.pages import bp_pages
 from routes.api_basic import bp_api_basic
 from routes.api_attend import bp_api_attend
@@ -28,11 +27,11 @@ from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_student_logs import bp_api_student_logs
 from routes.api_non_student_ocr import bp_api_non_student_ocr
-from routes.api_student_app_auth import bp_api_student_app_auth
 
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
+    app.json.ensure_ascii = False
     trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS", "").lower() in {
         "1",
         "true",
@@ -41,11 +40,6 @@ def create_app() -> Flask:
     }
     if trust_proxy_headers:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-
-    # Install the exact-host public boundary before generic request guards so
-    # public-app failures keep their JSON/cache contract. Authentication routes
-    # remain unregistered unless STUDENT_APP_PUBLIC_ENABLED is explicitly on.
-    install_student_public_surface(app, auth_blueprint=bp_api_student_app_auth)
 
     @app.before_request
     def block_cross_origin_writes():

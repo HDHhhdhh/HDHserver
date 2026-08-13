@@ -3,6 +3,7 @@
 /* global fetch */
 
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
+import { createUnitTestDisplayNameResolver } from './shared/testCatalogDisplay.js';
 
 const $ = (sel) => document.querySelector(sel);
 const CT = { 'Content-Type': 'application/json' };
@@ -303,6 +304,10 @@ function getCategoryTests(categoryKey = ui.category) {
   return cat.tests.map((test, idx) => normalizeTest(test, categoryKey, idx));
 }
 
+function displayTestName(test) {
+  return createUnitTestDisplayNameResolver(getCategoryTests('UNIT'))(test);
+}
+
 function getVisibleTests() {
   return getCategoryTests(ui.category)
     .filter(test => normalizeSubject(test.curriculum) === ui.subject)
@@ -538,7 +543,7 @@ function updateEditTermOptions(categoryKey = editCategoryValue()) {
   if (!TERM_OPTIONS.includes(sel.value)) sel.value = TERM_OPTIONS[0] || '';
 }
 
-function updateChrome(selected = null) {
+function updateChrome(selected = null, displayNameFor = displayTestName) {
   const visible = getVisibleTests();
   const total = CATEGORY_DEFS.reduce((sum, def) => sum + getCategoryTests(def.key).length, 0);
   const scope = [
@@ -553,7 +558,7 @@ function updateChrome(selected = null) {
   if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = scope;
   if ($('#visibleTestsMeta')) $('#visibleTestsMeta').textContent = `현재 목록 ${visible.length}개`;
   if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = '4개 분류 기준';
-  if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected?.name || '선택된 테스트 없음';
+  if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected ? displayNameFor(selected) : '선택된 테스트 없음';
 }
 
 function renderTestList() {
@@ -562,14 +567,15 @@ function renderTestList() {
 
   const tests = getVisibleTests();
   const selected = tests.find(test => test.id === ui.selectedId) || null;
-  updateChrome(selected);
+  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
+  updateChrome(selected, displayNameFor);
 
   if (!tests.length) {
     listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">등록된 테스트가 없습니다. 새 테스트를 추가하세요.</div>`;
     return;
   }
 
-  listEl.innerHTML = renderGroupedTestList(tests);
+  listEl.innerHTML = renderGroupedTestList(tests, displayNameFor);
 
   listEl.querySelectorAll('button[data-id]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -580,7 +586,7 @@ function renderTestList() {
   });
 }
 
-function renderGroupedTestList(tests) {
+function renderGroupedTestList(tests, displayNameFor = displayTestName) {
   const groups = new Map();
   tests.forEach(test => {
     const key = isPastCategory(ui.category)
@@ -604,20 +610,20 @@ function renderGroupedTestList(tests) {
           <span class="test-list-group-count">${items.length}개</span>
         </div>
         <div class="test-list-group-body">
-          ${items.map(test => renderTestButton(test)).join('')}
+          ${items.map(test => renderTestButton(test, displayNameFor)).join('')}
         </div>
       </section>
     `;
   }).join('');
 }
 
-function renderTestButton(test) {
+function renderTestButton(test, displayNameFor = displayTestName) {
   const stat = statForTest(test);
   const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
   const active = test.id === ui.selectedId ? 'active' : '';
   return `
     <button type="button" data-id="${escapeAttr(test.id)}" class="${active}">
-      ${escapeHtml(test.name)}
+      ${escapeHtml(displayNameFor(test))}
       <span class="small">(${escapeHtml(test.problems)}문항)</span>
       ${statBadge}
     </button>
@@ -701,12 +707,14 @@ function renderRuleSection(def) {
                 <td style="text-align:left;"><span class="level-pill">${escapeHtml(difficulty)}</span></td>
                 ${STUDENT_LEVELS.map(level => `
                   <td style="text-align:center;">
-                    <input type="checkbox" class="rule-check"
-                      data-category="${escapeAttr(def.key)}"
-                      data-subject="${escapeAttr(subject)}"
-                      data-difficulty="${escapeAttr(difficulty)}"
-                      data-level="${escapeAttr(level)}"
-                      ${levels.includes(level) ? 'checked' : ''}>
+                    <label class="rule-check-target" aria-label="${escapeAttr(`${subject} ${difficulty} ${level} 배정`)}">
+                      <input type="checkbox" class="rule-check"
+                        data-category="${escapeAttr(def.key)}"
+                        data-subject="${escapeAttr(subject)}"
+                        data-difficulty="${escapeAttr(difficulty)}"
+                        data-level="${escapeAttr(level)}"
+                        ${levels.includes(level) ? 'checked' : ''}>
+                    </label>
                   </td>
                 `).join('')}
               </tr>
@@ -1233,6 +1241,7 @@ function statsSearchText(row) {
     row.typeSearchLabel,
     row.curriculum,
     row.name,
+    row.displayName,
     row.difficulty,
     row.term,
     row.examTerm,
@@ -1266,8 +1275,10 @@ function renderStatsTable() {
   syncStatsControls();
   const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
   const queryText = ui.statsSearch || '';
+  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
   const rows = getCategoryTests(def.key).map(test => ({
     ...test,
+    displayName: displayNameFor(test),
     typeLabel: statsTypeLabel(def),
     typeSearchLabel: def.label,
     stat: statForTest(test),
@@ -1286,7 +1297,7 @@ function renderStatsTable() {
       <td style="text-align:left;">${escapeHtml(row.curriculum || '-')}</td>
       <td style="text-align:left;">
         <div class="stat-title">
-          <span class="stat-main">${escapeHtml(row.name)}</span>
+          <span class="stat-main">${escapeHtml(row.displayName)}</span>
           <span class="stat-sub">${escapeHtml([isPastCategory(row.categoryKey) ? (row.term || row.examTerm || '') : '', row.problems ? `${row.problems}문항` : ''].filter(Boolean).join(' · '))}</span>
         </div>
       </td>
@@ -1373,7 +1384,7 @@ function openStatsDetailModal(test) {
   const modal = $('#statsDetailModal');
   if (!modal) return;
   const title = $('#statsDetailModalTitle');
-  if (title) title.textContent = test?.name || '테스트 통계';
+  if (title) title.textContent = test ? (test.displayName || displayTestName(test)) : '테스트 통계';
   modal.hidden = false;
   modal.setAttribute('aria-hidden', 'false');
   document.body.classList.add('stats-modal-open');
@@ -1447,7 +1458,7 @@ function renderStatsDetail(test = null, fetchDetail = false) {
     <section class="stats-detail-panel">
       <div class="panel-head">
         <div>
-          <div class="panel-title">${escapeHtml(selected.name)}</div>
+          <div class="panel-title">${escapeHtml(selected.displayName || displayTestName(selected))}</div>
           <div class="panel-subtitle">${escapeHtml([selected.curriculum || '-', isPastCategory(selected.categoryKey) ? (selected.term || selected.examTerm || '') : '', selected.difficulty || '-', roundLabel(selected.round || '-')].filter(Boolean).join(' · '))}</div>
         </div>
       </div>

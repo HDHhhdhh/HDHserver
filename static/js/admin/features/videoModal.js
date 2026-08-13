@@ -302,15 +302,13 @@ function injectStudentPopupLayoutStyles() {
       overflow:hidden;
       padding-top:10px;
       display:grid;
-      grid-template-rows:minmax(0,5.5fr) minmax(0,4.5fr);
+      grid-template-rows:minmax(0,7fr) minmax(156px,3fr);
       gap:10px;
     }
     #vidModal .vid-course-list,
     #vidModal .vid-extra-list{
       min-height:0;
-      overflow-x:hidden;
-      overflow-y:auto;
-      overscroll-behavior:contain;
+      overflow:auto;
     }
     #vidModal .vid-course-list{ padding-right:4px; }
     #vidModal .vid-row{
@@ -384,7 +382,6 @@ function injectStudentPopupLayoutStyles() {
       gap:8px;
       padding-top:10px;
       border-top:1px solid #e5e7eb;
-      overflow:hidden;
     }
     #vidModal .vid-extra-head{
       display:flex;
@@ -455,10 +452,6 @@ function injectStudentPopupLayoutStyles() {
       border-radius:8px;
       color:#64748b;
       font-size:12px;
-    }
-    #vidModal .vid-extra-list{
-      flex:1 1 0;
-      min-height:0;
     }
     #vidModal.student-work-layout .vid-card > *,
     #logModal.student-work-layout .log-card > *,
@@ -618,8 +611,7 @@ function syncStudentPopupLayoutVars() {
   root.style.setProperty('--student-popup-h', `${next.height}px`);
   root.style.setProperty('--student-popup-content-zoom', String(zoomLock));
   root.style.setProperty('--student-tooltip-content-zoom', String(1.8 * zoomLock));
-  // Keep the counseling record readable while reserving the lower area for homework comments.
-  root.style.setProperty('--student-log-notes-h', `${Math.round((next.height * 0.42) / zoomLock)}px`);
+  root.style.setProperty('--student-log-notes-h', `${Math.round((next.height * 0.48) / zoomLock)}px`);
 }
 
 window.addEventListener('resize', syncStudentPopupLayoutVars);
@@ -1212,8 +1204,7 @@ function writeAssignFor(
   const normalizedTrainingPackMids = Array.from(new Set((trainingPackMids || []).map(String)))
     .filter(mid => selectedSet.has(mid));
   if (normalizedTrainingPackMids.length) assignment.trainingPackVideos = normalizedTrainingPackMids;
-  assignment.studentTrainingPackVideos = Array.from(new Set((studentTrainingPackMids || []).map(String)))
-    .filter(mid => selectedSet.has(mid));
+  assignment.studentTrainingPackVideos = Array.from(new Set((studentTrainingPackMids || []).map(String))).filter(mid => selectedSet.has(mid));
   dmap[k] = assignment;
 }
 
@@ -1454,16 +1445,7 @@ function applyVideoAssignmentState(
   studentTrainingPackMids = [],
 ) {
   if (shouldWriteExplicitAssignment(selected, source)) {
-    writeAssignFor(
-      updates,
-      day,
-      sid,
-      selected,
-      source,
-      reviewMids,
-      trainingPackMids,
-      studentTrainingPackMids,
-    );
+    writeAssignFor(updates, day, sid, selected, source, reviewMids, trainingPackMids, studentTrainingPackMids);
     return;
   }
 

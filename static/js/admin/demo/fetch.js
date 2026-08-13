@@ -1025,13 +1025,13 @@ async function handleWrite(root, ctx, store) {
     saveDemoStore(store);
     return ok(root, next);
   }
-
   if (method === 'POST' && path === '/api/today_order/patch') {
     const result = patchTodayOrder(store, body);
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, ...result });
   }
+
 
   if (method === 'POST' && path === '/api/makeup-carryover') {
     const next = setWholeMap(store, 'makeupCarryover', body);

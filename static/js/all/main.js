@@ -72,6 +72,15 @@ function renderAll() {
   decorateStudentTestRecordButtons(document).catch(console.warn);
 }
 
+document.addEventListener('all:student-deleted', (event) => {
+  const sid = String(event.detail?.sid || '').trim();
+  if (!sid) return;
+  state.students = state.students.filter(student => String(student?.id || '') !== sid);
+  window.students = state.students;
+  updateAllCount();
+  renderYoilStats();
+});
+
 (async function init() {
   try {
     await loadAll();

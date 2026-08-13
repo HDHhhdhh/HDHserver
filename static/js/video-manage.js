@@ -1,4 +1,5 @@
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
+import { nextVideoId } from './shared/videoIds.js';
 
 const toast = msg => {
     const d = document.createElement('div');
@@ -360,7 +361,7 @@ const $ = id => document.getElementById(id);
 
             // 새 영상 객체 생성 (exNum 프로퍼티만 포함)
             const newVid = {
-                id: videos.length ? Math.max(...videos.map(v => v.id || 0)) + 1 : 1,
+                id: nextVideoId(videos),
                 mid,
                 curriculum,
                 subCurriculum,

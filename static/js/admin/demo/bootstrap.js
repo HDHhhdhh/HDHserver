@@ -334,20 +334,19 @@ function homeworkBooksBySid(logs) {
 async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
 
-  if (path === '/api/student-logs') {
-    const store = loadDemoStore();
-    const result = applyStudentLogsRequest({
-      method: String(init?.method || input?.method || 'POST').toUpperCase(),
-      path,
-      body,
-      store,
-      createdAt: () => new Date().toISOString(),
-      today: store.demoDate,
-    });
-    if (result.changed) saveDemoStore(store);
-    return { demo: true, ...result.payload };
+  const store = loadDemoStore();
+  const studentLogsResult = applyStudentLogsRequest({
+    method: String(init?.method || input?.method || 'POST').toUpperCase(),
+    path,
+    body,
+    store,
+    createdAt: () => new Date().toISOString(),
+    today: store.demoDate,
+  });
+  if (studentLogsResult) {
+    if (studentLogsResult.changed) saveDemoStore(store);
+    return { demo: true, ...studentLogsResult.payload };
   }
-
   if (path === '/api/today_order/patch') {
     const date = String(body?.date || '').trim();
     const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
@@ -358,7 +357,6 @@ async function handleFallbackMutation(path, input, init) {
     if (!remove && !Array.isArray(body?.order)) {
       return { ok: false, demo: true, error: 'order must be a list' };
     }
-    const store = loadDemoStore();
     const todayOrder = store.todayOrder && typeof store.todayOrder === 'object' ? store.todayOrder : {};
     const order = remove
       ? []
@@ -368,6 +366,7 @@ async function handleFallbackMutation(path, input, init) {
     saveDemoStore({ ...store, todayOrder });
     return { ok: true, demo: true, date, order, removed: remove };
   }
+
 
   if (path === '/api/today_order') {
     saveDemoStore({ ...loadDemoStore(), todayOrder: body && typeof body === 'object' ? body : {} });

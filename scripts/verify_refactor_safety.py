@@ -32,6 +32,8 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_admin_tests_record_details.py",
     ROOT / "scripts/verify_submit_test_assignment_round_matching.py",
     ROOT / "scripts/verify_assistant_student_notes.py",
+    ROOT / "scripts/verify_admin_access_and_student_logs.py",
+    ROOT / "scripts/verify_file_reference_routes.py",
 ]
 
 JS_CHECK_FILES = [
@@ -48,11 +50,15 @@ JS_CHECK_FILES = [
     ROOT / "static/js/student.js",
     ROOT / "static/js/shared/api.js",
     ROOT / "static/js/shared/testRecordData.js",
+    ROOT / "static/js/shared/testCatalogDisplay.js",
     ROOT / "static/js/shared/testRecordDetails.js",
+    ROOT / "static/js/shared/videoIds.js",
     ROOT / "scripts/verify_student_material_access_scope.js",
     ROOT / "scripts/verify_student_training_pack_round_filter.js",
     ROOT / "scripts/verify_admin_tests_record_details_ui.js",
     ROOT / "scripts/verify_admin_tests_record_detail_answer_link_ui.js",
+    ROOT / "scripts/verify_test_catalog_display.mjs",
+    ROOT / "scripts/verify_video_manage_ids.mjs",
 ]
 
 REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...]] = (
@@ -432,6 +438,25 @@ def run_student_training_pack_round_filter_checks() -> None:
     _assert_unit(proc.returncode == 0, "student training-pack round filter contract failed")
 
 
+def run_shared_catalog_helper_checks() -> None:
+    for script in (
+        "scripts/verify_test_catalog_display.mjs",
+        "scripts/verify_video_manage_ids.mjs",
+    ):
+        cmd = ["node", script]
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, f"shared catalog helper check failed: {script}")
+
+
+
 def run_academy_proxy_network_access_checks() -> None:
     cmd = [sys.executable, "scripts/verify_academy_proxy_network_access.py"]
     print("$ " + " ".join(cmd))
@@ -441,6 +466,28 @@ def run_academy_proxy_network_access_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "academy proxy network access contract failed")
+
+
+def run_admin_access_and_student_logs_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_admin_access_and_student_logs.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin access and student operation log checks failed")
+
+
+def run_file_reference_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_file_reference_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "file reference route checks failed")
 
 
 def _assert_unit(condition: bool, message: str) -> None:
@@ -1477,10 +1524,13 @@ console.log('today order demo behavior PASS');
 
 def run_student_logs_demo_behavior_checks() -> None:
     fallback_source = (ROOT / "static/js/admin/demo/bootstrap.js").read_text("utf-8")
+    fetch_source = (ROOT / "static/js/admin/demo/fetch.js").read_text("utf-8")
+    contract_source = (ROOT / "static/js/admin/demo/studentLogsContract.js").read_text("utf-8")
     _assert_unit(
         "applyStudentLogsRequest" in fallback_source
         and "case '/api/student-logs':" in fallback_source
-        and "path === '/api/student-logs'" in fallback_source,
+        and "applyStudentLogsRequest" in fetch_source
+        and "const basePath = '/api/student-logs';" in contract_source,
         "demo fallback must intercept student-log reads and writes",
     )
 
@@ -6344,10 +6394,13 @@ const response = (payload, status = 200) => ({
   text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
 });
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/testModal.js');
+const displaySourcePath = path.join(process.cwd(), 'static/js/shared/testCatalogDisplay.js');
+const displaySource = fs.readFileSync(displaySourcePath, 'utf8').replaceAll('export ', '');
 const source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
-  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';");
+  .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';")
+  .replace("import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';", displaySource);
 const harness = `
 export function __setHarnessState(input) {
   editingDate = input.editingDate;
@@ -8392,6 +8445,8 @@ def run_unit_checks() -> bool:
     checks = [
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
+        run_admin_access_and_student_logs_checks,
+        run_file_reference_route_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
         run_progress_rule_unit_checks,
         run_student_previous_video_review_rule_unit_checks,
@@ -8428,6 +8483,7 @@ def run_unit_checks() -> bool:
         run_submit_test_assignment_round_matching_checks,
         run_student_material_access_scope_checks,
         run_student_training_pack_round_filter_checks,
+        run_shared_catalog_helper_checks,
         run_academy_proxy_network_access_checks,
         run_absence_test_assignment_transition_unit_checks,
         run_student_answer_link_render_source_checks,

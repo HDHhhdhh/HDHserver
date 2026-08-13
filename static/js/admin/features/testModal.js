@@ -5,6 +5,7 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';
 
 const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
 const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
@@ -968,6 +969,7 @@ function renderList() {
     return;
   }
 
+  const displayNameFor = createUnitTestDisplayNameResolver(activeCatalog);
   list.innerHTML = tests.map(test => {
     const done = isSubmitted(test);
     const rowStatus = statusForKey(test._key);
@@ -992,7 +994,7 @@ function renderList() {
         data-difficulty="${escapeHtml(test.difficulty)}" data-term="${escapeHtml(test.term || '')}"
         data-round="${escapeHtml(test.round || '')}" ${done ? ' disabled' : ''}>
         <span class="test-row-main">
-          <strong>${escapeHtml(test.name)}</strong>
+          <strong>${escapeHtml(displayNameFor(test))}</strong>
           <span class="test-row-meta">
             <span class="test-meta-text">${escapeHtml(baseMeta)}</span>
             <span class="test-difficulty-badge is-${escapeHtml(tone)}">${escapeHtml(test.difficulty)}</span>

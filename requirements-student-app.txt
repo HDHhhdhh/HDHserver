@@ -1,2 +1,0 @@
-# Web Push delivery adapter; installation is deferred until the student-app rollout.
-pywebpush==2.3.0

@@ -84,7 +84,11 @@ def create_student_log():
 
     if not date:
         date = dt.datetime.now(KST).date().isoformat()
-    if not DATE_PATTERN.fullmatch(date):
+    try:
+        parsed_date = dt.date.fromisoformat(date) if DATE_PATTERN.fullmatch(date) else None
+    except ValueError:
+        parsed_date = None
+    if parsed_date is None or parsed_date.isoformat() != date:
         return jsonify({"ok": False, "error": "date must be YYYY-MM-DD"}), 400
 
     log = get_repository().create(
@@ -95,6 +99,16 @@ def create_student_log():
         date=date,
     )
     return jsonify({"ok": True, "log": log}), 201
+
+
+@bp_api_student_logs.delete("/api/student-logs/<int:log_id>")
+def delete_student_log(log_id: int):
+    if log_id <= 0:
+        return jsonify({"ok": False, "error": "invalid student log id"}), 400
+    deleted = get_repository().delete_one(log_id)
+    if not deleted:
+        return jsonify({"ok": False, "error": "student log not found"}), 404
+    return jsonify({"ok": True, "deleted": 1, "id": log_id})
 
 
 @bp_api_student_logs.delete("/api/student-logs")

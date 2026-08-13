@@ -3,6 +3,10 @@ CREATE TABLE IF NOT EXISTS assistant_student_notes (
   student_id TEXT NOT NULL,
   content TEXT NOT NULL,
   created_by TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  remind_on TEXT NOT NULL DEFAULT '',
+  completed_at TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

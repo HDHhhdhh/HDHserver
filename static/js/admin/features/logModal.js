@@ -367,15 +367,10 @@ function injectStyles() {
     #logModal #logNotes{
       height:min(48vh, var(--student-log-notes-h, 416px));
       min-height:260px;
-      overflow-y:auto;
       resize:vertical;
       font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','맑은 고딕',sans-serif;
       font-size:28px;
       line-height:1.35;
-    }
-    #logModal.student-work-layout #logNotes{
-      height:min(42vh, var(--student-log-notes-h, 416px));
-      max-height:min(42vh, var(--student-log-notes-h, 416px));
     }
 
     #logProgress{
@@ -415,12 +410,7 @@ function injectStyles() {
     body.dark #hwBox{ border-color:#334155; background:#0b1220; }
 
     .hwHeader{
-      height:50px;
-      min-height:50px;
-      box-sizing:border-box;
-      display:flex;
-      align-items:center;
-      padding:8px 10px;
+      padding:10px 10px;
       background:#f8fafc;
       border-bottom:1px solid #e5e7eb;
     }
@@ -428,6 +418,23 @@ function injectStyles() {
       background:#0b1220;
       border-bottom-color:#334155;
     }
+
+    .hwHeaderTop, .hwHeaderBot{
+      display:grid;
+      gap:8px 12px;
+      align-items:start;
+    }
+    .hwHeaderTop{ grid-template-columns: 1.1fr 1fr 44px; }
+    .hwHeaderBot{ grid-template-columns: 1fr 1fr 44px; margin-top:8px; }
+
+    .hwHeader .h{
+      font-size:12px;
+      color:#64748b;
+      font-weight:900;
+      white-space:nowrap;
+    }
+    body.dark .hwHeader .h{ color:#94a3b8; }
+    .hwHeader .h-del{ text-align:right; opacity:.65; }
 
     #hwBody{
       padding:10px 10px;
@@ -583,114 +590,62 @@ function injectStyles() {
       background:#94a3b8;
     }
 
-    .hwHeader{ position:relative; }
     .hwHeaderActions{
-      width:100%;
-      display:flex;
-      justify-content:flex-end;
-      margin-top:0;
+      width:100%; display:flex; justify-content:flex-end; margin:0 0 8px;
     }
     .hw-insufficient-btn{
-      min-height:34px;
-      padding:0 10px;
-      border:1px solid #93c5fd;
-      border-radius:10px;
-      background:#eff6ff;
-      color:#1d4ed8;
-      cursor:pointer;
-      font-size:12px;
-      font-weight:900;
+      min-height:34px; padding:0 10px; border:1px solid #93c5fd;
+      border-radius:10px; background:#eff6ff; color:#1d4ed8;
+      cursor:pointer; font-size:12px; font-weight:900;
     }
     .hw-insufficient-btn:hover{ background:#dbeafe; }
     .hw-insufficient-btn:disabled{ cursor:default; opacity:.5; }
     body.dark .hw-insufficient-btn{
-      border-color:#365d91;
-      background:#172554;
-      color:#bfdbfe;
+      border-color:#365d91; background:#172554; color:#bfdbfe;
     }
 
     #homeworkInsufficientModal{
-      position:fixed;
-      inset:0;
-      z-index:100010;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:16px;
+      position:fixed; inset:0; z-index:100010; display:flex;
+      align-items:center; justify-content:center; padding:16px;
       background:rgba(2,6,23,.68);
     }
     #homeworkInsufficientModal[hidden]{ display:none !important; }
     .homework-insufficient-card{
-      width:min(480px, calc(100vw - 32px));
-      padding:20px;
-      border:1px solid #dbe4ef;
-      border-radius:14px;
-      background:#fff;
-      color:#0f172a;
+      width:min(480px, calc(100vw - 32px)); padding:20px;
+      border:1px solid #dbe4ef; border-radius:14px;
+      background:#fff; color:#0f172a;
       box-shadow:0 24px 70px rgba(0,0,0,.34);
     }
     .homework-insufficient-card h3{
-      margin:0 0 12px;
-      font-size:18px;
-      font-weight:900;
-      line-height:1.25;
+      margin:0 0 12px; font-size:18px; font-weight:900; line-height:1.25;
     }
     .homework-insufficient-form{
-      display:grid;
-      grid-template-columns:minmax(0,1fr) auto;
-      gap:8px;
-      align-items:center;
+      display:grid; grid-template-columns:minmax(0,1fr) auto;
+      gap:8px; align-items:center;
     }
     .homework-insufficient-form input{
-      width:100%;
-      min-height:42px;
-      box-sizing:border-box;
-      padding:0 12px;
-      border:1px solid #cbd5e1;
-      border-radius:10px;
-      background:#fff;
-      color:#0f172a;
-      outline:none;
-      font:inherit;
-      font-size:14px;
+      width:100%; min-height:42px; box-sizing:border-box; padding:0 12px;
+      border:1px solid #cbd5e1; border-radius:10px;
+      background:#fff; color:#0f172a; outline:none; font:inherit; font-size:14px;
     }
     .homework-insufficient-form input:focus-visible{
-      border-color:#3b82f6;
-      box-shadow:0 0 0 3px rgba(59,130,246,.18);
+      border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.18);
     }
     .homework-insufficient-form button{
-      min-height:42px;
-      padding:0 15px;
-      border:1px solid #2563eb;
-      border-radius:10px;
-      background:#2563eb;
-      color:#fff;
-      cursor:pointer;
-      font:inherit;
-      font-size:14px;
-      font-weight:900;
+      min-height:42px; padding:0 15px; border:1px solid #2563eb;
+      border-radius:10px; background:#2563eb; color:#fff;
+      cursor:pointer; font:inherit; font-size:14px; font-weight:900;
     }
     .homework-insufficient-form button:disabled{ cursor:wait; opacity:.55; }
     .homework-insufficient-cancel{
-      display:block;
-      margin:10px auto 0;
-      border:0;
-      background:transparent;
-      color:#64748b;
-      cursor:pointer;
-      font:inherit;
-      font-size:12px;
-      font-weight:800;
+      display:block; margin:10px auto 0; border:0; background:transparent;
+      color:#64748b; cursor:pointer; font:inherit; font-size:12px; font-weight:800;
     }
     body.dark .homework-insufficient-card{
-      border-color:#334155;
-      background:#0f172a;
-      color:#e5e7eb;
+      border-color:#334155; background:#0f172a; color:#e5e7eb;
     }
     body.dark .homework-insufficient-form input{
-      border-color:#475569;
-      background:#0b1220;
-      color:#e5e7eb;
+      border-color:#475569; background:#0b1220; color:#e5e7eb;
     }
     body.dark .homework-insufficient-cancel{ color:#94a3b8; }
 
@@ -718,8 +673,8 @@ function injectStyles() {
         font-size:20px; line-height:1.45;
       }
       #logProgress{ grid-template-columns:repeat(3,minmax(0,1fr)); }
-      .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
-      .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwHeaderTop, .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwHeaderBot, .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
       .thisCell{ grid-template-columns:1fr; }
     }
   `;
@@ -750,6 +705,16 @@ function modalTemplateHTML() {
               <div class="hwHeader" aria-label="숙제 헤더">
                 <div class="hwHeaderActions">
                   <button type="button" id="hwInsufficientBtn" class="hw-insufficient-btn">숙제 미흡 알림</button>
+                </div>
+                <div class="hwHeaderTop">
+                  <div class="h">교재</div>
+                  <div class="h">이번 숙제 / 진행률</div>
+                  <div class="h h-del"></div>
+                </div>
+                <div class="hwHeaderBot">
+                  <div class="h">코멘트</div>
+                  <div class="h">다음 숙제</div>
+                  <div class="h h-del"></div>
                 </div>
               </div>
               <div id="hwBody" aria-label="숙제 목록"></div>
@@ -834,6 +799,7 @@ function cleanHwText(s) {
 function normHwRows(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
+    ...((r && typeof r === 'object' && !Array.isArray(r)) ? r : {}),
     book: cleanHwText(r?.book),
     this: cleanHwText(r?.this),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
@@ -900,6 +866,7 @@ function mergeHwRows({ todayRows, latestRows, bookCarryRows }) {
     const hasTodayRow = i < a.length;
 
     out.push({
+      ...(hasTodayRow ? t : {}),
       _deleted: !!t._deleted,
       book: (hasTodayRow ? (t.book || '') : (bc.book || '')),
       this: t.this || '',
@@ -1007,6 +974,11 @@ function renderHwTable(mergedRows) {
   };
 
   host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
+  host.querySelectorAll('.hwItem').forEach((item, index) => {
+    const original = rows[index] && typeof rows[index] === 'object' ? { ...rows[index] } : {};
+    delete original._ph;
+    item.__homeworkOriginalRow = original;
+  });
 
   host.querySelectorAll('.pctWrap').forEach(wrap => {
     const range = wrap.querySelector('.hwPctRange');
@@ -1066,6 +1038,8 @@ function addHwRow(bookCarry = '') {
     const range = lastWrap.querySelector('.hwPctRange');
     updatePctBubble(lastWrap, range?.value ?? 0, { isPlaceholder: true });
   }
+  const item = host.querySelector('.hwItem:last-child');
+  if (item) item.__homeworkOriginalRow = {};
 }
 
 function collectHwTable() {
@@ -1088,7 +1062,11 @@ function collectHwTable() {
     const empty = (wrap?.dataset?.empty === '1');
     const pct = empty ? '' : String(raw);
 
-    const row = { book, this: thisHw, pct, comment, next, _deleted: false };
+    const original = item.__homeworkOriginalRow && typeof item.__homeworkOriginalRow === 'object'
+      ? item.__homeworkOriginalRow
+      : {};
+    const row = { ...original, book, this: thisHw, pct, comment, next, _deleted: false };
+    delete row._ph;
     if (!isMeaningfulHwRow(row)) return;
     out.push(row);
   });
@@ -1504,14 +1482,15 @@ export function initLogModal() {
 
   const submitHomeworkInsufficientLog = async () => {
     const sid = String(editingLogSid || '').trim();
-    const stu = state.students.find(x => String(x.id) === sid);
+    const student = state.students.find(item => String(item.id) === sid);
     const comment = String(homeworkInsufficientInput?.value || '').replace(/\s+/g, ' ').trim();
-    if (!sid || !stu || !comment || !editingLogDate) return;
+    if (!sid || !student || !comment || !editingLogDate) return;
     if (homeworkInsufficientConfirm) homeworkInsufficientConfirm.disabled = true;
     try {
       const log = await createStudentLog({
         sid,
-        studentName: String(stu.name || sid).trim() || sid,
+        studentName: String(student.name || sid).trim() || sid,
+        subject: String(student.curriculum || student.subject || student.course || '').trim(),
         kind: 'homework_insufficient',
         comment,
         date: editingLogDate,
@@ -1531,11 +1510,6 @@ export function initLogModal() {
     event.preventDefault();
     void submitHomeworkInsufficientLog();
   });
-  homeworkInsufficientInput?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    void submitHomeworkInsufficientLog();
-  });
   homeworkInsufficientModal?.addEventListener('click', (event) => {
     if (event.target === homeworkInsufficientModal) closeHomeworkInsufficientModal();
   });
@@ -1543,10 +1517,9 @@ export function initLogModal() {
     closeHomeworkInsufficientModal();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && homeworkInsufficientModal && !homeworkInsufficientModal.hidden) {
-      event.preventDefault();
-      closeHomeworkInsufficientModal();
-    }
+    if (event.key !== 'Escape' || !homeworkInsufficientModal || homeworkInsufficientModal.hidden) return;
+    event.preventDefault();
+    closeHomeworkInsufficientModal();
   }, true);
 
   if (!window.__hwDelDelegatedBound) {

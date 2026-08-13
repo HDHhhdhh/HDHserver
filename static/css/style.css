@@ -2374,4 +2374,123 @@ body.video-manage-page.dark #vidTable th {
   body.video-manage-page #vUrl {
     grid-column: 1 / -1;
   }
+
+  body.video-manage-page :where(button, input, select),
+  body.all-page :where(button, a, input:not([type="checkbox"]):not([type="radio"]), select) {
+    min-height: 44px !important;
+  }
+
+  body.all-page .topbar a {
+    min-height: 44px !important;
+  }
+
+  body.all-page #allWrap .studentsTable .dayInputRow input.dayInput,
+  body.all-page #allWrap .studentsTable .timeInputRow input.timeInput {
+    height: 44px !important;
+    min-height: 44px !important;
+    line-height: 42px;
+  }
+
+  body.all-page #allPageShell #allWrap .studentsTable .docBox {
+    grid-template-columns: minmax(0, 1fr) 44px 44px !important;
+  }
+
+  body.all-page #allPageShell #allWrap .studentsTable :is(
+    .docOpen,
+    .miniProgBtn,
+    .btn-del-stu,
+    .btn-clone-stu
+  ),
+  body.video-manage-page #vidTable .delV {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  body.all-page #allPageShell #allWrap .studentsTable :is(th.col-del, td:has(.btn-del-stu)) {
+    width: 52px !important;
+    min-width: 52px !important;
+    max-width: 52px !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  body.video-manage-page :where(button, input, select),
+  body.all-page :where(button, a, input:not([type="checkbox"]):not([type="radio"]), select) {
+    min-height: 44px !important;
+  }
+
+  body.all-page .topbar a {
+    min-height: 44px !important;
+  }
+
+  body.all-page #allWrap .studentsTable :is(.dayInputRow, .timeInputRow) {
+    width: 236px !important;
+    min-width: 236px !important;
+    grid-template-columns: repeat(5, 44px) !important;
+  }
+
+  body.all-page #allWrap .studentsTable :is(.dayInputRow input.dayInput, .timeInputRow input.timeInput) {
+    width: 44px !important;
+    min-width: 44px !important;
+    max-width: none !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  body.all-page #allWrap .studentsTable .stuName {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  body.all-page #allWrap .studentsTable .cell-school[tabindex] {
+    min-height: 44px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  body.video-manage-page > header a {
+    min-height: 44px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  body.video-manage-page button {
+    min-width: 44px !important;
+  }
+
+  body.all-page #allPageShell #allWrap .studentsTable .docBox {
+    grid-template-columns: minmax(0, 1fr) 44px 44px !important;
+  }
+
+  body.all-page #allPageShell #allWrap .studentsTable :is(
+    .docOpen,
+    .miniProgBtn,
+    .btn-del-stu,
+    .btn-clone-stu
+  ),
+  body.video-manage-page #vidTable .delV {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  body.school-calendar-page :where(
+    button,
+    a,
+    input:not([type="checkbox"]):not([type="radio"]),
+    select
+  ) {
+    min-height: 44px !important;
+  }
+
+  body.school-calendar-page :where(.btn-toggle, .btn-del) {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+  }
 }

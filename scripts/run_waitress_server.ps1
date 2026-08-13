@@ -7,6 +7,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$adminMachineEnv = @(
+    "ACADEMY_ADMIN_USERNAME",
+    "ACADEMY_ADMIN_PASSWORD_HASH"
+)
+foreach ($name in $adminMachineEnv) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Machine")
+    if ($null -ne $value) {
+        Set-Item -LiteralPath "Env:$name" -Value $value
+    } else {
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+}
+
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $waitressPath = Join-Path $serverRoot "venv\Scripts\waitress-serve.exe"
 if (-not (Test-Path -LiteralPath $waitressPath)) {

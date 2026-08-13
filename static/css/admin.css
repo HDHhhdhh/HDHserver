@@ -7856,53 +7856,6 @@ body.admin :where(
   border-radius: 8px !important;
 }
 
-body.admin #adminSchoolTip .student-tooltip-identity-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-body.admin #adminSchoolTip .student-tooltip-name {
-  min-width: 0;
-  font-size: 17px;
-  font-weight: 900;
-  line-height: 1.35;
-  word-break: keep-all;
-}
-
-body.admin #adminSchoolTip .student-tooltip-publisher {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  font-size: 12.5px;
-}
-
-body.admin #adminSchoolTip .student-exam-details {
-  margin-top: 8px;
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: 10px;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, .025);
-}
-
-body.admin #adminSchoolTip .student-exam-details > summary {
-  cursor: pointer;
-  padding: 9px 0;
-  font-weight: 800;
-  line-height: 1.35;
-  list-style-position: inside;
-}
-
-body.admin #adminSchoolTip .student-exam-details-body {
-  display: grid;
-  gap: 3px;
-  padding: 0 0 10px;
-}
-
 body.admin #adminSchoolTip .assistant-student-notes {
   margin-top: 12px;
   padding-top: 12px;
@@ -8004,72 +7957,11 @@ body.admin #adminSchoolTip .assistant-note-item-header {
   margin-bottom: 3px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item.is-pinned {
-  border-color: rgba(250, 204, 21, .58);
-  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, .12), 0 0 0 1px rgba(250, 204, 21, .08);
-}
-
-body.admin #adminSchoolTip .assistant-note-item-author-group {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 body.admin #adminSchoolTip .assistant-note-item-author {
   min-width: 0;
   color: var(--assistant-note-item-color);
   font-size: 10.5px;
   line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: 50%;
-  padding: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, .42);
-  font: inherit;
-  line-height: 1;
-  cursor: pointer;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin-icon {
-  display: block;
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin:hover,
-body.admin #adminSchoolTip .assistant-note-pin:focus-visible {
-  background: rgba(255, 255, 255, .1);
-  color: rgba(255, 255, 255, .86);
-  outline: 1px solid rgba(255, 255, 255, .72);
-  outline-offset: 1px;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] {
-  color: #fff;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] .assistant-note-pin-icon {
-  fill: currentColor;
-}
-
-body.admin #adminSchoolTip .assistant-note-pin:disabled {
-  cursor: wait;
-  opacity: .55;
 }
 
 body.admin #adminSchoolTip .assistant-note-item-time {
@@ -8131,6 +8023,13 @@ body.admin #adminSchoolTip .assistant-note-author-row {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-label {
+  flex: 0 0 auto;
+  color: rgba(248, 250, 252, .72);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 body.admin #adminSchoolTip .assistant-note-author-buttons {
@@ -8259,6 +8158,12 @@ body.admin #adminSchoolTip .assistant-note-status.is-success {
   color: #86efac;
 }
 
+body.admin #adminSchoolTip .assistant-note-shortcut {
+  color: rgba(203, 213, 225, .48);
+  font-size: 8px;
+  line-height: 1.3;
+}
+
 body.admin #adminSchoolTip .assistant-note-save {
   min-height: 28px;
   border: 1px solid rgba(96, 165, 250, .62);
@@ -8277,21 +8182,763 @@ body.admin #adminSchoolTip .assistant-note-save:disabled {
   opacity: .55;
 }
 
-/* =========================================
-   Command board memo/log rail
-   - Keep the existing left controls and reply dock tracks intact.
-   - The center rail owns the 70/30 memo-to-student-log split.
-   ========================================= */
-body.admin .hero-panel {
-  --admin-ann-compose-width: var(--admin-ann-reply-width);
-  grid-template-columns:
-    minmax(210px, 240px)
-    minmax(300px, 420px)
-    minmax(0, 1fr)
-    var(--admin-ann-reply-width)
-    var(--admin-ann-reply-width);
+/* Selected legacy-safe overlays from the verified retry2 server export. */
+/* Mixed feature-only styles were intentionally left out of this legacy overlay. */
+
+@media (max-width: 640px) {
+  body.admin .makeup-planner-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  body.admin .makeup-planner-head > div,
+  body.admin .makeup-planner-control-group {
+    min-width: 0;
+    width: 100%;
+  }
+
+  body.admin .makeup-planner-control-group {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  body.admin .makeup-export-btn {
+    flex: 1 1 92px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  body.admin .makeup-planner input[type="search"] {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+  }
 }
 
+body.admin #adminSchoolTip .student-tooltip-identity-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  column-gap: 7px;
+  margin-bottom: 6px;
+}
+
+body.admin #adminSchoolTip .student-tooltip-name-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+body.admin #adminSchoolTip .student-tooltip-level-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 0;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .student-tooltip-publisher {
+  min-width: 0;
+  align-self: start;
+}
+
+body.admin #adminSchoolTip .student-tooltip-publisher > span {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, .16);
+}
+
+body.admin #adminSchoolTip .assistant-note-heading h3 {
+  margin: 0 0 8px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-label {
+  flex: 0 0 auto;
+  color: rgba(248, 250, 252, .72);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button {
+  --assistant-note-author-color: #f8fafc;
+  --assistant-note-author-rgb: 248, 250, 252;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, .72);
+  color: var(--assistant-note-author-color);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="귤"] {
+  --assistant-note-author-color: #fbbf24;
+  --assistant-note-author-rgb: 251, 191, 36;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="세빈"] {
+  --assistant-note-author-color: #7dd3fc;
+  --assistant-note-author-rgb: 125, 211, 252;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="동훈"] {
+  --assistant-note-author-color: #86efac;
+  --assistant-note-author-rgb: 134, 239, 172;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="하영"] {
+  --assistant-note-author-color: #f9a8d4;
+  --assistant-note-author-rgb: 249, 168, 212;
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button:hover {
+  border-color: rgba(var(--assistant-note-author-rgb), .68);
+  background: rgba(var(--assistant-note-author-rgb), .12);
+}
+
+body.admin #adminSchoolTip .assistant-note-author-buttons button.is-selected {
+  border-color: var(--assistant-note-author-color);
+  background: rgba(var(--assistant-note-author-rgb), .20);
+  box-shadow: inset 0 0 0 1px rgba(var(--assistant-note-author-rgb), .30);
+}
+
+body.admin #adminSchoolTip .assistant-note-meta {
+  min-height: 16px;
+  margin: -1px 0 7px;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-input {
+  width: 100%;
+  min-height: 108px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: rgba(2, 6, 23, .5);
+  color: #f8fafc;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
+  color: #fbbf24;
+  caret-color: #fbbf24;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
+  color: #7dd3fc;
+  caret-color: #7dd3fc;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
+  color: #86efac;
+  caret-color: #86efac;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
+  color: #f9a8d4;
+  caret-color: #f9a8d4;
+}
+
+body.admin #adminSchoolTip .assistant-note-input:focus {
+  outline: 2px solid rgba(96, 165, 250, .9);
+  outline-offset: 1px;
+}
+
+body.admin #adminSchoolTip .assistant-note-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+body.admin #adminSchoolTip .assistant-note-save-info {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+body.admin #adminSchoolTip .assistant-note-status {
+  min-height: 16px;
+  color: rgba(255, 255, 255, .62);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-status.is-error {
+  color: #fca5a5;
+}
+
+body.admin #adminSchoolTip .assistant-note-status.is-success {
+  color: #86efac;
+}
+
+body.admin #adminSchoolTip .assistant-note-save {
+  min-height: 26px;
+  border: 1px solid rgba(96, 165, 250, .62);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-save:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+@media (max-width: 1024px) {
+  body.admin :where(
+    button,
+    a.btn,
+    input:not([type="checkbox"]):not([type="radio"]),
+    select
+  ) {
+    min-height: 44px !important;
+  }
+
+  body.admin button {
+    min-width: 44px !important;
+  }
+
+  body.admin .modal-close,
+  body.admin .ann-survey-icon-btn,
+  body.admin .ann-reply-expand-close,
+  body.admin #calendar .makeup-slot-close,
+  body.admin #logModal .hw-del-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  body.admin .global-links .btn,
+  body.admin #absentRecoverBtn,
+  body.admin #homeworkLeaveBtn,
+  body.admin #clearAllBtn,
+  body.admin.admin-simple .hero-actions .btn {
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+}
+body.admin #adminSchoolTip .assistant-note-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+body.admin #adminSchoolTip .assistant-note-count {
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, .3);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(15, 23, 42, .66);
+  color: rgba(226, 232, 240, .82);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-thread {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 68px;
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 9px;
+  padding: 7px;
+  background: rgba(2, 6, 23, .34);
+}
+
+body.admin #adminSchoolTip .assistant-note-empty {
+  align-self: center;
+  margin: 0;
+  padding: 14px 6px;
+  color: rgba(203, 213, 225, .66);
+  font-size: 10.5px;
+  text-align: center;
+}
+
+body.admin #adminSchoolTip .assistant-note-empty.is-error {
+  color: #fca5a5;
+}
+
+body.admin #adminSchoolTip .assistant-note-item {
+  --assistant-note-item-color: #e2e8f0;
+  --assistant-note-item-rgb: 226, 232, 240;
+  min-width: 0;
+  border: 1px solid rgba(var(--assistant-note-item-rgb), .2);
+  border-left: 3px solid var(--assistant-note-item-color);
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: rgba(var(--assistant-note-item-rgb), .07);
+}
+
+body.admin #adminSchoolTip .assistant-note-item[data-note-author="귤"] {
+  --assistant-note-item-color: #fbbf24;
+  --assistant-note-item-rgb: 251, 191, 36;
+}
+
+body.admin #adminSchoolTip .assistant-note-item[data-note-author="세빈"] {
+  --assistant-note-item-color: #7dd3fc;
+  --assistant-note-item-rgb: 125, 211, 252;
+}
+
+body.admin #adminSchoolTip .assistant-note-item[data-note-author="동훈"] {
+  --assistant-note-item-color: #86efac;
+  --assistant-note-item-rgb: 134, 239, 172;
+}
+
+body.admin #adminSchoolTip .assistant-note-item[data-note-author="하영"] {
+  --assistant-note-item-color: #f9a8d4;
+  --assistant-note-item-rgb: 249, 168, 212;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-header.is-reminder {
+  align-items: flex-start;
+  gap: 5px;
+}
+
+body.admin #adminSchoolTip .assistant-note-item.has-reminder > .assistant-note-item-author-group {
+  margin: 0 0 4px;
+}
+
+body.admin #adminSchoolTip .assistant-note-item.is-pinned {
+  border-color: rgba(250, 204, 21, .58);
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, .12), 0 0 0 1px rgba(250, 204, 21, .08);
+}
+
+body.admin #adminSchoolTip .assistant-note-item-author-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-author {
+  min-width: 0;
+  color: var(--assistant-note-item-color);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, .42);
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin:hover,
+body.admin #adminSchoolTip .assistant-note-pin:focus-visible {
+  background: rgba(255, 255, 255, .1);
+  color: rgba(255, 255, 255, .86);
+  outline: 1px solid rgba(255, 255, 255, .72);
+  outline-offset: 1px;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] {
+  color: #fff;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] .assistant-note-pin-icon {
+  fill: currentColor;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-time {
+  flex: 0 0 auto;
+  color: rgba(203, 213, 225, .62);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-meta {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+body.admin #adminSchoolTip .assistant-note-action-group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+
+body.admin #adminSchoolTip .assistant-note-item.has-reminder .assistant-note-action-group {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit {
+  min-height: 20px;
+  border: 1px solid rgba(96, 165, 250, .45);
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: rgba(37, 99, 235, .16);
+  color: #bfdbfe;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit:hover,
+body.admin #adminSchoolTip .assistant-note-edit:focus-visible {
+  border-color: rgba(147, 197, 253, .78);
+  background: rgba(37, 99, 235, .28);
+  color: #eff6ff;
+}
+body.admin #adminSchoolTip .assistant-note-delete,
+body.admin #adminSchoolTip .assistant-note-edit {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 20px !important;
+  min-height: 20px !important;
+}
+body.admin #adminSchoolTip .assistant-note-delete {
+  min-height: 20px;
+  border: 1px solid rgba(248, 113, 113, .42);
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: rgba(127, 29, 29, .22);
+  color: #fca5a5;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-delete:hover {
+  border-color: rgba(248, 113, 113, .78);
+  background: rgba(127, 29, 29, .42);
+  color: #fecaca;
+}
+
+body.admin #adminSchoolTip .assistant-note-pin:disabled,
+body.admin #adminSchoolTip .assistant-note-delete:disabled,
+body.admin #adminSchoolTip .assistant-note-edit:disabled,
+body.admin #adminSchoolTip .assistant-note-author-buttons button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin #adminSchoolTip .assistant-note-item-content {
+  margin: 0;
+  color: var(--assistant-note-item-color);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-input {
+  display: block;
+  width: 100%;
+  min-height: 68px;
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(96, 165, 250, .52);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, .72);
+  color: var(--assistant-note-item-color);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-actions button {
+  min-width: 0 !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-cancel {
+  border: 1px solid rgba(148, 163, 184, .36);
+  background: rgba(148, 163, 184, .12);
+  color: #cbd5e1;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-save {
+  border: 1px solid rgba(96, 165, 250, .52);
+  background: rgba(37, 99, 235, .2);
+  color: #bfdbfe;
+}
+
+body.admin #adminSchoolTip .assistant-note-edit-actions button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+body.admin #adminSchoolTip .assistant-note-compose {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(148, 163, 184, .18);
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="귤"] .assistant-note-input {
+  color: #fbbf24;
+  caret-color: #fbbf24;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="세빈"] .assistant-note-input {
+  color: #7dd3fc;
+  caret-color: #7dd3fc;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="동훈"] .assistant-note-input {
+  color: #86efac;
+  caret-color: #86efac;
+}
+
+body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="하영"] .assistant-note-input {
+  color: #f9a8d4;
+  caret-color: #f9a8d4;
+}
+
+body.admin #adminSchoolTip .assistant-note-remind-input {
+  width: 190px;
+  flex: 1 1 190px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid rgba(148, 163, 184, .32);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, .56);
+  color: #f8fafc;
+  color-scheme: dark;
+  font: inherit;
+}
+
+
+body.admin #adminSchoolTip .assistant-note-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+body.admin #adminSchoolTip .assistant-note-mode-button {
+  min-height: 30px;
+  border: 1px solid rgba(148, 163, 184, .32);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .62);
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+body.admin #adminSchoolTip .assistant-note-mode-button:hover,
+body.admin #adminSchoolTip .assistant-note-mode-button:focus-visible {
+  border-color: rgba(147, 197, 253, .72);
+  color: #f8fafc;
+}
+
+body.admin #adminSchoolTip .assistant-note-mode-button.is-selected {
+  border-color: rgba(96, 165, 250, .88);
+  background: #2563eb;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(191, 219, 254, .2);
+}
+
+body.admin #adminSchoolTip .assistant-note-mode-button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin #adminSchoolTip .assistant-note-compose-reminder[hidden] {
+  display: none;
+}
+body.admin #adminSchoolTip .assistant-note-compose-reminder {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 8px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+body.admin #adminSchoolTip .assistant-note-compose-reminder-label {
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-info {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(148, 163, 184, .42);
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-dates {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 3px;
+  color: #e2e8f0;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-arrow {
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-dates > span:last-child {
+  color: #bfdbfe;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="due"] .assistant-note-reminder-badge {
+  border-color: rgba(251, 191, 36, .72);
+  color: #fbbf24;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="upcoming"] .assistant-note-reminder-badge {
+  border-color: rgba(96, 165, 250, .58);
+  color: #93c5fd;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="past"] {
+  opacity: .8;
+}
+
+body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="past"] .assistant-note-reminder-badge {
+  color: #94a3b8;
+}
+@media (max-width: 600px) {
+  body.admin #adminSchoolTip .assistant-note-compose-reminder {
+    align-items: center;
+    flex-direction: row;
+  }
+}
+
+/* Restored student-operation log rail. Keep the live announcement composer intact. */
 body.admin .hero-note-rail {
   grid-column: 3;
   grid-row: 1 / span 2;
@@ -8299,7 +8946,7 @@ body.admin .hero-note-rail {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(220px, 13vw) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 2fr) minmax(230px, 3fr);
   gap: 10px;
 }
 
@@ -8309,12 +8956,13 @@ body.admin .hero-note-rail > .student-log-panel {
   grid-row: auto;
   min-width: 0;
   min-height: 0;
+  width: auto;
   height: 100%;
 }
 
 body.admin .student-log-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 8px;
   overflow: hidden;
   padding: 12px;
@@ -8329,6 +8977,13 @@ body.admin .student-log-head {
   gap: 8px;
 }
 
+body.admin .student-log-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 body.admin .student-log-head h3 {
   margin: 0;
   color: var(--ink);
@@ -8336,6 +8991,18 @@ body.admin .student-log-head h3 {
   font-weight: 850;
   line-height: 1.2;
   word-break: keep-all;
+}
+
+body.admin .student-log-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 21px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-soft) 80%, var(--card) 20%);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 850;
 }
 
 body.admin .student-log-head p {
@@ -8354,14 +9021,75 @@ body.admin .student-log-head .btn {
   font-size: 12px;
 }
 
-body.admin .student-log-list {
+body.admin .student-log-filters {
+  display: inline-flex;
+  justify-self: start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin .student-log-filter {
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin .student-log-filter.is-selected {
+  background: var(--brand);
+  color: #fff;
+}
+
+body.admin .student-log-filter:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin .student-log-list,
+body.admin .student-log-group-items {
   min-width: 0;
-  min-height: 0;
   margin: 0;
-  padding: 0 3px 0 0;
-  overflow: auto;
+  padding: 0;
   list-style: none;
+}
+
+body.admin .student-log-list {
+  min-height: 0;
+  padding-right: 3px;
+  overflow: auto;
   scrollbar-gutter: stable;
+}
+
+body.admin .student-log-group + .student-log-group {
+  margin-top: 8px;
+}
+
+body.admin .student-log-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 2px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+body.admin .student-log-group-label strong {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+body.admin .student-log-group-count {
+  font-weight: 750;
 }
 
 body.admin .student-log-item {
@@ -8369,30 +9097,103 @@ body.admin .student-log-item {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
   align-items: start;
-  gap: 7px;
+  gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
-body.admin .student-log-item::before {
+body.admin .student-log-marker {
   width: 8px;
   height: 8px;
-  margin-top: 5px;
+  margin-top: 6px;
   border: 2px solid var(--brand);
   border-radius: 50%;
   box-sizing: border-box;
-  content: "";
 }
 
-body.admin .student-log-content {
+body.admin .student-log-item-body {
   min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+body.admin .student-log-item-head,
+body.admin .student-log-identity,
+body.admin .student-log-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body.admin .student-log-item-head {
+  justify-content: space-between;
+}
+
+body.admin .student-log-identity {
+  overflow: hidden;
+}
+
+body.admin .student-log-student {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.admin .student-log-kind {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--card) 90%);
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+body.admin .student-log-time {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.admin .student-log-delete {
+  min-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin .student-log-delete:hover {
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--line) 66%);
+  background: color-mix(in srgb, var(--card) 82%, var(--danger) 18%);
+  color: var(--danger);
+}
+
+body.admin .student-log-delete:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin .student-log-comment {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
   line-height: 1.4;
   overflow-wrap: anywhere;
   word-break: keep-all;
-  text-wrap: pretty;
 }
 
 body.admin .student-log-empty {
@@ -8417,90 +9218,16 @@ body.admin .student-log-status {
   line-height: 1.35;
 }
 
-body.admin .student-log-status[data-state="error"] { color: var(--danger); }
-body.admin .student-log-status[data-state="success"] { color: var(--ok); }
-
-/* The inline composer stays in the DOM for the expanded announcement modal. */
-body.admin .announcement-section > .announcement-compose { display: none; }
-
-body.admin .hero-panel > .announcement-section {
-  grid-template-rows: auto auto auto;
-  align-content: start;
-}
-
-body.admin .announcement-compact-shell {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, var(--brand) 22%);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
-}
-
-body.admin .announcement-compact-shell > div {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-body.admin .announcement-compact-shell strong {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 850;
-}
-
-body.admin .announcement-compact-shell span {
-  min-width: 0;
-  color: var(--ink-soft);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.35;
-  word-break: keep-all;
-}
-
-body.admin .announcement-compact-shell .btn {
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 0 10px;
-  font-size: 12px;
-}
+body.admin .student-log-status[data-state='error'] { color: var(--danger); }
+body.admin .student-log-status[data-state='success'] { color: var(--ok); }
 
 body.admin.admin-simple .hero-note-rail { display: none !important; }
-
-@media (min-width: 1661px) {
-  body.admin .hero-panel > .hero-note-rail { min-height: 0; }
-}
-
-@media (min-width: 1501px) and (max-width: 1660px) {
-  body.admin .hero-note-rail {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    height: var(--admin-note-responsive-height, 250px);
-    min-height: var(--admin-note-responsive-height, 250px);
-    max-height: var(--admin-note-responsive-height, 250px);
-  }
-
-  body.admin .announcement-section {
-    grid-column: 1 / -1;
-    grid-row: 4;
-  }
-
-  body.admin .announcement-reply-dock {
-    grid-column: 1 / -1;
-    grid-row: 5;
-  }
-}
 
 @media (max-width: 1500px) {
   body.admin .hero-note-rail {
     grid-column: 1 / -1;
     grid-row: auto;
     height: auto;
-    min-height: 0;
-    max-height: none;
     grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
   }
 
@@ -8515,14 +9242,6 @@ body.admin.admin-simple .hero-note-rail { display: none !important; }
 @media (max-width: 1120px) {
   body.admin .hero-note-rail {
     grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  body.admin .hero-note-rail > .admin-operation-notes,
-  body.admin .hero-note-rail > .student-log-panel {
-    height: var(--admin-note-responsive-height, 250px);
-    min-height: var(--admin-note-responsive-height, 250px);
-    max-height: var(--admin-note-responsive-height, 250px);
   }
 }
 
@@ -8530,13 +9249,5 @@ body.admin.admin-simple .hero-note-rail { display: none !important; }
   body.admin .hero-note-rail {
     grid-column: 1;
     grid-row: auto;
-  }
-
-  body.admin .announcement-compact-shell {
-    align-items: flex-start;
-  }
-
-  body.admin .announcement-compact-shell span {
-    font-size: 10px;
   }
 }

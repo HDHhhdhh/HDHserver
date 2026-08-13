@@ -140,6 +140,6 @@ node --check <edited-file.js>
 - `progress.json` is large and date/sid keyed. Avoid full replacement writes from the frontend.
 - Older logs may contain legacy or corrupted text. Repair display and future saves without deleting unrelated fields.
 - The admin page uses both cached frontend state and server refreshes; hydrate date/sid-scoped data before assuming `state` is complete.
-- Today-order routes and `core.paths.TODAY_ORDER_PATH` share `DATA_DIR/today_order.json`; use `scripts/migrate_today_order_store.py` to archive any redundant legacy root store.
+- Live admin today-order routes use `data/today_order.json`, while `core.paths.TODAY_ORDER_PATH` points at the root file; do not assume those stores are unified.
 - `static/main.html`, `static/student copy.html`, and similarly unreferenced assets remain directly servable; confirm external/manual use before deletion.
 - There is no dependency manifest or frontend package runner. CI pins Python 3.11 and Node 20 but only compiles and invokes the custom safety harness.

@@ -83,6 +83,15 @@ TEST_ANSWER_FIELD_NAMES = frozenset(
     }
 )
 
+_TEST_CONFIG_SECRET_PREFIXES = (
+    "answer",
+    "solution",
+    "correct",
+    "expected",
+    "accepted",
+    "canonical",
+)
+
 
 class HeaderGetter(Protocol):
     def get(self, key: str, default: str | None = None) -> str | None:
@@ -222,21 +231,19 @@ def strip_answer_link_fields(value: Any) -> tuple[Any, bool]:
 
 
 def strip_tests_config_answer_links(config: Any) -> Any:
-    if not isinstance(config, dict):
-        return config
+    def is_secret_field(key: Any) -> bool:
+        normalized = re.sub(r"[^0-9a-z]", "", str(key or "").casefold())
+        return normalized.startswith(_TEST_CONFIG_SECRET_PREFIXES)
 
-    out = copy.deepcopy(config)
-    categories = out.get("categories")
-    if not isinstance(categories, dict):
-        return out
+    def project(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: project(child)
+                for key, child in value.items()
+                if not is_secret_field(key)
+            }
+        if isinstance(value, list):
+            return [project(child) for child in value]
+        return copy.deepcopy(value)
 
-    for category in categories.values():
-        if not isinstance(category, dict) or not isinstance(category.get("tests"), list):
-            continue
-        next_tests = []
-        for test in category.get("tests") or []:
-            stripped_test, _ = strip_answer_link_fields(test)
-            next_tests.append(stripped_test)
-        category["tests"] = next_tests
-
-    return out
+    return project(config)

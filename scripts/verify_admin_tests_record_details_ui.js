@@ -11,7 +11,11 @@ const source = fs
 function applySearchPlaceholder() {}
 function matchesSearchKey() { return true; }
 function searchKeyForText(value) { return String(Array.isArray(value) ? value.join(' ') : value || ''); }
-`);
+`)
+  .replace(
+    /import\s+\{\s*createUnitTestDisplayNameResolver\s*\}\s+from\s+['"]\.\/shared\/testCatalogDisplay\.js['"];\s*/,
+    "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');\n",
+  );
 const testsHtml = fs.readFileSync(TESTS_HTML_PATH, 'utf8');
 
 class ElementStub {

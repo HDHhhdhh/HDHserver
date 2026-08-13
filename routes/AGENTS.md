@@ -14,7 +14,7 @@ Flask blueprints live here. Routes are the boundary between static frontends, ru
 | Announcements/surveys | `api_announcements.py` | Announcement images, replies, acknowledgements, surveys, and statuses. |
 | Auth/files/makeup | `api_auth.py`, `api_fs.py`, `api_makeup_carryover.py` | Specialized persistence and mutation boundaries. |
 | Assistant notes API | `api_assistant_notes.py` | Admin-referer-gated, student-scoped SQLite CRUD; never student/export facing. |
-| Legacy today metadata | `api_todaymeta.py` | `/api/today_order` shares the canonical `core.paths.TODAY_ORDER_PATH` under `DATA_DIR`. |
+| Legacy today metadata | `api_todaymeta.py` | Live `/api/today_order` uses `data/today_order.json`, not root `today_order.json`. |
 | Page routes | `pages.py` | Serves static HTML shells directly, not templates. |
 
 ## Conventions

@@ -18,9 +18,21 @@ function result(payload, status = 200, changed = false) {
 }
 
 export function applyStudentLogsRequest({ method, path, body = {}, store, createdAt, today }) {
-  if (path !== '/api/student-logs') return null;
+  const basePath = '/api/student-logs';
+  const deleteMatch = String(path || '').match(/^\/api\/student-logs\/(\d+)$/);
+  if (path !== basePath && !deleteMatch) return null;
   const requestMethod = String(method || 'GET').toUpperCase();
   const rows = Array.isArray(store.studentOperationLogs) ? store.studentOperationLogs : [];
+
+  if (deleteMatch) {
+    if (requestMethod !== 'DELETE') return result({ ok: false, error: 'method not allowed' }, 405);
+    const id = Number(deleteMatch[1]);
+    if (!Number.isInteger(id) || id <= 0) return result({ ok: false, error: 'invalid student log id' }, 400);
+    const index = rows.findIndex(row => Number(row?.id) === id);
+    if (index < 0) return result({ ok: false, error: 'student log not found' }, 404);
+    store.studentOperationLogs = rows.filter(row => Number(row?.id) !== id);
+    return result({ ok: true, deleted: 1, id }, 200, true);
+  }
 
   if (requestMethod === 'GET') {
     return result({ ok: true, logs: rows.map(row => ({ ...row })) });
