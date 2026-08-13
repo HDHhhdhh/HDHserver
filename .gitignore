@@ -38,7 +38,7 @@ progress.json.*.tmp
 /.omo/frontend-design/
 /.omo/product-design-audit*/
 /.omo/reviews/
-/.omo/review-full.diff
+/.omo/review-*
 /output/
 /qa-evidence*/
 /browser-*.png
