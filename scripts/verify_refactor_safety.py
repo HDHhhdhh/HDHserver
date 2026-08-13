@@ -4422,6 +4422,85 @@ def run_student_answer_link_render_source_checks() -> None:
         _assert_unit(snippet in render_block, f"student assigned-test render block must preserve answer-link behavior: {snippet}")
 
 
+def run_unit_test_grading_contract_checks() -> None:
+    from routes import api_basic, api_tests  # noqa: PLC0415
+
+    test = {
+        "id": "fixture-unit-test-r2",
+        "sourceId": "fixture-unit-source",
+        "name": "합성 단원평가 Lv.3",
+        "curriculum": "합성수학",
+        "difficulty": "Lv.3",
+        "round": "2",
+        "problems": 3,
+        "answerKeys": {
+            "1": ["1", "2", "3"],
+            "2": ["3", "2", "1"],
+            "3": ["2", "1", "3"],
+        },
+    }
+    cfg = {
+        "categories": {
+            "UNIT": {
+                "label": "단원평가",
+                "tests": [test],
+            },
+        },
+    }
+    expected_answer_url = "https://drive.google.com/file/d/fixture-unit-solution/view?usp=drivesdk"
+    link_map = {
+        test["sourceId"]: {
+            test["round"]: {
+                "answerUrl": expected_answer_url,
+            },
+        },
+    }
+
+    test_id = test["id"]
+    source_id = test["sourceId"]
+    problems = test["problems"]
+    round_no = int(test["round"])
+    _assert_unit(test_id, "UNIT fixture must have id")
+    _assert_unit(source_id, f"UNIT fixture must have sourceId: {test_id}")
+    _assert_unit(problems > 0, f"UNIT fixture must have positive problems count: {test_id}")
+
+    test_def = api_tests._find_test_def_by_id(cfg, test_id)
+    _assert_unit(isinstance(test_def, dict), f"submit-test must find UNIT test by id: {test_id}")
+    key = api_tests._get_answer_key_for_round(test_def, problems, round_no)
+    _assert_unit(key is not None, f"UNIT test must expose answer key for grading: {test_id}")
+    _assert_unit(len(key) == problems, f"UNIT answer key length must match problems: {test_id}")
+    _assert_unit(all(str(answer).strip() for answer in key), f"UNIT answer key must not contain blanks: {test_id}")
+
+    correct, total, wrong, pct = api_tests._grade_answers(list(key), key)
+    _assert_unit(correct == problems and total == problems and wrong == [] and pct == 100.0, f"UNIT exact-answer grading must pass: {test_id}")
+
+    meta = api_tests._resolve_test_meta(test["name"], test_id, api_tests._build_test_catalog(cfg))
+    _assert_unit(meta.get("type") == "UNIT", f"UNIT submit metadata must resolve as UNIT: {test_id}")
+    _assert_unit(meta.get("source_id") == source_id, f"UNIT submit metadata must retain sourceId: {test_id}")
+    _assert_unit(meta.get("curriculum") == test["curriculum"], f"UNIT submit metadata must retain curriculum: {test_id}")
+    _assert_unit(meta.get("round") == test["round"], f"UNIT submit metadata must retain round: {test_id}")
+
+    assigned_item = {
+        "categoryLabel": "단원평가",
+        "curriculum": test["curriculum"],
+        "difficulty": test["difficulty"],
+        "round": f"{round_no}회차",
+        "name": test["name"],
+    }
+    original_config_loader = api_basic._load_tests_config_for_answer_links
+    original_map_loader = api_basic._load_test_answer_link_map
+    api_basic._load_tests_config_for_answer_links = lambda: cfg
+    api_basic._load_test_answer_link_map = lambda: link_map
+    try:
+        _assert_unit(
+            api_basic._test_assignment_answer_url(assigned_item) == expected_answer_url,
+            f"UNIT label-only assignment must resolve the source answerUrl: {test_id}",
+        )
+    finally:
+        api_basic._load_tests_config_for_answer_links = original_config_loader
+        api_basic._load_test_answer_link_map = original_map_loader
+
+
 def run_unit_test_grading_readiness_checks() -> None:
     from routes import api_basic, api_tests  # noqa: PLC0415
 
@@ -4909,10 +4988,10 @@ def run_frontend_evidence_inventory_checks() -> None:
 
 
 def run_verifier_execution_policy_source_checks() -> None:
-    """Keep ignored browser receipts strict but opt-in for reproducible defaults."""
+    """Keep ignored local artifacts strict but opt-in for reproducible defaults."""
     source = pathlib.Path(__file__).read_text(encoding="utf-8")
-    default_start = source.index("def run_unit_checks() -> bool:")
-    default_end = source.index("def run_selected_checks(", default_start)
+    default_start = source.index("\ndef run_unit_checks() -> bool:\n") + 1
+    default_end = source.index("\ndef run_selected_checks(", default_start)
     default_block = source[default_start:default_end]
     _assert_unit(
         "run_frontend_evidence_inventory_checks," not in default_block,
@@ -4922,6 +5001,16 @@ def run_verifier_execution_policy_source_checks() -> None:
         'if args.only_frontend_evidence_inventory:' in source
         and "selected_checks.append(run_frontend_evidence_inventory_checks)" in source,
         "strict frontend evidence validation must remain available through its explicit selector",
+    )
+    _assert_unit(
+        "run_unit_test_grading_readiness_checks," not in default_block
+        and "run_unit_test_grading_contract_checks," in default_block,
+        "the default suite must use a synthetic UNIT contract instead of ignored tests-config runtime data",
+    )
+    _assert_unit(
+        'if args.only_unit_test_grading_readiness:' in source
+        and "selected_checks.append(run_unit_test_grading_readiness_checks)" in source,
+        "live UNIT catalog readiness must remain available through its explicit selector",
     )
     _assert_unit(
         "ast.parse(source, filename=str(path), feature_version=(3, 11))" in source
@@ -7796,7 +7885,7 @@ def run_unit_checks() -> bool:
         run_academy_proxy_network_access_checks,
         run_absence_test_assignment_transition_unit_checks,
         run_student_answer_link_render_source_checks,
-        run_unit_test_grading_readiness_checks,
+        run_unit_test_grading_contract_checks,
         run_catalog_script_safety_source_checks,
         run_catalog_script_temp_file_behavior_checks,
         run_admin_css_scope_source_checks,
@@ -8127,9 +8216,14 @@ def main() -> int:
         help="Run only admin test-record wrong-answer detail contract checks.",
     )
     parser.add_argument(
+        "--only-unit-test-grading-contract",
+        action="store_true",
+        help="Run only the synthetic UNIT grading and answer-link contract checks.",
+    )
+    parser.add_argument(
         "--only-unit-test-grading-readiness",
         action="store_true",
-        help="Run only UNIT catalog grading readiness checks.",
+        help="Run only live UNIT catalog grading readiness checks.",
     )
     parser.add_argument(
         "--only-catalog-script-safety-source",
@@ -8244,6 +8338,8 @@ def main() -> int:
         selected_checks.append(run_admin_tests_record_detail_contract_checks)
         selected_checks.append(run_admin_tests_record_detail_ui_checks)
         selected_checks.append(run_admin_tests_record_detail_answer_link_ui_checks)
+    if args.only_unit_test_grading_contract:
+        selected_checks.append(run_unit_test_grading_contract_checks)
     if args.only_unit_test_grading_readiness:
         selected_checks.append(run_unit_test_grading_readiness_checks)
     if args.only_catalog_script_safety_source:
