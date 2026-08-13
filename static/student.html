@@ -2,61 +2,193 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2e77ec">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="학생 앱">
   <title>학생 페이지</title>
+
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/student-app-192.png">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="/css/student.css?v=20260415b">
+  <!-- Phase 2 keys student.css?v=20260809-homework-r1 and student.js?v=20260809-homework-r1 are superseded below. -->
+  <link rel="stylesheet" href="/css/student.css?v=20260809-focus-r1">
 
-  <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
-  <script defer src="/js/student.js"></script>
+  <script defer src="/js/student-focus.js?v=20260809-focus-r1"></script>
+  <script defer src="/js/student.js?v=20260809-focus-r1"></script>
 </head>
 <body class="student-page">
+  <a class="student-skip-link" href="#studentMain">오늘 학습 내용으로 건너뛰기</a>
   <div class="student-shell">
     <header class="topbar student-topbar">
       <div id="clock" class="clock-header"></div>
 
-      <button id="setBtn" class="settings-btn" type="button" aria-label="설정 열기">
+      <button id="noticeBtn" class="notice-btn" type="button" aria-label="학습 게시판 열기">
+        게시판
+        <span id="noticeBadge" class="notice-badge" hidden>0</span>
+      </button>
+
+      <button id="setBtn" class="settings-btn" type="button" aria-label="설정 열기" aria-controls="setPanel" aria-expanded="false">
         설정
-        <span id="badge" class="notice-badge">1</span>
       </button>
     </header>
 
-    <div id="setPanel">
+    <div id="setPanel" role="region" aria-hidden="true" aria-labelledby="studentSettingsTitle">
+      <div class="student-settings-head">
+        <h2 id="studentSettingsTitle">설정</h2>
+        <button id="setPanelClose" class="student-settings-close" type="button" aria-label="설정 닫기">닫기</button>
+      </div>
       <label class="row">
         다크 모드
         <input type="checkbox" id="darkToggle">
       </label>
 
-      <div class="settings-feedback">
+      <div id="studentAppSettings" hidden aria-label="학생 앱 설정">
+        <label class="row" for="studentAppCurriculum">
+          커리큘럼
+          <select id="studentAppCurriculum" aria-label="커리큘럼 선택" disabled></select>
+        </label>
+        <p id="studentAppNotificationStatus" role="status" aria-live="polite">학습 알림 상태를 확인하는 중입니다.</p>
+        <fieldset id="studentNotificationPreferences" class="student-notification-preferences" aria-describedby="studentNotificationPreferencesHelp" hidden>
+          <legend>받을 알림</legend>
+          <p id="studentNotificationPreferencesHelp">원하는 학습 알림을 각각 선택할 수 있습니다.</p>
+          <label class="student-notification-toggle" for="studentNotificationSchedule">
+            <span>수업</span>
+            <input id="studentNotificationSchedule" type="checkbox" data-student-notification-category="schedule">
+          </label>
+          <label class="student-notification-toggle" for="studentNotificationHomework">
+            <span>숙제</span>
+            <input id="studentNotificationHomework" type="checkbox" data-student-notification-category="homework">
+          </label>
+          <label class="student-notification-toggle" for="studentNotificationProgress">
+            <span>진도</span>
+            <input id="studentNotificationProgress" type="checkbox" data-student-notification-category="progress">
+          </label>
+          <label class="student-notification-toggle" for="studentNotificationAnnouncement">
+            <span>공지</span>
+            <input id="studentNotificationAnnouncement" type="checkbox" data-student-notification-category="announcement">
+          </label>
+          <p id="studentNotificationPreferencesStatus" class="student-notification-preferences-status" role="status" aria-live="polite"></p>
+          <button id="studentNotificationPreferencesRetry" class="student-notification-preferences-retry" type="button" hidden>다시 불러오기</button>
+        </fieldset>
+        <button id="studentAppLogout" type="button">학생 앱 로그아웃</button>
+      </div>
+
+      <div id="studentLocalFeedbackSettings" class="settings-feedback">
+        <label class="student-sr-only" for="feedbackBox">건의사항</label>
         <textarea id="feedbackBox" placeholder="건의사항을 편하게 남겨주세요."></textarea>
         <button id="submitFeedback" type="button">건의사항 보내기</button>
       </div>
 
-      <div>
+      <div id="studentLocalLoginSettings">
         <button id="goLogin" type="button">학원 로그인 페이지로 이동</button>
       </div>
     </div>
 
     <section class="hero-bar">
       <div class="namebar">
-        <h2 id="stuName" class="namebar-title"></h2>
+        <h1 id="stuName" class="namebar-title"></h1>
         <p class="namebar-desc">오늘 할당된 영상과 자료를 확인하고 학습을 진행해 주세요.</p>
       </div>
-      <button id="openTestSubmit" class="ts-btn" type="button">테스트 제출</button>
+      <button id="openTestSubmit" class="ts-btn" type="button" hidden>테스트 제출</button>
     </section>
 
-    <main class="student-main">
-      <section class="panel video-panel">
+    <main id="studentMain" class="student-main">
+    <section id="studentTodayOverview" class="student-today-overview" aria-labelledby="studentTodayOverviewTitle" hidden>
+      <div class="student-today-overview-head">
+        <div>
+          <p class="student-today-kicker">오늘 할 일</p>
+          <h2 id="studentTodayOverviewTitle">한눈에 보기</h2>
+        </div>
+        <p id="studentTodaySummary" role="status" aria-live="polite">오늘 학습 현황을 정리하는 중입니다.</p>
+      </div>
+
+      <dl class="student-today-metrics">
+        <div>
+          <dt>숙제 교재</dt>
+          <dd id="studentTodayHomeworkCount">0권</dd>
+        </div>
+        <div>
+          <dt>오늘 영상</dt>
+          <dd id="studentTodayVideoCount">0개</dd>
+        </div>
+        <div>
+          <dt>확인할 테스트</dt>
+          <dd id="studentTodayTestCount">0개</dd>
+        </div>
+        <div>
+          <dt>새 공지</dt>
+          <dd id="studentTodayNoticeCount">확인 중</dd>
+        </div>
+      </dl>
+
+      <div id="studentDashboardDetails" class="student-dashboard-details" hidden>
+        <section class="student-dashboard-card" aria-labelledby="studentCurriculumProgressTitle">
+          <div class="student-dashboard-card-head">
+            <h3 id="studentCurriculumProgressTitle">커리큘럼 진도</h3>
+            <strong id="studentCurriculumProgressPercent">확인 불가</strong>
+          </div>
+          <p id="studentCurriculumProgressCourse" class="student-dashboard-primary">과정 정보 없음</p>
+          <progress id="studentCurriculumProgress" max="100" value="0"
+            aria-labelledby="studentCurriculumProgressTitle"
+            aria-describedby="studentCurriculumProgressCourse studentCurriculumProgressMeta" hidden>0%</progress>
+          <p id="studentCurriculumProgressMeta" class="student-dashboard-meta">진도 정보를 확인할 수 없습니다.</p>
+        </section>
+
+        <section class="student-dashboard-card" aria-labelledby="studentNextScheduleTitle">
+          <div class="student-dashboard-card-head">
+            <h3 id="studentNextScheduleTitle">다음 수업</h3>
+            <strong id="studentNextScheduleStatus" hidden></strong>
+          </div>
+          <p id="studentNextScheduleKind" class="student-dashboard-primary">예정된 수업 없음</p>
+          <p id="studentNextScheduleWhen" class="student-dashboard-meta">다음 일정이 등록되면 알려드립니다.</p>
+          <p id="studentNextScheduleSlots" class="student-dashboard-meta" hidden></p>
+        </section>
+      </div>
+
+      <nav class="student-today-actions" aria-label="오늘 학습 빠른 이동">
+        <a href="#studentHomeworkPanel" data-student-summary-link="homework">숙제 보기</a>
+        <a href="#studentVideoPanel" data-student-summary-link="video">영상 보기</a>
+        <a href="#assignedTestsPanel" data-student-summary-link="tests">테스트 보기</a>
+        <button type="button" data-student-notice-shortcut>공지 보기</button>
+      </nav>
+      <p id="studentTodayAccess" class="student-today-access" hidden></p>
+    </section>
+
+      <section id="studentFocusLauncher" class="student-focus-launcher" aria-labelledby="studentFocusLauncherTitle" hidden>
+        <div class="student-focus-launcher-copy">
+          <p class="student-today-kicker">수업 집중</p>
+          <h2 id="studentFocusLauncherTitle">집중 세션</h2>
+          <p id="studentFocusLauncherStatus" role="status" aria-live="polite">수업 일정을 확인하는 중입니다.</p>
+        </div>
+        <button id="studentFocusStart" type="button" disabled>집중 시작</button>
+        <p class="student-focus-disclosure">화면이 숨겨진 시간은 전화·잠금·권한창과 앱 전환을 구분할 수 없어 ‘앱 이탈 추정’으로만 기록됩니다.</p>
+      </section>
+
+      <section class="panel homework-panel" id="studentHomeworkPanel" hidden>
+        <div class="student-homework-heading">
+          <h2 id="studentHomeworkTitle" class="section-title">오늘 숙제</h2>
+          <p id="studentHomeworkStatus" class="student-homework-status" role="status" aria-live="polite" hidden></p>
+        </div>
+        <ul id="studentHomeworkBooks" class="homework-book-list">
+          <li class="muted">숙제를 불러오는 중...</li>
+        </ul>
+        <ul id="studentHomeworkAssignments" class="student-homework-list" aria-label="숙제 목록" hidden></ul>
+        <button id="studentHomeworkRetry" class="student-homework-retry" type="button" hidden>다시 시도</button>
+      </section>
+
+      <section class="panel video-panel" id="studentVideoPanel">
         <h2 class="section-title">오늘 영상</h2>
 
         <div id="playerBox">
           <article class="player-card">
-            <iframe id="player" allow="autoplay; local-network-access" allowfullscreen webkitallowfullscreen
+            <iframe id="player" title="학생 학습 영상" allow="autoplay; local-network-access" allowfullscreen webkitallowfullscreen
               mozallowfullscreen></iframe>
           </article>
 
@@ -65,12 +197,28 @@
             <ul id="vidList">
               <li class="muted">영상을 불러오는 중...</li>
             </ul>
+            <section id="previousVideos" class="previous-videos" aria-labelledby="previousVideosToggle">
+              <button id="previousVideosToggle" class="previous-videos-toggle" type="button" disabled
+                aria-expanded="false" aria-controls="previousVideosPanel">영상 복습</button>
+              <div id="previousVideosPanel" class="previous-videos-panel" hidden>
+                <p id="previousVideosSummary" class="previous-videos-summary" role="status" aria-live="polite"></p>
+                <button id="previousVideosRegister" class="previous-videos-register" type="button" disabled>영상 등록</button>
+                <ul id="previousVidList" class="previous-videos-list"></ul>
+              </div>
+            </section>
           </aside>
         </div>
       </section>
 
+      <section class="panel tests-panel" id="assignedTestsPanel" hidden>
+        <h2 class="section-title">오늘 테스트</h2>
+        <ul id="assignedTestList">
+          <li class="muted">테스트를 불러오는 중...</li>
+        </ul>
+      </section>
+
       <section class="panel materials-panel">
-        <h3 class="section-title">자료 다운로드</h3>
+        <h2 class="section-title">자료 다운로드</h2>
         <ul id="matList">
           <li class="muted">자료를 불러오는 중...</li>
         </ul>
@@ -78,23 +226,144 @@
     </main>
   </div>
 
-  <div id="announceModal" class="announce-modal">
-    <div class="announce-card">
-      <h3 id="annTitle"></h3>
-      <div id="annContent"></div>
-
-      <div id="annPoll">
-        <div id="annPollQ"></div>
-        <div id="annPollOpts"></div>
+  <div id="announceModal" class="announce-modal" aria-hidden="true">
+    <div class="announce-card" role="dialog" aria-modal="true" aria-labelledby="annModalHeading">
+      <div class="announce-head">
+        <h2 id="annModalHeading" class="announce-heading" tabindex="-1">공지</h2>
       </div>
 
-      <div id="annSurvey"></div>
+      <div class="announce-body">
+        <section class="announce-section announce-title-section" aria-label="공지 제목">
+          <span class="announce-section-label">제목</span>
+          <div class="announce-title-row">
+            <h3 id="annTitle"></h3>
+            <div class="announce-created-card">
+              <span>등록 시간</span>
+              <time id="annCreatedAt"></time>
+            </div>
+          </div>
+        </section>
+        <div class="announce-post-scroll" aria-label="공지 이미지와 내용">
+          <section id="annImageSection" class="announce-section announce-image-section" aria-label="공지 첨부 이미지" hidden>
+            <div class="announce-image-section-head">
+              <span class="announce-section-label">이미지</span>
+              <span id="annImageCounter" class="announce-image-counter" aria-live="polite"></span>
+            </div>
+            <div id="annImageCarousel" class="announce-image-carousel" role="region" aria-roledescription="carousel" tabindex="0">
+              <div id="annImageTrack" class="announce-image-track"></div>
+              <button id="annImagePrev" class="announce-image-nav prev" type="button" aria-label="이전 이미지">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18 9 12l6-6"/></svg>
+              </button>
+              <button id="annImageNext" class="announce-image-nav next" type="button" aria-label="다음 이미지">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <div id="annImageDots" class="announce-image-dots" aria-label="이미지 페이지"></div>
+            </div>
+          </section>
+          <section class="announce-section announce-content-section" aria-label="공지 내용">
+            <span class="announce-section-label">내용</span>
+            <div id="annContent" class="announce-content"></div>
+          </section>
+        </div>
+        <section id="annSurvey" class="announce-section announce-survey" aria-label="설문조사" hidden>
+          <div class="announce-survey-head">
+            <span class="announce-section-label">설문조사</span>
+            <em id="annSurveyMeta">필수 질문을 모두 응답해 주세요.</em>
+          </div>
+          <div id="annSurveyQuestions" class="announce-survey-questions"></div>
+          <div id="annSurveyError" class="announce-survey-error" aria-live="polite"></div>
+          <div class="announce-survey-actions">
+            <button id="annSurveySubmit" type="button">설문 제출</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="announce-reply">
+        <div class="announce-reply-head">
+          <strong>답장</strong>
+          <span>필요하면 선생님께 바로 보낼 수 있어요.</span>
+        </div>
+        <label class="announce-anonymous">
+          <input id="annAnonymous" type="checkbox">
+          익명으로 답장
+        </label>
+        <label class="student-sr-only" for="annReply">공지 답장</label>
+        <textarea id="annReply" rows="3" placeholder="답장을 입력하세요."></textarea>
+        <div class="announce-reply-actions">
+          <button id="annSendReply" type="button">보내기</button>
+        </div>
+      </div>
+
+      <div id="annReplyStatus" class="announce-status" aria-live="polite"></div>
 
       <div class="announce-actions">
-        <button id="annSubmit" type="button">제출</button>
-        <button id="annConfirm" type="button">확인</button>
+        <button id="annRead" type="button">읽었습니다.</button>
       </div>
     </div>
+  </div>
+
+  <div id="announceHistoryModal" class="announce-modal" aria-hidden="true">
+    <div class="announce-card announce-history-card" role="dialog" aria-modal="true" aria-labelledby="annHistoryTitle">
+      <div class="announce-head row">
+        <div>
+          <p class="announce-label">STUDENT BOARD</p>
+          <h3 id="annHistoryTitle">학습 게시판</h3>
+        </div>
+        <button id="annHistoryClose" class="announce-close" type="button" aria-label="학습 게시판 닫기">×</button>
+      </div>
+      <div id="studentBoardFilters" class="student-board-filters" role="group" aria-label="게시판 종류" hidden>
+        <button type="button" data-student-board-type="all" aria-pressed="true">전체</button>
+        <button type="button" data-student-board-type="notice" aria-pressed="false">공지</button>
+        <button type="button" data-student-board-type="video" aria-pressed="false">영상</button>
+      </div>
+      <p id="studentBoardStatus" class="student-board-status" role="status" aria-live="polite" hidden></p>
+      <div id="annHistoryList" class="announce-history-list">
+        <div class="muted">게시판을 불러오는 중...</div>
+      </div>
+      <button id="studentBoardMore" class="student-board-more" type="button" hidden>더 보기</button>
+    </div>
+  </div>
+
+  <div id="studentFocusModal" class="student-focus-modal" hidden>
+    <section class="student-focus-sheet" role="dialog" aria-modal="true" aria-labelledby="studentFocusTitle">
+      <header class="student-focus-head">
+        <div>
+          <p class="student-today-kicker">FOCUS SESSION</p>
+          <h2 id="studentFocusTitle">수업에 집중하는 시간</h2>
+        </div>
+        <button id="studentFocusMinimize" type="button">학습 화면</button>
+      </header>
+
+      <div class="student-focus-countdown" aria-live="off">
+        <span>남은 수업 시간</span>
+        <strong id="studentFocusRemaining">--:--:--</strong>
+      </div>
+
+      <nav class="student-focus-shortcuts" aria-label="집중 세션 빠른 이동">
+        <a href="#studentHomeworkPanel">숙제</a>
+        <a href="#studentVideoPanel">영상</a>
+        <a href="#assignedTestsPanel">테스트</a>
+      </nav>
+
+      <dl class="student-focus-stats">
+        <div><dt>집중시간</dt><dd id="studentFocusTime">0분</dd></div>
+        <div><dt>이탈 추정</dt><dd id="studentFocusHiddenCount">0회</dd></div>
+        <div><dt>총 이탈시간</dt><dd id="studentFocusHiddenTime">0분</dd></div>
+        <div><dt>최장 이탈시간</dt><dd id="studentFocusLongestHidden">0분</dd></div>
+      </dl>
+
+      <p class="student-focus-disclosure">화면이 숨겨진 시간은 전화·잠금·권한창과 앱 전환을 구분할 수 없어 ‘앱 이탈 추정’으로만 기록됩니다. 다른 앱 이름이나 방문 URL은 수집하지 않습니다.</p>
+      <p id="studentFocusLiveStatus" class="student-focus-live-status" role="status" aria-live="polite"></p>
+
+      <div class="student-focus-end-actions">
+        <button id="studentFocusEnd" type="button">집중 종료</button>
+        <div id="studentFocusEndConfirm" class="student-focus-end-confirm" hidden>
+          <p>종료하면 이 수업의 집중 세션을 다시 시작할 수 없습니다.</p>
+          <button id="studentFocusEndCancel" type="button">계속 집중</button>
+          <button id="studentFocusEndConfirmButton" type="button">종료 확인</button>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script>

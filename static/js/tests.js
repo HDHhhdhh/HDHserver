@@ -1,896 +1,2145 @@
-// /js/tests.js — 테스트 관리(정의/정답 3회차) + 통계 대시보드 + 개인별 성적
+// /js/tests.js
+// Test catalog management for admin `/tests`.
 /* global fetch */
 
+import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
+import { createUnitTestDisplayNameResolver } from './shared/testCatalogDisplay.js';
+
 const $ = (sel) => document.querySelector(sel);
-const CT = { "Content-Type": "application/json" };
+const CT = { 'Content-Type': 'application/json' };
+const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
+const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
+
+const CATEGORY_DEFS = [
+  { key: 'REVIEW', label: '복습 테스트', difficulties: ['상', '중상'] },
+  { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
+  { key: 'TRAINING_PACK', label: '트레이닝팩', difficulties: ['트팩'] },
+  { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
+  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
+];
+const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
+const STATS_TYPE_LABELS = {
+  REVIEW: '복테',
+  TRAINING_PACK: '트팩',
+  SCHOOL_PAST: '학군지',
+  ILSAN_PAST: '일산',
+};
+const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
+const STUDENT_LEVELS = ['하', '중', '중상', '상'];
+const TERM_OPTIONS = ['중간고사', '기말고사'];
+
+const DEFAULT_RULES = {
+  REVIEW: defaultTwoBandRules(),
+  SCHOOL_PAST: defaultTwoBandRules(),
+  ILSAN_PAST: defaultIlsanRules(),
+  UNIT: defaultUnitRules(),
+  TRAINING_PACK: defaultTrainingPackRules(),
+};
+
+let TEST_CFG = { categories: {} };
+let TEST_CFG_REVISION = '';
+let TEST_STATS = null;
+let TEST_STATS_DETAIL = null;
+let ruleSaveTimer = null;
+let ruleSaveInFlight = false;
+let ruleSavePending = false;
+let ruleSaveToastTimer = null;
+let catalogOrderSaveInFlight = false;
+let catalogMutationSaveInFlight = false;
+let catalogOrderFeedback = null;
+let draggedCatalogIndex = null;
+const ui = {
+  category: 'UNIT',
+  subject: '공수1',
+  difficulty: '',
+  term: '',
+  round: '',
+  catalogSearch: '',
+  selectedId: '',
+  statsCategory: 'UNIT',
+  statsTestId: '',
+  statsSearch: '',
+  statsSort: 'default',
+};
+
+function isUnitCategory(categoryKey) {
+  return ['UNIT', 'TRAINING_PACK'].includes(String(categoryKey || ''));
+}
+
+function isPastCategory(categoryKey) {
+  return ['SCHOOL_PAST', 'ILSAN_PAST'].includes(String(categoryKey || ''));
+}
+
+function statsTypeLabel(def) {
+  return STATS_TYPE_LABELS[String(def?.key || '')] || def?.label || '';
+}
+
+function normalizeTerm(value, name = '') {
+  const raw = String(value || '').trim();
+  const source = `${raw} ${name}`.replace(/\s+/g, '');
+  if (/기말|final/i.test(source)) return '기말고사';
+  if (/중간|mid/i.test(source)) return '중간고사';
+  return raw;
+}
+
+function defaultTwoBandRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      '상': ['상', '중상'],
+      '중상': ['중', '하'],
+    };
+  });
+  return out;
+}
+
+function defaultIlsanRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    const allLevels = STUDENT_LEVELS.slice();
+    out[subject] = {
+      '중': allLevels.slice(),
+      '중상': allLevels.slice(),
+      [ILSAN_GRAPH_DIFFICULTY]: allLevels.slice(),
+    };
+  });
+  return out;
+}
+
+function defaultUnitRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      'Lv.3': ['하'],
+      'Lv.4': ['중'],
+      'Lv.5': ['중상'],
+      'Lv.6': ['상'],
+    };
+  });
+  return out;
+}
+
+function defaultTrainingPackRules() {
+  const out = {};
+  SUBJECTS.forEach(subject => {
+    out[subject] = {
+      '트팩': STUDENT_LEVELS.slice(),
+    };
+  });
+  return out;
+}
 
 async function fetchJSONSafe(url, init = {}) {
-  const res = await fetch(url, { cache: "no-store", ...init });
+  const res = await fetch(url, { cache: 'no-store', ...init });
   const body = await res.text();
-  if (!res.ok) throw new Error(`[tests] ${init.method || "GET"} ${url} -> ${res.status}\n${body.slice(0, 500)}`);
+  if (!res.ok) throw new Error(`[tests] ${init.method || 'GET'} ${url} -> ${res.status}\n${body.slice(0, 500)}`);
   try { return body.trim() ? JSON.parse(body) : {}; }
   catch (e) { throw new Error(`[tests] Bad JSON from ${url}: ${e?.message}\n${body.slice(0, 500)}`); }
 }
 
-let TEST_CFG = { categories: {} };
-let TEST_STATS = null;
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[m]));
+}
 
-// stats 이름 -> curriculum 매핑(설정 기반)
-let TEST_NAME_TO_CUR = {};
-let CUR_SET = new Set();
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;');
+}
 
-function normalizeCfg(x) {
-  const cfg = (x && typeof x === "object") ? x : {};
-  if (!cfg.categories || typeof cfg.categories !== "object") cfg.categories = {};
+function canonText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
 
-  for (const [k, v] of Object.entries(cfg.categories)) {
-    const cat = cfg.categories[k] = (v && typeof v === "object") ? v : {};
-    cat.label = (typeof cat.label === "string" && cat.label.trim()) ? cat.label : k;
-    if (!Array.isArray(cat.tests)) cat.tests = [];
+function normalizeSubject(value) {
+  const compact = String(value || '').trim().replace(/\s+/g, '');
+  const aliases = {
+    '공통수학1': '공수1',
+    '공통수학2': '공수2',
+    '미적1': '미적분1',
+    '미적분Ⅰ': '미적분1',
+    '미적분I': '미적분1',
+    '미적2': '미적분2',
+    '미적분Ⅱ': '미적분2',
+    '미적분II': '미적분2',
+    '확률과통계': '확통',
+  };
+  return aliases[compact] || compact || '공수1';
+}
 
-    cat.tests = cat.tests.map(t => {
-      if (!t || typeof t !== "object") return null;
+function categoryLabel(key) {
+  return CATEGORY_BY_KEY[key]?.label || key || '';
+}
 
-      const id = String(t.id || "").trim() || `t_${k}_${Math.random().toString(36).slice(2, 9)}`;
-      const name = String(t.name || "").trim() || id;
-      const problems = Number.isFinite(+t.problems) ? Math.max(1, +t.problems) : 20;
-      const curriculum = (t.curriculum || "").trim() || "공수1";
+function categoryKeyFrom(rawKey, label = '') {
+  const raw = `${rawKey || ''} ${label || ''}`.toUpperCase();
+  const ko = `${rawKey || ''} ${label || ''}`.replace(/\s+/g, '');
+  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
+  if (raw.includes('TRAINING') || ko.includes('트레이닝팩') || ko.includes('트팩')) return 'TRAINING_PACK';
+  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
+  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
+  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
+  return String(rawKey || '').trim();
+}
 
-      // ✅ 새 스키마: answerKeys {"1":[], "2":[], "3":[]}
-      // ✅ 구 스키마: answerKey / answers
-      const answerKeys = (t.answerKeys && typeof t.answerKeys === "object") ? t.answerKeys : null;
-      const answerKey = t.answerKey ?? t.answers ?? null;
+function isIlsanGraphDifficultyText(source) {
+  const text = String(source || '');
+  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
+    text.includes('그래프');
+}
 
-      const out = { id, name, problems, curriculum };
+function normalizeDifficulty(categoryKey, raw, name = '') {
+  const text = String(raw || '').trim();
+  const source = `${text} ${name}`;
+  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
+  const def = CATEGORY_BY_KEY[categoryKey];
+  if (def?.difficulties.includes(text)) return text;
 
-      if (answerKeys) {
-        out.answerKeys = {
-          "1": Array.isArray(answerKeys["1"]) ? answerKeys["1"] : null,
-          "2": Array.isArray(answerKeys["2"]) ? answerKeys["2"] : null,
-          "3": Array.isArray(answerKeys["3"]) ? answerKeys["3"] : null,
-        };
-      } else if (answerKey != null) {
-        out.answerKey = answerKey;
-      }
+  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
+  if (lv) return `Lv.${lv[1]}`;
+  if (source.includes('중상')) return '중상';
+  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
+  return def?.difficulties?.[0] || '';
+}
 
-      return out;
-    }).filter(Boolean);
+function normalizeRound(value, name = '') {
+  const raw = String(value || '').trim();
+  const source = `${raw} ${name}`;
+  const m = source.match(/(\d{1,2})\s*(?:회차|회)/);
+  if (m) return m[1];
+  if (/^\d{1,2}$/.test(raw)) return raw;
+  return raw || '1';
+}
+
+function roundLabel(value) {
+  const r = String(value || '').trim();
+  if (!r) return '';
+  if (r === '-') return '-';
+  return /회/.test(r) ? r : `${r}회차`;
+}
+
+function editCategoryValue() {
+  return categoryKeyFrom($('#cfgEditType')?.value || ui.category || 'UNIT');
+}
+
+function roundHelpText(categoryKey) {
+  if (String(categoryKey || '') === 'TRAINING_PACK') {
+    return '트레이닝팩은 같은 단원 안의 세트 번호를 1회차, 2회차로 구분합니다.';
   }
+  return isUnitCategory(categoryKey)
+    ? '단원평가는 같은 이름의 시험을 다른 문제로 반복하는 세트 번호입니다.'
+    : '복습테스트와 기출은 학생이 순서대로 보게 되는 시험 목록 순번입니다.';
+}
+
+function ensureConfig(raw) {
+  const cfg = (raw && typeof raw === 'object') ? raw : {};
+  if (!cfg.categories || typeof cfg.categories !== 'object') cfg.categories = {};
+
+  CATEGORY_DEFS.forEach(def => {
+    if (!cfg.categories[def.key] || typeof cfg.categories[def.key] !== 'object') {
+      cfg.categories[def.key] = { label: def.label, tests: [] };
+    }
+    if (!Array.isArray(cfg.categories[def.key].tests)) cfg.categories[def.key].tests = [];
+    cfg.categories[def.key].label = cfg.categories[def.key].label || def.label;
+  });
+
+  if (!cfg.autoAssignRules || typeof cfg.autoAssignRules !== 'object') cfg.autoAssignRules = {};
+  CATEGORY_DEFS.forEach(def => {
+    if (!cfg.autoAssignRules[def.key] || typeof cfg.autoAssignRules[def.key] !== 'object') {
+      cfg.autoAssignRules[def.key] = {};
+    }
+    SUBJECTS.forEach(subject => {
+      if (!cfg.autoAssignRules[def.key][subject] || typeof cfg.autoAssignRules[def.key][subject] !== 'object') {
+        cfg.autoAssignRules[def.key][subject] = {};
+      }
+      if (def.key === 'ILSAN_PAST') {
+        const subjectRules = cfg.autoAssignRules[def.key][subject];
+        const mergeLevels = (target, ...sources) => {
+          const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
+          const next = [...current];
+          sources.forEach(sourceKey => {
+            if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
+            if (sourceKey !== target) delete subjectRules[sourceKey];
+          });
+          subjectRules[target] = Array.from(new Set(next.map(String)));
+        };
+        mergeLevels('중상', '상');
+        mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
+      }
+      const defaults = DEFAULT_RULES[def.key]?.[subject] || {};
+      Object.entries(defaults).forEach(([difficulty, levels]) => {
+        if (def.key === 'ILSAN_PAST') {
+          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
+        } else if (!Array.isArray(cfg.autoAssignRules[def.key][subject][difficulty])) {
+          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
+        }
+      });
+    });
+  });
 
   return cfg;
 }
 
-function rebuildNameToCurriculumMap() {
-  TEST_NAME_TO_CUR = {};
-  CUR_SET = new Set();
-  for (const cat of Object.values(TEST_CFG.categories || {})) {
-    for (const t of (cat.tests || [])) {
-      const name = canonTestName(t.name);
-      const cur = String(t.curriculum || "").trim() || "공수1";
-      if (name) TEST_NAME_TO_CUR[name] = cur;
-      CUR_SET.add(cur);
-    }
-  }
+function normalizeTest(rawTest, rawCategoryKey, idx = 0) {
+  const categoryKey = categoryKeyFrom(rawCategoryKey);
+  const name = canonText(rawTest?.name || rawTest?.title || `테스트 ${idx + 1}`);
+  const curriculum = normalizeSubject(rawTest?.curriculum || rawTest?.subject || ui.subject);
+  return {
+    ...(rawTest || {}),
+    id: canonText(rawTest?.id) || `t_${categoryKey}_${Date.now()}_${idx}`,
+    name,
+    categoryKey,
+    curriculum,
+    difficulty: normalizeDifficulty(categoryKey, rawTest?.difficulty || rawTest?.level, name),
+    term: isPastCategory(categoryKey) ? normalizeTerm(rawTest?.term || rawTest?.examTerm || rawTest?.examPeriod || rawTest?.exam_period, name) : '',
+    round: normalizeRound(rawTest?.round || rawTest?.session || rawTest?.no, name),
+    problems: Number.isFinite(+rawTest?.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
+    _catalogIndex: idx,
+  };
 }
 
-function resolveCategoryKeysByType(typeVal) {
-  const hits = [];
-  for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
-    const label = String(cat.label || "").trim();
-    const k = String(key || "").trim().toUpperCase();
-    const lv = label.toUpperCase();
-    if (typeVal === "단원평가") {
-      if (lv.includes("단원") || lv.includes("UNIT") || k === "UNIT") hits.push(key);
-    } else if (typeVal === "FINAL") {
-      if (lv.includes("FINAL") || k === "FINAL") hits.push(key);
-    } else if (typeVal === "HELL") {
-      if (lv.includes("HELL") || k === "HELL") hits.push(key);
-    }
-  }
-  return hits;
+function getCategoryTests(categoryKey = ui.category) {
+  const cat = TEST_CFG.categories?.[categoryKey];
+  if (!cat || !Array.isArray(cat.tests)) return [];
+  return cat.tests.map((test, idx) => normalizeTest(test, categoryKey, idx));
 }
 
-function getCategoryKeyForType(typeVal) {
-  const keys = resolveCategoryKeysByType(typeVal);
-  if (keys.length) return keys[0];
-  const map = { "단원평가": "UNIT", "FINAL": "FINAL", "HELL": "HELL" };
-  const key = map[typeVal] || String(typeVal || "").toUpperCase();
-  if (!TEST_CFG.categories[key]) TEST_CFG.categories[key] = { label: typeVal, tests: [] };
-  return key;
+function displayTestName(test) {
+  return createUnitTestDisplayNameResolver(getCategoryTests('UNIT'))(test);
 }
 
-// ───────────── 정답 파싱 ─────────────
-function parseAnswerSpec(text, problems) {
-  if (!text && text !== 0) return null;
-  if (Array.isArray(text)) return text;
-
-  const s = String(text).trim();
-  if (!s) return null;
-
-  let arr;
-  if (/[\s,]/.test(s)) arr = s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
-  else arr = s.split("").map(v => v.trim());
-
-  if (!arr.length) return null;
-
-  if (problems && problems > 0) {
-    if (arr.length > problems) arr = arr.slice(0, problems);
-    if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(""));
-  }
-
-  return arr;
+function getVisibleTests() {
+  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
+  return getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .filter(test => !isPastCategory(ui.category) || !ui.term || String(test.term || '') === String(ui.term))
+    .filter(test => !isUnitCategory(ui.category) || !ui.round || String(test.round || '') === String(ui.round))
+    .filter(test => matchesSearchKey(catalogSearchText(test, displayNameFor), ui.catalogSearch))
+    .sort(compareTestsForList);
 }
 
-function parseAnswerSpec3(text, problems) {
-  const raw = String(text ?? "");
-  const lines = raw.replace(/\r\n/g, "\n").split("\n").slice(0, 3);
-
-  // 1줄만 있으면 1~3회차 동일로 저장
-  if (lines.length <= 1) {
-    const a = parseAnswerSpec(lines[0] || "", problems) || new Array(problems).fill("");
-    return { "1": a, "2": [...a], "3": [...a] };
-  }
-
-  const a1 = parseAnswerSpec(lines[0] || "", problems) || new Array(problems).fill("");
-  const a2 = parseAnswerSpec(lines[1] || "", problems) || [...a1];
-  const a3 = parseAnswerSpec(lines[2] || "", problems) || [...a1];
-
-  return { "1": a1, "2": a2, "3": a3 };
+async function fetchTestsConfig() {
+  const res = await fetch('/api/tests-config', { cache: 'no-store' });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`[tests] GET /api/tests-config -> ${res.status}\n${body.slice(0, 500)}`);
+  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
+  TEST_CFG_REVISION = /^[0-9a-f]{64}$/.test(revision) ? revision : '';
+  try { return body.trim() ? JSON.parse(body) : {}; }
+  catch (e) { throw new Error(`[tests] Bad JSON from /api/tests-config: ${e?.message}\n${body.slice(0, 500)}`); }
 }
 
-function answerKeysToText(test) {
-  const p = Number(test?.problems || 0) || 0;
-
-  // 새 스키마
-  if (test?.answerKeys && typeof test.answerKeys === "object") {
-    const a1 = Array.isArray(test.answerKeys["1"]) ? test.answerKeys["1"] : new Array(p).fill("");
-    const a2 = Array.isArray(test.answerKeys["2"]) ? test.answerKeys["2"] : a1;
-    const a3 = Array.isArray(test.answerKeys["3"]) ? test.answerKeys["3"] : a1;
-    return [
-      (a1 || []).join(" "),
-      (a2 || []).join(" "),
-      (a3 || []).join(" "),
-    ].join("\n").trimEnd();
-  }
-
-  // 구 스키마
-  if (test?.answerKey != null) {
-    const arr = Array.isArray(test.answerKey) ? test.answerKey : (parseAnswerSpec(test.answerKey, 0) || []);
-    return arr.join(" ");
-  }
-
-  return "";
+function catalogSearchText(test, displayNameFor = displayTestName) {
+  return searchKeyForText([
+    test?.id,
+    test?.sourceId,
+    test?.name,
+    displayNameFor(test),
+    categoryLabel(test?.categoryKey),
+    test?.curriculum,
+    test?.difficulty,
+    test?.term,
+    test?.examTerm,
+    roundLabel(test?.round || ''),
+    test?.problems ? `${test.problems}문항` : '',
+  ].map(canonText).join(' '));
 }
 
-function canonTestName(name) {
-  let s = String(name || "").trim();
-  if (!s) return "";
-  s = s.replace(/\s+/g, " ");
-  return s;
-}
-
-const state = {
-  type: "단원평가",
-  curriculum: "공수1",
-  selectedId: null,
-
-  selectedStatQuery: null,
-  selectedStatLabel: "",
-  selectedStatKey: "",
-  selectedBand: "",
-};
-
-// ───────────── XSS escape ─────────────
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[m]));
-}
-function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
-
-// ───────────── 편집 커리 셀렉트(동적 주입) ─────────────
-function ensureEditCurriculumUI() {
-  if ($("#cfgEditCur")) return;
-
-  const probEl = $("#cfgProblems");
-  if (!probEl) return;
-
-  const row = document.createElement("div");
-  row.className = "field-row";
-  row.style.marginTop = "6px";
-  row.innerHTML = `
-    <label for="cfgEditCur">시험 커리</label>
-    <select id="cfgEditCur">
-      <option value="공수1">공수1</option>
-      <option value="공수2">공수2</option>
-      <option value="대수">대수</option>
-      <option value="미적1">미적1</option>
-      <option value="미적2">미적2</option>
-      <option value="확통">확통</option>
-      <option value="기하">기하</option>
-    </select>
-    <div class="helper">이 시험이 속한 커리를 바꿀 수 있습니다.</div>
-  `;
-
-  const probRow = probEl.closest(".field-row");
-  if (probRow && probRow.parentElement) probRow.insertAdjacentElement("afterend", row);
-  else probEl.insertAdjacentElement("afterend", row);
-
-  $("#cfgEditCur")?.addEventListener("change", () => {
-    const val = $("#cfgEditCur").value;
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
-    const t = (cat.tests || []).find(x => x.id === state.selectedId);
-    if (!t) return;
-    t.curriculum = val;
-    renderTestList();
-  });
-}
-
-// ───────────── 왼쪽(시험 목록) ─────────────
-function getTestsForCurrentSelection() {
-  const catKey = getCategoryKeyForType(state.type);
-  const cat = TEST_CFG.categories[catKey];
-  if (!cat) return [];
-  const all = (cat.tests || []);
-  return all.filter(t => String(t.curriculum || "").trim() === state.curriculum);
-}
-
-function getTotalTestsCount() {
-  let total = 0;
-  for (const cat of Object.values(TEST_CFG.categories || {})) {
+function selectedTestRef() {
+  const selectedId = String(ui.selectedId || '');
+  if (!selectedId) return null;
+  for (const def of CATEGORY_DEFS) {
+    const cat = TEST_CFG.categories?.[def.key];
     if (!cat || !Array.isArray(cat.tests)) continue;
-    total += cat.tests.length;
-  }
-  return total;
-}
-
-function getRecentRangeLabel() {
-  const recent = String($("#statRecent")?.value || "30").trim();
-  if (recent === "365") return "최근 1년";
-  return `최근 ${recent || "30"}일`;
-}
-
-function updatePageChrome(selectedTest = null) {
-  const totalEl = $("#testsTotalPill");
-  if (totalEl) totalEl.textContent = `${getTotalTestsCount()}개`;
-
-  const scopeEl = $("#testsScopeLabel");
-  if (scopeEl) scopeEl.textContent = `${state.type} · ${state.curriculum}`;
-
-  const visibleEl = $("#visibleTestsMeta");
-  if (visibleEl) {
-    const visibleCount = getTestsForCurrentSelection().length;
-    visibleEl.textContent = `현재 목록 ${visibleCount}개`;
-  }
-
-  const rangeEl = $("#testsRangeLabel");
-  if (rangeEl) rangeEl.textContent = getRecentRangeLabel();
-
-  const editorEl = $("#editorSelectionLabel");
-  if (editorEl) editorEl.textContent = selectedTest?.name || "선택된 시험 없음";
-}
-
-function buildStatsBadgeForTest(test) {
-  if (!TEST_STATS || !TEST_STATS.by_test) return "";
-  const key = canonTestName(test.name);
-  const entry = TEST_STATS.by_test[key];
-  if (!entry || !entry.count) return "";
-  const avg = entry.avg_pct?.toFixed ? entry.avg_pct.toFixed(1) : entry.avg_pct;
-  return `<span class="small">· ${escapeHtml(avg)}% / ${escapeHtml(entry.count)}명</span>`;
-}
-
-function renderTestList() {
-  const listEl = $("#testList");
-  if (!listEl) return;
-
-  const tests = getTestsForCurrentSelection();
-  updatePageChrome((tests || []).find(t => t.id === state.selectedId) || null);
-  if (!tests.length) {
-    listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">아직 등록된 시험이 없습니다. [새 시험] 버튼을 눌러 추가하세요.</div>`;
-    return;
-  }
-
-  listEl.innerHTML = tests.map(t => {
-    const statsBadge = buildStatsBadgeForTest(t);
-    const active = (t.id === state.selectedId) ? "active" : "";
-    return `<button type="button" data-id="${escapeAttr(t.id)}" class="${active}">
-      ${escapeHtml(t.name)}
-      <span class="small">(${escapeHtml(t.problems)}문항)</span>
-      ${statsBadge}
-    </button>`;
-  }).join("");
-
-  listEl.querySelectorAll("button[data-id]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      state.selectedId = btn.getAttribute("data-id");
-      renderTestList();
-      fillEditorFromSelection();
-    });
-  });
-}
-
-function fillEditorFromSelection() {
-  ensureEditCurriculumUI();
-
-  const nameEl = $("#cfgName");
-  const probEl = $("#cfgProblems");
-  const ansEl = $("#cfgAnswers");
-  const editCurEl = $("#cfgEditCur");
-
-  const catKey = getCategoryKeyForType(state.type);
-  const tests = (TEST_CFG.categories[catKey]?.tests || []);
-
-  let sel = tests.find(t => t.id === state.selectedId);
-  if (!sel) sel = tests[0];
-
-  if (!sel) {
-    if (nameEl) nameEl.value = "";
-    if (probEl) probEl.value = "";
-    if (ansEl) ansEl.value = "";
-    if (editCurEl) editCurEl.value = "공수1";
-    updatePageChrome(null);
-    return;
-  }
-
-  state.selectedId = sel.id;
-  if (nameEl) nameEl.value = sel.name || "";
-  if (probEl) probEl.value = sel.problems || "";
-
-  if (ansEl) ansEl.value = answerKeysToText(sel);
-
-  if (editCurEl) {
-    const c = String(sel.curriculum || "").trim() || "공수1";
-    editCurEl.value = c;
-  }
-  updatePageChrome(sel);
-}
-
-// ───────────── 통계 툴바/필터 ─────────────
-function findTypeForTestName(name) {
-  const n = String(name || "").trim();
-  for (const [key, cat] of Object.entries(TEST_CFG.categories || {})) {
-    const label = String(cat.label || "").trim();
-    const typeGuess = label || key;
-    for (const t of (cat.tests || [])) {
-      if (String(t.name).trim() === n) return typeGuess;
-    }
+    const test = cat.tests.find(item => String(item?.id) === selectedId);
+    if (test) return { categoryKey: def.key, cat, test };
   }
   return null;
 }
 
-function fmtPct(val) {
-  return (typeof val === "number" && Number.isFinite(val)) ? `${val.toFixed(1)}%` : "-";
+function parseAnswerSpec(text, problems) {
+  if (Array.isArray(text)) return text.slice(0, problems);
+  const s = String(text ?? '').trim();
+  if (!s) return new Array(problems).fill('');
+  let arr;
+  if (/[\s,]/.test(s)) arr = s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+  else arr = s.split('').map(v => v.trim()).filter(Boolean);
+  if (arr.length > problems) arr = arr.slice(0, problems);
+  if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(''));
+  return arr;
 }
 
-function statTypeLabel(type) {
-  if (type === "UNIT") return "단원평가";
-  if (type === "FINAL") return "파이널";
-  if (type === "HELL") return "APEX HELL";
-  return type || "-";
-}
-
-function normalizeStatQuery(query) {
-  if (!query || typeof query !== "object") return null;
-  const out = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value == null) continue;
-    const text = String(value).trim();
-    if (!text) continue;
-    out[key] = text;
+function parseAnswerSpec3(text, problems) {
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n').slice(0, 3);
+  if (lines.length <= 1) {
+    const base = parseAnswerSpec(lines[0] || '', problems);
+    return { '1': base, '2': base.slice(), '3': base.slice() };
   }
-  return Object.keys(out).length ? out : null;
+  const one = parseAnswerSpec(lines[0] || '', problems);
+  return {
+    '1': one,
+    '2': parseAnswerSpec(lines[1] || '', problems),
+    '3': parseAnswerSpec(lines[2] || '', problems),
+  };
 }
 
-function statQueryKey(query) {
-  const normalized = normalizeStatQuery(query);
-  if (!normalized) return "";
-  return JSON.stringify(Object.keys(normalized).sort().reduce((acc, key) => {
-    acc[key] = normalized[key];
-    return acc;
-  }, {}));
+function answerKeysToText(test) {
+  return answerKeyForTest(test).join(' ');
 }
 
-function statQueryLabel(query) {
-  const normalized = normalizeStatQuery(query) || {};
-  const parts = [statTypeLabel(normalized.type || "")];
-  if (normalized.curriculum) parts.push(normalized.curriculum);
-  if (normalized.type === "UNIT") {
-    if (normalized.unit_name) parts.push(normalized.unit_name);
-    if (normalized.test_level) parts.push(`Lv.${normalized.test_level}`);
-  } else if (normalized.test) {
-    parts.push(normalized.test);
+function answerKeyForTest(test) {
+  const p = Number(test?.problems || 0) || 0;
+  const round = String(test?.round || '1').trim() || '1';
+  if (test?.answerKeys && typeof test.answerKeys === 'object') {
+    const exact = Array.isArray(test.answerKeys[round]) ? test.answerKeys[round] : null;
+    if (exact) return parseAnswerSpec(exact, p);
+    const firstKey = Object.keys(test.answerKeys).find(key => Array.isArray(test.answerKeys[key]));
+    if (firstKey) return parseAnswerSpec(test.answerKeys[firstKey], p);
   }
-  return parts.filter(Boolean).join(" / ");
+  if (test?.answerKey != null) {
+    return Array.isArray(test.answerKey) ? parseAnswerSpec(test.answerKey, p) : parseAnswerSpec(test.answerKey, p);
+  }
+  return new Array(p).fill('');
 }
 
-function buildStatsRows() {
-  const rows = [];
-  const unitRows = Array.isArray(TEST_STATS?.unit_rows) ? TEST_STATS.unit_rows : [];
-  const finalRows = Array.isArray(TEST_STATS?.final_rows) ? TEST_STATS.final_rows : [];
-  const hellRows = Array.isArray(TEST_STATS?.hell_rows) ? TEST_STATS.hell_rows : [];
-
-  for (const row of unitRows) {
-    const query = normalizeStatQuery({
-      type: "UNIT",
-      curriculum: row.curriculum || "",
-      unit_name: row.unit_name || "",
-      test_level: row.test_level,
-    });
-    rows.push({
-      type: "UNIT",
-      typeLabel: statTypeLabel("UNIT"),
-      curriculum: row.curriculum || "-",
-      name: row.unit_name || "-",
-      subtitle: row.test_level == null ? "단원 기준 집계" : `레벨 ${row.test_level} 분리 집계`,
-      level: row.test_level == null ? "-" : `Lv.${row.test_level}`,
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  for (const row of finalRows) {
-    const query = normalizeStatQuery({
-      type: "FINAL",
-      curriculum: row.curriculum || "",
-      test: row.test_name || "",
-    });
-    rows.push({
-      type: "FINAL",
-      typeLabel: statTypeLabel("FINAL"),
-      curriculum: row.curriculum || "-",
-      name: row.test_name || "-",
-      subtitle: "시험 기준 집계",
-      level: "-",
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  for (const row of hellRows) {
-    const query = normalizeStatQuery({
-      type: "HELL",
-      curriculum: row.curriculum || "",
-      test: row.test_name || "",
-    });
-    rows.push({
-      type: "HELL",
-      typeLabel: statTypeLabel("HELL"),
-      curriculum: row.curriculum || "-",
-      name: row.test_name || "-",
-      subtitle: "시험 기준 집계",
-      level: "-",
-      count: row.count || 0,
-      avg: row.avg_pct,
-      median: row.median_pct,
-      p90: row.p90_pct,
-      min: row.min_pct,
-      max: row.max_pct,
-      query,
-      key: statQueryKey(query),
-      label: statQueryLabel(query),
-    });
-  }
-
-  return rows;
+function updateDifficultyOptions(categoryKey = editCategoryValue()) {
+  const sel = $('#cfgDifficulty');
+  if (!sel) return;
+  const def = CATEGORY_BY_KEY[categoryKeyFrom(categoryKey)] || CATEGORY_BY_KEY.UNIT;
+  const current = sel.value;
+  sel.innerHTML = def.difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
+  sel.value = def.difficulties.includes(current) ? current : (def.difficulties[0] || '');
+  const help = $('#cfgRoundHelp');
+  if (help) help.textContent = roundHelpText(def.key);
 }
 
-function renderStatsTable() {
-  const tbody = $("#statsTable tbody");
-  const thead = $("#statsTable thead");
-  if (!tbody || !thead) return;
+function updateListDifficultyOptions() {
+  const sel = $('#cfgDifficultyFilter');
+  if (!sel) return;
+  const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+  const difficulties = def.difficulties || [];
+  if (!difficulties.includes(ui.difficulty)) ui.difficulty = difficulties[0] || '';
+  sel.innerHTML = difficulties.map(diff => `<option value="${escapeAttr(diff)}">${escapeHtml(diff)}</option>`).join('');
+  sel.value = ui.difficulty;
+}
 
-  thead.innerHTML = `
-    <tr>
-      <th style="text-align:left;">구분</th>
-      <th style="text-align:left;">과목</th>
-      <th style="text-align:left;">단원 / 시험명</th>
-      <th>레벨</th>
-      <th>응시</th>
-      <th>평균</th>
-      <th>최소</th>
-      <th>최대</th>
-    </tr>
-  `;
+function roundSortValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 9999;
+}
 
-  const rows = buildStatsRows();
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">집계된 시험 데이터가 없습니다.</td></tr>`;
+function termSortValue(value) {
+  const term = normalizeTerm(value);
+  const idx = TERM_OPTIONS.indexOf(term);
+  return idx >= 0 ? idx : 9999;
+}
+
+function testOrderValue(test) {
+  const raw = test?.sortOrder ?? test?.sourceOrder ?? test?.order ?? test?.sourceIndex ?? test?._catalogIndex;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 999999;
+}
+
+function compareTestsForList(a, b) {
+  const difficulty = String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
+  if (difficulty) return difficulty;
+  if (isPastCategory(ui.category)) {
+    return termSortValue(a.term || '') - termSortValue(b.term || '') ||
+      testOrderValue(a) - testOrderValue(b) ||
+      roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+      String(a.name).localeCompare(String(b.name), 'ko');
+  }
+  if (isUnitCategory(ui.category)) {
+    return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+      testOrderValue(a) - testOrderValue(b) ||
+      String(a.name).localeCompare(String(b.name), 'ko');
+  }
+  return testOrderValue(a) - testOrderValue(b) ||
+    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+    String(a.name).localeCompare(String(b.name), 'ko');
+}
+
+function catalogGroupKey(test, categoryKey = ui.category) {
+  if (isPastCategory(categoryKey)) {
+    return `${test?.term || '-'}|||${test?.difficulty || '-'}|||`;
+  }
+  if (isUnitCategory(categoryKey)) {
+    return `${test?.difficulty || '-'}|||${test?.round || '-'}`;
+  }
+  return `${test?.difficulty || '-'}|||`;
+}
+
+function catalogOrderBlock() {
+  if (catalogOrderSaveInFlight) {
+    return { kind: 'saving', message: '변경한 시험 순서를 저장하는 중입니다.' };
+  }
+  if (catalogMutationSaveInFlight) {
+    return { kind: 'saving', message: '시험 설정 변경을 저장하는 동안에는 순서를 바꿀 수 없습니다.' };
+  }
+  if (ruleSaveTimer || ruleSaveInFlight || ruleSavePending) {
+    return { kind: 'saving', message: '배정 기준 저장이 끝난 뒤 시험 순서를 바꿔주세요.' };
+  }
+  if (String(ui.catalogSearch || '').trim()) {
+    return { kind: 'blocked', message: '목록 검색 중에는 순서를 바꿀 수 없습니다. 검색어를 지우면 드래그와 위·아래 이동을 사용할 수 있습니다.' };
+  }
+  if (isPastCategory(ui.category) && ui.term) {
+    return { kind: 'blocked', message: '고사를 좁혀 본 상태에서는 순서를 바꿀 수 없습니다. 고사에서 전체 고사를 선택하세요.' };
+  }
+  if (isUnitCategory(ui.category) && ui.round) {
+    return { kind: 'blocked', message: '회차를 좁혀 본 상태에서는 순서를 바꿀 수 없습니다. 회차에서 전체 회차를 선택하세요.' };
+  }
+  return null;
+}
+
+function canReorderCatalog() {
+  return !catalogOrderBlock();
+}
+
+function clearCatalogOrderFeedback() {
+  catalogOrderFeedback = null;
+}
+
+function catalogMutationControlsLocked() {
+  if (!catalogOrderSaveInFlight && !catalogMutationSaveInFlight) return false;
+  updateCatalogOrderHint();
+  return true;
+}
+
+function beginCatalogMutationSave() {
+  if (catalogMutationControlsLocked()) return false;
+  if (ruleSaveTimer || ruleSaveInFlight || ruleSavePending) {
+    catalogOrderFeedback = { kind: 'saving', message: '배정 기준 저장이 끝난 뒤 시험 설정을 저장해주세요.' };
+    updateCatalogOrderHint();
+    return false;
+  }
+  catalogMutationSaveInFlight = true;
+  syncCatalogMutationControls();
+  updateCatalogOrderHint();
+  return true;
+}
+
+function endCatalogMutationSave() {
+  catalogMutationSaveInFlight = false;
+  renderTestList();
+  flushDeferredRuleSave();
+}
+
+function syncCatalogSearchControl() {
+  const input = $('#cfgCatalogSearch');
+  if (!input) return;
+  applySearchPlaceholder(input, '시험명, ID, 과목, 난이도 검색');
+  if (input.value !== ui.catalogSearch) input.value = ui.catalogSearch;
+}
+
+function setCatalogOrderControlLock(control, locked) {
+  if (!control) return;
+  if (locked) {
+    if (!Object.prototype.hasOwnProperty.call(control.dataset, 'catalogOrderWasDisabled')) {
+      control.dataset.catalogOrderWasDisabled = control.disabled ? 'true' : 'false';
+    }
+    control.disabled = true;
+    return;
+  }
+  if (!Object.prototype.hasOwnProperty.call(control.dataset, 'catalogOrderWasDisabled')) return;
+  control.disabled = control.dataset.catalogOrderWasDisabled === 'true';
+  delete control.dataset.catalogOrderWasDisabled;
+}
+
+function syncCatalogMutationControls() {
+  const locked = catalogOrderSaveInFlight || catalogMutationSaveInFlight;
+  [
+    '#cfgType', '#cfgCur', '#cfgDifficultyFilter', '#cfgTermFilter', '#cfgRoundFilter', '#cfgCatalogSearch',
+    '#cfgEditType', '#cfgSubject', '#cfgDifficulty', '#cfgTerm', '#cfgRound', '#cfgName', '#cfgProblems', '#cfgAnswers',
+    '#btnImportCsv', '#csvFile', '#btnNewTest', '#btnSaveTest', '#btnDeleteTest',
+    '#btnReloadStats', '#statRecent',
+  ].forEach(selector => setCatalogOrderControlLock($(selector), locked));
+  document.querySelectorAll('.rule-check').forEach(control => setCatalogOrderControlLock(control, locked));
+}
+
+function updateCatalogOrderHint() {
+  const hint = $('#catalogOrderHint');
+  if (!hint) return;
+  const block = catalogOrderBlock();
+  const status = block || catalogOrderFeedback || {
+    kind: 'ready',
+    message: '같은 그룹 안에서 드래그하거나 위·아래 버튼을 눌러 순서를 변경할 수 있습니다.',
+  };
+  hint.textContent = status.message;
+  hint.dataset.kind = status.kind;
+}
+
+function availableRounds() {
+  const rounds = new Set();
+  getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .forEach(test => {
+      const round = String(test.round || '').trim();
+      if (round) rounds.add(round);
+    });
+  return Array.from(rounds).sort((a, b) => roundSortValue(a) - roundSortValue(b) || String(a).localeCompare(String(b), 'ko'));
+}
+
+function nextRoundFor(categoryKey, subject, difficulty) {
+  const rounds = getCategoryTests(categoryKey)
+    .filter(test => normalizeSubject(test.curriculum) === normalizeSubject(subject))
+    .filter(test => !difficulty || String(test.difficulty || '') === String(difficulty))
+    .map(test => roundSortValue(test.round || 0))
+    .filter(value => Number.isFinite(value) && value < 9999);
+  const maxRound = rounds.length ? Math.max(...rounds) : 0;
+  return String(maxRound + 1);
+}
+
+function updateRoundOptions() {
+  const sel = $('#cfgRoundFilter');
+  if (!sel) return;
+  if (!isUnitCategory(ui.category)) {
+    ui.round = '';
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">전체 순번</option>';
+    sel.value = '';
+    return;
+  }
+  sel.disabled = false;
+  const rounds = availableRounds();
+  if (ui.round && !rounds.includes(ui.round)) ui.round = '';
+  sel.innerHTML = [
+    '<option value="">전체 회차</option>',
+    ...rounds.map(round => `<option value="${escapeAttr(round)}">${escapeHtml(roundLabel(round))}</option>`),
+  ].join('');
+  sel.value = ui.round;
+}
+
+function availableTerms() {
+  const terms = new Set();
+  getCategoryTests(ui.category)
+    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
+    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
+    .forEach(test => {
+      const term = normalizeTerm(test.term || '', test.name);
+      if (term) terms.add(term);
+    });
+  const out = TERM_OPTIONS.filter(term => terms.has(term));
+  return out.length ? out : TERM_OPTIONS.slice();
+}
+
+function updateTermOptions() {
+  const group = $('#cfgTermFilterGroup');
+  const sel = $('#cfgTermFilter');
+  if (!group || !sel) return;
+  if (!isPastCategory(ui.category)) {
+    ui.term = '';
+    group.hidden = true;
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">전체 고사</option>';
+    sel.value = '';
+    return;
+  }
+  group.hidden = false;
+  sel.disabled = false;
+  const terms = availableTerms();
+  if (ui.term && !terms.includes(ui.term)) ui.term = '';
+  sel.innerHTML = [
+    '<option value="">전체 고사</option>',
+    ...terms.map(term => `<option value="${escapeAttr(term)}">${escapeHtml(term)}</option>`),
+  ].join('');
+  sel.value = ui.term;
+}
+
+function updateSubjectOptions() {
+  const editor = $('#cfgSubject');
+  if (editor) {
+    editor.innerHTML = SUBJECTS.map(subject => `<option value="${escapeAttr(subject)}">${escapeHtml(subject)}</option>`).join('');
+  }
+}
+
+function updateEditCategoryOptions(selectedKey = editCategoryValue()) {
+  const sel = $('#cfgEditType');
+  if (!sel) return;
+  const key = categoryKeyFrom(selectedKey);
+  sel.innerHTML = CATEGORY_DEFS.map(def =>
+    `<option value="${escapeAttr(def.key)}">${escapeHtml(def.label)}</option>`
+  ).join('');
+  sel.value = CATEGORY_BY_KEY[key] ? key : ui.category;
+  updateDifficultyOptions(sel.value);
+  updateEditTermOptions(sel.value);
+}
+
+function updateEditTermOptions(categoryKey = editCategoryValue()) {
+  const row = $('#cfgTermRow');
+  const sel = $('#cfgTerm');
+  if (!row || !sel) return;
+  const show = isPastCategory(categoryKey);
+  row.hidden = !show;
+  sel.disabled = !show;
+  sel.innerHTML = TERM_OPTIONS.map(term => `<option value="${escapeAttr(term)}">${escapeHtml(term)}</option>`).join('');
+  if (!TERM_OPTIONS.includes(sel.value)) sel.value = TERM_OPTIONS[0] || '';
+}
+
+function updateChrome(selected = null, displayNameFor = displayTestName) {
+  const visible = getVisibleTests();
+  const total = CATEGORY_DEFS.reduce((sum, def) => sum + getCategoryTests(def.key).length, 0);
+  const scope = [
+    categoryLabel(ui.category),
+    ui.subject,
+    ui.difficulty || '난이도 전체',
+    isPastCategory(ui.category) ? (ui.term || '전체 고사') : '',
+    isUnitCategory(ui.category) ? (ui.round ? roundLabel(ui.round) : '전체 회차') : '전체 순번',
+  ].filter(Boolean).join(' · ');
+
+  if ($('#testsTotalPill')) $('#testsTotalPill').textContent = `${total}개`;
+  if ($('#testsScopeLabel')) $('#testsScopeLabel').textContent = scope;
+  if ($('#visibleTestsMeta')) $('#visibleTestsMeta').textContent = `현재 목록 ${visible.length}개`;
+  if ($('#testsRangeLabel')) $('#testsRangeLabel').textContent = '4개 분류 기준';
+  if ($('#editorSelectionLabel')) $('#editorSelectionLabel').textContent = selected ? displayNameFor(selected) : '선택된 테스트 없음';
+  syncCatalogSearchControl();
+  syncCatalogMutationControls();
+  updateCatalogOrderHint();
+}
+
+function renderTestList() {
+  const listEl = $('#testList');
+  if (!listEl) return;
+
+  const tests = getVisibleTests();
+  const selected = tests.find(test => test.id === ui.selectedId) || null;
+  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
+  updateChrome(selected, displayNameFor);
+
+  if (!tests.length) {
+    const emptyText = String(ui.catalogSearch || '').trim()
+      ? '목록 검색 결과가 없습니다.'
+      : '등록된 테스트가 없습니다. 새 테스트를 추가하세요.';
+    listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
-  const groups = [
-    ["UNIT", "단원평가"],
-    ["FINAL", "파이널"],
-    ["HELL", "APEX HELL"],
-  ].map(([type, label]) => ({
-    type,
-    label,
-    rows: rows.filter((row) => row.type === type),
-  })).filter((group) => group.rows.length);
+  listEl.innerHTML = renderGroupedTestList(tests, displayNameFor);
 
-  tbody.innerHTML = groups.map((group) => `
-    <tr class="group-row">
-      <td colspan="8">
-        <span class="group-label">${escapeHtml(group.label)}</span>
-        <span class="group-meta">${escapeHtml(group.rows.length)}개 항목</span>
-      </td>
-    </tr>
-    ${group.rows.map((row) => {
-      const isActive = state.selectedStatKey && row.key === state.selectedStatKey;
-      const rowClass = `data-row${isActive ? " is-active" : ""}`;
-      return `
-        <tr class="${rowClass}" data-key="${escapeAttr(row.key)}">
-          <td style="text-align:left;"><span class="type-pill" data-type="${escapeAttr(row.type)}">${escapeHtml(row.typeLabel)}</span></td>
-          <td style="text-align:left;"><span class="stat-main">${escapeHtml(row.curriculum)}</span></td>
-          <td style="text-align:left;">
-            <div class="stat-title">
-              <span class="stat-main">${escapeHtml(row.name)}</span>
-              <span class="stat-sub">${escapeHtml(row.subtitle || row.label)}</span>
-            </div>
-          </td>
-          <td><span class="level-pill">${escapeHtml(row.level)}</span></td>
-          <td><span class="metric-main">${escapeHtml(row.count)}</span><span class="metric-sub">응시</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.avg))}</span><span class="metric-sub">중앙 ${escapeHtml(fmtPct(row.median))}</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.min))}</span><span class="metric-sub">최소</span></td>
-          <td><span class="metric-main">${escapeHtml(fmtPct(row.max))}</span><span class="metric-sub">P90 ${escapeHtml(fmtPct(row.p90))}</span></td>
-        </tr>
-      `;
-    }).join("")}
-  `).join("");
+  listEl.querySelectorAll('button.test-select-button[data-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ui.selectedId = btn.dataset.id || '';
+      renderTestList();
+      fillEditor();
+    });
+  });
 
-  tbody.querySelectorAll("tr[data-key]").forEach((tr) => {
-    tr.addEventListener("click", async () => {
-      const key = tr.getAttribute("data-key") || "";
-      const picked = rows.find((row) => row.key === key);
-      if (!picked) return;
-      state.selectedStatQuery = picked.query;
-      state.selectedStatLabel = picked.label;
-      state.selectedStatKey = picked.key;
-      renderStatsTable();
-      await loadAndRenderPersonalScores();
+  listEl.querySelectorAll('button.test-order-button[data-move]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const catalogIndex = Number(btn.dataset.catalogIndex);
+      const direction = btn.dataset.move === 'up' ? -1 : 1;
+      void moveCatalogTestByKeyboard(catalogIndex, direction);
+    });
+  });
+
+  bindCatalogDragAndDrop(listEl);
+}
+
+function renderGroupedTestList(tests, displayNameFor = displayTestName) {
+  const groups = new Map();
+  tests.forEach(test => {
+    const key = catalogGroupKey(test);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(test);
+  });
+
+  return Array.from(groups.entries()).map(([key, items]) => {
+    const [partA, partB, partC] = key.split('|||');
+    const head = isPastCategory(ui.category)
+      ? `${partA || '고사 미분류'} · ${partB || '-'} · 전체 순번`
+      : `${partA || '-'} · ${partB ? roundLabel(partB) : '전체 순번'}`;
+    return `
+      <section class="test-list-group">
+        <div class="test-list-group-head">
+          <span>${escapeHtml(head)}</span>
+          <span class="test-list-group-count">${items.length}개</span>
+        </div>
+        <div class="test-list-group-body">
+          ${items.map((test, index) => renderTestButton(test, displayNameFor, {
+            groupKey: key,
+            index,
+            count: items.length,
+          })).join('')}
+        </div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderTestButton(test, displayNameFor = displayTestName, order = {}) {
+  const stat = statForTest(test);
+  const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
+  const active = test.id === ui.selectedId ? 'active' : '';
+  const reorderEnabled = canReorderCatalog() && order.count > 1;
+  const canMoveUp = reorderEnabled && order.index > 0;
+  const canMoveDown = reorderEnabled && order.index < order.count - 1;
+  const displayName = displayNameFor(test);
+  return `
+    <div class="test-list-item" data-catalog-index="${escapeAttr(test._catalogIndex)}"
+      data-group-key="${escapeAttr(order.groupKey || catalogGroupKey(test))}">
+      <span class="test-drag-handle" draggable="${reorderEnabled ? 'true' : 'false'}"
+        aria-hidden="true" aria-disabled="${reorderEnabled ? 'false' : 'true'}"
+        title="같은 그룹 안에서 드래그해 순서 변경">⋮⋮</span>
+      <button type="button" data-id="${escapeAttr(test.id)}" data-catalog-index="${escapeAttr(test._catalogIndex)}"
+        class="test-select-button ${active}">
+        ${escapeHtml(displayName)}
+        <span class="small">(${escapeHtml(test.problems)}문항)</span>
+        ${statBadge}
+      </button>
+      <span class="test-order-controls" aria-label="${escapeAttr(`${displayName} 순서 변경`)}">
+        <button type="button" class="test-order-button" data-move="up"
+          data-catalog-index="${escapeAttr(test._catalogIndex)}" aria-label="${escapeAttr(`${displayName} 위로 이동`)}"
+          title="위로 이동" ${canMoveUp ? '' : 'disabled'}>↑</button>
+        <button type="button" class="test-order-button" data-move="down"
+          data-catalog-index="${escapeAttr(test._catalogIndex)}" aria-label="${escapeAttr(`${displayName} 아래로 이동`)}"
+          title="아래로 이동" ${canMoveDown ? '' : 'disabled'}>↓</button>
+      </span>
+    </div>
+  `;
+}
+
+function clearCatalogDropIndicators(listEl = $('#testList')) {
+  listEl?.querySelectorAll?.('.test-list-item').forEach(item => {
+    item.classList.remove('is-dragging', 'is-drop-before', 'is-drop-after');
+  });
+}
+
+function bindCatalogDragAndDrop(listEl) {
+  listEl.querySelectorAll('.test-drag-handle[draggable="true"]').forEach(handle => {
+    handle.addEventListener('dragstart', event => {
+      const row = handle.closest('.test-list-item');
+      const catalogIndex = Number(row?.dataset.catalogIndex);
+      if (!Number.isInteger(catalogIndex) || !canReorderCatalog()) {
+        event.preventDefault();
+        return;
+      }
+      draggedCatalogIndex = catalogIndex;
+      row.classList.add('is-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(catalogIndex));
+      }
+    });
+
+    handle.addEventListener('dragend', () => {
+      draggedCatalogIndex = null;
+      clearCatalogDropIndicators(listEl);
+    });
+  });
+
+  listEl.querySelectorAll('.test-list-item').forEach(row => {
+    row.addEventListener('dragover', event => {
+      const source = listEl.querySelector(`.test-list-item[data-catalog-index="${draggedCatalogIndex}"]`);
+      if (!source || source === row || source.dataset.groupKey !== row.dataset.groupKey || !canReorderCatalog()) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      clearCatalogDropIndicators(listEl);
+      source.classList.add('is-dragging');
+      const rect = row.getBoundingClientRect();
+      const placement = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+      row.classList.add(placement === 'before' ? 'is-drop-before' : 'is-drop-after');
+    });
+
+    row.addEventListener('drop', event => {
+      const sourceIndex = draggedCatalogIndex;
+      const targetIndex = Number(row.dataset.catalogIndex);
+      const placement = row.classList.contains('is-drop-after') ? 'after' : 'before';
+      event.preventDefault();
+      draggedCatalogIndex = null;
+      clearCatalogDropIndicators(listEl);
+      if (!Number.isInteger(sourceIndex) || !Number.isInteger(targetIndex)) return;
+      void persistCatalogReorder(sourceIndex, targetIndex, placement, 'drag');
     });
   });
 }
 
-function renderStatsSummary() {
-  const box = $("#statsSummary");
-  if (!box) return;
-
-  const summary = (TEST_STATS && typeof TEST_STATS.summary === "object" && TEST_STATS.summary) ? TEST_STATS.summary : {};
-  const order = [
-    ["UNIT", "단원평가"],
-    ["FINAL", "파이널"],
-    ["HELL", "APEX HELL"],
-  ];
-
-  const cards = order
-    .map(([key, label]) => {
-      const row = summary[key];
-      if (!row || typeof row !== "object" || !row.count) return "";
-      return `
-        <article class="summary-card" data-type="${escapeAttr(key)}">
-          <div class="summary-label">${escapeHtml(label)}</div>
-          <div class="summary-value">${escapeHtml(fmtPct(row.avg_pct))}</div>
-          <div class="summary-meta">응시 ${escapeHtml(row.count)}건</div>
-          <div class="summary-meta">중앙 ${escapeHtml(fmtPct(row.median_pct))} · P90 ${escapeHtml(fmtPct(row.p90_pct))}</div>
-        </article>
-      `;
-    })
-    .filter(Boolean);
-
-  box.innerHTML = cards.length
-    ? cards.join("")
-    : `<div class="summary-empty">아직 통계 데이터가 부족합니다.</div>`;
+function catalogOrderSnapshot(cat, rawTests) {
+  return {
+    tests: cat.tests.slice(),
+    sortOrders: rawTests.map(test => ({
+      test,
+      hadValue: Object.prototype.hasOwnProperty.call(test, 'sortOrder'),
+      value: test.sortOrder,
+    })),
+  };
 }
 
-// ───────────── 개인별 성적 패널 ─────────────
-function ensurePersonalPanel() {
-  let panel = $("#personalPanel");
-  if (panel) return panel;
-
-  const statsTable = $("#statsTable");
-  if (!statsTable) return null;
-  const anchor = statsTable.closest(".stats-table-wrap") || statsTable;
-
-  panel = document.createElement("div");
-  panel.id = "personalPanel";
-  panel.className = "personal-panel";
-  panel.innerHTML = `
-    <div class="panel-head">
-      <div>
-        <div class="panel-title">개인별 성적</div>
-        <div id="personalTitle" class="panel-subtitle"></div>
-      </div>
-      <div class="panel-controls">
-        <span class="panel-subtitle">레벨</span>
-        <select id="personalBand" style="font-size:12px; padding:4px 8px;">
-          <option value="">전체</option>
-          <option value="상">상</option>
-          <option value="중상">중상</option>
-          <option value="중">중</option>
-          <option value="하">하</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="panel-table-wrap">
-      <table class="stats-table" id="personalTable" style="margin:0;">
-        <thead>
-          <tr>
-            <th style="text-align:left;">이름</th>
-            <th style="text-align:left;">레벨</th>
-            <th>점수(%)</th>
-            <th>정답/문항</th>
-            <th style="text-align:left;">제출시각</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-
-    <div id="personalHint" class="panel-hint"></div>
-  `;
-
-  anchor.insertAdjacentElement("afterend", panel);
-
-  $("#personalBand")?.addEventListener("change", async (e) => {
-    state.selectedBand = e.target.value || "";
-    await loadAndRenderPersonalScores();
+function restoreCatalogOrder(cat, snapshot) {
+  cat.tests.splice(0, cat.tests.length, ...snapshot.tests);
+  snapshot.sortOrders.forEach(({ test, hadValue, value }) => {
+    if (hadValue) test.sortOrder = value;
+    else delete test.sortOrder;
   });
-
-  return panel;
 }
 
-function renderPersonalEmpty(msg) {
-  ensurePersonalPanel();
-  const tbody = $("#personalTable tbody");
-  const titleEl = $("#personalTitle");
-  const hintEl = $("#personalHint");
-  if (titleEl) titleEl.textContent = msg || "";
-  if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">통계 항목을 선택하세요.</td></tr>`;
-  if (hintEl) hintEl.textContent = "";
+function applyRawCatalogGroupOrder(cat, orderedRawTests) {
+  const groupSet = new Set(orderedRawTests);
+  let orderedIndex = 0;
+  cat.tests.forEach((test, index) => {
+    if (!groupSet.has(test)) return;
+    cat.tests[index] = orderedRawTests[orderedIndex];
+    orderedIndex += 1;
+  });
+  orderedRawTests.forEach((test, index) => {
+    test.sortOrder = index;
+  });
 }
 
-async function loadAndRenderPersonalScores() {
-  ensurePersonalPanel();
+function sameRawTestOrder(left, right) {
+  return left.length === right.length && left.every((test, index) => test === right[index]);
+}
 
-  const tbody = $("#personalTable tbody");
-  const titleEl = $("#personalTitle");
-  const hintEl = $("#personalHint");
-  if (!tbody || !titleEl || !hintEl) return;
+function focusCatalogOrderControl(rawTest, requestedMove = '') {
+  const cat = TEST_CFG.categories?.[ui.category];
+  const catalogIndex = cat?.tests?.indexOf(rawTest) ?? -1;
+  if (catalogIndex < 0) return;
+  const requested = requestedMove === 'up' || requestedMove === 'down'
+    ? $(`#testList .test-order-button[data-move="${requestedMove}"][data-catalog-index="${catalogIndex}"]:not(:disabled)`)
+    : null;
+  const fallback = $(`#testList .test-select-button[data-catalog-index="${catalogIndex}"]`);
+  (requested || fallback)?.focus?.();
+}
 
-  const query = normalizeStatQuery(state.selectedStatQuery);
-  if (!query) {
-    renderPersonalEmpty("통계 표에서 행을 클릭하면 개인 성적이 나옵니다.");
-    return;
+function flushDeferredRuleSave() {
+  if (!ruleSavePending || ruleSaveInFlight || catalogOrderSaveInFlight) return;
+  ruleSavePending = false;
+  void saveRulesFromGrid();
+}
+
+async function persistCatalogReorder(sourceCatalogIndex, targetCatalogIndex, placement = 'before', focusMove = '') {
+  if (!canReorderCatalog()) {
+    updateCatalogOrderHint();
+    return false;
   }
+  const categoryKey = ui.category;
+  const cat = TEST_CFG.categories?.[categoryKey];
+  if (!cat || !Array.isArray(cat.tests)) return false;
 
-  const recent = Number($("#statRecent")?.value || "30") || 30;
-  const band = String($("#personalBand")?.value || state.selectedBand || "").trim();
-  state.selectedBand = band;
+  const visibleTests = getVisibleTests();
+  const source = visibleTests.find(test => test._catalogIndex === sourceCatalogIndex);
+  const target = visibleTests.find(test => test._catalogIndex === targetCatalogIndex);
+  if (!source || !target || source === target) return false;
 
-  const label = state.selectedStatLabel || statQueryLabel(query);
-  titleEl.textContent = `${label}${band ? ` · ${band}` : ""}`;
+  const groupKey = catalogGroupKey(source);
+  if (catalogGroupKey(target) !== groupKey) return false;
+  const groupTests = visibleTests.filter(test => catalogGroupKey(test) === groupKey);
+  const orderedRawTests = groupTests.map(test => cat.tests[test._catalogIndex]);
+  if (orderedRawTests.some(test => !test || typeof test !== 'object')) return false;
 
-  tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">불러오는 중...</td></tr>`;
-  hintEl.textContent = "";
+  const sourceRaw = cat.tests[source._catalogIndex];
+  const targetRaw = cat.tests[target._catalogIndex];
+  const nextRawTests = orderedRawTests.filter(test => test !== sourceRaw);
+  const targetIndex = nextRawTests.indexOf(targetRaw);
+  if (targetIndex < 0) return false;
+  nextRawTests.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, sourceRaw);
+  if (sameRawTestOrder(orderedRawTests, nextRawTests)) return false;
+
+  const snapshot = catalogOrderSnapshot(cat, orderedRawTests);
+  applyRawCatalogGroupOrder(cat, nextRawTests);
+  catalogOrderSaveInFlight = true;
+  catalogOrderFeedback = null;
+  renderTestList();
 
   try {
-    const q = new URLSearchParams();
-    q.set("recent_days", String(recent));
-    for (const [key, value] of Object.entries(query)) {
-      q.set(key, value);
+    await saveConfig();
+    catalogOrderSaveInFlight = false;
+    catalogOrderFeedback = { kind: 'success', message: '시험 순서를 저장했습니다.' };
+    renderTestList();
+    focusCatalogOrderControl(sourceRaw, focusMove);
+    flushDeferredRuleSave();
+    return true;
+  } catch (error) {
+    if (TEST_CFG.categories?.[categoryKey] === cat) restoreCatalogOrder(cat, snapshot);
+    catalogOrderSaveInFlight = false;
+    catalogOrderFeedback = error?.status === 409
+      ? { kind: 'error', message: '다른 곳에서 설정이 변경되어 최신 목록을 다시 불러왔습니다. 순서를 다시 확인해주세요.' }
+      : { kind: 'error', message: '순서 저장에 실패해 이전 순서로 되돌렸습니다.' };
+    console.error('[tests] catalog reorder failed', error);
+    renderTestList();
+    focusCatalogOrderControl(sourceRaw, focusMove);
+    flushDeferredRuleSave();
+    return false;
+  }
+}
+
+async function moveCatalogTestByKeyboard(catalogIndex, direction) {
+  if (!canReorderCatalog() || !Number.isInteger(catalogIndex)) return false;
+  const visibleTests = getVisibleTests();
+  const source = visibleTests.find(test => test._catalogIndex === catalogIndex);
+  if (!source) return false;
+  const groupTests = visibleTests.filter(test => catalogGroupKey(test) === catalogGroupKey(source));
+  const sourceIndex = groupTests.findIndex(test => test._catalogIndex === catalogIndex);
+  const target = groupTests[sourceIndex + direction];
+  if (!target) return false;
+  const move = direction < 0 ? 'up' : 'down';
+  return persistCatalogReorder(catalogIndex, target._catalogIndex, direction < 0 ? 'before' : 'after', move);
+}
+
+function fillEditor() {
+  updateSubjectOptions();
+
+  const ref = selectedTestRef();
+  const categoryKey = ref?.categoryKey || ui.category;
+  updateEditCategoryOptions(categoryKey);
+
+  const raw = ref?.test || null;
+  const test = raw ? normalizeTest(raw, categoryKey) : null;
+  if (!test) {
+    $('#cfgEditType') && ($('#cfgEditType').value = ui.category);
+    updateDifficultyOptions();
+    updateEditTermOptions(ui.category);
+    $('#cfgTerm') && ($('#cfgTerm').value = TERM_OPTIONS.includes(ui.term) ? ui.term : (TERM_OPTIONS[0] || ''));
+    $('#cfgSubject') && ($('#cfgSubject').value = ui.subject);
+    $('#cfgDifficulty') && ($('#cfgDifficulty').value = (CATEGORY_BY_KEY[ui.category]?.difficulties?.[0] || ''));
+    $('#cfgRound') && ($('#cfgRound').value = '1');
+    $('#cfgName') && ($('#cfgName').value = '');
+    $('#cfgProblems') && ($('#cfgProblems').value = '');
+    $('#cfgAnswers') && ($('#cfgAnswers').value = '');
+    updateChrome(null);
+    return;
+  }
+
+  if ($('#cfgEditType')) $('#cfgEditType').value = categoryKey;
+  updateDifficultyOptions(categoryKey);
+  updateEditTermOptions(categoryKey);
+  if ($('#cfgSubject')) $('#cfgSubject').value = test.curriculum;
+  if ($('#cfgDifficulty')) $('#cfgDifficulty').value = test.difficulty;
+  if ($('#cfgTerm')) $('#cfgTerm').value = TERM_OPTIONS.includes(test.term) ? test.term : (TERM_OPTIONS[0] || '');
+  if ($('#cfgRound')) $('#cfgRound').value = test.round || '1';
+  if ($('#cfgName')) $('#cfgName').value = test.name || '';
+  if ($('#cfgProblems')) $('#cfgProblems').value = test.problems || '';
+  if ($('#cfgAnswers')) $('#cfgAnswers').value = answerKeysToText(test);
+  updateChrome(test);
+}
+
+function renderRules() {
+  const host = $('#ruleGrid');
+  if (!host) return;
+
+  host.innerHTML = `
+    <div class="rule-grid-inner">
+      ${CATEGORY_DEFS.map(def => renderRuleSection(def)).join('')}
+    </div>
+  `;
+}
+
+function renderRuleSection(def) {
+  const rules = TEST_CFG.autoAssignRules?.[def.key] || {};
+  const difficultyLabel = def.difficulties.join(' · ');
+  return `
+    <section class="rule-section" data-rule-category="${escapeAttr(def.key)}">
+      <div class="rule-section-head">
+        <div class="rule-section-title">
+          <strong>${escapeHtml(def.label)}</strong>
+          <span>과목별 테스트 난이도와 학생 정보 레벨 연결</span>
+        </div>
+        <span class="rule-section-meta">${escapeHtml(difficultyLabel)}</span>
+      </div>
+      <table class="stats-table" style="margin:0">
+        <thead>
+          <tr>
+            <th style="text-align:left;">과목</th>
+            <th style="text-align:left;">테스트 난이도</th>
+            ${STUDENT_LEVELS.map(level => `<th>${escapeHtml(level)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${SUBJECTS.map(subject => def.difficulties.map((difficulty, index) => {
+            const levels = Array.isArray(rules?.[subject]?.[difficulty]) ? rules[subject][difficulty].map(String) : [];
+            return `
+              <tr>
+                ${index === 0 ? `<td rowspan="${def.difficulties.length}" style="text-align:left;font-weight:800;">${escapeHtml(subject)}</td>` : ''}
+                <td style="text-align:left;"><span class="level-pill">${escapeHtml(difficulty)}</span></td>
+                ${STUDENT_LEVELS.map(level => `
+                  <td style="text-align:center;">
+                    <label class="rule-check-target" aria-label="${escapeAttr(`${subject} ${difficulty} ${level} 배정`)}">
+                      <input type="checkbox" class="rule-check"
+                        data-category="${escapeAttr(def.key)}"
+                        data-subject="${escapeAttr(subject)}"
+                        data-difficulty="${escapeAttr(difficulty)}"
+                        data-level="${escapeAttr(level)}"
+                        ${levels.includes(level) ? 'checked' : ''}>
+                    </label>
+                  </td>
+                `).join('')}
+              </tr>
+            `;
+          }).join('')).join('')}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function readRulesFromGrid() {
+  TEST_CFG.autoAssignRules = TEST_CFG.autoAssignRules || {};
+
+  CATEGORY_DEFS.forEach(def => {
+    TEST_CFG.autoAssignRules[def.key] = TEST_CFG.autoAssignRules[def.key] || {};
+    SUBJECTS.forEach(subject => {
+      TEST_CFG.autoAssignRules[def.key][subject] = TEST_CFG.autoAssignRules[def.key][subject] || {};
+      def.difficulties.forEach(difficulty => {
+        const levels = Array.from(document.querySelectorAll(`.rule-check[data-category="${CSS.escape(def.key)}"][data-subject="${CSS.escape(subject)}"][data-difficulty="${CSS.escape(difficulty)}"]:checked`))
+          .map(input => input.dataset.level)
+          .filter(Boolean);
+        TEST_CFG.autoAssignRules[def.key][subject][difficulty] = levels;
+      });
+    });
+  });
+}
+
+function ruleSaveToast() {
+  let toast = $('#ruleSaveToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'ruleSaveToast';
+    toast.className = 'rule-save-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+  }
+  return toast;
+}
+
+function showRuleSavePopup(message = '저장됐음', kind = 'success') {
+  const toast = ruleSaveToast();
+  toast.textContent = message;
+  toast.dataset.kind = kind;
+  toast.classList.add('is-visible');
+  if (ruleSaveToastTimer) clearTimeout(ruleSaveToastTimer);
+  ruleSaveToastTimer = setTimeout(() => {
+    toast.classList.remove('is-visible');
+  }, 1800);
+}
+
+async function saveRulesFromGrid() {
+  if (catalogOrderSaveInFlight || catalogMutationSaveInFlight) {
+    ruleSavePending = true;
+    return;
+  }
+  if (ruleSaveInFlight) {
+    ruleSavePending = true;
+    return;
+  }
+
+  ruleSaveInFlight = true;
+  try {
+    readRulesFromGrid();
+    await saveConfig();
+    showRuleSavePopup();
+  } catch (e) {
+    console.error(e);
+    showRuleSavePopup('규칙 저장 실패', 'error');
+  } finally {
+    ruleSaveInFlight = false;
+    if (ruleSavePending) {
+      ruleSavePending = false;
+      saveRulesFromGrid();
     }
-    if (band) q.set("band", band);
+  }
+}
 
-    const data = await fetchJSONSafe(`/api/tests-records?${q.toString()}`);
-    const recs = Array.isArray(data.records) ? data.records : [];
+function scheduleRulesAutosave() {
+  if (ruleSaveTimer) clearTimeout(ruleSaveTimer);
+  if (catalogOrderSaveInFlight || catalogMutationSaveInFlight) {
+    ruleSaveTimer = null;
+    ruleSavePending = true;
+    return;
+  }
+  ruleSaveTimer = setTimeout(() => {
+    ruleSaveTimer = null;
+    saveRulesFromGrid();
+  }, 350);
+}
 
-    if (!recs.length) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">개인 성적 데이터가 없습니다.</td></tr>`;
-      hintEl.textContent = `최근 ${recent}일`;
+async function saveConfig(removedTestIds = []) {
+  const payload = { ...TEST_CFG };
+  if (Array.isArray(removedTestIds) && removedTestIds.length) {
+    payload.__removedTestIds = removedTestIds.map(id => String(id));
+  }
+  const headers = { ...CT };
+  if (TEST_CFG_REVISION) headers['X-Tests-Config-Revision'] = TEST_CFG_REVISION;
+  const res = await fetch('/api/tests-config', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    if (res.status === 409 || res.status === 428) await loadConfigAndStats();
+    const error = new Error(`tests-config save failed: ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
+}
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadCsvTemplate() {
+  const rows = [
+    ['분류', '과목', '난이도', '고사', '회차', '시험명', '문항수', '정답', '1회차정답', '2회차정답', '3회차정답'],
+    ['복습 테스트', '대수', '상', '', '1', '대수 복습 상 1회차', '20', '1 2 3 4', '', '', ''],
+    ['단원평가', '공수1', 'Lv.4', '', '1', '원의 방정식 Lv.4', '20', '', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
+    ['트레이닝팩', '미적분1', '트팩', '', '1', '함수의 극한1', '20', '', '1,2,3,4', '1,2,3,4', ''],
+    ['학군지 기출', '공수1', '상', '중간고사', '1', '학군지 기출 공수1 중간고사 상 1회차', '20', '1 2 3 4', '', '', ''],
+    ['일산 기출', '대수', '중', '기말고사', '1', '일산 기출 대수 기말고사 중 1회차', '20', '1 2 3 4', '', '', ''],
+    ['일산 기출', '대수', ILSAN_GRAPH_DIFFICULTY, '기말고사', '2', '그래프 포함 일산 기출 대수 기말고사 2회차', '20', '1 2 3 4', '', '', ''],
+  ];
+  const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'test_catalog_template.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (quoted) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      quoted = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows.filter(items => items.some(item => String(item || '').trim()));
+}
+
+function headerKey(value) {
+  const s = String(value || '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\s+/g, '');
+  const aliases = {
+    id: 'id',
+    testid: 'id',
+    테스트id: 'id',
+    분류: 'category',
+    구분: 'category',
+    category: 'category',
+    type: 'category',
+    과목: 'subject',
+    subject: 'subject',
+    curriculum: 'subject',
+    course: 'subject',
+    난이도: 'difficulty',
+    레벨: 'difficulty',
+    difficulty: 'difficulty',
+    level: 'difficulty',
+    고사: 'term',
+    시험기간: 'term',
+    학기고사: 'term',
+    term: 'term',
+    examterm: 'term',
+    examperiod: 'term',
+    exam_period: 'term',
+    period: 'term',
+    회차: 'round',
+    round: 'round',
+    session: 'round',
+    no: 'round',
+    시험명: 'name',
+    테스트명: 'name',
+    name: 'name',
+    title: 'name',
+    순번: 'sourceOrder',
+    정렬순서: 'sourceOrder',
+    sourceorder: 'sourceOrder',
+    source_order: 'sourceOrder',
+    sortorder: 'sourceOrder',
+    sort_order: 'sourceOrder',
+    sourceid: 'sourceId',
+    source_id: 'sourceId',
+    문항수: 'problems',
+    문제수: 'problems',
+    problems: 'problems',
+    '1회차정답': 'answers1',
+    '1회정답': 'answers1',
+    answer1: 'answers1',
+    answers1: 'answers1',
+    '2회차정답': 'answers2',
+    '2회정답': 'answers2',
+    answer2: 'answers2',
+    answers2: 'answers2',
+    '3회차정답': 'answers3',
+    '3회정답': 'answers3',
+    answer3: 'answers3',
+    answers3: 'answers3',
+    정답: 'answers',
+    answers: 'answers',
+    answer: 'answers',
+    answersjson: 'answersJson',
+    answers_json: 'answersJson',
+    answerkeyjson: 'answersJson',
+    answer_key_json: 'answersJson',
+  };
+  return aliases[s] || s;
+}
+
+function rowObject(headers, cells) {
+  const out = {};
+  headers.forEach((header, idx) => {
+    if (!header) return;
+    out[header] = String(cells[idx] ?? '').trim();
+  });
+  return out;
+}
+
+function csvAnswerRounds(row) {
+  return ['1', '2', '3'].filter(round => String(row[`answers${round}`] || '').trim());
+}
+
+function hasRoundAnswerColumns(row) {
+  return csvAnswerRounds(row).length > 0;
+}
+
+function answerKeyFromCsvRow(row, round, problems) {
+  const direct = String(row[`answers${round}`] || '').trim();
+  if (direct) return parseAnswerSpec(direct, problems);
+  const jsonText = String(row.answersJson || '').trim();
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (Array.isArray(parsed)) return parseAnswerSpec(parsed, problems);
+    } catch (err) {
+      console.warn('[tests] answers_json parse failed', err);
+    }
+  }
+  return parseAnswerSpec(row.answers || '', problems);
+}
+
+function findExistingTest(cat, patch) {
+  const tests = Array.isArray(cat.tests) ? cat.tests : [];
+  if (patch.id) {
+    const byId = tests.find(test => String(test?.id || '').trim() === patch.id);
+    if (byId) return byId;
+  }
+  return tests.find(test =>
+    canonText(test?.name) === patch.name &&
+    normalizeSubject(test?.curriculum || test?.subject) === patch.curriculum &&
+    String(normalizeDifficulty(patch.categoryKey, test?.difficulty || test?.level, test?.name)).trim() === patch.difficulty &&
+    String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim() === patch.round &&
+    (!isPastCategory(patch.categoryKey) || normalizeTerm(test?.term || test?.examTerm || test?.examPeriod || test?.exam_period, test?.name) === patch.term)
+  ) || null;
+}
+
+async function importTestsFromCsv(file) {
+  const rows = parseCsv(await file.text());
+  if (rows.length < 2) {
+    alert('가져올 시험 행이 없습니다.');
+    return;
+  }
+
+  const headers = rows[0].map(headerKey);
+  if (!headers.includes('name')) {
+    alert('CSV 첫 줄에 시험명 열이 필요합니다.');
+    return;
+  }
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors = [];
+  let lastCategory = ui.category;
+  let lastSubject = ui.subject;
+  let lastDifficulty = ui.difficulty;
+  let lastTerm = ui.term;
+  let lastRound = ui.round;
+
+  rows.slice(1).forEach((cells, idx) => {
+    const sourceOrder = idx + 1;
+    const row = rowObject(headers, cells);
+    const name = canonText(row.name);
+    if (!name) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 시험명 없음`);
       return;
     }
 
-    tbody.innerHTML = recs.map(r => {
-      const nm = escapeHtml(r.studentName || r.sid || "");
-      const lv = escapeHtml(r.level || "");
-      const pct = (typeof r.pct === "number") ? r.pct.toFixed(1) : escapeHtml(String(r.pct || ""));
-      const ct = `${r.correct ?? ""}/${r.total ?? ""}`;
-      const when = escapeHtml(String(r.createdAt || ""));
-      return `
-        <tr>
-          <td style="text-align:left;">${nm}</td>
-          <td style="text-align:left;">${lv || "-"}</td>
-          <td style="text-align:right;">${pct}</td>
-          <td style="text-align:right;">${escapeHtml(ct)}</td>
-          <td style="text-align:left; font-size:11px; opacity:.85;">${when}</td>
-        </tr>
-      `;
-    }).join("");
+    const categoryKey = categoryKeyFrom(row.category || ui.category);
+    const def = CATEGORY_BY_KEY[categoryKey];
+    if (!def) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 분류 "${row.category}"`);
+      return;
+    }
 
-    hintEl.textContent = `총 ${recs.length}건 · 최근 ${recent}일`;
-  } catch (e) {
-    console.error(e);
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">로드 실패</td></tr>`;
-    hintEl.textContent = String(e?.message || e).slice(0, 180);
+    const subject = normalizeSubject(row.subject || ui.subject);
+    if (!SUBJECTS.includes(subject)) {
+      skipped += 1;
+      errors.push(`${idx + 2}행: 알 수 없는 과목 "${row.subject}"`);
+      return;
+    }
+
+    const difficulty = normalizeDifficulty(categoryKey, row.difficulty, name);
+    const term = isPastCategory(categoryKey) ? normalizeTerm(row.term || row.examTerm || row.examPeriod || row.exam_period, name) : '';
+    const csvRound = normalizeRound(row.round || '1', name);
+    const problemsRaw = Number(row.problems || 20);
+    const problems = Number.isFinite(problemsRaw) ? Math.max(1, Math.min(100, Math.trunc(problemsRaw))) : 20;
+    const rawId = canonText(row.id);
+    const baseId = rawId || `t_${categoryKey.toLowerCase()}_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`;
+    const orderRaw = Number(row.sourceOrder || sourceOrder);
+    const rowOrder = Number.isFinite(orderRaw) ? orderRaw : sourceOrder;
+    const csvRounds = isUnitCategory(categoryKey) && hasRoundAnswerColumns(row) ? csvAnswerRounds(row) : [];
+    const rounds = csvRounds.length ? csvRounds : [csvRound];
+
+    const cat = TEST_CFG.categories[categoryKey] = TEST_CFG.categories[categoryKey] || { label: def.label, tests: [] };
+    if (!Array.isArray(cat.tests)) cat.tests = [];
+    cat.label = cat.label || def.label;
+
+    rounds.forEach(round => {
+      const answerKey = answerKeyFromCsvRow(row, round, problems);
+      const patch = {
+        id: rounds.length > 1 ? `${baseId}_r${round}` : baseId,
+        sourceId: rounds.length > 1 ? baseId : canonText(row.sourceId || row.source_id || ''),
+        name,
+        categoryKey,
+        problems,
+        curriculum: subject,
+        difficulty,
+        sortOrder: rowOrder,
+        sourceOrder: rowOrder,
+        round,
+        answerKeys: { [round]: answerKey },
+        answerKey,
+      };
+      if (term) {
+        patch.term = term;
+        patch.examTerm = term;
+      }
+
+      const existing = findExistingTest(cat, patch);
+      if (existing) {
+        if (!rawId && rounds.length === 1) patch.id = canonText(existing.id) || patch.id;
+        Object.assign(existing, patch);
+        updated += 1;
+      } else {
+        cat.tests.push(patch);
+        added += 1;
+      }
+    });
+    lastCategory = categoryKey;
+    lastSubject = subject;
+    lastDifficulty = difficulty;
+    lastTerm = term;
+    lastRound = rounds[rounds.length - 1] || csvRound;
+  });
+
+  if (!added && !updated) {
+    alert(`가져온 시험이 없습니다.${errors.length ? `\n${errors.slice(0, 5).join('\n')}` : ''}`);
+    return;
   }
+
+  await saveConfig();
+  ui.category = lastCategory;
+  ui.subject = lastSubject;
+  ui.difficulty = lastDifficulty;
+  ui.term = isPastCategory(lastCategory) ? lastTerm : '';
+  ui.round = lastRound;
+  ui.selectedId = '';
+  $('#cfgType') && ($('#cfgType').value = ui.category);
+  $('#cfgCur') && ($('#cfgCur').value = ui.subject);
+  await loadConfigAndStats();
+
+  const detail = errors.length ? `\n건너뜀 ${skipped}건\n${errors.slice(0, 5).join('\n')}` : '';
+  alert(`CSV 가져오기 완료\n추가 ${added}건 · 업데이트 ${updated}건${detail}`);
 }
 
-// ───────────── 로드/리렌더 ─────────────
 async function loadConfigAndStats() {
-  try { TEST_CFG = normalizeCfg(await fetchJSONSafe("/api/tests-config")); }
-  catch { TEST_CFG = { categories: {} }; }
+  TEST_STATS_DETAIL = null;
+  ui.statsTestId = '';
+  try {
+    TEST_CFG = ensureConfig(await fetchTestsConfig());
+  } catch {
+    TEST_CFG_REVISION = '';
+    TEST_CFG = ensureConfig({ categories: {} });
+  }
 
-  rebuildNameToCurriculumMap();
-  ensureEditCurriculumUI();
-
-  state.selectedStatQuery = normalizeStatQuery(state.selectedStatQuery);
-  state.selectedStatKey = state.selectedStatQuery ? statQueryKey(state.selectedStatQuery) : "";
-  state.selectedStatLabel = state.selectedStatQuery ? (state.selectedStatLabel || statQueryLabel(state.selectedStatQuery)) : "";
+  const typeSel = $('#cfgType');
+  const curSel = $('#cfgCur');
+  if (typeSel) typeSel.value = ui.category;
+  if (curSel) curSel.value = ui.subject;
 
   try {
-    const recent = Number($("#statRecent")?.value || "30") || 30;
+    const recent = Number($('#statRecent')?.value || '30') || 30;
     TEST_STATS = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
   } catch {
     TEST_STATS = null;
   }
 
+  updateSubjectOptions();
+  updateListDifficultyOptions();
+  updateTermOptions();
+  updateRoundOptions();
+  updateEditCategoryOptions(ui.category);
   renderTestList();
-  fillEditorFromSelection();
-  renderStatsTable();
+  fillEditor();
+  renderRules();
+  syncCatalogMutationControls();
   renderStatsSummary();
-
-  ensurePersonalPanel();
-  if (state.selectedStatQuery) await loadAndRenderPersonalScores();
-  else renderPersonalEmpty("통계 표에서 행을 클릭하면 개인 성적이 나옵니다.");
+  renderStatsTable();
+  renderStatsDetail();
 }
 
-// ───────────── 이벤트 ─────────────
+async function loadStatsOnly() {
+  TEST_STATS_DETAIL = null;
+  ui.statsTestId = '';
+  try {
+    const recent = Number($('#statRecent')?.value || '30') || 30;
+    TEST_STATS = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
+  } catch {
+    TEST_STATS = null;
+  }
+  renderStatsSummary();
+  renderStatsTable();
+  renderStatsDetail();
+}
+
+function renderStatsSummary() {
+  const box = $('#statsSummary');
+  if (!box) return;
+  const summary = TEST_STATS?.summary || {};
+  const cards = CATEGORY_DEFS.map(def => {
+    const row = summary[def.key];
+    const count = getCategoryTests(def.key).length;
+    const metric = row?.count ? `${Number(row.avg_pct || 0).toFixed(1)}%` : `${count}개`;
+    const meta = row?.count ? `응시 ${row.count}건` : '등록 테스트';
+    const active = ui.statsCategory === def.key ? ' is-active' : '';
+    return `
+      <button type="button" class="summary-card${active}" data-type="${escapeAttr(def.key)}" data-stats-category="${escapeAttr(def.key)}">
+        <div class="summary-label">${escapeHtml(def.label)}</div>
+        <div class="summary-value">${escapeHtml(metric)}</div>
+        <div class="summary-meta">${escapeHtml(meta)}</div>
+      </button>
+    `;
+  });
+  box.innerHTML = cards.join('');
+  box.querySelectorAll('[data-stats-category]').forEach(button => {
+    button.addEventListener('click', () => {
+      ui.statsCategory = button.dataset.statsCategory || 'UNIT';
+      ui.statsTestId = '';
+      TEST_STATS_DETAIL = null;
+      renderStatsSummary();
+      renderStatsTable();
+      renderStatsDetail();
+    });
+  });
+}
+
+function fmtPct(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? `${value.toFixed(1)}%` : '-';
+}
+
+function fmtNumber(value) {
+  return (typeof value === 'number' && Number.isFinite(value)) ? value.toFixed(1) : '-';
+}
+
+function statsSignature(test) {
+  return [
+    test?.categoryKey || ui.statsCategory || '',
+    test?.curriculum || '',
+    canonText(test?.name),
+    isPastCategory(test?.categoryKey || ui.statsCategory) ? normalizeTerm(test?.term || test?.examTerm || '', test?.name) : '',
+    String(test?.round || '').trim(),
+  ].join('\u241f');
+}
+
+function statForTest(test) {
+  const byId = TEST_STATS?.by_test_id || {};
+  if (test?.id && byId[test.id]) return byId[test.id];
+  const bySignature = TEST_STATS?.by_test_signature || {};
+  const sig = statsSignature(test);
+  if (sig && bySignature[sig]) return bySignature[sig];
+  return TEST_STATS?.by_test?.[canonText(test?.name)] || null;
+}
+
+function syncStatsControls() {
+  const search = $('#statSearch');
+  if (search) {
+    applySearchPlaceholder(search, '시험명, 과목, 레벨 검색');
+    if (search.value !== ui.statsSearch) search.value = ui.statsSearch;
+  }
+  const sort = $('#statSort');
+  if (sort) sort.value = ui.statsSort;
+}
+
+function defaultStatsCompare(a, b) {
+  return String(a.curriculum || '').localeCompare(String(b.curriculum || ''), 'ko') ||
+    String(a.difficulty || '').localeCompare(String(b.difficulty || ''), 'ko') ||
+    termSortValue(a.term || a.examTerm || '') - termSortValue(b.term || b.examTerm || '') ||
+    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ko');
+}
+
+function statsCount(row) {
+  const count = Number(row?.stat?.count || 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function statsAvg(row, emptyValue) {
+  const avg = Number(row?.stat?.avg_pct);
+  return Number.isFinite(avg) ? avg : emptyValue;
+}
+
+function statsSearchText(row) {
+  return searchKeyForText([
+    row.typeLabel,
+    row.typeSearchLabel,
+    row.curriculum,
+    row.name,
+    row.displayName,
+    row.difficulty,
+    row.term,
+    row.examTerm,
+    roundLabel(row.round || ''),
+    row.problems ? `${row.problems}문항` : '',
+  ].map(canonText).join(' '));
+}
+
+function compareStatsRows(a, b) {
+  switch (ui.statsSort) {
+    case 'name':
+      return String(a.name || '').localeCompare(String(b.name || ''), 'ko') || defaultStatsCompare(a, b);
+    case 'taken_desc':
+      return statsCount(b) - statsCount(a) || defaultStatsCompare(a, b);
+    case 'taken_asc':
+      return statsCount(a) - statsCount(b) || defaultStatsCompare(a, b);
+    case 'avg_desc':
+      return statsAvg(b, -1) - statsAvg(a, -1) || defaultStatsCompare(a, b);
+    case 'avg_asc':
+      return statsAvg(a, 101) - statsAvg(b, 101) || defaultStatsCompare(a, b);
+    case 'round':
+      return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) || defaultStatsCompare(a, b);
+    default:
+      return defaultStatsCompare(a, b);
+  }
+}
+
+function renderStatsTable() {
+  const tbody = $('#statsTable tbody');
+  if (!tbody) return;
+  syncStatsControls();
+  const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
+  const queryText = ui.statsSearch || '';
+  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
+  const rows = getCategoryTests(def.key).map(test => ({
+    ...test,
+    displayName: displayNameFor(test),
+    typeLabel: statsTypeLabel(def),
+    typeSearchLabel: def.label,
+    stat: statForTest(test),
+  }))
+    .filter(row => matchesSearchKey(statsSearchText(row), queryText))
+    .sort(compareStatsRows);
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${queryText.trim() ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(row => `
+    <tr class="data-row ${row.id === ui.statsTestId ? 'is-active' : ''}" data-stat-test-id="${escapeAttr(row.id)}">
+      <td style="text-align:left;"><span class="type-pill" data-type="${escapeAttr(row.categoryKey)}">${escapeHtml(row.typeLabel)}</span></td>
+      <td style="text-align:left;">${escapeHtml(row.curriculum || '-')}</td>
+      <td style="text-align:left;">
+        <div class="stat-title">
+          <span class="stat-main">${escapeHtml(row.displayName)}</span>
+          <span class="stat-sub">${escapeHtml([isPastCategory(row.categoryKey) ? (row.term || row.examTerm || '') : '', row.problems ? `${row.problems}문항` : ''].filter(Boolean).join(' · '))}</span>
+        </div>
+      </td>
+      <td><span class="level-pill">${escapeHtml(row.difficulty || '-')}</span></td>
+      <td>${escapeHtml(roundLabel(row.round || '-'))}</td>
+      <td>${escapeHtml(row.stat?.count || 0)}</td>
+      <td>${escapeHtml(fmtPct(row.stat?.avg_pct))}</td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('[data-stat-test-id]').forEach(rowEl => {
+    rowEl.addEventListener('click', () => {
+      const testId = rowEl.dataset.statTestId || '';
+      const row = rows.find(item => item.id === testId);
+      ui.statsTestId = testId;
+      TEST_STATS_DETAIL = null;
+      openStatsDetailModal(row);
+      renderStatsTable();
+      renderStatsDetail(row, true);
+    });
+  });
+}
+
+async function loadStatsDetail(test) {
+  if (!test?.id) return null;
+  const recent = Number($('#statRecent')?.value || '30') || 30;
+  const params = new URLSearchParams({ test_id: test.id, recent_days: String(recent) });
+  return fetchJSONSafe(`/api/tests-records?${params.toString()}`);
+}
+
+function detailMetric(label, value) {
+  return `
+    <div class="detail-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function wrongListText(wrong) {
+  if (!Array.isArray(wrong) || !wrong.length) return '틀린 문항 없음';
+  const numbers = wrong.map(value => String(value).trim()).filter(Boolean).join(', ');
+  return numbers ? `틀린 문항 ${numbers}` : '틀린 문항 없음';
+}
+
+function wrongDetailListHtml(details, wrong = []) {
+  const rows = Array.isArray(details) ? details.filter(row => row && typeof row === 'object') : [];
+  const wrongNumbers = Array.isArray(wrong) ? wrong.map(value => String(value).trim()).filter(Boolean) : [];
+  if (!rows.length && wrongNumbers.length) {
+    return '<p class="wrong-detail-empty">이전 제출 기록이라 내 답 비교가 없습니다.</p>';
+  }
+  if (!rows.length) return '';
+  const items = rows.map(row => {
+    const no = String(row.questionNo ?? row.question_no ?? '').trim();
+    const mine = String(row.myAnswer ?? row.my_answer ?? '').trim() || '-';
+    const correct = String(row.correctAnswer ?? row.correct_answer ?? '').trim() || '-';
+    return `
+      <li>
+        <span class="wrong-detail-no">${escapeHtml(no ? `${no}번` : '-')}</span>
+        <b class="wrong-detail-answer wrong-detail-mine">
+          <span class="wrong-detail-label">내 답</span>
+          <strong>${escapeHtml(mine)}</strong>
+        </b>
+        <em class="wrong-detail-answer wrong-detail-correct">
+          <span class="wrong-detail-label">정답</span>
+          <strong>${escapeHtml(correct)}</strong>
+        </em>
+      </li>
+    `;
+  }).join('');
+  return `
+    <details class="wrong-detail-list">
+      <summary>틀린 문항 내 답/정답 비교</summary>
+      <ul>${items}</ul>
+    </details>
+  `;
+}
+
+function statsDetailHost() {
+  return $('#statsDetailModalBody') || $('#statsDetail');
+}
+
+function openStatsDetailModal(test) {
+  const modal = $('#statsDetailModal');
+  if (!modal) return;
+  const title = $('#statsDetailModalTitle');
+  if (title) title.textContent = test ? (test.displayName || displayTestName(test)) : '테스트 통계';
+  modal.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('stats-modal-open');
+  requestAnimationFrame(() => modal.querySelector('.stats-detail-dialog')?.focus());
+}
+
+function closeStatsDetailModal() {
+  const modal = $('#statsDetailModal');
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('stats-modal-open');
+}
+
+function initStatsDetailModal() {
+  const modal = $('#statsDetailModal');
+  if (!modal) return;
+  modal.addEventListener('click', event => {
+    if (!event.target?.closest?.('[data-stats-detail-close]')) return;
+    closeStatsDetailModal();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || modal.hidden) return;
+    closeStatsDetailModal();
+  });
+}
+
+function renderStatsDetail(test = null, fetchDetail = false) {
+  const host = statsDetailHost();
+  if (!host) return;
+
+  const selected = test || getCategoryTests(ui.statsCategory).find(item => item.id === ui.statsTestId);
+  if (!selected) {
+    host.innerHTML = '';
+    return;
+  }
+
+  const stat = statForTest(selected) || {};
+  if (fetchDetail) {
+    TEST_STATS_DETAIL = { records: [] };
+    renderStatsDetail(selected, false);
+    loadStatsDetail(selected).then(detail => {
+      TEST_STATS_DETAIL = detail;
+      renderStatsDetail(selected, false);
+    }).catch(err => {
+      console.error(err);
+    });
+    return;
+  }
+
+  const records = Array.isArray(TEST_STATS_DETAIL?.records) ? TEST_STATS_DETAIL.records : [];
+  const detailAnswerUrl = String(TEST_STATS_DETAIL?.answerUrl || '').trim();
+  const answerLink = detailAnswerUrl ? { url: detailAnswerUrl, label: '전체 답지 보기' } : null;
+  const studentRows = records.map(rec => `
+    <tr>
+      <td style="text-align:left;">${escapeHtml(rec.studentName || rec.sid || '-')}</td>
+      <td>${escapeHtml(rec.level || '-')}</td>
+      <td>${escapeHtml(fmtPct(rec.pct))}</td>
+      <td>
+        <div class="score-with-wrong">
+          <strong>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</strong>
+          <span>${escapeHtml(wrongListText(rec.wrong))}</span>
+          ${wrongDetailListHtml(rec.wrongDetails, rec.wrong)}
+        </div>
+      </td>
+      <td style="text-align:left;">${escapeHtml((rec.createdAt || '').slice(0, 10) || '-')}</td>
+    </tr>
+  `).join('');
+
+  host.innerHTML = `
+    <section class="stats-detail-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">${escapeHtml(selected.displayName || displayTestName(selected))}</div>
+          <div class="panel-subtitle">${escapeHtml([selected.curriculum || '-', isPastCategory(selected.categoryKey) ? (selected.term || selected.examTerm || '') : '', selected.difficulty || '-', roundLabel(selected.round || '-')].filter(Boolean).join(' · '))}</div>
+        </div>
+      </div>
+      <div class="detail-metrics">
+        ${detailMetric('응시', stat.count || 0)}
+        ${detailMetric('평균', fmtPct(stat.avg_pct))}
+        ${detailMetric('표준편차', fmtNumber(stat.stddev_pct))}
+        ${detailMetric('중앙값', fmtPct(stat.median_pct))}
+        ${detailMetric('최대', fmtPct(stat.max_pct))}
+        ${detailMetric('최소', fmtPct(stat.min_pct))}
+      </div>
+      ${answerLink ? `
+        <div class="detail-answer-link-row">
+          <a class="detail-answer-link" href="${escapeAttr(answerLink.url)}" target="_blank" rel="noopener noreferrer">
+            ${escapeHtml(answerLink.label || '답지 보기')}
+          </a>
+        </div>
+      ` : ''}
+      <div class="panel-table-wrap">
+        <table class="stats-table detail-student-table">
+          <thead>
+            <tr>
+              <th>학생</th>
+              <th>레벨</th>
+              <th>점수</th>
+              <th>채점 결과</th>
+              <th>응시일</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="5" class="empty-cell">응시 기록이 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function bindUI() {
-  const typeSel = $("#cfgType");
-  const curSel = $("#cfgCur");
-  const newBtn = $("#btnNewTest");
-  const saveBtn = $("#btnSaveTest");
-  const delBtn = $("#btnDeleteTest");
-  const reloadBtn = $("#btnReloadStats");
-  const recentSel = $("#statRecent");
-
-  typeSel?.addEventListener("change", () => {
-    state.type = typeSel.value;
-    state.selectedId = null;
+  $('#cfgType')?.addEventListener('change', e => {
+    clearCatalogOrderFeedback();
+    ui.category = e.target.value || 'UNIT';
+    ui.difficulty = '';
+    ui.term = '';
+    ui.round = '';
+    ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateTermOptions();
+    updateRoundOptions();
+    updateEditCategoryOptions(ui.category);
     renderTestList();
-    fillEditorFromSelection();
+    fillEditor();
+    renderRules();
+    renderStatsSummary();
+    renderStatsTable();
   });
 
-  curSel?.addEventListener("change", () => {
-    state.curriculum = curSel.value;
-    state.selectedId = null;
+  $('#cfgCur')?.addEventListener('change', e => {
+    clearCatalogOrderFeedback();
+    ui.subject = normalizeSubject(e.target.value);
+    ui.term = '';
+    ui.round = '';
+    ui.selectedId = '';
+    updateListDifficultyOptions();
+    updateTermOptions();
+    updateRoundOptions();
     renderTestList();
-    fillEditorFromSelection();
+    fillEditor();
+    renderRules();
   });
 
-  newBtn?.addEventListener("click", () => {
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
+  $('#cfgDifficultyFilter')?.addEventListener('change', e => {
+    clearCatalogOrderFeedback();
+    ui.difficulty = String(e.target.value || '').trim();
+    ui.term = '';
+    ui.round = '';
+    ui.selectedId = '';
+    updateTermOptions();
+    updateRoundOptions();
+    renderTestList();
+    fillEditor();
+  });
+
+  $('#cfgRoundFilter')?.addEventListener('change', e => {
+    clearCatalogOrderFeedback();
+    ui.round = String(e.target.value || '').trim();
+    ui.selectedId = '';
+    renderTestList();
+    fillEditor();
+  });
+
+  $('#cfgEditType')?.addEventListener('change', e => {
+    const key = categoryKeyFrom(e.target.value || ui.category);
+    updateDifficultyOptions(key);
+    updateEditTermOptions(key);
+  });
+
+  $('#cfgTermFilter')?.addEventListener('change', e => {
+    clearCatalogOrderFeedback();
+    ui.term = String(e.target.value || '').trim();
+    ui.selectedId = '';
+    renderTestList();
+    fillEditor();
+  });
+
+  $('#cfgCatalogSearch')?.addEventListener('input', e => {
+    clearCatalogOrderFeedback();
+    ui.catalogSearch = String(e.target.value || '');
+    renderTestList();
+  });
+
+  $('#statSearch')?.addEventListener('input', e => {
+    ui.statsSearch = String(e.target.value || '').trim();
+    ui.statsTestId = '';
+    TEST_STATS_DETAIL = null;
+    closeStatsDetailModal();
+    renderStatsTable();
+    renderStatsDetail();
+  });
+
+  $('#statSort')?.addEventListener('change', e => {
+    ui.statsSort = String(e.target.value || 'default');
+    renderStatsTable();
+  });
+
+  $('#btnCsvTemplate')?.addEventListener('click', downloadCsvTemplate);
+
+  $('#btnImportCsv')?.addEventListener('click', () => {
+    if (catalogMutationControlsLocked()) return;
+    const input = $('#csvFile');
+    if (!input) return;
+    input.value = '';
+    input.click();
+  });
+
+  $('#csvFile')?.addEventListener('change', async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    if (!beginCatalogMutationSave()) {
+      e.target.value = '';
+      return;
+    }
+    try {
+      await importTestsFromCsv(file);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || 'CSV 가져오기에 실패했습니다.');
+    } finally {
+      endCatalogMutationSave();
+      e.target.value = '';
+    }
+  });
+
+  $('#btnNewTest')?.addEventListener('click', () => {
+    if (catalogMutationControlsLocked()) return;
+    const def = CATEGORY_BY_KEY[ui.category] || CATEGORY_BY_KEY.UNIT;
+    const difficulty = def.difficulties.includes(ui.difficulty) ? ui.difficulty : (def.difficulties[0] || '');
+    const term = isPastCategory(ui.category) ? (ui.term || TERM_OPTIONS[0] || '') : '';
+    const round = isUnitCategory(ui.category) ? (ui.round || '1') : nextRoundFor(ui.category, ui.subject, difficulty);
+    const draftName = `${categoryLabel(ui.category)} ${ui.subject} ${term ? `${term} ` : ''}${difficulty} ${round}회차`;
+    ui.selectedId = '';
+    ui.difficulty = difficulty;
+    ui.term = term;
+    ui.round = isUnitCategory(ui.category) ? round : '';
+    updateListDifficultyOptions();
+    updateTermOptions();
+    updateRoundOptions();
+    renderTestList();
+    fillEditor();
+    if ($('#cfgEditType')) $('#cfgEditType').value = ui.category;
+    updateDifficultyOptions(ui.category);
+    updateEditTermOptions(ui.category);
+    if ($('#cfgSubject')) $('#cfgSubject').value = ui.subject;
+    if ($('#cfgDifficulty')) $('#cfgDifficulty').value = difficulty;
+    if ($('#cfgTerm')) $('#cfgTerm').value = TERM_OPTIONS.includes(term) ? term : (TERM_OPTIONS[0] || '');
+    if ($('#cfgRound')) $('#cfgRound').value = round;
+    if ($('#cfgName')) $('#cfgName').value = draftName;
+    if ($('#cfgProblems')) $('#cfgProblems').value = '20';
+    if ($('#cfgAnswers')) $('#cfgAnswers').value = '';
+  });
+
+  $('#btnSaveTest')?.addEventListener('click', async () => {
+    const targetCategory = editCategoryValue();
+    const targetDef = CATEGORY_BY_KEY[targetCategory] || CATEGORY_BY_KEY.UNIT;
+    const cat = TEST_CFG.categories[targetCategory] = TEST_CFG.categories[targetCategory] || { label: targetDef.label, tests: [] };
     if (!cat) return;
+    cat.label = cat.label || targetDef.label;
+    if (!Array.isArray(cat.tests)) cat.tests = [];
+    const name = canonText($('#cfgName')?.value || '');
+    const problems = Math.max(1, Number($('#cfgProblems')?.value || 0));
+    const subject = normalizeSubject($('#cfgSubject')?.value || ui.subject);
+    const difficulty = String($('#cfgDifficulty')?.value || '').trim();
+    const term = isPastCategory(targetCategory) ? normalizeTerm($('#cfgTerm')?.value || ui.term, name) : '';
+    const round = normalizeRound($('#cfgRound')?.value || '1');
+    const answers = $('#cfgAnswers')?.value || '';
 
-    const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const cur = state.curriculum || "공수1";
-    const baseName = `${state.type} ${cur} ${cat.tests.length + 1}회`;
-
-    const test = {
-      id,
-      name: baseName,
-      problems: 20,
-      curriculum: cur,
-      // ✅ 기본: 3회차 동일 빈키
-      answerKeys: { "1": [], "2": [], "3": [] }
-    };
-    cat.tests.push(test);
-
-    state.selectedId = id;
-    renderTestList();
-    fillEditorFromSelection();
-  });
-
-  saveBtn?.addEventListener("click", async () => {
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
-
-    const nameEl = $("#cfgName");
-    const probEl = $("#cfgProblems");
-    const ansEl = $("#cfgAnswers");
-    const editCurEl = $("#cfgEditCur");
-
-    const name = nameEl?.value?.trim() || "";
-    const problems = Math.max(1, Number(probEl?.value) || 0);
-    const answersText = ansEl?.value || "";
-    const editCur = String(editCurEl?.value || "").trim();
-
-    if (!name) { alert("시험명을 입력해주세요."); return; }
-
-    let test = (cat.tests || []).find(t => t.id === state.selectedId);
-
-    const cur = editCur || (state.curriculum || "공수1");
-
-    if (!test) {
-      const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      test = { id, name, problems, curriculum: cur, answerKeys: { "1": [], "2": [], "3": [] } };
-      cat.tests.push(test);
-      state.selectedId = id;
+    if (!name) {
+      alert('테스트명을 입력해주세요.');
+      return;
     }
 
-    test.name = name;
-    test.problems = problems;
-    test.curriculum = cur;
-
-    // ✅ 3줄 파싱해서 answerKeys로 저장
-    test.answerKeys = parseAnswerSpec3(answersText, problems);
-
-    // 구 스키마 호환용(서버/다른 화면이 answerKey만 보는 경우 대비)
-    test.answerKey = test.answerKeys["1"];
+    if (!beginCatalogMutationSave()) return;
 
     try {
-      const res = await fetch("/api/tests-config", { method: "POST", headers: CT, body: JSON.stringify(TEST_CFG) });
-      if (!res.ok) throw new Error(String(res.status));
-      alert("저장 완료");
+      const ref = selectedTestRef();
+      let test = ref?.test || null;
+      if (!test) {
+        test = { id: `t_${targetCategory.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` };
+        cat.tests.push(test);
+        ui.selectedId = test.id;
+      } else if (ref.categoryKey !== targetCategory) {
+        ref.cat.tests = (ref.cat.tests || []).filter(item => item !== test);
+        cat.tests.push(test);
+      }
+
+      test.name = name;
+      test.category = targetCategory;
+      test.categoryKey = targetCategory;
+      test.curriculum = subject;
+      test.difficulty = difficulty;
+      if (term) {
+        test.term = term;
+        test.examTerm = term;
+      } else {
+        delete test.term;
+        delete test.examTerm;
+      }
+      test.round = round;
+      test.problems = problems;
+      test.answerKey = parseAnswerSpec(answers, problems);
+      test.answerKeys = { [round]: test.answerKey };
+
+      await saveConfig();
+      alert('저장 완료');
+      ui.category = targetCategory;
+      ui.subject = subject;
+      ui.difficulty = difficulty;
+      ui.term = isPastCategory(targetCategory) ? term : '';
+      ui.round = isUnitCategory(targetCategory) ? round : '';
+      $('#cfgType') && ($('#cfgType').value = targetCategory);
+      $('#cfgCur') && ($('#cfgCur').value = subject);
       await loadConfigAndStats();
     } catch (e) {
       console.error(e);
-      alert("저장에 실패했습니다.");
+      alert('저장에 실패했습니다.');
+    } finally {
+      endCatalogMutationSave();
     }
   });
 
-  delBtn?.addEventListener("click", async () => {
-    if (!state.selectedId) { alert("삭제할 시험을 선택해주세요."); return; }
-    if (!confirm("정말 이 시험 정의를 삭제할까요? (학생들의 기출 기록은 그대로 남습니다)")) return;
-
-    const catKey = getCategoryKeyForType(state.type);
-    const cat = TEST_CFG.categories[catKey];
-    if (!cat) return;
-
-    cat.tests = (cat.tests || []).filter(t => t.id !== state.selectedId);
-    state.selectedId = null;
-
+  $('#btnDeleteTest')?.addEventListener('click', async () => {
+    if (!ui.selectedId) {
+      alert('삭제할 테스트를 선택해주세요.');
+      return;
+    }
+    if (!confirm('정말 이 테스트 정의를 삭제할까요? 제출 기록은 유지됩니다.')) return;
+    if (!beginCatalogMutationSave()) return;
     try {
-      const res = await fetch("/api/tests-config", { method: "POST", headers: CT, body: JSON.stringify(TEST_CFG) });
-      if (!res.ok) throw new Error(String(res.status));
-      alert("삭제 완료");
+      const ref = selectedTestRef();
+      const cat = ref?.cat || TEST_CFG.categories[ui.category];
+      if (!cat || !Array.isArray(cat.tests)) return;
+      const deletedTestId = String(ui.selectedId);
+      cat.tests = (cat.tests || []).filter(test => String(test.id) !== deletedTestId);
+      ui.selectedId = '';
+      await saveConfig([deletedTestId]);
+      alert('삭제 완료');
       await loadConfigAndStats();
     } catch (e) {
       console.error(e);
-      alert("삭제에 실패했습니다.");
+      alert('삭제에 실패했습니다.');
+    } finally {
+      endCatalogMutationSave();
     }
   });
 
-  reloadBtn?.addEventListener("click", () => loadConfigAndStats());
-  recentSel?.addEventListener("change", () => loadConfigAndStats());
+  $('#ruleGrid')?.addEventListener('change', e => {
+    if (!e.target?.matches?.('.rule-check')) return;
+    scheduleRulesAutosave();
+  });
+
+  $('#btnReloadStats')?.addEventListener('click', () => {
+    if (catalogMutationControlsLocked()) return;
+    loadStatsOnly();
+  });
+  $('#statRecent')?.addEventListener('change', () => {
+    if (catalogMutationControlsLocked()) return;
+    loadStatsOnly();
+  });
 }
 
-// ───────────── init ─────────────
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener('DOMContentLoaded', () => {
   bindUI();
+  initStatsDetailModal();
   loadConfigAndStats().catch(err => {
     console.error(err);
-    alert("테스트 설정/통계 로드에 실패했습니다.");
+    alert('테스트 설정/통계 로드에 실패했습니다.');
   });
 });
-  

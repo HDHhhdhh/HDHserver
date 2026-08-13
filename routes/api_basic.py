@@ -1,28 +1,72 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import os
 import random
 import re
+import threading
 import time
-import os
 import json
-import sqlite3
+from copy import deepcopy
 from urllib.parse import parse_qs, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
-from flask import Blueprint, abort, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, request
 
 from core.paths import (
+    BASE,
     STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH,
     EXTRA_PATH, LOGS_PATH, CLINIC_PATH, TODAY_ORDER_PATH, WEEKEND_SLOTS_PATH,
-    WATCH_PATH,
+    WATCH_PATH, TESTS_CFG_PATH,
 )
-from core.storage import load, save_atomic, nocache_resp
+from core.ghost_student import (
+    GHOST_STUDENT_ID,
+    GHOST_STUDENT_WRITE_ERROR,
+    is_ghost_student_sid,
+    mapping_contains_ghost_student_sid,
+)
+from core.log_repository import LogRepository
+from core import log_rules as _log_rules
+from core.network_access import (
+    ACADEMY_ACCESS_MESSAGE,
+    academy_network_allowed,
+    ip_allowed,
+    strip_answer_link_fields,
+)
+from core.progress_rules import (
+    PROGRESS_ALL_STUDENTS_META_KEY,
+    PROGRESS_MANUAL_META_KEY,
+    TEST_ASSIGN_CLEAR_META_KEY,
+    WATCH_AUTO_PROGRESS_META_KEY,
+    merge_progress_day_sid as _merge_progress_day_sid,
+    merge_watch_entry as _merge_watch_entries_for_mid_migration,
+    normalize_watch_entry as _normalize_watch_entry,
+    watch_rank as _watch_rank,
+    watch_auto_status as _watch_auto_status,
+)
+from core.video_review_rules import resolve_video_review_states_before_date
+from core.student_curriculum_progress import build_curriculum_progress
+from core.student_schedule_projection import project_student_schedule, select_next_schedule
+from core.student_notification_hooks import (
+    enqueue_current_schedule_changes,
+    enqueue_progress_milestones,
+    runtime_repository,
+    student_schedule_changed_sids,
+)
+from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
 bp_api_basic = Blueprint("api_basic", __name__)
 
 CT = {"Content-Type": "application/json"}
+STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^"
+GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
+GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
+GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
+_PROGRESS_CACHE_LOCK = threading.Lock()
+_PROGRESS_CACHE_SIGNATURE: tuple[str, int, int] | None = None
+_PROGRESS_CACHE_DATA: dict | None = None
 
 # ─────────────────────────────────────────────
 # 공통 CRUD
@@ -35,17 +79,123 @@ def crud(path):
     return "", 204
 
 
-def _load_progress_strict() -> dict:
+def _progress_file_signature(path=None) -> tuple[str, int, int] | None:
+    progress_path = path or PRG_PATH
     try:
-        data = json.loads(PRG_PATH.read_text("utf-8-sig"))
+        stat = progress_path.stat()
     except FileNotFoundError:
-        return {}
-    except Exception as e:
-        raise RuntimeError(f"progress.json read failed: {e}") from e
+        return None
+    return str(progress_path), stat.st_mtime_ns, stat.st_size
+
+
+def _load_progress_strict(path=None) -> dict:
+    global _PROGRESS_CACHE_DATA, _PROGRESS_CACHE_SIGNATURE
+
+    progress_path = path or PRG_PATH
+    signature = _progress_file_signature(progress_path)
+    with _PROGRESS_CACHE_LOCK:
+        if _PROGRESS_CACHE_SIGNATURE == signature and _PROGRESS_CACHE_DATA is not None:
+            return _PROGRESS_CACHE_DATA
+
+        try:
+            data = {} if signature is None else json.loads(progress_path.read_text("utf-8-sig"))
+        except Exception as e:
+            raise RuntimeError(f"progress.json read failed: {e}") from e
+
+        if not isinstance(data, dict):
+            raise RuntimeError("progress.json must be an object")
+
+        _PROGRESS_CACHE_SIGNATURE = signature
+        _PROGRESS_CACHE_DATA = data
+        return data
+
+
+def _save_progress_strict(data: dict, path=None) -> None:
+    global _PROGRESS_CACHE_DATA, _PROGRESS_CACHE_SIGNATURE
 
     if not isinstance(data, dict):
         raise RuntimeError("progress.json must be an object")
-    return data
+
+    progress_path = path or PRG_PATH
+    save_atomic(progress_path, data, compact=True)
+    signature = _progress_file_signature(progress_path)
+    with _PROGRESS_CACHE_LOCK:
+        _PROGRESS_CACHE_SIGNATURE = signature
+        _PROGRESS_CACHE_DATA = data
+
+
+def _student_has_schedule_on_date(student: dict, date_key: str) -> bool:
+    try:
+        target = dt.date.fromisoformat(date_key)
+    except ValueError:
+        return False
+    wchr = "월화수목금토일"[target.weekday()]
+    for key, value in (student or {}).items():
+        if re.fullmatch(r"day\d+", str(key)) and str(value or "").startswith(wchr):
+            return True
+    return False
+
+
+def _weekday_char_for_date(date_key: str) -> str:
+    try:
+        target = dt.date.fromisoformat(str(date_key or "").strip())
+    except ValueError:
+        return ""
+    return "월화수목금토일"[target.weekday()]
+
+
+def _normalize_schedule_slots(raw) -> list[int]:
+    values = raw if isinstance(raw, list) else [raw]
+    out = []
+    seen = set()
+    for value in values:
+        for token in re.findall(r"(?<!\d)([1-6])(?!\d)", str(value or "")):
+            slot = int(token)
+            if slot in seen:
+                continue
+            seen.add(slot)
+            out.append(slot)
+    return sorted(out)
+
+
+def _student_slots_for_date(student: dict, sid: str, date_key: str, weekend_slots=None) -> list[int]:
+    """Return the date-specific class slots, honoring makeup overrides first."""
+    weekend = weekend_slots if isinstance(weekend_slots, dict) else {}
+    day_override = weekend.get(str(date_key or "")) if isinstance(weekend, dict) else None
+    if isinstance(day_override, dict):
+        override_value = _sid_lookup(day_override, sid)
+        override_slots = _normalize_schedule_slots(override_value)
+        if override_slots:
+            return override_slots
+
+    weekday = _weekday_char_for_date(date_key)
+    if not weekday:
+        return []
+    slots = []
+    for key, value in (student or {}).items():
+        if not re.fullmatch(r"day\d+", str(key)):
+            continue
+        text = str(value or "")
+        if text.startswith(weekday):
+            slots.extend(_normalize_schedule_slots(text))
+    return sorted(set(slots))
+
+
+def _has_consecutive_slots(slots) -> bool:
+    ordered = sorted({int(slot) for slot in (slots or []) if str(slot).isdigit()})
+    return any(right == left + 1 for left, right in zip(ordered, ordered[1:]))
+
+
+def _student_is_registered_on_date(student: dict, sid: str, date_key: str, extra=None) -> bool:
+    if _student_has_schedule_on_date(student, date_key):
+        return True
+    if extra is None:
+        try:
+            extra = load(EXTRA_PATH) or {}
+        except Exception:
+            extra = {}
+    extra_ids = extra.get(date_key, []) if isinstance(extra, dict) else []
+    return str(sid) in {str(x) for x in (extra_ids or [])}
 
 
 def _extract_kollus_mid_from_url(url) -> str:
@@ -115,53 +265,6 @@ def _merge_progress_status(existing: str, incoming: str) -> str:
     a = str(existing or "").strip()
     b = str(incoming or "").strip()
     return a if _progress_status_rank(a) >= _progress_status_rank(b) else b
-
-
-def _normalize_watch_entry_for_mid_migration(entry) -> dict:
-    if not isinstance(entry, dict):
-        entry = {}
-
-    try:
-        last = max(0, int(float(entry.get("last", 0) or 0)))
-    except Exception:
-        last = 0
-    try:
-        dur = max(0, int(float(entry.get("dur", 0) or 0)))
-    except Exception:
-        dur = 0
-    try:
-        updated_at = int(entry.get("updatedAt") or 0)
-    except Exception:
-        updated_at = 0
-
-    completed = bool(entry.get("completed", False))
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": updated_at,
-    }
-
-
-def _merge_watch_entries_for_mid_migration(prev, incoming) -> dict:
-    a = _normalize_watch_entry_for_mid_migration(prev)
-    b = _normalize_watch_entry_for_mid_migration(incoming)
-
-    last = max(a["last"], b["last"])
-    dur = max(a["dur"], b["dur"])
-    completed = a["completed"] or b["completed"]
-    if dur > 0 and last >= max(dur - 1, int(dur * 0.95)):
-        completed = True
-
-    return {
-        "last": last,
-        "dur": dur,
-        "completed": completed,
-        "updatedAt": max(a["updatedAt"], b["updatedAt"]),
-    }
 
 
 def _replace_mid_in_updates(data, old_mid: str, new_mid: str) -> bool:
@@ -246,7 +349,7 @@ def _migrate_video_mid_references(prev_videos, next_videos):
         return
 
     updates = load(UPD_PATH) or {}
-    progress = _load_progress_strict()
+    progress = load(PRG_PATH)
     watch = load(WATCH_PATH) or {}
 
     updates_changed = False
@@ -261,7 +364,7 @@ def _migrate_video_mid_references(prev_videos, next_videos):
     if updates_changed:
         save_atomic(UPD_PATH, updates)
     if progress_changed:
-        save_atomic(PRG_PATH, progress)
+        _save_progress_strict(progress)
     if watch_changed:
         save_atomic(WATCH_PATH, watch)
 
@@ -269,110 +372,739 @@ def _migrate_video_mid_references(prev_videos, next_videos):
 # ─────────────────────────────────────────────
 # ✅ 프로세스 간 파일 락 (JSON 저장 보호용)
 # ─────────────────────────────────────────────
-class _InterProcessFileLock:
-    def __init__(
-        self,
-        lock_path: str,
-        timeout_sec: float = 4.0,
-        poll_sec: float = 0.05,
-        stale_sec: float = 30.0,
-    ):
-        self.lock_path = lock_path
-        self.timeout_sec = timeout_sec
-        self.poll_sec = poll_sec
-        self.stale_sec = stale_sec
-        self._fd = None
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-        except Exception:
-            return False
-
-    def _try_break_stale_lock(self):
-        try:
-            st = os.stat(self.lock_path)
-        except FileNotFoundError:
-            return
-        except Exception:
-            return
-
-        age = time.time() - float(st.st_mtime)
-        if age < self.stale_sec:
-            return
-
-        pid = None
-        try:
-            with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as f:
-                txt = f.read()
-            m = re.search(r"\bpid=(\d+)\b", txt)
-            if m:
-                pid = int(m.group(1))
-        except Exception:
-            pid = None
-
-        # If owner pid is known and still alive, don't break lock even if old.
-        if pid is not None and self._pid_alive(pid):
-            return
-
-        try:
-            os.remove(self.lock_path)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
-
-    def acquire(self):
-        deadline = time.time() + self.timeout_sec
-        while True:
-            try:
-                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                self._fd = fd
-                os.write(fd, f"pid={os.getpid()} time={time.time()}".encode("utf-8"))
-                return
-            except FileExistsError:
-                self._try_break_stale_lock()
-                if time.time() > deadline:
-                    raise TimeoutError(f"lock timeout: {self.lock_path}")
-                time.sleep(self.poll_sec)
-
-    def release(self):
-        try:
-            if self._fd is not None:
-                try:
-                    os.close(self._fd)
-                except Exception:
-                    pass
-            self._fd = None
-            try:
-                os.remove(self.lock_path)
-            except FileNotFoundError:
-                pass
-        except Exception:
-            pass
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *_):
-        self.release()
+class _InterProcessFileLock(InterProcessFileLock):
+    """Backward-compatible alias for modules importing the old route-local lock."""
 
 
 def _logs_lock():
     lp = str(getattr(LOGS_PATH, "__fspath__", lambda: str(LOGS_PATH))())
-    return _InterProcessFileLock(lp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+    return _InterProcessFileLock(lp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
+
+
+def _sid_keys(sid: str) -> list[str]:
+    """Return canonical and numeric aliases used by date-scoped stores."""
+    key = str(sid or "").strip()
+    keys = [key]
+    if key.isdigit():
+        numeric = str(int(key))
+        if numeric not in keys:
+            keys.append(numeric)
+    return [item for item in keys if item]
 
 
 def _progress_lock():
     pp = str(getattr(PRG_PATH, "__fspath__", lambda: str(PRG_PATH))())
-    return _InterProcessFileLock(pp + ".lock", timeout_sec=8.0, poll_sec=0.05, stale_sec=30.0)
+    return _InterProcessFileLock(pp + ".lock", timeout_sec=30.0, poll_sec=0.05, stale_sec=30.0)
+
+
+def _updates_lock():
+    up = str(getattr(UPD_PATH, "__fspath__", lambda: str(UPD_PATH))())
+    return _InterProcessFileLock(up + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
+
+
+def _sid_lookup(mapping: dict, sid: str):
+    if not isinstance(mapping, dict):
+        return None
+    keys = [str(sid or "").strip()]
+    if keys[0].isdigit():
+        alt = str(int(keys[0]))
+        if alt not in keys:
+            keys.append(alt)
+    for key in keys:
+        if key and key in mapping:
+            return mapping.get(key)
+    return None
+
+
+def _write_sid_mapping(mapping: dict, sid: str, value) -> None:
+    key = str(sid or "").strip()
+    if not key:
+        return
+    num_key = str(int(key)) if key.isdigit() else None
+    if num_key and num_key != key:
+        mapping.pop(num_key, None)
+    if value is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = value
+
+
+def _normalize_video_assign_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("videos")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+def _is_manual_video_assignment(value) -> bool:
+    if not isinstance(value, dict):
+        return False
+    source = str(value.get("source") or "").strip().lower()
+    return (
+        source in {"manual", "selfstudy"}
+        or value.get("manual") is True
+        or value.get("manualVideoAssign") is True
+    )
+
+
+def _normalize_test_assignment_status(value) -> str:
+    if isinstance(value, dict):
+        value = value.get("status")
+    s = str(value or "").strip()
+    if not s or s == "none":
+        return ""
+    if s in ("assigned", "done", "interrupted", "skip"):
+        return s
+    return "assigned"
+
+
+def _test_assignment_status_label(status: str) -> str:
+    s = _normalize_test_assignment_status(status)
+    if s == "done":
+        return "완료"
+    if s == "interrupted":
+        return "배부"
+    if s == "skip":
+        return "제외"
+    return "배정" if s else ""
+
+
+def _is_active_test_assignment_status(status: str) -> bool:
+    return _normalize_test_assignment_status(status) in {"assigned", "interrupted"}
+
+
+def _round_label_for_assignment(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw if "회" in raw else f"{raw}회차"
+
+
+def _fallback_assigned_test_from_label(label: str, status: str) -> dict:
+    parts = [p.strip() for p in str(label or "").split(" / ") if p.strip()]
+    item = {
+        "label": str(label or "").strip(),
+        "name": parts[-1] if parts else str(label or "").strip(),
+        "status": status,
+        "statusLabel": _test_assignment_status_label(status),
+    }
+    if len(parts) >= 5:
+        item.update({
+            "categoryLabel": parts[0],
+            "curriculum": parts[1],
+            "difficulty": parts[2],
+            "round": parts[3].replace("회차", "").replace("회", "").strip(),
+        })
+    return item
+
+
+def _normalized_test_curriculum(value) -> str:
+    compact = re.sub(r"\s+", "", str(value or ""))
+    aliases = {
+        "공통수학1": "공수1",
+        "공통수학2": "공수2",
+        "미적1": "미적분1",
+        "미적분Ⅰ": "미적분1",
+        "미적분I": "미적분1",
+        "미적2": "미적분2",
+        "미적분Ⅱ": "미적분2",
+        "미적분II": "미적분2",
+        "확률과통계": "확통",
+    }
+    return aliases.get(compact, "미적분1" if compact == "미적분" else compact)
+
+
+def _assigned_test_curriculum(item: dict) -> str:
+    direct = item.get("curriculum") or item.get("subject") or item.get("course")
+    if str(direct or "").strip():
+        return _normalized_test_curriculum(direct)
+    parts = [part.strip() for part in str(item.get("label") or "").split("/") if part.strip()]
+    return _normalized_test_curriculum(parts[1] if len(parts) > 1 else "")
+
+
+def _filter_assigned_tests_for_student_curriculum(items: list[dict], student: dict) -> list[dict]:
+    current = _normalized_test_curriculum(student.get("curriculum") or student.get("subject"))
+    if not current:
+        return items
+    return [item for item in items if _assigned_test_curriculum(item) == current]
+
+
+def _assigned_test_label(raw: dict) -> str:
+    label = str(raw.get("label") or "").strip()
+    if label:
+        return label
+    pieces = [
+        raw.get("categoryLabel"),
+        raw.get("curriculum"),
+        raw.get("difficulty"),
+        _round_label_for_assignment(raw.get("round")),
+        raw.get("name"),
+    ]
+    return " / ".join(str(x).strip() for x in pieces if str(x or "").strip())
+
+
+def _normalized_test_status_map(tests) -> dict:
+    if not isinstance(tests, dict):
+        return {}
+    statuses = {
+        str(label).strip(): _normalize_test_assignment_status(status)
+        for label, status in tests.items()
+    }
+    return {label: status for label, status in statuses.items() if label and status}
+
+
+def _latest_previous_test_statuses(progress_all: dict, date: str, sid: str) -> dict:
+    return _latest_previous_test_statuses_from_sources(progress_all, None, date, sid)
+
+
+def _log_test_statuses_for_sid(logs_map: dict | None, date: str, sid: str) -> dict:
+    if not isinstance(logs_map, dict):
+        return {}
+    day_logs = logs_map.get(date)
+    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+    if not isinstance(log_entry, dict):
+        return {}
+
+    out = {}
+    for field in (TEST_ASSIGN_DAILY_ITEMS_KEY, "assignedTests"):
+        items = log_entry.get(field)
+        if not isinstance(items, list):
+            continue
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            label = _assigned_test_label(raw)
+            status = _normalize_test_assignment_status(raw.get("status") or "assigned")
+            if label and _is_active_test_assignment_status(status):
+                out[label] = status
+    return out
+
+
+def _latest_previous_test_statuses_from_sources(
+    progress_all: dict,
+    logs_map: dict | None,
+    date: str,
+    sid: str,
+) -> dict:
+    previous_date_keys = set()
+    for source in (progress_all, logs_map):
+        if not isinstance(source, dict):
+            continue
+        for raw_date in source.keys():
+            raw_date_s = str(raw_date or "")
+            if DATE_RE.match(raw_date_s) and raw_date_s < str(date):
+                previous_date_keys.add(raw_date_s)
+
+    for prev_date in sorted(previous_date_keys, reverse=True):
+        prev_day = progress_all.get(prev_date) if isinstance(progress_all, dict) else {}
+        prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
+        if isinstance(prev_entry, dict):
+            if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
+                break
+            prev_tests = prev_entry.get("tests")
+            if isinstance(prev_tests, dict) and prev_tests:
+                prev_statuses = _normalized_test_status_map(prev_tests)
+                # Previous skip means inactive/excluded, so it must not hide a
+                # test that became newly assigned on the current date.
+                return {
+                    label: status
+                    for label, status in prev_statuses.items()
+                    if _is_active_test_assignment_status(status)
+                }
+        log_statuses = _log_test_statuses_for_sid(logs_map, prev_date, sid)
+        if log_statuses:
+            return log_statuses
+    return {}
+
+
+def _normalize_test_answer_round(round_value) -> str:
+    raw = str(round_value or "1").strip()
+    match = re.search(r"\d+", raw)
+    if match:
+        return match.group(0)
+    return "1"
+
+
+def _drive_file_url(file_id: str) -> str:
+    fid = str(file_id or "").strip()
+    return f"https://drive.google.com/file/d/{fid}/view?usp=drivesdk" if fid else ""
+
+
+def _load_tests_config_for_answer_links() -> dict:
+    try:
+        mtime = TESTS_CFG_PATH.stat().st_mtime
+    except FileNotFoundError:
+        _TESTS_CONFIG_CACHE.update({"mtime": None, "data": {}})
+        return {}
+    except Exception:
+        return _TESTS_CONFIG_CACHE.get("data") or {}
+
+    if _TESTS_CONFIG_CACHE.get("mtime") == mtime:
+        return _TESTS_CONFIG_CACHE.get("data") or {}
+
+    try:
+        data = json.loads(TESTS_CFG_PATH.read_text("utf-8-sig"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _TESTS_CONFIG_CACHE.update({"mtime": mtime, "data": data})
+    return data
+
+
+def _load_test_answer_link_map() -> dict:
+    try:
+        mtime = TEST_ANSWER_LINK_MAP_PATH.stat().st_mtime
+    except FileNotFoundError:
+        _TEST_ANSWER_LINK_MAP_CACHE.update({"mtime": None, "data": {}})
+        return {}
+    except Exception:
+        return _TEST_ANSWER_LINK_MAP_CACHE.get("data") or {}
+
+    if _TEST_ANSWER_LINK_MAP_CACHE.get("mtime") == mtime:
+        return _TEST_ANSWER_LINK_MAP_CACHE.get("data") or {}
+
+    try:
+        data = json.loads(TEST_ANSWER_LINK_MAP_PATH.read_text("utf-8-sig"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _TEST_ANSWER_LINK_MAP_CACHE.update({"mtime": mtime, "data": data})
+    return data
+
+
+def _answer_url_from_link_entry(entry) -> str:
+    if isinstance(entry, str):
+        return entry.strip()
+    if isinstance(entry, dict):
+        for key in ("answerUrl", "answer_url", "solutionUrl", "solution_url", "url", "link"):
+            value = str(entry.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _assignment_direct_answer_url(item: dict) -> str:
+    direct = _answer_url_from_link_entry(item)
+    if direct:
+        return direct
+
+    source_files = item.get("sourceFiles") or item.get("source_files")
+    if isinstance(source_files, dict):
+        direct = _answer_url_from_link_entry(source_files)
+        if direct:
+            return direct
+
+    return ""
+
+
+def _test_assignment_category_key(item: dict) -> str:
+    source = " ".join(str(item.get(key) or "") for key in (
+        "category", "categoryKey", "categoryLabel", "label", "type"
+    ))
+    upper = source.upper()
+    compact = re.sub(r"\s+", "", source)
+    if re.search(r"\bUNIT\b", upper) or "\ub2e8\uc6d0\ud3c9\uac00" in source or "\ub2e8\uc6d0" in source:
+        return "UNIT"
+    if "REVIEW" in upper or "\ubcf5\uc2b5" in compact:
+        return "REVIEW"
+    if "SCHOOL_PAST" in upper or "SCHOOL" in upper or "\ud559\uad70\uc9c0" in compact or "\ud559\uad50\ubcc4" in compact:
+        return "SCHOOL_PAST"
+    if "ILSAN_PAST" in upper or "ILSAN" in upper or "\uc77c\uc0b0" in compact:
+        return "ILSAN_PAST"
+    return ""
+
+
+def _normalize_test_assignment_difficulty(category_key: str, value) -> str:
+    text = str(value or "").strip()
+    if category_key == "ILSAN_PAST":
+        if "\uadf8\ub798\ud504" in text:
+            return "\uadf8\ub798\ud504 \ud3ec\ud568"
+        if text == "\uc0c1" or "\uc911\uc0c1" in text:
+            return "\uc911\uc0c1"
+        if "\uc911" in text:
+            return "\uc911"
+    return text
+
+
+def _test_assignment_has_answer_link(item: dict) -> bool:
+    return _test_assignment_category_key(item) in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}
+
+
+def _test_config_answer_url(test: dict) -> str:
+    if not isinstance(test, dict):
+        return ""
+    direct = _answer_url_from_link_entry(test)
+    if direct:
+        return direct
+    source_files = test.get("sourceFiles") or test.get("source_files")
+    if isinstance(source_files, dict):
+        direct = _answer_url_from_link_entry(source_files)
+        if direct:
+            return direct
+        for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
+            url = _drive_file_url(source_files.get(key))
+            if url:
+                return url
+    for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
+        url = _drive_file_url(test.get(key))
+        if url:
+            return url
+    return ""
+
+
+def _candidate_test_ids(item: dict) -> list[str]:
+    candidates = []
+    for key in ("id", "testId", "sourceId", "source_id"):
+        raw = str(item.get(key) or "").strip()
+        if not raw:
+            continue
+        candidates.append(raw)
+        stripped = re.sub(r"_r[123]$", "", raw)
+        if stripped != raw:
+            candidates.append(stripped)
+    out = []
+    seen = set()
+    for value in candidates:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _find_test_config_for_assignment(item: dict) -> dict:
+    category_key = _test_assignment_category_key(item)
+    if category_key not in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}:
+        return {}
+
+    config = _load_tests_config_for_answer_links()
+    category = (config.get("categories") or {}).get(category_key) if isinstance(config, dict) else {}
+    tests = category.get("tests") if isinstance(category, dict) else []
+    if not isinstance(tests, list):
+        return {}
+
+    ids = set(_candidate_test_ids(item))
+    if ids:
+        for test in tests:
+            if not isinstance(test, dict):
+                continue
+            test_ids = {
+                str(test.get("id") or "").strip(),
+                str(test.get("sourceId") or test.get("source_id") or "").strip(),
+            }
+            if ids.intersection(x for x in test_ids if x):
+                return test
+
+    item_name = str(item.get("name") or item.get("testName") or "").strip()
+    item_label = str(item.get("label") or "").strip()
+    item_round = _normalize_test_answer_round(item.get("round"))
+    item_cur = str(item.get("curriculum") or "").strip()
+    item_difficulty = _normalize_test_assignment_difficulty(
+        category_key,
+        item.get("difficulty"),
+    )
+    item_term = str(item.get("term") or "").strip()
+
+    for test in tests:
+        if not isinstance(test, dict):
+            continue
+        test_name = str(test.get("name") or "").strip()
+        name_ok = item_name == test_name if item_name else bool(test_name and test_name in item_label)
+        if not name_ok:
+            continue
+        if item_round and _normalize_test_answer_round(test.get("round")) != item_round:
+            continue
+        if item_cur and str(test.get("curriculum") or "").strip() != item_cur:
+            continue
+        test_difficulty = _normalize_test_assignment_difficulty(
+            category_key,
+            test.get("difficulty"),
+        )
+        if item_difficulty and test_difficulty != item_difficulty:
+            continue
+        if item_term and str(test.get("term") or "").strip() != item_term:
+            continue
+        return test
+    return {}
+
+
+def _test_assignment_answer_url(item: dict) -> str:
+    if not isinstance(item, dict) or not _test_assignment_has_answer_link(item):
+        return ""
+
+    direct_url = _assignment_direct_answer_url(item)
+    if direct_url:
+        return direct_url
+
+    configured_test = _find_test_config_for_assignment(item)
+    config_url = _test_config_answer_url(configured_test)
+    if config_url:
+        return config_url
+
+    link_map = _load_test_answer_link_map()
+    if not link_map:
+        return ""
+
+    round_key = _normalize_test_answer_round(item.get("round"))
+    for candidate in (item, configured_test):
+        for test_id in _candidate_test_ids(candidate):
+            rounds = link_map.get(test_id)
+            if isinstance(rounds, dict):
+                url = _answer_url_from_link_entry(rounds.get(round_key))
+                if url:
+                    return url
+            url = _answer_url_from_link_entry(rounds)
+            if url:
+                return url
+    return ""
+
+
+def _append_unique_assigned_test_label(labels: list[str], label: str) -> None:
+    if label not in labels:
+        labels.append(label)
+
+
+def _collect_assigned_test_metadata(
+    source_map,
+    date: str,
+    sid: str,
+    by_label: dict,
+    log_labels: list[str],
+    daily_labels: list[str],
+) -> None:
+    day_logs = source_map.get(date) if isinstance(source_map, dict) else {}
+    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+
+    daily_items = log_entry.get(TEST_ASSIGN_DAILY_ITEMS_KEY) if isinstance(log_entry, dict) else []
+    if isinstance(daily_items, list):
+        for raw in daily_items:
+            if not isinstance(raw, dict):
+                continue
+            label = _assigned_test_label(raw)
+            if not label:
+                continue
+            _append_unique_assigned_test_label(daily_labels, label)
+            by_label[label] = {**by_label.get(label, {}), **raw, "label": label}
+
+    log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
+    if not isinstance(log_items, list):
+        return
+
+    for raw in log_items:
+        if not isinstance(raw, dict):
+            continue
+        label = _assigned_test_label(raw)
+        if not label:
+            continue
+        _append_unique_assigned_test_label(log_labels, label)
+        item = dict(raw)
+        if label in by_label:
+            merged = dict(item)
+            merged.update(by_label[label])
+            by_label[label] = merged
+        else:
+            by_label[label] = item
+
+
+def _student_assigned_test_labels(
+    status_by_label: dict,
+    log_labels: list[str],
+    daily_labels: list[str],
+) -> list[str]:
+    if daily_labels:
+        if status_by_label:
+            labels = [
+                label
+                for label in daily_labels
+                if (
+                    label in status_by_label
+                    and _is_active_test_assignment_status(status_by_label.get(label))
+                )
+            ]
+            for label, status in status_by_label.items():
+                if not _is_active_test_assignment_status(status) or label in labels:
+                    continue
+                labels.append(label)
+            return labels
+        return [
+            label
+            for label in daily_labels
+        ]
+
+    active_labels = [
+        label
+        for label, status in status_by_label.items()
+        if _is_active_test_assignment_status(status)
+    ] if status_by_label else list(log_labels)
+    return active_labels
+
+
+def _build_student_assigned_test_items(
+    labels: list[str],
+    by_label: dict,
+    status_by_label: dict,
+) -> list[dict]:
+    out = []
+    for label in labels:
+        item = dict(by_label.get(label) or {})
+        status = (
+            status_by_label.get(label)
+            or _normalize_test_assignment_status(item.get("status"))
+            or "assigned"
+        )
+        if not _is_active_test_assignment_status(status):
+            continue
+        if not item:
+            item = _fallback_assigned_test_from_label(label, status)
+        item["label"] = item.get("label") or label
+        item["status"] = status
+        item["statusLabel"] = _test_assignment_status_label(status)
+        answer_url = _test_assignment_answer_url(item)
+        if answer_url:
+            item["answerUrl"] = answer_url
+        out.append(item)
+
+    return out
+
+
+def _student_assigned_tests_for_date(
+    progress_all: dict,
+    logs_map: dict,
+    date: str,
+    sid: str,
+    fallback_logs_map=None,
+) -> list[dict]:
+    day_progress = progress_all.get(date) if isinstance(progress_all, dict) else {}
+    progress_entry = _sid_lookup(day_progress if isinstance(day_progress, dict) else {}, sid)
+    current_cleared = isinstance(progress_entry, dict) and bool(progress_entry.get(TEST_ASSIGN_CLEAR_META_KEY))
+    progress_tests = progress_entry.get("tests") if isinstance(progress_entry, dict) else {}
+    if not isinstance(progress_tests, dict):
+        progress_tests = {}
+
+    status_by_label = _normalized_test_status_map(progress_tests)
+
+    by_label = {}
+    log_labels = []
+    daily_labels = []
+
+    if current_cleared and not status_by_label:
+        return []
+
+    _collect_assigned_test_metadata(logs_map, date, sid, by_label, log_labels, daily_labels)
+    if not log_labels:
+        _collect_assigned_test_metadata(fallback_logs_map, date, sid, by_label, log_labels, daily_labels)
+
+    labels = _student_assigned_test_labels(
+        status_by_label,
+        log_labels,
+        daily_labels,
+    )
+    return _build_student_assigned_test_items(labels, by_label, status_by_label)
+
+
+def _merge_update_assignment(current, incoming):
+    if incoming is None:
+        return current
+
+    videos = _normalize_video_assign_list(incoming)
+    if isinstance(incoming, list):
+        return videos
+
+    if isinstance(incoming, dict):
+        if incoming.get("remove") is True:
+            return None
+        out = dict(current) if isinstance(current, dict) else {}
+        for key, value in incoming.items():
+            if key in ("remove",):
+                continue
+            if key == "videos":
+                out["videos"] = videos
+            elif value is not None:
+                out[str(key)] = value
+        if "videos" not in incoming and videos:
+            out["videos"] = videos
+        return out if out else (videos if videos else current)
+
+    return current
+
+
+def _merge_updates_payload(current, incoming):
+    if not isinstance(current, dict):
+        current = {}
+    if not isinstance(incoming, dict):
+        return current
+
+    out = dict(current)
+    for date, by_sid in incoming.items():
+        date_s = str(date or "").strip()
+        if not DATE_RE.match(date_s) or not isinstance(by_sid, dict):
+            continue
+
+        day = out.setdefault(date_s, {})
+        if not isinstance(day, dict):
+            out[date_s] = {}
+            day = out[date_s]
+
+        for sid, value in by_sid.items():
+            sid_s = str(sid or "").strip()
+            if not sid_s:
+                continue
+            merged = _merge_update_assignment(_sid_lookup(day, sid_s), value)
+            _write_sid_mapping(day, sid_s, merged)
+
+        if not day:
+            out.pop(date_s, None)
+    return out
+
+
+def _assigned_material_list(value) -> list[str]:
+    if isinstance(value, dict):
+        value = value.get("materials")
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("id") or item.get("url") or item.get("path")
+        key = str(item or "").strip()
+        if not key or key in seen:
+            continue
+        out.append(key)
+        seen.add(key)
+    return out
+
+
+def _filter_materials_for_assignment(materials, assigned):
+    if not isinstance(materials, dict):
+        return {}
+    wanted = {str(x) for x in (assigned or []) if str(x or "").strip()}
+    if not wanted:
+        return {}
+
+    out = {}
+    for key, value in materials.items():
+        item = value if isinstance(value, dict) else {}
+        candidates = {
+            str(key),
+            str(item.get("id") or ""),
+            str(item.get("mid") or ""),
+            str(item.get("url") or ""),
+            str(item.get("path") or ""),
+        }
+        if candidates & wanted:
+            out[key] = value
+    return out
 
 
 # ─────────────────────────────────────────────
@@ -382,268 +1114,321 @@ def _progress_lock():
 # - "__clear": ["notes", ...] 로 명시 삭제
 # - done=true 는 저장/수정으로 false로 풀리지 않게(명시 해제 기능 없으면 고정)
 # ─────────────────────────────────────────────
-def _is_empty_value(v) -> bool:
-    if v is None:
-        return True
-    if isinstance(v, str) and v.strip() == "":
-        return True
-    if isinstance(v, list) and len(v) == 0:
-        return True
-    if isinstance(v, dict) and len(v) == 0:
-        return True
-    return False
+def _is_question_placeholder(value) -> bool:
+    text = re.sub(r"\s+", "", str(value or ""))
+    return len(text) >= 2 and set(text) == {"?"}
 
 
-def _truthy(v) -> bool:
-    return v is True or v == 1 or v == "1" or v == "true"
+def _looks_corrupted_placeholder_text(value) -> bool:
+    text = str(value or "").strip()
+    if text.count("?") < 2:
+        return False
+    # If any real Korean/CJK/Latin text remains, keep it. This avoids
+    # stripping legitimate notes such as "확인??" while hiding mojibake.
+    return re.search(r"[A-Za-z가-힣一-龥]", text) is None
 
 
-def _merge_entry_safe(cur: dict, inc: dict) -> dict:
-    if not isinstance(cur, dict):
-        cur = {}
-    if not isinstance(inc, dict):
-        return cur
-
-    out = dict(cur)
-
-    # 명시 삭제
-    clear = inc.get("__clear")
-    if isinstance(clear, list):
-        for k in clear:
-            kk = str(k).strip()
-            if kk:
-                out.pop(kk, None)
-
-    cur_done = _truthy(cur.get("done"))
-
-    for k, v in inc.items():
-        if k == "__clear":
-            continue
-
-        # None은 삭제로 쓰지 말고 __clear로
-        if v is None:
-            continue
-
-        # 빈값이 기존 유효값을 덮는 것 방지
-        if _is_empty_value(v) and not _is_empty_value(out.get(k)):
-            continue
-
-        out[k] = v
-
-    # ✅ inc가 done을 언급하지 않았는데, cur이 done이었다면 유지
-    if cur_done and "done" not in inc:
-        out["done"] = True
-
-    # Safety: if this patch explicitly marks completion, do not keep
-    # stale archived=true unless the patch also explicitly asks to archive.
-    marks_done_now = _truthy(inc.get("done"))
-    marks_leave_now = any(
-        (k in inc) and (not _is_empty_value(inc.get(k)))
-        for k in ("leaveTime", "leaveAt", "doneTime")
-    )
-    done_after_merge = _truthy(out.get("done"))
-    if (marks_done_now or (marks_leave_now and (cur_done or done_after_merge))) and "archived" not in inc:
-        out.pop("archived", None)
-
-    return out
+def _clean_placeholder_text(value) -> str:
+    text = str(value or "").strip()
+    return "" if _is_question_placeholder(text) or _looks_corrupted_placeholder_text(text) else text
 
 
-def _normalize_hw_rows_for_compare(rows) -> list:
-    if not isinstance(rows, list):
+def _student_homework_books(sid: str) -> List[str]:
+    try:
+        students = load(STU_PATH) or []
+    except Exception:
+        students = []
+    if not isinstance(students, list):
         return []
 
-    out = []
+    sid_s = str(sid or "").strip()
+    stu = next(
+        (s for s in students if isinstance(s, dict) and str(s.get("id") or "").strip() == sid_s),
+        None,
+    )
+    if not stu:
+        return []
+
+    books: List[str] = []
+    for key in sorted(stu.keys(), key=lambda k: int(k[7:]) if re.match(r"^subBook\d+$", str(k)) else 999):
+        if not re.match(r"^subBook\d+$", str(key)):
+            continue
+        val = str(stu.get(key) or "").strip()
+        if val and val not in books:
+            books.append(val)
+    return books
+
+
+def _book_key(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip()).lower()
+
+
+def _hw_row_summary(row: dict) -> str:
+    if not isinstance(row, dict) or row.get("_deleted"):
+        return ""
+
+    book = str(row.get("book") or "").strip()
+    this_hw = str(row.get("this") or "").strip()
+    pct = row.get("pct")
+    pct_s = "" if pct in ("", None) else f"{str(pct).strip()}%"
+    comment = str(row.get("comment") or "").strip()
+    next_hw = str(row.get("next") or "").strip()
+
+    parts: List[str] = []
+    if book:
+        parts.append(f"[{book}]")
+    if this_hw:
+        parts.append(this_hw)
+    if pct_s:
+        parts.append(pct_s)
+    if comment:
+        parts.append(f"({comment})")
+    if next_hw:
+        parts.append(f"→ {next_hw}")
+    return " ".join(parts).strip()
+
+
+def _repair_homework_rows(rows, sid: str) -> tuple[list, bool]:
+    if not isinstance(rows, list):
+        return [], False
+
+    books = _student_homework_books(sid)
+    used = {
+        _book_key(row.get("book"))
+        for row in rows
+        if isinstance(row, dict) and not _is_question_placeholder(row.get("book"))
+    }
+    used.discard("")
+
+    out: List[dict] = []
+    changed = False
+
     for row in rows:
         if not isinstance(row, dict):
+            changed = True
             continue
 
-        if "book" in row or "this" in row or "comment" in row or "next" in row:
-            book = str(row.get("book") or "").strip()
-            this_hw = str(row.get("this") or "").strip()
-            pct = row.get("pct")
-            pct_s = "" if pct in ("", None) else str(pct).strip()
-            comment = str(row.get("comment") or "").strip()
-            next_hw = str(row.get("next") or "").strip()
-            deleted = bool(row.get("_deleted") or row.get("_del") or row.get("deleted"))
-        else:
-            book = str(row.get("name") or "").strip()
-            this_hw = str(row.get("unit") or "").strip()
-            pct = row.get("pct")
-            pct_s = "" if pct in ("", None) else str(pct).strip()
-            comment = str(row.get("rem") or "").strip()
-            next_hw = ""
-            deleted = False
+        next_row = dict(row)
 
-        out.append({
-            "book": book,
-            "this": this_hw,
-            "pct": pct_s,
-            "comment": comment,
-            "next": next_hw,
-            "_deleted": deleted,
-        })
+        raw_book = str(next_row.get("book") or "").strip()
+        if _is_question_placeholder(raw_book):
+            replacement = next((b for b in books if _book_key(b) not in used), "")
+            next_row["book"] = replacement
+            if replacement:
+                used.add(_book_key(replacement))
+            changed = True
+        elif raw_book:
+            used.add(_book_key(raw_book))
+
+        for field in ("this", "comment", "next"):
+            if field in next_row:
+                cleaned = _clean_placeholder_text(next_row.get(field))
+                if cleaned != str(next_row.get(field) or "").strip():
+                    next_row[field] = cleaned
+                    changed = True
+
+        out.append(next_row)
+
+    return out, changed
+
+
+def _repair_log_entry_placeholders(entry: dict, sid: str) -> dict:
+    if not isinstance(entry, dict):
+        return {}
+
+    out = dict(entry)
+
+    if "notes" in out:
+        cleaned_notes = _clean_placeholder_text(out.get("notes"))
+        if cleaned_notes:
+            out["notes"] = cleaned_notes
+        else:
+            out.pop("notes", None)
+
+    rows = out.get("homeworkTable")
+    repaired_rows, changed = _repair_homework_rows(rows, sid)
+
+    if isinstance(rows, list):
+        out["homeworkTable"] = repaired_rows
+        if changed:
+            summary = " / ".join(
+                s for s in (_hw_row_summary(row) for row in repaired_rows) if s
+            )
+            if summary:
+                out["homework"] = summary
+            else:
+                out.pop("homework", None)
+    elif _is_question_placeholder(out.get("homework")):
+        out.pop("homework", None)
 
     return out
 
 
-def _extract_hw_rows_for_compare(entry: dict) -> list:
+def _student_homework_book_names_from_log(entry: dict) -> list[str]:
     if not isinstance(entry, dict):
         return []
 
     rows = entry.get("homeworkTable")
-    if isinstance(rows, list) and rows:
-        return _normalize_hw_rows_for_compare(rows)
+    if not isinstance(rows, list):
+        return []
 
-    homework = str(entry.get("homework") or "").strip()
-    if homework:
-        return _normalize_hw_rows_for_compare([{
-            "book": "",
-            "this": "",
-            "pct": "",
-            "comment": homework,
-            "next": "",
-            "_deleted": False,
-        }])
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("_deleted"):
+            continue
+        book = _clean_placeholder_text(row.get("book"))
+        key = _book_key(book)
+        if not book or not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(book)
+    return out
 
-    return []
+
+def _academy_restricted_assigned_tests(items: list[dict], academy_allowed: bool) -> list[dict]:
+    if academy_allowed:
+        return items
+
+    out: list[dict] = []
+    for item in items or []:
+        stripped, had_answer_link = strip_answer_link_fields(item)
+        if isinstance(stripped, dict) and had_answer_link:
+            stripped["answerRestricted"] = True
+        out.append(stripped)
+    return out
 
 
-def _entry_conflicts_with_base(cur: dict, base: dict) -> bool:
-    if not isinstance(base, dict) or not base:
-        return False
+def _academy_restricted_student_videos(items: list[dict], academy_allowed: bool) -> list[dict]:
+    if academy_allowed:
+        return items
 
-    current = cur if isinstance(cur, dict) else {}
+    blocked_keys = {
+        "url",
+        "link",
+        "src",
+        "source",
+        "playUrl",
+        "play_url",
+        "streamUrl",
+        "stream_url",
+        "embedUrl",
+        "embed_url",
+    }
+    out: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        for key in blocked_keys:
+            next_item.pop(key, None)
+        next_item["playbackRestricted"] = True
+        out.append(next_item)
+    return out
 
-    if "notes" in base:
-        cur_notes = str(current.get("notes") or "").strip()
-        base_notes = str(base.get("notes") or "").strip()
-        if cur_notes != base_notes:
-            return True
 
-    if "homeworkTable" in base:
-        cur_rows = _extract_hw_rows_for_compare(current)
-        base_rows = _normalize_hw_rows_for_compare(base.get("homeworkTable"))
-        if cur_rows != base_rows:
-            return True
+def _is_ghost_student_sid(sid: str) -> bool:
+    return is_ghost_student_sid(sid)
 
-    return False
+
+def _ghost_student_bootstrap(date: str):
+    ghost_student = {
+        "id": GHOST_STUDENT_ID,
+        "name": "외부접속 테스트",
+        "curriculum": "고스트",
+        "subCurriculum": "외부접속",
+        "level": "중",
+        "school": "",
+        "grade": "",
+        "ghostStudent": True,
+    }
+    ghost_video = {
+        "mid": GHOST_STUDENT_VIDEO_MID,
+        "id": GHOST_STUDENT_VIDEO_MID,
+        "title": "외부접속 테스트 영상",
+        "chapter": "TEST",
+        "curriculum": ghost_student["curriculum"],
+        "subCurriculum": ghost_student["subCurriculum"],
+        "isExtraAssignment": False,
+        "playbackRestricted": True,
+    }
+    ghost_log_entry = {
+        "homeworkTable": [
+            {
+                "book": GHOST_STUDENT_HOMEWORK_BOOK,
+                "this": "",
+                "next": "",
+                "comment": "",
+            }
+        ],
+    }
+    ghost_test = {
+        "id": GHOST_STUDENT_TEST_ID,
+        "testId": GHOST_STUDENT_TEST_ID,
+        "name": "외부접속 테스트 답지",
+        "label": "외부접속 테스트 답지",
+        "categoryKey": "UNIT",
+        "categoryLabel": "단원평가",
+        "curriculum": ghost_student["curriculum"],
+        "round": "1",
+        "status": "assigned",
+        "statusLabel": "배정",
+        "answerRestricted": True,
+        "submissionRestricted": True,
+    }
+
+    # Code-only ghost for outside-Wi-Fi UI checks. It must never enter
+    # students.json, updates.json, logs, progress, or tests data.
+    payload = {
+        "ok": True,
+        "date": date,
+        "students": [ghost_student],
+        "student": ghost_student,
+        "videos": [ghost_video],
+        "reviewVideos": [],
+        "updates": {date: {GHOST_STUDENT_ID: [GHOST_STUDENT_VIDEO_MID]}},
+        "materials": {},
+        "assigns": {GHOST_STUDENT_ID: []},
+        "absent": {"by_date": {date: []}, "by_student": {}},
+        "logs": {date: {GHOST_STUDENT_ID: ghost_log_entry}},
+        "assignedTests": [ghost_test],
+        "homeworkBooks": [GHOST_STUDENT_HOMEWORK_BOOK],
+        "courseVideosCompleted": False,
+        "academyAccessAllowed": False,
+        "outsideAcademyBlocked": True,
+        "networkBlocked": True,
+        "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
+        "ghostStudent": True,
+        "testSubmissionBlocked": True,
+    }
+    return nocache_resp(_finalize_public_bootstrap(payload, GHOST_STUDENT_ID, False))
 
 
 # ─────────────────────────────────────────────
 # ✅ progress 1건(date/sid) 안전 merge
 # - inc[mid] = "done" | "interrupted" | "skip" | "none"
-# - "none" 은 명시 삭제 의미
+# - "none" is an explicit manual clear marker. It must override older
+#   historical progress and automatic watch-status updates.
 # ─────────────────────────────────────────────
-def _merge_progress_day_sid(cur: dict, inc: dict) -> dict:
-    if not isinstance(cur, dict):
-        cur = {}
-    if not isinstance(inc, dict):
-        return dict(cur)
-
-    out = dict(cur)
-
-    for mid, st in inc.items():
-        mid_s = str(mid).strip()
-        if not mid_s:
-            continue
-
-        st_s = str(st).strip()
-        if st_s == "none" or st_s == "":
-            out.pop(mid_s, None)
-        else:
-            out[mid_s] = st_s
-
-    return out
+def get_log_repository() -> LogRepository:
+    return LogRepository(
+        logs_path=LOGS_PATH,
+        repair_entry=_repair_log_entry_placeholders,
+        merge_entry=_log_rules.merge_log_entry_safe,
+        entry_conflicts=_log_rules.log_entry_conflicts_with_base,
+        lock_factory=_logs_lock,
+        truthy=_log_rules.truthy,
+        today_key=_today_kst_iso,
+    )
 
 
-# ─────────────────────────────────────────────
-# ✅ SQLite (logs 테이블) — dual-write용
-# logs(date TEXT, sid TEXT, entry_json TEXT, updated_at TEXT, PRIMARY KEY(date,sid))
-# ─────────────────────────────────────────────
+TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
+TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
+_TEST_ANSWER_LINK_MAP_CACHE = {"mtime": None, "data": {}}
+_TESTS_CONFIG_CACHE = {"mtime": None, "data": {}}
+
+
 KST = dt.timezone(dt.timedelta(hours=9))
-
-
-def _now_kst_iso() -> str:
-    return dt.datetime.now(KST).isoformat(timespec="seconds")
-
-
-def _default_db_path() -> str:
-    p = os.environ.get("DB_PATH")
-    if p:
-        return p
-    logs_json = str(getattr(LOGS_PATH, "__fspath__", lambda: str(LOGS_PATH))())
-    base_dir = os.path.dirname(os.path.abspath(logs_json))
-    return os.path.join(base_dir, "app.sqlite")
-
-
-def _db_connect() -> sqlite3.Connection:
-    db_path = _default_db_path()
-    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-
-    con = sqlite3.connect(
-        db_path,
-        timeout=30.0,
-        isolation_level=None,
-        check_same_thread=False
-    )
-    con.row_factory = sqlite3.Row
-
-    con.execute("PRAGMA busy_timeout=30000;")
-    con.execute("PRAGMA journal_mode=WAL;")
-    con.execute("PRAGMA synchronous=NORMAL;")
-    return con
-
-
-def _db_ensure_schema(con: sqlite3.Connection):
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-      date TEXT NOT NULL,
-      sid TEXT NOT NULL,
-      entry_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY(date, sid)
-    );
-    """)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_logs_sid ON logs(sid);")
-
-
-def _db_get_entry(con: sqlite3.Connection, date: str, sid: str) -> dict:
-    row = con.execute("SELECT entry_json FROM logs WHERE date=? AND sid=?;", (date, sid)).fetchone()
-    if not row:
-        return {}
-    try:
-        return json.loads(row["entry_json"]) if row["entry_json"] else {}
-    except Exception:
-        return {}
-
-
-def _db_upsert_entry(con: sqlite3.Connection, date: str, sid: str, entry: dict):
-    ej = json.dumps(entry or {}, ensure_ascii=False)
-    ua = _now_kst_iso()
-    con.execute(
-        """
-        INSERT INTO logs(date, sid, entry_json, updated_at)
-        VALUES(?,?,?,?)
-        ON CONFLICT(date, sid) DO UPDATE SET
-          entry_json=excluded.entry_json,
-          updated_at=excluded.updated_at;
-        """,
-        (date, sid, ej, ua),
-    )
-
-
-def _db_dump_all(con: sqlite3.Connection) -> dict:
-    out: Dict[str, Dict[str, dict]] = {}
-    rows = con.execute("SELECT date, sid, entry_json FROM logs;").fetchall()
-    for r in rows:
-        d = str(r["date"])
-        s = str(r["sid"])
-        try:
-            e = json.loads(r["entry_json"]) if r["entry_json"] else {}
-        except Exception:
-            e = {}
-        out.setdefault(d, {})[s] = e
-    return out
 
 
 # ─────────────────────────────────────────────
@@ -667,6 +1452,280 @@ def _has_assigned(val) -> bool:
     return False
 
 
+AUTO_VIDEO_ASSIGN_FIELD = "autoVideoAssignCount"
+DEFAULT_AUTO_VIDEO_ASSIGN_COUNT = 3
+ABLE_AUTO_VIDEO_ASSIGN_COUNT = 1
+ABLE_CURRICULUM_KEY = "a:ble"
+MIN_AUTO_VIDEO_ASSIGN_COUNT = 1
+MAX_AUTO_VIDEO_ASSIGN_COUNT = 10
+VIDEO_PROGRESS_FINISHED_STATUSES = {"done", "skip"}
+SELF_STUDY_VIDEO_ASSIGN_SOURCE = "selfStudy"
+SELF_STUDY_DAY_FIELDS = ("day1", "day2", "day3", "day4", "day5")
+
+
+def _coerce_auto_video_assign_count(value, default: int = DEFAULT_AUTO_VIDEO_ASSIGN_COUNT) -> int:
+    try:
+        n = int(round(float(value)))
+    except Exception:
+        n = default
+    return max(MIN_AUTO_VIDEO_ASSIGN_COUNT, min(MAX_AUTO_VIDEO_ASSIGN_COUNT, n))
+
+
+def _is_able_curriculum_value(value) -> bool:
+    return str(value or "").strip().casefold() == ABLE_CURRICULUM_KEY
+
+
+def _student_uses_able_curriculum(stu: dict) -> bool:
+    if not isinstance(stu, dict):
+        return False
+    return _is_able_curriculum_value(stu.get("curriculum")) or _is_able_curriculum_value(stu.get("subCurriculum"))
+
+
+def _apply_able_auto_video_assign_default(stu: dict) -> None:
+    if _student_uses_able_curriculum(stu):
+        stu[AUTO_VIDEO_ASSIGN_FIELD] = ABLE_AUTO_VIDEO_ASSIGN_COUNT
+
+
+def _student_auto_video_assign_count(stu: dict) -> int:
+    if not isinstance(stu, dict):
+        return DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
+    default = ABLE_AUTO_VIDEO_ASSIGN_COUNT if _student_uses_able_curriculum(stu) else DEFAULT_AUTO_VIDEO_ASSIGN_COUNT
+    return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD), default=default)
+
+
+def _effective_auto_video_assign_count(stu: dict, sid: str, date_key: str, weekend_slots=None) -> int:
+    configured = _student_auto_video_assign_count(stu)
+    slots = _student_slots_for_date(stu, sid, date_key, weekend_slots)
+    return configured * 2 if _has_consecutive_slots(slots) else configured
+
+
+def _student_has_scheduled_self_study_on_date(stu: dict, date_key: str) -> bool:
+    try:
+        target = dt.date.fromisoformat(date_key)
+    except ValueError:
+        return False
+
+    raw = stu.get("selfStudyDays") if isinstance(stu, dict) else None
+    scheduled_fields: set[str] = set()
+    if isinstance(raw, list):
+        scheduled_fields = {str(field or "").strip() for field in raw}
+    elif isinstance(raw, dict):
+        scheduled_fields = {
+            str(field or "").strip()
+            for field, enabled in raw.items()
+            if _log_rules.truthy(enabled)
+        }
+    else:
+        scheduled_fields = {
+            field for field in SELF_STUDY_DAY_FIELDS
+            if _log_rules.truthy(stu.get(f"{field}SelfStudy"))
+        }
+
+    weekday = "월화수목금토일"[target.weekday()]
+    return any(
+        field in scheduled_fields and str(stu.get(field) or "").strip().startswith(weekday)
+        for field in SELF_STUDY_DAY_FIELDS
+    )
+
+
+def _student_is_self_study_on_date(logs: dict, date_key: str, sid: str, stu: dict) -> bool:
+    day_logs = logs.get(date_key) if isinstance(logs, dict) else None
+    entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
+    if isinstance(entry, dict) and "selfStudy" in entry:
+        return _log_rules.truthy(entry.get("selfStudy"))
+    return _student_has_scheduled_self_study_on_date(stu, date_key)
+
+
+def _self_study_review_video_mids(
+    cur_vids: list,
+    assigned: list[str],
+    auto_candidates: list[str],
+    eligible_mids: set[str] | None = None,
+) -> list[str]:
+    """Return the last eligible curriculum videos before the assignment anchor."""
+    mids: list[str] = []
+    seen: set[str] = set()
+    for video in cur_vids:
+        mid = str(video.get("mid") or "").strip() if isinstance(video, dict) else ""
+        if mid and mid not in seen:
+            mids.append(mid)
+            seen.add(mid)
+
+    positions = {mid: index for index, mid in enumerate(mids)}
+    assigned_positions = [
+        positions[mid]
+        for mid in assigned
+        if mid in positions
+    ]
+    base_positions = assigned_positions or [
+        positions[mid]
+        for mid in auto_candidates
+        if mid in positions
+    ]
+    if not base_positions:
+        return []
+
+    eligible = set(mids) if eligible_mids is None else {
+        str(mid or "").strip() for mid in eligible_mids if str(mid or "").strip()
+    }
+    start = min(base_positions)
+    prior = [mid for mid in mids[:start] if mid in eligible]
+    return prior[-DEFAULT_AUTO_VIDEO_ASSIGN_COUNT:]
+
+
+def _is_finished_video_progress_status(status) -> bool:
+    return str(status or "").strip() in VIDEO_PROGRESS_FINISHED_STATUSES
+
+
+def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
+    if not isinstance(stu, dict):
+        return []
+
+    cur_key = (stu.get("curriculum") or "").strip()
+    sub_key = (stu.get("subCurriculum") or "").strip()
+
+    exact = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+        and (v.get("subCurriculum") or "").strip() == sub_key
+    ]
+    if exact:
+        exact.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+        return exact
+
+    fallback = [
+        v for v in (videos or [])
+        if isinstance(v, dict)
+        and (v.get("curriculum") or "").strip() == cur_key
+    ]
+    fallback.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
+    return fallback
+
+
+def _student_review_states_before_date(stu: dict, progress: dict, watch: dict, date_key: str) -> dict:
+    """Resolve current-student review states without exposing source maps."""
+    sid = str(stu.get("id") or "").strip() if isinstance(stu, dict) else ""
+    if not sid:
+        return {}
+    return resolve_video_review_states_before_date(
+        progress if isinstance(progress, dict) else {},
+        watch if isinstance(watch, dict) else {},
+        sid_keys=_sid_keys(sid),
+        before_date=date_key,
+    )
+
+
+def _student_eligible_review_video_mids(stu: dict, videos: list, progress: dict, watch: dict, date_key: str) -> set[str]:
+    """Return only catalog videos with a completed/interrupted pre-date state."""
+    catalog_mids = {
+        str(video.get("mid") or "").strip()
+        for video in _student_completion_videos(stu, videos)
+        if isinstance(video, dict) and str(video.get("mid") or "").strip()
+    }
+    states = _student_review_states_before_date(stu, progress, watch, date_key)
+    return {
+        str(mid or "").strip()
+        for mid, state in (states.items() if isinstance(states, dict) else [])
+        if str(mid or "").strip() in catalog_mids
+        and isinstance(state, dict)
+        and state.get("status") in {"done", "interrupted"}
+    }
+
+
+def _filter_self_study_assignment_for_response(assignment, eligible_mids: set[str]):
+    """Deep-copy and filter a self-study assignment without touching storage data."""
+    eligible = {
+        str(mid or "").strip() for mid in eligible_mids if str(mid or "").strip()
+    }
+    if isinstance(assignment, list):
+        return [
+            mid for mid in _normalize_video_assign_list(assignment)
+            if mid in eligible
+        ]
+    if not isinstance(assignment, dict):
+        return assignment
+
+    response_assignment = deepcopy(assignment)
+    if "videos" in response_assignment:
+        response_assignment["videos"] = [
+            mid for mid in _normalize_video_assign_list(response_assignment.get("videos"))
+            if mid in eligible
+        ]
+    return response_assignment
+
+
+def _student_review_video_projection(
+    student: dict,
+    videos_all: list,
+    progress: dict,
+    watch: dict,
+    date_key: str,
+    assigned_mids,
+    academy_allowed: bool,
+) -> list[dict]:
+    """Build a sanitized, current-curriculum historical review list."""
+    states = _student_review_states_before_date(student, progress, watch, date_key)
+    completion_videos = _student_completion_videos(student, videos_all)
+    primary_mids = _student_primary_video_mids(student, videos_all)
+    catalog_by_mid: dict[str, dict] = {}
+    for video in completion_videos:
+        if not isinstance(video, dict):
+            continue
+        mid = str(video.get("mid") or "").strip()
+        if not mid or mid in catalog_by_mid:
+            continue
+        item = deepcopy(video)
+        for internal_key in ("eventDate", "progress", "watch"):
+            item.pop(internal_key, None)
+        item["isExtraAssignment"] = mid not in primary_mids
+        catalog_by_mid[mid] = item
+
+    assigned = {
+        str(mid or "").strip() for mid in (assigned_mids or []) if str(mid or "").strip()
+    }
+    candidates: list[tuple[str, float, str, dict]] = []
+    for raw_mid, state in states.items():
+        mid = str(raw_mid or "").strip()
+        if not mid or mid in assigned or mid not in catalog_by_mid:
+            continue
+        if not isinstance(state, dict) or state.get("status") not in {"done", "interrupted"}:
+            continue
+        event_date = str(state.get("eventDate") or "")
+        item = deepcopy(catalog_by_mid[mid])
+        item["reviewStatus"] = state["status"]
+        candidates.append((event_date, _chap_num(item), mid, item))
+
+    candidates.sort(key=lambda entry: (entry[0], entry[1], entry[2]), reverse=True)
+    return _academy_restricted_student_videos(
+        [entry[3] for entry in candidates],
+        academy_allowed,
+    )
+
+
+def _student_primary_video_mids(stu: dict, videos: list) -> set[str]:
+    return {
+        str(v.get("mid") or "").strip()
+        for v in _student_completion_videos(stu, videos)
+        if isinstance(v, dict) and str(v.get("mid") or "").strip()
+    }
+
+
+def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid: dict) -> bool:
+    mids = [
+        str(v.get("mid") or "").strip()
+        for v in (course_videos or [])
+        if isinstance(v, dict) and str(v.get("mid") or "").strip()
+    ]
+    if not mids:
+        return False
+
+    latest = latest_status_by_sid.get(str(sid), {})
+    if not isinstance(latest, dict):
+        return False
+    return all(_is_finished_video_progress_status(latest.get(mid)) for mid in mids)
+
+
 def _build_latest_status_by_sid(progress: dict) -> dict:
     out = {}
     if not isinstance(progress, dict):
@@ -681,16 +1740,377 @@ def _build_latest_status_by_sid(progress: dict) -> dict:
                 continue
             sm = out.setdefault(str(sid), {})
             for mid, st in mids.items():
-                sm[str(mid)] = st
+                mid_s = str(mid)
+                if mid_s.startswith("__") or mid_s == "tests":
+                    continue
+                sm[mid_s] = st
     return out
+
+
+def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
+    blocked: dict[str, set[str]] = {}
+    manual_cleared_at: dict[tuple[str, str], str] = {}
+
+    if isinstance(progress, dict):
+        for d in sorted(progress.keys()):
+            day = progress.get(d) or {}
+            if not isinstance(day, dict):
+                continue
+            for sid, mids in day.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                manual_meta = mids.get(PROGRESS_MANUAL_META_KEY)
+                if not isinstance(manual_meta, dict):
+                    manual_meta = {}
+                for mid, st in mids.items():
+                    mid_s = str(mid)
+                    if mid_s.startswith("__") or mid_s == "tests":
+                        continue
+                    st_s = str(st or "").strip()
+                    key = (sid_s, mid_s)
+                    if _is_finished_video_progress_status(st_s):
+                        blocked.setdefault(sid_s, set()).add(mid_s)
+                    elif st_s == "none" and manual_meta.get(mid_s):
+                        blocked.setdefault(sid_s, set()).discard(mid_s)
+                        manual_cleared_at[key] = str(d)
+
+    if isinstance(watch, dict):
+        for d in sorted(watch.keys()):
+            by_date = watch.get(d) or {}
+            if not isinstance(by_date, dict):
+                continue
+            for sid, mids in by_date.items():
+                if not isinstance(mids, dict):
+                    continue
+                sid_s = str(sid)
+                for mid, entry in mids.items():
+                    mid_s = str(mid or "").strip()
+                    if not mid_s:
+                        continue
+                    status = _watch_auto_status(entry)
+                    if status != "done":
+                        continue
+                    cleared_at = manual_cleared_at.get((sid_s, mid_s), "")
+                    if cleared_at and str(cleared_at) >= str(d):
+                        continue
+                    blocked.setdefault(sid_s, set()).add(mid_s)
+
+    return blocked
 
 
 def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
 
 
-def _ensure_today_auto_assign(updates, students, videos, progress):
-    today = _today_kst_iso()
+def _student_dashboard_enabled() -> bool:
+    return bool(current_app.config.get("STUDENT_APP_DASHBOARD_ENABLED", False))
+
+
+def _student_homework_enabled() -> bool:
+    return bool(current_app.config.get("STUDENT_APP_HOMEWORK_ENABLED", False))
+
+
+def _dashboard_homework_count(sid: str, fallback: int) -> int:
+    if not _student_homework_enabled():
+        return fallback
+    try:
+        from core.student_homework_repository import StudentHomeworkRepository
+
+        database = os.environ.get("STUDENT_APP_DB_PATH", str(BASE / "app.sqlite"))
+        return StudentHomeworkRepository(database).count_open(sid)
+    except Exception:  # noqa: BROAD_EXCEPT_OK - an uninitialized additive store falls back to legacy data
+        return fallback
+
+
+def _dashboard_mapping(path) -> dict:
+    try:
+        value = load(path) or {}
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _student_dashboard_projection(
+    *,
+    student: dict,
+    sid: str,
+    date_key: str,
+    videos: list,
+    latest_status_by_sid: dict,
+    homework_books: list,
+    absences: dict,
+) -> dict:
+    start = dt.date.fromisoformat(date_key)
+    end = start + dt.timedelta(days=45)
+    calculated_at = dt.datetime.now(KST).replace(microsecond=0)
+    schedule_as_of = (
+        calculated_at
+        if start == calculated_at.date()
+        else dt.datetime.combine(start, dt.time.min, tzinfo=KST)
+    )
+    events = project_student_schedule(
+        student,
+        sid=sid,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        absence=absences,
+        extra=_dashboard_mapping(EXTRA_PATH),
+        weekend=_dashboard_mapping(WEEKEND_SLOTS_PATH),
+        makeup=_dashboard_mapping(BASE / "makeup_carryover.json"),
+    )
+    latest_for_student = latest_status_by_sid.get(str(sid), {})
+    if not isinstance(latest_for_student, dict):
+        latest_for_student = {}
+    curriculum_progress = build_curriculum_progress(
+        student,
+        videos,
+        latest_for_student,
+        calculated_at=calculated_at.isoformat(),
+    )
+    legacy_homework_count = len(homework_books) if isinstance(homework_books, list) else 0
+    homework_count = _dashboard_homework_count(sid, legacy_homework_count)
+    return {
+        "enabled": True,
+        "curriculumProgress": curriculum_progress,
+        "nextSchedule": select_next_schedule(
+            events,
+            as_of=schedule_as_of.isoformat(),
+        ),
+        "homeworkSummary": {
+            "count": homework_count,
+            "state": "assigned" if homework_count else "empty",
+        },
+        "unreadBoardCount": None,
+    }
+
+
+def _log_entry_for_date(logs, date_key: str, sid: str):
+    if not isinstance(logs, dict):
+        return None
+    day_logs = logs.get(date_key)
+    if not isinstance(day_logs, dict):
+        day_logs = logs
+    return _sid_lookup(day_logs, sid)
+
+
+def _student_absent_on_date(absent, date_key: str, sid: str) -> bool:
+    if not isinstance(absent, dict):
+        return False
+    by_date = absent.get("by_date") or {}
+    ids = by_date.get(date_key, []) if isinstance(by_date, dict) else []
+    if str(sid) in {str(value) for value in (ids or [])}:
+        return True
+    by_student = absent.get("by_student") or {}
+    return isinstance(by_student, dict) and str(_sid_lookup(by_student, sid) or "") == str(date_key)
+
+
+def _student_is_today_auto_target(stu: dict, sid: str, date_key: str, extra=None, absent=None, logs=None) -> bool:
+    if _student_absent_on_date(absent, date_key, sid):
+        return False
+    entry = _log_entry_for_date(logs, date_key, sid)
+    if isinstance(entry, dict) and _log_rules.truthy(entry.get("done")):
+        return False
+    # Self-study is an explicit daily mode. It must still reconcile an
+    # existing automatic snapshot even when the student has no regular class
+    # or makeup registration for this date.
+    if _student_is_self_study_on_date(logs, date_key, sid, stu):
+        return True
+    return _student_is_registered_on_date(stu, sid, date_key, extra=extra)
+
+
+def _same_student_course_alias(left: dict, right: dict) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if str(left.get("name") or "").strip() != str(right.get("name") or "").strip():
+        return False
+
+    shared_doc = str(left.get("docUrl") or "").strip()
+    if shared_doc and shared_doc == str(right.get("docUrl") or "").strip():
+        return True
+
+    for key in ("school", "grade", "level", "subCurriculum"):
+        if str(left.get(key) or "").strip() != str(right.get(key) or "").strip():
+            return False
+    return True
+
+
+def _active_student_alias_sid(students, student: dict, sid: str, date_key: str, absent) -> str:
+    candidates = []
+    for candidate in students if isinstance(students, list) else []:
+        candidate_sid = str(candidate.get("id") or "").strip() if isinstance(candidate, dict) else ""
+        if not candidate_sid or candidate_sid == sid:
+            continue
+        if not _same_student_course_alias(student, candidate):
+            continue
+        if _student_absent_on_date(absent, date_key, candidate_sid):
+            continue
+        if _student_is_registered_on_date(candidate, candidate_sid, date_key):
+            candidates.append(candidate_sid)
+
+    return candidates[0] if len(candidates) == 1 else ""
+
+
+def _append_auto_assignment_videos(current, cur_vids: list[dict], blocked, target_count: int):
+    legacy_list = isinstance(current, list)
+    if legacy_list:
+        if not current:
+            return current, False
+    elif not isinstance(current, dict):
+        return current, False
+    elif str(current.get("source") or "").strip().casefold() != "auto":
+        return current, False
+
+    assigned = _normalize_video_assign_list(current)
+    if len(assigned) >= target_count:
+        return current, False
+
+    blocked_set = {str(mid or "").strip() for mid in (blocked or set()) if str(mid or "").strip()}
+    seen = set(assigned)
+    next_videos = list(assigned)
+    for video in cur_vids or []:
+        mid = str(video.get("mid") or "").strip() if isinstance(video, dict) else ""
+        if not mid or mid in seen or mid in blocked_set:
+            continue
+        next_videos.append(mid)
+        seen.add(mid)
+        if len(next_videos) >= target_count:
+            break
+
+    if next_videos == assigned:
+        return current, False
+    if legacy_list:
+        return next_videos, True
+    updated = dict(current)
+    updated["videos"] = next_videos
+    return updated, True
+
+
+def _expand_consecutive_auto_assignment_in_updates(
+    updates: dict,
+    date_key: str,
+    sid: str,
+    students: list[dict],
+    videos: list[dict],
+    progress: dict,
+    watch=None,
+    weekend_slots=None,
+    extra=None,
+    absent=None,
+    logs=None,
+) -> bool:
+    day = updates.get(date_key) if isinstance(updates, dict) else None
+    if not isinstance(day, dict):
+        return False
+    student = next(
+        (row for row in (students or []) if isinstance(row, dict) and str(row.get("id") or "") == str(sid)),
+        None,
+    )
+    if not student:
+        return False
+    if not _student_is_today_auto_target(
+        student,
+        sid,
+        date_key,
+        extra={} if extra is None else extra,
+        absent={} if absent is None else absent,
+        logs={} if logs is None else logs,
+    ):
+        return False
+    if not _has_consecutive_slots(_student_slots_for_date(student, sid, date_key, weekend_slots)):
+        return False
+
+    current = _sid_lookup(day, sid)
+    if not isinstance(current, (dict, list)) or _is_manual_video_assignment(current):
+        return False
+    if isinstance(current, dict) and str(current.get("source") or "").strip().casefold() != "auto":
+        return False
+    if isinstance(current, list) and not current:
+        return False
+
+    cur_key = str(student.get("curriculum") or "").strip()
+    sub_key = str(student.get("subCurriculum") or "").strip()
+    cur_vids = [
+        video for video in (videos or [])
+        if isinstance(video, dict)
+        and str(video.get("curriculum") or "").strip() == cur_key
+        and str(video.get("subCurriculum") or "").strip() == sub_key
+    ]
+    cur_vids.sort(key=lambda video: (_chap_num(video), str(video.get("mid") or "")))
+    blocked = _build_auto_assignment_blocked_by_sid(progress, watch or {}).get(str(sid), set())
+    target_count = _effective_auto_video_assign_count(student, sid, date_key, weekend_slots)
+    expanded, changed = _append_auto_assignment_videos(current, cur_vids, blocked, target_count)
+    if changed:
+        _write_sid_mapping(day, sid, expanded)
+    return changed
+
+
+def _reconcile_consecutive_auto_assignment(
+    date_key: str,
+    sid: str,
+    students=None,
+    videos=None,
+    progress=None,
+    watch=None,
+    weekend_slots=None,
+    extra=None,
+    absent=None,
+    logs=None,
+) -> bool:
+    students = students if students is not None else load(STU_PATH)
+    videos = videos if videos is not None else load(VID_PATH)
+    progress = progress if progress is not None else _load_progress_strict()
+    watch = watch if watch is not None else load(WATCH_PATH)
+    weekend_slots = weekend_slots if weekend_slots is not None else load(WEEKEND_SLOTS_PATH)
+    if extra is None:
+        try:
+            extra = load(EXTRA_PATH)
+        except Exception:
+            extra = {}
+    if absent is None:
+        try:
+            absent = load_absent()
+        except Exception:
+            absent = {}
+    if logs is None:
+        try:
+            logs = get_log_repository().read_logs(date_key)
+        except Exception:
+            logs = {}
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        changed = _expand_consecutive_auto_assignment_in_updates(
+            updates,
+            date_key,
+            sid,
+            students,
+            videos,
+            progress,
+            watch=watch,
+            weekend_slots=weekend_slots,
+            extra=extra,
+            absent=absent,
+            logs=logs,
+        )
+        if changed:
+            save_atomic(UPD_PATH, updates)
+        return changed
+
+
+def _ensure_today_auto_assign(
+    updates,
+    students,
+    videos,
+    progress,
+    date_key: str | None = None,
+    watch=None,
+    logs=None,
+    extra=None,
+    absent=None,
+    weekend_slots=None,
+):
+    today = date_key or _today_kst_iso()
 
     if not isinstance(updates, dict):
         updates = {}
@@ -705,30 +2125,28 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
             if mid:
                 valid_mids.add(mid)
 
-    last_status = _build_latest_status_by_sid(progress)
+    latest_status_by_sid = _build_latest_status_by_sid(progress)
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
+    logs = logs if isinstance(logs, dict) else {}
+    if extra is None:
+        try:
+            extra = load(EXTRA_PATH) or {}
+        except Exception:
+            extra = {}
+    if absent is None:
+        try:
+            absent = load_absent()
+        except Exception:
+            absent = {}
+    if weekend_slots is None:
+        try:
+            weekend_slots = load(WEEKEND_SLOTS_PATH) or {}
+        except Exception:
+            weekend_slots = {}
 
-    def _normalize_assigned(val):
-        if isinstance(val, list):
-            return [str(x).strip() for x in val if str(x).strip()]
-        if isinstance(val, dict):
-            vids = val.get("videos")
-            if isinstance(vids, list):
-                return [str(x).strip() for x in vids if str(x).strip()]
-        return []
-
+    # Existing assignments are daily snapshots. Do not normalize, delete, or
+    # re-pick them merely because this read path was touched.
     changed = False
-
-    for sid, cur in list(updates[today].items()):
-        assigned = _normalize_assigned(cur)
-        if not assigned:
-            continue
-        cleaned = [mid for mid in assigned if mid in valid_mids]
-        if cleaned != assigned:
-            if cleaned:
-                updates[today][sid] = cleaned
-            else:
-                updates[today].pop(sid, None)
-            changed = True
 
     for stu in students or []:
         if not isinstance(stu, dict):
@@ -741,10 +2159,6 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
         cur_key = (stu.get("curriculum") or "").strip()
         sub_key = (stu.get("subCurriculum") or "").strip()
 
-        cur = updates[today].get(sid)
-        if _has_assigned(cur):
-            continue
-
         cur_vids = [
             v for v in (videos or [])
             if isinstance(v, dict)
@@ -753,41 +2167,268 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
         ]
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
 
-        blocked = {
-            str(mid)
-            for mid, st in (last_status.get(sid) or {}).items()
-            if st in ("done", "skip")
-        }
+        cur = _sid_lookup(updates[today], sid)
+        if not _student_is_today_auto_target(stu, sid, today, extra=extra, absent=absent, logs=logs):
+            continue
 
-        sub_norm = sub_key.strip()
-        lvl = (stu.get("level") or "").strip()
+        blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
+        max_assign = _effective_auto_video_assign_count(stu, sid, today, weekend_slots)
 
-        if sub_norm == "A:Ble":
-            max_assign = 1
-        elif sub_norm == "APEX":
-            max_assign = 2 if lvl in ("중", "하") else 3
-        else:
-            max_assign = 3
+        self_study = _student_is_self_study_on_date(logs, today, sid, stu)
+        completion_videos = _student_completion_videos(stu, videos)
+        if self_study:
+            cur_vids = completion_videos
 
-        picked = []
+        auto_candidates = []
         for v in cur_vids:
             mid = str(v.get("mid") or "").strip()
-            if not mid:
+            if not mid or mid not in valid_mids or mid in blocked:
                 continue
-            if mid not in valid_mids:
-                continue
-            if mid in blocked:
-                continue
-            picked.append(mid)
-            if len(picked) >= max_assign:
+            auto_candidates.append(mid)
+            if len(auto_candidates) >= max_assign:
                 break
 
-        if picked:
-            print("[AUTOASSIGN] PICK sid =", sid, "picked =", picked, flush=True)
-            updates[today][sid] = picked
+        if self_study:
+            if _is_manual_video_assignment(cur):
+                continue
+
+            eligible_states = _student_review_states_before_date(stu, progress, watch or {}, today)
+            review_mids = _self_study_review_video_mids(
+                completion_videos,
+                _normalize_video_assign_list(cur),
+                auto_candidates,
+                eligible_mids=set(eligible_states),
+            )
+            next_assignment = (
+                {"videos": review_mids, "source": SELF_STUDY_VIDEO_ASSIGN_SOURCE}
+                if review_mids
+                else None
+            )
+            if cur != next_assignment:
+                _write_sid_mapping(updates[today], sid, next_assignment)
+                changed = True
+            continue
+
+        completion_videos = cur_vids or completion_videos
+        if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
+            # Completion blocks a new assignment; it must never erase the
+            # assignment snapshot already shown for this date.
+            continue
+
+        if cur is not None:
+            continue
+
+        if auto_candidates:
+            print("[AUTOASSIGN] PICK sid =", sid, "picked =", auto_candidates, flush=True)
+            updates[today][sid] = {"videos": auto_candidates, "source": "auto"}
             changed = True
 
     return updates
+
+
+def _json_stable(obj) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def _load_updates_with_auto_assign(
+    students=None,
+    videos=None,
+    date_key: str | None = None,
+    extra=None,
+    absent=None,
+    weekend_slots=None,
+    logs=None,
+):
+    students = students if students is not None else load(STU_PATH)
+    videos = videos if videos is not None else load(VID_PATH)
+    progress = _load_progress_strict()
+    watch = load(WATCH_PATH)
+    target_date = date_key or _today_kst_iso()
+    logs = logs if logs is not None else get_log_repository().read_logs(target_date)
+    extra = extra if extra is not None else load(EXTRA_PATH)
+    absent = absent if absent is not None else load_absent()
+    weekend_slots = weekend_slots if weekend_slots is not None else load(WEEKEND_SLOTS_PATH)
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        before = _json_stable(updates)
+        fixed = _ensure_today_auto_assign(
+            updates,
+            students,
+            videos,
+            progress,
+            date_key=target_date,
+            watch=watch,
+            logs=logs,
+            extra=extra,
+            absent=absent,
+            weekend_slots=weekend_slots,
+        )
+        if _json_stable(fixed) != before:
+            save_atomic(UPD_PATH, fixed)
+        return fixed
+
+
+def _progress_sids_from_query() -> list[str]:
+    sid_values = request.args.getlist("sid")
+    raw_values = list(request.args.getlist("sids"))
+    if raw_values:
+        raw_values.extend(sid_values)
+    elif len(sid_values) > 1:
+        raw_values.extend(sid_values)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        for part in str(raw or "").split(","):
+            sid = part.strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(sid)
+    return out
+
+
+def _notification_progress_snapshot(progress: dict, sid: str):
+    """Build a best-effort, default-off milestone snapshot without changing progress writes."""
+    repository = runtime_repository()
+    if repository is None:
+        return None
+    try:
+        students, videos = load(STU_PATH), load(VID_PATH)
+        student = next(
+            (row for row in students if isinstance(row, dict) and str(row.get("id") or "") == str(sid)),
+            None,
+        ) if isinstance(students, list) else None
+        if not isinstance(student, dict) or not isinstance(videos, list):
+            return None
+        statuses = _build_latest_status_by_sid(progress).get(str(sid), {})
+        summary = build_curriculum_progress(
+            student, videos, statuses,
+            calculated_at=dt.datetime.now(KST).replace(microsecond=0).isoformat(),
+        )
+        percent = summary.get("percent")
+        if not isinstance(percent, int):
+            return None
+        identity = json.dumps(
+            [summary.get("basis"), summary.get("scope"), summary.get("curriculum"), summary.get("subCurriculum")],
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        return repository, key, percent
+    except Exception:
+        return None
+
+
+def _notification_progress_commit(before, after, sid: str) -> int:
+    if before is None or after is None or before[1] != after[1]:
+        return 0
+    try:
+        return enqueue_progress_milestones(
+            after[0], str(sid), after[1], before[2], after[2], now=time.time(),
+        )
+    except Exception:
+        return 0
+
+
+def _is_public_student_request() -> bool:
+    return getattr(g, "student_app_public_request", False) is True
+
+
+def _public_session_sid() -> str | None:
+    if not _is_public_student_request():
+        return None
+    sid = getattr(g, "student_app_active_sid", None)
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _student_request_academy_allowed() -> bool:
+    if not _is_public_student_request():
+        return academy_network_allowed()
+    client_ip = getattr(g, "student_app_client_ip", None)
+    return ip_allowed(client_ip) if isinstance(client_ip, str) else False
+
+
+def _latest_student_watch_payload(watch_all, sid: str) -> dict:
+    """Project the existing /api/watch/latest shape for one session SID."""
+    out: dict[str, dict] = {}
+    for by_date in (watch_all.values() if isinstance(watch_all, dict) else []):
+        if not isinstance(by_date, dict):
+            continue
+        watched = next(
+            (by_date.get(key) for key in _sid_keys(sid) if isinstance(by_date.get(key), dict)),
+            None,
+        )
+        if not isinstance(watched, dict):
+            continue
+        for raw_mid, raw_entry in watched.items():
+            mid = str(raw_mid or "").strip()
+            if not mid:
+                continue
+            normalized = _normalize_watch_entry(raw_entry)
+            if mid not in out or _watch_rank(normalized) > _watch_rank(out[mid]):
+                out[mid] = normalized
+    return {"ok": True, "sid": sid, "date": "", "watch": out}
+
+
+def _strip_public_bootstrap_links(value, restricted_scope: bool = False):
+    """Recursively remove off-site answer and homework/material file authority."""
+    if isinstance(value, list):
+        return [_strip_public_bootstrap_links(item, restricted_scope) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    stripped, _ = strip_answer_link_fields(value)
+    out = {}
+    for raw_key, raw_value in stripped.items():
+        key = str(raw_key)
+        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if "answer" in normalized or "solution" in normalized:
+            continue
+        child_scope = restricted_scope or any(
+            marker in normalized
+            for marker in ("material", "homework", "attachment", "sourcefile", "video")
+        )
+        if child_scope and (
+            normalized in {"url", "link", "path", "src", "source", "fileid"}
+            or normalized.endswith(("url", "link", "path", "fileid"))
+        ):
+            continue
+        out[raw_key] = _strip_public_bootstrap_links(raw_value, child_scope)
+    return out
+
+
+def _finalize_public_bootstrap(payload: dict, sid: str, academy_allowed: bool) -> dict:
+    if not _is_public_student_request():
+        return payload
+    result = deepcopy(payload)
+    result["academyAccessAllowed"] = academy_allowed
+    result["outsideAcademyBlocked"] = not academy_allowed
+    result["networkBlocked"] = not academy_allowed
+    result["testSubmissionBlocked"] = not academy_allowed
+    result["watch"] = _latest_student_watch_payload(load(WATCH_PATH) or {}, sid)
+    return result if academy_allowed else _strip_public_bootstrap_links(result)
+
+
+def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
+    out = {}
+    days = [(date, data.get(date) if isinstance(data, dict) else {})] if date else (data.items() if isinstance(data, dict) else [])
+    for day_key, day in days:
+        if not isinstance(day, dict):
+            continue
+        filtered = {}
+        for sid in sids:
+            entry = _sid_lookup(day, sid)
+            if isinstance(entry, dict) and entry:
+                filtered[str(sid)] = entry
+        if filtered:
+            out[str(day_key)] = filtered
+    if date and date not in out:
+        out[date] = {}
+    return out
 
 
 # ─────────────────────────────────────────────
@@ -795,7 +2436,14 @@ def _ensure_today_auto_assign(updates, students, videos, progress):
 # ─────────────────────────────────────────────
 @bp_api_basic.route("/api/students", methods=["GET", "POST"])
 def api_students():
-    return crud(STU_PATH)
+    if request.method == "GET":
+        return jsonify(load(STU_PATH))
+    previous = load(STU_PATH)
+    incoming = request.get_json(force=True)
+    save_atomic(STU_PATH, incoming)
+    affected = student_schedule_changed_sids(previous, incoming)
+    enqueue_current_schedule_changes(affected)
+    return "", 204
 
 
 @bp_api_basic.route("/api/videos", methods=["GET", "POST"])
@@ -812,7 +2460,36 @@ def api_videos():
 
 @bp_api_basic.route("/api/progress", methods=["GET"])
 def api_progress():
-    return jsonify(_load_progress_strict())
+    data = _load_progress_strict()
+    date = str(request.args.get("date") or "").strip()
+    sid = str(request.args.get("sid") or "").strip()
+    sids = _progress_sids_from_query()
+
+    if date:
+        if not DATE_RE.match(date):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+        day = data.get(date) if isinstance(data, dict) else {}
+        if sids:
+            return jsonify(_progress_for_sids(data, sids, date=date))
+        if sid:
+            entry = _sid_lookup(day if isinstance(day, dict) else {}, sid) or {}
+            return jsonify({date: {str(sid): entry}})
+        return jsonify({date: day if isinstance(day, dict) else {}})
+
+    if sids:
+        return jsonify(_progress_for_sids(data, sids))
+
+    if sid:
+        out = {}
+        for d, day in (data.items() if isinstance(data, dict) else []):
+            if not isinstance(day, dict):
+                continue
+            entry = _sid_lookup(day, sid)
+            if isinstance(entry, dict) and entry:
+                out[d] = {str(sid): entry}
+        return jsonify(out)
+
+    return jsonify(data)
 
 
 @bp_api_basic.post("/api/progress/patch")
@@ -833,26 +2510,29 @@ def api_progress_patch():
     date = str(body.get("date") or "").strip()
     sid = str(body.get("sid") or "").strip()
     prog = body.get("progress") or {}
+    source = str(body.get("source") or "").strip()
 
     if not date or not sid or not isinstance(prog, dict):
         return jsonify({"ok": False, "error": "bad payload"}), 400
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
     try:
         with _progress_lock():
-            current = _load_progress_strict()
+            current = dict(_load_progress_strict())
+            notification_before = _notification_progress_snapshot(current, sid)
 
-            day = current.setdefault(date, {})
-            if not isinstance(day, dict):
-                current[date] = {}
-                day = current[date]
+            current_day = current.get(date)
+            day = dict(current_day) if isinstance(current_day, dict) else {}
+            current[date] = day
 
             cur_sid = day.get(sid, {})
             if not isinstance(cur_sid, dict):
                 cur_sid = {}
 
-            merged = _merge_progress_day_sid(cur_sid, prog)
+            merged = _merge_progress_day_sid(cur_sid, prog, source=source)
 
             if merged:
                 day[sid] = merged
@@ -862,7 +2542,11 @@ def api_progress_patch():
             if not day:
                 current.pop(date, None)
 
-            save_atomic(PRG_PATH, current)
+            _save_progress_strict(current)
+
+            notification_after = _notification_progress_snapshot(current, sid)
+
+        _notification_progress_commit(notification_before, notification_after, sid)
 
         return jsonify({"ok": True, "progress": merged})
     except TimeoutError as e:
@@ -874,19 +2558,376 @@ def api_progress_patch():
 @bp_api_basic.route("/api/updates", methods=["GET", "POST"])
 def api_updates():
     if request.method == "GET":
-        updates = load(UPD_PATH)
-        fixed = _ensure_today_auto_assign(
-            updates,
-            load(STU_PATH),
-            load(VID_PATH),
-            load(PRG_PATH)
-        )
-        if fixed != updates:
-            save_atomic(UPD_PATH, fixed)
-        return nocache_resp(fixed)
+        if str(request.args.get("readOnly") or "").strip().lower() in {"1", "true", "yes"}:
+            return nocache_resp(load(UPD_PATH) or {})
+        return nocache_resp(_load_updates_with_auto_assign())
 
-    save_atomic(UPD_PATH, request.get_json(force=True))
+    incoming = request.get_json(force=True) or {}
+    if mapping_contains_ghost_student_sid(incoming):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
+    with _updates_lock():
+        current = load(UPD_PATH) or {}
+        merged = _merge_updates_payload(current, incoming)
+        save_atomic(UPD_PATH, merged)
     return "", 204
+
+
+@bp_api_basic.post("/api/updates/patch")
+def api_updates_patch():
+    body = request.get_json(force=True) or {}
+    date = str(body.get("date") or "").strip()
+    sid = str(body.get("sid") or "").strip()
+    remove = bool(body.get("remove"))
+
+    if not date or not sid or not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
+
+    if remove:
+        incoming = {"remove": True}
+    else:
+        incoming = dict(body.get("entry") or {}) if isinstance(body.get("entry"), dict) else {}
+        if "videos" in body:
+            incoming["videos"] = body.get("videos")
+        if not incoming:
+            incoming["videos"] = []
+
+    try:
+        with _updates_lock():
+            current = load(UPD_PATH) or {}
+            day = current.setdefault(date, {})
+            if not isinstance(day, dict):
+                current[date] = {}
+                day = current[date]
+
+            if remove:
+                _write_sid_mapping(day, sid, None)
+                assignment = []
+            else:
+                assignment = _merge_update_assignment(_sid_lookup(day, sid), incoming)
+                _write_sid_mapping(day, sid, assignment)
+
+            if not day:
+                current.pop(date, None)
+
+            save_atomic(UPD_PATH, current)
+        return jsonify({"ok": True, "assignment": assignment})
+    except TimeoutError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+
+
+@bp_api_basic.post("/api/updates/self-study")
+def api_updates_self_study():
+    body = request.get_json(force=True) or {}
+    date = str(body.get("date") or "").strip()
+    sid = str(body.get("sid") or "").strip()
+    has_requested_videos = "videos" in body
+    append_requested_videos = body.get("append") is True
+
+    if not date or not sid or not DATE_RE.match(date):
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
+    if has_requested_videos and not isinstance(body.get("videos"), list):
+        return jsonify({"ok": False, "error": "videos must be an array"}), 400
+
+    students = load(STU_PATH) or []
+    student = next(
+        (stu for stu in students if isinstance(stu, dict) and str(stu.get("id") or "") == sid),
+        None,
+    )
+    if not isinstance(student, dict):
+        abort(404, description="학생을 찾을 수 없습니다.")
+
+    logs = get_log_repository().read_logs(date, sid)
+    if not _student_is_self_study_on_date(logs, date, sid, student):
+        return jsonify({"ok": False, "error": "student is not self-study"}), 409
+
+    absences = load_absent()
+    if _student_absent_on_date(absences, date, sid):
+        return jsonify({"ok": False, "error": "student is absent"}), 409
+    log_entry = _log_entry_for_date(logs, date, sid)
+    if isinstance(log_entry, dict) and _log_rules.truthy(log_entry.get("archived")):
+        return jsonify({"ok": False, "error": "student is archived"}), 409
+
+    videos = load(VID_PATH) or []
+    progress = _load_progress_strict()
+    watch = load(WATCH_PATH) or {}
+    requested_videos = _normalize_video_assign_list(body.get("videos")) if has_requested_videos else []
+    eligible_review_mids = _student_eligible_review_video_mids(
+        student,
+        videos,
+        progress,
+        watch,
+        date,
+    )
+    invalid_requested_videos = [
+        mid for mid in requested_videos
+        if mid not in eligible_review_mids
+    ]
+    if invalid_requested_videos:
+        return jsonify({
+            "ok": False,
+            "error": "video is not eligible for self-study review",
+            "invalidVideos": invalid_requested_videos,
+        }), 409
+
+    try:
+        with _updates_lock():
+            updates = load(UPD_PATH) or {}
+            if has_requested_videos:
+                current = _sid_lookup(updates.get(date, {}), sid)
+                current_source = (
+                    str(current.get("source") or "").strip().casefold()
+                    if isinstance(current, dict)
+                    else ""
+                )
+                if _is_manual_video_assignment(current) and current_source != SELF_STUDY_VIDEO_ASSIGN_SOURCE.casefold():
+                    return jsonify({"ok": False, "error": "manual assignment is protected"}), 409
+            before = _json_stable(updates)
+            fixed = _ensure_today_auto_assign(
+                updates,
+                [student],
+                videos,
+                progress,
+                date_key=date,
+                watch=watch,
+                logs=logs,
+            )
+            if has_requested_videos:
+                day = fixed.setdefault(date, {})
+                current = _sid_lookup(day, sid)
+                existing = (
+                    [mid for mid in _normalize_video_assign_list(current) if mid in eligible_review_mids]
+                    if append_requested_videos
+                    else []
+                )
+                selected = []
+                for mid in [*existing, *requested_videos]:
+                    if mid not in selected:
+                        selected.append(mid)
+                assignment = (
+                    {"videos": selected, "source": SELF_STUDY_VIDEO_ASSIGN_SOURCE}
+                    if selected
+                    else None
+                )
+                _write_sid_mapping(day, sid, assignment)
+            else:
+                assignment = _sid_lookup(fixed.get(date, {}), sid)
+            if _json_stable(fixed) != before:
+                save_atomic(UPD_PATH, fixed)
+        return jsonify({"ok": True, "assignment": assignment})
+    except TimeoutError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+
+
+@bp_api_basic.get("/api/student/bootstrap")
+def api_student_bootstrap():
+    caller_sid = str(request.args.get("sid") or "").strip()
+    session_sid = _public_session_sid()
+    if _is_public_student_request() and session_sid is None:
+        return jsonify({"ok": False, "code": "unauthenticated"}), 401
+    sid = session_sid if session_sid is not None else caller_sid
+    date = str(request.args.get("date") or _today_kst_iso()).strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "missing sid"}), 400
+    try:
+        dt.date.fromisoformat(date)
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad date"}), 400
+
+    if _is_ghost_student_sid(sid):
+        return _ghost_student_bootstrap(date)
+
+    students = load(STU_PATH) or []
+    student = next((s for s in students if isinstance(s, dict) and str(s.get("id")) == sid), None)
+    if not student:
+        return jsonify({"ok": False, "error": "student not found"}), 404
+    academy_allowed = _student_request_academy_allowed()
+
+    log_repo = get_log_repository()
+    log_entry = log_repo.read_entry(date, sid).entry
+    logs = {date: {sid: log_entry}} if isinstance(log_entry, dict) and log_entry else {date: {}}
+    self_study_day = _student_is_self_study_on_date(logs, date, sid, student)
+    archived = isinstance(log_entry, dict) and _log_rules.truthy(log_entry.get("archived"))
+
+    absences = load_absent()
+    absent_for_date = {
+        "by_date": {date: (absences.get("by_date") or {}).get(date, [])},
+        "by_student": {sid: (absences.get("by_student") or {}).get(sid)}
+            if (absences.get("by_student") or {}).get(sid) else {},
+    }
+    absent_today = _student_absent_on_date(absences, date, sid)
+    registered_today = _student_is_registered_on_date(student, sid, date)
+
+    dashboard_enabled = _student_dashboard_enabled()
+    videos_all = None
+    progress_all = None
+    latest_status_by_sid = None
+    if dashboard_enabled:
+        videos_all = load(VID_PATH) or []
+        progress_all = _load_progress_strict()
+        latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+
+    if (not registered_today and not self_study_day) or absent_today:
+        redirect_sid = _active_student_alias_sid(students, student, sid, date, absences)
+        payload = {
+            "ok": True,
+            "date": date,
+            "students": [student],
+            "student": student,
+            "videos": [],
+            "reviewVideos": [],
+            "updates": {date: {sid: []}},
+            "materials": {},
+            "assigns": {sid: []},
+            "absent": absent_for_date,
+            "logs": {date: {}},
+            "assignedTests": [],
+            "homeworkBooks": [],
+            "courseBlocked": True,
+            "selfStudy": self_study_day,
+            "blockMessage": STUDENT_COURSE_BLOCK_MESSAGE,
+            "academyAccessAllowed": academy_allowed,
+            "outsideAcademyBlocked": not academy_allowed,
+            "networkBlocked": not academy_allowed,
+            "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
+            "redirectSid": redirect_sid,
+            "recoveredSid": redirect_sid,
+            "recoveryReason": "active_course_alias" if redirect_sid else "",
+        }
+        if dashboard_enabled:
+            payload["dashboard"] = _student_dashboard_projection(
+                student=student,
+                sid=sid,
+                date_key=date,
+                videos=videos_all,
+                latest_status_by_sid=latest_status_by_sid,
+                homework_books=[],
+                absences=absences,
+            )
+        return nocache_resp(_finalize_public_bootstrap(payload, sid, academy_allowed))
+
+    if videos_all is None:
+        videos_all = load(VID_PATH) or []
+    if progress_all is None:
+        progress_all = _load_progress_strict()
+    if latest_status_by_sid is None:
+        latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+    course_videos_completed = _course_videos_completed(
+        _student_completion_videos(student, videos_all),
+        sid,
+        latest_status_by_sid,
+    )
+    if date == _today_kst_iso() and not _is_public_student_request():
+        updates = _load_updates_with_auto_assign(
+            students=students,
+            videos=videos_all,
+            date_key=date,
+            logs=logs,
+        )
+    else:
+        updates = load(UPD_PATH) or {}
+    day_updates = updates.get(date) if isinstance(updates, dict) else {}
+    assignment = _sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
+    response_assignment = assignment
+    watch_all = load(WATCH_PATH) or {}
+    eligible_mids = _student_eligible_review_video_mids(
+        student,
+        videos_all,
+        progress_all,
+        watch_all,
+        date,
+    )
+    assignment_source = (
+        str(assignment.get("source") or "").strip().casefold()
+        if isinstance(assignment, dict)
+        else ""
+    )
+    if self_study_day or assignment_source == SELF_STUDY_VIDEO_ASSIGN_SOURCE.casefold():
+        response_assignment = _filter_self_study_assignment_for_response(
+            assignment,
+            eligible_mids,
+        )
+    assigned_videos = _normalize_video_assign_list(response_assignment)
+    assigned_set = set(assigned_videos)
+
+    primary_video_mids = _student_primary_video_mids(student, videos_all)
+    videos = []
+    for v in videos_all:
+        if not isinstance(v, dict):
+            continue
+        mid = str(v.get("mid") or "").strip()
+        if mid not in assigned_set:
+            continue
+        item = dict(v)
+        item["isExtraAssignment"] = mid not in primary_video_mids
+        videos.append(item)
+    videos = _academy_restricted_student_videos(videos, academy_allowed)
+
+    review_videos = []
+    if not absent_today and not archived:
+        review_videos = _student_review_video_projection(
+            student,
+            videos_all,
+            progress_all,
+            watch_all,
+            date,
+            assigned_videos,
+            academy_allowed,
+        )
+
+    assigns = load(ASN_PATH) or {}
+    material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
+    assigned_materials = _assigned_material_list(material_assignment)
+    materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
+
+    json_logs_for_assigned = log_repo.read_json_map()
+
+    assigned_tests = _student_assigned_tests_for_date(
+        progress_all,
+        logs,
+        date,
+        sid,
+        json_logs_for_assigned,
+    )
+    assigned_tests = _filter_assigned_tests_for_student_curriculum(assigned_tests, student)
+    assigned_tests = _academy_restricted_assigned_tests(assigned_tests, academy_allowed)
+    homework_books = _student_homework_book_names_from_log(log_entry)
+
+    payload = {
+        "ok": True,
+        "date": date,
+        "students": [student],
+        "student": student,
+        "videos": videos,
+        "reviewVideos": review_videos,
+        "updates": {date: {sid: response_assignment or []}},
+        "materials": materials,
+        "assigns": {sid: material_assignment or []},
+        "absent": absent_for_date,
+        "logs": logs,
+        "assignedTests": assigned_tests,
+        "homeworkBooks": homework_books,
+        "selfStudy": self_study_day,
+        "courseVideosCompleted": course_videos_completed,
+        "academyAccessAllowed": academy_allowed,
+        "outsideAcademyBlocked": not academy_allowed,
+        "networkBlocked": not academy_allowed,
+        "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
+    }
+    if dashboard_enabled:
+        payload["dashboard"] = _student_dashboard_projection(
+            student=student,
+            sid=sid,
+            date_key=date,
+            videos=videos_all,
+            latest_status_by_sid=latest_status_by_sid,
+            homework_books=homework_books,
+            absences=absences,
+        )
+    return nocache_resp(_finalize_public_bootstrap(payload, sid, academy_allowed))
 
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
@@ -919,8 +2960,10 @@ def api_add_student():
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
     data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
+    _apply_able_auto_video_assign_default(data)
     students.append(data)
     save_atomic(STU_PATH, students)
+    enqueue_current_schedule_changes([data["id"]])
     return jsonify({"id": data["id"]})
 
 
@@ -937,7 +2980,36 @@ def api_feedback():
 
 @bp_api_basic.route("/api/extra-attend", methods=["GET", "POST"])
 def api_extra_attend():
-    return crud(EXTRA_PATH)
+    if request.method == "GET":
+        return jsonify(load(EXTRA_PATH))
+
+    body = request.get_json(force=True) or {}
+    if mapping_contains_ghost_student_sid(body):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
+    previous = load(EXTRA_PATH) or {}
+    previous_map = previous if isinstance(previous, dict) else {}
+    body_map = body if isinstance(body, dict) else {}
+    save_atomic(EXTRA_PATH, body_map)
+
+    changed_dates = {
+        str(date_key)
+        for date_key in set(previous_map.keys()) | set(body_map.keys())
+        if DATE_RE.match(str(date_key))
+        and _json_stable(previous_map.get(date_key)) != _json_stable(body_map.get(date_key))
+    }
+    for date_key in sorted(changed_dates):
+        # A makeup registration is an explicit Today-membership event. The
+        # create-only initializer may assign this student once, but never
+        # re-picks an existing daily snapshot.
+        _load_updates_with_auto_assign(date_key=date_key, extra=body_map)
+    affected_sids = {
+        str(sid)
+        for date_key in changed_dates
+        for mapping in (previous_map.get(date_key), body_map.get(date_key))
+        for sid in (mapping.keys() if isinstance(mapping, dict) else [])
+    }
+    enqueue_current_schedule_changes(affected_sids)
+    return "", 204
 
 
 @bp_api_basic.route("/api/weekend-slots", methods=["GET", "POST"])
@@ -946,6 +3018,8 @@ def api_weekend_slots():
         return jsonify(load(WEEKEND_SLOTS_PATH))
     body = request.get_json(force=True) or {}
     cur = load(WEEKEND_SLOTS_PATH)
+    if not isinstance(cur, dict):
+        cur = {}
     for date, mapping in (body.items() if isinstance(body, dict) else []):
         if not isinstance(mapping, dict):
             continue
@@ -957,8 +3031,30 @@ def api_weekend_slots():
                 return int(v)
             return v
 
-        cur.setdefault(date, {}).update({str(k): norm(v) for k, v in mapping.items()})
+        day = cur.setdefault(date, {})
+        for k, v in mapping.items():
+            sid = str(k)
+            if v is None or v is False or v == []:
+                day.pop(sid, None)
+                continue
+            day[sid] = norm(v)
+        if not day:
+            cur.pop(date, None)
     save_atomic(WEEKEND_SLOTS_PATH, cur)
+    enqueue_current_schedule_changes(
+        str(sid)
+        for mapping in (body.values() if isinstance(body, dict) else [])
+        for sid in (mapping.keys() if isinstance(mapping, dict) else [])
+    )
+    for date, mapping in (body.items() if isinstance(body, dict) else []):
+        if not isinstance(mapping, dict) or not DATE_RE.match(str(date)):
+            continue
+        for sid in mapping:
+            _reconcile_consecutive_auto_assignment(
+                str(date),
+                str(sid),
+                weekend_slots=cur,
+            )
     return "", 204
 
 
@@ -975,33 +3071,31 @@ def api_logs_entry():
     if not date or not sid or not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad query"}), 400
 
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        entry = _db_get_entry(con, date, sid) or {}
-        try:
-            con.close()
-        except Exception:
-            pass
+    result = get_log_repository().read_entry(date, sid)
+    return jsonify({"ok": True, "source": result.source, "entry": result.entry})
 
-        if isinstance(entry, dict) and entry:
-            return jsonify({"ok": True, "source": "sqlite", "entry": entry})
-    except Exception as e:
-        print("[logs.entry] sqlite failed:", e, flush=True)
-        try:
-            con.close()
-        except Exception:
-            pass
 
-    try:
-        logs = load(LOGS_PATH) or {}
-        entry = (logs.get(date) or {}).get(sid) or {}
-        if not isinstance(entry, dict):
-            entry = {}
-    except Exception:
-        entry = {}
+def _summarize_unarchived_done_logs(exclude_date: str = "") -> dict:
+    return get_log_repository().summarize_unarchived_done(exclude_date)
 
-    return jsonify({"ok": True, "source": "json", "entry": entry})
+
+@bp_api_basic.get("/api/logs/unarchived-summary")
+def api_logs_unarchived_summary():
+    """Return stale-record counts and each student's latest unarchived done log."""
+    exclude_date = str(
+        request.args.get("exclude_date")
+        or request.args.get("excludeDate")
+        or ""
+    ).strip()
+    if exclude_date and not DATE_RE.match(exclude_date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+    return nocache_resp(_summarize_unarchived_done_logs(exclude_date))
+
+
+@bp_api_basic.get("/api/homework-books")
+def api_homework_books():
+    logs = get_log_repository().read_logs()
+    return nocache_resp(_log_rules.latest_homework_books_by_student(logs))
 
 
 # ─────────────────────────────────────────────
@@ -1013,113 +3107,20 @@ def api_logs_entry():
 @bp_api_basic.route("/api/logs", methods=["GET", "POST"])
 def api_logs():
     if request.method == "GET":
-        sqlite_map = {}
-        sqlite_ok = False
-        try:
-            con = _db_connect()
-            _db_ensure_schema(con)
-            sqlite_map = _db_dump_all(con)
-            sqlite_ok = True
-        except Exception as e:
-            print("[logs] sqlite GET failed:", e, flush=True)
-            sqlite_ok = False
-        finally:
-            try:
-                con.close()
-            except Exception:
-                pass
-
-        json_map = {}
-        try:
-            json_map = load(LOGS_PATH) or {}
-            if not isinstance(json_map, dict):
-                json_map = {}
-        except Exception:
-            json_map = {}
-
-        if not sqlite_ok:
-            return nocache_resp(json_map)
-
-        out = dict(sqlite_map)
-        for d, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
-            if not isinstance(by_sid, dict):
-                continue
-            day = out.setdefault(d, {})
-            if not isinstance(day, dict):
-                out[d] = {}
-                day = out[d]
-            for sid, entry in by_sid.items():
-                sid_s = str(sid)
-                if sid_s not in day:
-                    if isinstance(entry, dict):
-                        day[sid_s] = entry
-        return nocache_resp(out)
+        date_filter = str(request.args.get("date") or "").strip()
+        sid_filter = str(request.args.get("sid") or "").strip()
+        if date_filter and not DATE_RE.match(date_filter):
+            return jsonify({"ok": False, "error": "bad date"}), 400
+        return nocache_resp(get_log_repository().read_logs(date_filter, sid_filter))
 
     incoming = request.get_json(force=True) or {}
     if not isinstance(incoming, dict):
         incoming = {}
 
-    sqlite_ok = False
-    sqlite_err = None
+    result = get_log_repository().legacy_post(incoming)
 
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        con.execute("BEGIN IMMEDIATE;")
-        for date, by_sid in incoming.items():
-            if not isinstance(by_sid, dict):
-                continue
-            if not DATE_RE.match(str(date)):
-                continue
-            for sid, entry in by_sid.items():
-                if not isinstance(entry, dict):
-                    continue
-                date_s = str(date)
-                sid_s = str(sid)
-
-                cur = _db_get_entry(con, date_s, sid_s)
-                merged = _merge_entry_safe(cur, entry)
-                _db_upsert_entry(con, date_s, sid_s, merged)
-        con.execute("COMMIT;")
-        sqlite_ok = True
-    except Exception as e:
-        sqlite_err = e
-        try:
-            con.execute("ROLLBACK;")
-        except Exception:
-            pass
-        print("[logs] sqlite legacy POST failed:", e, flush=True)
-        sqlite_ok = False
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    with _logs_lock():
-        current = load(LOGS_PATH) or {}
-        if not isinstance(current, dict):
-            current = {}
-
-        for date, by_sid in incoming.items():
-            if not isinstance(by_sid, dict):
-                continue
-            cur_day = current.setdefault(date, {})
-            if not isinstance(cur_day, dict):
-                current[date] = {}
-                cur_day = current[date]
-
-            for sid, entry in by_sid.items():
-                if not isinstance(entry, dict):
-                    continue
-                sid_s = str(sid)
-                cur_entry = cur_day.get(sid_s, {})
-                cur_day[sid_s] = _merge_entry_safe(cur_entry, entry)
-
-        save_atomic(LOGS_PATH, current)
-
-    if not sqlite_ok:
-        return jsonify({"ok": False, "sqlite": False, "error": str(sqlite_err) if sqlite_err else "sqlite failed"}), 409
+    if not result.sqlite_ok:
+        return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
     return "", 204
 
@@ -1131,8 +3132,8 @@ def api_logs_patch():
     body:
       {
         "date": "YYYY-MM-DD",
-        "sid": "???334",
-        "entry": { ...????... },
+        "sid": "334",
+        "entry": { ...변경 내용... },
         "__clear": ["notes", ...]
       }
     """
@@ -1151,96 +3152,51 @@ def api_logs_patch():
         return jsonify({"ok": False, "error": "bad payload"}), 400
     if not DATE_RE.match(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
+    if _is_ghost_student_sid(sid):
+        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
-    merged: dict = {}
+    entry = _repair_log_entry_placeholders(entry, sid)
+    base = _repair_log_entry_placeholders(base, sid)
 
-    sqlite_ok = False
-    sqlite_err = None
-    sqlite_base_conflict = False
-    try:
-        con = _db_connect()
-        _db_ensure_schema(con)
-        con.execute("BEGIN IMMEDIATE;")
-        cur = _db_get_entry(con, date, sid)
-        if _entry_conflicts_with_base(cur, base):
-            con.execute("ROLLBACK;")
-            # SQLite? JSON? ?? ??? ??? ?? ?? ?? ??? JSON ???? ??.
-            sqlite_base_conflict = True
-            sqlite_ok = False
-        else:
-            merged = _merge_entry_safe(cur, entry)
-            _db_upsert_entry(con, date, sid, merged)
-            con.execute("COMMIT;")
-            sqlite_ok = True
-    except Exception as e:
-        sqlite_err = e
-        try:
-            con.execute("ROLLBACK;")
-        except Exception:
-            pass
-        print("[logs] sqlite PATCH failed:", e, flush=True)
-        sqlite_ok = False
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
+    result = get_log_repository().patch_entry(date, sid, entry, base)
 
-    try:
-        with _logs_lock():
-            current = load(LOGS_PATH) or {}
-            if not isinstance(current, dict):
-                current = {}
-            day = current.setdefault(date, {})
-            if not isinstance(day, dict):
-                current[date] = {}
-                day = current[date]
+    if result.json_conflict_entry is not None:
+        return jsonify({
+            "ok": False,
+            "retryable": False,
+            "error": "다른 화면에서 특이사항/숙제가 먼저 변경되었습니다. 새로고침 후 다시 저장해 주세요.",
+            "entry": result.json_conflict_entry,
+        }), 409
 
-            cur_json = day.get(sid, {})
-            if not isinstance(cur_json, dict):
-                cur_json = {}
-
-            if _entry_conflicts_with_base(cur_json, base):
+    if not result.sqlite_ok:
+        # SQLite 기준 충돌이어도 legacy JSON 저장이 확인된 경우에만 호환 성공으로 응답한다.
+        if result.sqlite_base_conflict:
+            if not result.json_ok:
                 return jsonify({
                     "ok": False,
-                    "retryable": False,
-                    "error": "?? ???? ????/??? ?? ??????. ?? ?? ?? ?? ??????.",
-                    "entry": cur_json,
+                    "sqlite": False,
+                    "json": False,
+                    "error": "sqlite out-of-sync and legacy logs.json save failed",
                 }), 409
+            return jsonify({
+                "ok": True,
+                "sqlite": False,
+                "json": result.json_ok,
+                "entry": result.merged,
+                "warning": "sqlite out-of-sync",
+            })
+        return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
-            if not merged:
-                merged = _merge_entry_safe(cur_json, entry)
-            day[sid] = merged
+    if not result.json_ok:
+        return jsonify({
+            "ok": True,
+            "sqlite": True,
+            "json": False,
+            "entry": result.merged,
+            "warning": "SQLite save succeeded, but legacy JSON log storage is out of sync.",
+        })
 
-            save_atomic(LOGS_PATH, current)
-    except Exception as e:
-        print("[logs] json PATCH failed:", e, flush=True)
-
-    # JSON ?? ?? ? SQLite ????(?? ??/?? ?? ??? ??)
-    if not sqlite_ok:
-        try:
-            con2 = _db_connect()
-            _db_ensure_schema(con2)
-            _db_upsert_entry(con2, date, sid, merged)
-            con2.commit()
-            sqlite_ok = True
-            sqlite_err = None
-        except Exception as e:
-            sqlite_err = e
-            sqlite_ok = False
-        finally:
-            try:
-                con2.close()
-            except Exception:
-                pass
-
-    if not sqlite_ok:
-        # ??? ?? ??? ?? ?? ?? JSON ?? ? 200?? ??
-        if sqlite_base_conflict:
-            return jsonify({"ok": True, "sqlite": False, "entry": merged, "warning": "sqlite out-of-sync"})
-        return jsonify({"ok": False, "sqlite": False, "error": str(sqlite_err) if sqlite_err else "sqlite failed"}), 409
-
-    return jsonify({"ok": True, "sqlite": True, "entry": merged})
+    return jsonify({"ok": True, "sqlite": True, "json": True, "entry": result.merged})
 
 
 # ─────────────────────────────────────────────
@@ -1270,8 +3226,31 @@ def api_update_student_field():
     students: List[dict] = load(STU_PATH)
     for s in students:
         if str(s.get("id")) == str(sid):
+            was_able = _student_uses_able_curriculum(s)
+            if field == AUTO_VIDEO_ASSIGN_FIELD:
+                value = _coerce_auto_video_assign_count(value)
             s[field] = value
+            if (
+                field in {"curriculum", "subCurriculum"}
+                and _student_uses_able_curriculum(s)
+                and (not was_able or _is_able_curriculum_value(value))
+            ):
+                _apply_able_auto_video_assign_default(s)
             save_atomic(STU_PATH, students)
+            if field == "selfStudyDays":
+                _load_updates_with_auto_assign(students=students)
+            elif re.fullmatch(r"day\d+", str(field)):
+                # A schedule edit is the explicit non-consecutive ->
+                # consecutive transition. Expand an existing automatic
+                # snapshot only; the regular initializer remains create-only.
+                _reconcile_consecutive_auto_assignment(
+                    _today_kst_iso(),
+                    str(sid),
+                    students=students,
+                )
+                _load_updates_with_auto_assign(students=students)
+            if re.fullmatch(r"(?:day|visitTime)\d+", str(field)):
+                enqueue_current_schedule_changes([str(sid)])
             return "OK"
     abort(404)
 

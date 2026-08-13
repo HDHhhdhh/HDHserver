@@ -86,7 +86,9 @@ export function isSchoolCalendarV2(payload) {
 }
 
 export function normalizeGradeLabel(value) {
-  return String(value ?? '').trim().replace(/\s+/g, '');
+  const compact = String(value ?? '').trim().replace(/\s+/g, '');
+  const gradeMatch = compact.match(/^(?:고|중)?([1-3])(?:학년)?$/);
+  return gradeMatch ? `${gradeMatch[1]}학년` : compact;
 }
 
 export function getActiveSchoolCalendarYear(payload) {

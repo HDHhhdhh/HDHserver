@@ -30,8 +30,25 @@ def _is_time_like(v: str) -> bool:
     return len(s) <= 20
 
 
-def _save_json(path, obj: Any) -> None:
-    save_atomic(path, obj)
+def _load_all_arrive_times() -> Dict[str, Dict[str, str]]:
+    all_map: Dict[str, Dict[str, str]] = load(ARRIVE_TIME_PATH) or {}
+    return all_map if isinstance(all_map, dict) else {}
+
+
+def _day_map(all_map: Dict[str, Dict[str, str]], date_key: str) -> Dict[str, str]:
+    cur = all_map.get(date_key, {})
+    return cur if isinstance(cur, dict) else {}
+
+
+def _apply_time_value(day_map: Dict[str, str], sid: str, value: Any) -> str:
+    v = "" if value is None else str(value).strip()
+    if not v:
+        day_map.pop(sid, None)
+        return ""
+    if not _is_time_like(v):
+        abort(400, description="Invalid time value")
+    day_map[sid] = v
+    return v
 
 
 @bp_api_arrive_time.get("/arrive-time")
@@ -42,18 +59,13 @@ def api_arrive_time_get():
     GET /api/arrive-time                  -> 전체(디버그용)
     """
     date_q = request.args.get("date", "")
-    all_map: Dict[str, Dict[str, str]] = load(ARRIVE_TIME_PATH) or {}
+    all_map = _load_all_arrive_times()
 
     if not date_q:
-        if not isinstance(all_map, dict):
-            all_map = {}
         return jsonify(all_map)
 
     date_key = _norm_date(date_q)
-    day_map = all_map.get(date_key, {})
-    if not isinstance(day_map, dict):
-        day_map = {}
-    return jsonify(day_map)
+    return jsonify(_day_map(all_map, date_key))
 
 
 @bp_api_arrive_time.post("/arrive-time")
@@ -69,40 +81,25 @@ def api_arrive_time_post():
         abort(400, description="Invalid JSON body")
 
     with file_lock(ARRIVE_TIME_PATH):
-        all_map: Dict[str, Dict[str, str]] = load(ARRIVE_TIME_PATH) or {}
-        if not isinstance(all_map, dict):
-            all_map = {}
+        all_map = _load_all_arrive_times()
 
         for date_key_raw, day_patch in payload.items():
             date_key = _norm_date(str(date_key_raw))
             if not isinstance(day_patch, dict):
                 abort(400, description="Invalid day map")
 
-            cur = all_map.get(date_key, {})
-            if not isinstance(cur, dict):
-                cur = {}
+            cur = _day_map(all_map, date_key)
 
             for sid_raw, time_raw in day_patch.items():
                 sid = str(sid_raw).strip()
                 if not sid:
                     continue
 
-                if time_raw is None:
-                    cur.pop(sid, None)
-                    continue
-
-                v = str(time_raw).strip()
-                if not v:
-                    cur.pop(sid, None)
-                    continue
-
-                if not _is_time_like(v):
-                    abort(400, description="Invalid time value")
-                cur[sid] = v
+                _apply_time_value(cur, sid, time_raw)
 
             all_map[date_key] = cur
 
-        _save_json(ARRIVE_TIME_PATH, all_map)
+        save_atomic(ARRIVE_TIME_PATH, all_map)
     return jsonify({"ok": True})
 
 
@@ -124,24 +121,12 @@ def api_arrive_time_patch():
         abort(400, description="sid is required")
 
     value = payload.get("value", "")
-    v = "" if value is None else str(value).strip()
 
     with file_lock(ARRIVE_TIME_PATH):
-        all_map: Dict[str, Dict[str, str]] = load(ARRIVE_TIME_PATH) or {}
-        if not isinstance(all_map, dict):
-            all_map = {}
-
-        cur = all_map.get(date_key, {})
-        if not isinstance(cur, dict):
-            cur = {}
-
-        if not v:
-            cur.pop(sid, None)
-        else:
-            if not _is_time_like(v):
-                abort(400, description="Invalid time value")
-            cur[sid] = v
+        all_map = _load_all_arrive_times()
+        cur = _day_map(all_map, date_key)
+        v = _apply_time_value(cur, sid, value)
 
         all_map[date_key] = cur
-        _save_json(ARRIVE_TIME_PATH, all_map)
+        save_atomic(ARRIVE_TIME_PATH, all_map)
     return jsonify({"ok": True, "date": date_key, "sid": sid, "value": v})

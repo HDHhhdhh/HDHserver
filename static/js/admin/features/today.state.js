@@ -14,6 +14,7 @@
 
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';
 
 const CT = { 'Content-Type': 'application/json' };
 const WCHR = '일월화수목금토';
@@ -22,8 +23,8 @@ const WCHR = '일월화수목금토';
 // 기본 예정 등원시간 매핑
 // ─────────────────────────────────────────────
 export const ARRIVE_TIME_MAP = {
-  '토1': '13:00', '토2': '18:00',
-  '일1': '13:00', '일2': '18:00',
+  '토1': '13:00', '토2': '18:00', '토3': '18:00',
+  '일1': '13:00', '일2': '18:00', '일3': '18:00',
   '월1': '13:00', '월2': '18:00',
   '화1': '13:00', '화2': '18:00',
   '수1': '13:00', '수2': '18:00',
@@ -171,6 +172,80 @@ export function isHwChecked(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];
   return !!(e && truthy(e.hwChecked));
 }
+export function isHwCheckRequested(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  if (!e || isHwChecked(dateKey, sid)) return false;
+  return truthy(e.hwCheckRequested);
+}
+export function isSelfStudy(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  if (e && Object.prototype.hasOwnProperty.call(e, 'selfStudy')) {
+    return truthy(e.selfStudy);
+  }
+  return isSelfStudyScheduledForDate(getStudent(sid), dateKey);
+}
+export function hwCheckRequestedAt(dateKey, sid) {
+  const e = state.logs?.[dateKey]?.[String(sid)];
+  return String(e?.hwCheckRequestedAt || '').trim();
+}
+async function assignSelfStudyReviewVideos(dateKey, sid) {
+  const res = await fetch('/api/updates/self-study', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify({ date: dateKey, sid: String(sid) }),
+  });
+  const payload = await res.json();
+  if (!res.ok || !payload?.ok) {
+    throw new Error(payload?.error || `self-study video assignment failed: ${res.status}`);
+  }
+
+  state.updates = state.updates || {};
+  state.updates[dateKey] = state.updates[dateKey] || {};
+  if (payload.assignment) state.updates[dateKey][String(sid)] = payload.assignment;
+  else delete state.updates[dateKey][String(sid)];
+}
+export async function setSelfStudyRemote(dateKey, sid, checked) {
+  if (checked) {
+    await patchLog(dateKey, sid, {
+      selfStudy: true,
+      hwCheckRequested: false,
+    }, ['hwCheckRequestedAt']);
+    await assignSelfStudyReviewVideos(dateKey, sid);
+    return;
+  }
+  await patchLog(dateKey, sid, { selfStudy: false });
+}
+export async function setHomeworkCheckRequestedRemote(dateKey, sid, checked) {
+  const on = !!checked;
+  if (on) {
+    await patchLog(dateKey, sid, {
+      hwCheckRequested: true,
+      hwCheckRequestedAt: nowISO(),
+    });
+    return;
+  }
+  await patchLog(dateKey, sid, {
+    hwCheckRequested: false,
+  }, ['hwCheckRequestedAt']);
+}
+export async function setHomeworkCheckedRemote(dateKey, sid, checked) {
+  const on = !!checked;
+  if (on) {
+    const t = nowHHMM();
+    await patchLog(dateKey, sid, {
+      hwChecked: true,
+      hwCheckedAt: t,
+      hwAssigned: true,
+      hwAssignedAt: t,
+      hwCheckRequested: false,
+    }, ['hwCheckRequestedAt']);
+    return;
+  }
+  await patchLog(dateKey, sid, {
+    hwChecked: false,
+    hwAssigned: false,
+  }, ['hwCheckedAt', 'hwAssignedAt']);
+}
 export async function setLogFlagRemote(dateKey, sid, field, checked) {
   await patchLog(dateKey, sid, { [field]: checked ? true : false });
 }
@@ -180,6 +255,25 @@ export async function setLogFlagRemote(dateKey, sid, field, checked) {
 // ─────────────────────────────────────────────
 export let WEEKEND_SLOTS = {}; // { "YYYY-MM-DD": { sid: [1,2] | 1 } }
 
+function isWeekendDate(dateStr) {
+  const w = yoilOf(dateStr);
+  return w === '토' || w === '일';
+}
+
+function isAllowedSlotNumber(n, dateStr = '') {
+  if (n === 1 || n === 2) return true;
+  if (n === 3) return !dateStr || isWeekendDate(dateStr);
+  return false;
+}
+
+function publishWeekendSlots() {
+  state.weekendSlots = WEEKEND_SLOTS;
+  window.weekendSlots = WEEKEND_SLOTS;
+  if (window.state && typeof window.state === 'object') {
+    window.state.weekendSlots = WEEKEND_SLOTS;
+  }
+}
+
 export async function loadWeekendSlots() {
   try {
     WEEKEND_SLOTS = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json());
@@ -187,25 +281,30 @@ export async function loadWeekendSlots() {
   } catch {
     WEEKEND_SLOTS = {};
   }
+  publishWeekendSlots();
 }
 
-export function parseSlotsFromText(txt) {
-  const nums = (String(txt || '').match(/[1-2]/g) || []).map(n => parseInt(n, 10));
-  return Array.from(new Set(nums)).filter(n => n === 1 || n === 2).sort((a, b) => a - b);
+export function parseSlotsFromText(txt, dateStr = '') {
+  const nums = (String(txt || '').match(/[1-3]/g) || []).map(n => parseInt(n, 10));
+  return Array.from(new Set(nums))
+    .filter(n => isAllowedSlotNumber(n, dateStr))
+    .sort((a, b) => a - b);
 }
 
-export function getSlots(dateStr, sid) {
-  const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
-
+function normalizeSlotValue(raw, dateStr = '') {
   if (Array.isArray(raw)) {
     return raw
       .map(n => parseInt(n, 10))
-      .filter(n => Number.isInteger(n) && (n === 1 || n === 2))
+      .filter(n => Number.isInteger(n) && isAllowedSlotNumber(n, dateStr))
       .sort((a, b) => a - b);
   }
-  if (Number.isInteger(raw) && (raw === 1 || raw === 2)) return [raw];
+  if (Number.isInteger(raw) && isAllowedSlotNumber(raw, dateStr)) return [raw];
+  const parsed = parseInt(String(raw ?? '').trim(), 10);
+  if (Number.isInteger(parsed) && isAllowedSlotNumber(parsed, dateStr)) return [parsed];
+  return [];
+}
 
-  // fallback: 학생 기본 요일 데이터
+function regularSlotsForStudent(dateStr, sid) {
   const w = yoilOf(dateStr);
   const stu = getStudent(sid);
   if (!stu) return [];
@@ -216,16 +315,39 @@ export function getSlots(dateStr, sid) {
       const m = String(v).match(/\d+/);
       return m ? parseInt(m[0], 10) : null;
     })
-    .filter(n => Number.isInteger(n) && (n === 1 || n === 2));
+    .filter(n => Number.isInteger(n) && isAllowedSlotNumber(n, dateStr));
 
-  if (nums.length) return Array.from(new Set(nums)).sort((a, b) => a - b);
+  return Array.from(new Set(nums)).sort((a, b) => a - b);
+}
+
+export function getSlots(dateStr, sid) {
+  const raw = WEEKEND_SLOTS?.[dateStr]?.[String(sid)];
+  const rawSlots = normalizeSlotValue(raw, dateStr);
+  const regularSlots = regularSlotsForStudent(dateStr, sid);
+
+  let slots = [];
+  if (rawSlots.length) {
+    // Extra/makeup schedulers persist merged slots when they need additive behavior.
+    // Inline "구분" edits must be authoritative so 일1일2 can narrow to 일1
+    // or widen back to 일1일2 even if an old slot-specific absence remains.
+    slots = rawSlots;
+  } else {
+    slots = regularSlots.length ? regularSlots : [];
+  }
+
+  const absentSlots = normalizeSlotValue(state.absentSlotsByDate?.[dateStr]?.[String(sid)], dateStr);
+  if (absentSlots.length && !rawSlots.length) {
+    const absentSet = new Set(absentSlots);
+    return slots.filter(slot => !absentSet.has(slot));
+  }
+  if (slots.length) return slots;
   return [];
 }
 
 export function labelFor(dateStr, sid) {
   const w = yoilOf(dateStr);
   const slots = getSlots(dateStr, sid);
-  if (slots.length) return slots.map(n => `${w}${n}`).join('·');
+  if (slots.length) return slots.map(n => `${w}${n}`).join(' ');
 
   const stu = getStudent(sid);
   if (!stu) return w;
@@ -242,7 +364,7 @@ export function labelFor(dateStr, sid) {
 
   if (!nums.length) return w;
   const uniq = Array.from(new Set(nums)).sort((a, b) => a - b);
-  return uniq.map(n => `${w}${n}`).join('·');
+  return uniq.map(n => `${w}${n}`).join(' ');
 }
 
 export function sortKeyFor(dateStr, sid) {
@@ -333,7 +455,7 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
   const w = yoilOf(dateStr);
 
   // 라벨에서 1/2 슬롯 추출 (예: "월2" / "월1·월2" / "월1월2" / "2" 다 됨)
-  const slots = parseSlotsFromText(labelText);
+  const slots = parseSlotsFromText(labelText, dateStr);
   if (slots.length) {
     const key = `${w}${Math.min(...slots)}`;
     return ARRIVE_TIME_MAP[key] || '';
@@ -348,8 +470,8 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
 // ─────────────────────────────────────────────
 let _orderMap = null; // { "YYYY-MM-DD": ["sid", ...] }
 
-export async function loadOrderMap() {
-  if (_orderMap) return _orderMap;
+export async function loadOrderMap(options = {}) {
+  if (_orderMap && !options.force) return _orderMap;
   try { _orderMap = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
   catch { _orderMap = {}; }
   return _orderMap;
@@ -370,45 +492,81 @@ export function applySavedOrder(list, dateKey) {
   return ordered;
 }
 export async function saveOrder(dateKey, newOrderIds) {
-  let latest;
-  try { latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
-  catch { latest = {}; }
-  latest[dateKey] = newOrderIds.map(String);
-  await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-  _orderMap = latest;
+  const date = String(dateKey || '').trim();
+  const order = Array.from(new Set((Array.isArray(newOrderIds) ? newOrderIds : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)));
+  const response = await fetch('/api/today_order', {
+    method: 'PATCH',
+    headers: CT,
+    body: JSON.stringify({ date, order }),
+  });
+  if (!response.ok) throw new Error(`/api/today_order save failed: ${response.status}`);
+  const payload = await response.json();
+  const savedOrder = Array.isArray(payload?.order) ? payload.order.map(String) : order;
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap, [date]: savedOrder };
+  } else {
+    _orderMap = null;
+  }
+  return savedOrder;
 }
 export async function clearTodayOrder(dateKey) {
-  try {
-    const latest = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (latest && latest[dateKey]) {
-      delete latest[dateKey];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(latest) });
-      _orderMap = latest;
-    }
-  } catch {}
+  const date = String(dateKey || '').trim();
+  const response = await fetch(`/api/today_order?${new URLSearchParams({ date }).toString()}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(`/api/today_order clear failed: ${response.status}`);
+  const payload = await response.json();
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap };
+    delete _orderMap[date];
+  }
+  return payload?.cleared === true;
 }
 
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
   const dateStr = dateKey || getAdminDate();
 
+  const latestRes = await fetch('/api/weekend-slots', { cache: 'no-store' });
+  if (!latestRes.ok) {
+    throw new Error(`/api/weekend-slots load failed: ${latestRes.status}`);
+  }
   let weekend = {};
-  try { weekend = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch {}
+  try { weekend = await latestRes.json(); } catch (e) {
+    throw new Error(`/api/weekend-slots bad JSON: ${e?.message || e}`);
+  }
+  if (!weekend || typeof weekend !== 'object') weekend = {};
 
-  const perDay = weekend[dateStr] || {};
-  const slots = parseSlotsFromText(labelText);
+  const perDay = (weekend[dateStr] && typeof weekend[dateStr] === 'object')
+    ? { ...weekend[dateStr] }
+    : {};
+  const slots = parseSlotsFromText(labelText, dateStr);
 
   if (slots.length) perDay[String(sid)] = slots;
   else delete perDay[String(sid)];
 
-  await fetch('/api/weekend-slots', {
+  const saveRes = await fetch('/api/weekend-slots', {
     method: 'POST',
     headers: CT,
     body: JSON.stringify({ [dateStr]: perDay }),
   });
+  if (!saveRes.ok) {
+    let msg = '';
+    try { msg = await saveRes.text(); } catch {}
+    throw new Error(`/api/weekend-slots save failed: ${saveRes.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
+  }
 
-  await clearTodayOrder(dateStr);
+  let orderReset = true;
+  try {
+    await clearTodayOrder(dateStr);
+  } catch (error) {
+    orderReset = false;
+    console.warn('[weekend slots] today order reset failed:', error);
+  }
   await loadWeekendSlots();
-  await loadOrderMap();
+  await loadOrderMap({ force: true });
+  return { saved: true, orderReset };
 }
 
 // ─────────────────────────────────────────────
@@ -432,8 +590,8 @@ async function fetchAttendDay(dateKey) {
   } catch {}
   return null;
 }
-export async function ensureAttendLoaded(dateKey) {
-  if (_attCache.has(dateKey)) return;
+export async function ensureAttendLoaded(dateKey, options = {}) {
+  if (_attCache.has(dateKey) && !options.force) return;
   const server = await fetchAttendDay(dateKey);
   if (server) { _attCache.set(dateKey, server); saveAttendMapLocal(dateKey, server); }
   else { const local = loadAttendMapLocal(dateKey); _attCache.set(dateKey, local); }
@@ -476,8 +634,8 @@ async function fetchContactDay(dateKey) {
   } catch {}
   return null;
 }
-export async function ensureContactLoaded(dateKey) {
-  if (_contactCache.has(dateKey)) return;
+export async function ensureContactLoaded(dateKey, options = {}) {
+  if (_contactCache.has(dateKey) && !options.force) return;
   const server = await fetchContactDay(dateKey);
   if (server) { _contactCache.set(dateKey, server); saveContactMapLocal(dateKey, server); }
   else { const local = loadContactMapLocal(dateKey); _contactCache.set(dateKey, local); }
@@ -541,8 +699,8 @@ async function fetchArriveAll() {
   } catch {}
   return null;
 }
-export async function ensureArriveLoaded(dateKey) {
-  if (_arriveCache.has(dateKey)) return;
+export async function ensureArriveLoaded(dateKey, options = {}) {
+  if (_arriveCache.has(dateKey) && !options.force) return;
 
   const day = await fetchArriveDay(dateKey);
   if (day) { _arriveCache.set(dateKey, day); saveArriveMapLocal(dateKey, day); return; }
@@ -611,6 +769,36 @@ export function collectUnarchivedLogsByDate(dateKey) {
     const timeCmp = bTime.localeCompare(aTime);
     if (timeCmp !== 0) return timeCmp;
 
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+
+  return out;
+}
+
+export function collectUnarchivedLogsExceptDate(dateKey) {
+  const logs = state.logs || {};
+  const selectedDate = String(dateKey || '').trim();
+  if (!selectedDate) return [];
+
+  const out = [];
+  for (const date of Object.keys(logs).sort()) {
+    if (date === selectedDate) continue;
+
+    const dayMap = logs[date] || {};
+    if (!dayMap || typeof dayMap !== 'object') continue;
+
+    for (const sid of Object.keys(dayMap)) {
+      const e = dayMap[sid] || {};
+      const done = truthy(e.done);
+      const archived = truthy(e.archived);
+      if (!done || archived) continue;
+      out.push([String(sid), e, date]);
+    }
+  }
+
+  out.sort((a, b) => {
+    const dateCmp = String(b[2]).localeCompare(String(a[2]));
+    if (dateCmp !== 0) return dateCmp;
     return String(a[0]).localeCompare(String(b[0]));
   });
 

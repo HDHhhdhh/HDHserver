@@ -1,10 +1,5 @@
 ﻿const CUR_ORDER = ['공수1','공수2','미적분1','미적분2','대수','기하','확통'];
 const LV = { '상': 0, '중상': 1, '중': 2, '하': 3 };
-const idx = (arr, v) => {
-  const i = arr.indexOf(v);
-  return i === -1 ? 999 : i;
-};
-
 function getWrap() {
   return document.getElementById('allWrap')
     || document.getElementById('studentsWrap')
@@ -69,13 +64,6 @@ export function sortDomRows(mode = 'name') {
       return nameA.localeCompare(nameB, 'ko');
     }
 
-    if (mode === 'curriculum') {
-      const ca = idx(CUR_ORDER, ra.dataset.cur);
-      const cb = idx(CUR_ORDER, rb.dataset.cur);
-      if (ca !== cb) return ca - cb;
-      return nameA.localeCompare(nameB, 'ko');
-    }
-
     return nameA.localeCompare(nameB, 'ko');
   });
 
@@ -93,14 +81,13 @@ export function injectAllSortBar() {
   bar.innerHTML = `<label style="font-size:13px;color:var(--text,#111)">정렬
     <select id="stuSort" style="margin-left:6px;">
       <option value="name">가나다</option>
-      <option value="level">난이도(상→중상→중→하)</option>
-      <option value="curriculum">커리큘럼</option>
+      <option value="level">난이도(상→하)</option>
     </select></label>`;
 
   wrap.prepend(bar);
 
   const sel = bar.querySelector('#stuSort');
-  sel.value = localStorage.stuSortMode || 'name';
+  sel.value = localStorage.stuSortMode === 'level' ? 'level' : 'name';
   sel.addEventListener('change', () => {
     localStorage.stuSortMode = sel.value;
     sortDomRows(sel.value);
@@ -112,7 +99,7 @@ export function hookAllSort() {
     const t = getTable();
     if (!t) return false;
     injectAllSortBar();
-    sortDomRows(localStorage.stuSortMode || 'name');
+    sortDomRows(localStorage.stuSortMode === 'level' ? 'level' : 'name');
     return true;
   };
 

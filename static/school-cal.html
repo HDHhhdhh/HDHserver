@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     :root {
-      --sc-bg: #eef4fb;
+      --sc-bg: #f4f6f8;
       --sc-surface: #ffffff;
-      --sc-line: #d6e1ef;
-      --sc-line-strong: #bdcfe5;
-      --sc-text: #1c2a3b;
-      --sc-muted: #59708c;
-      --sc-accent: #2e78ec;
-      --sc-shadow: 0 14px 28px rgba(17, 40, 70, 0.12);
+      --sc-line: #d9dee7;
+      --sc-line-strong: #c4ccd8;
+      --sc-text: #20242c;
+      --sc-muted: #5d6878;
+      --sc-accent: #1769aa;
+      --sc-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 28px rgba(15, 23, 42, .08);
     }
 
     body {
@@ -23,7 +23,12 @@
       padding: 14px 0 24px;
       background: var(--sc-bg);
       color: var(--sc-text);
-      font-family: "IBM Plex Sans KR", "Noto Sans KR", "Malgun Gothic", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-variant-numeric: tabular-nums;
     }
 
     body.dark {
@@ -40,7 +45,7 @@
     .cal-shell {
       background: var(--sc-surface);
       border: 1px solid var(--sc-line);
-      border-radius: 18px;
+      border-radius: 8px;
       box-shadow: var(--sc-shadow);
       padding: 14px;
     }
@@ -55,7 +60,7 @@
     .title-wrap h1 {
       margin: 0;
       font-size: clamp(1.25rem, 2.4vw, 1.8rem);
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
     }
 
     .title-sub {
@@ -91,17 +96,62 @@
       flex-wrap: wrap;
     }
 
-    .btn {
+    .tool-row > .tool-group:first-child {
+      order: 2;
+      margin-left: auto;
+    }
+
+    .tool-row > .tool-group:last-child {
+      order: 1;
+      margin-right: auto;
+    }
+
+    .field-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--sc-muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .select-field,
+    .search-field {
       height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--sc-line-strong);
+      background: var(--sc-surface);
+      color: var(--sc-text);
+      padding: 0 10px;
+      font-weight: 700;
+      box-sizing: border-box;
+    }
+
+    .search-field {
+      width: min(320px, 48vw);
+      font-weight: 600;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 40px;
       padding: 0 12px;
-      border-radius: 10px;
+      border-radius: 8px;
       border: 1px solid var(--sc-line-strong);
       background: var(--sc-surface);
       color: var(--sc-text);
       cursor: pointer;
       font-weight: 700;
       font-size: 13px;
+      line-height: 1;
+      text-align: center;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), border-color 150ms cubic-bezier(.2, 0, 0, 1), box-shadow 150ms cubic-bezier(.2, 0, 0, 1);
     }
+
+    .btn:active { transform: scale(.96); }
 
     .btn.primary {
       background: color-mix(in srgb, var(--sc-accent) 86%, #ffffff 14%);
@@ -124,20 +174,27 @@
     .seg {
       display: inline-flex;
       border: 1px solid var(--sc-line-strong);
-      border-radius: 10px;
+      border-radius: 8px;
       overflow: hidden;
       background: var(--sc-surface);
     }
 
     .seg button {
-      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 40px;
       padding: 0 12px;
       border: 0;
       background: transparent;
       color: var(--sc-text);
       font-weight: 700;
       cursor: pointer;
+      line-height: 1;
+      transition: transform 150ms cubic-bezier(.2, 0, 0, 1), background-color 150ms cubic-bezier(.2, 0, 0, 1), color 150ms cubic-bezier(.2, 0, 0, 1);
     }
+
+    .seg button:active { transform: scale(.96); }
 
     .seg button.active {
       background: color-mix(in srgb, var(--sc-accent) 85%, #ffffff 15%);
@@ -147,7 +204,7 @@
     .table-card {
       margin-top: 12px;
       border: 1px solid var(--sc-line);
-      border-radius: 14px;
+      border-radius: 8px;
       background: color-mix(in srgb, var(--sc-surface) 90%, #ffffff 10%);
       padding: 10px;
     }
@@ -161,7 +218,7 @@
 
     #wrap {
       overflow: auto;
-      border-radius: 10px;
+      border-radius: 8px;
     }
 
     .tbl {
@@ -197,16 +254,20 @@
 
       .cal-shell {
         padding: 10px;
-        border-radius: 14px;
+        border-radius: 8px;
       }
 
       .tool-row {
         align-items: stretch;
       }
+
+      :where(.btn, .link-back, .select-field, .search-field, .seg button) {
+        min-height: 44px;
+      }
     }
   </style>
 </head>
-<body>
+<body class="school-calendar-page">
   <div class="cal-shell">
     <header class="topbar-cal">
       <div class="title-wrap">
@@ -227,10 +288,23 @@
         <span id="status" class="status-chip" aria-live="polite"></span>
       </div>
       <div class="tool-group">
-        <div class="seg" id="viewSeg">
-          <button type="button" data-mode="mid" class="active">중간</button>
-          <button type="button" data-mode="final">기말</button>
-        </div>
+        <label class="field-label">년도
+          <select id="yearSelect" class="select-field"></select>
+        </label>
+        <label class="field-label">학기
+          <select id="semesterSelect" class="select-field">
+            <option value="1">1학기</option>
+            <option value="2">2학기</option>
+          </select>
+        </label>
+        <label class="field-label">시험
+          <select id="examSelect" class="select-field">
+            <option value="mid">중간고사</option>
+            <option value="final">기말고사</option>
+          </select>
+        </label>
+        <input id="calSearch" class="search-field" type="search" autocomplete="off" placeholder="학교/과목/교과서 검색">
+        <span id="searchStatus" class="status-chip" aria-live="polite"></span>
       </div>
     </div>
 
@@ -258,6 +332,7 @@
       });
     })();
   </script>
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
   <script type="module" src="/js/school-cal.js"></script>
 </body>
 </html>

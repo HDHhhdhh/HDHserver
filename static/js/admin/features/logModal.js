@@ -1,15 +1,120 @@
 // /js/admin/features/logModal.js
 /* global fetch */
 
-import { $, toast, postJSON, todayLocalKey } from '../core/utils.js';
+import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { getAdminDate } from '../core/adminDate.js';
+import { initTestModal } from './testModal.js';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
 let editingLogSid = null;
+let editingLogDate = null;
 let logModalSnapshot = { notes: '', homeworkTable: [] };
 let logModalServerSnapshot = { notes: '', homeworkTable: [] };
+const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
+const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
+const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
+const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
+const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
+let logOpenSeq = 0;
+let logModalReady = true;
+let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
+let logModalAccessMode = 'full';
+let canonicalHomework = createCanonicalHomeworkState();
+
+function createCanonicalHomeworkState() {
+  return {
+    mode: 'legacy',
+    assignments: [],
+    exactLogRows: [],
+    removedAssignmentIds: new Set(),
+    operationId: null,
+    pendingPayload: null,
+    error: '',
+  };
+}
+
+function resetCanonicalHomeworkState(mode = 'legacy') {
+  canonicalHomework = createCanonicalHomeworkState();
+  canonicalHomework.mode = mode;
+}
+
+function createHomeworkOperationId() {
+  const randomUuid = globalThis?.crypto?.randomUUID;
+  if (typeof randomUuid === 'function') return randomUuid.call(globalThis.crypto);
+  return `hw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function homeworkLocalDateTimeToKst(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) throw new Error('숙제 기한 형식이 올바르지 않습니다.');
+  const dueAt = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+09:00`;
+  const parsed = Date.parse(dueAt);
+  const roundTrip = Number.isFinite(parsed)
+    ? new Date(parsed + (9 * 60 * 60 * 1000)).toISOString().slice(0, 16)
+    : '';
+  if (roundTrip !== raw) throw new Error('숙제 기한을 확인해 주세요.');
+  return dueAt;
+}
+
+function homeworkDueAtToLocalInput(value) {
+  const parsed = Date.parse(String(value || ''));
+  if (!Number.isFinite(parsed)) return '';
+  return new Date(parsed + (9 * 60 * 60 * 1000)).toISOString().slice(0, 16);
+}
+
+function homeworkEffectiveStatus(assignment, now = new Date()) {
+  const status = ['assigned', 'completed', 'cancelled'].includes(String(assignment?.status))
+    ? String(assignment.status)
+    : 'assigned';
+  if (status !== 'assigned') return status;
+  const dueAt = Date.parse(String(assignment?.dueAt || ''));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now || ''));
+  return Number.isFinite(dueAt) && Number.isFinite(nowMs) && dueAt <= nowMs ? 'overdue' : 'assigned';
+}
+
+function mergeHomeworkLogRow(originalRow, managedFields, assignmentId) {
+  const original = originalRow && typeof originalRow === 'object' && !Array.isArray(originalRow) ? originalRow : {};
+  const managed = managedFields && typeof managedFields === 'object' && !Array.isArray(managedFields) ? managedFields : {};
+  const next = { ...original, ...managed };
+  delete next._ph;
+  delete next._canonical;
+  const id = String(assignmentId || '').trim();
+  if (id) next.assignmentId = id;
+  else delete next.assignmentId;
+  return next;
+}
+
+function normalizeHomeworkAssignment(row) {
+  const value = row && typeof row === 'object' ? row : {};
+  const revision = Number(value.revision);
+  const assignment = {
+    id: String(value.id || value.assignmentId || '').trim(),
+    sourceRowId: String(value.sourceRowId || value.source_row_id || '').trim(),
+    title: String(value.title || '').trim(),
+    book: String(value.book || '').trim(),
+    scope: String(value.scope || '').trim(),
+    dueAt: String(value.dueAt || '').trim() || null,
+    status: ['assigned', 'completed', 'cancelled'].includes(String(value.status)) ? String(value.status) : 'assigned',
+    revision: Number.isInteger(revision) && revision >= 1 ? revision : null,
+  };
+  assignment.effectiveStatus = homeworkEffectiveStatus(assignment);
+  return assignment;
+}
+
+function setHomeworkElementText(element, value, { asValue = false } = {}) {
+  if (asValue) element.value = String(value ?? '');
+  else element.textContent = String(value ?? '');
+  return element;
+}
+
+function isContextMenuOnlyAccess() {
+  return logModalAccessMode === 'all-students-readonly';
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function nowHHMM() {
@@ -17,6 +122,10 @@ function nowHHMM() {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 function nowISO() { return new Date().toISOString(); }
+
+function isFinishedVideoProgressStatus(status) {
+  return VIDEO_PROGRESS_FINISHED_STATUSES.has(String(status || '').trim());
+}
 
 /**
  * ✅ PATCH (SQLite/JSON 둘 다 허용)
@@ -132,6 +241,25 @@ async function patchProgressEntry(date, sid, progressMap) {
  * - 1) /api/logs/entry?date&sid
  * - 2) 없으면 /api/logs fallback
  */
+async function clearVideoAssignmentForDateSid(date, sid) {
+  const t = String(date || '').trim();
+  const s = String(sid || '').trim();
+  if (!t || !s) return;
+
+  state.updates = state.updates || {};
+  state.updates[t] = state.updates[t] || {};
+  delete state.updates[t][s];
+  if (/^\d+$/.test(s)) delete state.updates[t][String(Number(s))];
+  if (!Object.keys(state.updates[t]).length) delete state.updates[t];
+
+  const res = await fetch('/api/updates/patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: t, sid: s, remove: true }),
+  });
+  if (!res.ok) throw new Error('video assignment clear failed');
+}
+
 async function fetchLogEntryFromServer(date, sid) {
   const t = String(date);
   const s = String(sid);
@@ -168,6 +296,117 @@ async function fetchLogEntryFromServer(date, sid) {
   }
 }
 
+async function fetchCanonicalHomeworkForLog(date, sid) {
+  const query = new URLSearchParams({ date: String(date), sid: String(sid) }).toString();
+  const res = await fetch(`/api/admin/student-homework?${query}`, { cache: 'no-store' });
+  if (res.status === 404) return { mode: 'legacy', assignments: [], pendingOperation: null };
+
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok || !data?.ok) {
+    const message = data?.error || data?.message || `숙제 상세 조회 실패 (${res.status})`;
+    throw new Error(message);
+  }
+
+  const assignments = (Array.isArray(data.assignments) ? data.assignments : [])
+    .map(row => normalizeHomeworkAssignment(row));
+  return {
+    mode: 'canonical',
+    assignments,
+    pendingOperation: data.pendingOperation && typeof data.pendingOperation === 'object'
+      ? data.pendingOperation
+      : null,
+  };
+}
+
+async function fetchLatestCarriedTestLogEntry(date, sid) {
+  const q = new URLSearchParams({ date: String(date), sid: String(sid) }).toString();
+  let res = null;
+  try {
+    res = await fetch(`/api/logs/entry?${q}`, { cache: 'no-store' });
+  } catch (err) {
+    const detail = err?.message ? `: ${err.message}` : '';
+    throw new Error(`/api/logs/entry 최신 로그 조회 실패${detail}`);
+  }
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`/api/logs/entry 최신 로그 응답 JSON 파싱 실패 (${res.status})`);
+  }
+
+  if (!res.ok || data?.ok !== true) {
+    const detail = data?.error ? `: ${data.error}` : ` (${res.status})`;
+    throw new Error(`/api/logs/entry 최신 로그 조회 실패${detail}`);
+  }
+
+  return (data.entry && typeof data.entry === 'object') ? data.entry : {};
+}
+
+async function fetchJSONCached(url, ttlMs = 2500) {
+  const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const now = Date.now();
+  const hit = cache.get(url);
+  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+
+  const promise = fetch(url, { cache: 'no-store' }).then(async (res) => {
+    if (!res.ok) return {};
+    return await res.json().catch(() => ({}));
+  });
+  cache.set(url, { ts: now, promise });
+  return promise;
+}
+
+function mergeDateSidMap(target, incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  Object.entries(incoming).forEach(([date, bySid]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return;
+    if (!bySid || typeof bySid !== 'object') return;
+
+    target[date] = target[date] || {};
+    Object.entries(bySid).forEach(([sid, entry]) => {
+      if (entry && typeof entry === 'object') {
+        target[date][String(sid)] = entry;
+      }
+    });
+  });
+}
+
+async function hydrateLogHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const data = await fetchJSONCached(`/api/logs?${q}`);
+    state.logs = state.logs || {};
+    mergeDateSidMap(state.logs, data);
+    window.logs = state.logs;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateLogHistoryForSid failed:', e);
+    return false;
+  }
+}
+
+async function hydrateProgressHistoryForSid(sid) {
+  const s = String(sid);
+  if (!s) return false;
+
+  try {
+    const q = new URLSearchParams({ sid: s }).toString();
+    const data = await fetchJSONCached(`/api/progress?${q}`);
+    state.progress = state.progress || {};
+    mergeDateSidMap(state.progress, data);
+    window.progressData = state.progress;
+    return true;
+  } catch (e) {
+    console.warn('[logModal] hydrateProgressHistoryForSid failed:', e);
+    return false;
+  }
+}
+
 async function hydrateTodayLogFromServer(today, sid) {
   const t = String(today);
   const s = String(sid);
@@ -199,7 +438,24 @@ function injectStyles() {
     }
     body.dark #logModal .log-card{ background:#0f172a; color:#e5e7eb; border-color:#334155; }
 
-    #logModal h3{ margin:6px 0 10px; font-size:18px; font-weight:800; }
+    #logModal .log-header-row{
+      position:sticky;
+      top:0;
+      z-index:6;
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin:-2px 0 10px;
+      padding:2px 0 10px;
+      background:#ffffff;
+      border-bottom:1px solid rgba(226,232,240,.9);
+    }
+    body.dark #logModal .log-header-row{
+      background:#0f172a;
+      border-bottom-color:#334155;
+    }
+    #logModal h3{ margin:6px 0 0; font-size:36px; font-weight:900; line-height:1.12; }
     #logModal label{ display:block; margin:10px 0 8px; font-size:14px; }
 
     #logModal textarea,
@@ -218,6 +474,14 @@ function injectStyles() {
       border-color:#475569;
       background:#0b1220;
       color:#e5e7eb;
+    }
+    #logModal #logNotes{
+      height:min(48vh, var(--student-log-notes-h, 416px));
+      min-height:260px;
+      resize:vertical;
+      font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','맑은 고딕',sans-serif;
+      font-size:28px;
+      line-height:1.35;
     }
 
     #logProgress{
@@ -407,23 +671,82 @@ function injectStyles() {
     }
     body.dark .hw-del-btn{ border-color:#334155; background:#0b1220; color:#e5e7eb; }
 
-    #logModal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; flex-wrap:wrap; }
+    #logModal .actions{ display:flex; gap:12px; justify-content:flex-end; margin:0; flex-wrap:wrap; }
     #logModal .actions button{
-      height:36px; padding:0 12px; border-radius:10px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
-      font-weight:900; white-space:nowrap;
+      height:54px; min-width:96px; padding:0 18px; border-radius:14px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
+      font-size:20px; font-weight:900; white-space:nowrap;
     }
+    #logModal .actions #logCompleteBtn{ min-width:180px; }
     body.dark #logModal .actions button{ border-color:#334155; background:#1f2937; color:#e5e7eb; }
+    #logModal [hidden]{ display:none !important; }
+    #logModal[data-access-mode="all-students-readonly"] :where(textarea, input:disabled){ cursor:default; }
+    #logModal[data-access-mode="all-students-readonly"] #logProgress .progress-cell{ cursor:context-menu; }
+    #logModal[data-access-mode="all-students-readonly"] #logNotes{
+      resize:none;
+      background:#f8fafc;
+      border-style:dashed;
+      word-break:keep-all;
+      overflow-wrap:break-word;
+    }
+    body.dark #logModal[data-access-mode="all-students-readonly"] #logNotes{ background:#111827; }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled{
+      opacity:.58;
+      filter:grayscale(1);
+      cursor:default;
+    }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled::-webkit-slider-thumb{
+      background:#94a3b8;
+    }
+    #logModal[data-access-mode="all-students-readonly"] .hwPctRange:disabled::-moz-range-thumb{
+      background:#94a3b8;
+    }
+
+    @media (max-width:520px){
+      #logModal{ align-items:stretch; }
+      #logModal .log-card{
+        width:100%; max-width:100vw; max-height:100dvh;
+        padding:12px; border-radius:0;
+      }
+      #logModal .log-header-row{ display:block; }
+      #logModal h3{
+        margin:0; font-size:24px; line-height:1.2;
+        word-break:keep-all; overflow-wrap:normal;
+      }
+      #logModal .actions{
+        display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px; margin-top:12px;
+      }
+      #logModal .actions button{
+        width:100%; min-width:0; height:44px;
+        padding:0 10px; border-radius:10px; font-size:16px;
+      }
+      #logModal #logNotes{
+        height:40vh; min-height:220px;
+        font-size:20px; line-height:1.45;
+      }
+      #logProgress{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .hwHeaderTop, .hwTop{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .hwHeaderBot, .hwBot{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+      .thisCell{ grid-template-columns:1fr; }
+    }
   `;
   document.head.appendChild(s);
 }
 
 function modalTemplateHTML() {
   return `
-      <div id="logModal">
+      <div id="logModal" aria-label="기록 팝업">
         <div class="log-card">
-          <h3 id="logTitle">수업 기록</h3>
+          <div class="log-header-row">
+            <h3 id="logTitle">수업 기록</h3>
+            <div class="actions" aria-label="기록 작업">
+              <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
+              <button type="button" id="logSave">저장</button>
+              <button type="button" id="logClose">닫기</button>
+            </div>
+          </div>
 
-          <label>특이사항<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
+          <label class="notes-label">상담 기록<br><textarea id="logNotes" rows="16" placeholder=""></textarea></label>
 
           <label>진도</label>
           <div id="logProgress"></div>
@@ -451,12 +774,6 @@ function modalTemplateHTML() {
             </div>
           </div>
 
-          <div class="actions">
-            <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
-            <button type="button" id="logAssignBtn">숙제 배정 완료</button>
-            <button type="button" id="logSave">저장</button>
-            <button type="button" id="logClose">닫기</button>
-          </div>
         </div>
       </div>`;
 }
@@ -474,11 +791,14 @@ function shouldSkipForLow(stu, v) {
   return Number(ex['하']) === 0;
 }
 
-async function fetchWatchForSid(sid) {
+async function fetchWatchForSid(sid, date = '') {
   const key = String(sid || '').trim();
   if (!key) return {};
   try {
-    const payload = await fetch(`/api/watch/latest?sid=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(r => r.json());
+    const params = new URLSearchParams({ sid: key });
+    const dateKey = String(date || '').trim();
+    if (dateKey) params.set('date', dateKey);
+    const payload = await fetch(`/api/watch/latest?${params.toString()}`, { cache: 'no-store' }).then(r => r.json());
     return (payload && typeof payload.watch === 'object') ? payload.watch : {};
   } catch {
     return {};
@@ -494,14 +814,31 @@ function escapeAttr(s) {
     .replace(/>/g, '&gt;');
 }
 
+function isQuestionPlaceholder(s) {
+  const text = String(s ?? '').replace(/\s+/g, '');
+  return text.length >= 2 && /^[?]+$/.test(text);
+}
+
+function looksCorruptedPlaceholderText(s) {
+  const text = String(s ?? '').trim();
+  if ((text.match(/\?/g) || []).length < 2) return false;
+  return !/[A-Za-z가-힣一-龥]/.test(text);
+}
+
+function cleanHwText(s) {
+  const text = String(s ?? '').trim();
+  return (isQuestionPlaceholder(text) || looksCorruptedPlaceholderText(text)) ? '' : text;
+}
+
 function normHwRows(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.book ?? '').trim(),
-    this: String(r?.this ?? '').trim(),
+    ...((r && typeof r === 'object' && !Array.isArray(r)) ? r : {}),
+    book: cleanHwText(r?.book),
+    this: cleanHwText(r?.this),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.comment ?? '').trim(),
-    next: String(r?.next ?? '').trim(),
+    comment: cleanHwText(r?.comment),
+    next: cleanHwText(r?.next),
     _deleted: !!(r?._deleted || r?._del || r?.deleted),
   }));
 }
@@ -531,10 +868,10 @@ function entryHwRows(entry) {
 function normOldHwRows4(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
-    book: String(r?.name ?? '').trim(),
-    this: String(r?.unit ?? '').trim(),
+    book: cleanHwText(r?.name),
+    this: cleanHwText(r?.unit),
     pct: (r?.pct === '' || r?.pct == null) ? '' : String(r.pct).trim(),
-    comment: String(r?.rem ?? '').trim(),
+    comment: cleanHwText(r?.rem),
     next: '',
     _deleted: false,
   }));
@@ -563,6 +900,7 @@ function mergeHwRows({ todayRows, latestRows, bookCarryRows }) {
     const hasTodayRow = i < a.length;
 
     out.push({
+      ...(hasTodayRow ? t : {}),
       _deleted: !!t._deleted,
       book: (hasTodayRow ? (t.book || '') : (bc.book || '')),
       this: t.this || '',
@@ -584,6 +922,124 @@ function updatePctBubble(wrapEl, value, { isPlaceholder = false } = {}) {
   bubble.textContent = `${v}%`;
   bubble.classList.toggle('is-ph', !!isPlaceholder);
   bubble.style.left = `${Math.max(0, Math.min(100, v))}%`;
+}
+
+function assignmentForHomeworkRow(row, claimedIds) {
+  const rowId = String(row?.assignmentId || '').trim();
+  const assignment = rowId
+    ? canonicalHomework.assignments.find(item => String(item.id) === rowId)
+    : null;
+  if (assignment?.id) claimedIds.add(String(assignment.id));
+  return assignment || null;
+}
+
+function defaultHomeworkTitle(row) {
+  return cleanHwText(row?.next)
+    || cleanHwText(row?.this)
+    || cleanHwText(row?.comment)
+    || cleanHwText(row?.book)
+    || '';
+}
+
+function appendCanonicalHomeworkEditor(item, row, assignment, rowIndex) {
+  const doc = item.ownerDocument || document;
+  const normalized = assignment ? normalizeHomeworkAssignment(assignment) : null;
+  const editor = doc.createElement('section');
+  editor.className = 'hwCanonical';
+  editor.setAttribute('aria-label', `${rowIndex + 1}번째 숙제 상세`);
+
+  const grid = doc.createElement('div');
+  grid.className = 'hwCanonicalGrid';
+  editor.append(grid);
+
+  const appendField = (labelText, control) => {
+    const label = doc.createElement('label');
+    label.className = 'hwCanonicalField';
+    const labelNode = doc.createElement('span');
+    labelNode.className = 'hwCanonicalLabel';
+    setHomeworkElementText(labelNode, labelText);
+    label.append(labelNode, control);
+    grid.append(label);
+  };
+
+  const title = doc.createElement('input');
+  title.type = 'text';
+  title.className = 'hwTitle';
+  title.maxLength = 200;
+  title.placeholder = '예: 쎈 B단계';
+  setHomeworkElementText(title, normalized?.title || defaultHomeworkTitle(row), { asValue: true });
+  appendField('숙제명', title);
+
+  const scope = doc.createElement('input');
+  scope.type = 'text';
+  scope.className = 'hwScope';
+  scope.maxLength = 1000;
+  scope.placeholder = '예: 42~47쪽';
+  setHomeworkElementText(scope, normalized?.scope || cleanHwText(row?.next) || cleanHwText(row?.this), { asValue: true });
+  appendField('범위', scope);
+
+  const due = doc.createElement('input');
+  due.type = 'datetime-local';
+  due.className = 'hwDueAt';
+  setHomeworkElementText(due, homeworkDueAtToLocalInput(normalized?.dueAt), { asValue: true });
+  appendField('기한', due);
+
+  const status = doc.createElement('select');
+  status.className = 'hwStatus';
+  [
+    ['assigned', '진행 중'],
+    ['completed', '완료'],
+    ['cancelled', '취소'],
+  ].forEach(([value, text]) => {
+    const option = doc.createElement('option');
+    option.value = value;
+    setHomeworkElementText(option, text);
+    status.append(option);
+  });
+  status.value = normalized?.status || 'assigned';
+  appendField('상태', status);
+
+  const meta = doc.createElement('div');
+  meta.className = 'hwCanonicalMeta';
+  const hint = doc.createElement('span');
+  hint.className = 'hwDueHint';
+  setHomeworkElementText(hint, normalized?.dueAt ? '기한 알림 대상' : '기한 없음 — 알림 제외');
+  meta.append(hint);
+  const overdue = doc.createElement('span');
+  overdue.className = 'hwOverdueBadge';
+  setHomeworkElementText(overdue, '기한 지남');
+  overdue.setAttribute('role', 'status');
+  overdue.hidden = !(normalized && homeworkEffectiveStatus(normalized) === 'overdue');
+  meta.append(overdue);
+  editor.append(meta);
+
+  const refreshDueMeta = () => {
+    setHomeworkElementText(hint, due.value ? '기한 알림 대상' : '기한 없음 — 알림 제외');
+    const dueMs = Date.parse(due.value ? `${due.value}:00+09:00` : '');
+    overdue.hidden = status.value !== 'assigned' || !Number.isFinite(dueMs) || dueMs > Date.now();
+  };
+  due.addEventListener('input', () => {
+    item.__homeworkCanonicalDirty = true;
+    refreshDueMeta();
+    if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+  });
+  [title, scope, status].forEach(control => control.addEventListener('input', () => {
+    item.__homeworkCanonicalDirty = true;
+    if (control === status) refreshDueMeta();
+    if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+  }));
+
+  const readOnly = isContextMenuOnlyAccess();
+  [title, scope, due, status].forEach(control => { control.disabled = readOnly; });
+  item.__homeworkAssignment = normalized;
+  item.__homeworkCanonicalDirty = false;
+  item.__homeworkSourceRowId = String(
+    normalized?.sourceRowId
+    || normalized?.id
+    || row?.assignmentId
+    || `row_${createHomeworkOperationId()}`
+  );
+  item.append(editor);
 }
 
 function renderHwTable(mergedRows) {
@@ -671,6 +1127,31 @@ function renderHwTable(mergedRows) {
 
   host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
 
+  const claimedIds = new Set();
+  host.querySelectorAll('.hwItem').forEach((item, index) => {
+    const row = rows[index] || {};
+    item.__homeworkOriginalRow = mergeHomeworkLogRow(row, {}, row?.assignmentId);
+    if (canonicalHomework.mode !== 'canonical') return;
+    const assignment = assignmentForHomeworkRow(row, claimedIds);
+    if (row?.assignmentId && !assignment) {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.error = '로그에 연결된 숙제 상세를 찾지 못했습니다. 자동 복구하지 않고 저장을 중단했습니다.';
+    }
+    appendCanonicalHomeworkEditor(item, row, assignment, index);
+  });
+  if (canonicalHomework.mode === 'canonical') {
+    const unlinked = canonicalHomework.assignments.filter(assignment => (
+      assignment?.id && !claimedIds.has(String(assignment.id))
+    ));
+    unlinked.filter(assignment => assignment.status === 'cancelled').forEach(assignment => {
+      canonicalHomework.removedAssignmentIds.add(String(assignment.id));
+    });
+    if (unlinked.some(assignment => assignment.status !== 'cancelled')) {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.error = '로그 행과 연결되지 않은 숙제가 있습니다. 자동으로 취소하지 않고 저장을 중단했습니다.';
+    }
+  }
+
   host.querySelectorAll('.pctWrap').forEach(wrap => {
     const range = wrap.querySelector('.hwPctRange');
     if (!range) return;
@@ -729,6 +1210,14 @@ function addHwRow(bookCarry = '') {
     const range = lastWrap.querySelector('.hwPctRange');
     updatePctBubble(lastWrap, range?.value ?? 0, { isPlaceholder: true });
   }
+  const item = host.querySelector('.hwItem:last-child');
+  if (item) {
+    const row = { book: cleanHwText(bookCarry), this: '', pct: '', comment: '', next: '', _deleted: false };
+    item.__homeworkOriginalRow = {};
+    if (canonicalHomework.mode === 'canonical') {
+      appendCanonicalHomeworkEditor(item, row, null, host.querySelectorAll('.hwItem').length - 1);
+    }
+  }
 }
 
 function collectHwTable() {
@@ -738,11 +1227,16 @@ function collectHwTable() {
 
   host.querySelectorAll('.hwItem').forEach(item => {
     if (item.dataset.deleted === '1' || item.style.display === 'none') return;
+    if (canonicalHomework.mode === 'canonical' && item.querySelector('.hwStatus')?.value === 'cancelled') {
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      return;
+    }
 
-    const book = (item.querySelector('.hwBook')?.value || '').trim();
-    const thisHw = (item.querySelector('.hwThis')?.value || '').trim();
-    const comment = (item.querySelector('.hwComment')?.value || '').trim();
-    const next = (item.querySelector('.hwNext')?.value || '').trim();
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
+    const comment = cleanHwText(item.querySelector('.hwComment')?.value);
+    const next = cleanHwText(item.querySelector('.hwNext')?.value);
 
     const wrap = item.querySelector('.pctWrap');
     const range = item.querySelector('.hwPctRange');
@@ -751,21 +1245,172 @@ function collectHwTable() {
     const empty = (wrap?.dataset?.empty === '1');
     const pct = empty ? '' : String(raw);
 
-    const row = { book, this: thisHw, pct, comment, next, _deleted: false };
-    if (!isMeaningfulHwRow(row)) return;
+    const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+    const row = mergeHomeworkLogRow(item.__homeworkOriginalRow, {
+      book,
+      this: thisHw,
+      pct,
+      comment,
+      next,
+      _deleted: false,
+    }, assignmentId);
+    const canonicalMeaningful = canonicalHomework.mode === 'canonical'
+      && Boolean(item.__homeworkAssignment?.id || item.__homeworkCanonicalDirty);
+    if (!isMeaningfulHwRow(row) && !canonicalMeaningful) return;
     out.push(row);
   });
 
   return out;
 }
 
+function collectCanonicalHomeworkRows() {
+  if (canonicalHomework.mode !== 'canonical') return [];
+  const rows = [];
+  let rowIndex = 0;
+  document.querySelectorAll('#hwBody .hwItem').forEach(item => {
+    if (item.dataset.deleted === '1' || item.style.display === 'none') return;
+    if (item.querySelector('.hwStatus')?.value === 'cancelled') {
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      return;
+    }
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
+    const comment = cleanHwText(item.querySelector('.hwComment')?.value);
+    const next = cleanHwText(item.querySelector('.hwNext')?.value);
+    const pctWrap = item.querySelector('.pctWrap');
+    const pctRange = item.querySelector('.hwPctRange');
+    const pct = pctWrap?.dataset?.empty === '1' ? '' : String(snap10(pctRange?.value || 0));
+    const assignment = item.__homeworkAssignment || {};
+    const title = cleanHwText(item.querySelector('.hwTitle')?.value) || defaultHomeworkTitle({ book, this: thisHw, comment, next }) || '숙제';
+    const scope = cleanHwText(item.querySelector('.hwScope')?.value);
+    const dueAt = homeworkLocalDateTimeToKst(item.querySelector('.hwDueAt')?.value || '');
+    const status = String(item.querySelector('.hwStatus')?.value || 'assigned');
+    const legacyMeaningful = isMeaningfulHwRow({ book, this: thisHw, pct, comment, next, _deleted: false });
+    if (!legacyMeaningful && !assignment.id && !item.__homeworkCanonicalDirty) return;
+    const sourceRowId = String(item.__homeworkSourceRowId || assignment.sourceRowId || assignment.id || `row_${createHomeworkOperationId()}`);
+    item.__homeworkSourceRowId = sourceRowId;
+    rows.push({
+      rowIndex,
+      sourceRowId,
+      assignmentId: String(assignment.id || item.__homeworkOriginalRow?.assignmentId || '').trim() || null,
+      expectedRevision: Number.isInteger(Number(assignment.revision)) && Number(assignment.revision) >= 1
+        ? Number(assignment.revision)
+        : null,
+      title,
+      book,
+      scope,
+      dueAt,
+      status,
+    });
+    rowIndex += 1;
+  });
+  return rows;
+}
+
+function setCanonicalRetryLock(locked) {
+  const readOnly = isContextMenuOnlyAccess();
+  const notes = $('logNotes');
+  if (notes) notes.readOnly = readOnly || locked;
+  document.querySelectorAll('#hwBody input, #hwBody select, #hwBody button').forEach(control => {
+    control.disabled = readOnly || locked;
+  });
+  const addRow = $('hwAddRow');
+  if (addRow) addRow.disabled = locked;
+  const save = $('logSave');
+  if (save && !readOnly) save.textContent = locked ? '같은 작업 재시도' : '저장';
+}
+
+async function commitCanonicalHomework(payload) {
+  canonicalHomework.pendingPayload = canonicalHomework.pendingPayload || payload;
+  const requestPayload = canonicalHomework.pendingPayload;
+  setCanonicalRetryLock(true);
+  const saveButton = $('logSave');
+  const completeButton = $('logCompleteBtn');
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent = '저장 중…';
+  }
+  if (completeButton) completeButton.disabled = true;
+  let res = null;
+  try {
+    res = await fetch('/api/admin/student-homework/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+  } catch {
+    if (saveButton) saveButton.disabled = false;
+    if (completeButton) completeButton.disabled = false;
+    setCanonicalRetryLock(true);
+    const error = new Error('저장 응답을 확인하지 못했습니다. 같은 작업을 다시 시도해 주세요.');
+    error.code = 'homework_commit_network_error';
+    error.retryable = true;
+    throw error;
+  }
+  if (saveButton) saveButton.disabled = false;
+  if (completeButton) completeButton.disabled = false;
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (res.status === 409) {
+    const retryable = data?.retryable === true;
+    const isPartial = data?.code === 'partial_failure' && retryable;
+    if (isPartial) {
+      canonicalHomework.operationId = String(data?.operationId || requestPayload.operationId);
+      canonicalHomework.pendingPayload = requestPayload;
+      setCanonicalRetryLock(true);
+    } else {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.pendingPayload = null;
+      canonicalHomework.operationId = null;
+      setCanonicalRetryLock(true);
+      const save = $('logSave');
+      if (save) save.textContent = '닫고 다시 확인';
+      const latestEntry = data?.entry && typeof data.entry === 'object' ? data.entry : null;
+      if (latestEntry) {
+        const date = String(requestPayload.date);
+        const sid = String(requestPayload.sid);
+        state.logs = state.logs || {};
+        state.logs[date] = state.logs[date] || {};
+        state.logs[date][sid] = latestEntry;
+      }
+    }
+    const error = new Error(data?.error || data?.message || (isPartial
+      ? '일부 저장이 완료되지 않았습니다. 같은 작업을 다시 시도해 주세요.'
+      : '다른 화면에서 숙제가 변경되었습니다. 닫은 뒤 다시 열어 주세요.'));
+    error.code = data?.code || 'homework_conflict';
+    error.retryable = retryable;
+    throw error;
+  }
+
+  if (!res.ok || !data?.ok) {
+    const error = new Error(data?.error || data?.message || `숙제 저장 실패 (${res.status})`);
+    error.code = data?.code || 'homework_commit_failed';
+    error.retryable = data?.retryable === true || res.status >= 500;
+    if (error.retryable) {
+      setCanonicalRetryLock(true);
+    } else {
+      canonicalHomework.pendingPayload = null;
+      canonicalHomework.operationId = null;
+      setCanonicalRetryLock(false);
+    }
+    throw error;
+  }
+
+  canonicalHomework.pendingPayload = null;
+  canonicalHomework.operationId = null;
+  setCanonicalRetryLock(false);
+  return data;
+}
+
 function normalizeHwRowsForCompare(rows) {
   return activeHwRows(rows).map(r => ({
-    book: String(r.book || '').trim(),
-    this: String(r.this || '').trim(),
+    book: cleanHwText(r.book),
+    this: cleanHwText(r.this),
     pct: r.pct === '' ? '' : String(r.pct || '').trim(),
-    comment: String(r.comment || '').trim(),
-    next: String(r.next || '').trim(),
+    comment: cleanHwText(r.comment),
+    next: cleanHwText(r.next),
     _deleted: !!r._deleted,
   }));
 }
@@ -815,7 +1460,7 @@ function buildHwSummary(rows) {
 
 /* hw flags PATCH */
 async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
-  const date = dateKey || todayLocalKey();
+  const date = dateKey || getAdminDate();
   const ksid = String(sid);
   const t = nowHHMM();
 
@@ -840,17 +1485,309 @@ async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
     : { ...(state.logs[date][ksid] || {}), ...entry };
 }
 
+function stripGeneratedTestAssignmentBlocks(notes) {
+  return String(notes || '')
+    .replace(/(?:^|\n+)\[테스트 배정\]\n(?:- [^\n]*(?:\n|$))+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function assignmentLabel(item) {
+  if (!item || typeof item !== 'object') return '';
+  const label = String(item.label || '').trim();
+  if (label) return label;
+  return [
+    item.categoryLabel || item.category,
+    item.curriculum,
+    item.difficulty,
+    item.term,
+    item.round,
+    item.name,
+  ].map(v => String(v || '').trim()).filter(Boolean).join(' / ');
+}
+
+function normalizeAssignmentStatus(status) {
+  if (status && typeof status === 'object') status = status.status;
+  const s = String(status || '').trim();
+  if (['assigned', 'done', 'interrupted', 'skip'].includes(s)) return s;
+  return s ? 'assigned' : '';
+}
+
+function mergeAssignmentItemsByLabel(...groups) {
+  const byLabel = new Map();
+  groups.flat().forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const label = assignmentLabel(item);
+    const status = normalizeAssignmentStatus(item.status);
+    if (!label || !status || status === 'skip') return;
+    byLabel.set(label, { ...(byLabel.get(label) || {}), ...item, label, status });
+  });
+  return Array.from(byLabel.values());
+}
+
+function assignmentRoundLabel(round) {
+  const raw = String(round || '').trim();
+  if (!raw) return '';
+  return /회/.test(raw) ? raw : `${raw}회차`;
+}
+
+function buildCarriedAssignmentNote(items) {
+  const noteItems = mergeAssignmentItemsByLabel(items);
+  if (!noteItems.length) return '';
+  const lines = noteItems.map(item => {
+    if (!item.name) return `- ${assignmentLabel(item)}`;
+    const parts = [
+      item.categoryLabel || item.category,
+      item.curriculum,
+      item.difficulty,
+      item.term,
+      assignmentRoundLabel(item.round),
+    ].filter(Boolean);
+    return `- ${parts.join(' / ')}: ${item.name}`;
+  });
+  return `[테스트 배정]\n${lines.join('\n')}`;
+}
+
+function appendCarriedAssignmentNote(notes, block) {
+  const cleanNotes = stripGeneratedTestAssignmentBlocks(notes);
+  const noteBlock = String(block || '').trim();
+  if (!noteBlock) return cleanNotes;
+  return `${cleanNotes ? `${cleanNotes}\n\n` : ''}${noteBlock}`.trim();
+}
+
+function logEntryForSid(dateKey, sid) {
+  const day = state.logs?.[dateKey];
+  if (!day || typeof day !== 'object') return {};
+  const sidKey = String(sid || '');
+  const direct = day[sidKey];
+  if (direct && typeof direct === 'object') return direct;
+  const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
+  const entry = matchedSid ? day[matchedSid] : null;
+  return (entry && typeof entry === 'object') ? entry : {};
+}
+
+function carryoverTestItems(entry) {
+  const carryover = entry?.[TEST_ASSIGN_ABSENCE_CARRYOVER_KEY];
+  const items = carryover?.assignedTests;
+  return Array.isArray(items) ? mergeAssignmentItemsByLabel(items) : [];
+}
+
+function isSidAbsentOn(dateKey, sid) {
+  return new Set((state.absentByDate?.[dateKey] || []).map(String)).has(String(sid));
+}
+
+function carryoverConsumedBefore({ sourceDate, targetDate, sid }) {
+  return Object.keys(state.logs || {})
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date) && date > sourceDate && date < targetDate)
+    .some(date => String(logEntryForSid(date, sid)?.[TEST_ASSIGN_ABSENCE_SOURCE_KEY] || '') === sourceDate);
+}
+
+function findAbsentTestCarryoverForLog(dateKey, sid) {
+  const targetDate = String(dateKey || '');
+  const sidKey = String(sid || '');
+  if (!targetDate || !sidKey) return null;
+
+  const currentEntry = logEntryForSid(targetDate, sidKey);
+  const currentDailyItems = Array.isArray(currentEntry?.[TEST_ASSIGN_DAILY_ITEMS_KEY])
+    ? currentEntry[TEST_ASSIGN_DAILY_ITEMS_KEY]
+    : [];
+  if (currentDailyItems.length && !currentEntry?.[TEST_ASSIGN_ABSENCE_SOURCE_KEY]) return null;
+
+  const dates = Object.keys(state.logs || {})
+    .filter(date =>
+      /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+      date < targetDate &&
+      isSidAbsentOn(date, sidKey)
+    )
+    .sort()
+    .reverse();
+
+  for (const sourceDate of dates) {
+    const items = carryoverTestItems(logEntryForSid(sourceDate, sidKey));
+    if (!items.length) continue;
+    if (carryoverConsumedBefore({ sourceDate, targetDate, sid: sidKey })) continue;
+    return { sourceDate, items };
+  }
+  return null;
+}
+
+function collectChangedProgressPatch() {
+  const changed = {};
+  document.querySelectorAll('#logProgress .progress-cell').forEach(cell => {
+    const st = cell.dataset.state || 'none';
+    const initial = cell.dataset.initial || 'none';
+    const mid = String(cell.dataset.mid);
+
+    if (st !== initial) changed[mid] = st;
+  });
+  return changed;
+}
+
+function ensureProgressEntryForSave(date, sid) {
+  if (!state.progress) state.progress = {};
+  state.progress[date] = state.progress[date] || {};
+  if (!state.progress[date][sid] || typeof state.progress[date][sid] !== 'object') {
+    state.progress[date][sid] = {};
+  }
+  return state.progress[date][sid];
+}
+
+async function saveChangedProgressPatch(date, sid, changedProg) {
+  ensureProgressEntryForSave(date, sid);
+  if (!Object.keys(changedProg).length) return;
+
+  const mergedProgress = await patchProgressEntry(date, sid, changedProg);
+  state.progress[date][sid] = mergedProgress || {};
+}
+
+function collectPriorProgressByMid(date, sid) {
+  const oldTotal = {};
+  Object.keys(state.progress || {})
+    .filter(d => d < date)
+    .forEach(d => {
+      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        oldTotal[key] = st;
+      });
+    });
+  return oldTotal;
+}
+
+function videoProgressLabel(mid, st) {
+  if (st === 'none') return null;
+  const video = state.videos.find(v => String(v.mid) === String(mid));
+  if (!video) return null;
+  const base = `${video.chapter}차시`;
+  return st === 'done' ? base : (st === 'interrupted' ? `${base}(중단)` : (st === 'skip' ? `${base}(건너뜀)` : null));
+}
+
+function summarizeProgressPatch(changedProg, oldTotal) {
+  return Object.entries(changedProg)
+    .filter(([mid, st]) => oldTotal[String(mid)] !== st && st !== 'none')
+    .map(([mid, st]) => videoProgressLabel(mid, st))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function buildLogSavePatch({ notesNow, hwRows, prevLog, doneFlag, summary }) {
+  const clearKeys = [];
+  const entry = {};
+  const base = {};
+  let contentChanged = false;
+
+  if (notesNow !== String(logModalSnapshot.notes || '')) {
+    base.notes = String(logModalServerSnapshot.notes || '');
+    contentChanged = true;
+    if (notesNow) entry.notes = notesNow;
+    else clearKeys.push('notes');
+  }
+
+  if (!sameHwRows(hwRows, logModalSnapshot.homeworkTable)) {
+    base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
+    contentChanged = true;
+    if (hwRows.length) {
+      entry.homework = buildHwSummary(hwRows);
+      entry.homeworkTable = hwRows;
+    } else {
+      clearKeys.push('homework', 'homeworkTable');
+    }
+  }
+
+  if (logModalCarriedTestAssignment?.items?.length) {
+    const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
+    const mergedAssignedItems = mergeAssignmentItemsByLabel(
+      Array.isArray(prevLog.assignedTests) ? prevLog.assignedTests : [],
+      carriedItems,
+    );
+    const mergedDailyItems = mergeAssignmentItemsByLabel(
+      Array.isArray(prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? prevLog[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
+      carriedItems,
+    );
+    const mergedNoteBlock = buildCarriedAssignmentNote(mergedDailyItems);
+    entry.assignedTests = mergedAssignedItems;
+    entry[TEST_ASSIGN_DAILY_ITEMS_KEY] = mergedDailyItems;
+    if (mergedNoteBlock) entry.testAssignmentNote = mergedNoteBlock;
+    entry[TEST_ASSIGN_ABSENCE_SOURCE_KEY] = logModalCarriedTestAssignment.sourceDate;
+  }
+
+  if (summary) entry.topic = summary;
+  if (doneFlag) {
+    entry.done = true;
+    entry.leaveTime = nowHHMM();
+    entry.leaveAt = nowISO();
+  }
+
+  return { entry, clearKeys, base, contentChanged };
+}
+
+function applyLogSaveResult({ date, sid, entry, clearKeys, returned, doneFlag, prevDone }) {
+  state.logs = state.logs || {};
+  state.logs[date] = state.logs[date] || {};
+  if (returned) {
+    state.logs[date][sid] = returned;
+    return;
+  }
+
+  if (!Object.keys(entry).length && !clearKeys.length) return;
+
+  const next = { ...(state.logs[date][sid] || {}), ...entry };
+  clearKeys.forEach(k => { delete next[String(k)]; });
+  if (!doneFlag && prevDone) next.done = true;
+  state.logs[date][sid] = next;
+}
+
+function setLogModalSnapshots(notes, homeworkTable) {
+  logModalSnapshot = {
+    notes,
+    homeworkTable,
+  };
+  logModalServerSnapshot = {
+    notes,
+    homeworkTable: normalizeHwRowsForCompare(homeworkTable),
+  };
+}
+
 export function initLogModal() {
   ensureModal();
+  initTestModal();
 
   const logModal = $('logModal');
   const logTitle = $('logTitle');
   const logNotes = $('logNotes');
   const logSave = $('logSave');
-  const logAssign = $('logAssignBtn');
   const logClose = $('logClose');
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
+  const applyReadOnlyRecordAccess = () => {
+    const readOnly = isContextMenuOnlyAccess();
+    const retryLocked = Boolean(canonicalHomework.pendingPayload);
+    const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+    logModal.dataset.accessMode = logModalAccessMode;
+    logNotes.readOnly = readOnly || retryLocked || homeworkBlocked;
+    logNotes.setAttribute('aria-readonly', readOnly || retryLocked || homeworkBlocked ? 'true' : 'false');
+    document.querySelectorAll('#hwBody input, #hwBody select').forEach(input => {
+      input.disabled = readOnly || retryLocked || homeworkBlocked;
+    });
+    document.querySelectorAll('#hwBody .hw-del-btn').forEach(button => {
+      button.hidden = readOnly;
+      button.disabled = retryLocked || homeworkBlocked;
+    });
+    const addRow = $('hwAddRow');
+    if (addRow) {
+      addRow.hidden = readOnly;
+      addRow.disabled = retryLocked || homeworkBlocked;
+    }
+    if (logComplete) logComplete.hidden = readOnly;
+    if (logSave) logSave.textContent = readOnly
+      ? '영상 진도 저장'
+      : (homeworkBlocked ? '닫고 다시 확인' : (retryLocked ? '같은 작업 재시도' : '저장'));
+    const progressLabel = progEl.previousElementSibling;
+    if (progressLabel?.tagName === 'LABEL') {
+      progressLabel.textContent = readOnly ? '진도 (우클릭만 변경 가능)' : '진도';
+    }
+  };
   const resetLogModalScroll = () => {
     const card = logModal?.querySelector('.log-card');
     if (card) card.scrollTop = 0;
@@ -864,12 +1801,17 @@ export function initLogModal() {
       const btn = e.target.closest('button.hw-del-btn');
       if (!btn) return;
       if (!btn.closest('#logModal')) return;
+      if (isContextMenuOnlyAccess()) return;
 
       e.preventDefault();
       e.stopPropagation();
 
       const item = btn.closest('.hwItem');
       if (!item) return;
+
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
 
       item.remove();
 
@@ -883,6 +1825,10 @@ export function initLogModal() {
   }
 
   document.getElementById('hwBody')?.addEventListener('input', (e) => {
+    if (isContextMenuOnlyAccess()) return;
+    if (canonicalHomework.mode === 'canonical' && !canonicalHomework.pendingPayload) {
+      canonicalHomework.operationId = null;
+    }
     const t = e.target;
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
@@ -892,6 +1838,7 @@ export function initLogModal() {
   });
 
   document.getElementById('hwBody')?.addEventListener('change', (e) => {
+    if (isContextMenuOnlyAccess()) return;
     const t = e.target;
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
@@ -903,6 +1850,7 @@ export function initLogModal() {
   });
 
   $('hwAddRow')?.addEventListener('click', () => {
+    if (isContextMenuOnlyAccess()) return;
     const lastBook = Array.from(document.querySelectorAll('#hwBody .hwBook'))
       .map(i => (i.value || '').trim())
       .filter(Boolean)
@@ -919,6 +1867,7 @@ export function initLogModal() {
   const updateCellState = (cell, next) => {
     if (!cell) return;
     cell.dataset.state = next;
+    cell.dataset.explicitNone = next === 'none' ? '1' : '';
     cell.dataset.cleared = (next === 'none' && cell.dataset.initial !== 'none') ? '1' : '';
   };
 
@@ -955,6 +1904,7 @@ export function initLogModal() {
 
   const handleMove = (e) => {
     if (!pointerDown) return;
+    if (isContextMenuOnlyAccess() && dragButton !== 2) return;
     const cell = e.target.closest('.progress-cell');
     if (!cell) return;
 
@@ -983,6 +1933,7 @@ export function initLogModal() {
 
   progEl.addEventListener('mousedown', (e) => {
     if (e.button !== 0 && e.button !== 2) return;
+    if (isContextMenuOnlyAccess() && e.button !== 2) return;
     const cell = e.target.closest('.progress-cell');
     if (!cell) return;
 
@@ -999,20 +1950,64 @@ export function initLogModal() {
     startState = cell.dataset.state || 'none';
   });
 
-  document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
-    if (!btn) return;
-
-    editingLogSid = btn.closest('tr')?.dataset.sid;
+  async function openLogModalForRow(rowOrButton, opts = {}) {
+    const openSeq = ++logOpenSeq;
+    const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
+    editingLogSid = tr?.dataset?.sid;
+    editingLogDate = tr?.dataset?.date || getAdminDate();
+    logModalAccessMode = opts.accessMode === 'all-students-readonly'
+      ? 'all-students-readonly'
+      : 'full';
+    resetCanonicalHomeworkState('loading');
+    applyReadOnlyRecordAccess();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
     logTitle.textContent = `${stu.name} – ${stu.curriculum}`;
-    const today = todayLocalKey();
+    const today = editingLogDate;
     const sid = String(editingLogSid);
 
-    await hydrateTodayLogFromServer(today, sid);
+    logModalReady = false;
+    logModalSnapshot = { notes: '', homeworkTable: [] };
+    logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalCarriedTestAssignment = null;
+    $('hwWrap')?.querySelector('.hwCanonicalError')?.remove();
+    logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
+    logNotes.value = '불러오는 중...';
+    logNotes.disabled = true;
+    if (logSave) logSave.disabled = true;
+    if (logComplete) logComplete.disabled = true;
+    progEl.innerHTML = '<div class="log-loading">진도 불러오는 중...</div>';
+    renderHwTable([]);
+    logModal.style.display = 'flex';
+    resetLogModalScroll();
+
+    const hydrationResults = await Promise.allSettled([
+      hydrateTodayLogFromServer(today, sid),
+      hydrateLogHistoryForSid(sid),
+      hydrateProgressHistoryForSid(sid),
+      fetchCanonicalHomeworkForLog(today, sid),
+    ]);
+    if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
+    const canonicalResult = hydrationResults[3];
+    if (canonicalResult?.status === 'fulfilled') {
+      const payload = canonicalResult.value || {};
+      canonicalHomework.mode = payload.mode === 'canonical' ? 'canonical' : 'legacy';
+      canonicalHomework.assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+      canonicalHomework.operationId = String(payload.pendingOperation?.operationId || '').trim() || null;
+      if (canonicalHomework.mode === 'canonical' && payload.pendingOperation) {
+        canonicalHomework.mode = 'conflict';
+        canonicalHomework.error = '이 날짜에 미완료 저장 작업이 있습니다. 새 작업으로 덮어쓰지 않고 저장을 중단했습니다.';
+      }
+    } else {
+      canonicalHomework.mode = 'error';
+      canonicalHomework.error = canonicalResult?.reason?.message || '숙제 상세를 불러오지 못했습니다.';
+    }
+    logNotes.disabled = false;
+    if (logSave) logSave.disabled = false;
+    if (logComplete) logComplete.disabled = false;
+    logModalReady = true;
 
     const dates = Array.from(new Set([
       ...Object.keys(state.progress || {}),
@@ -1022,14 +2017,35 @@ export function initLogModal() {
       .sort();
 
     const progEntry = {};
+    const explicitNoneMids = new Set();
     dates.forEach(d => {
       const day = (state.progress?.[d] || {})[sid] || {};
-      Object.entries(day).forEach(([mid, st]) => { progEntry[String(mid)] = st; });
+      const manualMeta = (day[PROGRESS_MANUAL_META_KEY] && typeof day[PROGRESS_MANUAL_META_KEY] === 'object')
+        ? day[PROGRESS_MANUAL_META_KEY]
+        : {};
+      Object.entries(day).forEach(([mid, st]) => {
+        const key = String(mid);
+        if (key.startsWith('__') || key === 'tests') return;
+        const value = String(st || 'none');
+        if (value === 'none') {
+          if (manualMeta[key]) {
+            progEntry[key] = value;
+            explicitNoneMids.add(key);
+          }
+          return;
+        }
+        progEntry[key] = value;
+        explicitNoneMids.delete(key);
+      });
     });
 
     const logEntry = (state.logs[today] || {})[sid] || {};
-    const todayNotes = String(logEntry.notes || '');
+    canonicalHomework.exactLogRows = Array.isArray(logEntry.homeworkTable)
+      ? JSON.parse(JSON.stringify(logEntry.homeworkTable))
+      : [];
+    const todayNotes = cleanHwText(logEntry.notes);
     let seededNotes = todayNotes;
+    logModalCarriedTestAssignment = findAbsentTestCarryoverForLog(today, sid);
 
     // 오늘 특이사항이 비어 있으면, 가장 최근 특이사항을 실제 텍스트로 미리 채운다.
     if (!todayNotes.trim()) {
@@ -1037,7 +2053,7 @@ export function initLogModal() {
         const d = dates[i];
         if (d >= today) continue;
         const prev = (state.logs[d] || {})[sid];
-        const prevNotes = String(prev?.notes || '');
+        const prevNotes = stripGeneratedTestAssignmentBlocks(cleanHwText(prev?.notes));
         if (prevNotes.trim()) {
           seededNotes = prevNotes;
           break;
@@ -1045,7 +2061,12 @@ export function initLogModal() {
       }
     }
 
-    logNotes.value = seededNotes;
+    const carriedNoteBlock = buildCarriedAssignmentNote(logModalCarriedTestAssignment?.items || []);
+    if (carriedNoteBlock) {
+      seededNotes = appendCarriedAssignmentNote(seededNotes, carriedNoteBlock);
+    }
+
+    logNotes.value = cleanHwText(seededNotes);
     logNotes.placeholder = '';
 
     const todayRows = entryHwRows(logEntry);
@@ -1085,6 +2106,16 @@ export function initLogModal() {
 
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
     renderHwTable(merged);
+    if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
+      const warning = document.createElement('p');
+      warning.className = 'hwCanonicalError';
+      warning.setAttribute('role', 'alert');
+      warning.textContent = canonicalHomework.error
+        || '숙제 상세를 불러오지 못해 저장을 잠시 사용할 수 없습니다. 닫은 뒤 다시 시도해 주세요.';
+      $('hwWrap')?.prepend(warning);
+    }
+    applyReadOnlyRecordAccess();
+
     logModalSnapshot = {
       // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
       // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
@@ -1107,12 +2138,16 @@ export function initLogModal() {
         cell.dataset.mid = String(v.mid);
 
         const autoSkip = shouldSkipForLow(stu, v);
-        const initial = progEntry[String(v.mid)] || (autoSkip ? 'skip' : 'none');
+        const midKey = String(v.mid);
+        const hasExplicitNone = explicitNoneMids.has(midKey);
+        const initial = hasExplicitNone ? 'none' : (progEntry[midKey] || (autoSkip ? 'skip' : 'none'));
         cell.dataset.initial = initial;
         cell.dataset.state = initial;
+        cell.dataset.explicitNone = hasExplicitNone ? '1' : '';
         cell.dataset.cleared = '';
 
         cell.addEventListener('click', () => {
+          if (isContextMenuOnlyAccess()) return;
           if (suppressClickOnce) { suppressClickOnce = false; return; }
           const s = cell.dataset.state || 'none';
           updateCellState(cell, nextStateOf(s));
@@ -1126,139 +2161,284 @@ export function initLogModal() {
         progEl.append(cell);
       });
 
+    logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     logModal.style.display = 'flex';
     resetLogModalScroll();
     requestAnimationFrame(resetLogModalScroll);
 
     try {
-      if (window.showStudentTooltipForSid) {
-        window.showStudentTooltipForSid(editingLogSid, { variant: 'log', fixed: true });
+      if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
+        window.showStudentTooltipForSid(editingLogSid, {
+          variant: 'log',
+          fixed: true,
+          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
+        });
       }
     } catch (err) {
       console.warn('[logModal] show tooltip failed:', err);
     }
+  }
+
+  window.openRecordPopupForRow = openLogModalForRow;
+
+  async function openStudentPopupsForRow(rowOrButton, opts = {}) {
+    const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
+    if (!tr?.dataset?.sid) return;
+
+    if (window.showStudentPopupBackdrop) {
+      try { window.showStudentPopupBackdrop(); } catch {}
+    }
+    try {
+      window.showStudentTooltipForSid?.(tr.dataset.sid, {
+        variant: 'log',
+        fixed: true,
+        layout: 'student-work',
+      });
+    } catch {}
+
+    const logOptions = {
+      layout: 'student-work',
+      tooltipAlreadyShown: true,
+    };
+    if (opts.accessMode) logOptions.accessMode = opts.accessMode;
+
+    const openTasks = [
+      openLogModalForRow(tr, logOptions).catch((err) => {
+        console.warn('[logModal] open log popup failed:', err);
+      }),
+    ];
+    if (window.openVideoAssignmentPopupForRow) {
+      openTasks.push(window.openVideoAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open video popup failed:', err);
+      }));
+    }
+    if (window.openTestAssignmentPopupForRow) {
+      openTasks.push(window.openTestAssignmentPopupForRow(tr, { layout: 'student-work' }).catch((err) => {
+        console.warn('[logModal] open test popup failed:', err);
+      }));
+    }
+
+    await Promise.allSettled(openTasks);
+  }
+
+  window.openStudentPopupsForRow = openStudentPopupsForRow;
+
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.editLog,.openStudentPopups');
+    if (!btn) return;
+
+    const tr = btn.closest('tr[data-sid]');
+    if (!tr) return;
+
+    const unified = btn.classList.contains('openStudentPopups');
+    if (!unified) {
+      await openLogModalForRow(tr);
+      return;
+    }
+
+    await openStudentPopupsForRow(tr);
+  });
+
+  logNotes.addEventListener('input', () => {
+    if (canonicalHomework.mode === 'canonical' && !canonicalHomework.pendingPayload) {
+      canonicalHomework.operationId = null;
+    }
   });
 
   const close = () => {
+    logOpenSeq += 1;
+    const wasUnified = logModal.classList.contains('student-work-layout');
     logModal.style.display = 'none';
+    logModal.classList.remove('student-work-layout');
     editingLogSid = null;
+    editingLogDate = null;
+    logModalReady = false;
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalCarriedTestAssignment = null;
+    logModalAccessMode = 'full';
+    resetCanonicalHomeworkState();
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
+    if (wasUnified) {
+      try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
+      try { if (window.closeTestAssignmentPopup) window.closeTestAssignmentPopup(); } catch {}
+    }
+    try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
+  window.closeStudentWorkPopups = close;
   logClose.addEventListener('click', close);
-  logModal.addEventListener('click', (e) => { if (e.target === logModal) close(); });
+
+  function isCurrentLogProgressAllDone() {
+    const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
+    return cells.length > 0 && cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state));
+  }
+
+  function clearVideoAssignmentIfAllDone(saveResult) {
+    if (!saveResult?.allProgressDone) return false;
+    if (typeof window.hasManualVideoAssignmentSelection === 'function' && window.hasManualVideoAssignmentSelection()) {
+      return false;
+    }
+    if (typeof window.clearVideoAssignmentPopupForCurrent === 'function') {
+      window.clearVideoAssignmentPopupForCurrent();
+    }
+    return true;
+  }
 
   async function saveBase(doneFlag) {
-    const today = todayLocalKey();
+    const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
+
+    if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'error') {
+      throw new Error(canonicalHomework.error || '숙제 상세를 불러오지 못했습니다. 닫은 뒤 다시 시도해 주세요.');
+    }
+    if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'conflict') {
+      throw new Error(canonicalHomework.error || '다른 화면에서 숙제가 변경되었습니다. 닫은 뒤 다시 열어 주세요.');
+    }
 
     const prevLog = (state.logs?.[today] || {})[sid] || {};
     const prevDone =
       prevLog?.done === true || prevLog?.done === 'true' || prevLog?.done === 1 || prevLog?.done === '1';
 
-    const changedProg = {};
-    document.querySelectorAll('#logProgress .progress-cell').forEach(cell => {
-      const st = cell.dataset.state || 'none';
-      const initial = cell.dataset.initial || 'none';
-      const mid = String(cell.dataset.mid);
+    const changedProg = collectChangedProgressPatch();
+    await saveChangedProgressPatch(today, sid, changedProg);
 
-      if (st !== initial) changedProg[mid] = st;
-    });
-
-    if (!state.progress) state.progress = {};
-    state.progress[today] = state.progress[today] || {};
-    if (!state.progress[today][sid] || typeof state.progress[today][sid] !== 'object') {
-      state.progress[today][sid] = {};
+    if (isContextMenuOnlyAccess()) {
+      return { allProgressDone: false };
     }
 
-    if (Object.keys(changedProg).length) {
-      const mergedProgress = await patchProgressEntry(today, sid, changedProg);
-      state.progress[today][sid] = mergedProgress || {};
-    }
-
-    const oldDates = Object.keys(state.progress).filter(d => d < today);
-    const oldTotal = {};
-    oldDates.forEach(d => {
-      Object.entries(state.progress[d]?.[sid] || {}).forEach(([mid, st]) => { oldTotal[String(mid)] = st; });
-    });
-    const label = (mid, st) => {
-      if (st === 'none') return null;
-      const v = state.videos.find(v => String(v.mid) === String(mid));
-      if (!v) return null;
-      const base = `${v.chapter}차시`;
-      return st === 'done' ? base : (st === 'interrupted' ? `${base}(중단)` : (st === 'skip' ? `${base}(건너뜀)` : null));
-    };
-    const summary = Object.entries(changedProg)
-      .filter(([mid, st]) => oldTotal[String(mid)] !== st && st !== 'none')
-      .map(([mid, st]) => label(mid, st))
-      .filter(Boolean)
-      .join(', ');
+    const oldTotal = collectPriorProgressByMid(today, sid);
+    const summary = summarizeProgressPatch(changedProg, oldTotal);
 
     const hwRows = collectHwTable();
-    const notesNow = (logNotes.value || '').trim();
-    const clearKeys = [];
-    const entry = {};
-    const base = {};
-    let contentChanged = false;
+    const notesNow = cleanHwText(logNotes.value);
+    const { entry, clearKeys, base, contentChanged } = buildLogSavePatch({
+      notesNow,
+      hwRows,
+      prevLog,
+      doneFlag,
+      summary,
+    });
 
-    if (notesNow !== String(logModalSnapshot.notes || '')) {
-      base.notes = String(logModalServerSnapshot.notes || '');
-      contentChanged = true;
-      if (notesNow) entry.notes = notesNow;
-      else clearKeys.push('notes');
-    }
-
-    if (!sameHwRows(hwRows, logModalSnapshot.homeworkTable)) {
-      base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
-      contentChanged = true;
+    let returned = null;
+    if (canonicalHomework.mode === 'canonical') {
+      const canonicalRows = collectCanonicalHomeworkRows();
       if (hwRows.length) {
         entry.homework = buildHwSummary(hwRows);
         entry.homeworkTable = hwRows;
+        for (let i = clearKeys.length - 1; i >= 0; i--) {
+          if (clearKeys[i] === 'homework' || clearKeys[i] === 'homeworkTable') clearKeys.splice(i, 1);
+        }
       } else {
-        clearKeys.push('homework', 'homeworkTable');
+        entry.homeworkTable = [];
+        if (!clearKeys.includes('homework')) clearKeys.push('homework');
+        if (!clearKeys.includes('homeworkTable')) clearKeys.push('homeworkTable');
       }
-    }
-
-    if (summary) entry.topic = summary;
-    if (doneFlag) entry.done = true;
-
-    if (doneFlag) {
-      entry.leaveTime = nowHHMM();
-      entry.leaveAt = nowISO();
-    }
-
-    let returned = null;
-    if (Object.keys(entry).length || clearKeys.length) {
+      base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
+      entry.updatedAt = nowISO();
+      canonicalHomework.operationId = canonicalHomework.operationId || createHomeworkOperationId();
+      const commitPayload = {
+        operationId: canonicalHomework.operationId,
+        date: today,
+        sid,
+        logPatch: {
+          entry,
+          clearKeys,
+          base,
+          baseHomeworkTableExact: canonicalHomework.exactLogRows,
+        },
+        homeworkRows: canonicalRows,
+        removedAssignmentIds: Array.from(canonicalHomework.removedAssignmentIds),
+      };
+      const committed = await commitCanonicalHomework(commitPayload);
+      returned = (committed?.entry && typeof committed.entry === 'object')
+        ? committed.entry
+        : ((committed?.log?.entry && typeof committed.log.entry === 'object') ? committed.log.entry : null);
+    } else if (Object.keys(entry).length || clearKeys.length) {
       entry.updatedAt = nowISO();
       returned = await patchLogEntry(today, sid, entry, clearKeys, contentChanged ? { base } : {});
     }
 
-    state.logs = state.logs || {};
-    state.logs[today] = state.logs[today] || {};
-    if (returned) {
-      state.logs[today][sid] = returned;
-    } else if (Object.keys(entry).length || clearKeys.length) {
-      const next = { ...(state.logs[today][sid] || {}), ...entry };
-      clearKeys.forEach(k => { delete next[String(k)]; });
-      if (!doneFlag && prevDone) next.done = true;
-      state.logs[today][sid] = next;
+    applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });
+
+    const allProgressDone = isCurrentLogProgressAllDone();
+    if (allProgressDone) {
+      await clearVideoAssignmentForDateSid(today, sid);
     }
 
-    logModalSnapshot = {
-      notes: notesNow,
-      homeworkTable: hwRows,
+    setLogModalSnapshots(notesNow, hwRows);
+
+    return { allProgressDone };
+  }
+
+  async function saveRecordPopupForCurrent() {
+    if (!logModalReady) throw new Error('기록 팝업을 불러오는 중입니다.');
+    return await saveBase(false);
+  }
+
+  window.saveRecordPopup = saveRecordPopupForCurrent;
+
+  async function reapplyCarriedTestAssignmentForCurrent() {
+    if (!logModalCarriedTestAssignment?.items?.length) return;
+    const today = editingLogDate || getAdminDate();
+    const sid = String(editingLogSid || '');
+    if (!today || !sid) return;
+
+    const latestEntry = await fetchLatestCarriedTestLogEntry(today, sid);
+    const carriedItems = mergeAssignmentItemsByLabel(logModalCarriedTestAssignment.items);
+    const mergedAssignedItems = mergeAssignmentItemsByLabel(
+      Array.isArray(latestEntry.assignedTests) ? latestEntry.assignedTests : [],
+      carriedItems,
+    );
+    const mergedDailyItems = mergeAssignmentItemsByLabel(
+      Array.isArray(latestEntry[TEST_ASSIGN_DAILY_ITEMS_KEY]) ? latestEntry[TEST_ASSIGN_DAILY_ITEMS_KEY] : [],
+      carriedItems,
+    );
+    const noteBlock = buildCarriedAssignmentNote(mergedDailyItems);
+    const nextNotes = noteBlock ? appendCarriedAssignmentNote(latestEntry.notes || '', noteBlock) : String(latestEntry.notes || '').trim();
+    const prevNotes = String(latestEntry.notes || '').trim();
+    const entry = {
+      assignedTests: mergedAssignedItems,
+      [TEST_ASSIGN_DAILY_ITEMS_KEY]: mergedDailyItems,
+      [TEST_ASSIGN_ABSENCE_SOURCE_KEY]: logModalCarriedTestAssignment.sourceDate,
+      updatedAt: nowISO(),
     };
-    logModalServerSnapshot = {
-      notes: notesNow,
-      homeworkTable: normalizeHwRowsForCompare(hwRows),
-    };
+    if (noteBlock) entry.testAssignmentNote = noteBlock;
+    if (nextNotes !== prevNotes) entry.notes = nextNotes;
+
+    const saved = await patchLogEntry(
+      today,
+      sid,
+      entry,
+      [],
+      nextNotes !== prevNotes ? { base: { notes: latestEntry.notes || '' } } : {},
+    );
+
+    if (saved && typeof saved === 'object') {
+      state.logs = state.logs || {};
+      state.logs[today] = state.logs[today] || {};
+      state.logs[today][sid] = saved;
+      window.logs = state.logs;
+    }
   }
 
   logSave.addEventListener('click', async () => {
     try {
-      await saveBase(false);
-      toast('수업 기록 저장됨');
+      const saveResult = await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
+      }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+      }
+      if (!isContextMenuOnlyAccess()) {
+        await reapplyCarriedTestAssignmentForCurrent();
+      }
+      toast(isContextMenuOnlyAccess() ? '영상 진도 저장됨' : '수업 기록 저장됨');
       close();
       document.dispatchEvent(new CustomEvent('admin:refresh'));
     } catch (err) {
@@ -1271,28 +2451,22 @@ export function initLogModal() {
     }
   });
 
-  logAssign?.addEventListener('click', async () => {
-    try {
-      await saveBase(false);
-      const today = todayLocalKey();
-      await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: false });
-      toast(`숙제 배정 완료 (${nowHHMM()})`);
-      close();
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
-    } catch (err) {
-      if (err?.message) {
-        alert(err.message);
-        return;
-      }
-      console.error(err);
-      alert('숙제 배정 완료 저장 실패');
-    }
-  });
-
   logComplete.addEventListener('click', async () => {
     try {
-      await saveBase(false);
-      const today = todayLocalKey();
+      const saveResult = await saveRecordPopupForCurrent();
+      const unified = logModal.classList.contains('student-work-layout');
+      if (unified && typeof window.saveVideoAssignmentPopup === 'function') {
+        await window.saveVideoAssignmentPopup({
+          showPopup: false,
+          refresh: false,
+          forceEmpty: clearVideoAssignmentIfAllDone(saveResult),
+        });
+      }
+      if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+        await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+      }
+      await reapplyCarriedTestAssignmentForCurrent();
+      const today = editingLogDate || getAdminDate();
       await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
       toast(`숙제 검사 완료 (${nowHHMM()})`);
       close();
@@ -1310,7 +2484,7 @@ export function initLogModal() {
 
 /* 자동 판정 애드온 */
 (() => {
-  const TH_DONE = 95, TH_INTERRUPTED = 5;
+  const TH_DONE = 90, TH_INTERRUPTED = 5;
 
   const pctOf = (w) => (!w || !Number(w.dur))
     ? 0
@@ -1336,6 +2510,7 @@ export function initLogModal() {
         if (!st) return;
 
         // 이미 사람이 지정한 상태(done/interrupted/skip)가 있으면 자동값으로 덮지 않는다.
+        if (cell.dataset.explicitNone === '1') return;
         const current = String(cell.dataset.state || 'none');
         if (current !== 'none') return;
 
@@ -1348,14 +2523,15 @@ export function initLogModal() {
   }
 
   document.body.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.editLog');
+    const btn = e.target.closest('.editLog,.openStudentPopups');
     if (!btn) return;
 
     const tr = btn.closest('tr[data-sid]');
     const sid = tr?.dataset?.sid;
     if (!sid) return;
 
-    const raw = await fetchWatchForSid(sid);
+    const date = tr?.dataset?.date || editingLogDate || getAdminDate();
+    const raw = await fetchWatchForSid(sid, date);
 
     const watchByMid = {};
     Object.keys(raw).forEach(k => { watchByMid[String(k)] = raw[k]; });

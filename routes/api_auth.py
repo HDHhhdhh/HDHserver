@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import secrets
 import time
 import pathlib
 from functools import wraps
@@ -20,7 +21,9 @@ STU_PATH = BASE / "students.json"
 # ✅ 계정 맵 (로그인ID -> pw_hash + sids[])
 ACCT_PATH = BASE / "auth_accounts.json"
 
-AUTH_SECRET = os.environ.get("AUTH_SECRET", "CHANGE_ME_AUTH_SECRET")
+AUTH_SECRET = os.environ.get("AUTH_SECRET", "").strip()
+if not AUTH_SECRET or AUTH_SECRET == "CHANGE_ME_AUTH_SECRET":
+    AUTH_SECRET = secrets.token_urlsafe(32)
 TOKEN_EXPIRE_SEC = 60 * 60 * 24 * 30  # 30일
 
 # ✅ 1번 모드: 이 비번이면 어떤 아이디로든 무조건 로그인 통과

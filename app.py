@@ -1,12 +1,26 @@
 # app.py — Flask 2.x / Python 3.10+
 from __future__ import annotations
 
-import ipaddress
-import re
+import os
+from urllib.parse import urlparse
 
-from flask import Flask, request, abort, render_template_string
+from flask import Flask, g, request, abort, render_template_string
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from core.network_access import (
+    academy_network_allowed,
+    client_ip_from_request,
+    ip_allowed,
+)
+from core.student_app_config import load_student_app_config
+from core.student_public_surface import (
+    BOARD_ROUTE_METHODS,
+    FOCUS_ROUTE_METHODS,
+    HOMEWORK_ROUTE_METHODS,
+    PUSH_ROUTE_METHODS,
+    install_student_public_surface,
+    register_student_app_domain,
+)
 from routes.pages import bp_pages
 from routes.api_basic import bp_api_basic
 from routes.api_attend import bp_api_attend
@@ -18,64 +32,73 @@ from routes.api_fs import bp_api_fs
 from routes.api_kollus import bp_api_kollus
 from routes.api_auth import bp_api_auth
 from routes.api_todaymeta import bp_api_todaymeta
+from routes.api_makeup_carryover import bp_api_makeup_carryover
+from routes.api_student_app_auth import bp_api_student_app_auth
+from routes.api_student_accounts import bp_api_student_accounts
+from routes.api_student_push import bp_api_student_push
+from routes.api_student_homework import bp_api_student_homework, bp_api_student_homework_admin
+from routes.api_student_board import bp_api_student_board
+from routes.api_student_focus import bp_api_student_focus, bp_api_student_focus_admin
+from routes.api_assistant_notes import bp_api_assistant_notes
+from routes.api_admin_operation_notes import bp_api_admin_operation_notes
+from routes.api_non_student_ocr import bp_api_non_student_ocr
 
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-
-    # ─────────────────────────────────────────────
-    # ✅ 학생 사이트(/student) — 학원 네트워크만 허용 (IPv4 + IPv6)
-    #
-    # iPad는 IPv6 우선이라 /64 하나로는 자주 새는 케이스가 있음.
-    # 네가 준 prefix(2a09:bac2:46d9:....) 기준으로 /48로 커버 범위를 넓힘.
-    # ─────────────────────────────────────────────
-    ALLOWED = [
-        ipaddress.ip_network("110.14.147.14/32"),
-        ipaddress.ip_network("192.168.0.0/16"),
-
-        # ✅ 학원 회선 IPv6 (앞 3블록 고정)
-        # - /64로 하면 4번째 블록이 바뀌는 순간 또 막힘
-        # - /48은 범위가 넓어지지만 여전히 "해당 통신사/회선 블록" 안에만 묶임
-        ipaddress.ip_network("2a09:bac2:46d9::/48"),
-    ]
-
-    def _clean_ip(s: str) -> str:
-        s = (s or "").strip()
-        s = s.strip().strip(".")  # 끝 '.' 같은 잡문자 제거
-        # IPv6 zone id 제거 (예: fe80::1%en0)
-        s = re.sub(r"%[0-9A-Za-z_.-]+$", "", s)
-        # [IPv6] 형태 제거
-        if s.startswith("[") and s.endswith("]"):
-            s = s[1:-1]
-        return s
-
-    def _client_ip() -> str:
-        # ProxyFix 사용 중이면 X-Forwarded-For가 들어올 수 있음
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return _clean_ip(xff.split(",")[0])
-        return _clean_ip(request.remote_addr or "")
-
-    def ip_allowed(ip_str: str) -> bool:
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            return False
-        return any(ip in net for net in ALLOWED)
+    app.json.ensure_ascii = False
+    student_app_config = load_student_app_config()
+    install_student_public_surface(
+        app,
+        config=student_app_config,
+        auth_blueprint=bp_api_student_app_auth,
+    )
+    if student_app_config.public_enabled:
+        register_student_app_domain(app, bp_api_student_push, PUSH_ROUTE_METHODS)
+        register_student_app_domain(app, bp_api_student_board, BOARD_ROUTE_METHODS)
+        if student_app_config.homework_enabled:
+            register_student_app_domain(app, bp_api_student_homework, HOMEWORK_ROUTE_METHODS)
+        if student_app_config.focus_enabled:
+            register_student_app_domain(app, bp_api_student_focus, FOCUS_ROUTE_METHODS)
+    trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if trust_proxy_headers:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     @app.before_request
-    def block_student_outside():
-        p = (request.path or "")
+    def block_cross_origin_writes():
+        if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return
 
-        # ✅ /student 또는 /student/... 만 막기 ( /students 는 제외 )
-        if p == "/student" or p.startswith("/student/"):
-            ip_str = _client_ip()
-
-            if not ip_allowed(ip_str):
-                # ✅ 다음에 또 터지면 이 로그 한 줄로 바로 원인 확정 가능
-                print(f"[BLOCK] path={p} ip={ip_str} xff={request.headers.get('X-Forwarded-For')} remote={request.remote_addr}")
+        host = (request.host or "").lower()
+        for header in ("Origin", "Referer"):
+            raw = (request.headers.get(header) or "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = urlparse(raw)
+            except Exception:
                 abort(403)
+            if parsed.netloc and parsed.netloc.lower() != host:
+                abort(403)
+
+    @app.before_request
+    def block_academy_only_answer_files():
+        p = (request.path or "")
+        if p not in {"/js/test_answer_link_map.json", "/js/test_answer_link_map.js"}:
+            return
+        if getattr(g, "student_app_public_request", False) is True:
+            if not ip_allowed(getattr(g, "student_app_client_ip", "")):
+                abort(404)
+            return
+        if not academy_network_allowed():
+            ip_str = client_ip_from_request()
+            print(f"[BLOCK] path={p} ip={ip_str} xff={request.headers.get('X-Forwarded-For')} remote={request.remote_addr}")
+            abort(403)
 
     BLOCK_HTML = """
     <!doctype html>
@@ -106,8 +129,8 @@ def create_app() -> Flask:
     </head>
     <body>
       <div class="card">
-        <h1>학원 와이파이만 시청 가능합니다</h1>
-        <p>해당 콘텐츠는 학원 내부 네트워크에서만 이용할 수 있습니다.</p>
+        <h1>학원 Wi-Fi 전용 콘텐츠입니다</h1>
+        <p>영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.</p>
       </div>
     </body>
     </html>
@@ -129,6 +152,14 @@ def create_app() -> Flask:
     app.register_blueprint(bp_api_kollus)
     app.register_blueprint(bp_api_auth)
     app.register_blueprint(bp_api_todaymeta)
+    app.register_blueprint(bp_api_makeup_carryover)
+    app.register_blueprint(bp_api_assistant_notes)
+    app.register_blueprint(bp_api_admin_operation_notes)
+    app.register_blueprint(bp_api_non_student_ocr)
+    app.register_blueprint(bp_api_student_accounts)
+    if student_app_config.homework_enabled:
+        app.register_blueprint(bp_api_student_homework_admin)
+    app.register_blueprint(bp_api_student_focus_admin)
     return app
 
 

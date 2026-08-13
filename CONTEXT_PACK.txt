@@ -11,7 +11,7 @@
   • 테스트 이름 매칭: 공백 제거+lowercase 정규화 (단원평가 + FINAL + HELL)
 
 [주요 페이지/JS]
-- /admin : today.js (오늘표), calendar.js (캘린더), clinicModal.js (클리닉), exportLogs.js (TXT 내보내기)
+- /admin : today.js (오늘표), calendar.js (캘린더), clinicModal.js (클리닉), exportLogs.js (TXT/CSV 내보내기)
 - /students : all.html + all.js (전체 학생)
 - /student/<sid> : student.js (학생별 페이지)
 - /tests : tests.html + tests.js (테스트 카테고리/시험/문항수 관리 + 통계)
@@ -20,15 +20,20 @@
 [최근 델타 반영]
 - FINAL 3회 → 문항수 24
 - HoverTooltip: 파이널/헬 응시 여부도 표시, 색상 반영
-- exportLogs: skip(건너뜀) 제외 후 정렬 출력
+- exportLogs: skip(건너뜀) 제외 후 정렬 출력, TXT/CSV 형식과 TXT 항목 선택
 - tests 관리 페이지: 카테고리/시험 추가·삭제, 문항수 수정, 통계 표시
 - 자료 업로드: 다중 파일 선택 가능
 - 오늘표: 저장 후 자동 재정렬 / 결석 복구 기능 추가
 - 자유의 몸: archived=false 학생 전체 출력
 
 [열린 TODO]
-- 성능 개선: logs.json 전체 스캔 통계 → 최적화 필요
-- tests-config UI 개선 (drag-sort, 검색)
-- HoverTooltip 성능 개선(학생 많을 때)
-- exportLogs 포맷 사용자 정의 옵션
+- 완료: tests 통계의 logs.json 레거시 시험 후보를 파일 지문 기반으로 재사용해 반복 전수 파싱·정규화 제거 (Phase 8)
+- 완료: tests-config 시험 목록 검색과 그룹 내 drag/키보드 순서 저장 추가 (Phase 9)
+- 완료: HoverTooltip 학생 인덱스·동일 행 재렌더 억제와 프레임당 1회 위치 계산으로 대규모 명단 pointer 렉 최소화 (Phase 10)
+- 완료: HoverTooltip 모바일 폭 제한과 focus/blur/Escape·ARIA 연결, 전체학생 초기 키보드 접근 지원 (Phase 11)
+- 완료: exportLogs에서 TXT/CSV 형식과 TXT 항목(특이사항·테스트·진도·숙제)을 접근 가능한 모달로 선택 (Phase 12)
+- 완료: 학생 앱 설치 안내가 첫 화면을 가리지 않고 명시적 버튼으로만 열리며, 설치 완료 시 stale 프롬프트·모달·포커스를 정리하도록 수정 (Phase 13)
+- 완료: 학생 앱 Todo 14 배포·rollback temp fixture 계약을 기본 안전검증과 Windows CI에 편입하고, snapshot 완전성 강제·dry-run 전용 격리 mutex·실패 경로 process/runtime 불변 가드를 추가 (Phase 14)
+- 완료: 결석 복구가 서버 잠금 연산으로 by_date/by_student/by_slot을 함께 정리하고, 응답 유실을 재조회로 수렴시키며 날짜 단위 today_order 초기화 결과를 구분 표시함 (Phase 16)
+- 완료: 자유의 몸이 모든 날짜의 미정리 하원 학생을 학생별 최신 1건·최소 불리언 요약으로 표시하고 과거 날짜 시간/슬롯은 읽기 전용으로 보호함 (Phase 16)
 - 버그 X,Y (미상세, 추후 정의 필요)

@@ -1,6 +1,9 @@
 ﻿// /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
+import { ensureProgressForSid } from '../core/state.js';
+import { localDateKey } from '../core/date.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 let tipEl = null;
 let mode = 'hover';          // 'hover' | 'fixed'
@@ -123,7 +126,7 @@ export function initHoverTooltip() {
   // 영상/테스트 표시 (가로 스크롤 제거: flex-wrap)
   // ───────────────────────────────────────────
   function renderProgressTables(stu) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateKey();
 
     // 누적 progress 병합(오늘 포함, 최신이 우선)
     const allDates = Object.keys(state.progress || {}).filter(d => d <= today).sort();
@@ -133,7 +136,7 @@ export function initHoverTooltip() {
     allDates.forEach(d => {
       const per = state.progress[d]?.[stu.id] || {};
       Object.entries(per).forEach(([k, v]) => {
-        if (k === 'tests') return;
+        if (String(k).startsWith('__') || k === 'tests') return;
         mergedProg[k] = v;
       });
       if (per.tests && typeof per.tests === 'object') {
@@ -246,8 +249,8 @@ export function initHoverTooltip() {
   function buildTooltipHTML(stu, { includeProgress } = { includeProgress: true }) {
     const name = (stu.name || '').trim();
     const level = stu.level || '';
-    const days = [stu.day1, stu.day2, stu.day3].filter(Boolean).join('·');
-    const subBooks = [stu.subBook1, stu.subBook2].filter(Boolean).join(', ');
+    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
       stu.school ||
@@ -345,13 +348,13 @@ export function initHoverTooltip() {
     tipEl.style.top  = `${top}px`;
   }
 
-  function onOver(ev) {
+  async function onOver(ev) {
     if (mode !== 'hover') return;
     if (!(ev.target instanceof Element)) return;
     const a = ev.target.closest('a.stuName');
     if (!a) return;
 
-    const sid = a.dataset.sid;
+    const sid = a.dataset.sid || a.dataset.id;
     const name = (a.textContent || '').trim();
 
     const stu = (state.students || []).find(s => String(s.id) === String(sid))
@@ -359,9 +362,16 @@ export function initHoverTooltip() {
     if (!stu) return;
 
     const el = ensureTip();
-    el.innerHTML = buildTooltipHTML(stu, { includeProgress: true });
+    el.innerHTML = buildTooltipHTML(stu, { includeProgress: false });
     el.style.display = 'block';
 
+    requestAnimationFrame(() => {
+      placeTooltipFollowCursor(ev);
+    });
+
+    await ensureProgressForSid(stu.id);
+    if (mode !== 'hover' || tipEl !== el || el.style.display === 'none') return;
+    el.innerHTML = buildTooltipHTML(stu, { includeProgress: true });
     requestAnimationFrame(() => {
       placeTooltipFollowCursor(ev);
     });

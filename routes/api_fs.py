@@ -6,13 +6,15 @@ import re
 import shutil
 from typing import Any, Dict
 
-from flask import Blueprint, abort, jsonify, make_response, request, send_from_directory
+from flask import Blueprint, abort, g, jsonify, make_response, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from core.paths import FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
+from core.student_public_surface_paths import resolve_raw_request_target, safe_announcement_file
 from core.storage import load, save_atomic
 
 bp_api_fs = Blueprint("api_fs", __name__)
+FILES_ROOT = FILES_DIR.resolve()
 
 def json_or_form() -> dict:
     data = request.get_json(silent=True)
@@ -23,10 +25,24 @@ def json_or_form() -> dict:
     return data
 
 def _safe_join(rel_path: str) -> pathlib.Path:
-    p = (FILES_DIR / rel_path).resolve()
-    if not str(p).startswith(str(FILES_DIR.resolve())):
+    rel = str(rel_path or "").lstrip("/").replace("\\", "/")
+    p = (FILES_ROOT / rel).resolve()
+    try:
+        p.relative_to(FILES_ROOT)
+    except ValueError:
         raise ValueError("unsafe path")
     return p
+
+def _reject_root_path(p: pathlib.Path) -> None:
+    if p.resolve() == FILES_ROOT:
+        raise ValueError("refusing to modify files root")
+
+def _is_relative_to(child: pathlib.Path, parent: pathlib.Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
 
 def _rel_from_abs(p: pathlib.Path) -> str:
     rel = os.path.relpath(p.resolve(), FILES_DIR.resolve())
@@ -143,6 +159,7 @@ def api_fs_rename():
         return jsonify({"ok": False, "error": "src/new_name required"}), 400
     try:
         abs_src = _safe_join(src)
+        _reject_root_path(abs_src)
         abs_dst = abs_src.parent / secure_filename(new_name)
         if abs_dst.exists():
             return jsonify({"ok": False, "error": "already exists"}), 400
@@ -192,6 +209,7 @@ def api_fs_delete():
     for rel in items:
         try:
             abs_p = _safe_join(rel)
+            _reject_root_path(abs_p)
             if abs_p.is_dir():
                 shutil.rmtree(abs_p)
             elif abs_p.exists():
@@ -246,6 +264,7 @@ def api_fs_move():
 
         for rel in items:
             abs_src = _safe_join(rel)
+            _reject_root_path(abs_src)
             target = abs_dst / abs_src.name
             if target.exists():
                 if abs_src.is_file():
@@ -258,6 +277,8 @@ def api_fs_move():
                         new = f"{base} ({i})"
                         i += 1
                     target = abs_dst / new
+            if abs_src.is_dir() and _is_relative_to(target, abs_src):
+                raise ValueError("cannot move a folder into itself")
             shutil.move(str(abs_src), str(target))
             old_rel = rel.replace("\\", "/")
             new_rel = _rel_from_abs(target)
@@ -382,7 +403,21 @@ def api_fs_set_page_folders():
 
 @bp_api_fs.get("/files/<path:fname>")
 def files(fname: str):
-    pth = FILES_DIR / fname
+    if getattr(g, "student_app_public_request", False) is True:
+        raw_target = resolve_raw_request_target(request.environ, request.full_path.removesuffix("?"))
+        active_sid = getattr(g, "student_app_active_sid", None)
+        if not isinstance(active_sid, str) or not active_sid or raw_target is None:
+            abort(404)
+        if not safe_announcement_file(request.path, raw_target):
+            abort(404)
+        from routes.api_announcements import _student_can_access_announcement_image
+
+        if not _student_can_access_announcement_image(active_sid, fname):
+            abort(404)
+    try:
+        pth = _safe_join(fname)
+    except ValueError:
+        abort(404)
     if not pth.exists():
         abort(404)
     resp = send_from_directory(FILES_DIR, fname)

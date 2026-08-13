@@ -74,7 +74,9 @@
       inset: 0;
       border-radius: 9999px;
       background: #cbd5e1;
-      transition: .25s;
+      transition-property: background-color, border-color;
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
     }
 
     body.admin.tests-page .slider::before {
@@ -86,7 +88,9 @@
       height: 18px;
       border-radius: 50%;
       background: #fff;
-      transition: .25s;
+      transition-property: transform, background-color;
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
     }
 
     body.admin.tests-page .switch input:checked + .slider {
@@ -103,12 +107,12 @@
 
     body.admin.tests-page .page {
       width: 100%;
-      max-width: 1380px;
+      max-width: none;
       margin: 0 auto;
-      padding: 24px 32px 42px;
+      padding: 18px clamp(18px, 2vw, 34px) 42px;
       display: flex;
       flex-direction: column;
-      gap: 22px;
+      gap: 18px;
       box-sizing: border-box;
     }
 
@@ -184,14 +188,41 @@
 
     body.admin.tests-page .tests-shell {
       display: grid;
-      grid-template-columns: 390px minmax(0, 1fr);
-      gap: 22px;
-      align-items: start;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    body.admin.tests-page .tests-shell > .card {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: clamp(640px, calc(100vh - 320px), 1080px);
+      overflow: hidden;
+    }
+
+    body.admin.tests-page .card-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-right: 2px;
+      box-sizing: border-box;
+      scrollbar-gutter: stable;
+    }
+
+    body.admin.tests-page .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
 
     body.admin.tests-page .card-head h2 {
       margin: 0;
       font-size: 20px;
+      min-width: 0;
     }
 
     body.admin.tests-page .card-sub {
@@ -237,13 +268,56 @@
       color: var(--muted);
     }
 
+    body.admin.tests-page .catalog-search-group {
+      flex: 1 1 280px;
+      min-width: min(100%, 280px);
+    }
+
+    body.admin.tests-page .catalog-search-group input {
+      flex: 1 1 190px;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .catalog-order-hint {
+      margin-top: 10px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="saving"] {
+      border-color: color-mix(in oklab, var(--accent) 42%, var(--line) 58%);
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="success"] {
+      border-color: rgba(16, 185, 129, .38);
+      color: #047857;
+    }
+
+    body.dark.admin.tests-page .catalog-order-hint[data-kind="success"] {
+      color: #6ee7b7;
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="error"] {
+      border-color: rgba(239, 68, 68, .4);
+      color: #b91c1c;
+    }
+
+    body.dark.admin.tests-page .catalog-order-hint[data-kind="error"] {
+      color: #fca5a5;
+    }
+
     body.admin.tests-page .test-list {
       margin-top: 14px;
       border: 1px solid var(--line);
       border-radius: 16px;
       background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
-      overflow: auto;
-      max-height: 620px;
+      overflow: visible;
       padding: 8px;
       box-sizing: border-box;
     }
@@ -283,6 +357,142 @@
       margin-left: 6px;
     }
 
+    body.admin.tests-page .test-list-group {
+      margin: 0 0 10px;
+      border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+      border-radius: 13px;
+      overflow: hidden;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .test-list-group:last-child {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .test-list-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 92%, var(--accent) 8%);
+      font-size: 12px;
+      font-weight: 900;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .test-list-group-count {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .test-list-group-body {
+      padding: 7px;
+    }
+
+    body.admin.tests-page .test-list-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      transition: opacity .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    body.admin.tests-page .test-list-item:last-child {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .test-list-item.is-dragging {
+      opacity: .48;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-before::before,
+    body.admin.tests-page .test-list-item.is-drop-after::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      right: 4px;
+      height: 3px;
+      z-index: 2;
+      border-radius: 999px;
+      background: var(--accent);
+      pointer-events: none;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-before::before {
+      top: -5px;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-after::after {
+      bottom: -5px;
+    }
+
+    body.admin.tests-page .test-drag-handle {
+      width: 24px;
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: grab;
+      user-select: none;
+    }
+
+    body.admin.tests-page .test-drag-handle:active {
+      cursor: grabbing;
+    }
+
+    body.admin.tests-page .test-drag-handle[aria-disabled="true"] {
+      opacity: .32;
+      cursor: not-allowed;
+    }
+
+    body.admin.tests-page .test-list button.test-select-button {
+      margin: 0;
+    }
+
+    body.admin.tests-page .test-order-controls {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    body.admin.tests-page .test-list button.test-order-button {
+      width: 32px;
+      min-width: 32px;
+      min-height: 32px;
+      margin: 0;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-color: var(--line);
+      background: color-mix(in oklab, var(--card) 94%, var(--fg) 6%);
+      text-align: center;
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    body.admin.tests-page .test-list button.test-order-button:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    body.admin.tests-page .test-list button.test-order-button:disabled {
+      opacity: .32;
+      cursor: not-allowed;
+      transform: none;
+    }
+
     body.admin.tests-page .editor-panel {
       display: flex;
       flex-direction: column;
@@ -318,8 +528,8 @@
 
     body.admin.tests-page .field-row {
       display: grid;
-      grid-template-columns: 90px minmax(0, 1fr) 1.05fr;
-      gap: 10px;
+      grid-template-columns: 108px minmax(280px, .9fr) minmax(340px, 1.1fr);
+      gap: 12px 16px;
       align-items: center;
     }
 
@@ -385,17 +595,51 @@
     }
 
     body.admin.tests-page .summary-card {
+      appearance: none;
       position: relative;
       overflow: hidden;
+      width: 100%;
       padding: 14px;
       border-radius: 16px;
       border: 1px solid var(--line);
       background: color-mix(in oklab, var(--card) 93%, var(--accent) 7%);
       box-shadow: 0 8px 20px rgba(0, 0, 0, .12);
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease;
+    }
+
+    body.admin.tests-page .summary-card:hover {
+      transform: translateY(-1px);
+      background: color-mix(in oklab, var(--card) 88%, var(--accent) 12%);
+    }
+
+    body.admin.tests-page .summary-card:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+    }
+
+    body.admin.tests-page .summary-card.is-active {
+      border-color: color-mix(in oklab, var(--accent) 68%, var(--line) 32%);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, .14), inset 0 0 0 2px color-mix(in oklab, var(--accent) 36%, transparent);
     }
 
     body.admin.tests-page .summary-card[data-type="UNIT"] {
       border-color: color-mix(in oklab, var(--line) 58%, #3b82f6 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="REVIEW"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #14b8a6 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="SCHOOL_PAST"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #f59e0b 42%);
+    }
+
+    body.admin.tests-page .summary-card[data-type="ILSAN_PAST"] {
+      border-color: color-mix(in oklab, var(--line) 58%, #a855f7 42%);
     }
 
     body.admin.tests-page .summary-card[data-type="FINAL"] {
@@ -450,8 +694,45 @@
     body.admin.tests-page .stats-table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 860px;
+      min-width: 1040px;
       margin: 0;
+    }
+
+    body.admin.tests-page #statsTable {
+      min-width: 0;
+      table-layout: fixed;
+    }
+
+    body.admin.tests-page #statsTable th,
+    body.admin.tests-page #statsTable td {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(1) {
+      width: 84px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(2) {
+      width: 64px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(4),
+    body.admin.tests-page #statsTable th:nth-child(5) {
+      width: 66px;
+    }
+
+    body.admin.tests-page #statsTable th:nth-child(6),
+    body.admin.tests-page #statsTable th:nth-child(7) {
+      width: 58px;
+    }
+
+    body.admin.tests-page #statsTable .stat-main {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     body.admin.tests-page .stats-table thead th {
@@ -535,8 +816,38 @@
       border-color: rgba(59, 130, 246, .28);
     }
 
+    body.admin.tests-page .type-pill[data-type="REVIEW"] {
+      background: rgba(20, 184, 166, .14);
+      color: #0f766e;
+      border-color: rgba(20, 184, 166, .28);
+    }
+
+    body.admin.tests-page .type-pill[data-type="SCHOOL_PAST"] {
+      background: rgba(245, 158, 11, .16);
+      color: #92400e;
+      border-color: rgba(245, 158, 11, .3);
+    }
+
+    body.admin.tests-page .type-pill[data-type="ILSAN_PAST"] {
+      background: rgba(168, 85, 247, .14);
+      color: #7e22ce;
+      border-color: rgba(168, 85, 247, .28);
+    }
+
     body.dark.admin.tests-page .type-pill[data-type="UNIT"] {
       color: #93c5fd;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="REVIEW"] {
+      color: #5eead4;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="SCHOOL_PAST"] {
+      color: #fcd34d;
+    }
+
+    body.dark.admin.tests-page .type-pill[data-type="ILSAN_PAST"] {
+      color: #d8b4fe;
     }
 
     body.admin.tests-page .type-pill[data-type="FINAL"] {
@@ -563,6 +874,127 @@
       min-width: 54px;
       background: color-mix(in oklab, var(--card) 92%, var(--fg) 8%);
       color: var(--fg);
+    }
+
+    body.admin.tests-page .import-file {
+      display: none;
+    }
+
+    body.admin.tests-page .rule-grid-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 12px;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .rule-section {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .rule-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 92%, var(--accent) 8%);
+    }
+
+    body.admin.tests-page .rule-section-title {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    body.admin.tests-page .rule-section-title strong {
+      font-size: 15px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .rule-section-title span,
+    body.admin.tests-page .rule-section-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .rule-section table {
+      min-width: 1040px !important;
+    }
+
+    body.admin.tests-page .rule-check {
+      width: 24px;
+      height: 24px;
+      margin: 0;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    body.admin.tests-page .rule-check-target {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    body.admin.tests-page .rule-check:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
+      outline-offset: 3px;
+    }
+
+    @media (max-width: 1024px) {
+      body.admin.tests-page :where(
+        button,
+        a,
+        input:not([type="checkbox"]):not([type="radio"]),
+        select,
+        textarea
+      ) {
+        min-height: 44px !important;
+      }
+    }
+
+    body.admin.tests-page .rule-save-toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 1000;
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
+      border: 1px solid color-mix(in oklab, var(--accent) 44%, var(--line) 56%);
+      border-radius: 12px;
+      background: color-mix(in oklab, var(--card) 88%, var(--accent) 12%);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 800;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity .16s ease, transform .16s ease;
+    }
+
+    body.admin.tests-page .rule-save-toast.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    body.admin.tests-page .rule-save-toast[data-kind="error"] {
+      border-color: rgba(239, 68, 68, .38);
+      background: color-mix(in oklab, var(--card) 86%, #ef4444 14%);
     }
 
     body.admin.tests-page .stat-title {
@@ -646,20 +1078,496 @@
       color: var(--muted);
     }
 
+    body.admin.tests-page .stats-detail-panel,
+    body.admin.tests-page .stats-detail-empty {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in oklab, var(--card) 97%, var(--fg) 3%);
+    }
+
+    body.admin.tests-page .stats-detail-panel {
+      overflow: hidden;
+    }
+
+    body.admin.tests-page .stats-detail-empty {
+      padding: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    body.admin.tests-page #statsDetail {
+      display: none;
+    }
+
+    body.admin.tests-page .stats-detail-modal[hidden] {
+      display: none !important;
+    }
+
+    body.admin.tests-page .stats-detail-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    body.admin.tests-page .stats-detail-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, .42);
+      backdrop-filter: blur(3px);
+    }
+
+    body.admin.tests-page .stats-detail-dialog {
+      position: relative;
+      z-index: 1;
+      width: min(980px, calc(100vw - 48px));
+      max-height: min(820px, calc(100vh - 48px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
+      overflow: hidden;
+      outline: none;
+    }
+
+    body.admin.tests-page .stats-detail-dialog-head {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--card) 96%, var(--accent) 4%);
+    }
+
+    body.admin.tests-page .stats-detail-dialog-kicker {
+      margin: 0 0 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    body.admin.tests-page #statsDetailModalTitle {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      text-wrap: balance;
+    }
+
+    body.admin.tests-page .stats-detail-close {
+      width: 42px;
+      min-width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--fg);
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      transition-property: transform, background-color, border-color;
+      transition-duration: 150ms;
+      transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+    }
+
+    body.admin.tests-page .stats-detail-close:active {
+      transform: scale(.96);
+    }
+
+    body.admin.tests-page .stats-detail-modal-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 18px;
+    }
+
+    body.admin.tests-page .stats-detail-modal-body .stats-detail-panel,
+    body.admin.tests-page .stats-detail-modal-body .stats-detail-empty {
+      margin-top: 0;
+    }
+
+    body.admin.tests-page.stats-modal-open {
+      overflow: hidden;
+    }
+
+    body.admin.tests-page .detail-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      padding: 14px 16px 2px;
+    }
+
+    body.admin.tests-page .detail-metric {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: color-mix(in oklab, var(--card) 94%, var(--accent) 6%);
+      min-height: 66px;
+      box-sizing: border-box;
+    }
+
+    body.admin.tests-page .detail-metric span {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    body.admin.tests-page .detail-metric strong {
+      font-size: 18px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .detail-answer-link-row {
+      display: flex;
+      justify-content: flex-end;
+      padding: 10px 16px 0;
+    }
+
+    body.admin.tests-page .detail-answer-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      text-decoration: none;
+    }
+
+    body.admin.tests-page .score-with-wrong {
+      display: grid;
+      gap: 6px;
+      justify-items: center;
+      line-height: 1.2;
+    }
+
+    body.admin.tests-page .score-with-wrong strong {
+      font-size: 15px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .score-with-wrong span {
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .wrong-detail-list {
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      font-size: 14px;
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .wrong-detail-list summary {
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 6px 10px;
+      border: 1px solid color-mix(in oklab, var(--accent) 42%, var(--line) 58%);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--accent) 9%, var(--card) 91%);
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 900;
+      line-height: 1.25;
+      word-break: keep-all;
+    }
+
+    body.admin.tests-page .wrong-detail-list ul {
+      display: grid;
+      gap: 8px;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    body.admin.tests-page .wrong-detail-list li {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      overflow-wrap: anywhere;
+    }
+
+    body.admin.tests-page .wrong-detail-no {
+      color: var(--fg);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    body.admin.tests-page .wrong-detail-answer {
+      min-height: 44px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-content: center;
+      align-items: center;
+      gap: 2px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      font-style: normal;
+      color: var(--fg);
+      font-weight: 800;
+    }
+
+    body.admin.tests-page .wrong-detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    body.admin.tests-page .wrong-detail-answer strong {
+      color: var(--fg);
+      font-size: 15px;
+      line-height: 1.2;
+    }
+
+    body.admin.tests-page .wrong-detail-correct strong {
+      color: var(--accent);
+    }
+
+    body.admin.tests-page .wrong-detail-empty {
+      width: 100%;
+      margin: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    @media (max-width: 640px) {
+      body.admin.tests-page .stats-detail-modal {
+        padding: 12px;
+      }
+
+      body.admin.tests-page .stats-detail-dialog {
+        width: calc(100vw - 24px);
+        max-height: calc(100vh - 24px);
+      }
+
+      body.admin.tests-page .stats-detail-modal-body {
+        padding: 12px;
+      }
+
+      body.admin.tests-page .detail-metrics {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      body.admin.tests-page .panel-table-wrap {
+        padding: 12px 8px;
+        overflow: hidden;
+      }
+
+      body.admin.tests-page .detail-answer-link-row {
+        justify-content: stretch;
+      }
+
+      body.admin.tests-page .detail-answer-link {
+        width: 100%;
+      }
+
+      body.admin.tests-page .detail-student-table,
+      body.admin.tests-page .detail-student-table thead,
+      body.admin.tests-page .detail-student-table tbody,
+      body.admin.tests-page .detail-student-table tr,
+      body.admin.tests-page .detail-student-table td {
+        display: block;
+        width: 100%;
+      }
+
+      body.admin.tests-page .detail-student-table {
+        min-width: 0;
+        border-spacing: 0;
+      }
+
+      body.admin.tests-page .detail-student-table thead {
+        display: none;
+      }
+
+      body.admin.tests-page .detail-student-table tr {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      body.admin.tests-page .detail-student-table tr:last-child {
+        border-bottom: 0;
+      }
+
+      body.admin.tests-page .detail-student-table td {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        padding: 7px 0;
+        border-bottom: 0;
+        text-align: left !important;
+      }
+
+      body.admin.tests-page .detail-student-table td > * {
+        min-width: 0;
+      }
+
+      body.admin.tests-page .detail-student-table td::before {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(1)::before {
+        content: "학생";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(2)::before {
+        content: "레벨";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(3)::before {
+        content: "점수";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(4)::before {
+        content: "채점 결과";
+      }
+
+      body.admin.tests-page .detail-student-table td:nth-child(5)::before {
+        content: "응시일";
+      }
+
+      body.admin.tests-page .score-with-wrong {
+        justify-items: stretch;
+      }
+
+      body.admin.tests-page .wrong-detail-list li {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    body.admin.tests-page .detail-student-table {
+      min-width: 0;
+      table-layout: fixed;
+    }
+
+    body.admin.tests-page .detail-student-table th,
+    body.admin.tests-page .detail-student-table td {
+      padding-left: 8px;
+      padding-right: 8px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      vertical-align: middle;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(1),
+    body.admin.tests-page .detail-student-table td:nth-child(1) {
+      width: 18%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(2),
+    body.admin.tests-page .detail-student-table td:nth-child(2) {
+      width: 9%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(3),
+    body.admin.tests-page .detail-student-table td:nth-child(3) {
+      width: 12%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(4),
+    body.admin.tests-page .detail-student-table td:nth-child(4) {
+      width: 45%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(5),
+    body.admin.tests-page .detail-student-table td:nth-child(5) {
+      width: 16%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(1) {
+      width: 22%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(2) {
+      width: 15%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(3) {
+      width: 16%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(4) {
+      width: 31%;
+    }
+
+    body.admin.tests-page .detail-student-table th:nth-child(5) {
+      width: 16%;
+    }
+
+    @media (max-width: 640px) {
+      body.admin.tests-page .detail-student-table th,
+      body.admin.tests-page .detail-student-table td,
+      body.admin.tests-page .detail-student-table th:nth-child(1),
+      body.admin.tests-page .detail-student-table th:nth-child(2),
+      body.admin.tests-page .detail-student-table th:nth-child(3),
+      body.admin.tests-page .detail-student-table th:nth-child(4),
+      body.admin.tests-page .detail-student-table th:nth-child(5),
+      body.admin.tests-page .detail-student-table td:nth-child(1),
+      body.admin.tests-page .detail-student-table td:nth-child(2),
+      body.admin.tests-page .detail-student-table td:nth-child(3),
+      body.admin.tests-page .detail-student-table td:nth-child(4),
+      body.admin.tests-page .detail-student-table td:nth-child(5) {
+        width: 100%;
+        word-break: keep-all;
+      }
+    }
+
     body.admin.tests-page .empty-cell {
       text-align: center !important;
       color: var(--muted);
       padding: 22px 12px !important;
     }
 
-    @media (max-width: 1160px) {
-      body.admin.tests-page .hero-card,
-      body.admin.tests-page .tests-shell {
+    @media (max-width: 1080px) {
+      body.admin.tests-page .hero-card {
         grid-template-columns: 1fr;
       }
 
       body.admin.tests-page .hero-metrics {
         grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      body.admin.tests-page .tests-shell {
+        grid-template-columns: 1fr;
+      }
+
+      body.admin.tests-page .tests-shell > .card {
+        height: clamp(720px, 136vh, 1240px);
       }
     }
 
@@ -696,6 +1604,10 @@
       body.admin.tests-page .stats-table {
         min-width: 760px;
       }
+
+      body.admin.tests-page .detail-student-table {
+        min-width: 0;
+      }
     }
   </style></head>
 
@@ -705,17 +1617,8 @@
       <h1 class="topbar-title">
         테스트 관리 <span id="testsTotalPill" class="pill">0개</span>
       </h1>
-      <div class="topbar-sub">단원평가와 APEX 테스트를 등록하고, 최근 제출 통계를 한 화면에서 관리합니다.</div>
+      <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 분류별 배정 기준을 한 화면에서 관리합니다.</div>
     </div>
-
-    <nav class="topbar-nav" aria-label="주요 링크">
-      <a href="/admin">대시보드</a>
-      <a href="/students">전체학생</a>
-      <a href="/school-cal">학교일정</a>
-      <a href="/tests" class="active" aria-current="page">테스트</a>
-      <a href="/video-manage">영상관리</a>
-      <a href="/file-manage">자료실</a>
-    </nav>
 
     <label class="switch" title="다크모드">
       <input type="checkbox" id="darkToggle">
@@ -727,10 +1630,10 @@
     <section class="card hero-card">
       <div class="hero-copy">
         <div class="hero-eyebrow">Test Workspace</div>
-        <h2 class="hero-title">시험 등록부터 통계 확인까지 한 흐름으로 관리하세요</h2>
+        <h2 class="hero-title">테스트 목록과 배정 기준을 실사용 흐름으로 관리하세요</h2>
         <p class="hero-desc">
-          왼쪽에서 유형과 커리를 선택해 시험 목록을 관리하고, 오른쪽에서 시험명/문항 수/정답을 편집할 수 있습니다.
-          아래 통계에서는 과목/단원/레벨 기준 집계를 확인하고, 행을 클릭하면 개인별 성적을 바로 볼 수 있습니다.
+          왼쪽에서 분류와 과목을 선택해 테스트 목록을 관리하고, 오른쪽에서 과목/난이도/회차/정답을 편집할 수 있습니다.
+          테스트 팝업은 자동 배정하지 않고 선생님이 클릭한 항목만 저장합니다.
         </p>
       </div>
 
@@ -741,9 +1644,9 @@
           <span id="visibleTestsMeta" class="hero-metric-help">현재 목록 0개</span>
         </div>
         <div class="hero-metric">
-          <span class="hero-metric-label">통계 집계 범위</span>
-          <strong id="testsRangeLabel" class="hero-metric-value">최근 30일</strong>
-          <span class="hero-metric-help">기간을 바꾸면 요약 카드와 개인 성적 패널이 함께 갱신됩니다.</span>
+          <span class="hero-metric-label">분류별 배정 기준</span>
+          <strong id="testsRangeLabel" class="hero-metric-value">4개 분류</strong>
+          <span class="hero-metric-help">복습/단원/학군지/일산 기준을 각각 관리합니다.</span>
         </div>
       </div>
     </section>
@@ -753,119 +1656,220 @@
         <div class="card-head">
           <h2>시험 목록</h2>
         </div>
-        <div class="card-sub">유형과 커리를 선택하면 해당 범위의 시험만 모아서 볼 수 있습니다.</div>
+        <div class="card-scroll">
+          <div class="card-sub">분류, 과목, 난이도, 회차 순서로 테스트 목록을 좁혀 볼 수 있습니다.</div>
 
-        <div class="tests-toolbar">
-          <div class="toolbar-group">
-            <span class="toolbar-label">유형</span>
-            <select id="cfgType">
-  <option value="단원평가">단원평가</option>
-  <option value="FINAL">APEX FINAL</option>
-  <option value="HELL">APEX HELL</option>
+          <div class="tests-toolbar">
+            <div class="toolbar-group">
+              <span class="toolbar-label">분류</span>
+              <select id="cfgType">
+  <option value="REVIEW">복습 테스트</option>
+  <option value="UNIT" selected>단원평가</option>
+  <option value="SCHOOL_PAST">학군지 기출</option>
+  <option value="ILSAN_PAST">일산 기출</option>
 </select>
-          </div>
+            </div>
 
-          <div class="toolbar-group">
-            <span class="toolbar-label">커리</span>
-            <select id="cfgCur">
+            <div class="toolbar-group">
+              <span class="toolbar-label">과목</span>
+              <select id="cfgCur">
   <option value="공수1">공수1</option>
   <option value="공수2">공수2</option>
   <option value="대수">대수</option>
-  <option value="미적1">미적1</option>
-  <option value="미적2">미적2</option>
-  <option value="확통">확통</option>
+  <option value="미적분1">미적분1</option>
+  <option value="미적분2">미적분2</option>
   <option value="기하">기하</option>
+  <option value="확통">확통</option>
 </select>
+            </div>
+
+            <div class="toolbar-group">
+              <span class="toolbar-label">난이도</span>
+              <select id="cfgDifficultyFilter"></select>
+            </div>
+
+            <div class="toolbar-group" id="cfgTermFilterGroup" hidden>
+              <span class="toolbar-label">고사</span>
+              <select id="cfgTermFilter"></select>
+            </div>
+
+            <div class="toolbar-group">
+              <span class="toolbar-label">회차</span>
+              <select id="cfgRoundFilter"></select>
+            </div>
+
+            <div class="toolbar-group catalog-search-group">
+              <label class="toolbar-label" for="cfgCatalogSearch">목록 검색</label>
+              <input id="cfgCatalogSearch" type="search" autocomplete="off"
+                placeholder="시험명, ID, 과목, 난이도 검색" aria-describedby="catalogOrderHint">
+            </div>
+
+            <div class="toolbar-spacer"></div>
+            <button id="btnCsvTemplate" class="btn secondary" type="button">CSV 양식</button>
+            <button id="btnImportCsv" class="btn secondary" type="button">CSV 가져오기</button>
+            <input id="csvFile" class="import-file" type="file" accept=".csv,text/csv">
+            <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
           </div>
 
-          <div class="toolbar-spacer"></div>
-          <button id="btnNewTest" class="btn" type="button">+ 새 시험</button>
+          <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
+          <div id="catalogOrderHint" class="catalog-order-hint" role="status" aria-live="polite"></div>
+          <div id="testList" class="test-list" aria-label="시험 목록"></div>
         </div>
-
-        <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
-        <div id="testList" class="test-list"></div>
       </section>
 
       <section class="card editor-panel">
         <div class="card-head">
           <h2>시험 편집</h2>
         </div>
-        <div class="card-sub">기존 시험을 선택하거나 새 시험을 추가한 뒤 이름/문항 수/정답을 저장하세요.</div>
+        <div class="card-scroll">
+          <div class="card-sub">분류와 관계없이 기존 테스트를 선택하거나 새 테스트를 추가한 뒤 과목/난이도/회차/정답을 저장하세요.</div>
 
-        <div class="editor-banner">
-          <div>
-            <strong id="editorSelectionLabel">선택된 시험 없음</strong>
-            <div><span>왼쪽에서 시험을 고르면 아래 항목에서 바로 수정할 수 있습니다.</span></div>
-          </div>
-        </div>
-
-        <div class="field-grid">
-          <div class="field-row">
-            <label for="cfgName">시험명</label>
-            <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
-            <div class="helper">단원평가는 단원명과 레벨을 포함해 적으면 통계 분리가 쉬워집니다.</div>
+          <div class="editor-banner">
+            <div>
+              <strong id="editorSelectionLabel">선택된 시험 없음</strong>
+              <div><span>왼쪽에서 시험을 고르면 아래 항목에서 바로 수정할 수 있습니다.</span></div>
+            </div>
           </div>
 
-          <div class="field-row">
-            <label for="cfgProblems">문항 수</label>
-            <input type="number" id="cfgProblems" min="1" max="100" step="1">
-            <div class="helper">정답 배열 길이는 문항 수에 맞춰 자동 정리됩니다.</div>
-          </div>
-        </div>
+          <div class="field-grid">
+            <div class="field-row">
+              <label for="cfgEditType">분류</label>
+              <select id="cfgEditType"></select>
+              <div class="helper">선택한 시험을 저장할 테스트 분류입니다. 분류를 바꾸면 해당 분류 목록으로 이동합니다.</div>
+            </div>
 
-        <div class="answer-block">
-          <label for="cfgAnswers" class="answer-label">정답 (회차 1~3)</label>
-          <textarea id="cfgAnswers" placeholder="1회차 정답&#10;2회차 정답&#10;3회차 정답"></textarea>
-          <div class="answers-help">
-            · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
-            · 3줄 입력 시 각 줄이 1회차/2회차/3회차로 저장됩니다.<br>
-            · 1줄만 입력하면 1~3회차에 동일 정답이 저장됩니다.
-          </div>
-        </div>
+            <div class="field-row">
+              <label for="cfgSubject">과목</label>
+              <select id="cfgSubject"></select>
+              <div class="helper">관리자 테스트 팝업에서 학생 커리큘럼과 매칭되는 기준입니다.</div>
+            </div>
 
-        <div class="btn-row">
-          <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
-          <button id="btnSaveTest" class="btn" type="button">저장</button>
+            <div class="field-row">
+              <label for="cfgDifficulty">난이도</label>
+              <select id="cfgDifficulty"></select>
+              <div class="helper">복습/학군지 기출은 상·중상, 일산 기출은 중·중상·그래프 포함, 단원평가는 Lv.3~Lv.6을 사용합니다.</div>
+            </div>
+
+            <div class="field-row" id="cfgTermRow" hidden>
+              <label for="cfgTerm">고사</label>
+              <select id="cfgTerm"></select>
+              <div class="helper">학군지/일산 기출에서 중간고사와 기말고사를 구분합니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgRound">회차</label>
+              <input type="number" id="cfgRound" min="1" max="99" step="1">
+              <div id="cfgRoundHelp" class="helper">단원평가는 같은 시험의 반복 세트, 복습/기출은 목록 순번입니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgName">시험명</label>
+              <input type="text" id="cfgName" placeholder="예: 원의 방정식 Lv.4">
+              <div class="helper">학생과 상담 기록에 표시될 이름입니다.</div>
+            </div>
+
+            <div class="field-row">
+              <label for="cfgProblems">문항 수</label>
+              <input type="number" id="cfgProblems" min="1" max="100" step="1">
+              <div class="helper">정답 배열 길이는 문항 수에 맞춰 자동 정리됩니다.</div>
+            </div>
+          </div>
+
+          <div class="answer-block">
+            <label for="cfgAnswers" class="answer-label">정답</label>
+            <textarea id="cfgAnswers" placeholder="선택한 회차의 정답"></textarea>
+            <div class="answers-help">
+              · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
+              · 단원평가도 회차마다 독립 시험으로 저장되며, 현재 선택한 회차의 정답만 수정됩니다.<br>
+              · CSV 가져오기는 1회차/2회차/3회차 정답 열을 각각 별도 시험으로 펼쳐 저장합니다.
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
+            <button id="btnSaveTest" class="btn" type="button">저장</button>
+          </div>
         </div>
       </section>
-    </section>
 
-    <section class="card" aria-label="테스트 통계">
-      <div class="card-head">
-        <h2>테스트 통계</h2>
-      </div>
-      <div class="card-sub">최근 제출 기록을 기반으로 유형별 흐름을 보고, 행을 클릭하면 개인 성적까지 확인할 수 있습니다.</div>
+      <section class="card" aria-label="분류별 배정 기준">
+        <div class="card-head">
+          <h2>분류별 배정 기준</h2>
+        </div>
+        <div class="card-scroll">
+          <div class="card-sub">네 가지 테스트 분류를 각각 별도 표로 관리합니다. 테스트 배정 팝업은 이 기준으로 기본 과목/난이도/회차를 먼저 보여주고, 클릭한 테스트만 배정됩니다.</div>
+          <div id="ruleGrid" class="panel-table-wrap"></div>
+        </div>
+      </section>
 
-      <div class="stats-toolbar">
-        <div class="toolbar-group">
-          <span class="toolbar-label">기간</span>
-          <select id="statRecent">
+      <section class="card" aria-label="테스트 통계">
+        <div class="card-head">
+          <h2>테스트 통계</h2>
+        </div>
+        <div class="card-scroll">
+          <div class="card-sub">최근 제출 기록을 기반으로 유형별 흐름을 보고, 행을 클릭하면 개인 성적까지 확인할 수 있습니다.</div>
+
+          <div class="stats-toolbar">
+            <div class="toolbar-group">
+              <span class="toolbar-label">기간</span>
+              <select id="statRecent">
   <option value="30" selected>최근 30일</option>
   <option value="90">최근 90일</option>
   <option value="365">최근 1년</option>
 </select>
+            </div>
+            <div class="toolbar-group">
+              <span class="toolbar-label">검색</span>
+              <input id="statSearch" type="search" placeholder="시험명, 과목, 레벨">
+            </div>
+            <div class="toolbar-group">
+              <span class="toolbar-label">정렬</span>
+              <select id="statSort">
+                <option value="default" selected>기본순</option>
+                <option value="name">시험명순</option>
+                <option value="taken_desc">응시 많은순</option>
+                <option value="taken_asc">응시 적은순</option>
+                <option value="avg_desc">평균 높은순</option>
+                <option value="avg_asc">평균 낮은순</option>
+                <option value="round">회차순</option>
+              </select>
+            </div>
+            <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
+          </div>
+
+          <div id="statsSummary" class="stats-summary"></div>
+
+          <div class="stats-table-wrap">
+            <table class="stats-table" id="statsTable">
+              <thead>
+                <tr>
+                  <th>구분</th>
+                  <th>과목</th>
+                  <th>시험명</th>
+                  <th>레벨</th>
+                  <th>회차</th>
+                  <th>응시</th>
+                  <th>평균</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="statsDetail" class="stats-detail"></div>
         </div>
-        <button id="btnReloadStats" class="btn secondary" type="button">새로고침</button>
-      </div>
-
-      <div id="statsSummary" class="stats-summary"></div>
-
-      <div class="stats-table-wrap">
-        <table class="stats-table" id="statsTable">
-          <thead>
-            <tr>
-              <th>구분</th>
-              <th>과목</th>
-              <th>단원 / 시험명</th>
-              <th>레벨</th>
-              <th>응시</th>
-              <th>평균</th>
-              <th>최소</th>
-              <th>최대</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      </section>
+      <div id="statsDetailModal" class="stats-detail-modal" role="dialog" aria-modal="true" aria-labelledby="statsDetailModalTitle" aria-hidden="true" hidden>
+        <div class="stats-detail-modal-backdrop" data-stats-detail-close></div>
+        <section class="stats-detail-dialog" tabindex="-1">
+          <div class="stats-detail-dialog-head">
+            <div>
+              <p class="stats-detail-dialog-kicker">TEST DETAIL</p>
+              <h2 id="statsDetailModalTitle">테스트 통계</h2>
+            </div>
+            <button class="stats-detail-close" type="button" aria-label="테스트 통계 닫기" data-stats-detail-close>&times;</button>
+          </div>
+          <div id="statsDetailModalBody" class="stats-detail-modal-body"></div>
+        </section>
       </div>
     </section>
   </main>
@@ -884,7 +1888,8 @@
       });
     })();
   </script>
-  <script src="/js/tests.js" type="module"></script>
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
+  <script src="/js/tests.js?v=20260813p9r3" type="module"></script>
 </body>
 
 </html>

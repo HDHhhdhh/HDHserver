@@ -4,13 +4,24 @@ import { loadAll, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
 import { renderTable } from './features/table.js';
 import './features/progressModal.js';
-import './features/hoverTooltip.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
 import { hookDeleteButtons } from './features/deleteButtons.js';
+import { hookCloneButtons } from './features/cloneButtons.js';
 import './features/escClose.js';
 import { mountNewStudentBar } from './features/addStudent.js';
-import { initCloneStudentModal } from './features/CloneStudentModal.js';
+import { mountChatRosterExport } from './features/chatRosterExport.js';
+import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
+import { state as adminTooltipState } from '../admin/core/state.js';
+import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260813-phase11';
+
+function syncAdminTooltipState() {
+  adminTooltipState.students = state.students;
+  adminTooltipState.videos = state.videos;
+  adminTooltipState.progress = state.progress;
+  adminTooltipState.schoolCal = state.schoolCal;
+  adminTooltipState.homeworkBooksBySid = state.homeworkBooksBySid;
+}
 
 /** 이름+학교 기준으로 학생 dedup용 키 (table.js와 동일 로직) */
 function dedupKeyForStudent(s) {
@@ -55,26 +66,42 @@ function updateAllCount() {
 }
 
 function renderAll() {
+  syncAdminTooltipState();
   updateAllCount();
   renderTable();
+  document.dispatchEvent(new CustomEvent('all:rendered'));
   renderYoilStats();
   hookAllSort();
   hookDeleteButtons();
+  hookCloneButtons({
+    onCloned: async () => {
+      await loadAll();
+      renderAll();
+    },
+  });
   mountNewStudentBar();
+  mountChatRosterExport();
+  decorateStudentTestRecordButtons(document).catch(console.warn);
 }
+
+document.addEventListener('all:student-deleted', (event) => {
+  const sid = String(event.detail?.sid || '').trim();
+  if (!sid) return;
+  state.students = state.students.filter(student => String(student?.id || '') !== sid);
+  window.students = state.students;
+  syncAdminTooltipState();
+  document.dispatchEvent(new CustomEvent('all:rendered'));
+  updateAllCount();
+  renderYoilStats();
+});
 
 (async function init() {
   try {
     await loadAll();
+    syncAdminTooltipState();
+    initAdminHoverTooltip();
+    initStudentTestRecordDetails(document);
     renderAll();
-
-    // ✅ 표 밖(상단 버튼)으로 "커리 복제" 모달 초기화
-    initCloneStudentModal({
-      onCloned: async () => {
-        await loadAll();
-        renderAll();
-      }
-    });
 
     document.addEventListener('admin:refresh', () => {
       updateAllCount();

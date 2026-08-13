@@ -1,7 +1,9 @@
 # Local runtime data and private records
 /*.json
 /*.sqlite
+/*.sqlite-*
 /*.db
+/*.db-*
 /*.csv
 /*.tmp
 *.bak*
@@ -9,9 +11,60 @@ progress.json.*.tmp
 
 # Mirrored backups and generated/local data
 /_data_mirror/
+/_runtime_backups/
 /data/
 /files/
 /instance/
+/.codex_tk_runtime/
+/.codex/
+/.codex-backups/
+/.codex-remote-attachments/
+/.codex_drive_download/
+/generated/
+/.omo/evidence/
+/.omo/plans/
+/.omo/ulw-loop/
+/.omo/boulder.json
+/.omo/start-work/
+/.omo/drafts/
+/.omo/ultraresearch/
+/worktrees/
+/static/js/test_answer_link_map.js
+/.debug-journal.md
+
+# Local Codex, browser, and QA working artifacts
+/.codex-temp/
+/.playwright-cli/
+/.omo/frontend-design/
+/.omo/product-design-audit*/
+/.omo/reviews/
+/.omo/review-*
+/output/
+/qa-evidence*/
+/browser-*.png
+/browser-*.jpg
+/task-1-*.txt
+/design-qa.md
+/CHATGPT_PROJECT_CONTEXT.md
+/CODEX-HANDOFF.md
+/CODEX-REMOVALS.txt
+
+# Machine-local backups and one-off system remediation scripts
+/runtime_backup_*/
+/scripts/admin_cleanup_unrelated.ps1
+/scripts/admin_security_finalize.ps1
+
+# Local agent, browser, test, and OCR-lab artifacts
+/.omo/teams/
+/.omo/lazycodex-executor-verify/
+/codex_status/
+/test-results/
+/NUL
+/1
+/homework_excel_*.xlsx
+/homework_excel_*.txt
+/homework_excel_*_notepad.md
+/tools/subjective_sheet_lab/*
 
 # Python/runtime artifacts
 __pycache__/
@@ -20,6 +73,7 @@ __pycache__/
 /venv/
 
 # Local editor and OS files
+/.env
 /.vscode/
 .DS_Store
 Thumbs.db
@@ -27,3 +81,4 @@ Thumbs.db
 # Logs and temporary output
 *.log
 *.out
+*.lock
