@@ -37,6 +37,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - The tracked canonical answer map is `static/js/test_answer_link_map.json` with `sourceId -> round -> entry`; the ignored `.js` sibling is a stale legacy artifact.
 - SQL files in `migrations/` are manual artifacts, not an executable chain. The current assistant-note create/add-column files conflict if applied sequentially; reconcile them before any live migration.
 - CI installs no dependencies and depends on ignored evidence files, so a green local run does not prove a clean runner is reproducible.
+- `run_waitress_server.ps1` must load a persistent `AUTH_SECRET` from Machine scope first and the scheduled-task user's scope second, then fail before startup when it is missing or still a placeholder; otherwise student JWT auto-login breaks on every restart.
 
 ## Anti-Patterns
 - Do not commit runtime backup archives, generated CSVs, debug screenshots, or local Drive downloads unless explicitly requested.

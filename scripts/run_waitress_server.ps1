@@ -20,6 +20,16 @@ foreach ($name in $adminMachineEnv) {
     }
 }
 
+$authSecret = [Environment]::GetEnvironmentVariable("AUTH_SECRET", "Machine")
+if ([string]::IsNullOrWhiteSpace($authSecret) -or $authSecret -eq "CHANGE_ME_AUTH_SECRET") {
+    $authSecret = [Environment]::GetEnvironmentVariable("AUTH_SECRET", "User")
+}
+if ([string]::IsNullOrWhiteSpace($authSecret) -or $authSecret -eq "CHANGE_ME_AUTH_SECRET") {
+    Remove-Item -LiteralPath "Env:AUTH_SECRET" -ErrorAction SilentlyContinue
+    throw "AUTH_SECRET Machine or User environment variable must contain a persistent secret."
+}
+Set-Item -LiteralPath "Env:AUTH_SECRET" -Value $authSecret
+
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $waitressPath = Join-Path $serverRoot "venv\Scripts\waitress-serve.exe"
 if (-not (Test-Path -LiteralPath $waitressPath)) {

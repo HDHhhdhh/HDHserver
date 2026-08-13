@@ -7,6 +7,7 @@
 - 런타임 JSON/SQLite/업로드 파일: 포함하지 않음.
 - SQL migration과 `migrate_today_order_store.py --apply`: 실행하지 않음.
 - 관리자 페이지군은 학원 외부 네트워크에서도 Basic 인증 후 접속할 수 있습니다. `ACADEMY_ADMIN_USERNAME` 및 `ACADEMY_ADMIN_PASSWORD_HASH` Machine 환경 변수가 없으면 401로 닫히며, 학생 영상·답지의 학원 Wi-Fi 제한은 유지됩니다.
+- 학생 자동로그인 JWT는 Machine 우선, 예약 작업 사용자 범위 fallback의 영구 `AUTH_SECRET`을 사용합니다. 두 범위 모두 값이 없거나 기본 placeholder이면 운영 Waitress는 기동하지 않습니다.
 
 배포 전 `python scripts/backup_runtime_data.py`로 별도 백업하고, 프록시/직접 접속 구조와 위 환경 변수를 확인해야 합니다. 삭제 대상 학생 앱/PWA 경로는 `CODEX-REMOVALS.txt`에 기록되어 있으며, 디렉터리 단위 재귀 삭제용 목록이 아닙니다.
 

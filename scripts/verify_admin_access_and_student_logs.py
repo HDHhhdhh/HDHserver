@@ -96,6 +96,22 @@ def run_admin_basic_auth_checks() -> None:
         )
 
 
+def run_auth_secret_startup_contract_checks() -> None:
+    source = (ROOT / "scripts/run_waitress_server.ps1").read_text("utf-8")
+    check(
+        'GetEnvironmentVariable("AUTH_SECRET", "Machine")' in source
+        and 'GetEnvironmentVariable("AUTH_SECRET", "User")' in source
+        and 'Set-Item -LiteralPath "Env:AUTH_SECRET"' in source,
+        "Waitress startup must load persistent AUTH_SECRET with Machine-first User fallback",
+    )
+    check(
+        '[string]::IsNullOrWhiteSpace($authSecret)' in source
+        and 'CHANGE_ME_AUTH_SECRET' in source
+        and 'throw "AUTH_SECRET Machine or User environment variable' in source,
+        "Waitress startup must reject missing or placeholder AUTH_SECRET values",
+    )
+
+
 def run_student_operation_log_checks() -> None:
     from core.student_logs import StudentOperationLogRepository
     from routes import api_student_logs
@@ -286,6 +302,7 @@ console.log('admin access and student logs demo checks passed');
 
 def main() -> int:
     run_admin_basic_auth_checks()
+    run_auth_secret_startup_contract_checks()
     run_student_operation_log_checks()
     run_student_log_demo_checks()
     print("admin access and student operation log checks passed")
