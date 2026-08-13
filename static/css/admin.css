@@ -9581,3 +9581,91 @@ body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="pa
     flex-direction: row;
   }
 }
+
+/* Persistent section shortcuts for the long-form admin workspace. */
+body.admin .admin-section-nav {
+  --admin-section-nav-sticky-top: max(8px, env(safe-area-inset-top));
+  position: sticky;
+  top: var(--admin-section-nav-sticky-top);
+  z-index: 30;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 92%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card) 94%, #ffffff 6%);
+  box-shadow: var(--shadow-soft);
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  backdrop-filter: saturate(130%) blur(18px);
+}
+
+body.admin.dark .admin-section-nav {
+  background: color-mix(in srgb, var(--card) 92%, #000000 8%);
+}
+
+body.admin .admin-section-nav__button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+body.admin .admin-section-nav__button:hover {
+  border-color: color-mix(in srgb, var(--brand) 24%, var(--line) 76%);
+  background: color-mix(in srgb, var(--brand-soft) 54%, transparent);
+  color: var(--ink);
+}
+
+body.admin .admin-section-nav__button.is-active,
+body.admin .admin-section-nav__button[aria-current="location"] {
+  border-color: color-mix(in srgb, var(--brand) 44%, var(--line) 56%);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+body.admin.dark .admin-section-nav__button.is-active,
+body.admin.dark .admin-section-nav__button[aria-current="location"] {
+  color: #d8ebff;
+}
+
+body.admin :where(#todaySection, #doneSection, #calendarSection) {
+  scroll-margin-top: calc(max(8px, env(safe-area-inset-top)) + 66px);
+}
+
+body.admin #calendar .fc-header-toolbar {
+  top: calc(max(8px, env(safe-area-inset-top)) + 58px);
+}
+
+body.admin #calendar .fc-scrollgrid-section-header th {
+  top: calc(max(8px, env(safe-area-inset-top)) + 100px);
+}
+
+body.admin.admin-simple .admin-section-nav {
+  display: none !important;
+}
+
+@media (max-width: 600px) {
+  body.admin .admin-section-nav__button {
+    flex: 0 0 auto;
+    min-width: 112px;
+  }
+}

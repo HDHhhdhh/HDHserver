@@ -17,7 +17,7 @@ import { loadTodayAndRender } from './features/today.js?v=20260814-phase17';
 import { initAbsentRecovery } from './features/absentRecovery.js';
 import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
-import { initAdminUiEnhance } from './features/uiEnhance.js';
+import { initAdminUiEnhance } from './features/uiEnhance.js?v=20260814-phase19';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260810-server-merge1';
 import { initAdminOperationNotes } from './features/adminOperationNotes.js';

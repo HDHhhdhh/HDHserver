@@ -11,8 +11,98 @@ function clickById(id) {
 function scrollToSection(id) {
   const el = document.getElementById(id);
   if (!el) return false;
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
   return true;
+}
+
+const ADMIN_SECTION_BY_ACTION = {
+  'scroll-today': 'todaySection',
+  'scroll-done': 'doneSection',
+  'scroll-calendar': 'calendarSection',
+};
+
+function sectionNavButtons() {
+  return Array.from(document.querySelectorAll('#adminSectionNav .admin-section-nav__button'));
+}
+
+function setActiveAdminSection(sectionId) {
+  let matched = false;
+  sectionNavButtons().forEach((button) => {
+    const active = button.getAttribute('aria-controls') === sectionId;
+    button.classList.toggle('is-active', active);
+    if (active) {
+      button.setAttribute('aria-current', 'location');
+      matched = true;
+    } else {
+      button.removeAttribute('aria-current');
+    }
+  });
+  return matched;
+}
+
+function nearestAdminSection(sections) {
+  const navBottom = document.getElementById('adminSectionNav')?.getBoundingClientRect?.().bottom || 0;
+  let nearest = sections[0] || null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  sections.forEach((section) => {
+    const rect = section.getBoundingClientRect?.();
+    if (!rect) return;
+    if (rect.top <= navBottom + 1 && rect.bottom > navBottom + 1) {
+      nearest = section;
+      nearestDistance = -1;
+      return;
+    }
+    if (nearestDistance < 0) return;
+    const distance = Math.abs(rect.top - navBottom);
+    if (distance < nearestDistance) {
+      nearest = section;
+      nearestDistance = distance;
+    }
+  });
+
+  return nearest;
+}
+
+function initSectionNavTracking() {
+  const sections = Object.values(ADMIN_SECTION_BY_ACTION)
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  if (!sections.length) return;
+
+  setActiveAdminSection(sections[0].id);
+  if (typeof IntersectionObserver !== 'function') return;
+
+  const visibility = new Map(sections.map(section => [section, {
+    isIntersecting: false,
+    intersectionRatio: 0,
+  }]));
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!visibility.has(entry.target)) return;
+      visibility.set(entry.target, {
+        isIntersecting: entry.isIntersecting,
+        intersectionRatio: entry.intersectionRatio || 0,
+      });
+    });
+    const visible = sections
+      .map(section => ({ section, ...visibility.get(section) }))
+      .filter(entry => entry.isIntersecting)
+      .sort((a, b) => {
+        const ratioDelta = (b.intersectionRatio || 0) - (a.intersectionRatio || 0);
+        if (ratioDelta) return ratioDelta;
+        return sections.indexOf(a.section) - sections.indexOf(b.section);
+      });
+    const active = visible[0]?.section || nearestAdminSection(sections);
+    if (active?.id) setActiveAdminSection(active.id);
+  }, {
+    rootMargin: '-64px 0px -55% 0px',
+    threshold: [0, 0.15, 0.4, 0.7],
+  });
+
+  sections.forEach(section => observer.observe(section));
 }
 
 const OPS_SLOT_BOUNDARY_MINUTES = 18 * 60;
@@ -150,16 +240,14 @@ function initRailActions() {
     const action = btn.getAttribute('data-ui-action');
     if (!action) return;
 
+    const sectionId = ADMIN_SECTION_BY_ACTION[action];
+    if (sectionId) {
+      setActiveAdminSection(sectionId);
+      scrollToSection(sectionId);
+      return;
+    }
+
     switch (action) {
-      case 'scroll-today':
-        scrollToSection('todaySection');
-        break;
-      case 'scroll-done':
-        scrollToSection('doneSection');
-        break;
-      case 'scroll-calendar':
-        scrollToSection('calendarSection');
-        break;
       case 'open-extra':
         clickById('extraBtn');
         break;
@@ -204,6 +292,7 @@ export function initAdminUiEnhance() {
   setInterval(renderClock, 30 * 1000);
 
   initRailActions();
+  initSectionNavTracking();
   initAttendanceLedgerLink();
   initMetricWatchers();
 }

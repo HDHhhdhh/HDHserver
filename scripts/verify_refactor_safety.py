@@ -82,6 +82,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
     ROOT / "scripts/verify_admin_today_action_reachability.mjs",
+    ROOT / "scripts/verify_admin_section_navigation.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
     ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
@@ -716,6 +717,20 @@ def run_admin_today_action_reachability_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "admin today action reachability contract failed")
+
+
+def run_admin_section_navigation_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_section_navigation.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin section navigation contract failed")
 
 
 def run_student_material_access_scope_checks() -> None:
@@ -8149,6 +8164,7 @@ def run_unit_checks() -> bool:
         run_export_log_format_checks,
         run_today_completion_checks,
         run_admin_today_action_reachability_checks,
+        run_admin_section_navigation_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
@@ -8447,6 +8463,11 @@ def main() -> int:
         help="Run only admin today/done row action reachability and accessibility checks.",
     )
     parser.add_argument(
+        "--only-admin-section-navigation",
+        action="store_true",
+        help="Run only admin section navigation behavior and source checks.",
+    )
+    parser.add_argument(
         "--only-student-install-guide",
         action="store_true",
         help="Run only the student-app install-guide boot and interaction flow checks.",
@@ -8613,6 +8634,8 @@ def main() -> int:
         selected_checks.append(run_today_completion_checks)
     if args.only_admin_today_actions:
         selected_checks.append(run_admin_today_action_reachability_checks)
+    if args.only_admin_section_navigation:
+        selected_checks.append(run_admin_section_navigation_checks)
     if args.only_student_install_guide:
         selected_checks.append(run_student_mobile_pwa_flow_checks)
     if args.only_student_mobile_deployment:
