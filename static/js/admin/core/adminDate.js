@@ -14,7 +14,7 @@ function isValidAdminDate(value) {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  if (year < 1000 || year > 9998 || month < 1 || month > 12 || day < 1) return false;
 
   const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -31,6 +31,16 @@ function todayISO() {
 
 export function getRealToday() {
   return todayISO();
+}
+
+export function parseAdminDateLocal(dateStr) {
+  const value = String(dateStr || '').trim();
+  if (!isValidAdminDate(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(0);
+  parsed.setHours(12, 0, 0, 0);
+  parsed.setFullYear(year, month - 1, day);
+  return parsed;
 }
 
 export function getAdminDate() {
@@ -69,12 +79,6 @@ function shiftDays(dateStr, deltaDays) {
   const dd = String(d.getUTCDate()).padStart(2, '0');
   const shifted = `${yyyy}-${mm}-${dd}`;
   return isValidAdminDate(shifted) ? shifted : dateStr;
-}
-
-function formatShortDate(dateStr) {
-  if (!isValidAdminDate(dateStr)) return '';
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  return `${match[1].slice(-2)}/${match[2]}/${match[3]}`;
 }
 
 function ensureStyles() {
@@ -138,23 +142,60 @@ function ensureStyles() {
     line-height:1;
   }
   #adminDateMount .adb-date-display{
+    width:min(100%, 220px);
+    height:46px;
+    min-width:0;
+    box-sizing:border-box;
+    padding:0 10px;
+    border:1px solid var(--line-strong, rgba(148,163,184,.45));
+    border-radius:12px;
+    background:var(--card, #ffffff);
     color:var(--ink, #0f172a);
-    font-size:32px;
+    font-family:inherit;
+    font-size:18px;
     line-height:1;
-    font-weight:900;
+    font-weight:800;
     letter-spacing:0;
     font-variant-numeric:tabular-nums;
+    text-align:center;
+    color-scheme:light;
+    cursor:pointer;
+  }
+  #adminDateMount .adb-date-display::-webkit-calendar-picker-indicator{
+    cursor:pointer;
+    opacity:.78;
+  }
+  #adminDateMount .adb-date-display:focus-visible{
+    outline:3px solid color-mix(in srgb, var(--brand, #2563eb) 34%, transparent);
+    outline-offset:2px;
   }
   body.dark #adminDateMount .adb-btn,
   body.dark #adminDateMount .adb-date-display{ color:#e2e8f0; }
   body.dark #adminDateMount .adb-btn{ background:rgba(2,6,23,.64); }
+  body.dark #adminDateMount .adb-date-display{
+    background:rgba(2,6,23,.64);
+    color-scheme:dark;
+  }
   @media (max-width:760px){
     #adminDateMount .adb-wrap{ min-height:104px; padding:12px; border-radius:16px; }
     #adminDateMount .adb-nav-row{ grid-template-columns:44px minmax(72px,1fr) 44px; gap:8px; }
     #adminDateMount .adb-btn{ height:44px; border-radius:13px; }
     #adminDateMount .adb-icon-btn{ font-size:25px; }
     #adminDateMount .adb-today-btn{ font-size:18px; }
-    #adminDateMount .adb-date-display{ font-size:26px; }
+    #adminDateMount .adb-date-display{ width:100%; height:44px; font-size:16px; }
+  }
+  @media (max-width:480px){
+    body.admin #adminDateMount .adb-date-display{
+      padding:0 4px;
+      font-size:14px;
+      letter-spacing:-.02em;
+    }
+    body.admin #adminDateMount .adb-date-display::-webkit-calendar-picker-indicator{
+      width:18px;
+      height:18px;
+      margin:0;
+      padding:0;
+    }
   }
   `;
   document.head.appendChild(s);
@@ -254,7 +295,8 @@ export function initAdminDateBar({ mountId = 'adminDateMount' } = {}) {
         <button class="adb-btn adb-today-btn" id="adb_today" type="button">오늘</button>
         <button class="adb-btn adb-icon-btn" id="adb_next" type="button" title="하루 후" aria-label="하루 후">›</button>
       </div>
-      <div class="adb-date-display" id="adb_date_display" aria-live="polite"></div>
+      <input class="adb-date-display" id="adb_date_display" type="date"
+             min="1000-01-01" max="9998-12-31" aria-label="기준 날짜 직접 선택">
     </div>
   `;
   syncHeroDatePosition(host);
@@ -266,8 +308,8 @@ export function initAdminDateBar({ mountId = 'adminDateMount' } = {}) {
   const btnToday = $('adb_today');
 
   const syncDisplay = (dateStr = getAdminDate()) => {
-    if (!dateDisplay) return;
-    dateDisplay.textContent = formatShortDate(dateStr);
+    if (!dateDisplay || !isValidAdminDate(dateStr)) return;
+    dateDisplay.value = dateStr;
     dateDisplay.title = dateStr;
   };
 
@@ -289,6 +331,16 @@ export function initAdminDateBar({ mountId = 'adminDateMount' } = {}) {
     const d = todayISO();
     syncDisplay(d);
     setAdminDate(d);
+  });
+
+  dateDisplay.addEventListener('change', () => {
+    const current = getAdminDate();
+    const selected = String(dateDisplay.value || '').trim();
+    if (!isValidAdminDate(selected) || selected === current) {
+      syncDisplay(current);
+      return;
+    }
+    setAdminDate(selected);
   });
 
   // 다른 곳에서 날짜 바뀌면 표시도 동기화

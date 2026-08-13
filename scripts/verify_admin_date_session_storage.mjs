@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 const STORAGE_KEY = 'adminSelectedDate';
 const RealDate = Date;
@@ -95,6 +96,15 @@ class MiniClassList {
   }
 }
 
+function isNativeDateInputValue(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return false;
+  const [year, month, day] = match.slice(1).map(Number);
+  if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return day <= [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
 class MiniElement extends MiniEventTarget {
   constructor(tagName, ownerDocument) {
     super();
@@ -108,6 +118,10 @@ class MiniElement extends MiniEventTarget {
     };
     this.textContent = '';
     this.title = '';
+    this.type = '';
+    this.min = '';
+    this.max = '';
+    this._value = '';
     this.id = '';
     this._innerHTML = '';
   }
@@ -134,12 +148,27 @@ class MiniElement extends MiniEventTarget {
     this.dispatchEvent({ type: 'click' });
   }
 
+  set value(value) {
+    const next = String(value ?? '');
+    this._value = this.type === 'date' && next && !isNativeDateInputValue(next) ? '' : next;
+  }
+
+  get value() {
+    return this._value;
+  }
+
   set innerHTML(value) {
     this._innerHTML = String(value);
     this.children = [];
-    for (const match of this._innerHTML.matchAll(/<(button|div)[^>]*\sid="([^"]+)"[^>]*>/g)) {
+    for (const match of this._innerHTML.matchAll(/<(button|div|input)[^>]*\sid="([^"]+)"[^>]*>/g)) {
       const child = new MiniElement(match[1], this.ownerDocument);
-      child.id = match[2];
+      for (const attribute of match[0].matchAll(/\s([A-Za-z][\w:-]*)="([^"]*)"/g)) {
+        const [, name, attributeValue] = attribute;
+        if (name === 'id' || name === 'type' || name === 'min' || name === 'max' || name === 'title') {
+          child[name] = attributeValue;
+        }
+      }
+      child.id ||= match[2];
       this.appendChild(child);
     }
   }
@@ -178,9 +207,16 @@ globalThis.Date = FixedDate;
 globalThis.CustomEvent = MiniCustomEvent;
 
 const moduleUrl = new URL('../static/js/admin/core/adminDate.js', import.meta.url);
-const { getAdminDate, getRealToday, initAdminDateBar, setAdminDate } = await import(moduleUrl.href);
+const { getAdminDate, getRealToday, initAdminDateBar, parseAdminDateLocal, setAdminDate } = await import(moduleUrl.href);
+const coordinatorModuleUrl = new URL('../static/js/admin/features/calendarSnapshotCoordinator.js', import.meta.url);
+const { createSnapshotCoordinator } = await import(coordinatorModuleUrl.href);
 
 equal(getRealToday(), '2026-03-15', 'real-today helper must use the local calendar date');
+equal(parseAdminDateLocal('0001-01-01'), null, 'local date parsing must reject the unsupported FullCalendar low boundary');
+equal(parseAdminDateLocal('1000-01-01')?.getFullYear(), 1000, 'local date parsing must preserve the supported minimum year');
+equal(parseAdminDateLocal('9998-12-31')?.getFullYear(), 9998, 'local date parsing must preserve the supported maximum year');
+equal(parseAdminDateLocal('9999-01-01'), null, 'local date parsing must reject the unsupported FullCalendar high boundary');
+equal(parseAdminDateLocal('2026-02-31'), null, 'local date parsing must reject impossible dates');
 
 for (const storedValue of [
   undefined,
@@ -192,6 +228,9 @@ for (const storedValue of [
   '2026-02-31',
   '2026-04-31',
   '0000-01-01',
+  '0001-01-01',
+  '0999-12-31',
+  '9999-01-01',
 ]) {
   const initial = storedValue === undefined ? {} : { [STORAGE_KEY]: storedValue };
   globalThis.sessionStorage = new SessionStorageStub(initial);
@@ -226,7 +265,7 @@ equal(writableStorage.values.get(STORAGE_KEY), '2028-03-01', 'silent writes must
 equal(emittedDates.length, 1, 'silent writes must not emit an admin date event');
 
 const callsBeforeInvalidWrites = writableStorage.setCalls;
-for (const invalidValue of ['2026-02-29', '2026-02-31', '2026-04-31', '2026-99-01', '', null]) {
+for (const invalidValue of ['0001-01-01', '0999-12-31', '2026-02-29', '2026-02-31', '2026-04-31', '2026-99-01', '9999-01-01', '', null]) {
   setAdminDate(invalidValue);
 }
 equal(writableStorage.setCalls, callsBeforeInvalidWrites, 'invalid dates must not attempt a storage write');
@@ -272,37 +311,66 @@ const display = uiDocument.getElementById('adb_date_display');
 const previous = uiDocument.getElementById('adb_prev');
 const next = uiDocument.getElementById('adb_next');
 const today = uiDocument.getElementById('adb_today');
-equal(display.textContent, '26/03/01', 'the date bar must render the stored selected date');
+equal(display.tagName, 'INPUT', 'the selected date must be directly editable');
+equal(display.type, 'date', 'the selected date must retain native date input semantics');
+equal(display.min, '1000-01-01', 'the direct date input must expose the supported minimum');
+equal(display.max, '9998-12-31', 'the direct date input must expose the supported maximum');
+equal(display.value, '2026-03-01', 'the date bar must render the stored selected date');
 equal(display.title, '2026-03-01', 'the date bar title must expose the full selected date');
 
 previous.click();
 equal(uiStorage.values.get(STORAGE_KEY), '2026-02-28', 'previous must persist the preceding calendar day');
-equal(display.textContent, '26/02/28', 'previous must update the visible date');
+equal(display.value, '2026-02-28', 'previous must update the visible date');
 equal(uiEvents.at(-1), '2026-02-28', 'previous must emit the selected date');
 
 next.click();
 equal(uiStorage.values.get(STORAGE_KEY), '2026-03-01', 'next must persist the following calendar day');
-equal(display.textContent, '26/03/01', 'next must update the visible date');
+equal(display.value, '2026-03-01', 'next must update the visible date');
 equal(uiEvents.at(-1), '2026-03-01', 'next must emit the selected date');
 
 today.click();
 equal(uiStorage.values.get(STORAGE_KEY), '2026-03-15', 'today must persist the real local date');
-equal(display.textContent, '26/03/15', 'today must update the visible date');
+equal(display.value, '2026-03-15', 'today must update the visible date');
 equal(uiEvents.at(-1), '2026-03-15', 'today must emit the real local date');
+
+const eventsBeforeDirectSelection = uiEvents.length;
+display.value = '2025-12-24';
+display.dispatchEvent({ type: 'change' });
+equal(uiStorage.values.get(STORAGE_KEY), '2025-12-24', 'direct selection must persist the chosen date');
+equal(display.value, '2025-12-24', 'direct selection must remain visible');
+equal(uiEvents.length, eventsBeforeDirectSelection + 1, 'direct selection must emit exactly one event');
+equal(uiEvents.at(-1), '2025-12-24', 'direct selection must emit the chosen date');
+
+const callsBeforeSameSelection = uiStorage.setCalls;
+const eventsBeforeSameSelection = uiEvents.length;
+display.dispatchEvent({ type: 'change' });
+equal(uiStorage.setCalls, callsBeforeSameSelection, 'selecting the current date must not write again');
+equal(uiEvents.length, eventsBeforeSameSelection, 'selecting the current date must not emit again');
+
+display.value = '';
+display.dispatchEvent({ type: 'change' });
+equal(display.value, '2025-12-24', 'clearing the date input must restore the authoritative date');
+equal(uiEvents.length, eventsBeforeSameSelection, 'clearing the date input must not emit an event');
+
+display.value = '2026-02-31';
+equal(display.value, '', 'the test DOM must model native impossible-date normalization');
+display.dispatchEvent({ type: 'change' });
+equal(display.value, '2025-12-24', 'an impossible direct date must restore the authoritative date');
+equal(uiEvents.length, eventsBeforeSameSelection, 'an impossible direct date must not emit an event');
 
 uiDocument.dispatchEvent(new MiniCustomEvent('admin:date-change', {
   detail: { dateStr: '2026-02-31' },
 }));
-equal(display.textContent, '26/03/15', 'the date bar listener must ignore impossible event dates');
+equal(display.value, '2025-12-24', 'the date bar listener must ignore impossible event dates');
 
 uiDocument.dispatchEvent(new MiniCustomEvent('admin:date-change', {
   detail: { dateStr: '2026-12-31' },
 }));
-equal(display.textContent, '26/12/31', 'the date bar listener must accept valid external date events');
+equal(display.value, '2026-12-31', 'the date bar listener must accept valid external date events');
 equal(display.title, '2026-12-31', 'a valid external event must update the full-date title');
 equal(
   uiStorage.values.get(STORAGE_KEY),
-  '2026-03-15',
+  '2025-12-24',
   'an external event must update only the display rather than writing storage again',
 );
 
@@ -311,27 +379,259 @@ globalThis.document = boundaryDocument;
 const boundaryMount = boundaryDocument.createElement('div');
 boundaryMount.id = 'adminDateMount';
 boundaryDocument.body.appendChild(boundaryMount);
-const boundaryStorage = new SessionStorageStub({ [STORAGE_KEY]: '0001-01-01' });
+const boundaryStorage = new SessionStorageStub({ [STORAGE_KEY]: '1000-01-01' });
 globalThis.sessionStorage = boundaryStorage;
 initAdminDateBar();
 boundaryDocument.getElementById('adb_prev').click();
 equal(
-  boundaryDocument.getElementById('adb_date_display').title,
-  '0001-01-01',
+  boundaryDocument.getElementById('adb_date_display').value,
+  '1000-01-01',
   'previous at the minimum supported date must remain on a valid date',
 );
-equal(boundaryStorage.values.get(STORAGE_KEY), '0001-01-01', 'minimum-date navigation must not underflow');
+equal(boundaryStorage.values.get(STORAGE_KEY), '1000-01-01', 'minimum-date navigation must not underflow');
 
-boundaryStorage.values.set(STORAGE_KEY, '9999-12-31');
+boundaryStorage.values.set(STORAGE_KEY, '9998-12-31');
 boundaryDocument.dispatchEvent(new MiniCustomEvent('admin:date-change', {
-  detail: { dateStr: '9999-12-31' },
+  detail: { dateStr: '9998-12-31' },
 }));
 boundaryDocument.getElementById('adb_next').click();
 equal(
-  boundaryDocument.getElementById('adb_date_display').title,
-  '9999-12-31',
+  boundaryDocument.getElementById('adb_date_display').value,
+  '9998-12-31',
   'next at the maximum supported date must remain on a valid date',
 );
-equal(boundaryStorage.values.get(STORAGE_KEY), '9999-12-31', 'maximum-date navigation must not overflow');
+equal(boundaryStorage.values.get(STORAGE_KEY), '9998-12-31', 'maximum-date navigation must not overflow');
+
+const pendingRefreshes = new Map();
+const committedRefreshes = [];
+const refreshCoordinator = createSnapshotCoordinator(
+  key => new Promise(resolve => pendingRefreshes.set(key, resolve)),
+  (snapshot, key) => committedRefreshes.push([key, snapshot]),
+);
+const refreshA = refreshCoordinator.load('A');
+const refreshB = refreshCoordinator.load('B');
+pendingRefreshes.get('B')('snapshot-B');
+deepEqual(await refreshB, { committed: true, snapshot: 'snapshot-B' }, 'the latest calendar refresh must commit');
+pendingRefreshes.get('A')('snapshot-A');
+deepEqual(await refreshA, { committed: false, snapshot: 'snapshot-A' }, 'a late stale calendar refresh must not commit');
+deepEqual(committedRefreshes, [['B', 'snapshot-B']], 'reverse completion must preserve only the latest calendar state');
+const pendingActionRefreshes = new Map();
+const actionCommits = [];
+const sharedCoordinator = createSnapshotCoordinator(
+  key => new Promise(resolve => pendingActionRefreshes.set(key, resolve)),
+  (snapshot, key) => actionCommits.push([key, snapshot]),
+);
+const visibleLoad = sharedCoordinator.load('visible-A');
+const actionLoad = sharedCoordinator.load('action');
+pendingActionRefreshes.get('action')('action-state');
+deepEqual(await actionLoad, { committed: true, snapshot: 'action-state' }, 'a newer action preload must commit');
+pendingActionRefreshes.get('visible-A')('stale-visible-state');
+deepEqual(await visibleLoad, { committed: false, snapshot: 'stale-visible-state' }, 'an older visible refresh must not overwrite action state');
+deepEqual(actionCommits, [['action', 'action-state']], 'visible/action interleaving must preserve the newest shared snapshot');
+const pendingActionFirstRefreshes = new Map();
+const actionFirstCommits = [];
+const actionFirstCoordinator = createSnapshotCoordinator(
+  key => new Promise(resolve => pendingActionFirstRefreshes.set(key, resolve)),
+  (snapshot, key) => actionFirstCommits.push([key, snapshot]),
+);
+const actionFirstLoad = actionFirstCoordinator.load('action-first');
+const visibleSecondLoad = actionFirstCoordinator.load('visible-second');
+pendingActionFirstRefreshes.get('action-first')('stale-action-state');
+deepEqual(await actionFirstLoad, { committed: false, snapshot: 'stale-action-state' }, 'an action preload superseded by a visible refresh must report stale');
+pendingActionFirstRefreshes.get('visible-second')('visible-state');
+deepEqual(await visibleSecondLoad, { committed: true, snapshot: 'visible-state' }, 'the newer visible preload must own shared state');
+deepEqual(actionFirstCommits, [['visible-second', 'visible-state']], 'action-first interleaving must not publish its stale snapshot');
+const pendingCoalescedRefreshes = new Map();
+const coalescedCommits = [];
+let coalescedLoadCount = 0;
+const coalescedCoordinator = createSnapshotCoordinator(
+  key => {
+    coalescedLoadCount += 1;
+    return new Promise(resolve => pendingCoalescedRefreshes.set(key, resolve));
+  },
+  (snapshot, key) => coalescedCommits.push([key, snapshot]),
+);
+const coalescedAction = (async () => {
+  const result = await coalescedCoordinator.load('action');
+  return result.committed ? result : coalescedCoordinator.settled();
+})();
+const coalescedVisible = (async () => {
+  const result = await coalescedCoordinator.load('visible');
+  return result.committed ? result : coalescedCoordinator.settled();
+})();
+pendingCoalescedRefreshes.get('action')('stale-action');
+pendingCoalescedRefreshes.get('visible')('latest-visible');
+deepEqual(await coalescedAction, { committed: true, snapshot: 'latest-visible' }, 'a stale action must coalesce behind the latest visible refresh');
+deepEqual(await coalescedVisible, { committed: true, snapshot: 'latest-visible' }, 'the latest visible refresh must settle normally');
+equal(coalescedLoadCount, 2, 'coalescing must not create a retry request loop');
+deepEqual(coalescedCommits, [['visible', 'latest-visible']], 'coalescing must publish one newest snapshot');
+const invalidatedCommits = [];
+let resolveInvalidated;
+const invalidationCoordinator = createSnapshotCoordinator(
+  () => new Promise(resolve => { resolveInvalidated = resolve; }),
+  snapshot => invalidatedCommits.push(snapshot),
+);
+const invalidatedLoad = invalidationCoordinator.load('old-read');
+invalidationCoordinator.invalidate();
+resolveInvalidated('old-state');
+deepEqual(await invalidatedLoad, { committed: false, snapshot: 'old-state' }, 'a direct write invalidation must reject an older shared read');
+deepEqual(invalidatedCommits, [], 'an invalidated read must not overwrite direct write state');
+deepEqual(await invalidationCoordinator.settled(), { committed: true, snapshot: null }, 'settled after direct invalidation must not expose the rejected snapshot');
+const pendingProjectionRefreshes = new Map();
+const projectionCoordinator = createSnapshotCoordinator(
+  key => new Promise(resolve => pendingProjectionRefreshes.set(key, resolve)),
+  () => {},
+);
+let activeProjectionRange = 'A';
+const projectedRanges = [];
+const projectLatestRange = async requestedRange => {
+  const result = await projectionCoordinator.load(requestedRange);
+  let projectionRange = requestedRange;
+  if (!result.committed) {
+    const settled = await projectionCoordinator.settled();
+    if (!settled.snapshot) return false;
+    projectionRange = activeProjectionRange;
+  }
+  projectedRanges.push(projectionRange);
+  return true;
+};
+const projectionA = projectLatestRange('A');
+activeProjectionRange = 'B';
+const projectionB = projectLatestRange('B');
+pendingProjectionRefreshes.get('B')('snapshot-B');
+pendingProjectionRefreshes.get('A')('snapshot-A');
+equal(await projectionB, true, 'the latest visible range must project');
+equal(await projectionA, true, 'a stale visible call must settle without dropping the current projection');
+equal(projectedRanges.includes('A'), false, 'a stale visible call must never project its old range after the current range');
+deepEqual(projectedRanges, ['B', 'B'], 'all settled projections must target the current visible range');
+const invalidatedProjectionLoads = new Map();
+const invalidatedProjectionCoordinator = createSnapshotCoordinator(
+  key => new Promise(resolve => invalidatedProjectionLoads.set(key, resolve)),
+  () => {},
+);
+let invalidatedCurrentRange = 'A';
+const invalidatedProjectedRanges = [];
+const projectAfterInvalidation = async requestedRange => {
+  const result = await invalidatedProjectionCoordinator.load(requestedRange);
+  if (!result.committed) {
+    const settled = await invalidatedProjectionCoordinator.settled();
+    if (!settled.snapshot) return projectAfterInvalidation(invalidatedCurrentRange);
+  }
+  invalidatedProjectedRanges.push(invalidatedCurrentRange);
+  return true;
+};
+const invalidatedProjectionA = projectAfterInvalidation('A');
+invalidatedCurrentRange = 'B';
+invalidatedProjectionCoordinator.invalidate();
+invalidatedProjectionLoads.get('A')('stale-A');
+while (!invalidatedProjectionLoads.has('B')) await Promise.resolve();
+invalidatedProjectionLoads.get('B')('fresh-B');
+equal(await invalidatedProjectionA, true, 'invalidate recovery must eventually project');
+deepEqual(invalidatedProjectedRanges, ['B'], 'invalidate recovery must reload and project only the current range');
+
+const calendarSource = fs.readFileSync('static/js/admin/features/calendar.js', 'utf8');
+const adminMainSource = fs.readFileSync('static/js/admin/main.js', 'utf8');
+equal(
+  adminMainSource.includes("import { initAdminDateBar } from './core/adminDate.js';"),
+  true,
+  'admin bootstrap must share the canonical admin-date module instance with feature consumers',
+);
+equal(
+  /let calendarFocusDate = toSafeDate\(\.\.\.String\(getAdminDate\(\)/.test(calendarSource),
+  true,
+  'calendar initialization must use the selected admin date',
+);
+equal(
+  /y < 1000 \|\| y > 9998/.test(calendarSource),
+  true,
+  'calendar dates must enforce the same year range as the direct date input',
+);
+equal(
+  /String\(d\.getFullYear\(\)\)\.padStart\(4, '0'\)/.test(calendarSource),
+  true,
+  'calendar ISO dates must retain four-digit boundary years',
+);
+equal(
+  /return \{ start: ymd\(start\), end: ymd\(addDays\(start, 35\)\) \}/.test(calendarSource),
+  true,
+  'calendar visible ranges must use four-digit ISO strings at boundary years',
+);
+equal(
+  /String\(titleDate\.getFullYear\(\)\)\.padStart\(4, '0'\)\.slice\(2\)/.test(calendarSource),
+  true,
+  'calendar week titles must retain a two-digit display for boundary years',
+);
+equal(
+  (calendarSource.match(/new Date\(date\.getTime\(\)\)/g) || []).length,
+  2,
+  'calendar date copies must avoid constructor-based year offsets in every navigation path',
+);
+equal(
+  /new Date\(date\.getFullYear\(\), date\.getMonth\(\), date\.getDate\(\)\)/.test(calendarSource),
+  false,
+  'calendar navigation must not use the Date constructor year-1900 offset',
+);
+equal(
+  /return parseAdminDateLocal\(`\$\{String\(y\)\.padStart\(4, '0'\)\}-\$\{String\(m\)\.padStart\(2, '0'\)\}-\$\{String\(d\)\.padStart\(2, '0'\)\}`\)/.test(calendarSource),
+  true,
+  'calendar dates must use the executable admin date parser for boundary-year behavior',
+);
+equal(
+  /const isSupportedCalendarDate = value => !!parseAdminDateLocal\(String\(value \|\| ''\)\.trim\(\)\)/.test(calendarSource),
+  true,
+  'calendar interactions must share the executable supported-date validator',
+);
+equal(
+  /const next = date instanceof Date\s*\? parseAdminDateLocal\(ymd\(date\)\)\s*: toSafeDate/.test(calendarSource),
+  true,
+  'Date-based wheel navigation must revalidate the supported calendar range',
+);
+equal(
+  /dateClick: info => \{\s*if \(!isSupportedCalendarDate\(info\.dateStr\)\)/.test(calendarSource),
+  true,
+  'calendar side cells outside the supported range must be inert before any action mode',
+);
+equal(
+  /function openAttendModal\(dateStr\) \{\s*if \(!isSupportedCalendarDate\(dateStr\)\) return;/.test(calendarSource),
+  true,
+  'attendance reads must reject unsupported calendar dates',
+);
+equal(
+  /function openMakeupSlotPicker\(dateStr, dayEl\) \{\s*if \(!makeupSelection \|\| !dayEl \|\| !isSupportedCalendarDate\(dateStr\)\) return;/.test(calendarSource),
+  true,
+  'makeup scheduling must reject unsupported calendar dates',
+);
+equal(
+  /const extraWeekendCoordinator = createSnapshotCoordinator\(\s*loadExtraWeekendSnapshot,\s*applyExtraWeekendSnapshot,\s*\);/.test(calendarSource),
+  true,
+  'all calendar snapshot loads must share one latest-state coordinator',
+);
+equal(
+  /async function refreshVisibleCalendar\(range\) \{\s*const result = await extraWeekendCoordinator\.load\(range\);\s*let projectionRange = range;\s*if \(!result\.committed\) \{\s*const settled = await extraWeekendCoordinator\.settled\(\);\s*if \(!settled\.snapshot\) return refreshVisibleCalendar\(currentVisibleRange\(\)\);\s*projectionRange = currentVisibleRange\(\);\s*\}\s*countMap = buildCountsForRange\(projectionRange\.start, projectionRange\.end\);/.test(calendarSource),
+  true,
+  'visible projections must coalesce behind the newest committed shared snapshot',
+);
+equal(
+  /async function preloadExtraWeekend\(\) \{\s*const result = await extraWeekendCoordinator\.load\(\);\s*if \(!result\.committed\) \{\s*const settled = await extraWeekendCoordinator\.settled\(\);\s*if \(settled\.snapshot\) return settled\.snapshot;\s*return preloadExtraWeekend\(\);\s*\}\s*return result\.snapshot;\s*\}/.test(calendarSource),
+  true,
+  'action preloads must coalesce behind the newest committed shared snapshot',
+);
+equal(/Promise\.all\(\[[\s\S]*?\/api\/extra-attend[\s\S]*?\]\)\.then\(\(\[att, extraMap, weekendMap\]\) => \{\s*EXTRA\s*=/.test(calendarSource), false, 'attendance display loads must not overwrite the shared extra-attendance snapshot');
+equal(/Promise\.all\(\[[\s\S]*?\/api\/weekend-slots[\s\S]*?\]\)\.then\(\(\[todayAtt, extraMap, weekendMap\]\) => \{\s*EXTRA\s*=/.test(calendarSource), false, 'selection display loads must not overwrite the shared weekend snapshot');
+equal(/extraWeekendCoordinator\.invalidate\(\);\s*EXTRA\[dateStr\] = Array\.from\(nextSet\)/.test(calendarSource), true, 'selection saves must invalidate pending shared reads before in-place mutation');
+const datesSetBlock = calendarSource.match(/datesSet: range => \{([\s\S]*?)\r?\n\s{4}\}\r?\n\s{2}\}\);/)?.[1] || '';
+equal(datesSetBlock.includes('refreshVisibleCalendar(range);'), true, 'datesSet must use the consolidated calendar refresh');
+equal(datesSetBlock.includes('loadExtraWeekendSnapshot('), false, 'datesSet must not start a duplicate data preload');
+equal(datesSetBlock.includes('refreshMakeupPlanner('), false, 'datesSet must not start a duplicate planner preload');
+equal(
+  /document\.addEventListener\('admin:date-change', \(event\) => \{\s*setCalendarFocusDate\(event\?\.detail\?\.dateStr\)/.test(calendarSource),
+  true,
+  'calendar focus must follow valid admin date changes',
+);
+equal(
+  /document\.addEventListener\('admin:date-change', \(event\) => \{\s*setCalendarFocusDate\(event\?\.detail\?\.dateStr\);\s*\}\);/.test(calendarSource),
+  true,
+  'calendar date changes must rely on datesSet rather than issuing a second planner refresh',
+);
 
 console.log(`admin date sessionStorage checks passed: ${assertionCount} assertions`);

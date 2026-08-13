@@ -2,11 +2,12 @@
 // FullCalendar 월 뷰 + 날짜별 인원 카운트 뱃지 + 출결 모달(+주말 슬롯 선택/보강 병합 저장 - 멀티 슬롯 지원)
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
-import { getAdminDate } from '../core/adminDate.js';
+import { getAdminDate, parseAdminDateLocal } from '../core/adminDate.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { getAttendanceLedgerUrl } from './attendanceLedgerLink.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { createSnapshotCoordinator } from './calendarSnapshotCoordinator.js';
 import {
   buildPendingMakeups,
   buildActiveScheduledMakeupRows,
@@ -27,19 +28,31 @@ export function initCalendar() {
   const MAIN_WEEK_INDEX = 2;
   const MAKEUP_ARRIVE_BY_SLOT = { 1: '13:00', 2: '18:00' };
   let absenceRevision = '';
-  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const ymd = d => `${String(d.getFullYear()).padStart(4, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const isSupportedCalendarDate = value => !!parseAdminDateLocal(String(value || '').trim());
   const yoil = dateStr => WCHR[new Date(dateStr).getDay()];
   const isWeekend = dateStr => ['토', '일'].includes(yoil(dateStr));
 
-  async function fetchAbsentSnapshot() {
+  async function requestAbsentSnapshot() {
     const response = await fetch('/api/absent', { cache: 'no-store' });
     if (!response.ok) throw new Error(`/api/absent ${response.status}`);
     const payload = await response.json();
-    absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
-    return payload;
+    return {
+      payload,
+      revision: String(response.headers.get('X-Absence-Revision') || '').trim(),
+    };
+  }
+
+  async function fetchAbsentSnapshot() {
+    extraWeekendCoordinator?.invalidate();
+    const snapshot = await requestAbsentSnapshot();
+    extraWeekendCoordinator?.invalidate();
+    absenceRevision = snapshot.revision;
+    return snapshot.payload;
   }
 
   async function postAbsentSnapshot(payload) {
+    extraWeekendCoordinator?.invalidate();
     const response = await fetch('/api/absent', {
       method: 'POST',
       headers: { ...CT, ...(absenceRevision ? { 'If-Match': absenceRevision } : {}) },
@@ -47,28 +60,29 @@ export function initCalendar() {
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(`/api/absent ${response.status}`);
+    extraWeekendCoordinator?.invalidate();
     absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
     return data || payload;
   }
 
   function toSafeDate(year, month, day) {
-    const y = Number.parseInt(String(year), 10);
-    const m = Number.parseInt(String(month), 10);
-    const d = Number.parseInt(String(day), 10);
-    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
-    const dt = new Date(y, m - 1, d);
-    if (dt.getFullYear() !== y || dt.getMonth() !== (m - 1) || dt.getDate() !== d) return null;
-    return dt;
+    const parts = [year, month, day].map((value) => String(value ?? '').trim());
+    if (!/^\d{1,4}$/.test(parts[0]) || !/^\d{1,2}$/.test(parts[1]) || !/^\d{1,2}$/.test(parts[2])) return null;
+    const [y, m, d] = parts.map(Number);
+    if (y < 1000 || y > 9998 || m < 1 || m > 12 || d < 1) return null;
+    return parseAdminDateLocal(`${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
   }
 
   function addDays(date, days) {
-    const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const next = new Date(date.getTime());
+    next.setHours(12, 0, 0, 0);
     next.setDate(next.getDate() + days);
     return next;
   }
 
   function startOfWeek(date) {
-    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const d = new Date(date.getTime());
+    d.setHours(12, 0, 0, 0);
     const offset = (d.getDay() - WEEK_START_DAY + 7) % 7;
     d.setDate(d.getDate() - offset);
     return d;
@@ -77,13 +91,13 @@ export function initCalendar() {
   function rollingFiveWeekRange(currentDate) {
     const middleWeekStart = startOfWeek(currentDate);
     const start = addDays(middleWeekStart, -7 * MAIN_WEEK_INDEX);
-    return { start, end: addDays(start, 35) };
+    return { start: ymd(start), end: ymd(addDays(start, 35)) };
   }
 
   function weekTitleForRange(startDate) {
     const middleWeekStart = addDays(startOfWeek(startDate), 7 * MAIN_WEEK_INDEX);
     const titleDate = middleWeekStart;
-    const year = String(titleDate.getFullYear()).slice(2);
+    const year = String(titleDate.getFullYear()).padStart(4, '0').slice(2);
     const month = titleDate.getMonth() + 1;
     const week = Math.floor((titleDate.getDate() - 1) / 7) + 1;
     return `${year}년 ${month}월 ${week}주차`;
@@ -680,7 +694,7 @@ export function initCalendar() {
   }
 
   function selectedStudentExistingMakeupLabels(dateStr) {
-    if (!makeupSelection || !DATE_RE.test(String(dateStr || ''))) return [];
+    if (!makeupSelection || !isSupportedCalendarDate(dateStr)) return [];
     const records = selectedMakeupStudentRecords();
     const selectedSids = new Set(
       records.map(stu => String(stu?.id || '').trim()).filter(Boolean)
@@ -742,14 +756,43 @@ export function initCalendar() {
     (finalSlots.length ? finalSlots : [1]).forEach(slot => slotSets[slot].add(String(sid)));
   }
 
-  async function preloadExtraWeekend() {
-    try { EXTRA = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch { EXTRA = {}; }
-    try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
-    try { CARRYOVER = await fetch('/api/makeup-carryover', { cache: 'no-store' }).then(r => r.json()); } catch { CARRYOVER = {}; }
-    try { applyAbsentPayload(await fetchAbsentSnapshot()); } catch {}
-    state.extra = EXTRA || {};
+  async function loadExtraWeekendSnapshot() {
+    let extra = {};
+    let weekend = {};
+    let carryover = {};
+    let absent = null;
+    try { extra = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch {}
+    try { weekend = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch {}
+    try { carryover = await fetch('/api/makeup-carryover', { cache: 'no-store' }).then(r => r.json()); } catch {}
+    try { absent = await requestAbsentSnapshot(); } catch {}
+    return { extra, weekend, carryover, absent };
+  }
+
+  function applyExtraWeekendSnapshot(snapshot) {
+    EXTRA = snapshot.extra || {};
+    WEEKEND = snapshot.weekend || {};
+    CARRYOVER = normalizeCarryoverPayload(snapshot.carryover);
+    if (snapshot.absent) {
+      absenceRevision = snapshot.absent.revision;
+      applyAbsentPayload(snapshot.absent.payload);
+    }
+    state.extra = EXTRA;
     window.extra = state.extra;
-    CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
+  }
+
+  const extraWeekendCoordinator = createSnapshotCoordinator(
+    loadExtraWeekendSnapshot,
+    applyExtraWeekendSnapshot,
+  );
+
+  async function preloadExtraWeekend() {
+    const result = await extraWeekendCoordinator.load();
+    if (!result.committed) {
+      const settled = await extraWeekendCoordinator.settled();
+      if (settled.snapshot) return settled.snapshot;
+      return preloadExtraWeekend();
+    }
+    return result.snapshot;
   }
 
   function syncCalendarCellRatio() {
@@ -761,11 +804,10 @@ export function initCalendar() {
   }
 
   // 캘린더 범위 내 날짜별 1/2타임 인원 카운트 계산(정규+보강 - 결석)
-  async function fetchCountsForRange(start, end) {
-    await preloadExtraWeekend();
+  function buildCountsForRange(start, end) {
+    const nextCountMap = {};
     const days = []; const cur = new Date(start);
     while (cur < end) { days.push(ymd(cur)); cur.setDate(cur.getDate() + 1); }
-    countMap = {};
     for (const dateStr of days) {
       const wchr = yoil(dateStr);
       const slotSets = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, new Set()]));
@@ -787,8 +829,9 @@ export function initCalendar() {
         parseSlotNumbers(slotsRaw).forEach(slot => slotSets[slot]?.delete(String(sid)));
       });
 
-      countMap[dateStr] = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, slotSets[slot].size]));
+      nextCountMap[dateStr] = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, slotSets[slot].size]));
     }
+    return nextCountMap;
   }
 
   function refreshCountBadges() {
@@ -804,6 +847,20 @@ export function initCalendar() {
     });
     refreshMakeupConflictHints();
     syncCalendarCellRatio();
+  }
+
+  async function refreshVisibleCalendar(range) {
+    const result = await extraWeekendCoordinator.load(range);
+    let projectionRange = range;
+    if (!result.committed) {
+      const settled = await extraWeekendCoordinator.settled();
+      if (!settled.snapshot) return refreshVisibleCalendar(currentVisibleRange());
+      projectionRange = currentVisibleRange();
+    }
+    countMap = buildCountsForRange(projectionRange.start, projectionRange.end);
+    renderMakeupPlanner();
+    refreshCountBadges();
+    return true;
   }
 
   function escapeHtml(value) {
@@ -1061,7 +1118,7 @@ export function initCalendar() {
   }
 
   function manualMakeupSelectedDateList() {
-    return Array.from(manualMakeupSelectedDates).filter(date => DATE_RE.test(date)).sort();
+    return Array.from(manualMakeupSelectedDates).filter(isSupportedCalendarDate).sort();
   }
 
   function updateManualMakeupSaveState() {
@@ -1132,7 +1189,7 @@ export function initCalendar() {
   }
 
   function toggleManualAbsenceDate(dateStr) {
-    if (!manualAbsenceSelection || !DATE_RE.test(String(dateStr || ''))) return;
+    if (!manualAbsenceSelection || !isSupportedCalendarDate(dateStr)) return;
     if (manualMakeupSelectedDates.has(dateStr)) manualMakeupSelectedDates.delete(dateStr);
     else manualMakeupSelectedDates.add(dateStr);
     updateManualAbsenceFocusUI();
@@ -1143,7 +1200,8 @@ export function initCalendar() {
     const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
     const dayCell = target?.closest('.fc-daygrid-day[data-date]');
     if (!dayCell || !calendarEl.contains(dayCell)) return '';
-    return dayCell.getAttribute('data-date') || '';
+    const dateStr = dayCell.getAttribute('data-date') || '';
+    return isSupportedCalendarDate(dateStr) ? dateStr : '';
   }
 
   function recentlyHandledManualAbsenceDate(dateStr) {
@@ -1255,6 +1313,7 @@ export function initCalendar() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      extraWeekendCoordinator.invalidate();
       CARRYOVER = normalizeCarryoverPayload(data || next);
       cancelManualAbsenceSelection();
       await refreshMakeupPlanner();
@@ -1327,6 +1386,7 @@ export function initCalendar() {
       if (!res.ok || !data?.ok) {
         throw new Error(data?.message || data?.error || `시트 동기화 실패 (${res.status})`);
       }
+      extraWeekendCoordinator.invalidate();
       CARRYOVER = normalizeCarryoverPayload(data.carryover || {});
       EXTRA = data.extra || {};
       WEEKEND = data.weekendSlots || {};
@@ -1567,6 +1627,7 @@ export function initCalendar() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      extraWeekendCoordinator.invalidate();
       CARRYOVER = normalizeCarryoverPayload(data || next);
       if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
         setMakeupSelection(null);
@@ -1672,6 +1733,7 @@ export function initCalendar() {
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
 
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
     if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
       setMakeupSelection(null);
@@ -1714,6 +1776,7 @@ export function initCalendar() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -1745,6 +1808,7 @@ export function initCalendar() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -1865,7 +1929,7 @@ export function initCalendar() {
   async function saveScheduledMakeupDemand(item, makeupDate, slot, ownership = {}) {
     const sid = String(item?.sid || '').trim();
     const absenceDate = String(item?.absenceDate || '').trim();
-    if (!sid || !absenceDate || !DATE_RE.test(makeupDate) || !MAKEUP_SLOTS.includes(slot)) {
+    if (!sid || !absenceDate || !isSupportedCalendarDate(makeupDate) || !MAKEUP_SLOTS.includes(slot)) {
       throw new Error('Invalid makeup schedule');
     }
 
@@ -1921,6 +1985,7 @@ export function initCalendar() {
     }
 
     const data = await postJson('/api/makeup-carryover', next);
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
     return CARRYOVER;
   }
@@ -1971,6 +2036,7 @@ export function initCalendar() {
     await postJson('/api/extra-attend', nextExtra);
     await postWeekendPatch(weekendPatch);
 
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = nextCarryover;
     EXTRA = nextExtra;
     WEEKEND = nextWeekend;
@@ -2022,6 +2088,7 @@ export function initCalendar() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -2066,6 +2133,7 @@ export function initCalendar() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    extraWeekendCoordinator.invalidate();
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -2187,7 +2255,7 @@ export function initCalendar() {
   }
 
   function openMakeupSlotPicker(dateStr, dayEl) {
-    if (!makeupSelection || !dayEl) return;
+    if (!makeupSelection || !dayEl || !isSupportedCalendarDate(dateStr)) return;
     closeMakeupSlotPicker();
     dayEl.style.position = 'relative';
 
@@ -2265,10 +2333,12 @@ export function initCalendar() {
         value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...(storedSlots.length ? storedSlots : [slot]))] || '',
       });
     } catch (err) {
+      extraWeekendCoordinator.invalidate();
       CARRYOVER = carryoverBeforeSave;
       throw err;
     }
 
+    extraWeekendCoordinator.invalidate();
     EXTRA = nextExtra;
     WEEKEND = nextWeekend;
     CARRYOVER = nextCarryover;
@@ -2285,7 +2355,7 @@ export function initCalendar() {
 
   const calBadge = $('calTodayBadge');
   let schoolExamEvents = buildSchoolExamEvents();
-  let calendarFocusDate = new Date();
+  let calendarFocusDate = toSafeDate(...String(getAdminDate() || '').split('-')) || new Date();
 
   function updateExamBadge(count, source = 'cache') {
     if (!calBadge) return;
@@ -2440,9 +2510,10 @@ export function initCalendar() {
 
   function setCalendarFocusDate(date) {
     const next = date instanceof Date
-      ? new Date(date.getFullYear(), date.getMonth(), date.getDate())
+      ? parseAdminDateLocal(ymd(date))
       : toSafeDate(...String(date || '').split('-'));
     if (!next) return;
+    next.setHours(12, 0, 0, 0);
     calendarFocusDate = next;
     applyCalendarFocusDate();
   }
@@ -2480,7 +2551,14 @@ export function initCalendar() {
     events: schoolExamEvents,
     dayCellClassNames: (arg) => {
       const viewStart = arg.view?.activeStart || arg.view?.currentStart;
-      return isMainWeekDate(arg.date, viewStart) ? ['cal-main-week'] : ['cal-side-week'];
+      const classes = isMainWeekDate(arg.date, viewStart) ? ['cal-main-week'] : ['cal-side-week'];
+      if (!isSupportedCalendarDate(ymd(arg.date))) classes.push('cal-date-unsupported');
+      return classes;
+    },
+    dayCellDidMount: (arg) => {
+      if (isSupportedCalendarDate(ymd(arg.date))) return;
+      arg.el.setAttribute('aria-disabled', 'true');
+      arg.el.setAttribute('title', '지원 날짜 범위 밖입니다.');
     },
     dayCellContent: (arg) => ({
       html: `<span class="cal-day-number">${arg.date.getMonth() + 1}/${arg.date.getDate()}</span>`,
@@ -2493,6 +2571,10 @@ export function initCalendar() {
       return String(a.title || '').localeCompare(String(b.title || ''), 'ko');
     },
     dateClick: info => {
+      if (!isSupportedCalendarDate(info.dateStr)) {
+        toast('지원 날짜 범위는 1000-01-01부터 9998-12-31까지입니다.');
+        return;
+      }
       if (manualAbsenceSelection) {
         if (!recentlyHandledManualAbsenceDate(info.dateStr)) toggleManualAbsenceDate(info.dateStr);
         return;
@@ -2519,9 +2601,8 @@ export function initCalendar() {
       if (titleEl) titleEl.textContent = weekTitleForRange(range.start);
       syncCalendarCellRatio();
       bindCenterTodayButton();
-      fetchCountsForRange(range.start, range.end).then(refreshCountBadges);
+      refreshVisibleCalendar(range);
       refreshManualAbsenceDateMarks();
-      refreshMakeupPlanner();
     }
   });
   calendar.render();
@@ -2548,7 +2629,6 @@ export function initCalendar() {
 
   bindCenterTodayButton();
   ensureMakeupPlanner();
-  refreshMakeupPlanner();
   updateExamBadge(schoolExamEvents.length, 'cache');
 
   calendarEl.addEventListener('pointerdown', handleManualAbsencePointerDown, true);
@@ -2627,15 +2707,12 @@ export function initCalendar() {
   window.recalcCalendarCounts = function () {
     const viewStart = calendar.view.activeStart || calendar.view.currentStart;
     const viewEnd = calendar.view.activeEnd || calendar.view.currentEnd;
-    return fetchCountsForRange(viewStart, viewEnd)
-      .then(() => {
-        refreshCountBadges();
-        return refreshMakeupPlanner();
-      });
+    return refreshVisibleCalendar({ start: viewStart, end: viewEnd });
   };
 
   // ───────────────── 출결 모달 ─────────────────
   function openAttendModal(dateStr) {
+    if (!isSupportedCalendarDate(dateStr)) return;
     const attendModal = $('attendModal'), titleEl = $('attendDateTitle'), listEl = $('attendList');
     if (!attendModal || !titleEl || !listEl) return;
 
@@ -2654,10 +2731,8 @@ export function initCalendar() {
       fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
     ]).then(([att, extraMap, weekendMap]) => {
-      EXTRA = extraMap || {};
-      WEEKEND = weekendMap || {};
-      const extras = (EXTRA[dateStr] || []).map(String);
-      const slotMap = WEEKEND[dateStr] || {};
+      const extras = ((extraMap || {})[dateStr] || []).map(String);
+      const slotMap = (weekendMap || {})[dateStr] || {};
 
       const rows = [...att].sort((a, b) => {
         const slotsA = availableSlotsForAttendStudent(a, dateStr, extras, slotMap);
@@ -2880,16 +2955,16 @@ export function initCalendar() {
       fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
     ]).then(([todayAtt, extraMap, weekendMap]) => {
-      EXTRA = extraMap || {};
-      WEEKEND = weekendMap || {};
+      const localExtra = extraMap || {};
+      const localWeekend = weekendMap || {};
 
       // 목록 소스: 결석 처리는 오늘 등원자만, 보강은 전체 학생
       const listSource = mode === 'absent'
         ? [...todayAtt].filter(stu =>
-          availableSlotsForAttendStudent(stu, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {}).length
+          availableSlotsForAttendStudent(stu, dateStr, (localExtra[dateStr] || []).map(String), localWeekend[dateStr] || {}).length
         ).sort((a, b) => {
-          const slotsA = availableSlotsForAttendStudent(a, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {});
-          const slotsB = availableSlotsForAttendStudent(b, dateStr, (EXTRA[dateStr] || []).map(String), WEEKEND[dateStr] || {});
+          const slotsA = availableSlotsForAttendStudent(a, dateStr, (localExtra[dateStr] || []).map(String), localWeekend[dateStr] || {});
+          const slotsB = availableSlotsForAttendStudent(b, dateStr, (localExtra[dateStr] || []).map(String), localWeekend[dateStr] || {});
           const slotCmp = slotSortValue(slotsA) - slotSortValue(slotsB);
           if (slotCmp !== 0) return slotCmp;
           return String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true });
@@ -2897,8 +2972,9 @@ export function initCalendar() {
         : (state.students || []).slice()
           .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }));
 
-      const pre = new Set((EXTRA[dateStr] || []).map(String));
-      const perDateSlot = WEEKEND[dateStr] || {};
+      const localExtraIds = (localExtra[dateStr] || []).map(String);
+      const pre = new Set(localExtraIds);
+      const perDateSlot = localWeekend[dateStr] || {};
       const showSlots = mode === 'extra' || mode === 'absent';
 
       selectionListEl.innerHTML =
@@ -2906,8 +2982,8 @@ export function initCalendar() {
         listSource.map(s => {
           const sid = String(s.id);
           const checked = mode === 'extra' ? pre.has(sid) : false;
-          const allSlots = slotsForAttendStudent(s, dateStr, (EXTRA[dateStr] || []).map(String), perDateSlot);
-          const availableSlots = availableSlotsForAttendStudent(s, dateStr, (EXTRA[dateStr] || []).map(String), perDateSlot);
+          const allSlots = slotsForAttendStudent(s, dateStr, localExtraIds, perDateSlot);
+          const availableSlots = availableSlotsForAttendStudent(s, dateStr, localExtraIds, perDateSlot);
           const curSlots = mode === 'extra'
             ? combinedSlotsForStudent(s, dateStr, parseSlotNumbers(perDateSlot[sid] ?? [1]))
             : availableSlots;
@@ -3037,6 +3113,7 @@ export function initCalendar() {
     await preloadExtraWeekend(); // 최신화
     const previousExtraSet = new Set((EXTRA[dateStr] || []).map(String));
     const nextSet = new Set(selectedIds);
+    extraWeekendCoordinator.invalidate();
     EXTRA[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
     const newlyAddedExtraIds = selectedIds.filter(sid => !previousExtraSet.has(String(sid)));
 
@@ -3074,6 +3151,7 @@ export function initCalendar() {
         });
       }
       await resolveFirstOpenMakeupDemandsForSids(newlyAddedExtraIds);
+      extraWeekendCoordinator.invalidate();
       alert('보강 저장 완료');
       selectionModal.style.display = 'none';
       // 모달 상단 리스트/뱃지 갱신
@@ -3083,6 +3161,7 @@ export function initCalendar() {
       if (window.recalcCalendarCounts) await window.recalcCalendarCounts();
       else await refreshMakeupPlanner();
     } catch (e) {
+      extraWeekendCoordinator.invalidate();
       console.error(e);
       alert('요청에 실패했습니다.');
     }
@@ -3091,6 +3170,8 @@ export function initCalendar() {
   selectionClose?.addEventListener('click', () => selectionModal.style.display = 'none');
   document.addEventListener('admin:refresh', () => refreshMakeupPlanner());
   document.addEventListener('attendance:updated', () => refreshMakeupPlanner());
-  document.addEventListener('admin:date-change', () => refreshMakeupPlanner());
+  document.addEventListener('admin:date-change', (event) => {
+    setCalendarFocusDate(event?.detail?.dateStr);
+  });
 }
 
