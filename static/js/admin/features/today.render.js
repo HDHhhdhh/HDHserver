@@ -11,6 +11,7 @@ import { $, toast } from '../core/utils.js';
 import { getAdminDate, getRealToday } from '../core/adminDate.js';
 import { state } from '../core/state.js';
 import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';
+import { renderTodayActionButtons, renderTodayDocumentButton } from './todayActionMarkup.js';
 
 import {
   yoilOf,
@@ -360,7 +361,7 @@ function attachSortable(dateKey, alphaSortOnly) {
     .today-table .stuName,.done-table .stuName{font-size:15.5px}
     .today-check-cell,.today-self-study-cell,.today-homework-request-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell,.today-progress-cell{text-align:center}
     .today-action-cell,.done-action-cell{white-space:nowrap;overflow:visible!important;text-overflow:clip!important}
-    .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+    .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
     .today-actions button{flex:0 0 auto}
     .homework-request-toggle{
       display:inline-flex;align-items:center;justify-content:center;
@@ -952,18 +953,18 @@ function _ensureDoneTableIfMissing() {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
-        <col style="width:112px"><col style="width:268px"><col style="width:56px">
+        <col style="width:120px"><col style="width:268px"><col style="width:104px"><col style="width:72px"><col style="width:64px">
+        <col style="width:84px"><col style="width:112px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
+          <th>이름</th>
+          <th>작업</th>
           <th>날짜</th>
           <th>구분</th>
           <th title="등원시간">등원</th>
-          <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
-          <th>작업</th>
           <th>문서</th>
         </tr>
       </thead>
@@ -1134,6 +1135,7 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   const arrive = (tr.querySelector('.arriveLabel')?.textContent || '').trim();
 
   const nameLink = tr.querySelector('a.stuName');
+  const name = (nameLink?.textContent || tr.querySelector('.stuName')?.textContent || tr.dataset.sid || '').trim();
   const nameCellHtml = nameLink
     ? nameLink.outerHTML
     : `<span class="stuName">${escapeAttr((tr.querySelector('.stuName')?.textContent || '').trim())}</span>`;
@@ -1154,6 +1156,11 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
   if (tr.dataset.hw === '1') newRow.dataset.hw = '1';
   if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
   newRow.innerHTML = `
+    <td class="today-name-cell">${nameCellHtml}</td>
+    <td class="done-action-cell">
+      <span class="done-action-date">${escapeAttr(dateKey)}</span>
+      ${renderTodayActionButtons({ sid, name, date: dateKey, includeDoneActions: true })}
+    </td>
     <td class="done-date-cell">${escapeAttr(dateKey)}</td>
     <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
     <td class="att-time done-arrive-cell">
@@ -1164,20 +1171,9 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
         ${escapeAttr(arrive)}
       </span>
     </td>
-    <td class="today-name-cell">${nameCellHtml}</td>
     <td class="today-school-cell">${escapeAttr(school || '')}</td>
     <td class="today-curriculum-cell">${escapeAttr(curLabel || '')}</td>
-    <td class="done-action-cell">
-      <div class="today-actions">
-      <button class="openStudentPopups" title="상담 기록">🧾</button>
-      <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sid)}" title="테스트 기록 보기">기록</button>
-      <button class="markAbsent" title="결석">🚫</button>
-      <button class="markLeave" title="하원">🏠</button>
-      <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
-      <button class="clearDone" title="기록 정리" style="margin-left:6px">🧹</button>
-      </div>
-    </td>
-    <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${escapeAttr(docUrl)}" title="문서 열기">📄</button></td>
+    <td class="today-doc-cell">${renderTodayDocumentButton({ docUrl, name, sid })}</td>
   `;
 
   tbDone.prepend(newRow);
@@ -1200,10 +1196,11 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
 function ensureSelfStudyHeader(host) {
   const headRow = host?.querySelector?.('thead tr');
   if (!headRow || headRow.querySelector('.today-self-study-head')) return;
+  const homeworkRequestHead = headRow.querySelector('.today-homework-request-head');
   const th = document.createElement('th');
   th.className = 'today-self-study-head';
   th.textContent = '자습';
-  headRow.insertBefore(th, headRow.children[5] || null);
+  headRow.insertBefore(th, homeworkRequestHead || null);
 }
 
 // --- render ---
@@ -1258,13 +1255,17 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           ${hwRequestAt ? `data-hw-request-at="${hwRequestAt}"` : ''}>
         <td class="drag-handle today-drag-cell" style="cursor:${alphaSortOnly ? 'default' : 'grab'};text-align:center">::</td>
 
-        <td class="today-slot-cell">${renderEditableSlotLabel(labelText)}</td>
-
         <td class="today-name-cell">
           <a href="/student/${s.id}" target="_blank" class="stuName" data-sid="${s.id}">
             ${s.name}
           </a>
         </td>
+
+        <td class="today-action-cell">
+          ${renderTodayActionButtons({ sid: s.id, name: s.name })}
+        </td>
+
+        <td class="today-slot-cell">${renderEditableSlotLabel(labelText)}</td>
 
         <td class="att-time" style="text-align:center;width:84px;">
           <span class="arriveLabel" contenteditable="true" spellcheck="false"
@@ -1305,18 +1306,10 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
         <td class="today-curriculum-cell">${curLabel}</td>
         <td class="today-progress-cell">${progressMarker}</td>
 
-        <td class="today-action-cell">
-          <div class="today-actions">
-          <button class="openStudentPopups" title="상담 기록">🧾</button>
-          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(s.id)}" data-test-result-name="${escapeAttr(s.name || s.id)}" title="테스트 기록 보기">기록</button>
-          <button class="markAbsent" title="결석">🚫</button>
-          <button class="markLeave" title="하원">🏠</button>
-          </div>
-        </td>
         <td class="makeup-count-cell">
           <span class="makeup-count-badge ${makeupCount > 0 ? 'needs' : ''}">${makeupCount}</span>
         </td>
-        <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${s.docUrl || ''}" title="문서 열기">📄</button></td>
+        <td class="today-doc-cell">${renderTodayDocumentButton({ docUrl: s.docUrl, name: s.name, sid: s.id })}</td>
       </tr>
     `;
   }).join('');
@@ -1325,22 +1318,22 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   host.innerHTML = list.length ? `
       <table class="today-table">
       <colgroup>
-        <col style="width:32px"><col style="width:72px"><col style="width:120px"><col style="width:84px">
+        <col style="width:32px"><col style="width:120px"><col style="width:188px"><col style="width:72px"><col style="width:84px">
         <col style="width:168px"><col style="width:44px"><col style="width:84px"><col style="width:84px"><col style="width:112px">
-        <col style="width:36px"><col style="width:268px"><col style="width:64px"><col style="width:56px">
+        <col style="width:36px"><col style="width:64px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
           <th></th>
-          <th>구분</th>
           <th>이름</th>
+          <th>작업</th>
+          <th>구분</th>
           <th>도착</th>
           <th>출석/연락/숙제</th>
-          <th>숙검요청</th>
+          <th class="today-homework-request-head">숙검요청</th>
           <th>학교</th>
           <th>커리큘럼</th>
           <th>진도</th>
-          <th>작업</th>
           <th>보강</th>
           <th>문서</th>
         </tr>
@@ -1400,29 +1393,23 @@ export function renderDone(doneEntries) {
 
     return `
       <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
-        <td class="done-date-cell">${escapeAttr(dateKey)}</td>
-        <td class="today-slot-cell">${slotMarkup}</td>
-        <td class="att-time done-arrive-cell">
-          ${arriveMarkup}
-        </td>
         <td class="today-name-cell">
           ${s ? `<a href="/student/${encodeURIComponent(String(s.id))}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${escapeAttr(name)}</a>`
               : `<span class="stuName">${escapeAttr(name)}</span>`
           }
         </td>
+        <td class="done-action-cell">
+          <span class="done-action-date">${escapeAttr(dateKey)}</span>
+          ${renderTodayActionButtons({ sid: sidKey, name, date: dateKey, includeDoneActions: true })}
+        </td>
+        <td class="done-date-cell">${escapeAttr(dateKey)}</td>
+        <td class="today-slot-cell">${slotMarkup}</td>
+        <td class="att-time done-arrive-cell">
+          ${arriveMarkup}
+        </td>
         <td class="today-school-cell">${escapeAttr(school || '')}</td>
         <td class="today-curriculum-cell">${escapeAttr(curLabel)}</td>
-        <td class="done-action-cell">
-          <div class="today-actions">
-          <button class="openStudentPopups" title="상담 기록">🧾</button>
-          <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sidKey)}" data-test-result-name="${escapeAttr(name || sidKey)}" title="테스트 기록 보기">기록</button>
-          <button class="markAbsent" title="결석">🚫</button>
-          <button class="markLeave" title="하원">🏠</button>
-          <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
-          <button class="clearDone" title="기록 정리" style="margin-left:6px">🧹</button>
-          </div>
-        </td>
-        <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${escapeAttr(docUrl)}" title="문서 열기">📄</button></td>
+        <td class="today-doc-cell">${renderTodayDocumentButton({ docUrl, name, sid: sidKey })}</td>
       </tr>
     `;
   }).join('');
@@ -1430,18 +1417,18 @@ export function renderDone(doneEntries) {
   wrap.innerHTML = `
     <table class="done-table">
       <colgroup>
-        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
-        <col style="width:112px"><col style="width:268px"><col style="width:56px">
+        <col style="width:120px"><col style="width:268px"><col style="width:104px"><col style="width:72px"><col style="width:64px">
+        <col style="width:84px"><col style="width:112px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
+          <th>이름</th>
+          <th>작업</th>
           <th>날짜</th>
           <th>구분</th>
           <th title="등원시간">등원</th>
-          <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
-          <th>작업</th>
           <th>문서</th>
         </tr>
       </thead>

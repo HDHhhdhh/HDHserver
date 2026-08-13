@@ -2,7 +2,7 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { patchLog, truthy } from './today.state.js';
-import { completeAssignedTestsForRecordCleanup } from './today.render.js';
+import { completeAssignedTestsForRecordCleanup } from './today.render.js?v=20260814-phase17';
 
 export function initClearAll() {
   $('clearAllBtn')?.addEventListener('click', async () => {
