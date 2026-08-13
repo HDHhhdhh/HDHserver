@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import hashlib
 import io
@@ -34,9 +35,19 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_assistant_student_notes.py",
 ]
 
+PYTHON_311_FILES = [
+    ROOT / "app.py",
+    *sorted((ROOT / "routes").rglob("*.py")),
+    *sorted((ROOT / "core").rglob("*.py")),
+    *sorted((ROOT / "scripts").rglob("*.py")),
+]
+
 JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
+    ROOT / "static/js/all/main.js",
+    ROOT / "static/js/admin/core/adminDate.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
+    ROOT / "static/js/admin/features/exportLogFormat.js",
     ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/logModal.js",
     ROOT / "static/js/admin/features/today.js",
@@ -44,6 +55,8 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/today.render.js",
     ROOT / "static/js/admin/features/testModal.js",
     ROOT / "static/js/admin/features/videoModal.js",
+    ROOT / "static/js/student-app-push.js",
+    ROOT / "static/js/student-app.js",
     ROOT / "static/js/student.js",
     ROOT / "static/js/shared/api.js",
     ROOT / "static/js/shared/testRecordData.js",
@@ -52,6 +65,12 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_student_training_pack_round_filter.js",
     ROOT / "scripts/verify_admin_tests_record_details_ui.js",
     ROOT / "scripts/verify_admin_tests_record_detail_answer_link_ui.js",
+    ROOT / "scripts/verify_admin_date_session_storage.mjs",
+    ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
+    ROOT / "scripts/verify_hover_tooltip_performance.mjs",
+    ROOT / "scripts/verify_export_log_format.mjs",
+    ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
+    ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
 
 REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...]] = (
@@ -234,9 +253,13 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
 
 SMOKE_GUARD_SNIPPETS: Final[tuple[str, ...]] = (
     "before = runtime_fingerprints()",
+    "before_sqlite = sqlite_runtime_metadata()",
     "after = runtime_fingerprints()",
+    "after_sqlite = sqlite_runtime_metadata()",
     "runtime_diff_keys(before, after)",
-    "all(is_sqlite_transient_sidecar(key) for key in changed)",
+    "sqlite_change_observations(before_sqlite, after_sqlite)",
+    "sqlite_change_observations_are_safe(sqlite_changes)",
+    "if include_log_gets:",
     "Skipped GET /api/logs/entry because it may touch SQLite WAL/schema state.",
     "Skipped GET /api/logs because it may touch SQLite WAL/schema state.",
     "Skipped GET /api/updates because it can auto-write updates.json.",
@@ -287,6 +310,8 @@ RUNTIME_ROOT_SUFFIXES = {
 RUNTIME_DIRS = ("data", "files", "instance")
 SKIP_DIR_NAMES = {".git", ".pytest_cache", "__pycache__", "venv", "_data_mirror", "_runtime_backups"}
 SQLITE_TRANSIENT_SUFFIXES = (".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm")
+SQLITE_MAIN_SUFFIXES = (".sqlite", ".db")
+SQLITE_OBSERVED_SUFFIXES = SQLITE_MAIN_SUFFIXES + SQLITE_TRANSIENT_SUFFIXES
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -340,6 +365,109 @@ def runtime_fingerprints() -> dict[str, str | None]:
     return out
 
 
+def _is_sqlite_observed_path(path: pathlib.Path | str) -> bool:
+    return str(path).lower().endswith(SQLITE_OBSERVED_SUFFIXES)
+
+
+def iter_sqlite_runtime_paths(root: pathlib.Path = ROOT) -> Iterable[pathlib.Path]:
+    seen: set[pathlib.Path] = set()
+
+    for path in root.iterdir():
+        if path.is_file() and _is_sqlite_observed_path(path):
+            seen.add(path)
+            yield path
+
+    for dirname in RUNTIME_DIRS:
+        base = root / dirname
+        if not base.exists():
+            continue
+        for path in sorted(base.rglob("*")):
+            if any(part in SKIP_DIR_NAMES for part in path.relative_to(root).parts):
+                continue
+            if path.is_file() and _is_sqlite_observed_path(path) and path not in seen:
+                seen.add(path)
+                yield path
+
+
+def _sqlite_file_metadata(path: pathlib.Path) -> dict[str, int | str]:
+    with path.open("rb") as stream:
+        stat = os.fstat(stream.fileno())
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def sqlite_runtime_metadata(root: pathlib.Path = ROOT) -> dict[str, dict[str, int | str]]:
+    observations: dict[str, dict[str, int | str]] = {}
+    for path in iter_sqlite_runtime_paths(root):
+        try:
+            observations[path.relative_to(root).as_posix()] = _sqlite_file_metadata(path)
+        except FileNotFoundError:
+            # A sidecar can disappear while a live SQLite connection checkpoints.
+            continue
+    return observations
+
+
+def runtime_metadata_fingerprints() -> dict[str, dict[str, int | str]]:
+    """Observe runtime content, size, and mtime without importing application paths."""
+    observations: dict[str, dict[str, int | str]] = {}
+    for path in iter_runtime_paths():
+        try:
+            observations[rel(path)] = _sqlite_file_metadata(path)
+        except FileNotFoundError:
+            continue
+    return observations
+
+
+def sqlite_change_observations(
+    before: dict[str, dict[str, int | str]],
+    after: dict[str, dict[str, int | str]],
+) -> list[dict[str, object]]:
+    observations: list[dict[str, object]] = []
+    for key in sorted(set(before) | set(after)):
+        before_item = before.get(key)
+        after_item = after.get(key)
+        if before_item == after_item:
+            continue
+        if before_item is None:
+            change = "created"
+            changed_fields = ["existence"]
+        elif after_item is None:
+            change = "deleted"
+            changed_fields = ["existence"]
+        else:
+            change = "modified"
+            changed_fields = [
+                field
+                for field in ("mtime_ns", "size", "sha256")
+                if before_item.get(field) != after_item.get(field)
+            ]
+        observations.append({
+            "path": key,
+            "change": change,
+            "changedFields": changed_fields,
+            "allowed": is_sqlite_transient_sidecar(key),
+        })
+    return observations
+
+
+def sqlite_change_observations_are_safe(observations: Iterable[dict[str, object]]) -> bool:
+    return all(observation.get("allowed") is True for observation in observations)
+
+
+def print_sqlite_change_observations(observations: Iterable[dict[str, object]]) -> None:
+    for observation in observations:
+        print(
+            "sqlite file observation: " + json.dumps(observation, ensure_ascii=False, sort_keys=True),
+            file=sys.stderr,
+        )
+
+
 def runtime_diff_keys(before: dict[str, str | None], after: dict[str, str | None]) -> list[str]:
     return [
         key
@@ -357,7 +485,11 @@ def print_runtime_diff(before: dict[str, str | None], after: dict[str, str | Non
         print(f"runtime changed: {key}", file=sys.stderr)
 
 
-def _run_captured(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_captured(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=ROOT,
@@ -365,22 +497,41 @@ def _run_captured(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         capture_output=True,
+        env=env,
     )
 
 
 def run_python_compile() -> bool:
     ok = True
-    with tempfile.TemporaryDirectory(prefix="verify-refactor-pycompile-") as tmp:
-        compile_root = pathlib.Path(tmp)
-        for path in PYTHON_FILES:
-            try:
-                target = (compile_root / path.relative_to(ROOT)).with_suffix(".pyc")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                py_compile.compile(str(path), cfile=str(target), doraise=True)
-                print(f"py_compile ok: {rel(path)}")
-            except Exception as exc:
-                ok = False
-                print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
+    for path in PYTHON_FILES:
+        try:
+            py_compile.compile(str(path), doraise=True)
+            print(f"py_compile ok: {rel(path)}")
+        except Exception as exc:
+            ok = False
+            print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
+    return ok
+
+
+def run_python311_syntax_checks() -> bool:
+    """Match the repository CI parser without relying on the local Python version."""
+    ok = True
+    checked = 0
+    for path in PYTHON_311_FILES:
+        checked += 1
+        try:
+            source = path.read_text(encoding="utf-8")
+            ast.parse(source, filename=str(path), feature_version=(3, 11))
+        except (SyntaxError, UnicodeError) as exc:
+            ok = False
+            line = getattr(exc, "lineno", None)
+            location = f":{line}" if isinstance(line, int) and line > 0 else ""
+            print(
+                f"python 3.11 syntax failed: {rel(path)}{location}: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+    if ok:
+        print(f"python 3.11 syntax ok: {checked} files")
     return ok
 
 
@@ -403,6 +554,75 @@ def run_js_checks() -> bool:
     return all(run_node_check(path) for path in JS_CHECK_FILES)
 
 
+def run_admin_date_session_storage_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_date_session_storage.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin selected-date sessionStorage contract failed")
+
+
+def run_test_catalog_search_sort_checks() -> None:
+    node_cmd = ["node", "scripts/verify_test_catalog_search_and_sort.mjs"]
+    print("$ " + " ".join(node_cmd))
+    try:
+        proc = _run_captured(node_cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog search and ordering contract failed")
+
+    python_cmd = [sys.executable, "scripts/verify_tests_config_write_safety.py"]
+    print("$ " + " ".join(python_cmd))
+    proc = _run_captured(python_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog revision/write safety contract failed")
+
+
+def run_hover_tooltip_performance_checks() -> None:
+    cmd = ["node", "scripts/verify_hover_tooltip_performance.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin hover tooltip performance/accessibility contract failed")
+
+
+def run_export_log_format_checks() -> None:
+    commands = [
+        (["node", "scripts/verify_export_log_format.mjs"], "export log format contract failed"),
+        (["node", "scripts/verify_roster_export_logic.js"], "roster export regression contract failed"),
+    ]
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
 def run_student_material_access_scope_checks() -> None:
     cmd = ["node", "scripts/verify_student_material_access_scope.js"]
     print("$ " + " ".join(cmd))
@@ -415,6 +635,34 @@ def run_student_material_access_scope_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "student material access scope contract failed")
+
+
+def run_video_manage_id_checks() -> None:
+    cmd = ["node", "scripts/verify_video_manage_ids.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "video manager ID allocation contract failed")
+
+
+def run_mobile_touch_target_checks() -> None:
+    cmd = ["node", "scripts/verify_mobile_touch_targets.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "mobile touch target contract failed")
 
 
 def run_student_training_pack_round_filter_checks() -> None:
@@ -445,6 +693,140 @@ def run_academy_proxy_network_access_checks() -> None:
 def _assert_unit(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def run_smoke_sqlite_observation_unit_checks() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-smoke-sqlite-") as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        main_db = tmp / "app.sqlite"
+        wal = tmp / "app.sqlite-wal"
+        shm = tmp / "app.sqlite-shm"
+        main_db.write_bytes(b"main-database")
+        wal.write_bytes(b"wal-before")
+
+        before_sidecar = sqlite_runtime_metadata(tmp)
+        wal_stat = wal.stat()
+        wal.write_bytes(b"wal-after")
+        os.utime(wal, ns=(wal_stat.st_atime_ns, wal_stat.st_mtime_ns + 2_000_000_000))
+        after_sidecar = sqlite_runtime_metadata(tmp)
+        sidecar_changes = sqlite_change_observations(before_sidecar, after_sidecar)
+        _assert_unit(
+            sidecar_changes == [{
+                "path": "app.sqlite-wal",
+                "change": "modified",
+                "changedFields": ["mtime_ns", "size", "sha256"],
+                "allowed": True,
+            }],
+            f"WAL content changes must produce one structured allowed observation: {sidecar_changes}",
+        )
+        _assert_unit(
+            sqlite_change_observations_are_safe(sidecar_changes),
+            "WAL/SHM-only changes must be allowed",
+        )
+
+        before_main_touch = sqlite_runtime_metadata(tmp)
+        main_stat = main_db.stat()
+        os.utime(
+            main_db,
+            ns=(main_stat.st_atime_ns, main_stat.st_mtime_ns + 2_000_000_000),
+        )
+        after_main_touch = sqlite_runtime_metadata(tmp)
+        main_changes = sqlite_change_observations(before_main_touch, after_main_touch)
+        _assert_unit(
+            main_changes == [{
+                "path": "app.sqlite",
+                "change": "modified",
+                "changedFields": ["mtime_ns"],
+                "allowed": False,
+            }],
+            f"main DB mtime-only changes must be detected without a hash/size change: {main_changes}",
+        )
+        _assert_unit(
+            not sqlite_change_observations_are_safe(main_changes),
+            "main .sqlite/.db metadata changes must fail smoke safety",
+        )
+
+        before_create = sqlite_runtime_metadata(tmp)
+        shm.write_bytes(b"shm")
+        after_create = sqlite_runtime_metadata(tmp)
+        created_changes = sqlite_change_observations(before_create, after_create)
+        _assert_unit(
+            created_changes == [{
+                "path": "app.sqlite-shm",
+                "change": "created",
+                "changedFields": ["existence"],
+                "allowed": True,
+            }],
+            f"created SHM sidecars must be detected: {created_changes}",
+        )
+
+        before_delete = after_create
+        shm.unlink()
+        after_delete = sqlite_runtime_metadata(tmp)
+        deleted_changes = sqlite_change_observations(before_delete, after_delete)
+        _assert_unit(
+            deleted_changes == [{
+                "path": "app.sqlite-shm",
+                "change": "deleted",
+                "changedFields": ["existence"],
+                "allowed": True,
+            }],
+            f"deleted SHM sidecars must be detected: {deleted_changes}",
+        )
+        _assert_unit(
+            set(created_changes[0]) == {"path", "change", "changedFields", "allowed"},
+            "structured observations must not expose before/after file or runtime record values",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            print_sqlite_change_observations(created_changes)
+        prefix = "sqlite file observation: "
+        rendered = stderr.getvalue().strip()
+        _assert_unit(rendered.startswith(prefix), "SQLite change output must use a structured observation prefix")
+        _assert_unit(
+            json.loads(rendered[len(prefix):]) == created_changes[0],
+            "SQLite change output must contain only the redacted structured observation",
+        )
+
+    expected_log_paths = [
+        ("log entry date/sid", "/api/logs/entry?date=2026-06-06&sid=student-1"),
+        ("logs date/sid", "/api/logs?date=2026-06-06&sid=student-1"),
+    ]
+    _assert_unit(
+        smoke_log_paths("2026-06-06", "student-1") == expected_log_paths,
+        "opt-in smoke must wire both exact date/SID log GETs",
+    )
+    _assert_unit(
+        smoke_log_paths("2026-06-06", "") == []
+        and smoke_log_paths("bad-date", "student-1") == [],
+        "opt-in log GET smoke must never widen an invalid or empty candidate",
+    )
+    _assert_unit(
+        all("/api/logs" not in path for _label, path in smoke_paths("2026-06-06", "student-1")),
+        "default smoke paths must continue to exclude both log GETs",
+    )
+
+    source = pathlib.Path(__file__).read_text(encoding="utf-8")
+    smoke_start = source.rfind("def run_smoke_checks(")
+    main_start = source.rfind("def main()")
+    smoke_block = source[smoke_start:main_start]
+    main_block = source[main_start:]
+    for snippet in (
+        '"--smoke-log-gets"',
+        "if args.smoke_log_gets and not args.smoke:",
+        'parser.error("--smoke-log-gets requires --smoke")',
+        "run_smoke_checks(include_log_gets=args.smoke_log_gets)",
+    ):
+        _assert_unit(snippet in main_block, f"log GET smoke CLI wiring must remain explicit: {snippet}")
+    _assert_unit(
+        "if include_log_gets:" in smoke_block
+        and "log_paths = smoke_log_paths(date, sid)" in smoke_block
+        and "if not log_paths:" in smoke_block
+        and "ok = _run_smoke_gets(client, log_paths) and ok" in smoke_block
+        and "Skipped GET /api/logs/entry because it may touch SQLite WAL/schema state." in smoke_block
+        and "Skipped GET /api/logs because it may touch SQLite WAL/schema state." in smoke_block,
+        "default smoke must skip risky log GETs unless the explicit opt-in is enabled",
+    )
 
 
 def run_app_import_smoke_checks() -> None:
@@ -595,7 +977,6 @@ def run_progress_rule_unit_checks() -> None:
         PROGRESS_ALL_STUDENTS_META_KEY,
         PROGRESS_MANUAL_META_KEY,
         WATCH_AUTO_PROGRESS_META_KEY,
-        has_completed_video_before_date,
         merge_progress_day_sid,
         merge_watch_entry,
         watch_auto_status,
@@ -649,27 +1030,6 @@ def run_progress_rule_unit_checks() -> None:
 
     auto_done_preserved = merge_progress_day_sid(auto_done, {"m5": ""}, source="auto")
     _assert_unit(auto_done_preserved.get("m5") == "done", "auto empty update must not downgrade done")
-
-    historical_done = has_completed_video_before_date(
-        {"2026-06-05": {"007": {"m9": "done"}}},
-        {},
-        sid_keys=("007", "7"),
-        mid="m9",
-        before_date="2026-06-06",
-    )
-    _assert_unit(historical_done, "historical done progress must survive replay on a later date")
-
-    historical_cleared = has_completed_video_before_date(
-        {
-            "2026-06-04": {"007": {"m9": "done"}},
-            "2026-06-05": {"007": {"m9": "none"}},
-        },
-        {},
-        sid_keys=("007", "7"),
-        mid="m9",
-        before_date="2026-06-06",
-    )
-    _assert_unit(not historical_cleared, "explicit historical white must clear completion history")
 
     manual_clear = merge_progress_day_sid(auto_done, {"m5": ""})
     _assert_unit("m5" not in manual_clear, "manual empty update should clear progress")
@@ -1294,57 +1654,6 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     _assert_unit(
         api_basic._sid_lookup(weekend_initial[date], "scheduled")["videos"] == ["m1", "m2", "m3", "m4"],
         "date-specific consecutive slots double the first assignment count",
-    )
-
-    low_level = {
-        **scheduled,
-        "id": "low-level",
-        "level": "하",
-        "autoVideoAssignCount": 1,
-        "day2": "토2",
-    }
-    low_level_videos = [
-        {"mid": "low-red", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1", "exNum": {"하": 0}},
-        {"mid": "low-green", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "2", "exNum": {"하": 1}},
-        {"mid": "low-next", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "3", "exNum": {"하": 1}},
-    ]
-    low_level_initial = {}
-    api_basic._ensure_today_auto_assign(
-        low_level_initial,
-        [low_level],
-        low_level_videos,
-        {},
-        date_key=date,
-        watch={},
-        logs={date: {}},
-        extra={},
-        absent=empty_absent,
-        weekend_slots={date: {"low-level": [1, 2]}},
-    )
-    _assert_unit(
-        api_basic._sid_lookup(low_level_initial[date], "low-level")["videos"] == ["low-green", "low-next"],
-        "consecutive auto assignment skips low-level videos excluded from the progress grid",
-    )
-
-    low_level_expansion = {
-        date: {"low-level": {"videos": ["low-green"], "source": "auto"}},
-    }
-    _assert_unit(
-        api_basic._expand_consecutive_auto_assignment_in_updates(
-            low_level_expansion,
-            date,
-            "low-level",
-            [low_level],
-            low_level_videos,
-            {},
-            watch={},
-            weekend_slots={date: {"low-level": [1, 2]}},
-            extra={},
-            absent=empty_absent,
-            logs={date: {}},
-        )
-        and low_level_expansion[date]["low-level"]["videos"] == ["low-green", "low-next"],
-        "consecutive expansion skips low-level progress-excluded videos",
     )
 
     absent_updates = {}
@@ -1990,7 +2299,7 @@ def run_self_study_assignment_route_unit_checks() -> None:
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
         api_basic.load_absent = lambda: deepcopy(state["absent"])
-        api_basic._load_progress_strict = lambda: deepcopy(state["progress"])
+        api_basic._load_progress_strict = lambda *_args, **_kwargs: deepcopy(state["progress"])
         api_basic.get_log_repository = lambda: FakeLogRepository()
         api_basic._updates_lock = lambda: contextlib.nullcontext()
 
@@ -2075,228 +2384,10 @@ def run_self_study_assignment_route_unit_checks() -> None:
             setattr(api_basic, name, value)
 
 
-def run_student_review_video_route_unit_checks() -> None:
-    from copy import deepcopy
-    from types import SimpleNamespace
-    from flask import Flask
-
-    import routes.api_basic as api_basic
-
-    date = "2026-06-06"
-    sid = "student-review-route"
-    students_path = object()
-    videos_path = object()
-    watch_path = object()
-    updates_path = object()
-    state = {
-        "students": [{
-            "id": sid,
-            "curriculum": "ALG",
-            "subCurriculum": "BASE",
-            "level": "\ud558",
-            "day1": "토1",
-        }],
-        "videos": [
-            {"mid": "m1", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "1", "title": "복습 1"},
-            {"mid": "m2", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "2", "title": "복습 2"},
-            {"mid": "m3", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": "3", "title": "오늘 영상"},
-        ],
-        "watch": {},
-        "updates": {
-            date: {
-                sid: {
-                    "videos": ["m3"],
-                    "source": "auto",
-                    "unknownAssignmentField": "preserve-me",
-                },
-            },
-        },
-        "progress": {"2026-06-05": {sid: {"m1": "done", "m2": "interrupted"}}},
-        "absent": {"by_date": {}, "by_student": {}},
-    }
-    state["videos"].append({
-        "mid": "m-red",
-        "curriculum": "ALG",
-        "subCurriculum": "BASE",
-        "chapter": "2.5",
-        "title": "excluded",
-        "exNum": {"\ud558": 0},
-    })
-    sync_calls = []
-
-    class FakeLogRepository:
-        def __init__(self):
-            self.entry = {}
-
-        def read_logs(self, _date, _sid):
-            return {_date: {_sid: deepcopy(self.entry)}}
-
-        def read_entry(self, _date, _sid):
-            return SimpleNamespace(source="fake", entry=deepcopy(self.entry))
-
-        def patch_entry(self, _date, _sid, entry, _base):
-            next_entry = deepcopy(self.entry)
-            for key in entry.get("__clear", []) if isinstance(entry, dict) else []:
-                next_entry.pop(key, None)
-            for key, value in (entry or {}).items():
-                if key != "__clear":
-                    next_entry[key] = deepcopy(value)
-            self.entry = next_entry
-            return SimpleNamespace(
-                merged=deepcopy(next_entry),
-                sqlite_ok=True,
-                json_ok=True,
-                json_conflict_entry=None,
-            )
-
-    repository = FakeLogRepository()
-    original = {
-        "STU_PATH": api_basic.STU_PATH,
-        "VID_PATH": api_basic.VID_PATH,
-        "WATCH_PATH": api_basic.WATCH_PATH,
-        "UPD_PATH": api_basic.UPD_PATH,
-        "load": api_basic.load,
-        "save_atomic": api_basic.save_atomic,
-        "load_absent": api_basic.load_absent,
-        "_load_progress_strict": api_basic._load_progress_strict,
-        "get_log_repository": api_basic.get_log_repository,
-        "_updates_lock": api_basic._updates_lock,
-        "_student_is_registered_on_date": api_basic._student_is_registered_on_date,
-        "_sync_review_video_registration_log": api_basic._sync_review_video_registration_log,
-    }
-
-    def fake_load(path):
-        if path is students_path:
-            return deepcopy(state["students"])
-        if path is videos_path:
-            return deepcopy(state["videos"])
-        if path is watch_path:
-            return deepcopy(state["watch"])
-        if path is updates_path:
-            return deepcopy(state["updates"])
-        return {}
-
-    def fake_save(path, value, **_kwargs):
-        if path is updates_path:
-            state["updates"] = deepcopy(value)
-
-    try:
-        api_basic.STU_PATH = students_path
-        api_basic.VID_PATH = videos_path
-        api_basic.WATCH_PATH = watch_path
-        api_basic.UPD_PATH = updates_path
-        api_basic.load = fake_load
-        api_basic.save_atomic = fake_save
-        api_basic.load_absent = lambda: deepcopy(state["absent"])
-        api_basic._load_progress_strict = lambda: deepcopy(state["progress"])
-        api_basic.get_log_repository = lambda: repository
-        api_basic._updates_lock = lambda: contextlib.nullcontext()
-        api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
-        api_basic._sync_review_video_registration_log = lambda review_date, review_sid, mids: sync_calls.append(
-            (review_date, review_sid, list(mids))
-        ) or {}
-
-        app = Flask("verify-student-review-video-route")
-        app.register_blueprint(api_basic.bp_api_basic)
-        client = app.test_client()
-
-        response = client.post(
-            "/api/updates/review",
-            json={"date": date, "sid": sid, "videos": ["m1", "m2", "m1"]},
-        )
-        payload = response.get_json() or {}
-        expected = {
-            "videos": ["m3", "m1", "m2"],
-            "source": "auto",
-            "unknownAssignmentField": "preserve-me",
-            "reviewVideos": ["m1", "m2"],
-        }
-        _assert_unit(
-            response.status_code == 200
-            and payload.get("assignment") == expected
-            and state["updates"][date][sid] == expected
-            and sync_calls[-1] == (date, sid, ["m1", "m2"]),
-            "student review registration must merge eligible videos and preserve assignment metadata",
-        )
-
-        response = client.post(
-            "/api/updates/patch",
-            json={
-                "date": date,
-                "sid": sid,
-                "entry": {"videos": ["m3", "m2"], "source": "auto", "reviewVideos": ["m2"]},
-            },
-        )
-        payload = response.get_json() or {}
-        _assert_unit(
-            response.status_code == 200
-            and payload.get("assignment", {}).get("reviewVideos") == ["m2"],
-            "admin video assignment patch must keep selected gray review metadata",
-        )
-
-        response = client.post(
-            "/api/updates/patch",
-            json={
-                "date": date,
-                "sid": sid,
-                "entry": {"videos": ["m3"], "source": "auto", "reviewVideos": []},
-            },
-        )
-        payload = response.get_json() or {}
-        _assert_unit(
-            response.status_code == 200
-            and "reviewVideos" not in (payload.get("assignment") or {})
-            and state["updates"][date][sid]["videos"] == ["m3"]
-            and sync_calls[-1] == (date, sid, []),
-            "unchecking gray review videos must cancel their registration without deleting unrelated assignment data",
-        )
-
-        state["updates"][date][sid] = {
-            "videos": ["m3", "m1"],
-            "source": "auto",
-            "reviewVideos": ["m1"],
-        }
-        _assert_unit(
-            api_basic.record_review_video_watch(date, sid, "m1") is True
-            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCHED_MIDS_KEY) == ["m1"]
-            and api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY in repository.entry
-            and "복습 영상 시청" in repository.entry.get("notes", ""),
-            "watching a registered review video must append a counseling record",
-        )
-        previous_log = deepcopy(repository.entry)
-        _assert_unit(
-            api_basic.record_review_video_watch(date, sid, "m3") is False
-            and repository.entry == previous_log,
-            "watching a non-review assigned video must not append a review counseling record",
-        )
-
-        response = client.post(
-            "/api/updates/review",
-            json={"date": date, "sid": sid, "videos": ["m1"], "action": "cancel"},
-        )
-        payload = response.get_json() or {}
-        _assert_unit(
-            response.status_code == 200
-            and payload.get("reviewVideos") == []
-            and payload.get("assignment", {}).get("videos") == ["m3"]
-            and "reviewVideos" not in (payload.get("assignment") or {})
-            and sync_calls[-1] == (date, sid, [])
-            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCHED_MIDS_KEY) == ["m1"]
-            and repository.entry.get(api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY)
-                == previous_log.get(api_basic.REVIEW_VIDEO_WATCH_NOTE_KEY)
-            and repository.entry.get("notes") == previous_log.get("notes"),
-            "cancelling a registered review must preserve its existing counseling watch record",
-        )
-    finally:
-        for name, value in original.items():
-            setattr(api_basic, name, value)
-
-
 def run_video_assignment_boundary_source_checks() -> None:
     today_js = (ROOT / "static/js/admin/features/today.js").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
     export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
-    student_copy_js = (ROOT / "static/js/student copy.js").read_text("utf-8")
 
     _assert_unit(
         "async function refreshUpdatesAtAssignmentBoundary" in today_js,
@@ -2323,17 +2414,10 @@ def run_video_assignment_boundary_source_checks() -> None:
         "'/api/updates?readOnly=1'" in export_logs_js,
         "roster export updates hydration must not initialize or re-pick videos",
     )
-    _assert_unit(
-        "fetch('/api/updates/patch'" in student_copy_js
-        and "entry: { videos: last.map(String), source: 'auto' }" in student_copy_js
-        and "body: JSON.stringify(nextUpdates)" not in student_copy_js,
-        "legacy student auto-assignment fallback must use the guarded single-assignment patch endpoint",
-    )
 
 
 def run_self_study_video_assignment_source_checks() -> None:
     api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
-    api_watch_py = (ROOT / "routes/api_watch.py").read_text("utf-8")
     today_state_js = (ROOT / "static/js/admin/features/today.state.js").read_text("utf-8")
     export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
@@ -2341,18 +2425,6 @@ def run_self_study_video_assignment_source_checks() -> None:
     _assert_unit(
         "@bp_api_basic.post(\"/api/updates/self-study\")" in api_basic_py,
         "self-study review assignment must have a dedicated updates endpoint",
-    )
-    _assert_unit(
-        "@bp_api_basic.post(\"/api/updates/review\")" in api_basic_py
-        and 'STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE = "studentReview"' in api_basic_py
-        and 'REVIEW_VIDEO_ASSIGNMENT_KEY = "reviewVideos"' in api_basic_py,
-        "student review registration must persist distinguishable assignment metadata",
-    )
-    _assert_unit(
-        "record_review_video_watch" in api_watch_py
-        and "REVIEW_VIDEO_REGISTRATION_NOTE_KEY" in api_basic_py
-        and "REVIEW_VIDEO_WATCH_NOTE_KEY" in api_basic_py,
-        "registered review watching must flow into counseling notes",
     )
     _assert_unit(
         "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in api_basic_py,
@@ -2383,15 +2455,11 @@ def run_self_study_video_assignment_source_checks() -> None:
     )
     _assert_unit(
         "selfStudy: b.selfStudy === true" in student_js
-        and "async function registerReviewVideos()" in student_js
-        and "async function cancelRegisteredReviewVideo(mid)" in student_js
-        and "fetch('/api/updates/review'" in student_js
-        and "action: 'cancel'" in student_js
-        and "playlist-review-cancel" in student_js
-        and "registeredReviewVideos" in student_js
-        and "localStorage.setItem(reviewPlaylistStorageKey()" not in student_js
-        and "/api/updates/self-study" not in student_js,
-        "student review rows must use the server-backed date/SID assignment",
+        and "function registerReviewVideos" in student_js
+        and "registeredReviewMids = normalizeStoredReviewMids" in student_js
+        and "saveRegisteredReviewMids();" in student_js
+        and "previousVideosRegister" in student_js,
+        "student self-study review rows must register in the server-authorized local playlist",
     )
     review_surface_start = student_js.find("function reviewSurfaceBlocked()")
     review_surface_end = student_js.find("\n  }", review_surface_start)
@@ -2416,13 +2484,6 @@ def run_self_study_video_assignment_source_checks() -> None:
         "isSelfStudyScheduledForDate(stu, today)" in video_modal_js,
         "video modal must not create new automatic progress for scheduled self-study",
     )
-    _assert_unit(
-        "is-review-registered" in video_modal_js
-        and "accent-color:#9ca3af" in video_modal_js
-        and "reviewVideos: reviewMids" in video_modal_js
-        and "activeRegisteredReviewMids" in video_modal_js,
-        "video assignment popup must distinguish and persist gray student review selections",
-    )
 
 
 def run_watch_route_progress_unit_checks() -> None:
@@ -2431,12 +2492,14 @@ def run_watch_route_progress_unit_checks() -> None:
     import routes.api_basic as api_basic
     import routes.api_watch as api_watch
 
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
     old_watch_path = api_watch.WATCH_PATH
     old_network_allowed = api_watch.academy_network_allowed
 
-    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         watch_path = pathlib.Path(tmpdir) / "watch.json"
         progress_path.write_text("{}", "utf-8")
@@ -2465,59 +2528,6 @@ def run_watch_route_progress_unit_checks() -> None:
 
             merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
             _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
-
-            progress_path.write_text(
-                json.dumps(
-                    {"2026-06-06": {"007": {"m1": "done"}}},
-                    ensure_ascii=False,
-                ),
-                "utf-8",
-            )
-            merged = api_watch._save_progress_status("2026-06-07", "007", "m1", "interrupted")
-            _assert_unit(
-                merged.get("m1") == "done",
-                "later replay must preserve a previously completed progress status",
-            )
-
-            progress_path.write_text("{}", "utf-8")
-            watch_path.write_text(
-                json.dumps(
-                    {
-                        "2026-06-06": {
-                            "007": {
-                                "m4": {
-                                    "last": 95,
-                                    "dur": 100,
-                                    "completed": True,
-                                    "updatedAt": 1,
-                                }
-                            }
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                "utf-8",
-            )
-            merged = api_watch._save_progress_status("2026-06-07", "007", "m4", "interrupted")
-            _assert_unit(
-                merged.get("m4") == "done",
-                "later replay must preserve a previously completed watch status",
-            )
-
-            progress_path.write_text(
-                json.dumps(
-                    {
-                        "2026-06-06": {
-                            "007": {
-                                "m2": "none",
-                                PROGRESS_MANUAL_META_KEY: {"m2": True},
-                            }
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                "utf-8",
-            )
 
             app = Flask("verify_watch_status")
             app.register_blueprint(api_watch.bp_api_watch)
@@ -2596,7 +2606,9 @@ def run_log_repository_unit_checks() -> None:
     from core.log_repository import LogRepository
     from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
 
-    with tempfile.TemporaryDirectory(prefix="verify-logrepo-") as tmpdir:
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="verify-logrepo-", dir=temp_base) as tmpdir:
         tmp = pathlib.Path(tmpdir)
         logs_path = tmp / "logs.json"
         db_path = tmp / "app.sqlite"
@@ -2839,6 +2851,196 @@ def run_log_repository_unit_checks() -> None:
         error = str(payload.get("error") or "")
         _assert_unit(error, "sqlite conflict plus json failure must include an error")
         _assert_unit("C:" not in error and "runtime" not in error, "conflict json failure error must not expose raw local paths")
+
+
+def run_legacy_test_record_cache_unit_checks() -> None:
+    import datetime as dt
+
+    from routes import api_basic, api_tests
+
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    original_tests_path = api_tests.TESTS_PATH
+    original_logs_path = api_tests.LOGS_PATH
+    original_get_log_repository = api_basic.get_log_repository
+    original_load = api_tests.load
+
+    def reset_cache() -> None:
+        with api_tests._LEGACY_TEST_RECORD_CACHE_LOCK:
+            api_tests._LEGACY_TEST_RECORD_CACHE = None
+
+    def record(name: str, *, created_at: str = "", score: str = "8/10", memo: str = "") -> dict:
+        return {
+            "name": name,
+            "score": score,
+            "createdAt": created_at,
+            "memo": memo,
+            "wrong": [2],
+            "testMeta": {"type": "UNIT", "curriculum": "수학"},
+        }
+
+    with tempfile.TemporaryDirectory(prefix="verify-test-record-cache-", dir=temp_base) as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        tests_path = tmp / "tests.json"
+        logs_path = tmp / "logs.json"
+        date_one = "2026-06-01"
+        date_two = "2026-06-02"
+        duplicate_name = "단원 / 캐시 회귀"
+        tests_path.write_text(
+            json.dumps({date_one: {"s1": [record(duplicate_name, memo="durable")]}}, ensure_ascii=False),
+            "utf-8",
+        )
+        logs_path.write_text(
+            json.dumps(
+                {
+                    date_one: {
+                        "s1": {"tests": [record(duplicate_name, memo="legacy duplicate")]},
+                        "bad": {"tests": [record("zero", score="1/0"), {"score": "1/2"}]},
+                    },
+                    date_two: {"s1": {"tests": [record(duplicate_name)]}},
+                    "not-a-date": {"s2": {"tests": [record("invalid date")]}},
+                },
+                ensure_ascii=False,
+            ),
+            "utf-8",
+        )
+        api_tests.TESTS_PATH = tests_path
+        api_tests.LOGS_PATH = logs_path
+
+        load_calls = 0
+
+        class CountingLogRepository:
+            def read_json_map(self):
+                nonlocal load_calls
+                load_calls += 1
+                return json.loads(logs_path.read_text("utf-8"))
+
+        api_basic.get_log_repository = CountingLogRepository
+        reset_cache()
+        try:
+            start = dt.date.fromisoformat(date_one)
+            end = dt.date.fromisoformat(date_two)
+            first = list(api_tests._iter_test_records(start, end))
+            duplicate_rows = [row for row in first if row.get("name") == duplicate_name]
+            _assert_unit(
+                len(first) == 2,
+                "malformed, invalid-date, and zero-total legacy records must remain excluded",
+            )
+            _assert_unit(
+                len(duplicate_rows) == 2,
+                "same blank-createdAt test on different dates must remain two attempts",
+            )
+            _assert_unit(
+                [row.get("day").isoformat() for row in duplicate_rows] == [date_one, date_two],
+                "durable-first order and cross-date legacy fallback must stay stable",
+            )
+            _assert_unit(
+                duplicate_rows[0].get("memo") == "durable",
+                "same-day durable test records must remain authoritative over legacy duplicates",
+            )
+            _assert_unit(
+                len(list(api_tests._iter_test_records(start, start))) == 1,
+                "test record date bounds must remain inclusive",
+            )
+
+            duplicate_rows[-1]["meta"]["type"] = "POISONED"
+            second = list(api_tests._iter_test_records(start, end))
+            _assert_unit(load_calls == 1, "unchanged legacy logs must be projected once across requests")
+            _assert_unit(
+                all(row.get("meta", {}).get("type") == "UNIT" for row in second),
+                "cached legacy test candidates must return defensive copies",
+            )
+
+            replacement = tmp / "logs-replacement.json"
+            replacement.write_text(
+                json.dumps(
+                    {
+                        date_two: {
+                            "s1": {"tests": [record(duplicate_name)]},
+                            "s2": {"tests": [record("단원 / 교체 감지", created_at="2026-06-02T12:00:00Z")]},
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "utf-8",
+            )
+            os.replace(replacement, logs_path)
+            after_replace = list(api_tests._iter_test_records(start, end))
+            _assert_unit(load_calls == 2, "atomic logs replacement must invalidate legacy test candidates")
+            _assert_unit(
+                any(row.get("name") == "단원 / 교체 감지" for row in after_replace),
+                "cache reload must expose records from the replaced logs file",
+            )
+
+            reset_cache()
+            fallback_failures = 0
+
+            class FailingLogRepository:
+                def read_json_map(self):
+                    raise RuntimeError("synthetic repository read failure")
+
+            def fail_logs_load_once(path):
+                nonlocal fallback_failures
+                if pathlib.Path(path) == logs_path and fallback_failures == 0:
+                    fallback_failures += 1
+                    raise RuntimeError("synthetic fallback read failure")
+                return original_load(path)
+
+            api_basic.get_log_repository = FailingLogRepository
+            api_tests.load = fail_logs_load_once
+            try:
+                list(api_tests._iter_test_records(start, end))
+                _assert_unit(False, "failed legacy reads must remain visible")
+            except RuntimeError as exc:
+                _assert_unit(
+                    "synthetic fallback read failure" in str(exc),
+                    "legacy read failure must not be replaced by stale cached data",
+                )
+            recovered = list(api_tests._iter_test_records(start, end))
+            _assert_unit(
+                any(row.get("name") == "단원 / 교체 감지" for row in recovered),
+                "a failed legacy read must not become sticky",
+            )
+
+            api_tests.load = original_load
+            reset_cache()
+            unstable_calls = 0
+
+            class ReplacingLogRepository:
+                def read_json_map(self):
+                    nonlocal unstable_calls
+                    unstable_calls += 1
+                    snapshot = json.loads(logs_path.read_text("utf-8"))
+                    if unstable_calls == 1:
+                        next_path = tmp / "logs-concurrent-replacement.json"
+                        next_path.write_text(
+                            json.dumps(
+                                {date_two: {"s3": {"tests": [record("단원 / 안정 재시도")]}}},
+                                ensure_ascii=False,
+                            ),
+                            "utf-8",
+                        )
+                        os.replace(next_path, logs_path)
+                    return snapshot
+
+            api_basic.get_log_repository = ReplacingLogRepository
+            first_unstable = list(api_tests._iter_test_records(start, end))
+            second_stable = list(api_tests._iter_test_records(start, end))
+            _assert_unit(
+                unstable_calls == 2,
+                "a signature change during legacy projection must force a stable reload",
+            )
+            _assert_unit(
+                any(row.get("name") == "단원 / 교체 감지" for row in first_unstable)
+                and any(row.get("name") == "단원 / 안정 재시도" for row in second_stable),
+                "unstable reads may serve their snapshot but must not cache it under the replacement signature",
+            )
+        finally:
+            api_tests.TESTS_PATH = original_tests_path
+            api_tests.LOGS_PATH = original_logs_path
+            api_basic.get_log_repository = original_get_log_repository
+            api_tests.load = original_load
+            reset_cache()
 
 
 def run_student_assigned_tests_unit_checks() -> None:
@@ -3174,6 +3376,7 @@ def run_student_answer_link_precedence_unit_checks() -> None:
 def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     """Exercise the extracted bootstrap projection with isolated in-memory fixtures."""
     import ast
+    import datetime as dt
     from copy import deepcopy
 
     from core.video_review_rules import resolve_video_review_states_before_date
@@ -3185,13 +3388,6 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "_sid_keys",
         "_sid_lookup",
         "_normalize_video_assign_list",
-        "_normalize_review_video_mids",
-        "_review_video_mids_for_assignment",
-        "_is_training_pack_video",
-        "_is_training_pack_student",
-        "_student_training_pack_videos",
-        "_normalize_training_pack_video_mids",
-        "_training_pack_video_mids_for_assignment",
         "_chap_num",
         "_academy_restricted_student_videos",
         "_student_completion_videos",
@@ -3200,22 +3396,18 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "_student_eligible_review_video_mids",
         "_filter_self_study_assignment_for_response",
         "_student_review_video_projection",
-        "_student_training_pack_projection",
         "_self_study_review_video_mids",
         "_student_absent_on_date",
-        "_active_student_alias_sid",
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     extracted = {node.name for node in nodes}
     _assert_unit(extracted == names, "bootstrap fixture must extract every route review helper")
     namespace = {
         "__name__": "student_previous_video_review_fixture",
+        "dt": dt,
         "deepcopy": deepcopy,
         "resolve_video_review_states_before_date": resolve_video_review_states_before_date,
         "DEFAULT_AUTO_VIDEO_ASSIGN_COUNT": 3,
-        "REVIEW_VIDEO_ASSIGNMENT_KEY": "reviewVideos",
-        "TRAINING_PACK_VIDEO_SUBCURRICULUM": "트팩",
-        "TRAINING_PACK_ASSIGNMENT_KEY": "trainingPackVideos",
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "routes/api_basic.py", "exec"), namespace)
 
@@ -3471,6 +3663,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     }
     route_namespace["_log_rules"] = SimpleNamespace(truthy=lambda value: bool(value))
     route_namespace["_build_latest_status_by_sid"] = lambda _progress: {}
+    route_namespace["_student_dashboard_enabled"] = lambda: False
     route_namespace["_course_videos_completed"] = lambda *_args: False
     route_namespace["_student_homework_book_names_from_log"] = lambda _entry: []
     route_namespace["_assigned_material_list"] = lambda value: value.get("materials", []) if isinstance(value, dict) else []
@@ -3551,12 +3744,17 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
 
     route_namespace["load"] = fixture_load
     route_namespace["load_absent"] = lambda: deepcopy(route_state["absent"])
-    route_namespace["_load_progress_strict"] = lambda: deepcopy(route_state["progress"])
+    route_namespace["_load_progress_strict"] = lambda *_args, **_kwargs: deepcopy(route_state["progress"])
     route_namespace["get_log_repository"] = lambda: FixtureRepository()
     route_namespace["academy_network_allowed"] = lambda: bool(route_state["academy_allowed"])
-    route_namespace["_student_is_registered_on_date"] = lambda *_args: bool(route_state["registered"])
+    route_namespace["_student_is_registered_on_date"] = lambda *_args, **_kwargs: bool(route_state["registered"])
     route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
     route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
+    route_namespace["_is_public_student_request"] = lambda: False
+    route_namespace["_public_session_sid"] = lambda: None
+    route_namespace["_student_request_academy_allowed"] = lambda: bool(route_state["academy_allowed"])
+    route_namespace["_finalize_public_bootstrap"] = lambda payload, *_args: payload
+    route_namespace["_active_student_alias_sid"] = lambda *_args: None
 
     exec(compile(ast.Module(body=[route_node], type_ignores=[]), "routes/api_basic.py", "exec"), route_namespace)
     route_fn = route_namespace["api_student_bootstrap"]
@@ -3850,20 +4048,20 @@ def run_student_bootstrap_unit_checks() -> None:
         return {}
 
     original_load = api_basic.load
-    original_load_progress = api_basic._load_progress_strict
     original_load_absent = api_basic.load_absent
     original_get_log_repository = api_basic.get_log_repository
     original_academy_network_allowed = api_basic.academy_network_allowed
     original_student_is_registered_on_date = api_basic._student_is_registered_on_date
+    original_progress_loader = api_basic._load_progress_strict
     original_config_loader = api_basic._load_tests_config_for_answer_links
     original_map_loader = api_basic._load_test_answer_link_map
 
     api_basic.load = fake_load
-    api_basic._load_progress_strict = lambda _path=None: json.loads(json.dumps(progress))
     api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
     api_basic.get_log_repository = lambda: FakeLogRepository()
     api_basic.academy_network_allowed = lambda: True
     api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
+    api_basic._load_progress_strict = lambda *_args, **_kwargs: progress
     api_basic._load_tests_config_for_answer_links = lambda: tests_config
     api_basic._load_test_answer_link_map = lambda: {
         "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}}
@@ -3921,11 +4119,11 @@ def run_student_bootstrap_unit_checks() -> None:
         _assert_unit(missing_payload.get("error") == "missing sid", "student bootstrap missing sid must return missing sid")
     finally:
         api_basic.load = original_load
-        api_basic._load_progress_strict = original_load_progress
         api_basic.load_absent = original_load_absent
         api_basic.get_log_repository = original_get_log_repository
         api_basic.academy_network_allowed = original_academy_network_allowed
         api_basic._student_is_registered_on_date = original_student_is_registered_on_date
+        api_basic._load_progress_strict = original_progress_loader
         api_basic._load_tests_config_for_answer_links = original_config_loader
         api_basic._load_test_answer_link_map = original_map_loader
 
@@ -3982,22 +4180,41 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
     original_tests_path = api_tests.TESTS_PATH
     original_tests_cfg_path = api_tests.TESTS_CFG_PATH
     original_progress_path = getattr(api_tests, "PRG_PATH", None)
+    original_basic_progress_path = api_basic.PRG_PATH
+    original_basic_updates_path = api_basic.UPD_PATH
+    original_basic_progress_loader = api_basic._load_progress_strict
     original_basic_load = api_basic.load
-    original_basic_load_progress = api_basic._load_progress_strict
     original_basic_load_absent = api_basic.load_absent
     original_basic_get_log_repository = api_basic.get_log_repository
     original_basic_academy_network_allowed = api_basic.academy_network_allowed
     original_basic_student_is_registered_on_date = api_basic._student_is_registered_on_date
     original_basic_config_loader = api_basic._load_tests_config_for_answer_links
     original_basic_map_loader = api_basic._load_test_answer_link_map
+    protected_live_paths = {
+        pathlib.Path(path)
+        for path in (
+            original_tests_path,
+            original_tests_cfg_path,
+            original_progress_path,
+            original_basic_progress_path,
+            original_basic_updates_path,
+        )
+        if path is not None
+    }
+    protected_live_fingerprints = {
+        path: sha256_file(path) if path.is_file() else None
+        for path in protected_live_paths
+    }
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = pathlib.Path(tmp)
         tests_path = tmp_dir / "tests.json"
         tests_cfg_path = tmp_dir / "tests-config.json"
         progress_path = tmp_dir / "progress.json"
+        updates_path = tmp_dir / "updates.json"
         tests_path.write_text("{}", "utf-8")
         tests_cfg_path.write_text(json.dumps(tests_config, ensure_ascii=False), "utf-8")
+        updates_path.write_text("{}", "utf-8")
         progress_path.write_text(
             json.dumps(
                 {
@@ -4033,8 +4250,10 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
         api_tests.TESTS_PATH = tests_path
         api_tests.TESTS_CFG_PATH = tests_cfg_path
         api_tests.PRG_PATH = progress_path
+        api_basic.PRG_PATH = progress_path
+        api_basic.UPD_PATH = updates_path
+        api_basic._load_progress_strict = lambda *_args, **_kwargs: json.loads(progress_path.read_text("utf-8"))
         api_basic.load = fake_load
-        api_basic._load_progress_strict = lambda _path=None: json.loads(progress_path.read_text("utf-8"))
         api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
         api_basic.get_log_repository = lambda: FakeLogRepository()
         api_basic.academy_network_allowed = lambda: True
@@ -4095,14 +4314,25 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
                     pass
             else:
                 api_tests.PRG_PATH = original_progress_path
+            api_basic.PRG_PATH = original_basic_progress_path
+            api_basic.UPD_PATH = original_basic_updates_path
+            api_basic._load_progress_strict = original_basic_progress_loader
             api_basic.load = original_basic_load
-            api_basic._load_progress_strict = original_basic_load_progress
             api_basic.load_absent = original_basic_load_absent
             api_basic.get_log_repository = original_basic_get_log_repository
             api_basic.academy_network_allowed = original_basic_academy_network_allowed
             api_basic._student_is_registered_on_date = original_basic_student_is_registered_on_date
             api_basic._load_tests_config_for_answer_links = original_basic_config_loader
             api_basic._load_test_answer_link_map = original_basic_map_loader
+            changed_live_paths = [
+                str(path)
+                for path, before in protected_live_fingerprints.items()
+                if (sha256_file(path) if path.is_file() else None) != before
+            ]
+            _assert_unit(
+                not changed_live_paths,
+                f"submit-test fixture modified live runtime paths: {changed_live_paths}",
+            )
 
 
 def run_admin_tests_record_detail_contract_checks() -> None:
@@ -4292,7 +4522,9 @@ def run_catalog_script_temp_file_behavior_checks() -> None:
         live_map: fingerprint(live_map),
     }
 
-    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-") as tmpdir:
+    temp_base = ROOT / "tmp"
+    temp_base.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-", dir=temp_base) as tmpdir:
         tmp = pathlib.Path(tmpdir)
         config_path = tmp / "tests-config.json"
         config_path.write_text(json.dumps({"categories": {}}, ensure_ascii=False), encoding="utf-8")
@@ -4478,6 +4710,7 @@ def _student_css_selector_is_scoped(selector: str) -> bool:
 
 def run_admin_css_scope_source_checks() -> None:
     admin_css = (ROOT / "static/css/admin.css").read_text(encoding="utf-8")
+    normalized_css = re.sub(r"\s+", " ", admin_css)
     _assert_unit(
         any(font in admin_css for font in ("Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic")),
         "admin.css must preserve Korean-capable font stack",
@@ -4492,6 +4725,21 @@ def run_admin_css_scope_source_checks() -> None:
     _assert_unit(
         not offenders,
         "admin.css has unscoped selectors:\n" + "\n".join(offenders[:80]),
+    )
+    _assert_unit(
+        "@media (max-width: 640px) { body.admin .makeup-planner-head { align-items: stretch; flex-direction: column;"
+        in normalized_css,
+        "mobile makeup planner heading must stack instead of overflowing the viewport",
+    )
+    _assert_unit(
+        "body.admin .makeup-planner input[type=\"search\"] { width: 100%; min-width: 0; height: 44px;"
+        in normalized_css,
+        "mobile makeup planner search must fit the viewport with a 44px target",
+    )
+    _assert_unit(
+        "@media (max-width: 1024px) { body.admin :where( button, a.btn, input:not([type=\"checkbox\"]):not([type=\"radio\"]), select ) { min-height: 44px !important;"
+        in normalized_css,
+        "mobile and tablet admin controls must keep a 44px touch target",
     )
 
 
@@ -4571,7 +4819,7 @@ def run_refactor_contract_evidence_source_checks() -> None:
     unit_start = script_source.rfind("def run_unit_checks()")
     selected_start = script_source.rfind("def run_selected_checks")
     unit_block = script_source[unit_start:selected_start]
-    smoke_start = script_source.rfind("def run_smoke_checks()")
+    smoke_start = script_source.rfind("def run_smoke_checks(")
     main_start = script_source.rfind("def main()")
     smoke_block = script_source[smoke_start:main_start]
 
@@ -4660,6 +4908,288 @@ def run_frontend_evidence_inventory_checks() -> None:
         _assert_unit(snippet in cleanup_receipt, f"server cleanup receipt must record {snippet}")
 
 
+def run_verifier_execution_policy_source_checks() -> None:
+    """Keep ignored browser receipts strict but opt-in for reproducible defaults."""
+    source = pathlib.Path(__file__).read_text(encoding="utf-8")
+    default_start = source.index("def run_unit_checks() -> bool:")
+    default_end = source.index("def run_selected_checks(", default_start)
+    default_block = source[default_start:default_end]
+    _assert_unit(
+        "run_frontend_evidence_inventory_checks," not in default_block,
+        "ignored frontend browser evidence must not be required by the default safety suite",
+    )
+    _assert_unit(
+        'if args.only_frontend_evidence_inventory:' in source
+        and "selected_checks.append(run_frontend_evidence_inventory_checks)" in source,
+        "strict frontend evidence validation must remain available through its explicit selector",
+    )
+    _assert_unit(
+        "ast.parse(source, filename=str(path), feature_version=(3, 11))" in source
+        and "ok = run_python311_syntax_checks() and ok" in source,
+        "the default verifier must enforce the Python 3.11 CI syntax boundary",
+    )
+
+
+def run_student_mobile_result_contract_checks() -> None:
+    cmd = ["node", "--test", "scripts/student_mobile_app_checks/result-contract.test.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student mobile JavaScript result contract failed")
+
+
+def run_student_mobile_pwa_flow_checks() -> None:
+    """Exercise the real student-app install-guide boot and interaction contract."""
+    cmd = ["node", "scripts/student_mobile_app_checks/pwa-flow.mjs"]
+    print("$ " + " ".join(cmd))
+    with tempfile.TemporaryDirectory(prefix="verify-student-install-guide-") as tmpdir:
+        evidence = pathlib.Path(tmpdir) / "pwa-flow-check.json"
+        env = os.environ.copy()
+        env["STUDENT_APP_PWA_FLOW_EVIDENCE"] = str(evidence)
+        try:
+            proc = _run_captured(cmd, env=env)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "student install-guide PWA flow failed")
+        _assert_unit(evidence.is_file(), "student install-guide PWA flow did not write its temp receipt")
+        receipt = json.loads(evidence.read_text(encoding="utf-8"))
+        _assert_unit(receipt.get("suite") == "student-mobile-app-pwa-flow", "student install-guide receipt identity mismatch")
+        _assert_unit(
+            isinstance(receipt.get("checks"), int) and receipt["checks"] >= 16,
+            "student install-guide receipt must contain the full current contract",
+        )
+
+
+def _execute_student_mobile_deployment_checker(
+    checker: Callable[[], dict[str, object]],
+    *,
+    expected_name: str,
+    minimum_assertions: int,
+    runtime_observer: Callable[[], object] = runtime_metadata_fingerprints,
+) -> int:
+    """Validate one receipt and restore process globals even when its checker fails."""
+    from scripts import backup_runtime_data
+
+    original_environment = os.environ.copy()
+    original_backup_root = backup_runtime_data.ROOT
+    original_cwd = pathlib.Path.cwd()
+    runtime_before = runtime_observer()
+    result: dict[str, object] | None = None
+    failure: BaseException | None = None
+    failure_traceback = None
+    observer_failure: BaseException | None = None
+    environment_changed = False
+    backup_root_changed = False
+    cwd_changed = False
+    runtime_changed = False
+    try:
+        result = checker()
+    except BaseException as exc:  # restore shared verifier state before propagating any failure
+        failure = exc
+        failure_traceback = exc.__traceback__
+    finally:
+        try:
+            environment_changed = os.environ != original_environment
+            backup_root_changed = backup_runtime_data.ROOT != original_backup_root
+            cwd_changed = pathlib.Path.cwd() != original_cwd
+            runtime_changed = runtime_observer() != runtime_before
+        except BaseException as exc:
+            observer_failure = exc
+        finally:
+            os.environ.clear()
+            os.environ.update(original_environment)
+            backup_runtime_data.ROOT = original_backup_root
+            if pathlib.Path.cwd() != original_cwd:
+                os.chdir(original_cwd)
+
+    if observer_failure is not None:
+        invariant_error = AssertionError(
+            "student deployment runtime observer failed after shared verifier state was restored"
+        )
+        if failure is not None:
+            raise invariant_error from failure
+        raise invariant_error from observer_failure
+
+    if environment_changed or backup_root_changed or cwd_changed or runtime_changed:
+        changed = []
+        if environment_changed:
+            changed.append("process environment")
+        if backup_root_changed:
+            changed.append("backup runtime root")
+        if cwd_changed:
+            changed.append("working directory")
+        if runtime_changed:
+            changed.append("runtime metadata/content")
+        invariant_error = AssertionError(
+            "student deployment checker changed shared verifier state; restored: " + ", ".join(changed)
+        )
+        if failure is not None:
+            raise invariant_error from failure
+        raise invariant_error
+    if failure is not None:
+        raise failure.with_traceback(failure_traceback)
+
+    _assert_unit(isinstance(result, dict), "student deployment checker returned a non-object receipt")
+    _assert_unit(result.get("name") == expected_name, "student deployment receipt identity mismatch")
+    _assert_unit(result.get("passed") is True, "student deployment contract did not pass")
+    assertions = result.get("assertions")
+    _assert_unit(
+        isinstance(assertions, int) and not isinstance(assertions, bool) and assertions >= minimum_assertions,
+        "student deployment receipt must contain the full current contract",
+    )
+    return assertions
+
+
+def run_student_mobile_deployment_guard_unit_checks() -> None:
+    """Adversarially prove receipt validation and exception-path state restoration."""
+    from scripts import backup_runtime_data
+
+    original_environment = os.environ.copy()
+    original_backup_root = backup_runtime_data.ROOT
+    original_cwd = pathlib.Path.cwd()
+    _assert_unit(
+        _execute_student_mobile_deployment_checker(
+            lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+        ) == 3,
+        "student deployment guard rejected a valid receipt",
+    )
+    invalid_receipts = (
+        {"name": "wrong", "assertions": 3, "passed": True},
+        {"name": "deployment-fixture", "assertions": 0, "passed": True},
+        {"name": "deployment-fixture", "assertions": True, "passed": True},
+        {"name": "deployment-fixture", "assertions": 3, "passed": False},
+    )
+    for receipt in invalid_receipts:
+        try:
+            _execute_student_mobile_deployment_checker(
+                lambda receipt=receipt: receipt,
+                expected_name="deployment-fixture",
+                minimum_assertions=3,
+            )
+        except AssertionError:
+            continue
+        raise AssertionError(f"student deployment guard accepted invalid receipt: {receipt}")
+
+    def dirty_failure() -> dict[str, object]:
+        os.environ["ACADEMY_PHASE14_GUARD_FIXTURE"] = "mutated"
+        backup_runtime_data.ROOT = ROOT / "phase14-invalid-runtime-root"
+        raise RuntimeError("injected deployment checker failure")
+
+    try:
+        _execute_student_mobile_deployment_checker(
+            dirty_failure,
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+        )
+    except AssertionError as exc:
+        _assert_unit("shared verifier state; restored" in str(exc), "deployment guard hid state restoration failure")
+    else:
+        raise AssertionError("deployment guard accepted checker state leakage")
+    _assert_unit(os.environ == original_environment, "deployment guard did not restore the process environment")
+    _assert_unit(backup_runtime_data.ROOT == original_backup_root, "deployment guard did not restore the backup root")
+
+    observations = iter(({"runtime": 1}, {"runtime": 2}))
+    try:
+        _execute_student_mobile_deployment_checker(
+            lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+            runtime_observer=lambda: next(observations),
+        )
+    except AssertionError as exc:
+        _assert_unit("runtime metadata/content" in str(exc), "deployment guard hid runtime mutation")
+    else:
+        raise AssertionError("deployment guard accepted runtime mutation")
+
+    observer_calls = [0]
+
+    def failing_observer() -> object:
+        observer_calls[0] += 1
+        if observer_calls[0] == 2:
+            raise PermissionError("injected runtime observation failure")
+        return {"runtime": 1}
+
+    def dirty_success() -> dict[str, object]:
+        os.environ["ACADEMY_PHASE14_GUARD_FIXTURE"] = "mutated"
+        backup_runtime_data.ROOT = ROOT / "phase14-invalid-runtime-root"
+        os.chdir(ROOT.parent if original_cwd != ROOT.parent else ROOT)
+        return {"name": "deployment-fixture", "assertions": 3, "passed": True}
+
+    try:
+        _execute_student_mobile_deployment_checker(
+            dirty_success,
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+            runtime_observer=failing_observer,
+        )
+    except AssertionError as exc:
+        _assert_unit("runtime observer failed" in str(exc), "deployment guard hid observer failure")
+    else:
+        raise AssertionError("deployment guard accepted a failed post-run observer")
+    _assert_unit(os.environ == original_environment, "observer failure left the process environment dirty")
+    _assert_unit(backup_runtime_data.ROOT == original_backup_root, "observer failure left the backup root dirty")
+    _assert_unit(pathlib.Path.cwd() == original_cwd, "observer failure left the working directory dirty")
+
+
+def run_student_mobile_deployment_contract_checks() -> None:
+    """Run isolated fixtures; runtime stores are fingerprinted read-only for mutation detection."""
+    from scripts.student_mobile_app_checks import deployment
+
+    full_windows_contract = os.name == "nt"
+    checker = deployment.run_checks if full_windows_contract else deployment.run_portable_checks
+    assertions = _execute_student_mobile_deployment_checker(
+        checker,
+        expected_name="deployment" if full_windows_contract else "deployment-portable",
+        minimum_assertions=118 if full_windows_contract else 92,
+    )
+    mode = "windows-full" if full_windows_contract else "portable-static"
+    print(f"student mobile deployment contract ({mode}): {assertions} assertions passed; process state restored")
+
+
+def run_student_mobile_python_result_contract_checks() -> None:
+    from types import ModuleType
+
+    from scripts import verify_student_mobile_app as dispatcher
+
+    module_name = "scripts.student_mobile_app_checks._dispatcher_contract_fixture"
+    module = ModuleType(module_name)
+    original = dispatcher.CHECK_MODULES["config"]
+    dispatcher.CHECK_MODULES["config"] = module_name
+    sys.modules[module_name] = module
+    try:
+        invalid = (
+            {"name": "wrong", "assertions": 1, "passed": True},
+            {"name": "config", "assertions": 0, "passed": True},
+            {"name": "config", "assertions": True, "passed": True},
+            {"name": "config", "assertions": 1, "passed": False},
+        )
+        for receipt in invalid:
+            module.run_checks = lambda receipt=receipt: receipt
+            try:
+                dispatcher._load_result("config")
+            except dispatcher.StudentMobileAppCheckError:
+                continue
+            raise AssertionError(f"Python dispatcher accepted invalid receipt: {receipt}")
+        module.run_checks = lambda: {"name": "config", "assertions": 1, "passed": True}
+        accepted = dispatcher._load_result("config")
+        _assert_unit(accepted["assertions"] == 1, "Python dispatcher rejected a valid bound receipt")
+    finally:
+        dispatcher.CHECK_MODULES["config"] = original
+        sys.modules.pop(module_name, None)
+
+
 def run_refactor_notes_contract_source_checks() -> None:
     refactor_notes_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
 
@@ -4676,6 +5206,15 @@ def run_refactor_notes_contract_source_checks() -> None:
         (
             "catalog writer safety notes",
             ["--backup-confirmed", "--config", "--csv", "--output", "--issues"],
+        ),
+        (
+            "opt-in log GET smoke safety notes",
+            [
+                "--smoke --smoke-log-gets",
+                "python scripts\\backup_runtime_data.py",
+                "`mtime_ns`, size, and SHA-256",
+                "including an mtime-only change, fails",
+            ],
         ),
     ]
     for label, snippets in required_note_groups:
@@ -5480,13 +6019,12 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "latest log preflight must happen before /api/updates/patch",
     )
     _assert_unit(
-        "const latestEntryForExtra = activeRegisteredReviewMids.size || reviewMids.length" in save_block
-        and "await patchExtraVideoLogAssignment(today, sid, selected, latestEntryForExtra);" in save_block,
-        "extra video log patch must use the latest entry after review metadata changes",
+        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);" in save_block,
+        "extra video log patch must receive the same latest entry used for preflight",
     )
     for snippet in [
         "fetch('/api/updates/patch'",
-        "body: JSON.stringify(buildVideoAssignmentPatchBody(",
+        "body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))",
         "fetch('/api/updates?readOnly=1', { cache: 'no-store' })",
         "body.base = { notes: prevNotes.trim() };",
     ]:
@@ -5500,7 +6038,7 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "options.forceEmpty === true",
         "function applyVideoAssignmentState",
         "function buildVideoAssignmentPatchBody",
-        "reviewVideos: reviewMids",
+        "return { date: day, sid, entry: { videos: selected, source } };",
         "return { date: day, sid, remove: true };",
         "activeAssignmentManual = source === 'manual';",
     ]:
@@ -5967,8 +6505,8 @@ export function __renderAutoAssignControlHarness(stu, date) {
   renderAutoAssignControl(stu);
   return globalThis.__elements.autoAssignCountToggle.innerHTML;
 }
-export function __pickAutoVideosHarness(videos, blocked, count, student = null) {
-  return pickAutoVideos(videos, blocked, count, student);
+export function __pickAutoVideosHarness(videos, blocked, count) {
+  return pickAutoVideos(videos, blocked, count);
 }
 export async function __saveAutoAssignCountHarness(count) {
   return saveAutoAssignCountForCurrent(count);
@@ -6027,19 +6565,6 @@ const boundaryVideos = Array.from({ length: 12 }, (_, index) => ({
   subCurriculum: 'BASE',
 }));
 ok(mod.__pickAutoVideosHarness(boundaryVideos, {}, 12).length === 12, 'effective consecutive count is not reclamped to the six-setting maximum');
-const lowExcludedVideos = [
-  { mid: 'low-red', exNum: { '하': 0 } },
-  { mid: 'low-green', exNum: { '하': 1 } },
-  { mid: 'low-next', exNum: { '하': 1 } },
-];
-ok(
-  JSON.stringify(mod.__pickAutoVideosHarness(lowExcludedVideos, {}, 2, { level: '하' })) === JSON.stringify(['low-green', 'low-next']),
-  'video modal auto re-pick skips low-level progress-excluded videos',
-);
-ok(
-  JSON.stringify(mod.__pickAutoVideosHarness(lowExcludedVideos, {}, 2, { level: '중' })) === JSON.stringify(['low-red', 'low-green']),
-  'video modal auto re-pick keeps progress-excluded videos for other levels',
-);
 globalThis.__checkboxes = boundaryVideos.map(video => ({
   value: video.mid,
   checked: false,
@@ -6184,48 +6709,6 @@ ok(updatesPatch.body?.date === '2026-06-06', 'manual save uses editingVideoDate 
 ok(updatesPatch.body?.sid === '007', 'manual save keeps sid');
 ok(updatesPatch.body?.entry?.source === 'manual', 'manual save preserves manual source');
 ok(updatesPatch.body?.entry?.videos?.[0] === 'extra-1', 'manual save keeps selected video');
-
-calls = [];
-globalThis.__checkboxes = [];
-globalThis.fetch = async (url, init = {}) => {
-  calls.push(callRecord(url, init));
-  const value = String(url);
-  if (value === '/api/updates' || value === '/api/updates?readOnly=1') {
-    return response({ ok: true, updates: {
-      '2026-06-06': {
-        'review-existing': { videos: ['m1', 'm2'], source: 'auto', reviewVideos: ['m1'] },
-      },
-    } });
-  }
-  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
-  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-06': [] } });
-  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
-  if (value === '/api/updates/patch') return response({ ok: true });
-  return response({ ok: true });
-};
-mod.__setHarnessState({
-  sid: 'review-existing',
-  date: '2026-06-06',
-  students: [{ id: 'review-existing', curriculum: 'ALG', subCurriculum: 'BASE', day1: '湲?' }],
-  videos,
-  updates: {},
-});
-await mod.__openHarness(makeRow('review-existing', '2026-06-06'));
-const reviewAssignmentHtml = globalThis.__elements.chkZone.innerHTML;
-ok(reviewAssignmentHtml.includes('is-review-registered')
-  && reviewAssignmentHtml.includes('data-review-registered="true"')
-  && reviewAssignmentHtml.includes('회색 체크박스'),
-  'registered review videos render a distinct gray-checkbox legend and marker');
-globalThis.__checkboxes = [
-  { value: 'm1', checked: false },
-  { value: 'm2', checked: true },
-];
-await mod.__saveHarness({ showPopup: false, refresh: false });
-updatesPatch = calls.find((call) => call.url === '/api/updates/patch');
-ok(updatesPatch.body?.entry?.source === 'auto', 'unchecking a gray review video preserves the automatic source');
-ok(JSON.stringify(updatesPatch.body?.entry?.videos) === JSON.stringify(['m2']), 'gray review cancellation preserves unrelated assigned videos');
-ok(Array.isArray(updatesPatch.body?.entry?.reviewVideos) && updatesPatch.body.entry.reviewVideos.length === 0,
-  'gray review cancellation sends an empty review metadata list');
 
 calls = [];
 globalThis.__checkboxes = [{ value: 'm1', checked: true }];
@@ -7276,6 +7759,11 @@ ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig upd
 
 def run_unit_checks() -> bool:
     checks = [
+        run_smoke_sqlite_observation_unit_checks,
+        run_admin_date_session_storage_checks,
+        run_test_catalog_search_sort_checks,
+        run_hover_tooltip_performance_checks,
+        run_export_log_format_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
@@ -7287,12 +7775,12 @@ def run_unit_checks() -> bool:
         run_video_assignment_snapshot_unit_checks,
         run_video_assignment_route_hook_unit_checks,
         run_self_study_assignment_route_unit_checks,
-        run_student_review_video_route_unit_checks,
         run_video_assignment_boundary_source_checks,
         run_video_completion_source_checks,
         run_self_study_video_assignment_source_checks,
         run_watch_route_progress_unit_checks,
         run_log_repository_unit_checks,
+        run_legacy_test_record_cache_unit_checks,
         run_student_answer_link_precedence_unit_checks,
         run_student_previous_video_review_bootstrap_unit_checks,
         run_student_bootstrap_unit_checks,
@@ -7302,6 +7790,8 @@ def run_unit_checks() -> bool:
         run_admin_tests_record_detail_answer_link_ui_checks,
         run_submit_test_assignment_round_matching_checks,
         run_student_material_access_scope_checks,
+        run_video_manage_id_checks,
+        run_mobile_touch_target_checks,
         run_student_training_pack_round_filter_checks,
         run_academy_proxy_network_access_checks,
         run_absence_test_assignment_transition_unit_checks,
@@ -7313,7 +7803,12 @@ def run_unit_checks() -> bool:
         run_student_css_scope_source_checks,
         run_shared_css_scope_source_checks,
         run_refactor_contract_evidence_source_checks,
-        run_frontend_evidence_inventory_checks,
+        run_verifier_execution_policy_source_checks,
+        run_student_mobile_result_contract_checks,
+        run_student_mobile_pwa_flow_checks,
+        run_student_mobile_deployment_guard_unit_checks,
+        run_student_mobile_deployment_contract_checks,
+        run_student_mobile_python_result_contract_checks,
         run_refactor_notes_contract_source_checks,
         run_admin_calendar_test_completion_source_checks,
         run_admin_wave_b_source_checks,
@@ -7450,39 +7945,74 @@ def smoke_paths(date: str, sid: str) -> list[tuple[str, str]]:
     return paths
 
 
-def run_smoke_checks() -> bool:
+def smoke_log_paths(date: str, sid: str) -> list[tuple[str, str]]:
+    date = str(date or "").strip()
+    sid = str(sid or "").strip()
+    if not DATE_RE.fullmatch(date) or not sid:
+        return []
+    qs = urllib.parse.urlencode({"date": date, "sid": sid})
+    return [
+        ("log entry date/sid", f"/api/logs/entry?{qs}"),
+        ("logs date/sid", f"/api/logs?{qs}"),
+    ]
+
+
+def _run_smoke_gets(client, paths: Iterable[tuple[str, str]]) -> bool:
+    ok = True
+    for label, path in paths:
+        resp = client.get(path)
+        endpoint = path.partition("?")[0]
+        print(f"GET {endpoint} -> {resp.status_code} ({label}; query values redacted)")
+        if resp.status_code != 200:
+            ok = False
+    return ok
+
+
+def run_smoke_checks(*, include_log_gets: bool = False) -> bool:
     if not import_smoke_is_safe():
         return False
 
     before = runtime_fingerprints()
+    before_sqlite = sqlite_runtime_metadata()
     sys.path.insert(0, str(ROOT))
     from app import app  # noqa: PLC0415
 
     date, sid = smoke_candidate()
-    print(f"smoke candidate: date={date} sid={sid}")
+    print("smoke candidate selected (date/SID values redacted)")
     client = app.test_client()
 
-    ok = True
-    for label, path in smoke_paths(date, sid):
-        resp = client.get(path)
-        print(f"GET {path} -> {resp.status_code} ({label})")
-        if resp.status_code != 200:
+    ok = _run_smoke_gets(client, smoke_paths(date, sid))
+    if include_log_gets:
+        log_paths = smoke_log_paths(date, sid)
+        if not log_paths:
+            print(
+                "Cannot run explicitly enabled log GET smoke checks without a valid date and nonempty SID candidate.",
+                file=sys.stderr,
+            )
             ok = False
-
-    print("Skipped GET /api/logs/entry because it may touch SQLite WAL/schema state.")
-    print("Skipped GET /api/logs because it may touch SQLite WAL/schema state.")
+        else:
+            print("Running explicitly enabled log GET smoke checks; response bodies are not inspected or printed.")
+            ok = _run_smoke_gets(client, log_paths) and ok
+    else:
+        print("Skipped GET /api/logs/entry because it may touch SQLite WAL/schema state.")
+        print("Skipped GET /api/logs because it may touch SQLite WAL/schema state.")
     print("Skipped GET /api/updates because it can auto-write updates.json.")
     print("Skipped today's /api/student/bootstrap because it can auto-write updates.json.")
 
     after = runtime_fingerprints()
+    after_sqlite = sqlite_runtime_metadata()
     changed = runtime_diff_keys(before, after)
-    if changed and all(is_sqlite_transient_sidecar(key) for key in changed):
-        for key in changed:
-            print(f"runtime sqlite sidecar changed (allowed): {key}", file=sys.stderr)
-        print("runtime fingerprints unchanged except allowed SQLite sidecars")
-    elif changed:
+    sqlite_changes = sqlite_change_observations(before_sqlite, after_sqlite)
+    print_sqlite_change_observations(sqlite_changes)
+    disallowed_runtime_changes = [key for key in changed if not is_sqlite_transient_sidecar(key)]
+    if disallowed_runtime_changes:
         print_runtime_diff(before, after)
         return False
+    if not sqlite_change_observations_are_safe(sqlite_changes):
+        print("main SQLite file metadata changed during smoke checks", file=sys.stderr)
+        return False
+    if changed or sqlite_changes:
+        print("runtime fingerprints unchanged except allowed SQLite sidecars")
     else:
         print("runtime fingerprints unchanged after smoke checks")
     return ok
@@ -7491,6 +8021,51 @@ def run_smoke_checks() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe refactor verification checks.")
     parser.add_argument("--smoke", action="store_true", help="Run safe GET smoke checks with runtime fingerprints.")
+    parser.add_argument(
+        "--smoke-log-gets",
+        action="store_true",
+        help="With --smoke, opt in to risky log GETs that may touch SQLite WAL/schema state.",
+    )
+    parser.add_argument(
+        "--only-admin-date-session-storage",
+        action="store_true",
+        help="Run only admin selected-date sessionStorage and date-bar behavior checks.",
+    )
+    parser.add_argument(
+        "--only-test-catalog-search-sort",
+        action="store_true",
+        help="Run only test catalog search and group-local ordering checks.",
+    )
+    parser.add_argument(
+        "--only-hover-tooltip-performance",
+        action="store_true",
+        help="Run only admin hover tooltip large-roster performance checks.",
+    )
+    parser.add_argument(
+        "--only-hover-tooltip-accessibility",
+        action="store_true",
+        help="Run only responsive keyboard/ARIA hover tooltip checks.",
+    )
+    parser.add_argument(
+        "--only-export-log-format",
+        action="store_true",
+        help="Run only class-log export format customization and roster regression checks.",
+    )
+    parser.add_argument(
+        "--only-student-install-guide",
+        action="store_true",
+        help="Run only the student-app install-guide boot and interaction flow checks.",
+    )
+    parser.add_argument(
+        "--only-student-mobile-deployment",
+        action="store_true",
+        help="Run only temp-only student-app deployment and rollback contract checks.",
+    )
+    parser.add_argument(
+        "--only-legacy-test-record-cache",
+        action="store_true",
+        help="Run only legacy logs test-record projection cache checks.",
+    )
     parser.add_argument(
         "--only-admin-weekend-slot-behavior",
         action="store_true",
@@ -7622,8 +8197,25 @@ def main() -> int:
         help="Run only log modal save policy behavior checks.",
     )
     args = parser.parse_args()
+    if args.smoke_log_gets and not args.smoke:
+        parser.error("--smoke-log-gets requires --smoke")
 
     selected_checks = []
+    if args.only_admin_date_session_storage:
+        selected_checks.append(run_admin_date_session_storage_checks)
+    if args.only_test_catalog_search_sort:
+        selected_checks.append(run_test_catalog_search_sort_checks)
+    if args.only_hover_tooltip_performance or args.only_hover_tooltip_accessibility:
+        selected_checks.append(run_hover_tooltip_performance_checks)
+    if args.only_export_log_format:
+        selected_checks.append(run_export_log_format_checks)
+    if args.only_student_install_guide:
+        selected_checks.append(run_student_mobile_pwa_flow_checks)
+    if args.only_student_mobile_deployment:
+        selected_checks.append(run_student_mobile_deployment_guard_unit_checks)
+        selected_checks.append(run_student_mobile_deployment_contract_checks)
+    if args.only_legacy_test_record_cache:
+        selected_checks.append(run_legacy_test_record_cache_unit_checks)
     if args.only_admin_weekend_slot_behavior:
         selected_checks.append(run_admin_weekend_slot_behavior_checks)
     if args.only_admin_calendar_test_completion_source:
@@ -7683,10 +8275,11 @@ def main() -> int:
 
     ok = True
     ok = run_python_compile() and ok
+    ok = run_python311_syntax_checks() and ok
     ok = run_unit_checks() and ok
     ok = run_js_checks() and ok
     if args.smoke:
-        ok = run_smoke_checks() and ok
+        ok = run_smoke_checks(include_log_gets=args.smoke_log_gets) and ok
     return 0 if ok else 1
 
 

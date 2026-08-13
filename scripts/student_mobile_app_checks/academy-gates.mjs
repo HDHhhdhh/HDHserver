@@ -218,7 +218,7 @@ export async function runChecks() {
   });
 
   console.log(`academy-gates checks passed: ${checks.length}`);
-  return { checks: checks.length };
+  return { suite: 'student-mobile-app-academy-gates', checks: checks.length, passed: true };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -21,6 +21,7 @@ The all-students page is a standalone static frontend with its own core wrapper 
 - Field edits preserve unknown student keys through `/api/update`; clone intentionally copies identity fields and clears curriculum/schedule fields.
 - The former student `subBook*` inputs are retired. The table reads `/api/homework-books`, derived from each student's latest registered `homeworkTable[].book`.
 - The row counseling button reuses the admin log modal in `all-students-readonly` mode: notes/homework are read-only and progress accepts right-click skip edits only.
+- `all/main.js` eagerly bridges only the lightweight shared admin hover tooltip and the already-loaded roster state so student-name links work by pointer and keyboard. Keep the full admin popup graph lazy behind the counseling button.
 - Direct fetch remains in add/clone/delete/progress compatibility paths; do not mass-convert without preserving fallbacks and payloads.
 
 ## Anti-Patterns

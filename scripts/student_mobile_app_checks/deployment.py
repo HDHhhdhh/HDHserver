@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+import uuid
 import zipfile
 from html import escape
 from pathlib import Path
@@ -19,6 +20,7 @@ VERIFY = ROOT / "scripts" / "verify_student_app_deployment.ps1"
 RUNNER = ROOT / "scripts" / "run_student_push_worker.ps1"
 WAITRESS_RUNNER = ROOT / "scripts" / "run_waitress_server.ps1"
 DOC = ROOT / "docs" / "student-mobile-app-deploy.md"
+WORKFLOW = ROOT / ".github" / "workflows" / "refactor-safety.yml"
 POWERSHELL = "powershell.exe"
 
 
@@ -125,10 +127,16 @@ def _backup_contract(state: list[int], temp_root: Path) -> None:
     _write(runtime / "instance" / "student-app-vapid-private.pem", "secret")
     _write(runtime / "instance" / "student-app-vapid-private.pem.tmp", "secret-sidecar")
     _write(runtime / "instance" / "student-app-vapid-public.txt", "public")
+    _write(runtime / "instance" / "student-test-push-approval.json", "approval")
+    _write(runtime / "instance" / "student-test-push-approval.json.tmp", "approval-temp")
+    _write(runtime / "instance" / "student-test-push-approval.json.consumed.opaque", "approval-consumed")
     _write(runtime / "instance" / "other-runtime.txt", "keep")
     selected = {path.relative_to(runtime).as_posix() for path in backup_runtime_data.iter_runtime_files(runtime)}
     _check(state, "instance/student-app-vapid-private.pem" not in selected, "private key entered backup selection")
     _check(state, "instance/student-app-vapid-private.pem.tmp" not in selected, "private key sidecar entered backup selection")
+    _check(state, "instance/student-test-push-approval.json" not in selected, "test Push approval entered backup selection")
+    _check(state, "instance/student-test-push-approval.json.tmp" not in selected, "test Push approval temp entered backup selection")
+    _check(state, "instance/student-test-push-approval.json.consumed.opaque" not in selected, "consumed test Push approval entered backup selection")
     _check(state, "instance/student-app-vapid-public.txt" in selected, "public key output was incorrectly excluded")
     _check(state, "instance/other-runtime.txt" in selected, "unrelated instance data was excluded")
     original_root = backup_runtime_data.ROOT
@@ -143,6 +151,9 @@ def _backup_contract(state: list[int], temp_root: Path) -> None:
     manifest_names = {item["path"] for item in manifest["files"]}
     _check(state, "instance/student-app-vapid-private.pem" not in names | manifest_names, "archive contains private key")
     _check(state, "instance/student-app-vapid-private.pem.tmp" not in names | manifest_names, "archive contains private key sidecar")
+    _check(state, "instance/student-test-push-approval.json" not in names | manifest_names, "archive contains test Push approval")
+    _check(state, "instance/student-test-push-approval.json.tmp" not in names | manifest_names, "archive contains test Push approval temp")
+    _check(state, "instance/student-test-push-approval.json.consumed.opaque" not in names | manifest_names, "archive contains consumed test Push approval")
     _check(state, {"auth_accounts.json", "app.sqlite", "instance/other-runtime.txt"} <= names, "archive lost runtime files")
 
 
@@ -151,6 +162,8 @@ def _static_contract(state: list[int]) -> None:
     runner_source = RUNNER.read_text(encoding="utf-8")
     waitress_source = WAITRESS_RUNNER.read_text(encoding="utf-8")
     doc = DOC.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    windows_ci_job = workflow.partition("verify-student-deployment-windows:")[2]
     for value in (
         "app.5a-math.com", "Academy Student Push Delivery",
         "STUDENT_APP_PUBLIC_ENABLED", "STUDENT_APP_LEGACY_HOST", "STUDENT_APP_LEGACY_REDIRECT_ENABLED", "STUDENT_APP_CANARY_SIDS", "STUDENT_APP_TRUSTED_PROXIES",
@@ -169,7 +182,26 @@ def _static_contract(state: list[int]) -> None:
         _check(state, worker in runner_source and "--once" in runner_source,
                f"worker runner omitted {worker}")
     _check(state, "WaitOne(0)" in runner_source and "worker_overlap" in runner_source, "worker overlap guard missing")
+    _check(state, "ContractFixtureId requires DryRun" in runner_source, "worker contract fixture is not fail-closed")
+    _check(state, "Local\\AcademyStudentPushDelivery-ContractFixture-" in runner_source, "worker fixture still shares the production mutex")
+    _check(state, "Global\\AcademyStudentPushDelivery-v1" in runner_source, "production worker mutex contract changed")
+    _check(
+        state,
+        "runs-on: windows-latest" in windows_ci_job
+        and "python-version: \"3.12\"" in windows_ci_job
+        and "python -m venv venv" in windows_ci_job
+        and "--only-student-mobile-deployment" in windows_ci_job,
+        "Windows CI does not execute the full deployment contract",
+    )
+    for override in (
+        "PublicHostOverride", "PublicEnabledOverride", "RemindersEnabledOverride",
+        "CanarySidsOverride", "VapidSubjectOverride", "VapidPrivateKeyPathOverride",
+        "RuntimeRootOverride", "DevelopmentIsolation",
+    ):
+        _check(state, override in runner_source, f"worker runner omitted process override {override}")
+    _check(state, "Development worker isolation requires" in runner_source, "development worker lacks fail-closed isolation validation")
     _check(state, "ls-files --error-unmatch" not in verify_source and "$tracked.Count -gt 0" in verify_source, "live untracked-key check can terminate under Windows PowerShell ErrorActionPreference")
+    _check(state, "FixtureMode requires DryRun and every snapshot path" in verify_source, "fixture verifier can fall back to live state")
     _check(state, "Add-Type -AssemblyName System.Net.Http" in verify_source, "Windows PowerShell live health check does not load System.Net.Http")
     _check(state, 'TryAddWithoutValidation("CF-Connecting-IP"' in verify_source, "live health check omits the trusted tunnel client header")
     _check(state, 'ValidateSet("app.5a-math.com", "dev-app.5a-math.com")' in verify_source, "deployment verifier omits exact dev/prod hosts")
@@ -182,9 +214,14 @@ def _static_contract(state: list[int]) -> None:
         "STUDENT_APP_REMINDERS_ENABLED", "STUDENT_APP_FOCUS_ENABLED",
     ):
         _check(state, flag in waitress_source, f"Waitress runner omitted feature flag {flag}")
-    for override in ("PublicHostOverride", "PublicEnabledOverride", "CanarySidsOverride"):
+    for override in (
+        "PublicHostOverride", "PublicEnabledOverride", "CanarySidsOverride",
+        "VapidSubjectOverride", "VapidPrivateKeyPathOverride",
+    ):
         _check(state, override in waitress_source, f"Waitress runner omitted process override {override}")
     _check(state, "exact DNS hostname" in waitress_source, "Waitress runner does not reject malformed host overrides")
+    _check(state, "VAPID overrides must be provided together" in waitress_source, "Waitress runner permits partial VAPID overrides")
+    _check(state, "repository instance directory" in waitress_source, "development VAPID key is not isolated to the instance directory")
     for option in ("--trusted-proxy=127.0.0.1", "--trusted-proxy-count=1", "--trusted-proxy-headers=x-forwarded-proto", "--clear-untrusted-proxy-headers"):
         _check(state, option in waitress_source, f"Waitress runner omitted {option}")
     _check(state, "--trusted-proxy-headers=x-forwarded-for" not in waitress_source, "Waitress bypasses CF client identity validation")
@@ -193,27 +230,50 @@ def _static_contract(state: list[int]) -> None:
     _check(state, rollback.index("STUDENT_APP_PUBLIC_ENABLED=0") < rollback.index("Cloudflare") < rollback.index("Disable-ScheduledTask"), "rollback order is not flag, Tunnel, task")
 
 
+def run_portable_checks() -> dict[str, object]:
+    """Validate source and backup contracts without invoking Windows PowerShell."""
+    state = [0]
+    _static_contract(state)
+    with tempfile.TemporaryDirectory(prefix="student-app-deploy-portable-") as directory:
+        _backup_contract(state, Path(directory))
+    return {"name": "deployment-portable", "assertions": state[0], "passed": True}
+
+
 def run_checks() -> dict[str, object]:
     state = [0]
     _static_contract(state)
+    fixture_id = f"phase14-{os.getpid()}-{uuid.uuid4().hex[:12]}"
     syntax = _run("-Command", f"$t=$null;$e=$null;[Management.Automation.Language.Parser]::ParseFile('{VERIFY}',[ref]$t,[ref]$e)|Out-Null;if($e.Count){{exit 1}}")
     _check(state, syntax.returncode == 0, "deployment verifier has PowerShell syntax errors")
     syntax = _run("-Command", f"$t=$null;$e=$null;[Management.Automation.Language.Parser]::ParseFile('{RUNNER}',[ref]$t,[ref]$e)|Out-Null;if($e.Count){{exit 1}}")
     _check(state, syntax.returncode == 0, "Push runner has PowerShell syntax errors")
     syntax = _run("-Command", f"$t=$null;$e=$null;[Management.Automation.Language.Parser]::ParseFile('{WAITRESS_RUNNER}',[ref]$t,[ref]$e)|Out-Null;if($e.Count){{exit 1}}")
     _check(state, syntax.returncode == 0, "Waitress runner has PowerShell syntax errors")
-    runner = _run("-File", str(RUNNER), "-DryRun")
+    incomplete_fixture = _run("-File", str(VERIFY), "-DryRun", "-FixtureMode")
+    _check(state, incomplete_fixture.returncode != 0
+           and "requires DryRun and every snapshot path" in incomplete_fixture.stderr,
+           "incomplete FixtureMode invocation did not fail before live-state fallback")
+    runner = _run("-File", str(RUNNER), "-DryRun", "-ContractFixtureId", fixture_id)
+    runner_payload = _parse_result(runner)
     _check(state, runner.returncode == 0
+           and runner_payload.get("contractFixture") is True
+           and runner_payload.get("publicEnabled") == "0"
+           and runner_payload.get("remindersEnabled") == "0"
            and all(worker in runner.stdout for worker in (
                "deliver_student_push_outbox.py --once", "enqueue_student_reminders.py --once",
                "deliver_student_notification_outbox.py --once",
-           )), "worker dry-run contract failed")
+           )), "isolated worker dry-run contract failed")
+    unsafe_fixture = _run("-File", str(RUNNER), "-ContractFixtureId", fixture_id)
+    _check(state, unsafe_fixture.returncode != 0 and "requires DryRun" in unsafe_fixture.stderr,
+           "worker contract fixture allowed a non-dry-run invocation")
     runner_literal = str(RUNNER).replace("'", "''")
+    fixture_id_literal = fixture_id.replace("'", "''")
+    fixture_mutex = f"Local\\AcademyStudentPushDelivery-ContractFixture-{fixture_id}".replace("'", "''")
     overlap = _run(
         "-Command",
-        "$m=[Threading.Mutex]::new($true,'Global\\AcademyStudentPushDelivery-v1');try{"
-        f"$p=Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{runner_literal}','-DryRun') -Wait -PassThru -NoNewWindow;exit $p.ExitCode"
-        "}finally{$m.ReleaseMutex();$m.Dispose()}",
+        f"$m=[Threading.Mutex]::new($true,'{fixture_mutex}');$code=1;try{{"
+        f"$runner='{runner_literal}';& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -DryRun -ContractFixtureId '{fixture_id_literal}';$code=$LASTEXITCODE"
+        "}finally{$m.ReleaseMutex();$m.Dispose()};exit $code",
     )
     _check(state, overlap.returncode == 3 and "worker_overlap" in overlap.stdout, "worker overlap was not rejected")
     with tempfile.TemporaryDirectory(prefix="student-app-deploy-") as directory:

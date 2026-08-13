@@ -607,6 +607,8 @@ body.admin .global-links .link-school { --link-accent: #22c55e; }
 body.admin .global-links .link-video { --link-accent: #8b5cf6; }
 body.admin .global-links .link-tests { --link-accent: #f59e0b; }
 body.admin .global-links .link-files { --link-accent: #64748b; }
+body.admin .global-links .link-student-accounts { --link-accent: #ec4899; }
+body.admin .global-links .link-student-focus { --link-accent: #0f9f85; }
 
 /* =========================================
    Buttons / switch
@@ -1371,6 +1373,37 @@ body.admin .makeup-planner input[type="search"] {
 
 body.admin.dark .makeup-planner input[type="search"] {
   background: #0b1220;
+}
+
+@media (max-width: 640px) {
+  body.admin .makeup-planner-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  body.admin .makeup-planner-head > div,
+  body.admin .makeup-planner-control-group {
+    min-width: 0;
+    width: 100%;
+  }
+
+  body.admin .makeup-planner-control-group {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  body.admin .makeup-export-btn {
+    flex: 1 1 92px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  body.admin .makeup-planner input[type="search"] {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+  }
 }
 
 body.admin .makeup-planner-list {
@@ -7067,6 +7100,193 @@ body.admin .progress-card .kpi-progress-track {
   height: 5px;
 }
 
+body.admin.export-logs-open {
+  overflow: hidden;
+}
+
+body.admin #exportLogsModal .export-logs-panel {
+  position: relative;
+  width: min(680px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+}
+
+body.admin #exportLogsModal .export-logs-heading {
+  display: grid;
+  gap: 5px;
+  padding-right: 38px;
+}
+
+body.admin #exportLogsModal .export-logs-heading h3,
+body.admin #exportLogsModal .export-logs-heading p {
+  margin: 0;
+}
+
+body.admin #exportLogsModal .export-logs-kicker {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+body.admin #exportLogsModal #exportLogsDescription,
+body.admin #exportLogsModal .export-logs-privacy {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.admin #exportLogsModal .export-logs-form {
+  display: grid;
+  gap: 14px;
+}
+
+body.admin #exportLogsModal .export-logs-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+body.admin #exportLogsModal fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin #exportLogsModal fieldset.is-disabled {
+  opacity: .56;
+}
+
+body.admin #exportLogsModal fieldset.is-disabled .export-logs-option {
+  cursor: not-allowed;
+}
+
+body.admin #exportLogsModal fieldset.is-disabled .export-logs-option:hover {
+  background: transparent;
+}
+
+body.admin #exportLogsModal legend {
+  padding: 0 5px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+body.admin #exportLogsModal .export-logs-option {
+  min-height: 52px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 11px;
+  padding: 9px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+body.admin #exportLogsModal .export-logs-option:hover {
+  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
+}
+
+body.admin #exportLogsModal .export-logs-option.compact {
+  min-height: 42px;
+  align-items: center;
+  padding-block: 5px;
+}
+
+body.admin #exportLogsModal .export-logs-option input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+}
+
+body.admin #exportLogsModal .export-logs-option span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+
+body.admin #exportLogsModal .export-logs-option small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+body.admin #exportLogsModal .export-logs-privacy {
+  margin: 0;
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #f59e0b 11%, var(--card));
+}
+
+body.admin #exportLogsModal .export-logs-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.admin #exportLogsModal .export-logs-status.is-error {
+  color: var(--danger);
+}
+
+body.admin #exportLogsModal .export-logs-status.is-success {
+  color: var(--ok);
+}
+
+body.admin #exportLogsModal .export-logs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin #exportLogsModal .export-logs-action-spacer {
+  flex: 1 1 auto;
+}
+
+body.admin #exportLogsModal .export-logs-actions .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  body.admin #exportLogsModal {
+    padding: 6px;
+    align-items: stretch;
+  }
+
+  body.admin #exportLogsModal .export-logs-panel {
+    width: 100%;
+    max-height: 96vh;
+    max-height: 96dvh;
+    align-self: center;
+    border-radius: 16px;
+  }
+
+  body.admin #exportLogsModal .export-logs-option-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #exportLogsModal .export-logs-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin #exportLogsModal .export-logs-action-spacer {
+    display: none;
+  }
+
+  body.admin #exportLogsModal #exportLogsSubmit {
+    grid-column: 1 / -1;
+  }
+}
+
 body.admin .admin-operation-notes {
   --admin-note-panel-gap: 8px;
   --admin-note-panel-padding: 12px;
@@ -7862,160 +8082,11 @@ body.admin #adminSchoolTip .assistant-student-notes {
   border-top: 1px solid rgba(255, 255, 255, .16);
 }
 
-body.admin #adminSchoolTip .assistant-note-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
 body.admin #adminSchoolTip .assistant-note-heading h3 {
-  margin: 0;
+  margin: 0 0 8px;
   color: #fff;
   font-size: 13px;
   line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-count {
-  flex: 0 0 auto;
-  border: 1px solid rgba(148, 163, 184, .3);
-  border-radius: 999px;
-  padding: 2px 7px;
-  background: rgba(15, 23, 42, .66);
-  color: rgba(226, 232, 240, .82);
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-thread {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-height: 68px;
-  max-height: 210px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  box-sizing: border-box;
-  border: 1px solid rgba(148, 163, 184, .2);
-  border-radius: 9px;
-  padding: 7px;
-  background: rgba(2, 6, 23, .34);
-}
-
-body.admin #adminSchoolTip .assistant-note-empty {
-  align-self: center;
-  margin: 0;
-  padding: 14px 6px;
-  color: rgba(203, 213, 225, .66);
-  font-size: 10.5px;
-  text-align: center;
-}
-
-body.admin #adminSchoolTip .assistant-note-empty.is-error {
-  color: #fca5a5;
-}
-
-body.admin #adminSchoolTip .assistant-note-item {
-  --assistant-note-item-color: #e2e8f0;
-  --assistant-note-item-rgb: 226, 232, 240;
-  min-width: 0;
-  border: 1px solid rgba(var(--assistant-note-item-rgb), .2);
-  border-left: 3px solid var(--assistant-note-item-color);
-  border-radius: 7px;
-  padding: 7px 8px;
-  background: rgba(var(--assistant-note-item-rgb), .07);
-}
-
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="귤"] {
-  --assistant-note-item-color: #fbbf24;
-  --assistant-note-item-rgb: 251, 191, 36;
-}
-
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="세빈"] {
-  --assistant-note-item-color: #7dd3fc;
-  --assistant-note-item-rgb: 125, 211, 252;
-}
-
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="동훈"] {
-  --assistant-note-item-color: #86efac;
-  --assistant-note-item-rgb: 134, 239, 172;
-}
-
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="하영"] {
-  --assistant-note-item-color: #f9a8d4;
-  --assistant-note-item-rgb: 249, 168, 212;
-}
-
-body.admin #adminSchoolTip .assistant-note-item-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 3px;
-}
-
-body.admin #adminSchoolTip .assistant-note-item-author {
-  min-width: 0;
-  color: var(--assistant-note-item-color);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-item-time {
-  flex: 0 0 auto;
-  color: rgba(203, 213, 225, .62);
-  font-size: 8.5px;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-item-meta {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-body.admin #adminSchoolTip .assistant-note-delete {
-  min-height: 20px;
-  border: 1px solid rgba(248, 113, 113, .42);
-  border-radius: 5px;
-  padding: 1px 5px;
-  background: rgba(127, 29, 29, .22);
-  color: #fca5a5;
-  font: inherit;
-  font-size: 8px;
-  font-weight: 800;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-body.admin #adminSchoolTip .assistant-note-delete:hover {
-  border-color: rgba(248, 113, 113, .78);
-  background: rgba(127, 29, 29, .42);
-  color: #fecaca;
-}
-
-body.admin #adminSchoolTip .assistant-note-delete:disabled {
-  cursor: wait;
-  opacity: .55;
-}
-
-body.admin #adminSchoolTip .assistant-note-item-content {
-  margin: 0;
-  color: var(--assistant-note-item-color);
-  font-size: 10.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-body.admin #adminSchoolTip .assistant-note-compose {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid rgba(148, 163, 184, .18);
 }
 
 body.admin #adminSchoolTip .assistant-note-author-row {
@@ -8084,14 +8155,18 @@ body.admin #adminSchoolTip .assistant-note-author-buttons button.is-selected {
   box-shadow: inset 0 0 0 1px rgba(var(--assistant-note-author-rgb), .30);
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button:disabled {
-  cursor: wait;
-  opacity: .55;
+body.admin #adminSchoolTip .assistant-note-meta {
+  min-height: 16px;
+  margin: -1px 0 7px;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 body.admin #adminSchoolTip .assistant-note-input {
   width: 100%;
-  min-height: 72px;
+  min-height: 108px;
   resize: vertical;
   box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, .2);
@@ -8104,22 +8179,22 @@ body.admin #adminSchoolTip .assistant-note-input {
   line-height: 1.45;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="귤"] .assistant-note-input {
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
   color: #fbbf24;
   caret-color: #fbbf24;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="세빈"] .assistant-note-input {
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
   color: #7dd3fc;
   caret-color: #7dd3fc;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="동훈"] .assistant-note-input {
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
   color: #86efac;
   caret-color: #86efac;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="하영"] .assistant-note-input {
+body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
   color: #f9a8d4;
   caret-color: #f9a8d4;
 }
@@ -8158,21 +8233,15 @@ body.admin #adminSchoolTip .assistant-note-status.is-success {
   color: #86efac;
 }
 
-body.admin #adminSchoolTip .assistant-note-shortcut {
-  color: rgba(203, 213, 225, .48);
-  font-size: 8px;
-  line-height: 1.3;
-}
-
 body.admin #adminSchoolTip .assistant-note-save {
-  min-height: 28px;
+  min-height: 26px;
   border: 1px solid rgba(96, 165, 250, .62);
   border-radius: 7px;
-  padding: 4px 10px;
+  padding: 4px 8px;
   background: #2563eb;
   color: #fff;
   font: inherit;
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -8182,8 +8251,521 @@ body.admin #adminSchoolTip .assistant-note-save:disabled {
   opacity: .55;
 }
 
+body.admin .student-accounts-panel {
+  position: relative;
+  display: grid;
+  gap: 14px;
+}
+
+body.admin.student-accounts-open {
+  overflow: hidden;
+}
+
+body.admin .student-accounts-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 4px 44px 2px 2px;
+}
+
+body.admin .student-accounts-heading h3,
+body.admin .student-accounts-heading p {
+  margin: 0;
+}
+
+body.admin .student-accounts-heading p:last-child {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+body.admin .student-accounts-kicker {
+  color: #ec4899;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .13em;
+}
+
+body.admin .student-accounts-toolbar {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(150px, .55fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+body.admin .student-accounts-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+body.admin .student-accounts-toolbar input,
+body.admin .student-accounts-toolbar select {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+body.admin .student-accounts-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+body.admin .student-accounts-status.is-error { color: #ef4444; }
+body.admin .student-accounts-status.is-success { color: #16a34a; }
+
+body.admin .student-accounts-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, #ec4899 52%, var(--line));
+  border-radius: 13px;
+  padding: 11px 12px;
+  background: color-mix(in srgb, #ec4899 10%, var(--card));
+}
+
+body.admin .student-accounts-code[hidden] { display: none; }
+
+body.admin .student-accounts-code div {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+}
+
+body.admin .student-accounts-code code {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+body.admin .student-accounts-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(58vh, 620px);
+  overflow: auto;
+  padding-right: 3px;
+}
+
+body.admin .student-accounts-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin .student-accounts-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.admin .student-accounts-card-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+body.admin .student-accounts-identity,
+body.admin .student-accounts-metrics {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+body.admin .student-accounts-badge,
+body.admin .student-accounts-flag {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: color-mix(in srgb, #22c55e 14%, var(--card));
+  color: #15803d;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+body.admin .student-accounts-badge.is-disabled,
+body.admin .student-accounts-badge.is-unavailable {
+  background: color-mix(in srgb, #64748b 15%, var(--card));
+  color: var(--muted);
+}
+
+body.admin .student-accounts-flags,
+body.admin .student-accounts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+body.admin .student-accounts-flag { background: color-mix(in srgb, #3b82f6 13%, var(--card)); color: #2563eb; }
+body.admin .student-accounts-flag.is-warning { background: color-mix(in srgb, #f59e0b 15%, var(--card)); color: #b45309; }
+body.admin .student-accounts-action.is-danger { color: #dc2626; }
+body.admin .student-accounts-empty { margin: 20px 0; color: var(--muted); text-align: center; }
+
+@media (max-width: 640px) {
+  body.admin .student-accounts-modal { padding: 6px; align-items: stretch; }
+  body.admin .student-accounts-panel { width: 100%; max-height: 96vh; border-radius: 16px; }
+  body.admin .student-accounts-toolbar { grid-template-columns: 1fr; }
+  body.admin .student-accounts-code { align-items: stretch; flex-wrap: wrap; }
+  body.admin .student-accounts-code div { flex-basis: 100%; }
+  body.admin .student-accounts-actions .btn { flex: 1 1 132px; }
+}
+
+/* Focus summaries expose only class aggregates; raw transitions stay hidden. */
+body.admin.student-focus-admin-open { overflow: hidden; }
+
+body.admin .student-focus-admin-panel {
+  width: min(980px, calc(100vw - 28px));
+  max-height: min(88vh, 880px);
+  max-height: min(88dvh, 880px);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 14px;
+  overflow: hidden;
+}
+
+body.admin .student-focus-admin-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+body.admin .student-focus-admin-heading h3,
+body.admin .student-focus-admin-heading p { margin: 0; }
+
+body.admin .student-focus-admin-heading p:last-child {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+body.admin .student-focus-admin-kicker {
+  color: #0f9f85;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+body.admin .student-focus-admin-toolbar,
+body.admin .student-focus-admin-class-head,
+body.admin .student-focus-admin-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.admin .student-focus-admin-toolbar .btn,
+body.admin .student-focus-admin-heading .modal-close { min-width: 44px; min-height: 44px; }
+
+body.admin .student-focus-admin-status {
+  min-height: 22px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+body.admin .student-focus-admin-status.is-error { color: #dc2626; }
+
+body.admin .student-focus-admin-list {
+  min-width: 0;
+  min-height: 0;
+  padding: 2px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+body.admin .student-focus-admin-class {
+  min-width: 0;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+body.admin .student-focus-admin-class-head h4 { margin: 0; }
+
+body.admin .student-focus-admin-class-head > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+body.admin .student-focus-admin-sessions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+body.admin .student-focus-admin-card {
+  min-width: 0;
+  padding: 13px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 82%, var(--bg) 18%);
+}
+
+body.admin .student-focus-admin-card-head > div { min-width: 0; display: grid; gap: 3px; }
+
+body.admin .student-focus-admin-card-head strong,
+body.admin .student-focus-admin-card-head span { overflow-wrap: anywhere; }
+
+body.admin .student-focus-admin-card-head > div span { color: var(--muted); font-size: 12px; }
+
+body.admin .student-focus-admin-state {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #0f9f85 14%, var(--card) 86%);
+  color: #08735f;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+body.admin .student-focus-admin-state.is-unknown {
+  background: color-mix(in srgb, #f59e0b 16%, var(--card) 84%);
+  color: #a34b08;
+}
+
+body.admin .student-focus-admin-metrics {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+body.admin .student-focus-admin-metrics div {
+  min-width: 0;
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+  border-radius: 8px;
+  background: var(--card);
+}
+
+body.admin .student-focus-admin-metrics dt { color: var(--muted); font-size: 11px; }
+
+body.admin .student-focus-admin-metrics dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+body.admin .student-focus-admin-unknown,
+body.admin .student-focus-admin-empty { margin: 0; color: var(--muted); line-height: 1.5; }
+
+body.admin .student-focus-admin-empty { padding: 32px 16px; text-align: center; }
+
+@media (max-width: 720px) {
+  body.admin .student-focus-admin-modal {
+    padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+    align-items: stretch;
+  }
+
+  body.admin .student-focus-admin-panel {
+    width: 100%;
+    max-height: calc(100dvh - 12px);
+    border-radius: 16px;
+  }
+
+  body.admin .student-focus-admin-sessions { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Canonical homework details inside the existing class-log modal. */
+body.admin #logModal .hwCanonical {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--brand, #2563eb) 22%, var(--line, #dbe3ef));
+  border-radius: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--brand-soft, #eff6ff) 42%, var(--card, #fff));
+}
+
+body.admin #logModal .hwCanonicalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  min-width: 0;
+}
+
+body.admin #logModal .hwCanonicalField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+body.admin #logModal .hwCanonicalLabel {
+  color: var(--muted, #64748b);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+body.admin #logModal .hwCanonical :where(input, select),
+body.admin #logModal #hwBody input:not([type="range"]),
+body.admin #logModal #hwBody button,
+body.admin #logModal #hwAddRow {
+  min-height: 44px;
+}
+
+body.admin #logModal #hwBody .hw-del-btn {
+  width: 44px !important;
+  min-width: 44px !important;
+  height: 44px !important;
+}
+
+body.admin #logModal .hwCanonical select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: var(--card, #fff);
+  color: var(--ink, #0f172a);
+  font: inherit;
+}
+
+body.admin #logModal .hwCanonicalMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted, #64748b);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+body.admin #logModal .hwOverdueBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: color-mix(in srgb, #dc2626 14%, var(--card, #fff));
+  color: #b91c1c;
+  font-weight: 900;
+}
+
+body.admin #logModal .hwCanonicalError {
+  margin: 0 0 10px;
+  border: 1px solid color-mix(in srgb, #dc2626 38%, var(--line, #dbe3ef));
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #dc2626 8%, var(--card, #fff));
+  color: #b91c1c;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+body.admin.dark #logModal .hwCanonical {
+  background: color-mix(in srgb, #2563eb 12%, #0b1220);
+  border-color: #334155;
+}
+
+body.admin.dark #logModal .hwCanonical select {
+  border-color: #475569;
+  background: #0b1220;
+  color: #e5e7eb;
+}
+
+body.admin.dark #logModal .hwOverdueBadge,
+body.admin.dark #logModal .hwCanonicalError {
+  color: #fecaca;
+}
+
+@media (max-width: 520px) {
+  body.admin #logModal .hwCanonicalGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #logModal .hwCanonical {
+    padding: 10px;
+  }
+}
+body.admin .announcement-video-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+body.admin .announcement-video-field[hidden] {
+  display: none;
+}
+
+body.admin .announcement-video-field select {
+  width: 100%;
+  min-height: 42px;
+}
+
+body.admin .announcement-video-field small {
+  color: var(--muted, #667085);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1024px) {
+  body.admin :where(
+    button,
+    a.btn,
+    input:not([type="checkbox"]):not([type="radio"]),
+    select
+  ) {
+    min-height: 44px !important;
+  }
+
+  body.admin button {
+    min-width: 44px !important;
+  }
+
+  body.admin .modal-close,
+  body.admin .ann-survey-icon-btn,
+  body.admin .ann-reply-expand-close,
+  body.admin #calendar .makeup-slot-close,
+  body.admin #logModal .hw-del-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  body.admin .global-links .btn,
+  body.admin #absentRecoverBtn,
+  body.admin #homeworkLeaveBtn,
+  body.admin #clearAllBtn,
+  body.admin.admin-simple .hero-actions .btn {
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+}
+
 /* Selected legacy-safe overlays from the verified retry2 server export. */
-/* Mixed feature-only styles were intentionally left out of this legacy overlay. */
+/* Excludes student-app accounts/focus, canonical-homework, student-log, and announcement-video styles. */
 
 @media (max-width: 640px) {
   body.admin .makeup-planner-head {

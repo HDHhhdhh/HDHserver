@@ -8,6 +8,7 @@ from typing import Dict, List, Any
 from flask import Blueprint, abort, jsonify, request
 
 from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, LOGS_PATH
+from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 from core.absent import load_absent, save_absent, DATE_RE
 
@@ -548,7 +549,9 @@ def api_absent_post():
     if not isinstance(payload, dict):
         abort(400, description="Invalid JSON body")
     before = load_absent()
-    new_pairs = _absence_pairs(payload) - _absence_pairs(before)
+    before_pairs = _absence_pairs(before)
+    after_pairs = _absence_pairs(payload)
+    new_pairs = after_pairs - before_pairs
     if new_pairs:
         try:
             _clear_assignments_for_new_absences(new_pairs)
@@ -557,6 +560,7 @@ def api_absent_post():
         except Exception as e:
             abort(500, description=f"Failed to clear absence assignments: {e}")
     save_absent(payload)
+    enqueue_current_schedule_changes(sid for _date, sid in before_pairs ^ after_pairs)
     return jsonify(load_absent())
 
 

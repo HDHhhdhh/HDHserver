@@ -6,6 +6,7 @@ import {
   saveDemoStore,
 } from './store.js';
 import { createDemoFetch } from './fetch.js';
+import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
 import { installDemoTutorial } from './tutorial.js';
 
@@ -180,6 +181,24 @@ async function handleDemoApiRequest(request, input, init, demo) {
   const { method, url } = request;
   const path = normalizePath(url.pathname);
 
+  const homeworkBody = method === 'GET' ? {} : await readJsonBody(input, init);
+  const homeworkStore = loadDemoStore();
+  const homeworkResult = applyDemoHomeworkRequest({
+    method,
+    path,
+    params: url.searchParams,
+    body: homeworkBody,
+    store: homeworkStore,
+    now: new Date(homeworkStore.generatedAt || '2026-06-17T00:00:00+09:00'),
+  });
+  if (homeworkResult) {
+    if (homeworkResult.changed) saveDemoStore(homeworkStore);
+    return demoJson(homeworkResult.payload, {
+      status: homeworkResult.status,
+      handler: 'bootstrap-fallback',
+    });
+  }
+
   if (isOperationNotesPath(path)) {
     const body = method === 'GET' ? {} : await readJsonBody(input, init);
     const store = loadDemoStore();
@@ -297,6 +316,12 @@ function fallbackPayloadForGet(path, params, store) {
       return { ok: true, demo: true };
     case '/api/announcements':
       return cloneDemoValue(store.announcements || []);
+    case '/api/admin/student-focus/summary': {
+      const date = String(params.get('date') || '').trim();
+      return cloneDemoValue(store.focusSummaries?.[date] || {
+        ok: true, date, serverNow: new Date().toISOString(), classes: [],
+      });
+    }
     default:
       return {
         ok: true,
@@ -553,6 +578,8 @@ function injectDemoControls() {
     'color:#613b00',
     'font:inherit',
     'font-weight:800',
+    'min-width:44px',
+    'min-height:44px',
     'padding:0 0 0 7px',
     'cursor:pointer',
   ].join(';');

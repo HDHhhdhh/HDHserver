@@ -6,10 +6,11 @@ import re
 import shutil
 from typing import Any, Dict
 
-from flask import Blueprint, abort, jsonify, make_response, request, send_from_directory
+from flask import Blueprint, abort, g, jsonify, make_response, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from core.paths import FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
+from core.student_public_surface_paths import resolve_raw_request_target, safe_announcement_file
 from core.storage import load, save_atomic
 
 bp_api_fs = Blueprint("api_fs", __name__)
@@ -402,6 +403,17 @@ def api_fs_set_page_folders():
 
 @bp_api_fs.get("/files/<path:fname>")
 def files(fname: str):
+    if getattr(g, "student_app_public_request", False) is True:
+        raw_target = resolve_raw_request_target(request.environ, request.full_path.removesuffix("?"))
+        active_sid = getattr(g, "student_app_active_sid", None)
+        if not isinstance(active_sid, str) or not active_sid or raw_target is None:
+            abort(404)
+        if not safe_announcement_file(request.path, raw_target):
+            abort(404)
+        from routes.api_announcements import _student_can_access_announcement_image
+
+        if not _student_can_access_announcement_image(active_sid, fname):
+            abort(404)
     try:
         pth = _safe_join(fname)
     except ValueError:

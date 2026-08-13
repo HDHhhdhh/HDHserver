@@ -162,7 +162,7 @@ function createPreferenceHarness(studentSource, { publicMode = true, initialResp
   };
 }
 
-function serviceWorkerHarness(source, { clients = [] } = {}) {
+function serviceWorkerHarness(source, { clients = [], origin = 'https://app.test' } = {}) {
   const listeners = new Map();
   const notifications = [];
   const opened = [];
@@ -189,7 +189,7 @@ function serviceWorkerHarness(source, { clients = [] } = {}) {
     },
     fetch: async () => new Response('ok'),
     self: {
-      location: { origin: 'https://app.test' },
+      location: { origin },
       addEventListener: (name, callback) => listeners.set(name, callback),
       skipWaiting: async () => {},
       registration: {
@@ -345,9 +345,13 @@ export async function runChecks() {
       ['homework_due', eventId('D'), '숙제 기한 알림', '학생 앱에서 마감 예정 숙제를 확인해 주세요.', `/app?view=homework&item=${eventId('D')}`],
       ['progress_milestone', eventId('E'), '진도 알림', '학생 앱에서 학습 진도를 확인해 주세요.', '/app?view=home'],
       ['announcement_published', eventId('F'), '새 공지가 도착했습니다', '학생 앱을 열어 공지 내용을 확인해 주세요.', `/app?view=board&item=${eventId('F')}`],
+      ['push_test', eventId('T'), '학생 앱 테스트 알림', '개발용 Push 수신 테스트가 완료되었습니다.', '/app?view=home'],
     ];
     for (const [type, eventId, title, body, target] of cases) {
-      const harness = serviceWorkerHarness(sw);
+      const harness = serviceWorkerHarness(
+        sw,
+        type === 'push_test' ? { origin: 'https://dev-app.5a-math.com' } : {},
+      );
       assert.equal(await harness.push({
         type,
         eventId,
@@ -376,12 +380,15 @@ export async function runChecks() {
     assert.deepEqual(legacy.opened, ['/app?announcement=ann%3Alegacy']);
 
     const invalid = serviceWorkerHarness(sw);
+    assert.equal(await invalid.push({ type: 'push_test', eventId: eventId('T') }), false);
     for (const payload of [
       { type: 'unknown', eventId: 'event-1' },
       { type: 'toString', eventId: 'event-1' },
       { type: 'homework_due', eventId: '../secret' },
       { type: 'homework_due', eventId: 'homework:colon' },
       { type: 'announcement_published', eventId: '' },
+      { type: 'push_test', eventId: '../secret', url: '/app?view=homework' },
+      { type: 'push_test', eventId: `${eventId('T')}extra`, url: 'https://evil.test' },
       { type: 'announcement', announcementId: 'https://evil.test' },
     ]) assert.equal(await invalid.push(payload), false);
     assert.equal(invalid.notifications.length, 0);

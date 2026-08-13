@@ -21,8 +21,9 @@ Browser behavior is split between admin modules, all-page modules, shared helper
 - Preserve endpoint URLs, payload keys, credentials/cache options, and existing response shapes.
 - `todayLocalKey()` means real local date. Admin selected-date behavior belongs in `static/js/admin/core/adminDate.js`.
 - Student bootstrap `assignedTests` stays a top-level array. Preserve every server access flag when projecting bootstrap data into `window.__ASSIGNED_TESTS__` and `window.__STUDENT_ACCESS__`.
+- The public student-app installation guide starts hidden and opens only from its explicit header button. Preserve standalone/install-complete hiding, stale-prompt cleanup, background inertness, Escape/dismiss behavior, and focus restoration; do not turn it into an automatic shell gate.
 - Answer precedence is assignment/config direct URL, `sourceFiles.solutionFileId`, then canonical JSON map. Academy-network gating strips/blocks every layer.
-- `tests.js` POSTs the whole test config. Never save a network-stripped GET representation or drop source metadata, unknown fields, or answer rounds.
+- `tests.js` POSTs the whole test config with the `X-Tests-Config-Revision` returned by the preceding GET. On a revision conflict, reload the server copy instead of rolling stale client state back over it. Never save a network-stripped GET representation or drop source metadata, unknown fields, or answer rounds.
 - Do not introduce mojibake or placeholder `????` text.
 
 ## Anti-Patterns

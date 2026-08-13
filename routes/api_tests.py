@@ -1,26 +1,37 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from statistics import median, pstdev
 import datetime as dt
 import re
+import threading
 import time
 from typing import Final, Tuple, TypedDict
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, request
 
 from core.ghost_student import (
     GHOST_STUDENT_WRITE_ERROR,
     is_ghost_student_sid,
     mapping_contains_ghost_student_sid,
 )
-from core.network_access import academy_network_allowed, strip_tests_config_answer_links
+from core.network_access import (
+    ACADEMY_ACCESS_MESSAGE,
+    academy_network_allowed,
+    ip_allowed,
+    strip_tests_config_answer_links,
+)
 from core.paths import (
     LOGS_PATH, TESTS_PATH, STU_PATH, PRG_PATH,
     TESTS_CFG_PATH
 )
 from core.storage import load, save_atomic, nocache_resp, utc_now_isoz, file_lock
-from core.test_config_safety import TestsConfigWriteConflict, merge_tests_config_for_write
+from core.test_config_safety import (
+    TestsConfigWriteConflict,
+    merge_tests_config_for_write,
+    tests_config_revision,
+)
 
 bp_api_tests = Blueprint("api_tests", __name__)
 TEST_TYPE_ORDER = ("REVIEW", "UNIT", "TRAINING_PACK", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
@@ -75,6 +86,41 @@ OCR_REVIEW_META_TEXT_FIELDS = (
     "cache_source",
     "provider_status",
 )
+
+
+def _is_public_student_request() -> bool:
+    return getattr(g, "student_app_public_request", False) is True
+
+
+def _academy_request_allowed() -> bool:
+    if _is_public_student_request():
+        client_ip = getattr(g, "student_app_client_ip", None)
+        return isinstance(client_ip, str) and ip_allowed(client_ip)
+    return academy_network_allowed()
+
+
+def _public_sid_matches(sid: str) -> bool:
+    if not _is_public_student_request():
+        return True
+    active_sid = getattr(g, "student_app_active_sid", None)
+    return isinstance(active_sid, str) and bool(sid) and sid == active_sid
+
+
+def _public_session_available() -> bool:
+    if not _is_public_student_request():
+        return True
+    active_sid = getattr(g, "student_app_active_sid", None)
+    return isinstance(active_sid, str) and bool(active_sid)
+
+
+def _academy_required_response():
+    return jsonify({
+        "ok": False,
+        "error": "academy_network_required",
+        "message": ACADEMY_ACCESS_MESSAGE,
+    }), 403
+
+
 OCR_REVIEW_META_INT_FIELDS = (
     "crop_count",
     "contact_sheet_count",
@@ -89,6 +135,8 @@ SUBMIT_PROGRESS_STATUS_SKIP_MODES: Final = {"skip", "none", "disabled"}
 SUBMIT_PROGRESS_STATUS_MARK_DONE_MODES: Final = {"mark_done", "submit_complete"}
 SUBMIT_PROGRESS_STATUS_AUTHORIZED_VALUES: Final = {"true", "1", "yes", "authorized"}
 SUBMIT_PROGRESS_STATUS_OCR_SOURCES: Final = {"ocr_review", "ocr-review", "ocr"}
+_LEGACY_TEST_RECORD_CACHE_LOCK = threading.Lock()
+_LEGACY_TEST_RECORD_CACHE: tuple[tuple[object, ...], tuple[dict, ...]] | None = None
 
 
 class WrongAnswerDetail(TypedDict):
@@ -991,6 +1039,8 @@ def _phase2a_harden_review_meta(meta: dict) -> dict:
 
 @bp_api_tests.post("/api/ocr-test-sheet-review")
 def ocr_test_sheet_review():
+    if _is_public_student_request():
+        abort(404)
     if not _phase2a_review_route_enabled():
         return _phase2a_review_error(503, "feature_disabled", "OCR review route is disabled.")
 
@@ -1190,6 +1240,8 @@ def ocr_test_sheet_review():
 
 @bp_api_tests.post("/api/ocr-test-sheet")
 def ocr_test_sheet():
+    if _is_public_student_request():
+        abort(404)
     try:
         from core.ocr_test_sheet import (
             OcrConfigError,
@@ -1252,8 +1304,13 @@ def ocr_test_sheet():
 
 @bp_api_tests.post('/api/submit-test')
 def submit_test():
+    if _is_public_student_request() and not _academy_request_allowed():
+        return _academy_required_response()
     data = request.get_json(force=True, silent=True) or {}
     sid   = str(data.get('sid', '')).strip()
+
+    if not _public_sid_matches(sid):
+        return jsonify({"ok": False, "code": "sid_mismatch", "error": "sid_mismatch"}), 403
 
     test_id = str(data.get('testId', '')).strip()
     name  = str(data.get('name', '')).strip()
@@ -1429,13 +1486,24 @@ def api_tests():
 
 @bp_api_tests.get("/api/tests-config")
 def get_tests_config():
+    if not _public_session_available():
+        return jsonify({"ok": False, "code": "unauthenticated"}), 401
     config = load(TESTS_CFG_PATH)
-    if not academy_network_allowed():
+    revision = tests_config_revision(config) if isinstance(config, dict) else ""
+    if not _academy_request_allowed():
         config = strip_tests_config_answer_links(config)
-    return nocache_resp(config)
+    response = nocache_resp(config)
+    if revision:
+        response.headers["X-Tests-Config-Revision"] = revision
+    return response
 
 @bp_api_tests.post("/api/tests-config")
 def post_tests_config():
+    expected_revision = str(
+        request.headers.get("X-Tests-Config-Revision", "")
+    ).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_revision):
+        return jsonify({"ok": False, "error": "catalog_revision_required"}), 428
     payload = request.get_json(force=True, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "invalid payload"}), 400
@@ -1448,6 +1516,8 @@ def post_tests_config():
         current = load(TESTS_CFG_PATH)
         if not isinstance(current, dict):
             return jsonify({"ok": False, "error": "invalid current config"}), 500
+        if tests_config_revision(current) != expected_revision:
+            return jsonify({"ok": False, "error": "catalog_changed"}), 409
         try:
             merged = merge_tests_config_for_write(
                 current,
@@ -1473,7 +1543,10 @@ def post_tests_config():
         except ValueError:
             return jsonify({"ok": False, "error": "invalid config"}), 400
         save_atomic(TESTS_CFG_PATH, merged)
-    return jsonify({"ok": True})
+        saved_revision = tests_config_revision(merged)
+    response = jsonify({"ok": True})
+    response.headers["X-Tests-Config-Revision"] = saved_revision
+    return response
 
 def _parse_date(s: str) -> dt.date | None:
     try:
@@ -1481,90 +1554,138 @@ def _parse_date(s: str) -> dt.date | None:
     except Exception:
         return None
 
-def _iter_test_records(start: dt.date | None, end: dt.date | None):
-    seen: set[Tuple[str, str, str]] = set()
+def _test_record_file_signature(path) -> tuple[object, ...] | None:
+    try:
+        absolute_path = os.path.normcase(os.path.abspath(os.fspath(path)))
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (
+        absolute_path,
+        getattr(stat, "st_dev", 0),
+        getattr(stat, "st_ino", 0),
+        stat.st_mtime_ns,
+        getattr(stat, "st_ctime_ns", 0),
+        stat.st_size,
+    )
 
-    def _walk(container: dict):
-        for date_str, by_sid in (container or {}).items():
-            day = _parse_date(date_str)
+
+def _normalized_test_record_candidates(container: dict):
+    for date_str, by_sid in (container or {}).items():
+        date_key = str(date_str)
+        day = _parse_date(date_key)
+        if not isinstance(by_sid, dict):
+            continue
+
+        for sid, val in by_sid.items():
+            if isinstance(val, list):
+                arr = val
+            elif isinstance(val, dict):
+                arr = val.get("tests", [])
+                if not isinstance(arr, list):
+                    continue
+            else:
+                continue
+
+            for rec in arr:
+                if not isinstance(rec, dict):
+                    continue
+                name = str(rec.get("name", "")).strip()
+                score = str(rec.get("score", "")).strip()
+                created_at = rec.get("createdAt") or ""
+                wrong = _normalize_wrong_numbers(rec.get("wrong"))
+                memo = str(rec.get("memo") or "").strip()
+                raw_meta = rec.get("testMeta") if isinstance(rec.get("testMeta"), dict) else {}
+                snap_meta = {
+                    "type": str(rec.get("type") or raw_meta.get("type") or "").strip(),
+                    "curriculum": str(rec.get("curriculum") or raw_meta.get("curriculum") or "").strip(),
+                    "test_name": str(rec.get("testName") or raw_meta.get("test_name") or raw_meta.get("testName") or "").strip(),
+                    "unit_name": str(rec.get("unitName") or raw_meta.get("unit_name") or raw_meta.get("unitName") or "").strip(),
+                    "test_level": rec.get("testLevel") if rec.get("testLevel") is not None else raw_meta.get("test_level") or raw_meta.get("testLevel"),
+                    "difficulty": str(rec.get("difficulty") or raw_meta.get("difficulty") or "").strip(),
+                    "term": _normalize_test_term(rec.get("term") or raw_meta.get("term") or raw_meta.get("examTerm") or raw_meta.get("examPeriod") or raw_meta.get("exam_period") or ""),
+                    "round": str(raw_meta.get("round") or rec.get("round") or "").strip(),
+                    "source_id": str(rec.get("sourceId") or raw_meta.get("source_id") or raw_meta.get("sourceId") or "").strip(),
+                }
+                if not name or "/" not in score:
+                    continue
+                try:
+                    correct_s, total_s = score.split("/", 1)
+                    correct = int(str(correct_s).strip())
+                    total = int(str(total_s).strip())
+                    if total <= 0:
+                        continue
+                except Exception:
+                    continue
+                yield {
+                    "_date_key": date_key,
+                    "sid": str(sid),
+                    "test_id": str(rec.get("testId") or "").strip(),
+                    "name": name,
+                    "correct": int(correct),
+                    "total": int(total),
+                    "wrong": wrong,
+                    "submitted_answers": _submitted_answers_from_record(rec, total),
+                    "created_at": str(created_at),
+                    "memo": memo,
+                    "day": day,
+                    "meta": snap_meta,
+                }
+
+
+def _legacy_test_record_candidates() -> list[dict]:
+    global _LEGACY_TEST_RECORD_CACHE
+
+    with _LEGACY_TEST_RECORD_CACHE_LOCK:
+        before_signature = _test_record_file_signature(LOGS_PATH)
+        cached = _LEGACY_TEST_RECORD_CACHE
+        if before_signature is not None and cached is not None and cached[0] == before_signature:
+            candidates = cached[1]
+        else:
+            try:
+                from routes.api_basic import get_log_repository
+
+                legacy_logs = get_log_repository().read_json_map()
+            except Exception:
+                legacy_logs = load(LOGS_PATH)
+
+            candidates = tuple(_normalized_test_record_candidates(legacy_logs))
+            after_signature = _test_record_file_signature(LOGS_PATH)
+            if candidates and before_signature is not None and before_signature == after_signature:
+                cached_candidates = tuple(deepcopy(candidates))
+                _LEGACY_TEST_RECORD_CACHE = (after_signature, cached_candidates)
+
+    return deepcopy(list(candidates))
+
+
+def _iter_test_records(start: dt.date | None, end: dt.date | None):
+    seen: set[Tuple[str, str, str, str]] = set()
+
+    def _walk(candidates):
+        for candidate in candidates:
+            day = candidate.get("day")
             if start and (not day or day < start):
                 continue
             if end and (not day or day > end):
                 continue
-            if not isinstance(by_sid, dict):
+            key = (
+                str(candidate.get("_date_key") or ""),
+                str(candidate.get("sid") or ""),
+                str(candidate.get("name") or ""),
+                str(candidate.get("created_at") or ""),
+            )
+            if key in seen:
                 continue
-
-            for sid, val in by_sid.items():
-                if isinstance(val, list):
-                    arr = val
-                elif isinstance(val, dict):
-                    arr = val.get("tests", [])
-                    if not isinstance(arr, list):
-                        continue
-                else:
-                    continue
-
-                for rec in arr:
-                    if not isinstance(rec, dict):
-                        continue
-                    name = str(rec.get("name", "")).strip()
-                    score = str(rec.get("score", "")).strip()
-                    created_at = rec.get("createdAt") or ""
-                    wrong = _normalize_wrong_numbers(rec.get("wrong"))
-                    memo = str(rec.get("memo") or "").strip()
-                    raw_meta = rec.get("testMeta") if isinstance(rec.get("testMeta"), dict) else {}
-                    snap_meta = {
-                        "type": str(rec.get("type") or raw_meta.get("type") or "").strip(),
-                        "curriculum": str(rec.get("curriculum") or raw_meta.get("curriculum") or "").strip(),
-                        "test_name": str(rec.get("testName") or raw_meta.get("test_name") or raw_meta.get("testName") or "").strip(),
-                        "unit_name": str(rec.get("unitName") or raw_meta.get("unit_name") or raw_meta.get("unitName") or "").strip(),
-                        "test_level": rec.get("testLevel") if rec.get("testLevel") is not None else raw_meta.get("test_level") or raw_meta.get("testLevel"),
-                        "difficulty": str(rec.get("difficulty") or raw_meta.get("difficulty") or "").strip(),
-                        "term": _normalize_test_term(rec.get("term") or raw_meta.get("term") or raw_meta.get("examTerm") or raw_meta.get("examPeriod") or raw_meta.get("exam_period") or ""),
-                        "round": str(raw_meta.get("round") or rec.get("round") or "").strip(),
-                        "source_id": str(rec.get("sourceId") or raw_meta.get("source_id") or raw_meta.get("sourceId") or "").strip(),
-                    }
-                    if not name or "/" not in score:
-                        continue
-                    try:
-                        correct_s, total_s = score.split("/", 1)
-                        correct = int(str(correct_s).strip())
-                        total = int(str(total_s).strip())
-                        if total <= 0:
-                            continue
-                    except Exception:
-                        continue
-                    submitted_answers = _submitted_answers_from_record(rec, total)
-
-                    key = (str(sid), name, str(created_at))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    yield {
-                        "sid": str(sid),
-                        "test_id": str(rec.get("testId") or "").strip(),
-                        "name": name,
-                        "correct": int(correct),
-                        "total": int(total),
-                        "wrong": wrong,
-                        "submitted_answers": submitted_answers,
-                        "created_at": str(created_at),
-                        "memo": memo,
-                        "day": day,
-                        "meta": snap_meta,
-                    }
+            seen.add(key)
+            item = deepcopy(candidate)
+            item.pop("_date_key", None)
+            yield item
 
     # tests.json is the durable student-test store. logs.json is kept as a
     # legacy fallback so old 상담/수업 기록 embedded tests still appear.
-    for item in _walk(load(TESTS_PATH)):
+    for item in _walk(_normalized_test_record_candidates(load(TESTS_PATH))):
         yield item
-    try:
-        from routes.api_basic import get_log_repository
-
-        legacy_logs = get_log_repository().read_json_map()
-    except Exception:
-        legacy_logs = load(LOGS_PATH)
-    for item in _walk(legacy_logs):
+    for item in _walk(_legacy_test_record_candidates()):
         yield item
 
 @bp_api_tests.get("/api/tests-records")

@@ -22,6 +22,95 @@ let logModalReady = true;
 let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 let logModalAccessMode = 'full';
+let canonicalHomework = createCanonicalHomeworkState();
+
+function createCanonicalHomeworkState() {
+  return {
+    mode: 'legacy',
+    assignments: [],
+    exactLogRows: [],
+    removedAssignmentIds: new Set(),
+    operationId: null,
+    pendingPayload: null,
+    error: '',
+  };
+}
+
+function resetCanonicalHomeworkState(mode = 'legacy') {
+  canonicalHomework = createCanonicalHomeworkState();
+  canonicalHomework.mode = mode;
+}
+
+function createHomeworkOperationId() {
+  const randomUuid = globalThis?.crypto?.randomUUID;
+  if (typeof randomUuid === 'function') return randomUuid.call(globalThis.crypto);
+  return `hw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function homeworkLocalDateTimeToKst(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) throw new Error('숙제 기한 형식이 올바르지 않습니다.');
+  const dueAt = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+09:00`;
+  const parsed = Date.parse(dueAt);
+  const roundTrip = Number.isFinite(parsed)
+    ? new Date(parsed + (9 * 60 * 60 * 1000)).toISOString().slice(0, 16)
+    : '';
+  if (roundTrip !== raw) throw new Error('숙제 기한을 확인해 주세요.');
+  return dueAt;
+}
+
+function homeworkDueAtToLocalInput(value) {
+  const parsed = Date.parse(String(value || ''));
+  if (!Number.isFinite(parsed)) return '';
+  return new Date(parsed + (9 * 60 * 60 * 1000)).toISOString().slice(0, 16);
+}
+
+function homeworkEffectiveStatus(assignment, now = new Date()) {
+  const status = ['assigned', 'completed', 'cancelled'].includes(String(assignment?.status))
+    ? String(assignment.status)
+    : 'assigned';
+  if (status !== 'assigned') return status;
+  const dueAt = Date.parse(String(assignment?.dueAt || ''));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now || ''));
+  return Number.isFinite(dueAt) && Number.isFinite(nowMs) && dueAt <= nowMs ? 'overdue' : 'assigned';
+}
+
+function mergeHomeworkLogRow(originalRow, managedFields, assignmentId) {
+  const original = originalRow && typeof originalRow === 'object' && !Array.isArray(originalRow) ? originalRow : {};
+  const managed = managedFields && typeof managedFields === 'object' && !Array.isArray(managedFields) ? managedFields : {};
+  const next = { ...original, ...managed };
+  delete next._ph;
+  delete next._canonical;
+  const id = String(assignmentId || '').trim();
+  if (id) next.assignmentId = id;
+  else delete next.assignmentId;
+  return next;
+}
+
+function normalizeHomeworkAssignment(row) {
+  const value = row && typeof row === 'object' ? row : {};
+  const revision = Number(value.revision);
+  const assignment = {
+    id: String(value.id || value.assignmentId || '').trim(),
+    sourceRowId: String(value.sourceRowId || value.source_row_id || '').trim(),
+    title: String(value.title || '').trim(),
+    book: String(value.book || '').trim(),
+    scope: String(value.scope || '').trim(),
+    dueAt: String(value.dueAt || '').trim() || null,
+    status: ['assigned', 'completed', 'cancelled'].includes(String(value.status)) ? String(value.status) : 'assigned',
+    revision: Number.isInteger(revision) && revision >= 1 ? revision : null,
+  };
+  assignment.effectiveStatus = homeworkEffectiveStatus(assignment);
+  return assignment;
+}
+
+function setHomeworkElementText(element, value, { asValue = false } = {}) {
+  if (asValue) element.value = String(value ?? '');
+  else element.textContent = String(value ?? '');
+  return element;
+}
 
 function isContextMenuOnlyAccess() {
   return logModalAccessMode === 'all-students-readonly';
@@ -205,6 +294,29 @@ async function fetchLogEntryFromServer(date, sid) {
       : {};
     return entry;
   }
+}
+
+async function fetchCanonicalHomeworkForLog(date, sid) {
+  const query = new URLSearchParams({ date: String(date), sid: String(sid) }).toString();
+  const res = await fetch(`/api/admin/student-homework?${query}`, { cache: 'no-store' });
+  if (res.status === 404) return { mode: 'legacy', assignments: [], pendingOperation: null };
+
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok || !data?.ok) {
+    const message = data?.error || data?.message || `숙제 상세 조회 실패 (${res.status})`;
+    throw new Error(message);
+  }
+
+  const assignments = (Array.isArray(data.assignments) ? data.assignments : [])
+    .map(row => normalizeHomeworkAssignment(row));
+  return {
+    mode: 'canonical',
+    assignments,
+    pendingOperation: data.pendingOperation && typeof data.pendingOperation === 'object'
+      ? data.pendingOperation
+      : null,
+  };
 }
 
 async function fetchLatestCarriedTestLogEntry(date, sid) {
@@ -812,6 +924,124 @@ function updatePctBubble(wrapEl, value, { isPlaceholder = false } = {}) {
   bubble.style.left = `${Math.max(0, Math.min(100, v))}%`;
 }
 
+function assignmentForHomeworkRow(row, claimedIds) {
+  const rowId = String(row?.assignmentId || '').trim();
+  const assignment = rowId
+    ? canonicalHomework.assignments.find(item => String(item.id) === rowId)
+    : null;
+  if (assignment?.id) claimedIds.add(String(assignment.id));
+  return assignment || null;
+}
+
+function defaultHomeworkTitle(row) {
+  return cleanHwText(row?.next)
+    || cleanHwText(row?.this)
+    || cleanHwText(row?.comment)
+    || cleanHwText(row?.book)
+    || '';
+}
+
+function appendCanonicalHomeworkEditor(item, row, assignment, rowIndex) {
+  const doc = item.ownerDocument || document;
+  const normalized = assignment ? normalizeHomeworkAssignment(assignment) : null;
+  const editor = doc.createElement('section');
+  editor.className = 'hwCanonical';
+  editor.setAttribute('aria-label', `${rowIndex + 1}번째 숙제 상세`);
+
+  const grid = doc.createElement('div');
+  grid.className = 'hwCanonicalGrid';
+  editor.append(grid);
+
+  const appendField = (labelText, control) => {
+    const label = doc.createElement('label');
+    label.className = 'hwCanonicalField';
+    const labelNode = doc.createElement('span');
+    labelNode.className = 'hwCanonicalLabel';
+    setHomeworkElementText(labelNode, labelText);
+    label.append(labelNode, control);
+    grid.append(label);
+  };
+
+  const title = doc.createElement('input');
+  title.type = 'text';
+  title.className = 'hwTitle';
+  title.maxLength = 200;
+  title.placeholder = '예: 쎈 B단계';
+  setHomeworkElementText(title, normalized?.title || defaultHomeworkTitle(row), { asValue: true });
+  appendField('숙제명', title);
+
+  const scope = doc.createElement('input');
+  scope.type = 'text';
+  scope.className = 'hwScope';
+  scope.maxLength = 1000;
+  scope.placeholder = '예: 42~47쪽';
+  setHomeworkElementText(scope, normalized?.scope || cleanHwText(row?.next) || cleanHwText(row?.this), { asValue: true });
+  appendField('범위', scope);
+
+  const due = doc.createElement('input');
+  due.type = 'datetime-local';
+  due.className = 'hwDueAt';
+  setHomeworkElementText(due, homeworkDueAtToLocalInput(normalized?.dueAt), { asValue: true });
+  appendField('기한', due);
+
+  const status = doc.createElement('select');
+  status.className = 'hwStatus';
+  [
+    ['assigned', '진행 중'],
+    ['completed', '완료'],
+    ['cancelled', '취소'],
+  ].forEach(([value, text]) => {
+    const option = doc.createElement('option');
+    option.value = value;
+    setHomeworkElementText(option, text);
+    status.append(option);
+  });
+  status.value = normalized?.status || 'assigned';
+  appendField('상태', status);
+
+  const meta = doc.createElement('div');
+  meta.className = 'hwCanonicalMeta';
+  const hint = doc.createElement('span');
+  hint.className = 'hwDueHint';
+  setHomeworkElementText(hint, normalized?.dueAt ? '기한 알림 대상' : '기한 없음 — 알림 제외');
+  meta.append(hint);
+  const overdue = doc.createElement('span');
+  overdue.className = 'hwOverdueBadge';
+  setHomeworkElementText(overdue, '기한 지남');
+  overdue.setAttribute('role', 'status');
+  overdue.hidden = !(normalized && homeworkEffectiveStatus(normalized) === 'overdue');
+  meta.append(overdue);
+  editor.append(meta);
+
+  const refreshDueMeta = () => {
+    setHomeworkElementText(hint, due.value ? '기한 알림 대상' : '기한 없음 — 알림 제외');
+    const dueMs = Date.parse(due.value ? `${due.value}:00+09:00` : '');
+    overdue.hidden = status.value !== 'assigned' || !Number.isFinite(dueMs) || dueMs > Date.now();
+  };
+  due.addEventListener('input', () => {
+    item.__homeworkCanonicalDirty = true;
+    refreshDueMeta();
+    if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+  });
+  [title, scope, status].forEach(control => control.addEventListener('input', () => {
+    item.__homeworkCanonicalDirty = true;
+    if (control === status) refreshDueMeta();
+    if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+  }));
+
+  const readOnly = isContextMenuOnlyAccess();
+  [title, scope, due, status].forEach(control => { control.disabled = readOnly; });
+  item.__homeworkAssignment = normalized;
+  item.__homeworkCanonicalDirty = false;
+  item.__homeworkSourceRowId = String(
+    normalized?.sourceRowId
+    || normalized?.id
+    || row?.assignmentId
+    || `row_${createHomeworkOperationId()}`
+  );
+  item.append(editor);
+}
+
 function renderHwTable(mergedRows) {
   const host = $('hwBody');
   if (!host) return;
@@ -896,11 +1126,31 @@ function renderHwTable(mergedRows) {
   };
 
   host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
+
+  const claimedIds = new Set();
   host.querySelectorAll('.hwItem').forEach((item, index) => {
-    const original = rows[index] && typeof rows[index] === 'object' ? { ...rows[index] } : {};
-    delete original._ph;
-    item.__homeworkOriginalRow = original;
+    const row = rows[index] || {};
+    item.__homeworkOriginalRow = mergeHomeworkLogRow(row, {}, row?.assignmentId);
+    if (canonicalHomework.mode !== 'canonical') return;
+    const assignment = assignmentForHomeworkRow(row, claimedIds);
+    if (row?.assignmentId && !assignment) {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.error = '로그에 연결된 숙제 상세를 찾지 못했습니다. 자동 복구하지 않고 저장을 중단했습니다.';
+    }
+    appendCanonicalHomeworkEditor(item, row, assignment, index);
   });
+  if (canonicalHomework.mode === 'canonical') {
+    const unlinked = canonicalHomework.assignments.filter(assignment => (
+      assignment?.id && !claimedIds.has(String(assignment.id))
+    ));
+    unlinked.filter(assignment => assignment.status === 'cancelled').forEach(assignment => {
+      canonicalHomework.removedAssignmentIds.add(String(assignment.id));
+    });
+    if (unlinked.some(assignment => assignment.status !== 'cancelled')) {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.error = '로그 행과 연결되지 않은 숙제가 있습니다. 자동으로 취소하지 않고 저장을 중단했습니다.';
+    }
+  }
 
   host.querySelectorAll('.pctWrap').forEach(wrap => {
     const range = wrap.querySelector('.hwPctRange');
@@ -961,7 +1211,13 @@ function addHwRow(bookCarry = '') {
     updatePctBubble(lastWrap, range?.value ?? 0, { isPlaceholder: true });
   }
   const item = host.querySelector('.hwItem:last-child');
-  if (item) item.__homeworkOriginalRow = {};
+  if (item) {
+    const row = { book: cleanHwText(bookCarry), this: '', pct: '', comment: '', next: '', _deleted: false };
+    item.__homeworkOriginalRow = {};
+    if (canonicalHomework.mode === 'canonical') {
+      appendCanonicalHomeworkEditor(item, row, null, host.querySelectorAll('.hwItem').length - 1);
+    }
+  }
 }
 
 function collectHwTable() {
@@ -971,6 +1227,11 @@ function collectHwTable() {
 
   host.querySelectorAll('.hwItem').forEach(item => {
     if (item.dataset.deleted === '1' || item.style.display === 'none') return;
+    if (canonicalHomework.mode === 'canonical' && item.querySelector('.hwStatus')?.value === 'cancelled') {
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      return;
+    }
 
     const book = cleanHwText(item.querySelector('.hwBook')?.value);
     const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
@@ -984,16 +1245,163 @@ function collectHwTable() {
     const empty = (wrap?.dataset?.empty === '1');
     const pct = empty ? '' : String(raw);
 
-    const original = item.__homeworkOriginalRow && typeof item.__homeworkOriginalRow === 'object'
-      ? item.__homeworkOriginalRow
-      : {};
-    const row = { ...original, book, this: thisHw, pct, comment, next, _deleted: false };
-    delete row._ph;
-    if (!isMeaningfulHwRow(row)) return;
+    const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+    const row = mergeHomeworkLogRow(item.__homeworkOriginalRow, {
+      book,
+      this: thisHw,
+      pct,
+      comment,
+      next,
+      _deleted: false,
+    }, assignmentId);
+    const canonicalMeaningful = canonicalHomework.mode === 'canonical'
+      && Boolean(item.__homeworkAssignment?.id || item.__homeworkCanonicalDirty);
+    if (!isMeaningfulHwRow(row) && !canonicalMeaningful) return;
     out.push(row);
   });
 
   return out;
+}
+
+function collectCanonicalHomeworkRows() {
+  if (canonicalHomework.mode !== 'canonical') return [];
+  const rows = [];
+  let rowIndex = 0;
+  document.querySelectorAll('#hwBody .hwItem').forEach(item => {
+    if (item.dataset.deleted === '1' || item.style.display === 'none') return;
+    if (item.querySelector('.hwStatus')?.value === 'cancelled') {
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      return;
+    }
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const thisHw = cleanHwText(item.querySelector('.hwThis')?.value);
+    const comment = cleanHwText(item.querySelector('.hwComment')?.value);
+    const next = cleanHwText(item.querySelector('.hwNext')?.value);
+    const pctWrap = item.querySelector('.pctWrap');
+    const pctRange = item.querySelector('.hwPctRange');
+    const pct = pctWrap?.dataset?.empty === '1' ? '' : String(snap10(pctRange?.value || 0));
+    const assignment = item.__homeworkAssignment || {};
+    const title = cleanHwText(item.querySelector('.hwTitle')?.value) || defaultHomeworkTitle({ book, this: thisHw, comment, next }) || '숙제';
+    const scope = cleanHwText(item.querySelector('.hwScope')?.value);
+    const dueAt = homeworkLocalDateTimeToKst(item.querySelector('.hwDueAt')?.value || '');
+    const status = String(item.querySelector('.hwStatus')?.value || 'assigned');
+    const legacyMeaningful = isMeaningfulHwRow({ book, this: thisHw, pct, comment, next, _deleted: false });
+    if (!legacyMeaningful && !assignment.id && !item.__homeworkCanonicalDirty) return;
+    const sourceRowId = String(item.__homeworkSourceRowId || assignment.sourceRowId || assignment.id || `row_${createHomeworkOperationId()}`);
+    item.__homeworkSourceRowId = sourceRowId;
+    rows.push({
+      rowIndex,
+      sourceRowId,
+      assignmentId: String(assignment.id || item.__homeworkOriginalRow?.assignmentId || '').trim() || null,
+      expectedRevision: Number.isInteger(Number(assignment.revision)) && Number(assignment.revision) >= 1
+        ? Number(assignment.revision)
+        : null,
+      title,
+      book,
+      scope,
+      dueAt,
+      status,
+    });
+    rowIndex += 1;
+  });
+  return rows;
+}
+
+function setCanonicalRetryLock(locked) {
+  const readOnly = isContextMenuOnlyAccess();
+  const notes = $('logNotes');
+  if (notes) notes.readOnly = readOnly || locked;
+  document.querySelectorAll('#hwBody input, #hwBody select, #hwBody button').forEach(control => {
+    control.disabled = readOnly || locked;
+  });
+  const addRow = $('hwAddRow');
+  if (addRow) addRow.disabled = locked;
+  const save = $('logSave');
+  if (save && !readOnly) save.textContent = locked ? '같은 작업 재시도' : '저장';
+}
+
+async function commitCanonicalHomework(payload) {
+  canonicalHomework.pendingPayload = canonicalHomework.pendingPayload || payload;
+  const requestPayload = canonicalHomework.pendingPayload;
+  setCanonicalRetryLock(true);
+  const saveButton = $('logSave');
+  const completeButton = $('logCompleteBtn');
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent = '저장 중…';
+  }
+  if (completeButton) completeButton.disabled = true;
+  let res = null;
+  try {
+    res = await fetch('/api/admin/student-homework/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+  } catch {
+    if (saveButton) saveButton.disabled = false;
+    if (completeButton) completeButton.disabled = false;
+    setCanonicalRetryLock(true);
+    const error = new Error('저장 응답을 확인하지 못했습니다. 같은 작업을 다시 시도해 주세요.');
+    error.code = 'homework_commit_network_error';
+    error.retryable = true;
+    throw error;
+  }
+  if (saveButton) saveButton.disabled = false;
+  if (completeButton) completeButton.disabled = false;
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (res.status === 409) {
+    const retryable = data?.retryable === true;
+    const isPartial = data?.code === 'partial_failure' && retryable;
+    if (isPartial) {
+      canonicalHomework.operationId = String(data?.operationId || requestPayload.operationId);
+      canonicalHomework.pendingPayload = requestPayload;
+      setCanonicalRetryLock(true);
+    } else {
+      canonicalHomework.mode = 'conflict';
+      canonicalHomework.pendingPayload = null;
+      canonicalHomework.operationId = null;
+      setCanonicalRetryLock(true);
+      const save = $('logSave');
+      if (save) save.textContent = '닫고 다시 확인';
+      const latestEntry = data?.entry && typeof data.entry === 'object' ? data.entry : null;
+      if (latestEntry) {
+        const date = String(requestPayload.date);
+        const sid = String(requestPayload.sid);
+        state.logs = state.logs || {};
+        state.logs[date] = state.logs[date] || {};
+        state.logs[date][sid] = latestEntry;
+      }
+    }
+    const error = new Error(data?.error || data?.message || (isPartial
+      ? '일부 저장이 완료되지 않았습니다. 같은 작업을 다시 시도해 주세요.'
+      : '다른 화면에서 숙제가 변경되었습니다. 닫은 뒤 다시 열어 주세요.'));
+    error.code = data?.code || 'homework_conflict';
+    error.retryable = retryable;
+    throw error;
+  }
+
+  if (!res.ok || !data?.ok) {
+    const error = new Error(data?.error || data?.message || `숙제 저장 실패 (${res.status})`);
+    error.code = data?.code || 'homework_commit_failed';
+    error.retryable = data?.retryable === true || res.status >= 500;
+    if (error.retryable) {
+      setCanonicalRetryLock(true);
+    } else {
+      canonicalHomework.pendingPayload = null;
+      canonicalHomework.operationId = null;
+      setCanonicalRetryLock(false);
+    }
+    throw error;
+  }
+
+  canonicalHomework.pendingPayload = null;
+  canonicalHomework.operationId = null;
+  setCanonicalRetryLock(false);
+  return data;
 }
 
 function normalizeHwRowsForCompare(rows) {
@@ -1354,19 +1762,27 @@ export function initLogModal() {
   const logComplete = $('logCompleteBtn');
   const applyReadOnlyRecordAccess = () => {
     const readOnly = isContextMenuOnlyAccess();
+    const retryLocked = Boolean(canonicalHomework.pendingPayload);
+    const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
     logModal.dataset.accessMode = logModalAccessMode;
-    logNotes.readOnly = readOnly;
-    logNotes.setAttribute('aria-readonly', readOnly ? 'true' : 'false');
-    document.querySelectorAll('#hwBody input').forEach(input => {
-      input.disabled = readOnly;
+    logNotes.readOnly = readOnly || retryLocked || homeworkBlocked;
+    logNotes.setAttribute('aria-readonly', readOnly || retryLocked || homeworkBlocked ? 'true' : 'false');
+    document.querySelectorAll('#hwBody input, #hwBody select').forEach(input => {
+      input.disabled = readOnly || retryLocked || homeworkBlocked;
     });
     document.querySelectorAll('#hwBody .hw-del-btn').forEach(button => {
       button.hidden = readOnly;
+      button.disabled = retryLocked || homeworkBlocked;
     });
     const addRow = $('hwAddRow');
-    if (addRow) addRow.hidden = readOnly;
+    if (addRow) {
+      addRow.hidden = readOnly;
+      addRow.disabled = retryLocked || homeworkBlocked;
+    }
     if (logComplete) logComplete.hidden = readOnly;
-    if (logSave) logSave.textContent = readOnly ? '영상 진도 저장' : '저장';
+    if (logSave) logSave.textContent = readOnly
+      ? '영상 진도 저장'
+      : (homeworkBlocked ? '닫고 다시 확인' : (retryLocked ? '같은 작업 재시도' : '저장'));
     const progressLabel = progEl.previousElementSibling;
     if (progressLabel?.tagName === 'LABEL') {
       progressLabel.textContent = readOnly ? '진도 (우클릭만 변경 가능)' : '진도';
@@ -1393,6 +1809,10 @@ export function initLogModal() {
       const item = btn.closest('.hwItem');
       if (!item) return;
 
+      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+      if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+
       item.remove();
 
       const host = document.getElementById('hwBody');
@@ -1406,6 +1826,9 @@ export function initLogModal() {
 
   document.getElementById('hwBody')?.addEventListener('input', (e) => {
     if (isContextMenuOnlyAccess()) return;
+    if (canonicalHomework.mode === 'canonical' && !canonicalHomework.pendingPayload) {
+      canonicalHomework.operationId = null;
+    }
     const t = e.target;
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
@@ -1535,6 +1958,7 @@ export function initLogModal() {
     logModalAccessMode = opts.accessMode === 'all-students-readonly'
       ? 'all-students-readonly'
       : 'full';
+    resetCanonicalHomeworkState('loading');
     applyReadOnlyRecordAccess();
 
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
@@ -1548,6 +1972,7 @@ export function initLogModal() {
     logModalSnapshot = { notes: '', homeworkTable: [] };
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     logModalCarriedTestAssignment = null;
+    $('hwWrap')?.querySelector('.hwCanonicalError')?.remove();
     logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
     logNotes.value = '불러오는 중...';
     logNotes.disabled = true;
@@ -1558,12 +1983,27 @@ export function initLogModal() {
     logModal.style.display = 'flex';
     resetLogModalScroll();
 
-    await Promise.allSettled([
+    const hydrationResults = await Promise.allSettled([
       hydrateTodayLogFromServer(today, sid),
       hydrateLogHistoryForSid(sid),
       hydrateProgressHistoryForSid(sid),
+      fetchCanonicalHomeworkForLog(today, sid),
     ]);
     if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
+    const canonicalResult = hydrationResults[3];
+    if (canonicalResult?.status === 'fulfilled') {
+      const payload = canonicalResult.value || {};
+      canonicalHomework.mode = payload.mode === 'canonical' ? 'canonical' : 'legacy';
+      canonicalHomework.assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+      canonicalHomework.operationId = String(payload.pendingOperation?.operationId || '').trim() || null;
+      if (canonicalHomework.mode === 'canonical' && payload.pendingOperation) {
+        canonicalHomework.mode = 'conflict';
+        canonicalHomework.error = '이 날짜에 미완료 저장 작업이 있습니다. 새 작업으로 덮어쓰지 않고 저장을 중단했습니다.';
+      }
+    } else {
+      canonicalHomework.mode = 'error';
+      canonicalHomework.error = canonicalResult?.reason?.message || '숙제 상세를 불러오지 못했습니다.';
+    }
     logNotes.disabled = false;
     if (logSave) logSave.disabled = false;
     if (logComplete) logComplete.disabled = false;
@@ -1600,6 +2040,9 @@ export function initLogModal() {
     });
 
     const logEntry = (state.logs[today] || {})[sid] || {};
+    canonicalHomework.exactLogRows = Array.isArray(logEntry.homeworkTable)
+      ? JSON.parse(JSON.stringify(logEntry.homeworkTable))
+      : [];
     const todayNotes = cleanHwText(logEntry.notes);
     let seededNotes = todayNotes;
     logModalCarriedTestAssignment = findAbsentTestCarryoverForLog(today, sid);
@@ -1663,6 +2106,14 @@ export function initLogModal() {
 
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
     renderHwTable(merged);
+    if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
+      const warning = document.createElement('p');
+      warning.className = 'hwCanonicalError';
+      warning.setAttribute('role', 'alert');
+      warning.textContent = canonicalHomework.error
+        || '숙제 상세를 불러오지 못해 저장을 잠시 사용할 수 없습니다. 닫은 뒤 다시 시도해 주세요.';
+      $('hwWrap')?.prepend(warning);
+    }
     applyReadOnlyRecordAccess();
 
     logModalSnapshot = {
@@ -1788,6 +2239,12 @@ export function initLogModal() {
     await openStudentPopupsForRow(tr);
   });
 
+  logNotes.addEventListener('input', () => {
+    if (canonicalHomework.mode === 'canonical' && !canonicalHomework.pendingPayload) {
+      canonicalHomework.operationId = null;
+    }
+  });
+
   const close = () => {
     logOpenSeq += 1;
     const wasUnified = logModal.classList.contains('student-work-layout');
@@ -1800,6 +2257,7 @@ export function initLogModal() {
     logModalServerSnapshot = { notes: '', homeworkTable: [] };
     logModalCarriedTestAssignment = null;
     logModalAccessMode = 'full';
+    resetCanonicalHomeworkState();
     try { if (window.hideStudentTooltip) window.hideStudentTooltip(); } catch {}
     if (wasUnified) {
       try { if (window.closeVideoAssignmentPopup) window.closeVideoAssignmentPopup(); } catch {}
@@ -1830,6 +2288,13 @@ export function initLogModal() {
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
 
+    if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'error') {
+      throw new Error(canonicalHomework.error || '숙제 상세를 불러오지 못했습니다. 닫은 뒤 다시 시도해 주세요.');
+    }
+    if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'conflict') {
+      throw new Error(canonicalHomework.error || '다른 화면에서 숙제가 변경되었습니다. 닫은 뒤 다시 열어 주세요.');
+    }
+
     const prevLog = (state.logs?.[today] || {})[sid] || {};
     const prevDone =
       prevLog?.done === true || prevLog?.done === 'true' || prevLog?.done === 1 || prevLog?.done === '1';
@@ -1855,7 +2320,40 @@ export function initLogModal() {
     });
 
     let returned = null;
-    if (Object.keys(entry).length || clearKeys.length) {
+    if (canonicalHomework.mode === 'canonical') {
+      const canonicalRows = collectCanonicalHomeworkRows();
+      if (hwRows.length) {
+        entry.homework = buildHwSummary(hwRows);
+        entry.homeworkTable = hwRows;
+        for (let i = clearKeys.length - 1; i >= 0; i--) {
+          if (clearKeys[i] === 'homework' || clearKeys[i] === 'homeworkTable') clearKeys.splice(i, 1);
+        }
+      } else {
+        entry.homeworkTable = [];
+        if (!clearKeys.includes('homework')) clearKeys.push('homework');
+        if (!clearKeys.includes('homeworkTable')) clearKeys.push('homeworkTable');
+      }
+      base.homeworkTable = normalizeHwRowsForCompare(logModalServerSnapshot.homeworkTable);
+      entry.updatedAt = nowISO();
+      canonicalHomework.operationId = canonicalHomework.operationId || createHomeworkOperationId();
+      const commitPayload = {
+        operationId: canonicalHomework.operationId,
+        date: today,
+        sid,
+        logPatch: {
+          entry,
+          clearKeys,
+          base,
+          baseHomeworkTableExact: canonicalHomework.exactLogRows,
+        },
+        homeworkRows: canonicalRows,
+        removedAssignmentIds: Array.from(canonicalHomework.removedAssignmentIds),
+      };
+      const committed = await commitCanonicalHomework(commitPayload);
+      returned = (committed?.entry && typeof committed.entry === 'object')
+        ? committed.entry
+        : ((committed?.log?.entry && typeof committed.log.entry === 'object') ? committed.log.entry : null);
+    } else if (Object.keys(entry).length || clearKeys.length) {
       entry.updatedAt = nowISO();
       returned = await patchLogEntry(today, sid, entry, clearKeys, contentChanged ? { base } : {});
     }

@@ -1,6 +1,6 @@
 # 학생 모바일 앱 최소 운영 runbook
 
-이 문서는 운영 장비에서 `app.5a-math.com`을 Flask/Waitress 프로세스 하나에 연결하는 배포 절차다. 개발 장비의 `dev-app.5a-math.com` 분리와 cutover/rollback은 [student-app-domain-split.md](student-app-domain-split.md)를 함께 따른다. 문서 작성과 `verify_student_app_deployment.ps1 -DryRun`은 DNS, Tunnel, Task Scheduler, key, backup 또는 runtime data를 변경하지 않는다. 실제 변경은 Todo 14 검증과 사용자 production 승인 후에만 수행한다.
+이 문서는 운영 장비에서 `app.5a-math.com`을 Flask/Waitress 프로세스 하나에 연결하는 배포 절차다. 개발 장비의 `dev-app.5a-math.com` 분리와 cutover/rollback은 [student-app-domain-split.md](student-app-domain-split.md)를 함께 따른다. 문서 작성과 `verify_student_app_deployment.ps1 -DryRun`은 DNS, Tunnel, Task Scheduler, key, backup 또는 runtime data를 변경하지 않는다. Phase 14에서 temp-only Todo 14 배포 계약을 기본 안전검증에 편입했지만, fixture PASS는 실기기·실제 host·Push 공급자 증거가 아니다. 실제 변경은 실기기 검증과 사용자 production 승인 후에만 수행한다.
 
 ## 고정 계약
 
@@ -113,6 +113,52 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_student_push_w
 `deliver_student_notification_outbox.py --once`를 차례로 한 번씩 실행한다. 새 알림용
 SQLite migration과 focused 검증이 끝나기 전에는 `STUDENT_APP_REMINDERS_ENABLED=0`을 유지한다.
 
+### 개발 격리 Push 작업
+
+`dev-app.5a-math.com` 검증은 production task와 키를 재사용하지 않는다. 개발 키는 개발
+작업트리의 ignored `instance\student-app-vapid-private.pem`에 두고, Waitress와 worker에
+`-VapidSubjectOverride`와 `-VapidPrivateKeyPathOverride`를 항상 한 쌍으로 전달한다.
+worker에는 `-PublicHostOverride dev-app.5a-math.com`, 비어 있지 않은 개발 canary SID,
+`-PublicEnabledOverride 1`, 개발 작업트리 `-RuntimeRootOverride`,
+`-DevelopmentIsolation`도 함께 전달한다. 이 조합은 다른 host/runtime/key 경로를
+fail-closed로 거부한다.
+
+개발용 예약 작업은 production과 다른 이름으로 등록하고 실기기 구독이 확인될 때까지
+disabled 상태를 유지한다. 준비 확인은 동일 인자를 사용한
+`run_student_push_worker.ps1 -DryRun`으로만 수행한다. `STUDENT_APP_REMINDERS_ENABLED=0`이어도 legacy 공지 worker는
+실제 outbox를 전송할 수 있으므로, 구독 대상과 outbox를 확인하지 않은 non-dry 실행은 금지한다.
+
+공지나 기존 outbox를 만들지 않는 개발 실기기 1회 검증은 전용 도구만 사용한다. 이 도구는
+`dev-student-001` 합성 학생, 현재 계정/세션 바인딩, 전체 활성 구독 정확히 1개, legacy/generic
+대기 큐와 schedule pending 0개, 개발 작업트리의 VAPID key를 모두 다시 확인한다. 구독 ID,
+endpoint, 구독 key, 계정 ID, SID는 명령 인자·출력·증거에 기록하지 않는다.
+
+```powershell
+.\venv\Scripts\python.exe -X utf8 .\scripts\send_student_test_push.py `
+  --dry-run
+```
+
+dry-run이 `ready:true`일 때만 출력된 불투명 `targetCommitment`와 `approvalId`를 별도 사용자
+승인과 함께 정확히 한 번 전송한다. 이 값들은 endpoint나 식별자를 복원하지 않으며,
+`approvalId`는 ignored `instance`의 최소 승인 레코드와 함께 5분 내 한 번만 소비된다. dry-run
+뒤 권한·세션·구독·대기 큐가 바뀌거나 같은 승인을 재사용하면 전송을 거부한다. 이 경로는 예약
+작업을 켜거나 공지/알림 outbox를 lease하지 않는다. 성공은 불투명한 receipt ID만 출력한다.
+provider 404/410은 전송 대상 한 행만 binding 전체 일치 조건으로 revoke하고, 429/5xx/timeout은
+DB를 변경하지 않은 채 `retryable:true`로 끝난다. 테스트 payload의 provider TTL은 60초이며,
+서비스워커도 `dev-app.5a-math.com`에서만 `push_test`를 표시한다.
+
+```powershell
+.\venv\Scripts\python.exe -X utf8 .\scripts\send_student_test_push.py `
+  --send --confirm SEND_DEV_TEST_PUSH_ONCE `
+  --target-commitment <dry-run-targetCommitment> `
+  --approval-id <dry-run-approvalId>
+```
+
+timeout/429/5xx의 `retryable:true`는 자동 재시도 지시가 아니다. provider 수락 여부가 불명확할
+수 있으므로 기기 수신을 먼저 확인하고, 다시 보낼 때에는 새 dry-run과 별도 승인을 받는다.
+승인 레코드와 그 임시/소비 파일은 runtime backup에서 제외하며 `approvalId`는 장기 증거에
+남기지 않는다.
+
 ## 6. named Cloudflare Tunnel
 
 Cloudflare credential이 없으면 여기서 `BLOCKED_NO_CLOUDFLARE_AUTH`로 중단한다. 문서 또는 verifier가 DNS/Tunnel을 생성하지 않는다. 기존 또는 신규 named tunnel의 locally-managed config 예시는 다음과 같다. credential 파일과 config는 저장소 밖의 ACL 제한 위치에 둔다.
@@ -146,6 +192,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_student_app
 ```
 
 exit `0`은 PASS, exit `3`과 `BLOCKED_*`는 외부 상태 미준비, exit `2`와 `FAIL_*`는 잘못된 구성이다. 어느 것도 secret 값을 출력하지 않는다. fixture mode PASS는 verifier 계약만 증명하며 rollout 증거가 아니다.
+
+코드·runbook 계약만 집중 검증하려면 아래 명령을 사용한다. Windows에서는 PowerShell syntax와 production/dev/rollout 실패 주입까지 포함한 전체 temp fixture를 실행한다. `-FixtureMode`는 `-DryRun`과 environment/Python/key-policy/task/Tunnel/listener/health snapshot 경로가 모두 없으면 live fallback 전에 즉시 실패한다. worker 검사는 `-DryRun`에서만 허용되는 고유 `Local\...ContractFixture...` mutex와 정리된 fixture 환경을 사용하므로 실제 예약 worker의 production mutex와 경합하지 않는다. Ubuntu CI 같은 비Windows 환경에서는 PowerShell을 실행하지 않고 동일 소스 계약과 backup 비밀 제외를 검사하며, 별도 `windows-latest` CI job이 전체 Windows 계약을 실행한다. 어느 모드도 live host, Task Scheduler, Tunnel, provider를 조회하거나 상태를 변경하지 않는다. runtime store는 mutation 감지를 위한 content/size/mtime fingerprint로만 읽고 쓰지 않는다. checker가 실패하거나 잘못된 receipt를 반환해도 process environment, working directory, backup root는 항상 복원되며 live runtime 변화도 검증 실패로 처리한다. 기본 `verify_refactor_safety.py` 실행에도 해당 플랫폼 모드의 계약 검사가 포함된다.
+
+```powershell
+.\venv\Scripts\python.exe -X utf8 .\scripts\verify_refactor_safety.py --only-student-mobile-deployment
+```
 
 Todo 14 자동검증과 네 실기기 준비 후에만 `STUDENT_APP_PUBLIC_ENABLED=1`로 바꾸고 Waitress를 재시작한다. 이 단계에서도 `STUDENT_APP_LEGACY_REDIRECT_ENABLED=0`과 test/staff SID allowlist를 유지한다. 따라서 `5a-math.com`은 기존 로그인과 `/student/<sid>` 흐름을 계속 사용하고, 앱 canary는 `app.5a-math.com/app`을 직접 연다. hostname을 연결한 다음 아래 검증이 PASS해야 한다. HTTPS `/app` 200, `Cache-Control: no-store`, secure host-only session cookie와 `SameSite=Lax`는 Browser Network/Application evidence로 별도 확인한다.
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
 from copy import deepcopy
 from typing import Final, TypeAlias
@@ -42,6 +44,18 @@ class TestsConfigWriteConflict(ValueError):
         super().__init__(
             f"tests-config write omitted {len(self.missing_test_ids)} existing test(s)"
         )
+
+
+def tests_config_revision(config: JsonObject) -> str:
+    """Return a stable revision token for optimistic whole-config writes."""
+
+    encoded = json.dumps(
+        config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _test_id(test: JsonObject) -> str:

@@ -2,7 +2,7 @@ import { bootstrap, state } from './core/state.js';
 import { initDarkmode } from './core/darkmode.js';
 import { initAdminViewMode } from './core/viewMode.js';
 import { initEscClose } from './features/escClose.js';
-import { initHoverTooltip } from './features/hoverTooltip.js?v=20260810-legacy-merge1';
+import { initHoverTooltip } from './features/hoverTooltip.js?v=20260813-phase11';
 import { initVideoModal } from './features/videoModal.js';
 import { initLogModal } from './features/logModal.js';
 import { initExtraModal } from './features/extraModal.js';
@@ -10,7 +10,7 @@ import { initAbsentRegister } from './features/absentRegister.js';
 //import { initMaterials } from './features/materials.js';
 import { initAssignModal } from './features/assignModal.js';
 import { initCalendar } from './features/calendar.js';
-import { initExport } from './features/exportLogs.js';
+import { initExport } from './features/exportLogs.js?v=20260813-phase12';
 import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js';
 import { loadTodayAndRender } from './features/today.js';
@@ -19,8 +19,10 @@ import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
-import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260810-legacy-merge1';
+import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260810-server-merge1';
 import { initAdminOperationNotes } from './features/adminOperationNotes.js';
+import { initStudentAccounts } from './features/studentAccounts.js';
+import { initStudentFocus } from './features/studentFocus.js';
 
 
 // 1) 공통 초기화
@@ -41,6 +43,8 @@ try {
 initHoverTooltip();
 initAssistantStudentNotes();
 initAdminOperationNotes();
+initStudentAccounts();
+initStudentFocus();
 initVideoModal();
 initLogModal();
 initExtraModal();

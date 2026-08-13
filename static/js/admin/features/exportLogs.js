@@ -15,6 +15,14 @@ import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import {
+  HW_HEADER_LINE,
+  defaultExportLogOptions,
+  normalizeExportLogOptions,
+  recordsToCsv,
+  renderClassLogText,
+  validateExportLogOptions,
+} from './exportLogFormat.js?v=20260813-phase12';
+import {
   loadWeekendSlots,
   hasWeekday,
   yoilOf,
@@ -61,8 +69,6 @@ function ensureRosterHistoryCache() {
  *  - 5칸: 교재 / 이번숙제 / 진행률 / 코멘트 / 다음숙제
  *  - 빈칸은 ''로 두되, 구분자는 항상 유지(형태 고정)
  * ────────────────────────────────────────────*/
-const HW_HEADER_LINE = '교재 / 이번 숙제 / 진행률 / 코멘트 / 다음숙제';
-
 function normStr(v) { return String(v ?? '').trim(); }
 
 function hwRowToFields(r) {
@@ -242,57 +248,6 @@ function allStudentsProgressMids(entry) {
 
 function exportDateStamp() {
   return String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
-}
-
-function csvCell(value) {
-  const s = String(value ?? '');
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-function recordsToCsv(records) {
-  const columns = [
-    'date',
-    'sid',
-    'name',
-    'school',
-    'curriculum',
-    'notes',
-    'tests',
-    'progress',
-    'homework_row',
-    'homework_book',
-    'homework_current',
-    'homework_progress',
-    'homework_comment',
-    'homework_next',
-  ];
-
-  const lines = [columns.map(csvCell).join(',')];
-
-  for (const record of records) {
-    const hwRows = record.homeworkRows.length ? record.homeworkRows : [null];
-    hwRows.forEach((hw, idx) => {
-      lines.push([
-        record.date,
-        record.sid,
-        record.name,
-        record.school,
-        record.curriculum,
-        record.notes,
-        record.testLines.join(' / '),
-        record.diffs.join(', '),
-        hw ? String(idx + 1) : '',
-        hw?.book || '',
-        hw?.thisHw || '',
-        hw?.pct || '',
-        hw?.comment || '',
-        hw?.nextHw || '',
-      ].map(csvCell).join(','));
-    });
-  }
-
-  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 function downloadTextFile(filename, contents, type) {
@@ -1120,6 +1075,20 @@ async function exportRosterCsv() {
 
 export function initExport() {
   const btn = $('exportLogs');
+  const modal = $('exportLogsModal');
+  const form = $('exportLogsForm');
+  const closeButton = $('exportLogsClose');
+  const cancelButton = $('exportLogsCancel');
+  const resetButton = $('exportLogsReset');
+  const submitButton = $('exportLogsSubmit');
+  const status = $('exportLogsStatus');
+  const formatTxt = $('exportLogsFormatTxt');
+  const formatCsv = $('exportLogsFormatCsv');
+  const txtSections = $('exportLogsTxtSections');
+  const sectionNotes = $('exportLogsSectionNotes');
+  const sectionTests = $('exportLogsSectionTests');
+  const sectionProgress = $('exportLogsSectionProgress');
+  const sectionHomework = $('exportLogsSectionHomework');
   const rosterButtons = [
     $('exportRoster'),
     $('exportRosterRail'),
@@ -1132,11 +1101,12 @@ export function initExport() {
 
   if (!btn) return;
 
-  btn.addEventListener('click', async () => {
+  async function exportClassLogs(rawOptions, { signal } = {}) {
+    const options = normalizeExportLogOptions(rawOptions);
     try {
       const [logs, progress] = await Promise.all([
-        fetch('/api/logs', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-        fetch('/api/progress', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch('/api/logs', { cache: 'no-store', signal }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch('/api/progress', { cache: 'no-store', signal }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       ]);
       if (logs && typeof logs === 'object') {
         state.logs = logs;
@@ -1149,9 +1119,10 @@ export function initExport() {
         resetRosterHistoryCache();
       }
     } catch (err) {
+      if (err?.name === 'AbortError') throw err;
       console.warn('[exportLogs] full history load failed:', err);
       toast('내보내기 데이터 로드 실패');
-      return;
+      throw new Error('내보내기 데이터를 불러오지 못했습니다. 잠시 후 다시 시도하세요.');
     }
 
     // 비디오 인덱스 (mid -> video)
@@ -1179,7 +1150,7 @@ export function initExport() {
 
     if (!targets.length) {
       toast('내보낼 (완료 & 미정리) 기록이 없습니다.');
-      return;
+      return { downloaded: [], message: '내보낼 완료·미정리 기록이 없습니다.' };
     }
 
     // 이름순 정렬 (동일하면 날짜)
@@ -1284,33 +1255,217 @@ export function initExport() {
       });
     });
 
-    let out = '';
-    records.forEach((record) => {
-      out += `(${record.headerDate}) ${record.name}\n`;
+    if (!records.length) {
+      toast('내보낼 내용이 없습니다.');
+      return { downloaded: [], message: '내보낼 내용이 없습니다.' };
+    }
 
-      if (record.hasSpecial) out += `특이사항 : ${record.notes}\n\n`;
-      if (record.hasTests) out += `테스트 : ${record.testLines.join(' / ')}\n\n`;
+    const stamp = exportDateStamp();
+    const downloaded = [];
+    let txtSkipped = false;
 
-      out += `진도 (${record.curriculum}) : ${record.diffs.join(', ')}\n\n`;
-
-      // ✅ 숙제 출력
-      if (record.hwHasContent) {
-        out += `${record.hwBlock}\n\n\n`;
+    if (options.formats.txt) {
+      const out = renderClassLogText(records, options);
+      if (out.trim()) {
+        downloadTextFile(`수업기록_완료미정리_${stamp}.txt`, out, 'text/plain;charset=utf-8');
+        downloaded.push('TXT');
       } else {
-        out += `숙제 :\n${HW_HEADER_LINE}\n\n\n`;
+        txtSkipped = true;
+      }
+    }
+    if (options.formats.csv) {
+      downloadTextFile(`수업기록_완료미정리_${stamp}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
+      downloaded.push('CSV');
+    }
+
+    if (!downloaded.length) {
+      toast('선택한 TXT 항목에 내보낼 내용이 없습니다.');
+      return { downloaded, message: '선택한 TXT 항목에 내보낼 내용이 없습니다.' };
+    }
+
+    const suffix = txtSkipped ? ' · 선택한 TXT 항목은 내용 없음' : '';
+    toast(`수업 기록 ${downloaded.join('/')} 내보내기 완료${suffix}`);
+    return { downloaded, message: `${downloaded.join('/')} 파일을 내려받았습니다.${suffix}` };
+  }
+
+  let currentOptions = defaultExportLogOptions();
+  let exportInFlight = false;
+  let activeExportController = null;
+  let restoreFocus = null;
+
+  const dialogReady = !!(
+    modal && form && closeButton && cancelButton && resetButton && submitButton && status &&
+    formatTxt && formatCsv && txtSections && sectionNotes && sectionTests && sectionProgress && sectionHomework
+  );
+
+  if (!dialogReady) {
+    btn.addEventListener('click', async () => {
+      if (exportInFlight) return;
+      exportInFlight = true;
+      btn.disabled = true;
+      try { await exportClassLogs(currentOptions); }
+      catch { /* toast is emitted by exportClassLogs */ }
+      finally {
+        exportInFlight = false;
+        btn.disabled = false;
       }
     });
+    return;
+  }
 
-    if (!out.trim()) {
-      toast('내보낼 내용이 없습니다.');
+  const optionControls = [
+    formatTxt,
+    formatCsv,
+    sectionNotes,
+    sectionTests,
+    sectionProgress,
+    sectionHomework,
+  ];
+
+  function setStatus(message = '', kind = '') {
+    status.textContent = message;
+    status.classList.toggle('is-error', kind === 'error');
+    status.classList.toggle('is-success', kind === 'success');
+  }
+
+  function syncTxtSectionState() {
+    txtSections.disabled = !formatTxt.checked || exportInFlight;
+    txtSections.classList.toggle('is-disabled', !formatTxt.checked);
+  }
+
+  function writeOptionsToForm(value) {
+    const options = normalizeExportLogOptions(value);
+    formatTxt.checked = options.formats.txt;
+    formatCsv.checked = options.formats.csv;
+    sectionNotes.checked = options.sections.notes;
+    sectionTests.checked = options.sections.tests;
+    sectionProgress.checked = options.sections.progress;
+    sectionHomework.checked = options.sections.homework;
+    syncTxtSectionState();
+  }
+
+  function readOptionsFromForm() {
+    return normalizeExportLogOptions({
+      formats: { txt: formatTxt.checked, csv: formatCsv.checked },
+      sections: {
+        notes: sectionNotes.checked,
+        tests: sectionTests.checked,
+        progress: sectionProgress.checked,
+        homework: sectionHomework.checked,
+      },
+    });
+  }
+
+  function setBusy(busy) {
+    if (
+      busy &&
+      modal.contains(document.activeElement) &&
+      ![closeButton, cancelButton, submitButton].includes(document.activeElement)
+    ) {
+      submitButton.focus();
+    }
+    exportInFlight = busy;
+    modal.setAttribute('aria-busy', busy ? 'true' : 'false');
+    optionControls.forEach(control => { control.disabled = busy; });
+    resetButton.disabled = busy;
+    submitButton.setAttribute('aria-disabled', busy ? 'true' : 'false');
+    submitButton.textContent = busy ? '준비 중…' : '선택 형식으로 내보내기';
+    if (!busy) syncTxtSectionState();
+  }
+
+  function closeDialog() {
+    if (exportInFlight) activeExportController?.abort();
+    modal.style.display = 'none';
+    modal.hidden = true;
+    document.body.classList.remove('export-logs-open');
+    setStatus();
+    const target = restoreFocus;
+    restoreFocus = null;
+    if (target?.focus) requestAnimationFrame(() => target.focus());
+  }
+
+  function openDialog() {
+    if (exportInFlight) return;
+    restoreFocus = document.activeElement;
+    writeOptionsToForm(currentOptions);
+    setStatus('설정을 확인한 뒤 내보내기를 실행하세요.');
+    modal.hidden = false;
+    modal.style.display = 'flex';
+    document.body.classList.add('export-logs-open');
+    requestAnimationFrame(() => formatTxt.focus());
+  }
+
+  btn.addEventListener('click', openDialog);
+  closeButton.addEventListener('click', closeDialog);
+  cancelButton.addEventListener('click', closeDialog);
+  resetButton.addEventListener('click', () => {
+    writeOptionsToForm(defaultExportLogOptions());
+    setStatus('기본 설정으로 되돌렸습니다. 내보내기를 실행하면 현재 페이지에 적용됩니다.', 'success');
+  });
+  formatTxt.addEventListener('change', syncTxtSectionState);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeDialog();
+  });
+  modal.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDialog();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(modal.querySelectorAll('button:not([disabled]), input:not([disabled])'))
+      .filter(element => !element.hidden && element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  document.addEventListener('focusin', (event) => {
+    if (modal.hidden || modal.contains(event.target)) return;
+    submitButton.focus();
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (exportInFlight) return;
+
+    const validation = validateExportLogOptions(readOptionsFromForm());
+    if (!validation.ok) {
+      setStatus(validation.message, 'error');
+      if (validation.code === 'format_required') formatTxt.focus();
+      else sectionNotes.focus();
       return;
     }
 
-    // ✅ 파일명 날짜 포함
-    const stamp = exportDateStamp();
-    downloadTextFile(`수업기록_완료미정리_${stamp}.txt`, out, 'text/plain;charset=utf-8');
-    downloadTextFile(`수업기록_완료미정리_${stamp}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
-
-    toast('수업 기록 TXT/CSV 내보내기 완료');
+    currentOptions = validation.options;
+    const controller = new AbortController();
+    activeExportController = controller;
+    setBusy(true);
+    setStatus('수업 기록을 안전하게 준비하고 있습니다.');
+    let closeAfterExport = false;
+    try {
+      const result = await exportClassLogs(currentOptions, { signal: controller.signal });
+      if (result.downloaded.length) {
+        setStatus(result.message, 'success');
+        closeAfterExport = true;
+      } else {
+        setStatus(result.message, 'error');
+      }
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        setStatus(err?.message || '내보내기에 실패했습니다.', 'error');
+      }
+    } finally {
+      if (activeExportController === controller) activeExportController = null;
+      setBusy(false);
+      if (closeAfterExport && !modal.hidden) closeDialog();
+    }
   });
 }

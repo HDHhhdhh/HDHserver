@@ -11,6 +11,7 @@ const appModule = path.join(root, 'static', 'js', 'student-app.js');
 const swPath = path.join(root, 'static', 'sw.js');
 const studentPath = path.join(root, 'static', 'js', 'student.js');
 const studentHtmlPath = path.join(root, 'static', 'student.html');
+const studentAppHtmlPath = path.join(root, 'static', 'student-app.html');
 const artifactPath = process.env.STUDENT_APP_PWA_FLOW_EVIDENCE ?? path.join(root, '.omo', 'evidence', 'student-mobile-app-v2', 'task-12', 'pwa-flow-check.json');
 
 function authState() {
@@ -63,6 +64,86 @@ function fakeApi(overrides = {}) {
   };
 }
 
+function installGuideFixture() {
+  const listeners = new WeakMap();
+  const documentRef = {
+    activeElement: null,
+    createElement: () => createNode(),
+    getElementById: id => id === 'student-app' ? rootNode : null,
+    querySelector: selector => ({
+      '[data-install-guide]': overlay,
+      '[data-install-dialog]': dialog,
+      '[data-install-guide-open]': opener,
+      '#student-app input, #student-app select, #student-app button, #student-app [tabindex]:not([tabindex="-1"])': mainFocus,
+    })[selector] ?? null,
+    querySelectorAll: selector => selector === 'body > header, body > main, body > footer'
+      ? background
+      : [],
+  };
+
+  function createNode() {
+    const node = {
+      hidden: false,
+      inert: false,
+      disabled: false,
+      isConnected: true,
+      textContent: '',
+      children: [],
+      attributes: new Map(),
+      addEventListener(type, listener) {
+        const registered = listeners.get(node) ?? new Map();
+        const typed = registered.get(type) ?? [];
+        typed.push(listener);
+        registered.set(type, typed);
+        listeners.set(node, registered);
+      },
+      async dispatch(type, event = {}) {
+        for (const listener of listeners.get(node)?.get(type) ?? []) {
+          await listener({ target: node, preventDefault() {}, ...event });
+        }
+      },
+      setAttribute(name, value) { node.attributes.set(name, String(value)); },
+      getAttribute(name) { return node.attributes.get(name) ?? null; },
+      removeAttribute(name) { node.attributes.delete(name); },
+      focus() { documentRef.activeElement = node; },
+      replaceChildren(...children) { node.children = children; },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    };
+    return node;
+  }
+
+  const label = createNode();
+  const title = createNode();
+  const body = createNode();
+  const steps = createNode();
+  const action = createNode();
+  const status = createNode();
+  const dismiss = createNode();
+  const overlay = createNode();
+  const dialog = createNode();
+  const opener = createNode();
+  const background = [createNode(), createNode(), createNode()];
+  const rootNode = createNode();
+  const mainFocus = createNode();
+  overlay.hidden = true;
+  overlay.querySelector = selector => ({
+    '[data-install-environment]': label,
+    '[data-install-title]': title,
+    '[data-install-body]': body,
+    '[data-install-steps]': steps,
+    '[data-install-action]': action,
+    '[data-install-status]': status,
+  })[selector] ?? null;
+  overlay.querySelectorAll = selector => {
+    if (selector === '[data-install-dismiss]') return [dismiss];
+    if (selector.startsWith('button:not')) return [action, dismiss];
+    return [];
+  };
+  documentRef.activeElement = opener;
+  return { documentRef, overlay, dialog, opener, dismiss, action, status, steps, background, rootNode, mainFocus };
+}
+
 function loadDeepLinkContract(source) {
   const start = source.indexOf('/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_START */');
   const end = source.indexOf('/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_END */');
@@ -96,13 +177,14 @@ async function serviceWorkerTrace(source) {
 }
 
 export async function runChecks() {
-  const [{ createPushGate, detectInstallEnvironment }, { safeAnnouncementId, studentPageUrl, isBackwardTransition }, { installGuideContent }, sw, student, studentHtml, appSource] = await Promise.all([
+  const [{ createBrowserPushPlatform, createPushGate, detectInstallEnvironment }, { safeAnnouncementId, studentPageUrl, isBackwardTransition }, { bootStudentAppShell, initInstallGuide, installGuideContent }, sw, student, studentHtml, studentAppHtml, appSource] = await Promise.all([
     import(pathToFileURL(pushModule).href),
     import(pathToFileURL(contractModule).href),
     import(pathToFileURL(appModule).href),
     fs.readFile(swPath, 'utf8'),
     fs.readFile(studentPath, 'utf8'),
     fs.readFile(studentHtmlPath, 'utf8'),
+    fs.readFile(studentAppHtmlPath, 'utf8'),
     fs.readFile(appModule, 'utf8'),
   ]);
   const checks = [];
@@ -129,7 +211,176 @@ export async function runChecks() {
     const installed = detected('Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36', { standalone: true });
     assert.equal(installed.standalone, true);
     assert.match(appSource, /if \(environment\.standalone\)[\s\S]*opener\.hidden = true/);
-    assert.match(appSource, /initInstallGuide\(\);/);
+    assert.match(appSource, /bootStudentAppShell\(\);/);
+  });
+
+  await check('real app shell starts hidden and exposes explicit dismiss controls', async () => {
+    assert.match(studentAppHtml, /data-install-guide\s+hidden/i);
+    assert.ok((studentAppHtml.match(/data-install-dismiss/g) ?? []).length >= 2);
+  });
+
+  await check('browser shell boot keeps the guide closed after initialization', async () => {
+    const fixture = installGuideFixture();
+    let createCalls = 0;
+    const platform = {
+      installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+      hasInstallPrompt: () => false,
+      capabilities: () => ({ serviceWorker: false }),
+    };
+    const result = bootStudentAppShell({
+      document: fixture.documentRef,
+      window: {},
+      platform,
+      createApp: ({ document, root: appRoot, platform: appPlatform }) => {
+        createCalls += 1;
+        assert.equal(document, fixture.documentRef);
+        assert.equal(appRoot, fixture.rootNode);
+        assert.equal(appPlatform, platform);
+        return { status: 'started' };
+      },
+    });
+    await Promise.resolve();
+    assert.ok(result);
+    assert.equal(createCalls, 1);
+    assert.equal(fixture.overlay.hidden, true);
+    assert.equal(fixture.documentRef.activeElement, fixture.opener);
+    assert.equal(fixture.background.some(node => node.inert), false);
+    const browserBootScope = appSource.slice(appSource.indexOf('function bootBrowserShell'), appSource.indexOf("if (typeof document !== 'undefined')"));
+    assert.doesNotMatch(browserBootScope, /\.open\s*\(/);
+  });
+
+  await check('install guide stays closed until the explicit opener and restores focus', async () => {
+    const fixture = installGuideFixture();
+    const controller = initInstallGuide({
+      documentRef: fixture.documentRef,
+      windowRef: {},
+      platform: {
+        installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+        hasInstallPrompt: () => false,
+      },
+    });
+    assert.ok(controller);
+    assert.equal(fixture.overlay.hidden, true, 'initialization must not cover the signed-out shell');
+    assert.equal(fixture.documentRef.activeElement, fixture.opener, 'initialization moved focus without a gesture');
+    assert.equal(fixture.background.some(node => node.inert), false, 'initialization made the app background inert');
+
+    await fixture.opener.dispatch('click');
+    assert.equal(fixture.overlay.hidden, false);
+    assert.equal(fixture.documentRef.activeElement, fixture.dialog);
+    assert.equal(fixture.background.every(node => node.inert), true);
+
+    await fixture.overlay.dispatch('keydown', { key: 'Escape' });
+    assert.equal(fixture.overlay.hidden, true);
+    assert.equal(fixture.documentRef.activeElement, fixture.opener);
+    assert.equal(fixture.background.some(node => node.inert), false);
+
+    await fixture.opener.dispatch('click');
+    await fixture.dismiss.dispatch('click');
+    assert.equal(fixture.overlay.hidden, true);
+    assert.equal(fixture.documentRef.activeElement, fixture.opener);
+    assert.equal(fixture.background.some(node => node.inert), false);
+  });
+
+  await check('native install completion closes the guide, clears inertness, and moves focus into the app', async () => {
+    const accepted = installGuideFixture();
+    initInstallGuide({
+      documentRef: accepted.documentRef,
+      windowRef: {},
+      platform: {
+        installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+        hasInstallPrompt: () => true,
+        promptInstall: async () => 'accepted',
+      },
+    });
+    await accepted.opener.dispatch('click');
+    await accepted.action.dispatch('click');
+    assert.equal(accepted.overlay.hidden, true);
+    assert.equal(accepted.opener.hidden, true);
+    assert.equal(accepted.background.some(node => node.inert), false);
+    assert.equal(accepted.documentRef.activeElement, accepted.mainFocus);
+    assert.equal(accepted.action.getAttribute('aria-disabled'), null);
+    assert.equal(accepted.dialog.getAttribute('aria-busy'), null);
+
+    const dismissed = installGuideFixture();
+    initInstallGuide({
+      documentRef: dismissed.documentRef,
+      windowRef: {},
+      platform: {
+        installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+        hasInstallPrompt: () => true,
+        promptInstall: async () => 'dismissed',
+      },
+    });
+    await dismissed.opener.dispatch('click');
+    await dismissed.action.dispatch('click');
+    assert.equal(dismissed.overlay.hidden, false);
+    assert.equal(dismissed.documentRef.activeElement, dismissed.action);
+    assert.equal(dismissed.action.getAttribute('aria-disabled'), null);
+    assert.equal(dismissed.dialog.getAttribute('aria-busy'), null);
+  });
+
+  await check('appinstalled and standalone display changes clear stale install prompts exactly once', async () => {
+    const windowListeners = new Map();
+    const displayListeners = new Map();
+    const displayMode = {
+      matches: false,
+      addEventListener: (type, listener) => displayListeners.set(type, listener),
+    };
+    const windowRef = {
+      navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/126.0' },
+      matchMedia: () => displayMode,
+      addEventListener: (type, listener) => windowListeners.set(type, listener),
+    };
+    const platform = createBrowserPushPlatform(windowRef);
+    let installedCount = 0;
+    platform.onInstalled(() => { installedCount += 1; });
+    let prevented = false;
+    windowListeners.get('beforeinstallprompt')({ preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(platform.hasInstallPrompt(), true);
+    windowListeners.get('appinstalled')();
+    assert.equal(platform.hasInstallPrompt(), false);
+    assert.equal(installedCount, 1);
+    displayMode.matches = true;
+    displayListeners.get('change')({ matches: true });
+    assert.equal(installedCount, 1);
+
+    const installed = installGuideFixture();
+    let notifyInstalled;
+    const controller = initInstallGuide({
+      documentRef: installed.documentRef,
+      windowRef: {},
+      platform: {
+        installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+        hasInstallPrompt: () => false,
+        onInstalled: listener => { notifyInstalled = listener; return () => {}; },
+      },
+    });
+    await installed.opener.dispatch('click');
+    notifyInstalled();
+    assert.equal(installed.overlay.hidden, true);
+    assert.equal(installed.opener.hidden, true);
+    assert.equal(installed.background.some(node => node.inert), false);
+    assert.equal(installed.documentRef.activeElement, installed.mainFocus);
+    controller.open();
+    assert.equal(installed.overlay.hidden, true);
+
+    const closed = installGuideFixture();
+    let notifyClosedInstall;
+    initInstallGuide({
+      documentRef: closed.documentRef,
+      windowRef: {},
+      platform: {
+        installEnvironment: () => ({ platform: 'windows', browser: 'chrome', standalone: false }),
+        hasInstallPrompt: () => false,
+        onInstalled: listener => { notifyClosedInstall = listener; return () => {}; },
+      },
+    });
+    assert.equal(closed.documentRef.activeElement, closed.opener);
+    notifyClosedInstall();
+    assert.equal(closed.overlay.hidden, true);
+    assert.equal(closed.opener.hidden, true);
+    assert.equal(closed.documentRef.activeElement, closed.mainFocus);
   });
 
   await check('auth and install states move forward and permission stays behind the click action', async () => {

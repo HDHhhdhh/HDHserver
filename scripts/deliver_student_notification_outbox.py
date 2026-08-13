@@ -51,6 +51,18 @@ def _retry_reason(result: PushSendResult) -> str:
     return "5xx" if result.http_status is not None and result.http_status >= 500 else "delivery_failed"
 
 
+def _retry_exhausted(repository: object, lease: object) -> bool:
+    max_attempts = getattr(repository, "MAX_ATTEMPTS", None)
+    attempts = lease.get("attempts") if isinstance(lease, dict) else None
+    return (
+        isinstance(max_attempts, int)
+        and not isinstance(max_attempts, bool)
+        and isinstance(attempts, int)
+        and not isinstance(attempts, bool)
+        and attempts + 1 >= max_attempts
+    )
+
+
 def _finish_one(repository, push, sender, authority, lease, summary: DeliverySummary,
                 lease_seconds: float) -> None:
     row_id, token = lease["event_row_id"], lease["lease_token"]
@@ -104,7 +116,8 @@ def _finish_one(repository, push, sender, authority, lease, summary: DeliverySum
     summary["deliveries"] += delivered
     if transient is not None:
         completed = repository.complete(row_id, token, success=False, error=transient)
-        summary["retried"] += int(completed)
+        if completed:
+            summary["failed" if _retry_exhausted(repository, lease) else "retried"] += 1
     elif delivered or finished:
         completed = repository.complete(row_id, token, success=True)
         summary["sent"] += int(completed)

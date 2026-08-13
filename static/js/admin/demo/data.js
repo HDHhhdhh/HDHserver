@@ -297,6 +297,37 @@ function createLogs(baseDate, prevDate, students) {
   return logs;
 }
 
+function createHomeworkAssignments(logs, baseDate, students) {
+  return students.map((student, index) => {
+    const id = `demo-homework-${String(index + 1).padStart(3, '0')}`;
+    const status = index % 5 === 3 ? 'completed' : (index % 5 === 4 ? 'cancelled' : 'assigned');
+    const logRow = logs?.[baseDate]?.[student.id]?.homeworkTable?.[0];
+    if (status === 'cancelled' && logs?.[baseDate]?.[student.id]) {
+      logs[baseDate][student.id].homeworkTable = [];
+      delete logs[baseDate][student.id].homework;
+    } else if (logRow && typeof logRow === 'object') {
+      logRow.assignmentId = id;
+      if (index === 0) logRow.demoUnknownKey = 'unknown-field-preserved';
+    }
+    const dueAt = index % 4 === 1
+      ? null
+      : isoAt(baseDate, index % 4 === 2 ? '08:30' : '21:00');
+    return {
+      id,
+      sid: student.id,
+      sourceLogDate: baseDate,
+      sourceRowId: id,
+      rowIndex: 0,
+      title: `${student.currentBook} 확인 과제`,
+      book: student.currentBook,
+      scope: `${13 + index}쪽 핵심 문제`,
+      dueAt,
+      status,
+      revision: 1,
+    };
+  });
+}
+
 function createProgress(baseDate, prevDate, students, videos) {
   const progress = { [prevDate]: {}, [baseDate]: {} };
   students.forEach((student, index) => {
@@ -537,6 +568,58 @@ function createMatAssign(students) {
   ]));
 }
 
+function createStudentAccounts(students) {
+  const group = (index, account, options = {}) => ({
+    identity: {
+      name: students[index].name,
+      school: students[index].school,
+      grade: students[index].grade,
+      sids: options.sids || [students[index].id],
+    },
+    account,
+    activationCodeRequired: Boolean(options.activationCodeRequired),
+    duplicateName: Boolean(options.duplicateName),
+  });
+  return [
+    group(0, { aid: 'demo-a001', status: 'active', mustChangeCredentials: false, activeSessionCount: 2, activePushSubscriptionCount: 1 }),
+    group(1, null, { activationCodeRequired: true, duplicateName: true, sids: [students[1].id, students[2].id] }),
+    group(3, { aid: 'demo-a003', status: 'disabled', mustChangeCredentials: false, activeSessionCount: 0, activePushSubscriptionCount: 0 }),
+    group(4, { aid: 'demo-a004', status: 'active', mustChangeCredentials: true, activeSessionCount: 1, activePushSubscriptionCount: 1 }),
+  ];
+}
+
+function createFocusSummaries(baseDate, students) {
+  const startAt = isoAt(baseDate, '18:00');
+  const endAt = isoAt(baseDate, '20:00');
+  return {
+    [baseDate]: {
+      ok: true,
+      date: baseDate,
+      serverNow: isoAt(baseDate, '19:35'),
+      classes: [{
+        classId: 'fcl_demo_focus_class_0001',
+        kind: 'regular',
+        startAt,
+        endAt,
+        sessions: students.slice(0, 3).map((student, index) => ({
+          sid: student.id,
+          name: student.name,
+          school: student.school,
+          grade: student.grade,
+          state: index === 2 ? 'unknown' : (index === 1 ? 'active' : 'finished'),
+          startedAt: isoAt(baseDate, '17:58'),
+          endedAt: index === 0 ? isoAt(baseDate, '19:25') : null,
+          focusMs: [4_680_000, 4_020_000, 3_360_000][index],
+          hiddenCount: [1, 2, 1][index],
+          hiddenMs: [120_000, 240_000, 60_000][index],
+          longestHiddenMs: [120_000, 180_000, 60_000][index],
+          unknownMs: index === 2 ? 480_000 : 0,
+        })),
+      }],
+    },
+  };
+}
+
 export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) {
   const currentDate = dateKey(now);
   const previousDate = addDays(currentDate, -1);
@@ -545,6 +628,8 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
   const students = createStudents();
   const videos = createVideos();
   const dayMaps = createDayMaps(currentDate, nextDate, weekendDate, students);
+  const logs = createLogs(currentDate, previousDate, students);
+  const homeworkAssignments = createHomeworkAssignments(logs, currentDate, students);
 
   return {
     schemaVersion,
@@ -557,11 +642,15 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
       weekend: weekendDate,
     },
     students,
+    studentAccounts: createStudentAccounts(students),
+    focusSummaries: createFocusSummaries(currentDate, students),
     videos,
     materials: createMaterials(),
     matAssign: createMatAssign(students),
     updates: createUpdates(currentDate, nextDate, students, videos),
-    logs: createLogs(currentDate, previousDate, students),
+    logs,
+    homeworkAssignments,
+    homeworkOperations: {},
     progress: createProgress(currentDate, previousDate, students, videos),
     testsConfig: createTestsConfig(),
     tests: createTests(previousDate, currentDate),

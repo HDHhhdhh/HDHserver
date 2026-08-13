@@ -29,3 +29,22 @@ jobs:
 
       - name: Run safety verification
         run: python scripts/verify_refactor_safety.py
+
+  verify-student-deployment-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up deployment Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create fixture virtual environment
+        shell: pwsh
+        run: python -m venv venv
+
+      - name: Run full student deployment contract
+        shell: pwsh
+        run: .\venv\Scripts\python.exe -X utf8 .\scripts\verify_refactor_safety.py --only-student-mobile-deployment

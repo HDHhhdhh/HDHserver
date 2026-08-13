@@ -41,6 +41,7 @@ class LogPatchResult:
     sqlite_ok: bool
     sqlite_error: Exception | None = None
     sqlite_base_conflict: bool = False
+    sqlite_conflict_entry: dict | None = None
     json_ok: bool = False
     json_error: Exception | None = None
     json_conflict_entry: dict | None = None
@@ -425,6 +426,7 @@ class LogRepository:
         sqlite_ok = False
         sqlite_err = None
         sqlite_base_conflict = False
+        sqlite_conflict_entry = None
         json_ok = False
         json_err = None
         con = None
@@ -437,6 +439,7 @@ class LogRepository:
             if self.entry_conflicts(cur, base):
                 con.execute("ROLLBACK;")
                 sqlite_base_conflict = True
+                sqlite_conflict_entry = cur
             else:
                 merged = self.merge_entry(cur, entry)
                 self._sqlite_upsert_entry(con, date, sid, merged)
@@ -478,6 +481,7 @@ class LogRepository:
                         sqlite_ok=sqlite_ok,
                         sqlite_error=sqlite_err,
                         sqlite_base_conflict=sqlite_base_conflict,
+                        sqlite_conflict_entry=sqlite_conflict_entry,
                         json_ok=json_ok,
                         json_error=json_err,
                         json_conflict_entry=cur_json,
@@ -517,6 +521,7 @@ class LogRepository:
             sqlite_ok=sqlite_ok,
             sqlite_error=sqlite_err,
             sqlite_base_conflict=sqlite_base_conflict,
+            sqlite_conflict_entry=sqlite_conflict_entry,
             json_ok=json_ok,
             json_error=json_err,
         )

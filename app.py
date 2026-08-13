@@ -4,12 +4,22 @@ from __future__ import annotations
 import os
 from urllib.parse import urlparse
 
-from flask import Flask, request, abort, render_template_string
+from flask import Flask, g, request, abort, render_template_string
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from core.network_access import (
     academy_network_allowed,
     client_ip_from_request,
+    ip_allowed,
+)
+from core.student_app_config import load_student_app_config
+from core.student_public_surface import (
+    BOARD_ROUTE_METHODS,
+    FOCUS_ROUTE_METHODS,
+    HOMEWORK_ROUTE_METHODS,
+    PUSH_ROUTE_METHODS,
+    install_student_public_surface,
+    register_student_app_domain,
 )
 from routes.pages import bp_pages
 from routes.api_basic import bp_api_basic
@@ -23,6 +33,12 @@ from routes.api_kollus import bp_api_kollus
 from routes.api_auth import bp_api_auth
 from routes.api_todaymeta import bp_api_todaymeta
 from routes.api_makeup_carryover import bp_api_makeup_carryover
+from routes.api_student_app_auth import bp_api_student_app_auth
+from routes.api_student_accounts import bp_api_student_accounts
+from routes.api_student_push import bp_api_student_push
+from routes.api_student_homework import bp_api_student_homework, bp_api_student_homework_admin
+from routes.api_student_board import bp_api_student_board
+from routes.api_student_focus import bp_api_student_focus, bp_api_student_focus_admin
 from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_non_student_ocr import bp_api_non_student_ocr
@@ -31,6 +47,19 @@ from routes.api_non_student_ocr import bp_api_non_student_ocr
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
     app.json.ensure_ascii = False
+    student_app_config = load_student_app_config()
+    install_student_public_surface(
+        app,
+        config=student_app_config,
+        auth_blueprint=bp_api_student_app_auth,
+    )
+    if student_app_config.public_enabled:
+        register_student_app_domain(app, bp_api_student_push, PUSH_ROUTE_METHODS)
+        register_student_app_domain(app, bp_api_student_board, BOARD_ROUTE_METHODS)
+        if student_app_config.homework_enabled:
+            register_student_app_domain(app, bp_api_student_homework, HOMEWORK_ROUTE_METHODS)
+        if student_app_config.focus_enabled:
+            register_student_app_domain(app, bp_api_student_focus, FOCUS_ROUTE_METHODS)
     trust_proxy_headers = os.environ.get("TRUST_PROXY_HEADERS", "").lower() in {
         "1",
         "true",
@@ -60,7 +89,13 @@ def create_app() -> Flask:
     @app.before_request
     def block_academy_only_answer_files():
         p = (request.path or "")
-        if p in {"/js/test_answer_link_map.json", "/js/test_answer_link_map.js"} and not academy_network_allowed():
+        if p not in {"/js/test_answer_link_map.json", "/js/test_answer_link_map.js"}:
+            return
+        if getattr(g, "student_app_public_request", False) is True:
+            if not ip_allowed(getattr(g, "student_app_client_ip", "")):
+                abort(404)
+            return
+        if not academy_network_allowed():
             ip_str = client_ip_from_request()
             print(f"[BLOCK] path={p} ip={ip_str} xff={request.headers.get('X-Forwarded-For')} remote={request.remote_addr}")
             abort(403)
@@ -121,6 +156,10 @@ def create_app() -> Flask:
     app.register_blueprint(bp_api_assistant_notes)
     app.register_blueprint(bp_api_admin_operation_notes)
     app.register_blueprint(bp_api_non_student_ocr)
+    app.register_blueprint(bp_api_student_accounts)
+    if student_app_config.homework_enabled:
+        app.register_blueprint(bp_api_student_homework_admin)
+    app.register_blueprint(bp_api_student_focus_admin)
     return app
 
 

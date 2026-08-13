@@ -1,4 +1,5 @@
 import { cloneDemoValue, loadDemoStore, saveDemoStore } from './store.js';
+import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
@@ -791,8 +792,49 @@ function homeworkBooksBySid(logs) {
   return out;
 }
 
+function findStudentAccountGroup(store, aid) {
+  return (Array.isArray(store.studentAccounts) ? store.studentAccounts : [])
+    .find(group => String(group?.account?.aid || group?.identity?.name || '') === String(aid || ''));
+}
+
+function sameExactSids(expected, received) {
+  if (!Array.isArray(expected) || !Array.isArray(received)) return false;
+  const normalize = rows => [...new Set(rows.map(value => String(value).trim()).filter(Boolean))].sort();
+  const left = normalize(expected);
+  const right = normalize(received);
+  return left.length === right.length && left.every((sid, index) => sid === right[index]);
+}
+
+function studentAccountAction(path) {
+  const match = path.match(/^\/api\/student-accounts\/([^/]+)\/(reset|disable|enable|revoke-sessions|activation-code)$/);
+  if (!match) return null;
+  try {
+    return { aid: decodeURIComponent(match[1]), action: match[2] };
+  } catch {
+    return null;
+  }
+}
+
 async function handleGet(root, ctx, store) {
   const { path, url } = ctx;
+  const homeworkResult = applyDemoHomeworkRequest({
+    method: 'GET',
+    path,
+    params: url.searchParams,
+    store,
+    now: new Date(DEFAULT_DEMO_NOW),
+  });
+  if (homeworkResult) {
+    if (homeworkResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(homeworkResult.payload), homeworkResult.status);
+  }
+  if (path === '/api/student-accounts') return responseJson(root, { ok: true, groups: clone(store.studentAccounts || []) });
+  if (path === '/api/admin/student-focus/summary') {
+    const date = String(url.searchParams.get('date') || '').trim();
+    return responseJson(root, clone(store.focusSummaries?.[date] || {
+      ok: true, date, serverNow: nowIso(), classes: [],
+    }));
+  }
   if (path === '/api/students') return responseJson(root, clone(store.students || []));
   if (path === '/api/videos') return responseJson(root, clone(store.videos || []));
   if (path === '/api/materials') return responseJson(root, clone(store.materials || {}));
@@ -844,6 +886,46 @@ async function handleWrite(root, ctx, store) {
     } catch {
       return badRequest(root, 'invalid json body');
     }
+  }
+
+  const homeworkResult = applyDemoHomeworkRequest({
+    method,
+    path,
+    body,
+    store,
+    now: new Date(DEFAULT_DEMO_NOW),
+  });
+  if (homeworkResult) {
+    if (homeworkResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(homeworkResult.payload), homeworkResult.status);
+  }
+
+  const accountRequest = method === 'POST' ? studentAccountAction(path) : null;
+  if (accountRequest) {
+    const group = findStudentAccountGroup(store, accountRequest.aid);
+    if (!group) return notFound(root, 'student account not found');
+    const account = group.account || null;
+    if (accountRequest.action === 'activation-code') {
+      if (account?.status === 'disabled') return responseJson(root, { ok: false, error: 'student account disabled' }, 409);
+      if (!group.activationCodeRequired) return responseJson(root, { ok: false, error: 'activation code not required' }, 409);
+      if (!sameExactSids(group.identity?.sids, body?.sids)) return badRequest(root, 'exact SID group required');
+      return ok(root, { ok: true, activationCode: '482731', expiresAt: Math.floor(Date.now() / 1000) + (24 * 60 * 60) });
+    }
+    if (!account) return notFound(root, 'student account not found');
+    if (accountRequest.action === 'reset') {
+      account.mustChangeCredentials = true;
+      account.activeSessionCount = 0;
+    } else if (accountRequest.action === 'disable') {
+      account.status = 'disabled';
+      account.activeSessionCount = 0;
+      account.activePushSubscriptionCount = 0;
+    } else if (accountRequest.action === 'enable') {
+      account.status = 'active';
+    } else if (accountRequest.action === 'revoke-sessions') {
+      account.activeSessionCount = 0;
+    }
+    saveDemoStore(store);
+    return ok(root, { ok: true, group: clone(group) });
   }
 
   if (PATCH_METHODS.has(method) && path === '/api/update') {

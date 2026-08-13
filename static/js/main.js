@@ -4,6 +4,69 @@ const $ = (id) => document.getElementById(id);
 const LS_TOKEN = "studentToken";
 
 /* =========================
+   PWA: Head + Service Worker
+   ========================= */
+function ensurePWAHead() {
+  const head = document.head;
+  if (!head) return;
+
+  // manifest
+  if (!head.querySelector('link[rel="manifest"]')) {
+    const l = document.createElement("link");
+    l.rel = "manifest";
+    l.href = "/manifest.webmanifest";
+    head.appendChild(l);
+  }
+
+  // iOS standalone meta
+  const metas = [
+    ["apple-mobile-web-app-capable", "yes"],
+    ["apple-mobile-web-app-status-bar-style", "black-translucent"],
+    ["apple-mobile-web-app-title", "APEX"],
+    ["theme-color", "#111111"],
+  ];
+
+  for (const [name, content] of metas) {
+    if (!head.querySelector(`meta[name="${name}"]`)) {
+      const m = document.createElement("meta");
+      m.name = name;
+      m.content = content;
+      head.appendChild(m);
+    }
+  }
+
+  // iOS icon
+  if (!head.querySelector('link[rel="apple-touch-icon"]')) {
+    const a = document.createElement("link");
+    a.rel = "apple-touch-icon";
+    a.href = "/static/icons/icon-192.png";
+    head.appendChild(a);
+  }
+
+  // viewport가 없으면 넣음
+  if (!head.querySelector('meta[name="viewport"]')) {
+    const v = document.createElement("meta");
+    v.name = "viewport";
+    v.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+    head.appendChild(v);
+  }
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", async () => {
+    try {
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    } catch (e) {
+      console.warn("[PWA] sw register failed:", e);
+    }
+  });
+}
+
+ensurePWAHead();
+registerServiceWorker();
+
+/* =========================
    Existing student page code
    ========================= */
 function msg(text, type = "") {

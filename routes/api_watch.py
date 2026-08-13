@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import time
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
-from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, ip_allowed
 from core.paths import WATCH_PATH, PRG_PATH
 from core.progress_rules import (
     PROGRESS_MANUAL_META_KEY,
@@ -12,7 +12,6 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_progress_day_sid,
     merge_watch_entry,
-    has_completed_video_before_date,
     normalize_watch_entry,
     watch_auto_status,
     watch_rank,
@@ -23,6 +22,20 @@ bp_api_watch = Blueprint("api_watch", __name__)
 
 AUTO_PROGRESS_META_KEY = WATCH_AUTO_PROGRESS_META_KEY
 MANUAL_PROGRESS_META_KEY = PROGRESS_MANUAL_META_KEY
+
+
+def _academy_request_allowed() -> bool:
+    if getattr(g, "student_app_public_request", False) is True:
+        client_ip = getattr(g, "student_app_client_ip", None)
+        return isinstance(client_ip, str) and ip_allowed(client_ip)
+    return academy_network_allowed()
+
+
+def _public_sid_matches(sid: str) -> bool:
+    if getattr(g, "student_app_public_request", False) is not True:
+        return True
+    active_sid = getattr(g, "student_app_active_sid", None)
+    return isinstance(active_sid, str) and bool(sid) and sid == active_sid
 
 
 def _watch_lock():
@@ -109,19 +122,17 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     if status not in VALID_VIDEO_PROGRESS_STATUSES:
         raise ValueError("bad status")
 
-    from routes.api_basic import _load_progress_strict, _progress_lock, _save_progress_strict
+    from routes.api_basic import (
+        _load_progress_strict,
+        _notification_progress_commit,
+        _notification_progress_snapshot,
+        _progress_lock,
+        _save_progress_strict,
+    )
 
     with _progress_lock():
         current = dict(_load_progress_strict(PRG_PATH))
-
-        if status == "interrupted" and has_completed_video_before_date(
-            current,
-            load(WATCH_PATH),
-            sid_keys=_sid_keys(sid),
-            mid=mid,
-            before_date=date,
-        ):
-            status = "done"
+        notification_before = _notification_progress_snapshot(current, sid)
 
         current_day = current.get(date)
         day = dict(current_day) if isinstance(current_day, dict) else {}
@@ -149,6 +160,10 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
             current.pop(date, None)
 
         _save_progress_strict(current, PRG_PATH)
+
+        notification_after = _notification_progress_snapshot(current, sid)
+
+    _notification_progress_commit(notification_before, notification_after, sid)
 
     return merged
 
@@ -195,8 +210,10 @@ def api_watch_latest():
 @bp_api_watch.route("/api/watch", methods=["GET", "POST"])
 def api_watch():
     if request.method == "GET":
+        if getattr(g, "student_app_public_request", False) is True:
+            return jsonify({"ok": False, "error": "not found"}), 404
         return nocache_resp(load(WATCH_PATH))
-    if not academy_network_allowed():
+    if not _academy_request_allowed():
         return jsonify({
             "ok": False,
             "error": "academy_network_required",
@@ -207,6 +224,8 @@ def api_watch():
     date = str(body.get("date") or "").strip()
     sid  = str(body.get("sid")  or "").strip()
     mid  = str(body.get("mid")  or "").strip()
+    if not _public_sid_matches(sid):
+        return jsonify({"ok": False, "code": "sid_mismatch", "error": "sid_mismatch"}), 403
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
     if is_ghost_student_sid(sid):
@@ -230,21 +249,13 @@ def api_watch():
     merged = _save_watch_entry(date, sid, mid, incoming)
     status = watch_auto_status(merged)
     progress = _save_progress_status(date, sid, mid, status) if status else {}
-    if status:
-        try:
-            from routes.api_basic import record_review_video_watch
-
-            record_review_video_watch(date, sid, mid)
-        except Exception as exc:
-            # A counseling-note side effect must never make a valid watch save fail.
-            print("[watch] review counseling sync failed:", exc, flush=True)
 
     return jsonify({"ok": True, "watch": merged, "progress": progress})
 
 
 @bp_api_watch.post("/api/watch-status")
 def api_watch_status():
-    if not academy_network_allowed():
+    if not _academy_request_allowed():
         return jsonify({
             "ok": False,
             "error": "academy_network_required",
@@ -256,6 +267,8 @@ def api_watch_status():
     sid = str(body.get("sid") or "").strip()
     mid = str(body.get("mid") or "").strip()
     status = str(body.get("status") or "").strip()
+    if not _public_sid_matches(sid):
+        return jsonify({"ok": False, "code": "sid_mismatch", "error": "sid_mismatch"}), 403
 
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
@@ -273,12 +286,5 @@ def api_watch_status():
             pass
 
     merged = _save_progress_status(date, sid, mid, status)
-    if status in {"interrupted", "done"}:
-        try:
-            from routes.api_basic import record_review_video_watch
-
-            record_review_video_watch(date, sid, mid)
-        except Exception as exc:
-            print("[watch-status] review counseling sync failed:", exc, flush=True)
 
     return jsonify({"ok": True, "progress": merged})

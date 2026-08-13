@@ -162,15 +162,199 @@ refactors. It is documentation only; do not treat it as a migration plan.
   `sourceFiles.solutionFileId`; UNIT answer links are regenerated into the
   link map from Drive explanation files.
 
+## Admin Selected-Date Session Contract (Phase 7 Complete)
+
+- `static/js/admin/core/adminDate.js` remains the single source of truth for
+  the admin operating date and keeps the `adminSelectedDate` sessionStorage
+  key plus the `admin:date-change` event detail `{ dateStr }`.
+- Stored values, setter inputs, and external date-change events all use the
+  same semantic `YYYY-MM-DD` calendar validation. Shape-correct but impossible
+  values such as `2026-02-31`, non-leap `2026-02-29`, and invalid months are
+  rejected.
+- Missing, malformed, impossible, or unreadable sessionStorage values fall
+  back to the real local date. Valid setter calls still broadcast in-page when
+  sessionStorage rejects a write and remain authoritative through a page-local
+  memory fallback, while `{ silent: true }` persists without broadcasting and
+  invalid setters are no-ops.
+- Previous/next navigation shifts calendar days in UTC calendar fields so its
+  result does not depend on parsing a bare date string in the host timezone;
+  navigation clamps at the supported `0001-01-01` and `9999-12-31` bounds.
+- The no-app/no-runtime regression is
+  `node scripts/verify_admin_date_session_storage.mjs`; it is part of the
+  default safety suite and can be selected with
+  `python scripts/verify_refactor_safety.py --only-admin-date-session-storage`.
+
+## Legacy Test Statistics Cache (Phase 8 Complete)
+
+- `routes/api_tests.py::_iter_test_records()` still reads `tests.json` first on
+  every request; that durable store remains authoritative for same-day
+  duplicates.
+- Only normalized legacy test candidates projected from `logs.json` are cached.
+  The cache is keyed by absolute path plus filesystem identity/time/size fields,
+  is populated only after a stable non-empty read, and returns deep copies.
+- Repeated `/api/tests-stats` and `/api/tests-records` calls therefore avoid
+  reparsing and walking unrelated class-log entries while the legacy file is
+  unchanged. Missing, failed, empty, or concurrently replaced reads are not
+  made sticky.
+- The dedupe identity includes the top-level date. Identical same-day durable
+  and legacy copies still collapse, while the same student/test with a blank
+  `createdAt` on different dates remains two real attempts.
+- Date range semantics, malformed-record filtering, metadata normalization,
+  response fields, sort order, and cache headers remain unchanged.
+- The temp-only focused regression is
+  `python scripts/verify_refactor_safety.py --only-legacy-test-record-cache`;
+  it is also registered in the default safety suite.
+
+## Test Catalog Search and Ordering (Phase 9 Complete)
+
+- `static/js/tests.js` keeps catalog search separate from the statistics
+  search. The catalog query matches the displayed/name/ID, subject,
+  difficulty, term, round, and problem-count text through the shared Korean
+  search contract.
+- Ordering is limited to one rendered category/subject/difficulty group. UNIT
+  and TRAINING_PACK rows stay inside their round, and past-test rows stay
+  inside their exam term. Cross-group drops are ignored.
+- Search, round-filter, and term-filter views are intentionally read-only for
+  ordering so a partial list cannot silently redefine hidden rows. Desktop
+  drag and keyboard up/down controls share the same guarded save path.
+- A reorder changes only `sortOrder` and raw array placement for the affected
+  rows. It preserves `sourceOrder`, `sourceFiles`, source IDs, every answer
+  round, and unknown fields; a failed save restores the exact prior array and
+  `sortOrder` property state.
+- Catalog GETs return an `X-Tests-Config-Revision`; every whole-config POST
+  must send that revision. Missing or stale revisions fail before merge so a
+  concurrent edit or deletion cannot be overwritten or resurrected.
+- Statistics refreshes do not reload `TEST_CFG`. The New button keeps its
+  unsaved draft in editor controls until Save, so neither a reorder nor rule
+  autosave can persist an unconfirmed test definition.
+- The no-app/no-runtime UI regression is
+  `node scripts/verify_test_catalog_search_and_sort.mjs`. The focused selector
+  `python scripts/verify_refactor_safety.py --only-test-catalog-search-sort`
+  also runs the temp-file Flask write/revision contract in
+  `scripts/verify_tests_config_write_safety.py`; both are registered in the
+  default safety suite.
+
+## Admin Hover Tooltip Performance (Phase 10 Complete)
+
+- `static/js/admin/features/hoverTooltip.js` keeps the existing delegated
+  `todayWrap` / `doneWrap` / `allWrap` listener topology and makes repeated
+  initialization idempotent; student rows never receive per-row listeners.
+- SID/name lookup uses a roster-identity/length keyed `Map` index instead of
+  scanning every student on each hover. Same-anchor pointer events reuse the
+  current HTML. Re-entry rebuilds the compact today tooltip so in-place roster
+  edits cannot leave stale or unbounded cached markup behind.
+- Pointer movement records only the latest coordinates and performs at most
+  one placement per animation frame. Tooltip dimensions are measured once per
+  visible hover, so repeated pointer events neither force synchronous layout
+  nor rebuild the same DOM.
+- Fixed log/student-work tooltips return before progress/video enumeration when
+  video content is disabled. Delayed fixed placement is generation-guarded so
+  hide/layout changes cannot restore a stale popup, and drag reuses the
+  pointer-down dimensions instead of measuring on every move. Assistant-note
+  mount, storage, and global launcher contracts remain unchanged.
+- The no-app/no-runtime stress regression is
+  `node scripts/verify_hover_tooltip_performance.mjs`; it exercises a 10,000
+  student roster and more than 1,000 pointer events. It is also wired through
+  `python scripts/verify_refactor_safety.py --only-hover-tooltip-performance`
+  and the default suite.
+
+## Admin Hover Tooltip Responsive Accessibility (Phase 11 Complete)
+
+- The compact student-name tooltip now bounds its inner content to the outer
+  `92vw` viewport allowance and permits narrow Korean labels/values to wrap;
+  fixed log/student-work panel sizing remains owned by its existing popup CSS.
+- Delegated `focusin`, `focusout`, and `keydown` handlers mirror pointer hover
+  without adding per-row listeners. Keyboard focus owns the tooltip while
+  active, link `Enter` remains untouched, and `Escape` dismisses only the
+  tooltip while keeping focus on the student link.
+- Hover mode uses `role="tooltip"`, `aria-hidden`, and a token-preserving
+  `aria-describedby="adminSchoolTip"` link. The interactive fixed student panel
+  switches to a labelled `role="region"` so its assistant-note controls are not
+  exposed as a non-interactive tooltip.
+- Focus transitions are microtask/generation guarded. `today:rendered` and the
+  new `all:rendered` boundary remove stale ARIA/pointer state without closing a
+  fixed student-work panel.
+- `static/js/all/main.js` initializes only the shared admin tooltip and mirrors
+  the already-loaded all-page roster state. The larger admin modal graph remains
+  lazy behind the first counseling button interaction.
+- `node scripts/verify_hover_tooltip_performance.mjs` now covers large-roster
+  performance plus focus transitions, mixed pointer/focus ownership, Escape,
+  ARIA role separation, fixed-panel refresh behavior, responsive width source,
+  and the all-page lightweight bridge. Run the focused alias with
+  `python scripts/verify_refactor_safety.py --only-hover-tooltip-accessibility`.
+
+## Class Log Export Format Options (Phase 12 Complete)
+
+- The existing `#exportLogs` action now opens an accessible, keyboard-trapped
+  dialog. Opening or cancelling the dialog performs no API request; data is
+  loaded only after a valid submit.
+- TXT and CSV remain enabled by default, preserving the legacy two-download
+  behavior. TXT can include any combination of notes, tests, progress, and
+  homework, while records with no selected content are omitted.
+- CSV intentionally keeps its canonical 14-column schema and homework row
+  expansion so downstream consumers do not receive a shape that changes with
+  UI options. Spreadsheet-formula prefixes are neutralized before CSV quoting.
+- Options live only in the current page instance. They are not written to
+  browser storage or the server, and assistant-student notes remain outside
+  every class-log export.
+- `static/js/admin/features/exportLogFormat.js` owns pure normalization,
+  validation, TXT rendering, and CSV serialization. Run the focused contract
+  with `python scripts/verify_refactor_safety.py --only-export-log-format`.
+
+## Student App Install Guide Entry (Phase 13 Complete)
+
+- `/app` now leaves the signed-out or current app state visible when the shell
+  initializes. The installation guide opens only from the explicit
+  `data-install-guide-open` button; it is not a first-load gate.
+- Explicit opening still makes the page background inert and focuses the
+  labelled dialog. Escape, the backdrop, and both dismiss controls close it
+  and restore focus to the opener. Standalone installations and successful
+  native install events hide the opener and overlay, clear any captured stale
+  prompt, release inertness, and move focus back into the app.
+- `scripts/student_mobile_app_checks/pwa-flow.mjs` executes this lifecycle with
+  an isolated DOM fixture, including the actual boot seam, the real shell's
+  hidden/dismiss markup, click-to-open, Escape/dismiss, prompt focus handling,
+  install completion, stale-prompt cleanup, inert cleanup, and focus
+  restoration. The default refactor verifier runs this flow with its receipt
+  redirected to a temporary directory; use `--only-student-install-guide` for
+  the focused contract.
+
+## Student App Deployment Contract (Phase 14 Complete)
+
+- The default refactor safety suite now executes the existing deployment
+  contract checker. Windows covers production/dev Preflight fixtures, Canary
+  and approved Expanded gates, rollback back to public-off, PowerShell syntax,
+  worker overlap through a unique dry-run-only fixture mutex,
+  Tunnel/task/listener failures, and secret backup exclusions.
+  Non-Windows CI runs the portable source and secret-backup subset instead of
+  attempting an unavailable `powershell.exe` binary; a dedicated Windows 3.12
+  CI job runs the full contract.
+- `-FixtureMode` requires `-DryRun` plus all seven snapshot paths before any
+  check can fall back to process, Task Scheduler, listener, or HTTP state.
+- The wrapper restores and rejects changes to the process environment, working
+  directory, and backup runtime root even when the checker raises or returns a
+  malformed receipt. It also observes live runtime content/size/mtime before
+  and after solely to reject mutation. Deployment fixtures remain in OS
+  temporary directories and do not import the Flask app, call a live host or
+  Push provider, or mutate Task Scheduler, Tunnel, keys, or runtime stores.
+- Run only this contract with
+  `python scripts/verify_refactor_safety.py --only-student-mobile-deployment`.
+  Fixture PASS is not physical-device, live-host, subscription, or delivery
+  evidence; those remain blocked until approved devices and infrastructure are
+  available.
+
 ## Verification Contract
 
 Safe default checks:
 
 - `python scripts\verify_refactor_safety.py`
+  - The default verifier parses every Python file covered by the CI compile
+    command with the Python 3.11 grammar, even when the local venv is newer.
 - `python scripts\verify_refactor_safety.py --smoke`
   - Smoke mode fingerprints runtime files before and after safe GET checks,
     including existing root SQLite sidecars (`*.sqlite-wal`, `*.sqlite-shm`,
     `*.db-wal`, `*.db-shm`).
+  - Default smoke continues to skip both log GET endpoints.
 - `GET /api/progress?date=YYYY-MM-DD&sid=<sid>`
 - `GET /api/attendance?date=YYYY-MM-DD`
 - `GET /api/contact?date=YYYY-MM-DD`
@@ -180,6 +364,22 @@ Safe default checks:
 Checks to treat as risky:
 
 - `GET /api/logs` and `GET /api/logs/entry` can touch SQLite WAL/schema state.
+- The log GET smoke is therefore opt-in and requires both flags:
+  `python scripts\verify_refactor_safety.py --smoke --smoke-log-gets`.
+  Before running it against local operational data, create a backup with
+  `python scripts\backup_runtime_data.py` and retain the printed backup path.
+- The opt-in check sends the selected date/SID to
+  `/api/logs/entry?date=<candidate>&sid=<candidate>` and
+  `/api/logs?date=<candidate>&sid=<candidate>`. It does not print the candidate
+  values or response bodies. If either candidate is invalid or the SID is
+  empty, it calls neither endpoint and fails the opt-in smoke instead of
+  widening `/api/logs` to a date-wide read.
+- Smoke captures `mtime_ns`, size, and SHA-256 for SQLite main files plus their
+  WAL/SHM sidecars before and after requests. WAL/SHM creation, deletion, or
+  modification is reported as an allowed structured observation. Any change to
+  a main `*.sqlite` or `*.db` file, including an mtime-only change, fails.
+- `--smoke-log-gets` without `--smoke` is rejected; do not treat this mode as a
+  substitute for a backup or run it casually against live operational data.
 - `GET /api/updates` can auto-write `updates.json`.
 - Today's `GET /api/student/bootstrap` can auto-write `updates.json`.
 - Any `POST`, `PATCH`, or `DELETE` check can mutate runtime data and requires a
@@ -187,8 +387,8 @@ Checks to treat as risky:
 
 ## Phase 6 Follow-Up Candidates
 
-- Add a verification mode that records SQLite WAL/schema mtimes before and
-  after optional log GET checks, but keep it opt-in.
+- The opt-in log GET observability mode is implemented as `--smoke-log-gets`;
+  keep its backup guidance, main-database failure rule, and default skip intact.
 - Phase 7 note: `scripts/backup_runtime_data.py` includes existing root
   SQLite sidecars (`*.sqlite-wal`, `*.sqlite-shm`, `*.db-wal`, `*.db-shm`)
   by filename suffix, without opening SQLite to discover them.
@@ -197,7 +397,8 @@ Checks to treat as risky:
   coverage also includes root `.tmp` files to match verification.
 - Keep runtime backup coverage aligned with SQLite sidecar files when new DB
   paths are introduced.
-- Separately verify the dirty `adminDate.js` sessionStorage behavior before
-  more date-sensitive frontend changes.
+- Phase 7 admin selected-date sessionStorage behavior is verified by the
+  default and focused safety checks; preserve this contract before further
+  date-sensitive frontend changes.
 - Keep backend logs/progress refactors split into one endpoint or one helper at
   a time.

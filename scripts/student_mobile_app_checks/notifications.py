@@ -484,6 +484,23 @@ class _SlowSuccessSender:
         return PushSendResult(PushResultStatus.SUCCESS, http_status=201)
 
 
+class _PermanentSender:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    def send_event(self, _subscription, _event_type, _event_id):
+        return PushSendResult(PushResultStatus.PERMANENT_FAILURE, http_status=self.status)
+
+
+class _AlwaysTransientSender:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def send_event(self, _subscription, _event_type, _event_id):
+        self.calls += 1
+        return PushSendResult(PushResultStatus.TRANSIENT_FAILURE, reason="timeout")
+
+
 class _HomeworkRows:
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
@@ -604,6 +621,72 @@ def _hooks_scanner_delivery(root: Path, state: list[int]) -> None:
            and slow_second["leased"] == 0 and slow_sender.calls == 1
            and _count(slow_db, "student_notification_deliveries") == 1,
            "provider success beyond the old 30-second lease was delivered twice")
+
+    for status in (404, 410):
+        gone_db = root / f"gone-worker-{status}.sqlite"
+        gone_push = StudentPushRepository(gone_db, clock=lambda: now[0])
+        _migrate(gone_db)
+        gone_repo = StudentNotificationRepository(gone_db, clock=lambda: now[0])
+        gone_push.upsert_subscription(
+            "aid-a", f"sid-gone-{status}", f"gone-{status}",
+            f"https://fcm.googleapis.com/fcm/send/gone-{status}", "a2V5", "YXV0aA",
+            session_id=1, now=now[0],
+        )
+        gone_event = deterministic_event_id("homework_due", f"gone-assignment-{status}")
+        gone_repo.enqueue("homework_due", gone_event, f"sid-gone-{status}", now=now[0])
+        gone_summary = run_delivery(
+            gone_repo, gone_push, _PermanentSender(status), _EventAuthority(), limit=1,
+        )
+        gone_state = _row(
+            gone_db,
+            "SELECT state,attempts,last_error FROM student_notification_events WHERE event_id=?",
+            (gone_event,),
+        )
+        _check(
+            state,
+            gone_summary["failed"] == 1 and gone_summary["revoked"] == 1
+            and not gone_push.active_subscriptions(f"sid-gone-{status}")
+            and gone_state == ("failed", 1, "permanent"),
+            f"generic notification {status} did not revoke and terminate the subscription",
+        )
+
+    exhausted_db = root / "exhausted-worker.sqlite"
+    exhausted_push = StudentPushRepository(exhausted_db, clock=lambda: now[0])
+    _migrate(exhausted_db)
+    exhausted_repo = StudentNotificationRepository(exhausted_db, clock=lambda: now[0])
+    exhausted_push.upsert_subscription(
+        "aid-a", "sid-exhausted", "exhausted-device",
+        "https://fcm.googleapis.com/fcm/send/exhausted", "a2V5", "YXV0aA",
+        session_id=1, now=now[0],
+    )
+    exhausted_event = deterministic_event_id("homework_due", "exhausted-assignment")
+    exhausted_repo.enqueue("homework_due", exhausted_event, "sid-exhausted", now=now[0])
+    exhausted_sender = _AlwaysTransientSender()
+    summaries = []
+    for _ in range(exhausted_repo.MAX_ATTEMPTS):
+        summaries.append(run_delivery(
+            exhausted_repo, exhausted_push, exhausted_sender, _EventAuthority(), limit=1,
+        ))
+        row = _row(
+            exhausted_db,
+            "SELECT state,next_attempt,attempts,last_error FROM student_notification_events WHERE event_id=?",
+            (exhausted_event,),
+        )
+        if row[0] == "pending":
+            now[0] = float(row[1])
+    exhausted_state = _row(
+        exhausted_db,
+        "SELECT state,attempts,last_error FROM student_notification_events WHERE event_id=?",
+        (exhausted_event,),
+    )
+    _check(
+        state,
+        all(item["retried"] == 1 and item["failed"] == 0 for item in summaries[:-1])
+        and summaries[-1]["retried"] == 0 and summaries[-1]["failed"] == 1
+        and exhausted_state == ("failed", exhausted_repo.MAX_ATTEMPTS, "timeout")
+        and exhausted_sender.calls == exhausted_repo.MAX_ATTEMPTS,
+        "generic notification retry exhaustion reported retried instead of terminal failure",
+    )
 
 
 def _fresh_file_authority(root: Path, state: list[int]) -> None:

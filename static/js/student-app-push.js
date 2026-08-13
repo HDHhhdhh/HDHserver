@@ -191,7 +191,25 @@ export function applicationServerKey(value) {
 export function createBrowserPushPlatform(windowRef = window) {
   const navigatorRef = windowRef.navigator;
   let installEvent = null;
-  windowRef.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installEvent = event; });
+  let installationNotified = false;
+  const installedListeners = new Set();
+  const notifyInstalled = () => {
+    installEvent = null;
+    if (installationNotified) return;
+    installationNotified = true;
+    for (const listener of [...installedListeners]) {
+      try { listener(); } catch { /* installation state remains authoritative */ }
+    }
+  };
+  windowRef.addEventListener?.('beforeinstallprompt', event => {
+    event.preventDefault();
+    if (!installationNotified) installEvent = event;
+  });
+  windowRef.addEventListener?.('appinstalled', notifyInstalled);
+  const displayMode = windowRef.matchMedia?.('(display-mode: standalone)');
+  const onDisplayModeChange = event => { if (event?.matches === true) notifyInstalled(); };
+  if (typeof displayMode?.addEventListener === 'function') displayMode.addEventListener('change', onDisplayModeChange);
+  else if (typeof displayMode?.addListener === 'function') displayMode.addListener(onDisplayModeChange);
   const standalone = () => windowRef.matchMedia?.('(display-mode: standalone)')?.matches === true || navigatorRef.standalone === true;
   const environment = detectInstallEnvironment(windowRef);
   return Object.freeze({
@@ -201,6 +219,11 @@ export function createBrowserPushPlatform(windowRef = window) {
     capabilities: () => ({ serviceWorker: !!navigatorRef.serviceWorker, pushManager: typeof windowRef.PushManager !== 'undefined', notification: typeof windowRef.Notification !== 'undefined', standalone: standalone() }),
     hasInstallPrompt: () => installEvent !== null,
     promptInstall: async () => { if (!installEvent) return 'unavailable'; const event = installEvent; installEvent = null; await event.prompt(); return (await event.userChoice)?.outcome || 'dismissed'; },
+    onInstalled: listener => {
+      if (typeof listener !== 'function') return () => {};
+      installedListeners.add(listener);
+      return () => installedListeners.delete(listener);
+    },
     register: () => navigatorRef.serviceWorker.register('/sw.js', { scope: '/' }),
     getSubscription: registration => registration.pushManager.getSubscription(),
     notificationPermission: () => windowRef.Notification?.permission || 'unsupported',

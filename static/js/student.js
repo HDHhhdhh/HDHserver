@@ -3,6 +3,647 @@
    + (표시개선) 파일명 표시에서 UUID/타임스탬프 접두어 제거(표시 전용, 실제 URL/경로는 그대로)
    + (Kollus 연동) VG Controller 브릿지: 플레이어 이벤트(progress/ready/done) → 우리 postMessage 포맷으로 재발행
 */
+/* STUDENT_APP_PUBLIC_SESSION_START */
+class StudentAppSessionError extends Error {
+  constructor(code, status = 0, activeSid = '') {
+    super(code);
+    this.name = 'StudentAppSessionError';
+    this.code = code;
+    this.status = Number(status) || 0;
+    this.activeSid = activeSid;
+  }
+}
+
+function studentAppStrictSid(value) {
+  const sid = typeof value === 'string' ? value.trim() : '';
+  if (!sid || sid.length > 128 || sid === '.' || sid === '..') return '';
+  return /[\s/\\%,\u0000-\u001f\u007f]/.test(sid) ? '' : sid;
+}
+
+const STUDENT_APP_PUBLIC_HOSTS = new Set(['app.5a-math.com', 'dev-app.5a-math.com']);
+
+function studentAppIsPublicMode(locationRef) {
+  const protocol = String(locationRef?.protocol || '').toLowerCase();
+  const hostname = String(locationRef?.hostname || '').trim().toLowerCase();
+  return protocol === 'https:' && STUDENT_APP_PUBLIC_HOSTS.has(hostname);
+}
+
+function createStudentAppSessionAdapter(options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  let current = null;
+  let refreshPromise = null;
+
+  async function responsePayload(response) {
+    try { return await response.json(); }
+    catch { return null; }
+  }
+
+  async function refreshSession({ force = false } = {}) {
+    if (!force && current) return { activeSid: current.activeSid };
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      let response;
+      try {
+        response = await fetchImpl('/api/mobile/auth/session', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+      } catch {
+        current = null;
+        throw new StudentAppSessionError('session_unavailable');
+      }
+      const payload = await responsePayload(response);
+      const state = String(payload?.state || payload?.status || '');
+      const activeSid = studentAppStrictSid(payload?.sid ?? payload?.sessionSid);
+      const csrfToken = typeof payload?.csrfToken === 'string' ? payload.csrfToken.trim() : '';
+      if (!response.ok || state !== 'ready' || !activeSid || !csrfToken) {
+        current = null;
+        throw new StudentAppSessionError(
+          String(payload?.code || (response.status === 401 ? 'login_required' : 'session_not_ready')),
+          response.status,
+        );
+      }
+      const curris = Array.isArray(payload?.curris)
+        ? payload.curris.map(item => ({ sid: studentAppStrictSid(item?.sid), cur: String(item?.cur || '').trim() })).filter(item => item.sid)
+        : [];
+      current = Object.freeze({ activeSid, csrfToken, curris, pushState: String(payload?.pushState || '') });
+      return { activeSid };
+    })();
+    try { return await refreshPromise; }
+    finally { refreshPromise = null; }
+  }
+
+  function assertBoundSid(input, init, activeSid) {
+    const rawUrl = typeof input === 'string' ? input : input?.url;
+    let allowsCurriculumTarget = false;
+    if (typeof rawUrl === 'string') {
+      const parsed = new URL(rawUrl, 'https://student-app.invalid');
+      allowsCurriculumTarget = parsed.pathname === '/api/mobile/auth/switch';
+      for (const requestedSid of parsed.searchParams.getAll('sid')) {
+        if (requestedSid !== activeSid) throw new StudentAppSessionError('sid_mismatch', 403, activeSid);
+      }
+    }
+    if (typeof init?.body !== 'string' || !init.body.trim()) return;
+    let body;
+    try { body = JSON.parse(init.body); }
+    catch { return; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return;
+    for (const key of ['sid', 'studentSid', 'activeSid']) {
+      if (allowsCurriculumTarget && key === 'sid') continue;
+      if (Object.hasOwn(body, key) && String(body[key]) !== activeSid) {
+        throw new StudentAppSessionError('sid_mismatch', 403, activeSid);
+      }
+    }
+  }
+
+  async function request(input, init = {}, retryOnRotation = true) {
+    const session = await refreshSession();
+    assertBoundSid(input, init, session.activeSid);
+    const method = String(init.method || 'GET').toUpperCase();
+    const headers = new Headers(init.headers || {});
+    if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+    headers.delete('Authorization');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', current.csrfToken);
+
+    let response;
+    try {
+      response = await fetchImpl(input, { ...init, method, headers, credentials: 'same-origin' });
+    } catch {
+      throw new StudentAppSessionError('request_unavailable');
+    }
+    if (!retryOnRotation || (response.status !== 401 && response.status !== 403)) return response;
+
+    let code = '';
+    try { code = String((await response.clone().json())?.code || ''); }
+    catch { code = ''; }
+    const shouldRefresh = response.status === 401 || code === 'csrf_invalid' || code === 'csrf_required'
+      || code === 'unauthenticated' || code === 'sid_mismatch';
+    if (!shouldRefresh) return response;
+
+    const previousSid = session.activeSid;
+    current = null;
+    const refreshed = await refreshSession({ force: true });
+    if (refreshed.activeSid !== previousSid) {
+      throw new StudentAppSessionError('sid_rotated', 409, refreshed.activeSid);
+    }
+    return request(input, init, false);
+  }
+
+  return Object.freeze({
+    activeSid: () => current?.activeSid || '',
+    sessionState: () => current ? { activeSid: current.activeSid, curris: current.curris.map(item => ({ ...item })), pushState: current.pushState } : null,
+    refreshSession,
+    request,
+  });
+}
+
+async function loadPublicStudentBootstrap({ adapter, pageSid, date }) {
+  const session = await adapter.refreshSession();
+  if (pageSid && pageSid !== session.activeSid) {
+    throw new StudentAppSessionError('sid_rotated', 409, session.activeSid);
+  }
+  const query = new URLSearchParams({ sid: session.activeSid, date: String(date) }).toString();
+  const response = await adapter.request(`/api/student/bootstrap?${query}`, { cache: 'no-store' });
+  if (!response.ok) throw new StudentAppSessionError('bootstrap_failed', response.status, session.activeSid);
+  let bootstrap;
+  try { bootstrap = await response.json(); }
+  catch { throw new StudentAppSessionError('bootstrap_malformed', response.status, session.activeSid); }
+  if (!bootstrap || typeof bootstrap !== 'object' || Array.isArray(bootstrap)) {
+    throw new StudentAppSessionError('bootstrap_malformed', response.status, session.activeSid);
+  }
+  return { activeSid: session.activeSid, bootstrap, watch: bootstrap.watch || { ok: true, sid: session.activeSid, date: String(date), watch: {} } };
+}
+/* STUDENT_APP_PUBLIC_SESSION_END */
+
+/* STUDENT_APP_ACADEMY_GATES_START */
+const STUDENT_APP_KOLLUS_CONTROLLER_URL = 'https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js';
+let studentAppKollusControllerPromise = null;
+
+function studentAppAcademyAccessFromBootstrap(publicMode, bootstrap) {
+  const value = bootstrap && typeof bootstrap === 'object' ? bootstrap : {};
+  const notBlocked = value.outsideAcademyBlocked !== true && value.networkBlocked !== true;
+  if (publicMode === true) return value.academyAccessAllowed === true && notBlocked;
+  return value.academyAccessAllowed !== false && notBlocked;
+}
+
+function studentAppQueryFeatureGates(publicMode, search) {
+  if (publicMode === true) return Object.freeze({ ocrEnabled: false, freshPhase2E: false, qaDate: '' });
+  const params = new URLSearchParams(String(search || ''));
+  const ocrEnabled = params.get('ocr') === '1';
+  const requestedDate = ocrEnabled ? String(params.get('qaDate') || '').trim() : '';
+  return Object.freeze({
+    ocrEnabled,
+    freshPhase2E: ocrEnabled && params.get('freshPhase2E') === '1',
+    qaDate: /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : '',
+  });
+}
+
+function studentAppShouldLoadKollusController(publicMode, academyAccessAllowed) {
+  return publicMode === true ? academyAccessAllowed === true : academyAccessAllowed !== false;
+}
+
+function loadStudentAppKollusController({
+  publicMode,
+  academyAccessAllowed,
+  documentRef,
+  globalRef,
+}) {
+  if (!studentAppShouldLoadKollusController(publicMode, academyAccessAllowed)) return Promise.resolve(false);
+  if (globalRef?.VgControllerClient) return Promise.resolve(true);
+  if (studentAppKollusControllerPromise) return studentAppKollusControllerPromise;
+
+  const existing = documentRef?.querySelector?.('script[data-student-academy-controller="kollus"]');
+  if (existing) return Promise.resolve(true);
+  const parent = documentRef?.head || documentRef?.documentElement;
+  if (!parent || typeof documentRef?.createElement !== 'function') return Promise.resolve(false);
+
+  studentAppKollusControllerPromise = new Promise((resolve, reject) => {
+    const script = documentRef.createElement('script');
+    script.src = STUDENT_APP_KOLLUS_CONTROLLER_URL;
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    script.dataset.studentAcademyController = 'kollus';
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      studentAppKollusControllerPromise = null;
+      reject(new Error('kollus_controller_unavailable'));
+    };
+    parent.appendChild(script);
+  });
+  return studentAppKollusControllerPromise;
+}
+
+function studentAppClassifySubmitFailure(error) {
+  const status = Number(error?.status) || 0;
+  const code = String(error?.code || '').trim().toLowerCase();
+  const academyOnly = status === 403 || [
+    'academy_only',
+    'academy_network_required',
+    'academy_required',
+    'network_forbidden',
+  ].includes(code);
+  return Object.freeze({
+    state: academyOnly ? 'academy_only' : 'retry',
+    message: academyOnly
+      ? '테스트 제출은 학원 Wi-Fi에서만 가능합니다.'
+      : '테스트를 제출하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+  });
+}
+
+async function studentAppResolveSubmitFailure({ publicMode, error, runLegacyFallback }) {
+  const failure = studentAppClassifySubmitFailure(error);
+  if (publicMode === true) return Object.freeze({ ...failure, mayUseLegacyFallback: false });
+  if (typeof runLegacyFallback === 'function') await runLegacyFallback(error);
+  return Object.freeze({ ...failure, mayUseLegacyFallback: true });
+}
+/* STUDENT_APP_ACADEMY_GATES_END */
+
+/* STUDENT_APP_DASHBOARD_START */
+const STUDENT_DASHBOARD_SCHEDULE_KIND_LABELS = Object.freeze({
+  regular: '정규 수업',
+  extra: '추가 수업',
+  makeup: '보강',
+  absence: '결석',
+});
+const STUDENT_DASHBOARD_SCHEDULE_STATUS_LABELS = Object.freeze({
+  scheduled: '예정',
+  completed: '완료',
+  cancelled: '취소',
+});
+
+function studentDashboardNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function studentDashboardSafeText(value, maxLength = 80) {
+  if (typeof value !== 'string') return '';
+  const text = value.trim().replace(/\s+/g, ' ').slice(0, maxLength);
+  const urlLike = /^(?:\/|\\)|(?:[a-z][a-z0-9+.-]*:|\/\/|www\.)|\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|dev|app|kr|co\.kr)(?:[/?#]|$)/i;
+  return urlLike.test(text) ? '' : text;
+}
+
+function studentDashboardDateLabel(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) return '';
+  return `${month}월 ${day}일`;
+}
+
+function studentDashboardTimeLabel(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return '';
+  const match = /^(\d{2}):(\d{2})$/.exec(text);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return '';
+  return text;
+}
+
+function normalizeStudentDashboard(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.enabled !== true) return null;
+
+  const progressSource = value.curriculumProgress;
+  if (!progressSource || typeof progressSource !== 'object' || Array.isArray(progressSource)) return null;
+  if (progressSource.basis !== 'curriculum_videos_v1') return null;
+  const progressState = String(progressSource.state || '');
+  if (!['available', 'unavailable'].includes(progressState)) return null;
+  const curriculum = studentDashboardSafeText(progressSource.curriculum);
+  const subCurriculum = studentDashboardSafeText(progressSource.subCurriculum);
+  let curriculumProgress;
+  if (progressState === 'available') {
+    const completed = studentDashboardNonNegativeInteger(progressSource.completed);
+    const interrupted = studentDashboardNonNegativeInteger(progressSource.interrupted);
+    const total = studentDashboardNonNegativeInteger(progressSource.total);
+    const percent = studentDashboardNonNegativeInteger(progressSource.percent);
+    const calculatedPercent = total > 0 && completed != null ? Math.round((completed / total) * 100) : null;
+    if (completed == null || interrupted == null || total == null || percent == null
+      || total === 0 || percent > 100 || percent !== calculatedPercent
+      || completed > total || interrupted > total || completed + interrupted > total) return null;
+    curriculumProgress = Object.freeze({
+      state: progressState,
+      curriculum,
+      subCurriculum,
+      completed,
+      interrupted,
+      total,
+      percent,
+    });
+  } else {
+    curriculumProgress = Object.freeze({
+      state: progressState,
+      curriculum,
+      subCurriculum,
+      completed: null,
+      interrupted: null,
+      total: null,
+      percent: null,
+    });
+  }
+
+  const homeworkSource = value.homeworkSummary;
+  if (!homeworkSource || typeof homeworkSource !== 'object' || Array.isArray(homeworkSource)) return null;
+  const homeworkState = String(homeworkSource.state || '');
+  const homeworkCount = studentDashboardNonNegativeInteger(homeworkSource.count);
+  if (!['assigned', 'empty'].includes(homeworkState) || homeworkCount == null
+    || (homeworkState === 'assigned' && homeworkCount === 0)
+    || (homeworkState === 'empty' && homeworkCount !== 0)) return null;
+
+  let unreadBoardCount = null;
+  if (value.unreadBoardCount != null) {
+    unreadBoardCount = studentDashboardNonNegativeInteger(value.unreadBoardCount);
+    if (unreadBoardCount == null) return null;
+  }
+
+  let nextSchedule = null;
+  if (value.nextSchedule != null) {
+    const source = value.nextSchedule;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+    const kind = String(source.kind || '');
+    const status = String(source.status || '');
+    const dateLabel = studentDashboardDateLabel(source.date);
+    const timeLabel = studentDashboardTimeLabel(source.timeLabel);
+    if (!Object.hasOwn(STUDENT_DASHBOARD_SCHEDULE_KIND_LABELS, kind)
+      || !Object.hasOwn(STUDENT_DASHBOARD_SCHEDULE_STATUS_LABELS, status)
+      || !dateLabel || (source.timeLabel && !timeLabel) || !Array.isArray(source.slots)
+      || source.slots.length > 3
+      || source.slots.some(slot => !Number.isInteger(slot) || slot < 1 || slot > 3)
+      || new Set(source.slots).size !== source.slots.length) return null;
+    nextSchedule = Object.freeze({
+      dateLabel,
+      kind,
+      status,
+      timeLabel,
+      slots: Object.freeze(source.slots.slice()),
+    });
+  }
+
+  return Object.freeze({
+    enabled: true,
+    curriculumProgress,
+    nextSchedule,
+    homeworkSummary: Object.freeze({ state: homeworkState, count: homeworkCount }),
+    unreadBoardCount,
+  });
+}
+
+function studentDashboardViewModel(value) {
+  const dashboard = normalizeStudentDashboard(value);
+  if (!dashboard) return null;
+  const progress = dashboard.curriculumProgress;
+  const courseLabel = [progress.curriculum, progress.subCurriculum].filter(Boolean).join(' · ');
+  const progressAvailable = progress.state === 'available';
+  const schedule = dashboard.nextSchedule
+    ? Object.freeze({
+      available: true,
+      kindLabel: STUDENT_DASHBOARD_SCHEDULE_KIND_LABELS[dashboard.nextSchedule.kind],
+      statusLabel: STUDENT_DASHBOARD_SCHEDULE_STATUS_LABELS[dashboard.nextSchedule.status],
+      whenLabel: [dashboard.nextSchedule.dateLabel, dashboard.nextSchedule.timeLabel].filter(Boolean).join(' · '),
+      slotsLabel: dashboard.nextSchedule.slots.map(slot => `${slot}교시`).join(' · '),
+    })
+    : Object.freeze({
+      available: false,
+      kindLabel: '예정된 수업 없음',
+      statusLabel: '',
+      whenLabel: '다음 일정이 등록되면 알려드립니다.',
+      slotsLabel: '',
+    });
+  return Object.freeze({
+    progress: Object.freeze({
+      available: progressAvailable,
+      courseLabel: courseLabel || '과정 정보 없음',
+      percent: progressAvailable ? progress.percent : null,
+      percentLabel: progressAvailable ? `${progress.percent}%` : '확인 불가',
+      countLabel: progressAvailable
+        ? `완료 ${progress.completed} · 중단 ${progress.interrupted} · 전체 ${progress.total}`
+        : '진도 정보를 확인할 수 없습니다.',
+    }),
+    schedule,
+    homework: Object.freeze({
+      count: dashboard.homeworkSummary.count,
+      countLabel: dashboard.homeworkSummary.count ? `${dashboard.homeworkSummary.count}권` : '없음',
+      summaryLabel: dashboard.homeworkSummary.count
+        ? `숙제 교재 ${dashboard.homeworkSummary.count}권 등록`
+        : '등록된 숙제 교재 없음',
+    }),
+    unreadBoardCount: dashboard.unreadBoardCount,
+  });
+}
+/* STUDENT_APP_DASHBOARD_END */
+
+/* STUDENT_APP_HOMEWORK_START */
+const STUDENT_HOMEWORK_CANONICAL_STATUSES = Object.freeze(['assigned', 'completed', 'cancelled']);
+const STUDENT_HOMEWORK_STATUS_LABELS = Object.freeze({
+  assigned: '진행 중',
+  overdue: '기한 지남',
+  completed: '완료',
+  cancelled: '취소',
+});
+
+function studentHomeworkOpaqueId(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > 128 || text === '.' || text === '..') return '';
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(text) ? text : '';
+}
+
+function studentHomeworkOpaqueCursor(value) {
+  if (value == null) return null;
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > 256 || text === '.' || text === '..') return '';
+  return /^[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(text) ? text : '';
+}
+
+function studentHomeworkSafeText(value, maxLength) {
+  if (typeof value !== 'string') return null;
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+}
+
+function studentHomeworkIsoTimestamp(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || value.length > 40) return '';
+  const text = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?(?:\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/.exec(text);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] || 0);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const calendarValid = date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+  if (!calendarValid || hour > 23 || minute > 59 || second > 59 || !Number.isFinite(Date.parse(text))) return '';
+  return text;
+}
+
+function normalizeStudentHomeworkPayload(value, nowValue = Date.now()) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.items)) return null;
+  if (!Object.hasOwn(value, 'nextCursor')) return null;
+  if (value.items.length > 50) return null;
+  const now = Number(nowValue);
+  if (!Number.isFinite(now)) return null;
+  const nextCursor = studentHomeworkOpaqueCursor(value.nextCursor);
+  if (value.nextCursor != null && !nextCursor) return null;
+  const ids = new Set();
+  const items = [];
+  for (const source of value.items) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+    if (!['id', 'title', 'book', 'scope', 'assignedAt', 'dueAt', 'status', 'completedAt', 'legacy', 'notificationEligible']
+      .every(key => Object.hasOwn(source, key))) return null;
+    const id = studentHomeworkOpaqueId(source.id);
+    const title = studentHomeworkSafeText(source.title, 160);
+    const book = studentHomeworkSafeText(source.book, 120);
+    const scope = studentHomeworkSafeText(source.scope, 240);
+    const assignedAt = studentHomeworkIsoTimestamp(source.assignedAt);
+    const dueAt = studentHomeworkIsoTimestamp(source.dueAt);
+    const completedAt = studentHomeworkIsoTimestamp(source.completedAt);
+    const status = String(source.status || '');
+    const rawNotificationIds = source.notificationEventIds == null ? [] : source.notificationEventIds;
+    if (!Array.isArray(rawNotificationIds) || rawNotificationIds.length > 2) return null;
+    const notificationEventIds = rawNotificationIds.map(studentHomeworkOpaqueId);
+    if (!id || ids.has(id) || !title || book == null || scope == null || !assignedAt
+      || !STUDENT_HOMEWORK_CANONICAL_STATUSES.includes(status)
+      || typeof source.legacy !== 'boolean' || typeof source.notificationEligible !== 'boolean'
+      || notificationEventIds.some((eventId, index) => !/^evt_[A-Za-z0-9_-]{32}$/.test(eventId)
+        || notificationEventIds.indexOf(eventId) !== index)
+      || (source.dueAt != null && !dueAt) || (source.completedAt != null && !completedAt)
+      || (status === 'completed' ? !completedAt : completedAt != null)
+      || (source.notificationEligible && (source.legacy || status !== 'assigned' || !dueAt || Date.parse(dueAt) <= now))) return null;
+    ids.add(id);
+    items.push(Object.freeze({
+      id,
+      title,
+      book,
+      scope,
+      assignedAt,
+      dueAt,
+      status,
+      completedAt,
+      legacy: source.legacy,
+      notificationEligible: source.notificationEligible,
+      notificationEventIds: Object.freeze(notificationEventIds),
+    }));
+  }
+  items.sort((left, right) => {
+    const leftDue = left.dueAt == null ? Number.POSITIVE_INFINITY : Date.parse(left.dueAt);
+    const rightDue = right.dueAt == null ? Number.POSITIVE_INFINITY : Date.parse(right.dueAt);
+    if (leftDue !== rightDue) return leftDue - rightDue;
+    const assignedOrder = Date.parse(left.assignedAt) - Date.parse(right.assignedAt);
+    return assignedOrder || left.id.localeCompare(right.id);
+  });
+  return Object.freeze({ items: Object.freeze(items), nextCursor });
+}
+
+function studentHomeworkDeepLink(search) {
+  const params = new URLSearchParams(String(search || ''));
+  const views = params.getAll('view');
+  const items = params.getAll('item');
+  if (params.has('announcement') || views.length !== 1 || items.length !== 1 || views[0] !== 'homework') return '';
+  return studentHomeworkOpaqueId(items[0]);
+}
+
+function studentHomeworkTimeLabel(value) {
+  const timestamp = studentHomeworkIsoTimestamp(value);
+  if (!timestamp) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(timestamp);
+  return match ? `${Number(match[2])}월 ${Number(match[3])}일 ${match[4]}:${match[5]}` : '';
+}
+
+function studentHomeworkViewModel(item, nowValue = Date.now()) {
+  const now = Number(nowValue);
+  if (!item || !Number.isFinite(now)) return null;
+  const status = item.status === 'assigned' && item.dueAt && Date.parse(item.dueAt) <= now
+    ? 'overdue'
+    : item.status;
+  return Object.freeze({
+    id: item.id,
+    title: item.title,
+    bookLabel: item.book || '교재 미지정',
+    scopeLabel: item.scope || '범위 미지정',
+    assignedLabel: `지정 ${studentHomeworkTimeLabel(item.assignedAt)}`,
+    dueLabel: item.dueAt ? `기한 ${studentHomeworkTimeLabel(item.dueAt)}` : '기한 미지정 · 알림 제외',
+    status,
+    statusLabel: STUDENT_HOMEWORK_STATUS_LABELS[status],
+    notificationEligible: item.notificationEligible,
+    notificationEventIds: item.notificationEventIds,
+  });
+}
+/* STUDENT_APP_HOMEWORK_END */
+
+/* STUDENT_APP_NOTIFICATION_PREFERENCES_START */
+const STUDENT_NOTIFICATION_CATEGORIES = Object.freeze(['schedule', 'homework', 'progress', 'announcement']);
+
+function normalizeStudentNotificationPreferencesPayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok !== true) return null;
+  const revision = value.revision;
+  const preferences = value.preferences;
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0
+    || !preferences || typeof preferences !== 'object' || Array.isArray(preferences)) return null;
+  const keys = Object.keys(preferences).sort();
+  const expected = [...STUDENT_NOTIFICATION_CATEGORIES].sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) return null;
+  if (STUDENT_NOTIFICATION_CATEGORIES.some(key => typeof preferences[key] !== 'boolean')) return null;
+  return Object.freeze({
+    revision,
+    preferences: Object.freeze(Object.fromEntries(
+      STUDENT_NOTIFICATION_CATEGORIES.map(key => [key, preferences[key]])
+    )),
+  });
+}
+
+function studentAppHomeDeepLink(search) {
+  const params = new URLSearchParams(String(search || ''));
+  return !params.has('announcement')
+    && params.getAll('view').length === 1
+    && params.getAll('view')[0] === 'home'
+    && params.getAll('item').length === 0;
+}
+/* STUDENT_APP_NOTIFICATION_PREFERENCES_END */
+
+const STUDENT_APP_PUBLIC_MODE = studentAppIsPublicMode(location);
+const STUDENT_APP_PAGE_SID = resolveStudentId();
+document.body?.classList.toggle('student-app-mobile-surface', STUDENT_APP_PUBLIC_MODE);
+const STUDENT_APP_PUBLIC_SESSION = STUDENT_APP_PUBLIC_MODE ? createStudentAppSessionAdapter() : null;
+let studentFocusController = null;
+
+async function studentAppRequest(url, init = {}) {
+  if (!STUDENT_APP_PUBLIC_MODE) return fetch(url, init);
+  return STUDENT_APP_PUBLIC_SESSION.request(url, init);
+}
+
+function initStudentFocusController() {
+  if (!STUDENT_APP_PUBLIC_MODE || studentFocusController || !window.StudentFocus?.createController) return;
+  studentFocusController = window.StudentFocus.createController({
+    request: studentAppRequest,
+    onSessionFailure: handleStudentAppSessionFailure,
+    makeSessionError: (code, status) => new StudentAppSessionError(code, status),
+  });
+  void studentFocusController.load();
+}
+
+function handleStudentAppSessionFailure(error) {
+  if (!STUDENT_APP_PUBLIC_MODE || !(error instanceof StudentAppSessionError)) return false;
+  const activeSid = studentAppStrictSid(error?.activeSid);
+  if (error?.code === 'sid_rotated' && activeSid) {
+    location.replace(`/student/${encodeURIComponent(activeSid)}`);
+    return true;
+  }
+
+  document.querySelector('.student-shell')?.setAttribute('hidden', '');
+  let panel = document.getElementById('studentSessionRecovery');
+  if (!panel) {
+    panel = document.createElement('main');
+    panel.id = 'studentSessionRecovery';
+    panel.className = 'student-session-recovery';
+    panel.setAttribute('role', 'alert');
+    panel.setAttribute('aria-labelledby', 'studentSessionRecoveryTitle');
+    const title = document.createElement('h1');
+    title.id = 'studentSessionRecoveryTitle';
+    title.textContent = '학생 앱 연결을 확인해 주세요';
+    const message = document.createElement('p');
+    message.textContent = error?.status === 401
+      ? '로그인이 만료되었습니다. 다시 로그인해 주세요.'
+      : '학생 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = '다시 시도';
+    retry.addEventListener('click', () => location.reload());
+    const login = document.createElement('button');
+    login.type = 'button';
+    login.textContent = '로그인 화면';
+    login.addEventListener('click', () => location.assign('/app'));
+    panel.append(title, message, retry, login);
+    document.body.prepend(panel);
+    retry.focus();
+  }
+  return true;
+}
+
 function resolveStudentId() {
   const lastSeg = decodeURIComponent(location.pathname.split("/").pop() || "");
   // /student/123 처럼 마지막 세그먼트가 숫자면 그걸 sid로 사용
@@ -17,22 +658,18 @@ function resolveStudentId() {
   return lastSeg || "";
 }
 
-// 전역으로 공유해서 아래 IIFE들에서 같이 씀
-window.__STU_SID__ = resolveStudentId();
-window.__OCR_TEST_SHEET_ENABLED__ = new URLSearchParams(location.search).get("ocr") === "1";
-function resolveOcrQaDate() {
-  if (window.__OCR_TEST_SHEET_ENABLED__ !== true) return "";
-  const value = String(new URLSearchParams(location.search).get("qaDate") || "").trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-}
-window.__OCR_QA_DATE__ = resolveOcrQaDate();
+// 공개 앱에서는 이 값이 권한 근거가 아니다. 서버 세션 확인 뒤에만 active SID를 채운다.
+window.__STU_SID__ = STUDENT_APP_PUBLIC_MODE ? '' : STUDENT_APP_PAGE_SID;
+const STUDENT_APP_QUERY_FEATURES = studentAppQueryFeatureGates(STUDENT_APP_PUBLIC_MODE, location.search);
+window.__OCR_TEST_SHEET_ENABLED__ = STUDENT_APP_QUERY_FEATURES.ocrEnabled;
+window.__OCR_QA_DATE__ = STUDENT_APP_QUERY_FEATURES.qaDate;
 const OCR_PHASE1_ALLOWED_TEST_IDS = new Set([
   't_unit_daesu_01_lv3_r1',
   't_unit_daesu_02_lv3_r1',
   't_unit_mijeok1_01_lv3_r1',
 ]);
 try {
-  if (window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
+  if (!STUDENT_APP_PUBLIC_MODE && window.__STU_SID__) localStorage.setItem("studentSid", String(window.__STU_SID__));
 } catch {}
 
 const STUDENT_SEARCH_HELP_TEXT = '초성/영타 검색 · 띄어쓰기=AND';
@@ -225,8 +862,7 @@ function studentMatchesSearchKey(key, query) {
 }
 
 
-// ===== [중요] HTML <head>에 아래 스크립트를 추가해야 VG Controller가 동작합니다 =====
-// <script src="https://file.kollus.com/vgcontroller/vg-controller-client.latest.min.js" crossorigin="anonymous"></script>
+// VG Controller는 bootstrap이 학원망 접근을 허용한 뒤에만 동적으로 불러온다.
 
 window.todayLocalKey = function () {
   const now = new Date();
@@ -240,7 +876,7 @@ window.todayLocalKey = function () {
   const CT = { "Content-Type": "application/json" };
   const LS_TOKEN_ACTIVE = "studentToken";
   const LS_TOKEN_MASTER = "studentTokenMaster";
-  const sid = window.__STU_SID__ || decodeURIComponent(location.pathname.split("/").pop());
+  let sid = STUDENT_APP_PUBLIC_MODE ? '' : (window.__STU_SID__ || decodeURIComponent(location.pathname.split("/").pop()));
   let currentMid = null;
 
   function todayLocalKey() {
@@ -267,31 +903,36 @@ window.todayLocalKey = function () {
   let reviewVideosCache = []; // server-authorized previous-video membership for this page session
   const reviewSelection = new Set(); // chooser-only checked MIDs waiting for server registration
   let registeredReviewMids = []; // ordered, SID/date-scoped server-confirmed selections
-  let trainingPackVideosCache = []; // subject-wide training-pack catalog for this page session
-  const trainingPackSelection = new Set(); // chooser-only checked MIDs waiting for server registration
-  let registeredTrainingPackMids = []; // ordered, SID/date-scoped server-confirmed selections
+  const REVIEW_PLAYLIST_STORAGE_PREFIX = 'student:review-playlist';
   let updatesCache = {};     // /api/updates
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
   let logsCache = {};         // /api/logs 전체
   let assignedTestsCache = [];
   let homeworkBooksCache = [];
+  let studentDashboardCache = null;
+  let canonicalHomeworkState = null;
+  let canonicalHomeworkLoading = false;
+  const canonicalHomeworkElements = new Map();
+  let notificationPreferencesState = null;
+  let notificationPreferencesLoading = false;
+  let studentHomeDeepLinkHandled = !studentAppHomeDeepLink(location.search);
   let courseBlocked = false;
-  let courseBlockMessage = "수업일이 아닌 것 같습니다. 선생님께 문의주세용 ^_^";
+  let courseBlockMessage = "오늘은 지정된 수업일이 아닙니다. 일정이 다르면 학원에 문의해 주세요.";
   let courseVideosCompleted = false;
-  let academyAccessAllowed = true;
+  let academyAccessAllowed = !STUDENT_APP_PUBLIC_MODE;
   let academyOnlyMessage = "영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.";
   let academyOnlyInitialNoticeShown = false;
-  let testSubmissionBlocked = false;
+  let testSubmissionBlocked = STUDENT_APP_PUBLIC_MODE;
   let reviewVideosMalformed = false;
-  let trainingPackVideosMalformed = false;
   let ghostStudent = false;
-  const COURSE_VIDEOS_COMPLETED_MESSAGE = "진도를 마쳤습니다. 필요한 영상이 있으면 선생님께 문의 주세요 ^_^";
+  let announcementPendingCount = null;
+  const COURSE_VIDEOS_COMPLETED_MESSAGE = "오늘 영상 진도를 모두 마쳤습니다. 추가 영상이 필요하면 학원에 문의해 주세요.";
   window.__ASSIGNED_TESTS__ = [];
   window.__STUDENT_ACCESS__ = {
-    academyAccessAllowed: true,
-    outsideAcademyBlocked: false,
-    testSubmissionBlocked: false,
+    academyAccessAllowed,
+    outsideAcademyBlocked: !academyAccessAllowed,
+    testSubmissionBlocked,
     message: academyOnlyMessage,
   };
 
@@ -465,7 +1106,7 @@ window.todayLocalKey = function () {
     };
 
     try {
-      const res1 = await fetch('/api/watch', {
+      const res1 = await studentAppRequest('/api/watch', {
         method: 'POST', headers: CT, body: JSON.stringify(payload), keepalive: !!options.keepalive
       });
       if (res1.ok) _lastSent.set(mid, snap);
@@ -500,17 +1141,256 @@ window.todayLocalKey = function () {
   /* ───────────── 설정 패널 & 다크모드 ───────────── */
   const setBtn = $('setBtn');
   const setPanel = $('setPanel');
+  const setPanelClose = $('setPanelClose');
   const darkTgl = $('darkToggle');
+  const studentAppSettings = $('studentAppSettings');
+  const studentAppCurriculum = $('studentAppCurriculum');
+  const studentAppNotificationStatus = $('studentAppNotificationStatus');
+  const studentNotificationPreferences = $('studentNotificationPreferences');
+  const studentNotificationPreferencesStatus = $('studentNotificationPreferencesStatus');
+  const studentNotificationPreferencesRetry = $('studentNotificationPreferencesRetry');
+  const studentNotificationPreferenceInputs = Object.freeze(Object.fromEntries(
+    STUDENT_NOTIFICATION_CATEGORIES.map(category => [
+      category,
+      document.querySelector(`[data-student-notification-category="${category}"]`),
+    ])
+  ));
+  const studentAppLogout = $('studentAppLogout');
+  const studentLocalFeedbackSettings = $('studentLocalFeedbackSettings');
+  const studentLocalLoginSettings = $('studentLocalLoginSettings');
+
+  if (STUDENT_APP_PUBLIC_MODE) {
+    if (studentAppSettings) studentAppSettings.hidden = false;
+    if (studentLocalFeedbackSettings) studentLocalFeedbackSettings.hidden = true;
+    if (studentLocalLoginSettings) studentLocalLoginSettings.hidden = true;
+  }
+
+  function publicNotificationStatus() {
+    if (!('serviceWorker' in navigator) || typeof window.PushManager === 'undefined' || typeof window.Notification === 'undefined') {
+      return '이 기기는 학습 알림을 지원하지 않아 학생 앱의 24시간 기본 방식을 사용합니다.';
+    }
+    if (Notification.permission === 'granted') return '학습 알림이 허용되어 있습니다.';
+    if (Notification.permission === 'denied') return '학습 알림이 차단되어 있습니다. 브라우저 설정에서 허용할 수 있습니다.';
+    return '학습 알림 권한을 아직 선택하지 않았습니다. 학생 앱에서 설정할 수 있습니다.';
+  }
+
+  function setNotificationPreferencesBusy(busy) {
+    if (!studentNotificationPreferences) return;
+    studentNotificationPreferences.setAttribute('aria-busy', busy ? 'true' : 'false');
+    STUDENT_NOTIFICATION_CATEGORIES.forEach(category => {
+      const input = studentNotificationPreferenceInputs[category];
+      if (input) input.disabled = busy || !notificationPreferencesState;
+    });
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.disabled = busy;
+  }
+
+  function renderNotificationPreferences(payload, message = '원하는 알림을 변경할 수 있습니다.') {
+    if (!studentNotificationPreferences || !payload) return;
+    notificationPreferencesState = payload;
+    STUDENT_NOTIFICATION_CATEGORIES.forEach(category => {
+      const input = studentNotificationPreferenceInputs[category];
+      if (input) input.checked = payload.preferences[category];
+    });
+    studentNotificationPreferences.hidden = false;
+    if (studentNotificationPreferencesStatus) studentNotificationPreferencesStatus.textContent = message;
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.hidden = true;
+  }
+
+  function hideNotificationPreferences() {
+    notificationPreferencesState = null;
+    if (studentNotificationPreferences) studentNotificationPreferences.hidden = true;
+    if (studentNotificationPreferencesStatus) studentNotificationPreferencesStatus.textContent = '';
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.hidden = true;
+  }
+
+  function showNotificationPreferencesError() {
+    if (!studentNotificationPreferences) return;
+    studentNotificationPreferences.hidden = false;
+    if (studentNotificationPreferencesStatus) {
+      studentNotificationPreferencesStatus.textContent = '알림 설정을 확인하지 못했습니다. 연결 후 다시 시도해 주세요.';
+    }
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.hidden = false;
+  }
+
+  function handleNotificationPreferencesSessionFailure(error) {
+    if (!(error instanceof StudentAppSessionError)) return false;
+    if (![401, 403].includes(error.status) && error.code !== 'sid_rotated') return false;
+    return handleStudentAppSessionFailure(error);
+  }
+
+  async function loadNotificationPreferences({ message = '' } = {}) {
+    if (!STUDENT_APP_PUBLIC_MODE || !studentNotificationPreferences || notificationPreferencesLoading) return null;
+    notificationPreferencesLoading = true;
+    studentNotificationPreferences.hidden = false;
+    if (studentNotificationPreferencesStatus) studentNotificationPreferencesStatus.textContent = '알림 설정을 불러오는 중입니다.';
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.hidden = true;
+    setNotificationPreferencesBusy(true);
+    try {
+      const response = await studentAppRequest('/api/mobile/push/preferences', { cache: 'no-store' });
+      if (response.status === 404) {
+        hideNotificationPreferences();
+        return null;
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new StudentAppSessionError('notification_preferences_session_failed', response.status);
+      }
+      if (!response.ok) throw new Error('notification_preferences_unavailable');
+      const raw = await response.json().catch(() => null);
+      const payload = normalizeStudentNotificationPreferencesPayload(raw);
+      if (!payload) throw new Error('notification_preferences_malformed');
+      renderNotificationPreferences(payload, message || '원하는 알림을 변경할 수 있습니다.');
+      return payload;
+    } catch (error) {
+      if (!handleNotificationPreferencesSessionFailure(error)) showNotificationPreferencesError();
+      return null;
+    } finally {
+      notificationPreferencesLoading = false;
+      setNotificationPreferencesBusy(false);
+    }
+  }
+
+  async function saveNotificationPreferences() {
+    if (!STUDENT_APP_PUBLIC_MODE || !notificationPreferencesState || notificationPreferencesLoading) return;
+    const previous = notificationPreferencesState;
+    const preferences = Object.fromEntries(STUDENT_NOTIFICATION_CATEGORIES.map(category => [
+      category,
+      studentNotificationPreferenceInputs[category]?.checked === true,
+    ]));
+    let conflict = false;
+    notificationPreferencesLoading = true;
+    if (studentNotificationPreferencesStatus) studentNotificationPreferencesStatus.textContent = '알림 설정을 저장하는 중입니다.';
+    if (studentNotificationPreferencesRetry) studentNotificationPreferencesRetry.hidden = true;
+    setNotificationPreferencesBusy(true);
+    try {
+      const response = await studentAppRequest('/api/mobile/push/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences, expectedRevision: previous.revision }),
+      });
+      if (response.status === 404) {
+        hideNotificationPreferences();
+        return;
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new StudentAppSessionError('notification_preferences_session_failed', response.status);
+      }
+      if (response.status === 409) {
+        conflict = true;
+        return;
+      }
+      if (!response.ok) throw new Error('notification_preferences_unavailable');
+      const raw = await response.json().catch(() => null);
+      const payload = normalizeStudentNotificationPreferencesPayload(raw);
+      if (!payload) throw new Error('notification_preferences_malformed');
+      renderNotificationPreferences(payload, '알림 설정을 저장했습니다.');
+    } catch (error) {
+      if (!handleNotificationPreferencesSessionFailure(error)) {
+        renderNotificationPreferences(previous);
+        showNotificationPreferencesError();
+      }
+    } finally {
+      notificationPreferencesLoading = false;
+      setNotificationPreferencesBusy(false);
+      if (conflict) {
+        renderNotificationPreferences(previous, '다른 화면의 변경을 확인하는 중입니다.');
+        void loadNotificationPreferences({ message: '다른 화면의 변경을 반영했습니다.' });
+      }
+    }
+  }
+
+  async function preparePublicStudentSettings() {
+    if (!STUDENT_APP_PUBLIC_MODE || !studentAppSettings) return;
+    studentAppSettings.hidden = false;
+    if (studentLocalFeedbackSettings) studentLocalFeedbackSettings.hidden = true;
+    if (studentLocalLoginSettings) studentLocalLoginSettings.hidden = true;
+    const session = await STUDENT_APP_PUBLIC_SESSION.refreshSession();
+    const state = STUDENT_APP_PUBLIC_SESSION.sessionState();
+    if (!state || session.activeSid !== state.activeSid) return;
+    if (studentAppNotificationStatus) studentAppNotificationStatus.textContent = publicNotificationStatus();
+    if (studentAppCurriculum) {
+      studentAppCurriculum.replaceChildren(...state.curris.map(curriculum => {
+        const option = document.createElement('option');
+        option.value = curriculum.sid;
+        option.textContent = curriculum.cur || curriculum.sid;
+        option.selected = curriculum.sid === state.activeSid;
+        return option;
+      }));
+      studentAppCurriculum.disabled = state.curris.length < 2;
+    }
+    await loadNotificationPreferences();
+  }
+
+  STUDENT_NOTIFICATION_CATEGORIES.forEach(category => {
+    studentNotificationPreferenceInputs[category]?.addEventListener('change', () => {
+      void saveNotificationPreferences();
+    });
+  });
+
+  studentNotificationPreferencesRetry?.addEventListener('click', () => {
+    void loadNotificationPreferences({ message: '알림 설정을 다시 불러왔습니다.' });
+  });
+
+  studentAppCurriculum?.addEventListener('change', async () => {
+    if (!STUDENT_APP_PUBLIC_MODE) return;
+    const targetSid = studentAppStrictSid(studentAppCurriculum.value);
+    if (!targetSid || targetSid === STUDENT_APP_PUBLIC_SESSION.activeSid()) return;
+    studentAppCurriculum.disabled = true;
+    try {
+      const response = await STUDENT_APP_PUBLIC_SESSION.request('/api/mobile/auth/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sid: targetSid }),
+      });
+      if (!response.ok) throw new StudentAppSessionError('switch_failed', response.status);
+      await STUDENT_APP_PUBLIC_SESSION.refreshSession({ force: true });
+      // Session rotation invalidates the previous Push binding. Re-enter the
+      // app shell so the existing browser subscription is bound to the new SID.
+      location.assign('/app');
+    } catch (error) {
+      handleStudentAppSessionFailure(error);
+      if (studentAppNotificationStatus) studentAppNotificationStatus.textContent = '커리큘럼을 바꾸지 못했습니다. 다시 시도해 주세요.';
+      studentAppCurriculum.disabled = false;
+    }
+  });
+
+  studentAppLogout?.addEventListener('click', async () => {
+    if (!STUDENT_APP_PUBLIC_MODE) return;
+    studentAppLogout.disabled = true;
+    try {
+      const response = await STUDENT_APP_PUBLIC_SESSION.request('/api/mobile/auth/logout', { method: 'POST', body: '{}' });
+      if (!response.ok) throw new StudentAppSessionError('logout_failed', response.status);
+      location.replace('/app');
+    } catch (error) {
+      handleStudentAppSessionFailure(error);
+      if (studentAppNotificationStatus) studentAppNotificationStatus.textContent = '로그아웃에 실패했습니다. 다시 시도해 주세요.';
+      studentAppLogout.disabled = false;
+    }
+  });
+
+  function setSettingsPanelOpen(open) {
+    setPanel?.classList.toggle('open', open);
+    setPanel?.setAttribute('aria-hidden', open ? 'false' : 'true');
+    setBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
 
   setBtn?.addEventListener('click', e => {
     e.stopPropagation();
-    setPanel?.classList.toggle('open');
+    setSettingsPanelOpen(!setPanel?.classList.contains('open'));
+  });
+  setPanelClose?.addEventListener('click', () => {
+    setSettingsPanelOpen(false);
+    setBtn?.focus();
   });
   document.addEventListener('click', e => {
     if (!setPanel || !setBtn) return;
     if (!setPanel.contains(e.target) && !setBtn.contains(e.target)) {
-      setPanel.classList.remove('open');
+      setSettingsPanelOpen(false);
     }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !setPanel?.classList.contains('open')) return;
+    setSettingsPanelOpen(false);
+    setBtn?.focus();
   });
 
   if (localStorage.theme === "dark") {
@@ -549,8 +1429,50 @@ window.todayLocalKey = function () {
   }
 
   /* ───────────── 데이터 로드 ───────────── */
+  function bootstrapInitialData(b, watchRaw) {
+    const academyAllowed = studentAppAcademyAccessFromBootstrap(STUDENT_APP_PUBLIC_MODE, b);
+    return [
+      Array.isArray(b.students) ? b.students : (b.student ? [b.student] : []),
+      Array.isArray(b.videos) ? b.videos : [],
+      b.updates || {},
+      b.materials || {},
+      b.assigns || {},
+      b.absent || {},
+      b.logs || {},
+      watchRaw,
+      {
+        courseBlocked: b.courseBlocked === true,
+        selfStudy: b.selfStudy === true,
+        blockMessage: b.blockMessage || '',
+        courseVideosCompleted: b.courseVideosCompleted === true,
+        academyAccessAllowed: academyAllowed,
+        academyOnlyMessage: b.academyOnlyMessage || b.academyOnlyNotice || b.restrictedMessage || '',
+        assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
+        homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
+        reviewVideos: b.reviewVideos,
+        reviewVideosMalformed: !Array.isArray(b.reviewVideos),
+        ghostStudent: b.ghostStudent === true,
+        redirectSid: b.redirectSid || b.recoveredSid || '',
+        recoveryReason: b.recoveryReason || '',
+        testSubmissionBlocked: b.testSubmissionBlocked === true || (STUDENT_APP_PUBLIC_MODE && !academyAllowed),
+        dashboard: b.dashboard && typeof b.dashboard === 'object' ? b.dashboard : null,
+      },
+    ];
+  }
+
   async function loadInitialData() {
     const today = studentDataDateKey();
+    if (STUDENT_APP_PUBLIC_MODE) {
+      const loaded = await loadPublicStudentBootstrap({
+        adapter: STUDENT_APP_PUBLIC_SESSION,
+        pageSid: STUDENT_APP_PAGE_SID,
+        date: today,
+      });
+      sid = loaded.activeSid;
+      window.__STU_SID__ = loaded.activeSid;
+      return bootstrapInitialData(loaded.bootstrap, loaded.watch);
+    }
+
     const watchReq = fetch(`/api/watch/latest?sid=${encodeURIComponent(sid)}`)
       .then(r => r.json()).catch(() => ({}));
 
@@ -559,34 +1481,7 @@ window.todayLocalKey = function () {
       const res = await fetch(`/api/student/bootstrap?${q}`, { cache: 'no-store' });
       if (res.ok) {
         const b = await res.json();
-        return [
-          Array.isArray(b.students) ? b.students : (b.student ? [b.student] : []),
-          Array.isArray(b.videos) ? b.videos : [],
-          b.updates || {},
-          b.materials || {},
-          b.assigns || {},
-          b.absent || {},
-          b.logs || {},
-          await watchReq,
-          {
-            courseBlocked: b.courseBlocked === true,
-            selfStudy: b.selfStudy === true,
-            blockMessage: b.blockMessage || '',
-            courseVideosCompleted: b.courseVideosCompleted === true,
-            academyAccessAllowed: b.academyAccessAllowed !== false && b.outsideAcademyBlocked !== true && b.networkBlocked !== true,
-            academyOnlyMessage: b.academyOnlyMessage || b.academyOnlyNotice || b.restrictedMessage || '',
-            assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
-            homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
-            reviewVideos: b.reviewVideos,
-            reviewVideosMalformed: !Array.isArray(b.reviewVideos),
-            trainingPackVideos: b.trainingPackVideos,
-            trainingPackVideosMalformed: !Array.isArray(b.trainingPackVideos),
-            registeredTrainingPackVideos: b.registeredTrainingPackVideos,
-            ghostStudent: b.ghostStudent === true,
-            redirectSid: b.redirectSid || b.recoveredSid || '',
-            recoveryReason: b.recoveryReason || '',
-          },
-        ];
+        return bootstrapInitialData(b, await watchReq);
       }
       if (res.status !== 404) throw new Error(`bootstrap ${res.status}`);
     } catch (err) {
@@ -613,15 +1508,16 @@ window.todayLocalKey = function () {
         homeworkBooks: [],
         reviewVideos: [],
         reviewVideosMalformed: false,
-        trainingPackVideos: [],
-        trainingPackVideosMalformed: false,
-        registeredTrainingPackVideos: [],
         ghostStudent: false,
+        dashboard: null,
       },
     ]);
   }
 
-  loadInitialData().then(init).catch(err => alert("데이터 로드 실패\n" + err));
+  loadInitialData().then(init).catch(err => {
+    if (handleStudentAppSessionFailure(err)) return;
+    alert("데이터 로드 실패\n" + err);
+  });
 
   /* ───────────── 자동배정 헬퍼 ───────────── */
 
@@ -685,6 +1581,7 @@ window.todayLocalKey = function () {
 
   // “오늘 학생표에 있는 애”만 자동 배정 (자동배정 로직 내부에서만 today 허용 체크)
   async function ensureTodayAssignmentIfMissing() {
+    if (STUDENT_APP_PUBLIC_MODE) return false;
     const today = todayLocalKey();
     const dayMap = updatesCache[today] || {};
     const sidStr = String(sid);
@@ -777,7 +1674,11 @@ window.todayLocalKey = function () {
     return normalized;
   }
 
-  function normalizeReviewMids(value) {
+  function reviewPlaylistStorageKey() {
+    return `${REVIEW_PLAYLIST_STORAGE_PREFIX}:${String(sid)}:${studentDataDateKey()}`;
+  }
+
+  function normalizeStoredReviewMids(value) {
     const seen = new Set();
     const normalized = [];
     if (!Array.isArray(value)) return normalized;
@@ -791,93 +1692,35 @@ window.todayLocalKey = function () {
     return normalized;
   }
 
-  function normalizeTrainingPackVideos(items) {
-    const seen = new Set();
-    const normalized = [];
-    if (!Array.isArray(items)) return normalized;
-    items.forEach(item => {
-      if (!item || typeof item !== 'object') return;
-      const mid = String(item.mid ?? '').trim();
-      const subCurriculum = String(item.subCurriculum ?? '').trim().toLowerCase();
-      if (!mid || subCurriculum !== '트팩' || seen.has(mid)) return;
-      seen.add(mid);
-      normalized.push({ ...item, mid, isTrainingPack: true });
-    });
-    return normalized;
+  function saveRegisteredReviewMids() {
+    try {
+      localStorage.setItem(reviewPlaylistStorageKey(), JSON.stringify(registeredReviewMids));
+    } catch (_) {
+      // Browser storage is a convenience only; the server-authorized chooser remains usable.
+    }
   }
 
-  function normalizeTrainingPackMids(value) {
-    const seen = new Set();
-    const normalized = [];
-    if (!Array.isArray(value)) return normalized;
-    value.forEach(raw => {
-      const mid = String(raw ?? '').trim();
-      if (mid && !seen.has(mid)) {
-        seen.add(mid);
-        normalized.push(mid);
-      }
-    });
-    return normalized;
-  }
-
-  function reviewAssignmentFor(updatesObj, date, sidVal) {
-    const dayMap = (updatesObj && updatesObj[date]) ? updatesObj[date] : {};
-    const sidStr = String(sidVal);
-    const sidNum = Number.isFinite(+sidVal) ? String(+sidVal) : null;
-    return dayMap[sidStr] ?? (sidNum != null ? dayMap[sidNum] : undefined);
-  }
-
-  function setRegisteredReviewMids(value) {
-    registeredReviewMids = normalizeReviewMids(value);
+  function loadRegisteredReviewMids() {
+    let parsed = [];
+    try {
+      const raw = localStorage.getItem(reviewPlaylistStorageKey());
+      if (raw) parsed = JSON.parse(raw);
+    } catch (_) {
+      parsed = [];
+    }
+    const allowed = new Set(reviewVideosCache.map(item => item.mid));
+    const normalized = normalizeStoredReviewMids(parsed);
+    const next = normalized.filter(mid => allowed.has(mid));
+    const changed = JSON.stringify(next) !== JSON.stringify(normalized);
+    registeredReviewMids = next;
     reviewSelection.clear();
-  }
-
-  function setRegisteredTrainingPackMids(value) {
-    registeredTrainingPackMids = normalizeTrainingPackMids(value);
-    trainingPackSelection.clear();
-  }
-
-  function loadRegisteredReviewMids(serverMids) {
-    const assignment = reviewAssignmentFor(updatesCache, studentDataDateKey(), sid);
-    const assignmentMids = assignment && typeof assignment === 'object'
-      ? assignment.reviewVideos
-      : [];
-    setRegisteredReviewMids(
-      Array.isArray(serverMids) ? serverMids : assignmentMids,
-    );
-  }
-
-  function loadRegisteredTrainingPackMids(serverMids) {
-    const assignment = reviewAssignmentFor(updatesCache, studentDataDateKey(), sid);
-    const assignmentMids = assignment && typeof assignment === 'object'
-      ? assignment.trainingPackVideos
-      : [];
-    setRegisteredTrainingPackMids(
-      Array.isArray(serverMids) ? serverMids : assignmentMids,
-    );
-  }
-
-  function updateReviewAssignmentInCache(assignment) {
-    const date = studentDataDateKey();
-    const dayMap = { ...(updatesCache?.[date] || {}) };
-    const sidKey = String(sid);
-    if (assignment && typeof assignment === 'object') dayMap[sidKey] = assignment;
-    else delete dayMap[sidKey];
-    updatesCache = { ...(updatesCache || {}), [date]: dayMap };
+    if (changed) saveRegisteredReviewMids();
   }
 
   function registeredReviewVideos() {
     if (!academyAccessAllowed || reviewSurfaceBlocked()) return [];
     const byMid = new Map(reviewVideosCache.map(item => [item.mid, item]));
     return registeredReviewMids
-      .map(mid => byMid.get(mid))
-      .filter(item => item && item.playbackRestricted !== true);
-  }
-
-  function registeredTrainingPackVideos() {
-    if (!academyAccessAllowed || trainingPackSurfaceBlocked()) return [];
-    const byMid = new Map(trainingPackVideosCache.map(item => [item.mid, item]));
-    return registeredTrainingPackMids
       .map(mid => byMid.get(mid))
       .filter(item => item && item.playbackRestricted !== true);
   }
@@ -906,26 +1749,18 @@ window.todayLocalKey = function () {
       || isAbsentOnStudentDate() || isArchivedOnStudentDate();
   }
 
-  function trainingPackStudentEligible() {
-    const level = String(stuCache?.level || '').trim();
-    const subCurriculum = String(stuCache?.subCurriculum || '').trim().toLowerCase();
-    return ['중', '하'].includes(level) && ['a:ble', 'apex'].includes(subCurriculum);
-  }
-
-  function trainingPackSurfaceBlocked() {
-    return reviewSurfaceBlocked() || trainingPackVideosMalformed || !trainingPackStudentEligible();
-  }
-
   function setActiveVideo(mid) {
     const key = String(mid || '');
     $('vidList')?.querySelectorAll('li[data-mid]').forEach(item => {
-      item.classList.toggle('active', item.dataset.mid === key);
+      const active = item.dataset.mid === key;
+      item.classList.toggle('active', active);
+      const action = item.querySelector('.video-row-action');
+      if (active) action?.setAttribute('aria-current', 'true');
+      else action?.removeAttribute('aria-current');
     });
     const reviewItems = [
       ...($('previousVidList')?.querySelectorAll('button[data-mid]') || []),
       ...($('previousVidList')?.querySelectorAll('label[data-mid]') || []),
-      ...($('trainingPackVideosList')?.querySelectorAll('button[data-mid]') || []),
-      ...($('trainingPackVideosList')?.querySelectorAll('label[data-mid]') || []),
     ];
     reviewItems.forEach(item => {
       const active = item.dataset.mid === key;
@@ -939,99 +1774,22 @@ window.todayLocalKey = function () {
     const eligible = new Set(reviewVideosCache.map(item => item.mid));
     const registered = new Set(registeredReviewMids);
     const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    register.disabled = reviewRegistrationPending || reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
+    register.disabled = reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
   }
 
-  let reviewRegistrationPending = false;
-  const reviewCancellationPendingMids = new Set();
-
-  async function registerReviewVideos() {
+  function registerReviewVideos() {
     if (reviewSurfaceBlocked() || !academyAccessAllowed) return false;
     const eligible = new Set(reviewVideosCache.map(item => item.mid));
     const registered = new Set(registeredReviewMids);
     const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    if (!selected.length || reviewRegistrationPending) return false;
+    if (!selected.length) return false;
 
-    reviewRegistrationPending = true;
-    try {
-      const date = studentDataDateKey();
-      const res = await fetch('/api/updates/review', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify({ date, sid: String(sid), videos: selected }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || payload?.ok === false) {
-        throw new Error(payload?.error || '복습 영상 등록에 실패했습니다.');
-      }
-
-      updateReviewAssignmentInCache(payload.assignment);
-      setRegisteredReviewMids(payload.reviewVideos || payload.assignment?.reviewVideos || selected);
-      void renderAssignedList({ autoPlay: false });
-      renderPreviousVideos();
-      return true;
-    } catch (err) {
-      alert(err?.message || '복습 영상 등록에 실패했습니다.');
-      return false;
-    } finally {
-      reviewRegistrationPending = false;
-      syncReviewRegisterControl($('previousVideosRegister'));
-    }
-  }
-
-  async function cancelRegisteredReviewVideo(mid) {
-    const midKey = String(mid ?? '').trim();
-    if (!midKey || !registeredReviewMids.includes(midKey)
-      || reviewSurfaceBlocked() || !academyAccessAllowed
-      || reviewCancellationPendingMids.has(midKey)) return false;
-
-    reviewCancellationPendingMids.add(midKey);
-    const cancelButton = [...($('vidList')?.querySelectorAll('button[data-review-cancel]') || [])]
-      .find(button => button.dataset.mid === midKey);
-    if (cancelButton) {
-      cancelButton.disabled = true;
-      cancelButton.textContent = '취소 중…';
-    }
-
-    try {
-      const date = studentDataDateKey();
-      const res = await fetch('/api/updates/review', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify({
-          date,
-          sid: String(sid),
-          videos: [midKey],
-          action: 'cancel',
-        }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || payload?.ok === false) {
-        throw new Error(payload?.error || '복습 영상 취소에 실패했습니다.');
-      }
-
-      updateReviewAssignmentInCache(payload.assignment);
-      const nextReviewMids = Array.isArray(payload.reviewVideos)
-        ? payload.reviewVideos
-        : (Array.isArray(payload.assignment?.reviewVideos)
-          ? payload.assignment.reviewVideos
-          : registeredReviewMids.filter(item => item !== midKey));
-      setRegisteredReviewMids(nextReviewMids);
-      await renderAssignedList({ autoPlay: false });
-      renderPreviousVideos();
-      return true;
-    } catch (err) {
-      alert(err?.message || '복습 영상 취소에 실패했습니다.');
-      return false;
-    } finally {
-      reviewCancellationPendingMids.delete(midKey);
-      const retryButton = [...($('vidList')?.querySelectorAll('button[data-review-cancel]') || [])]
-        .find(button => button.dataset.mid === midKey);
-      if (retryButton) {
-        retryButton.disabled = false;
-        retryButton.textContent = '취소';
-      }
-    }
+    registeredReviewMids = normalizeStoredReviewMids([...registeredReviewMids, ...selected]);
+    reviewSelection.clear();
+    saveRegisteredReviewMids();
+    void renderAssignedList({ autoPlay: false });
+    renderPreviousVideos();
+    return true;
   }
 
   function renderPreviousVideos() {
@@ -1158,169 +1916,6 @@ window.todayLocalKey = function () {
     syncReviewRegisterControl(register);
   }
 
-  function syncTrainingPackRegisterControl(register) {
-    if (!register) return;
-    const eligible = new Set(trainingPackVideosCache.map(item => item.mid));
-    const registered = new Set(registeredTrainingPackMids);
-    const selected = [...trainingPackSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    register.disabled = trainingPackRegistrationPending || trainingPackSurfaceBlocked()
-      || !academyAccessAllowed || selected.length === 0;
-  }
-
-  let trainingPackRegistrationPending = false;
-
-  async function registerTrainingPackVideos() {
-    if (trainingPackSurfaceBlocked() || !academyAccessAllowed) return false;
-    const eligible = new Set(trainingPackVideosCache.map(item => item.mid));
-    const registered = new Set(registeredTrainingPackMids);
-    const selected = [...trainingPackSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    if (!selected.length || trainingPackRegistrationPending) return false;
-
-    trainingPackRegistrationPending = true;
-    try {
-      const date = studentDataDateKey();
-      const res = await fetch('/api/updates/training-pack', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify({ date, sid: String(sid), videos: selected }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || payload?.ok === false) {
-        throw new Error(payload?.error || '트레이닝팩 영상 등록에 실패했습니다.');
-      }
-
-      updateReviewAssignmentInCache(payload.assignment);
-      setRegisteredTrainingPackMids(
-        payload.trainingPackVideos || payload.assignment?.trainingPackVideos || [
-          ...registeredTrainingPackMids,
-          ...selected,
-        ],
-      );
-      void renderAssignedList({ autoPlay: false });
-      renderTrainingPackVideos();
-      return true;
-    } catch (err) {
-      alert(err?.message || '트레이닝팩 영상 등록에 실패했습니다.');
-      return false;
-    } finally {
-      trainingPackRegistrationPending = false;
-      syncTrainingPackRegisterControl($('trainingPackVideosRegister'));
-    }
-  }
-
-  function renderTrainingPackVideos() {
-    const wrapper = $('trainingPackVideos');
-    const toggle = $('trainingPackVideosToggle');
-    const panel = $('trainingPackVideosPanel');
-    const summary = $('trainingPackVideosSummary');
-    const register = $('trainingPackVideosRegister');
-    const list = $('trainingPackVideosList');
-    if (!wrapper || !toggle || !panel || !summary || !list) return;
-
-    if (!toggle.dataset.trainingPackBound) {
-      toggle.addEventListener('click', () => {
-        if (toggle.disabled) return;
-        const expanded = toggle.getAttribute('aria-expanded') === 'true';
-        toggle.setAttribute('aria-expanded', String(!expanded));
-        panel.hidden = expanded;
-      });
-      toggle.dataset.trainingPackBound = '1';
-    }
-    if (register && !register.dataset.trainingPackBound) {
-      register.addEventListener('click', () => { void registerTrainingPackVideos(); });
-      register.dataset.trainingPackBound = '1';
-    }
-
-    wrapper.hidden = true;
-    wrapper.classList.remove('is-empty', 'is-disabled', 'is-restricted');
-    toggle.textContent = '트레이닝팩';
-    toggle.disabled = true;
-    toggle.setAttribute('aria-expanded', 'false');
-    panel.hidden = true;
-    summary.textContent = '';
-    summary.classList.remove('is-empty');
-    list.textContent = '';
-    if (register) {
-      register.hidden = false;
-      register.disabled = true;
-    }
-
-    // The catalog itself controls visibility: no training-pack videos means
-    // no button. The server has already limited this list to the student's
-    // subject and the eligible level/course combination.
-    if (trainingPackSurfaceBlocked() || !trainingPackVideosCache.length) return;
-
-    wrapper.hidden = false;
-    toggle.disabled = false;
-    toggle.textContent = `트레이닝팩 (${trainingPackVideosCache.length})`;
-    const registered = new Set(registeredTrainingPackMids);
-    const pending = trainingPackVideosCache.some(item => !registered.has(item.mid));
-    summary.textContent = pending
-      ? '영상을 선택한 뒤 영상 등록을 누르세요'
-      : '등록된 트레이닝팩 영상은 오늘 영상 목록에서 재생할 수 있습니다';
-    if (!pending && register) register.hidden = true;
-
-    for (const item of trainingPackVideosCache) {
-      const title = document.createElement('span');
-      const restricted = item.playbackRestricted === true || !academyAccessAllowed;
-      const isRegistered = registered.has(item.mid);
-      title.className = 'previous-video-title';
-      title.textContent = reviewVideoTitle(item);
-
-      if (!academyAccessAllowed) {
-        const row = document.createElement('li');
-        const playButton = document.createElement('button');
-        row.className = 'previous-video-play-row';
-        playButton.type = 'button';
-        playButton.className = 'previous-video-play';
-        playButton.dataset.mid = item.mid;
-        playButton.dataset.playbackRestricted = 'true';
-        playButton.disabled = true;
-        playButton.setAttribute('aria-label', `${title.textContent} (학원에서만 재생 가능)`);
-        playButton.appendChild(title);
-        row.dataset.mid = item.mid;
-        row.appendChild(playButton);
-        list.appendChild(row);
-        continue;
-      }
-
-      const row = document.createElement('label');
-      row.className = 'previous-video-row';
-      row.dataset.mid = item.mid;
-      row.classList.toggle('is-active', currentMid === item.mid);
-      row.setAttribute('aria-current', String(currentMid === item.mid));
-      row.classList.toggle('is-restricted', restricted);
-      if (restricted) row.setAttribute('aria-disabled', 'true');
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.dataset.mid = item.mid;
-      checkbox.checked = isRegistered || trainingPackSelection.has(item.mid);
-      checkbox.disabled = isRegistered || restricted;
-      checkbox.setAttribute('aria-label', isRegistered ? `${title.textContent} 등록됨` : title.textContent);
-      if (isRegistered) checkbox.setAttribute('data-registered', 'true');
-      checkbox.addEventListener('change', () => {
-        if (isRegistered) {
-          checkbox.checked = true;
-          return;
-        }
-        if (checkbox.checked) trainingPackSelection.add(item.mid);
-        else trainingPackSelection.delete(item.mid);
-        syncTrainingPackRegisterControl(register);
-      });
-      if (isRegistered) {
-        row.addEventListener('click', (event) => {
-          if (event.target === checkbox) return;
-          setActiveVideo(item.mid);
-          void play(item.mid);
-        });
-      }
-      row.append(checkbox, title);
-      list.appendChild(row);
-    }
-    syncTrainingPackRegisterControl(register);
-  }
-
   function normalizeAssignedTestStatus(status) {
     const s = String(status || '').trim();
     if (s === 'interrupted' || s === 'skip' || s === 'done' || s === 'assigned') return s;
@@ -1430,6 +2025,146 @@ window.todayLocalKey = function () {
       li.textContent = book;
       list.appendChild(li);
     });
+  }
+
+  function restoreLegacyHomeworkFallback() {
+    canonicalHomeworkState = null;
+    canonicalHomeworkElements.clear();
+    const title = $('studentHomeworkTitle');
+    const assignments = $('studentHomeworkAssignments');
+    const books = $('studentHomeworkBooks');
+    const status = $('studentHomeworkStatus');
+    const retry = $('studentHomeworkRetry');
+    if (title) title.textContent = '오늘 숙제';
+    if (assignments) {
+      assignments.hidden = true;
+      assignments.textContent = '';
+    }
+    if (books) books.hidden = false;
+    if (status) {
+      status.hidden = true;
+      status.textContent = '';
+    }
+    if (retry) retry.hidden = true;
+    renderHomeworkBooks();
+    renderStudentTodayOverview();
+  }
+
+  function renderCanonicalHomework(payload) {
+    const panel = $('studentHomeworkPanel');
+    const title = $('studentHomeworkTitle');
+    const assignments = $('studentHomeworkAssignments');
+    const books = $('studentHomeworkBooks');
+    const status = $('studentHomeworkStatus');
+    const retry = $('studentHomeworkRetry');
+    if (!panel || !assignments) return;
+
+    canonicalHomeworkElements.clear();
+    assignments.textContent = '';
+    payload.items.forEach(item => {
+      const view = studentHomeworkViewModel(item);
+      if (!view) return;
+      const card = document.createElement('li');
+      card.className = `student-homework-card is-${view.status}`;
+      card.tabIndex = -1;
+
+      const heading = document.createElement('div');
+      heading.className = 'student-homework-card-heading';
+      const itemTitle = document.createElement('h3');
+      itemTitle.textContent = view.title;
+      const state = document.createElement('strong');
+      state.className = 'student-homework-state';
+      state.textContent = view.statusLabel;
+      heading.append(itemTitle, state);
+
+      const details = document.createElement('p');
+      details.className = 'student-homework-details';
+      details.textContent = `${view.bookLabel} · ${view.scopeLabel}`;
+      const timing = document.createElement('p');
+      timing.className = 'student-homework-timing';
+      timing.textContent = `${view.assignedLabel} · ${view.dueLabel}`;
+      card.append(heading, details, timing);
+      assignments.appendChild(card);
+      canonicalHomeworkElements.set(view.id, card);
+      view.notificationEventIds.forEach(eventId => canonicalHomeworkElements.set(eventId, card));
+    });
+
+    if (!payload.items.length) {
+      const empty = document.createElement('li');
+      empty.className = 'student-homework-empty';
+      empty.textContent = '등록된 숙제가 없습니다.';
+      assignments.appendChild(empty);
+    }
+    if (title) title.textContent = '숙제';
+    if (books) books.hidden = true;
+    if (status) {
+      status.hidden = true;
+      status.textContent = '';
+    }
+    if (retry) retry.hidden = true;
+    assignments.hidden = false;
+    panel.hidden = false;
+  }
+
+  function showCanonicalHomeworkError() {
+    const panel = $('studentHomeworkPanel');
+    const status = $('studentHomeworkStatus');
+    const retry = $('studentHomeworkRetry');
+    if (status) {
+      status.textContent = '숙제 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.';
+      status.hidden = false;
+    }
+    if (retry) retry.hidden = false;
+    if (panel) panel.hidden = false;
+  }
+
+  function focusCanonicalHomeworkDeepLink() {
+    const requestedId = studentHomeworkDeepLink(location.search);
+    if (!requestedId) return;
+    const card = canonicalHomeworkElements.get(requestedId);
+    if (!card) return;
+    card.classList.add('student-homework-deep-link');
+    card.setAttribute('aria-current', 'true');
+    requestAnimationFrame(() => {
+      card.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      card.focus?.({ preventScroll: true });
+    });
+  }
+
+  async function loadCanonicalStudentHomework() {
+    if (!STUDENT_APP_PUBLIC_MODE || canonicalHomeworkLoading) return;
+    canonicalHomeworkLoading = true;
+    const retry = $('studentHomeworkRetry');
+    if (retry) retry.disabled = true;
+    try {
+      const response = await studentAppRequest('/api/mobile/student/homework?status=open', { cache: 'no-store' });
+      if (response.status === 404) {
+        restoreLegacyHomeworkFallback();
+        return;
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new StudentAppSessionError('homework_session_failed', response.status);
+      }
+      if (!response.ok) {
+        showCanonicalHomeworkError();
+        return;
+      }
+      const raw = await response.json().catch(() => null);
+      const payload = normalizeStudentHomeworkPayload(raw);
+      if (!payload) {
+        showCanonicalHomeworkError();
+        return;
+      }
+      canonicalHomeworkState = Object.freeze({ state: 'ready', payload });
+      renderCanonicalHomework(payload);
+      renderStudentTodayOverview();
+      focusCanonicalHomeworkDeepLink();
+    } catch (error) {
+      if (!handleStudentAppSessionFailure(error)) showCanonicalHomeworkError();
+    } finally {
+      canonicalHomeworkLoading = false;
+      if (retry) retry.disabled = false;
+    }
   }
 
   function assignedTestAnswerUrl(test) {
@@ -1565,6 +2300,7 @@ window.todayLocalKey = function () {
   }
 
   async function recoverStudentSid(stuArr, missingSid) {
+    if (STUDENT_APP_PUBLIC_MODE) return '';
     const byId = new Map((Array.isArray(stuArr) ? stuArr : []).map(s => [String(s?.id || ""), s]));
     const missing = String(missingSid || "").trim();
 
@@ -1604,10 +2340,148 @@ window.todayLocalKey = function () {
     }
   }
 
+  function renderStudentDashboardDetails(view) {
+    const details = $('studentDashboardDetails');
+    if (!details) return;
+    details.hidden = !view;
+
+    const progressBar = $('studentCurriculumProgress');
+    if (!view) {
+      if (progressBar) {
+        progressBar.hidden = true;
+        progressBar.value = 0;
+        progressBar.textContent = '';
+        progressBar.removeAttribute('aria-valuetext');
+      }
+      return;
+    }
+
+    const progressCourse = $('studentCurriculumProgressCourse');
+    const progressPercent = $('studentCurriculumProgressPercent');
+    const progressMeta = $('studentCurriculumProgressMeta');
+    if (progressCourse) progressCourse.textContent = view.progress.courseLabel;
+    if (progressPercent) progressPercent.textContent = view.progress.percentLabel;
+    if (progressMeta) progressMeta.textContent = view.progress.countLabel;
+    if (progressBar) {
+      progressBar.hidden = !view.progress.available;
+      progressBar.value = view.progress.percent ?? 0;
+      progressBar.textContent = view.progress.available ? view.progress.percentLabel : '';
+      if (view.progress.available) progressBar.setAttribute('aria-valuetext', view.progress.percentLabel);
+      else progressBar.removeAttribute('aria-valuetext');
+    }
+
+    const scheduleKind = $('studentNextScheduleKind');
+    const scheduleStatus = $('studentNextScheduleStatus');
+    const scheduleWhen = $('studentNextScheduleWhen');
+    const scheduleSlots = $('studentNextScheduleSlots');
+    if (scheduleKind) scheduleKind.textContent = view.schedule.kindLabel;
+    if (scheduleStatus) {
+      scheduleStatus.hidden = !view.schedule.statusLabel;
+      scheduleStatus.textContent = view.schedule.statusLabel;
+    }
+    if (scheduleWhen) scheduleWhen.textContent = view.schedule.whenLabel;
+    if (scheduleSlots) {
+      scheduleSlots.hidden = !view.schedule.slotsLabel;
+      scheduleSlots.textContent = view.schedule.slotsLabel;
+    }
+  }
+
+  function focusStudentHomeDeepLink() {
+    if (studentHomeDeepLinkHandled) return;
+    const overview = $('studentTodayOverview');
+    if (!overview || overview.hidden) return;
+    studentHomeDeepLinkHandled = true;
+    overview.tabIndex = -1;
+    overview.classList.add('student-app-deep-link-target');
+    requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+      overview.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+      overview.focus?.({ preventScroll: true });
+    });
+  }
+
+  function renderStudentTodayOverview() {
+    if (!STUDENT_APP_PUBLIC_MODE) return;
+    const overview = $('studentTodayOverview');
+    if (!overview) return;
+
+    const dashboardView = studentDashboardViewModel(studentDashboardCache);
+    renderStudentDashboardDetails(dashboardView);
+    const books = homeworkBooksCache.length ? homeworkBooksCache : homeworkBooksFromLogs();
+    const canonicalHomeworkCount = canonicalHomeworkState?.state === 'ready'
+      ? canonicalHomeworkState.payload.items.length
+      : null;
+    const videoRows = Array.from($('vidList')?.querySelectorAll('li[data-mid]') || [])
+      .filter(row => row.dataset.reviewRegistered !== 'true');
+    const completedVideos = videoRows.filter(row => getProgress(row.dataset.mid)?.completed).length;
+    const pendingTests = assignedTestsCache.filter(test => !['done', 'skip'].includes(normalizeAssignedTestStatus(test?.status))).length;
+    const unreadCount = dashboardView?.unreadBoardCount ?? announcementPendingCount;
+
+    const homeworkCount = $('studentTodayHomeworkCount');
+    const videoCount = $('studentTodayVideoCount');
+    const testCount = $('studentTodayTestCount');
+    const noticeCount = $('studentTodayNoticeCount');
+    const summary = $('studentTodaySummary');
+    if (homeworkCount) {
+      homeworkCount.textContent = canonicalHomeworkCount == null
+        ? (dashboardView?.homework.countLabel || `${books.length}권`)
+        : `${canonicalHomeworkCount}개`;
+    }
+    if (videoCount) videoCount.textContent = videoRows.length ? `${completedVideos}/${videoRows.length} 완료` : '없음';
+    if (testCount) testCount.textContent = pendingTests ? `${pendingTests}개` : '없음';
+    if (noticeCount) noticeCount.textContent = unreadCount == null ? '확인 중' : unreadCount ? `${unreadCount}개` : '없음';
+    if (summary) {
+      const nextSummary = [
+        canonicalHomeworkCount == null
+          ? (dashboardView?.homework.summaryLabel
+            || (books.length ? `숙제 교재 ${books.length}권 등록` : '등록된 숙제 교재 없음'))
+          : (canonicalHomeworkCount ? `숙제 ${canonicalHomeworkCount}개 확인 필요` : '등록된 숙제 없음'),
+        videoRows.length ? `영상 ${completedVideos}/${videoRows.length} 완료` : '오늘 영상 없음',
+        pendingTests ? `테스트 ${pendingTests}개 확인 필요` : '확인할 테스트 없음',
+      ].join(' · ');
+      if (summary.textContent !== nextSummary) summary.textContent = nextSummary;
+    }
+
+    const linkTargets = {
+      homework: $('studentHomeworkPanel'),
+      video: $('studentVideoPanel'),
+      tests: $('assignedTestsPanel'),
+    };
+    overview.querySelectorAll('[data-student-summary-link]').forEach(link => {
+      const target = linkTargets[link.dataset.studentSummaryLink];
+      link.hidden = !target || target.hidden;
+    });
+    const access = $('studentTodayAccess');
+    if (access) {
+      access.hidden = academyAccessAllowed;
+      access.textContent = academyAccessAllowed ? '' : '영상 재생과 테스트 제출은 학원에서 이용할 수 있습니다.';
+    }
+    overview.hidden = false;
+    focusStudentHomeDeepLink();
+  }
+
+  document.addEventListener('student-app:announcement-summary', event => {
+    const pending = Number(event?.detail?.pending);
+    announcementPendingCount = Number.isFinite(pending) ? Math.max(0, Math.floor(pending)) : null;
+    renderStudentTodayOverview();
+  });
+
+  document.querySelector('[data-student-notice-shortcut]')?.addEventListener('click', () => {
+    $('noticeBtn')?.click();
+  });
+
+  $('studentHomeworkRetry')?.addEventListener('click', () => {
+    void loadCanonicalStudentHomework();
+  });
+
   /* ───────────── main ───────────── */
   async function init([stuArr, vids, upd, mats, assigns, absentRaw, logsRaw, watchRaw, bootstrapMeta]) {
     const redirectSid = String(bootstrapMeta?.redirectSid || '').trim();
     if (redirectSid && redirectSid !== String(sid)) {
+      if (STUDENT_APP_PUBLIC_MODE) {
+        handleStudentAppSessionFailure(new StudentAppSessionError('session_not_ready', 409));
+        return;
+      }
       try { localStorage.setItem("studentSid", redirectSid); } catch {}
       location.replace(`/student/${encodeURIComponent(redirectSid)}`);
       return;
@@ -1619,6 +2493,10 @@ window.todayLocalKey = function () {
       if (recoveredSid) {
         try { localStorage.setItem("studentSid", recoveredSid); } catch {}
         location.replace(`/student/${encodeURIComponent(recoveredSid)}`);
+        return;
+      }
+      if (STUDENT_APP_PUBLIC_MODE) {
+        handleStudentAppSessionFailure(new StudentAppSessionError('student_not_found', 404));
         return;
       }
       alert("학생 정보가 없습니다");
@@ -1633,37 +2511,48 @@ window.todayLocalKey = function () {
     logsCache = logsRaw || {};
     assignedTestsCache = normalizeAssignedTests(bootstrapMeta?.assignedTests);
     homeworkBooksCache = normalizeHomeworkBooks(bootstrapMeta?.homeworkBooks);
+    studentDashboardCache = bootstrapMeta?.dashboard || null;
     reviewVideosCache = normalizeReviewVideos(bootstrapMeta?.reviewVideos);
     reviewVideosMalformed = bootstrapMeta?.reviewVideosMalformed === true;
-    trainingPackVideosCache = normalizeTrainingPackVideos(bootstrapMeta?.trainingPackVideos);
-    trainingPackVideosMalformed = bootstrapMeta?.trainingPackVideosMalformed === true;
-    loadRegisteredReviewMids(bootstrapMeta?.registeredReviewVideos);
-    loadRegisteredTrainingPackMids(bootstrapMeta?.registeredTrainingPackVideos);
+    loadRegisteredReviewMids();
     ghostStudent = bootstrapMeta?.ghostStudent === true;
     window.__ASSIGNED_TESTS__ = assignedTestsCache;
     courseBlocked = bootstrapMeta?.courseBlocked === true;
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
-    academyAccessAllowed = bootstrapMeta?.academyAccessAllowed !== false;
+    academyAccessAllowed = studentAppAcademyAccessFromBootstrap(STUDENT_APP_PUBLIC_MODE, bootstrapMeta);
     academyOnlyMessage = bootstrapMeta?.academyOnlyMessage || academyOnlyMessage;
-    testSubmissionBlocked = bootstrapMeta?.testSubmissionBlocked === true;
+    testSubmissionBlocked = bootstrapMeta?.testSubmissionBlocked === true || (STUDENT_APP_PUBLIC_MODE && !academyAccessAllowed);
     publishStudentAccess();
+    if (academyAccessAllowed) {
+      void loadStudentAppKollusController({
+        publicMode: STUDENT_APP_PUBLIC_MODE,
+        academyAccessAllowed,
+        documentRef: document,
+        globalRef: window,
+      }).catch(err => console.warn('[KollusBridge] controller load failed:', err));
+    }
     mergeServerWatchIntoLocal((watchRaw && typeof watchRaw.watch === 'object') ? watchRaw.watch : {});
 
     const nameEl = $('stuName');
     if (nameEl) nameEl.textContent = `${stu.name} (${stu.curriculum})`;
+    void preparePublicStudentSettings().catch(error => {
+      handleStudentAppSessionFailure(error);
+      console.warn('[student-app-settings] load failed:', error);
+    });
+    initStudentFocusController();
 
     // 재생 목록 최초 렌더
     renderHomeworkBooks();
     renderAssignedTests();
     renderAssignedList();
     renderPreviousVideos();
-    renderTrainingPackVideos();
+    renderStudentTodayOverview();
+    if (STUDENT_APP_PUBLIC_MODE) void loadCanonicalStudentHomework();
 
     const listBox = $('vidList');
     if (listBox) {
       listBox.onclick = e => {
-        if (e.target.closest('button[data-review-cancel]')) return;
         const li = e.target.closest('li[data-mid]');
         if (!li) return;
         if (!academyAccessAllowed) {
@@ -1944,7 +2833,7 @@ window.todayLocalKey = function () {
         if (!text) return alert('내용을 입력해주세요!');
         const name = stu?.name || '익명';
 
-        fetch('/api/feedback', {
+        studentAppRequest('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, text })
@@ -2030,16 +2919,14 @@ window.todayLocalKey = function () {
     });
 
     const registeredVids = registeredReviewVideos();
-    const registeredTrainingPackVids = registeredTrainingPackVideos();
     const todayMids = new Set(myVids.map(v => String(v?.mid ?? v?.id ?? '').trim()).filter(Boolean));
     const appendedReviewVids = registeredVids.filter(v => !todayMids.has(String(v.mid).trim()));
-    const appendedTrainingPackVids = registeredTrainingPackVids.filter(v => !todayMids.has(String(v.mid).trim()));
 
     const emptyMessage = courseVideosCompleted
       ? COURSE_VIDEOS_COMPLETED_MESSAGE
-      : "오늘 할당된 영상이 없습니다 문의 부탁";
+      : "오늘 할당된 영상이 없습니다.";
 
-    if (!myVids.length && !appendedReviewVids.length && !appendedTrainingPackVids.length) {
+    if (!myVids.length && !appendedReviewVids.length) {
       if (listBox) listBox.innerHTML = `<li style='opacity:.65'>${emptyMessage}</li>`;
       setPlayerEmptyState(emptyMessage);
       return;
@@ -2047,18 +2934,10 @@ window.todayLocalKey = function () {
 
     if (listBox) {
       listBox.textContent = '';
-      const supplementalStart = myVids.length;
-      const trainingPackStart = supplementalStart + appendedReviewVids.length;
-      const registeredReviewMidSet = new Set(registeredReviewMids);
-      const registeredTrainingPackMidSet = new Set(registeredTrainingPackMids);
-      [...myVids, ...appendedReviewVids, ...appendedTrainingPackVids].forEach((v, index) => {
+      [...myVids, ...appendedReviewVids].forEach((v, index) => {
+        const isRegisteredReview = index >= myVids.length;
+        const num = isRegisteredReview ? '' : (v.exNum?.[essayBandOf(stuCache.level)] || '');
         const mid = String(v?.mid ?? v?.id ?? '').trim();
-        const isRegisteredReview = (index >= supplementalStart && index < trainingPackStart)
-          || registeredReviewMidSet.has(mid);
-        const isRegisteredTrainingPack = index >= trainingPackStart
-          || registeredTrainingPackMidSet.has(mid);
-        const isRegisteredSupplement = isRegisteredReview || isRegisteredTrainingPack;
-        const num = isRegisteredSupplement ? '' : (v.exNum?.[essayBandOf(stuCache.level)] || '');
         const prog = getProgress(mid);
         const done = prog?.completed;
         const pct = (prog?.dur > 0)
@@ -2069,8 +2948,10 @@ window.todayLocalKey = function () {
         li.dataset.mid = mid;
         if (!isRegisteredReview && index === 0) li.className = 'active';
         if (isRegisteredReview) li.dataset.reviewRegistered = 'true';
-        if (isRegisteredTrainingPack) li.dataset.trainingPackRegistered = 'true';
 
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'video-row-action';
         const main = document.createElement('span');
         main.className = 'video-main';
         main.append(assignedVideoTitle(v));
@@ -2078,37 +2959,20 @@ window.todayLocalKey = function () {
         if (done || pct) {
           const badge = document.createElement('span');
           badge.className = 'badge-done';
-          badge.textContent = done ? '✅' : fmtPct(pct);
+          badge.textContent = done ? '완료' : fmtPct(pct);
           if (!done) badge.title = '진행도';
           main.append(' ', badge);
         }
-        li.appendChild(main);
+        action.appendChild(main);
 
         if (num) {
           const essay = document.createElement('span');
           essay.className = 'essay-badge';
           essay.textContent = `[서술형 ${num}번]`;
-          li.appendChild(essay);
+          action.appendChild(essay);
         }
 
-        if (isRegisteredReview) {
-          const cancelButton = document.createElement('button');
-          cancelButton.type = 'button';
-          cancelButton.className = 'playlist-review-cancel';
-          cancelButton.dataset.reviewCancel = 'true';
-          cancelButton.dataset.mid = mid;
-          cancelButton.textContent = reviewCancellationPendingMids.has(mid) ? '취소 중…' : '취소';
-          cancelButton.disabled = reviewCancellationPendingMids.has(mid);
-          cancelButton.title = '복습 영상 등록 취소';
-          cancelButton.setAttribute('aria-label', `${assignedVideoTitle(v)} 복습 영상 등록 취소`);
-          cancelButton.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            void cancelRegisteredReviewVideo(mid);
-          });
-          li.appendChild(cancelButton);
-        }
-
+        li.appendChild(action);
         listBox.appendChild(li);
       });
       if (currentMid) setActiveVideo(currentMid);
@@ -2142,6 +3006,18 @@ window.todayLocalKey = function () {
       const prog = getProgress(mid);
       const done = prog?.completed;
       const pct = (prog?.dur > 0) ? Math.min(100, Math.round((prog.last || 0) / prog.dur * 100)) : 0;
+      const main = li.querySelector('.video-main');
+      let badge = li.querySelector('.badge-done');
+      if (done || pct) {
+        if (!badge && main) {
+          badge = document.createElement('span');
+          badge.className = 'badge-done';
+          main.append(' ', badge);
+        }
+        if (badge) badge.textContent = done ? '완료' : fmtPct(pct);
+      } else {
+        badge?.remove();
+      }
 
       if (done) {
         li.title = '완료됨';
@@ -2151,6 +3027,7 @@ window.todayLocalKey = function () {
         li.removeAttribute('title');
       }
     });
+    renderStudentTodayOverview();
   }
 
   /* ───────────── Kollus 플레이어 교체 + 진행도(옵션) ───────────── */
@@ -2296,7 +3173,7 @@ window.todayLocalKey = function () {
     const resumeAt = prog?.last || 0;
 
     try {
-      const res = await fetch(`/api/get-url?mid=${encodeURIComponent(mid)}&sid=${encodeURIComponent(sid)}`);
+      const res = await studentAppRequest(`/api/get-url?mid=${encodeURIComponent(mid)}&sid=${encodeURIComponent(sid)}`);
       if (!res.ok) {
         if (res.status === 403) showAcademyOnlyNotice();
         throw new Error(res.status === 403 ? 'academy-network-required' : `get-url ${res.status}`);
@@ -2323,7 +3200,62 @@ window.todayLocalKey = function () {
       alert("영상을 불러오지 못했습니다.");
     }
   }
+
+  document.addEventListener('student-app:play-board-video', (event) => {
+    if (!STUDENT_APP_PUBLIC_MODE) return;
+    const mid = typeof event?.detail?.mid === 'string' ? event.detail.mid.trim() : '';
+    if (!/^[A-Za-z0-9_-]{4,128}$/.test(mid)) return;
+    const playerBox = $('playerBox');
+    if (playerBox) {
+      playerBox.tabIndex = -1;
+      playerBox.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      playerBox.focus?.({ preventScroll: true });
+    }
+    void play(mid);
+  });
 })();
+
+/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_START */
+function studentAppValidAnnouncementId(value) {
+  const id = typeof value === 'string' ? value : '';
+  const match = /[A-Za-z0-9][A-Za-z0-9._:-]{0,127}/.exec(id);
+  return match?.index === 0 && match[0] === id;
+}
+
+function studentAppValidNotificationEventId(value) {
+  return typeof value === 'string' && /^evt_[A-Za-z0-9_-]{32}$/.test(value);
+}
+
+function studentAppAnnouncementDeepLink(search) {
+  const params = new URLSearchParams(String(search || ''));
+  const announcements = params.getAll('announcement');
+  const views = params.getAll('view');
+  const items = params.getAll('item');
+  if (announcements.length === 1 && views.length === 0 && items.length === 0) {
+    return studentAppValidAnnouncementId(announcements[0]) ? announcements[0] : '';
+  }
+  if (announcements.length !== 0 || views.length !== 1 || views[0] !== 'board' || items.length !== 1) return '';
+  return studentAppValidNotificationEventId(items[0]) ? items[0] : '';
+}
+
+function studentAppBoardDeepLink(search) {
+  const params = new URLSearchParams(String(search || ''));
+  const views = params.getAll('view');
+  const items = params.getAll('item');
+  if (params.has('announcement') || views.length !== 1 || views[0] !== 'board' || items.length !== 1) return '';
+  return studentAppValidNotificationEventId(items[0]) ? items[0] : '';
+}
+
+function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement) {
+  const safeId = studentAppValidAnnouncementId(id) || studentAppValidNotificationEventId(id) ? id : '';
+  if (!safeId || !Array.isArray(announcements) || typeof openAnnouncement !== 'function') return false;
+  const selected = announcements.find(item => String(item?.id || '') === safeId
+    || String(item?.notificationEventId || '') === safeId);
+  if (!selected) return false;
+  openAnnouncement(selected);
+  return true;
+}
+/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_END */
 
 /* ────────────────────────────────────────────────────────────────────────────
    공지 팝업 / 공지함
@@ -2331,7 +3263,7 @@ window.todayLocalKey = function () {
 (() => {
   const CT = { 'Content-Type': 'application/json' };
   const $ = s => document.querySelector(s);
-  const SID = window.__STU_SID__ || decodeURIComponent(location.pathname.split('/').pop());
+  const SID = STUDENT_APP_PUBLIC_MODE ? '' : (window.__STU_SID__ || decodeURIComponent(location.pathname.split('/').pop()));
 
   const modal = $('#announceModal');
   const historyModal = $('#announceHistoryModal');
@@ -2359,7 +3291,14 @@ window.todayLocalKey = function () {
   const annSurveyMeta = $('#annSurveyMeta');
   const historyList = $('#annHistoryList');
   const historyClose = $('#annHistoryClose');
+  const boardFilters = $('#studentBoardFilters');
+  const boardStatus = $('#studentBoardStatus');
+  const boardMore = $('#studentBoardMore');
   const ANN_REPLY_LIMIT = 3;
+  const requestedBoardId = STUDENT_APP_PUBLIC_MODE ? studentAppBoardDeepLink(location.search) : '';
+  const requestedAnnouncementId = STUDENT_APP_PUBLIC_MODE && !requestedBoardId
+    ? studentAppAnnouncementDeepLink(location.search)
+    : '';
 
   if (!modal || !historyModal || !noticeBtn || !annTitle || !annContent || !annRead) {
     console.warn('[announce] required elements not found on this page, skip init');
@@ -2372,11 +3311,103 @@ window.todayLocalKey = function () {
   let active = null;
   let activeFromHistory = false;
   let loading = false;
+  let boardType = 'all';
+  let boardItems = [];
+  let boardNextCursor = null;
+  let boardLoading = false;
+  let boardRequestId = 0;
   let imageCarouselIndex = 0;
   let imagePointerStartX = 0;
   let imagePointerStartY = 0;
   let imagePointerMoved = false;
   let imagePointerActive = false;
+  let announcementDeepLinkHandled = !requestedAnnouncementId;
+  let announcementReturnFocus = null;
+  let historyReturnFocus = null;
+  const studentShell = document.querySelector('.student-shell');
+  const DIALOG_FOCUS_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+
+  function dialogControls(dialog) {
+    return Array.from(dialog?.querySelectorAll(DIALOG_FOCUS_SELECTOR) || [])
+      .filter(control => !control.hidden && control.getAttribute('aria-hidden') !== 'true' && control.getClientRects().length);
+  }
+
+  function syncDialogIsolation() {
+    const dialogOpen = modal.style.display === 'flex' || historyModal.style.display === 'flex';
+    studentShell?.toggleAttribute('inert', dialogOpen);
+  }
+
+  function openDialog(dialog, preferredFocus) {
+    dialog.style.display = 'flex';
+    dialog.setAttribute('aria-hidden', 'false');
+    syncDialogIsolation();
+    window.requestAnimationFrame(() => {
+      (preferredFocus || dialogControls(dialog)[0])?.focus?.();
+    });
+  }
+
+  function closeDialog(dialog, returnFocus, { restoreFocus = true } = {}) {
+    dialog.style.display = 'none';
+    dialog.setAttribute('aria-hidden', 'true');
+    syncDialogIsolation();
+    if (restoreFocus) window.requestAnimationFrame(() => returnFocus?.focus?.());
+  }
+
+  function trapDialogFocus(dialog, event) {
+    if (event.key !== 'Tab') return;
+    const controls = dialogControls(dialog);
+    if (!controls.length) {
+      event.preventDefault();
+      dialog.querySelector('[role="dialog"]')?.focus?.();
+      return;
+    }
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!controls.includes(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function openAnnouncementDialog(opener) {
+    if (modal.style.display !== 'flex' && !announcementReturnFocus) {
+      const activeElement = document.activeElement;
+      announcementReturnFocus = opener?.focus
+        ? opener
+        : (activeElement && activeElement !== document.body && activeElement.focus ? activeElement : noticeBtn);
+    }
+    openDialog(modal, $('#annModalHeading'));
+  }
+
+  function closeAnnouncementDialog(options = {}) {
+    const restoreFocus = options.restoreFocus !== false && !!announcementReturnFocus;
+    closeDialog(modal, announcementReturnFocus || noticeBtn, { restoreFocus });
+    if (options.restoreFocus !== false) announcementReturnFocus = null;
+  }
+
+  function openHistoryDialog(opener) {
+    historyReturnFocus = opener?.focus ? opener : noticeBtn;
+    openDialog(historyModal, historyClose);
+  }
+
+  function closeHistoryDialog(options = {}) {
+    const restoreFocus = options.restoreFocus !== false && !!historyReturnFocus;
+    closeDialog(historyModal, historyReturnFocus || noticeBtn, { restoreFocus });
+    if (options.restoreFocus !== false) historyReturnFocus = null;
+  }
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -2446,6 +3477,206 @@ window.todayLocalKey = function () {
       return true;
     });
   }
+
+  /* STUDENT_APP_BOARD_START */
+  const BOARD_NOTICE_KEYS = new Set([
+    'id', 'type', 'kind', 'title', 'content', 'createdAt', 'expiresAt', 'read',
+    'notificationEventId', 'images', 'requireCompletion',
+  ]);
+  const BOARD_VIDEO_KEYS = new Set([
+    'id', 'type', 'kind', 'title', 'content', 'createdAt', 'expiresAt', 'read',
+    'notificationEventId', 'thumbnail', 'videoMid', 'locked',
+  ]);
+
+  function exactObjectKeys(value, expected) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const keys = Object.keys(value);
+    return keys.length === expected.size && keys.every(key => expected.has(key));
+  }
+
+  function boardImageUrl(value) {
+    const url = typeof value === 'string' ? value.trim() : '';
+    return /^\/files\/announcements\/[A-Za-z0-9._-]+\.(?:jpe?g|png|gif|webp|bmp)$/i.test(url) ? url : '';
+  }
+
+  function normalizeBoardItem(source) {
+    const type = source?.type;
+    const expected = type === 'notice' ? BOARD_NOTICE_KEYS : type === 'video' ? BOARD_VIDEO_KEYS : null;
+    if (!expected || !exactObjectKeys(source, expected)) return null;
+    const id = typeof source.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(source.id) ? source.id : '';
+    const eventId = typeof source.notificationEventId === 'string' && /^evt_[A-Za-z0-9_-]{32}$/.test(source.notificationEventId)
+      ? source.notificationEventId
+      : '';
+    const createdAt = typeof source.createdAt === 'string' && Number.isFinite(Date.parse(source.createdAt)) ? source.createdAt : '';
+    const expiresAt = typeof source.expiresAt === 'string' && Number.isFinite(Date.parse(source.expiresAt)) ? source.expiresAt : '';
+    const title = typeof source.title === 'string' ? source.title.trim().slice(0, 400) : '';
+    const content = typeof source.content === 'string' ? source.content.trim().slice(0, 10000) : '';
+    if (!id || !eventId || !createdAt || !expiresAt || Date.parse(createdAt) >= Date.parse(expiresAt) || !title || typeof source.read !== 'boolean') return null;
+    if (type === 'video') {
+      const mid = typeof source.videoMid === 'string' ? source.videoMid.trim() : '';
+      const thumbnail = source.thumbnail == null ? null : boardImageUrl(source.thumbnail);
+      if (source.kind !== 'video' || !/^[A-Za-z0-9_-]{4,128}$/.test(mid) || typeof source.locked !== 'boolean' || (source.thumbnail != null && !thumbnail)) return null;
+      return Object.freeze({ id, type, kind: 'video', title, content, createdAt, expiresAt, read: source.read, notificationEventId: eventId, thumbnail, videoMid: mid, locked: source.locked });
+    }
+    const kind = source.kind === 'survey' ? 'survey' : source.kind === 'announcement' ? 'announcement' : '';
+    if (!kind || typeof source.requireCompletion !== 'boolean' || !Array.isArray(source.images) || source.images.length > 10) return null;
+    const images = source.images.map(image => {
+      if (!exactObjectKeys(image, new Set(['url', 'mime']))) return null;
+      const url = boardImageUrl(image.url);
+      const mime = typeof image.mime === 'string' ? image.mime.trim().slice(0, 100) : '';
+      return url && /^image\//.test(mime) ? Object.freeze({ url, mime }) : null;
+    });
+    if (images.some(image => image === null)) return null;
+    return Object.freeze({ id, type, kind, title, content, createdAt, expiresAt, read: source.read, notificationEventId: eventId, images: Object.freeze(images), requireCompletion: source.requireCompletion });
+  }
+
+  function normalizeBoardPage(source, requestedType) {
+    const expected = new Set(['ok', 'type', 'items', 'nextCursor']);
+    if (!exactObjectKeys(source, expected) || source.ok !== true || source.type !== requestedType || !Array.isArray(source.items) || source.items.length > 50) return null;
+    const items = source.items.map(normalizeBoardItem);
+    const cursor = source.nextCursor == null ? null : (typeof source.nextCursor === 'string' && /^[A-Za-z0-9_-]{1,1024}$/.test(source.nextCursor) ? source.nextCursor : '');
+    if (items.some(item => item === null) || cursor === '') return null;
+    const ids = new Set();
+    if (items.some(item => ids.has(item.id) || (ids.add(item.id), false))) return null;
+    return Object.freeze({ items: Object.freeze(items), nextCursor: cursor });
+  }
+
+  function setBoardStatus(message, state = '') {
+    if (!boardStatus) return;
+    boardStatus.hidden = false;
+    boardStatus.textContent = String(message || '');
+    boardStatus.dataset.state = state;
+  }
+
+  function renderStudentBoard() {
+    if (!STUDENT_APP_PUBLIC_MODE || !historyList) return false;
+    if (boardFilters) boardFilters.hidden = false;
+    boardFilters?.querySelectorAll('[data-student-board-type]').forEach(button => {
+      button.setAttribute('aria-pressed', button.dataset.studentBoardType === boardType ? 'true' : 'false');
+    });
+    historyList.replaceChildren();
+    if (!boardItems.length) {
+      const empty = document.createElement('p');
+      empty.className = 'announce-history-empty';
+      empty.textContent = boardLoading ? '게시판을 불러오는 중입니다.' : '현재 볼 수 있는 게시물이 없습니다.';
+      historyList.append(empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      boardItems.forEach(item => {
+        const card = document.createElement('article');
+        card.className = `student-board-card is-${item.type}${item.read ? ' is-read' : ''}`;
+        card.dataset.studentBoardId = item.id;
+        card.tabIndex = -1;
+        if (item.type === 'video' && item.thumbnail) {
+          const image = document.createElement('img');
+          image.className = 'student-board-thumbnail';
+          image.src = item.thumbnail;
+          image.alt = '';
+          card.append(image);
+        }
+        const header = document.createElement('div');
+        header.className = 'student-board-card-head';
+        const badgeNode = document.createElement('span');
+        badgeNode.className = 'student-board-kind';
+        badgeNode.textContent = item.type === 'video' ? '영상' : item.kind === 'survey' ? '설문' : '공지';
+        const stateNode = document.createElement('span');
+        stateNode.className = 'student-board-read-state';
+        stateNode.textContent = item.read ? '확인함' : '새 글';
+        header.append(badgeNode, stateNode);
+        const titleNode = document.createElement('h4');
+        titleNode.textContent = item.title;
+        const contentNode = document.createElement('p');
+        contentNode.textContent = item.content;
+        const meta = document.createElement('time');
+        meta.dateTime = item.createdAt;
+        meta.textContent = `${formatDateTime(item.createdAt)} · ${timeLeftText(item.expiresAt)}`;
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.dataset.studentBoardAction = item.id;
+        action.textContent = item.type === 'video'
+          ? (item.locked ? '학원에서 재생할 수 있어요' : '영상 재생')
+          : '내용 보기';
+        if (item.type === 'video' && item.locked) action.dataset.locked = 'true';
+        card.append(header, titleNode, contentNode, meta, action);
+        fragment.append(card);
+      });
+      historyList.append(fragment);
+    }
+    if (boardMore) {
+      boardMore.hidden = !boardNextCursor;
+      boardMore.disabled = boardLoading;
+    }
+    return true;
+  }
+
+  function boardItemByIdentifier(identifier) {
+    return boardItems.find(item => item.id === identifier || item.notificationEventId === identifier) || null;
+  }
+
+  function focusBoardItem(identifier) {
+    const item = boardItemByIdentifier(identifier);
+    if (!item) return false;
+    const card = historyList?.querySelector(`[data-student-board-id="${CSS.escape(item.id)}"]`);
+    if (!card) return false;
+    card.classList.add('student-app-deep-link-target');
+    card.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    card.focus?.();
+    window.setTimeout(() => card.classList.remove('student-app-deep-link-target'), 2400);
+    return true;
+  }
+
+  async function loadStudentBoard({ reset = false, seekId = '' } = {}) {
+    if (!STUDENT_APP_PUBLIC_MODE) return false;
+    const requestId = ++boardRequestId;
+    boardLoading = true;
+    if (reset) {
+      boardItems = [];
+      boardNextCursor = null;
+    }
+    renderStudentBoard();
+    setBoardStatus('게시판을 불러오는 중입니다.', 'loading');
+    let cursor = boardNextCursor;
+    let pages = 0;
+    try {
+      do {
+        const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        const response = await studentAppRequest(`/api/mobile/student/board?type=${encodeURIComponent(boardType)}${suffix}`, { cache: 'no-store' });
+        if (response.status === 401 || response.status === 403) {
+          throw new StudentAppSessionError(
+            response.status === 401 ? 'unauthenticated' : 'session_not_ready',
+            response.status,
+            STUDENT_APP_PUBLIC_SESSION.activeSid(),
+          );
+        }
+        if (!response.ok) throw new Error(`board_${response.status}`);
+        const page = normalizeBoardPage(await response.json(), boardType);
+        if (!page) throw new Error('board_malformed');
+        if (requestId !== boardRequestId) return false;
+        const known = new Set(boardItems.map(item => item.id));
+        boardItems = boardItems.concat(page.items.filter(item => !known.has(item.id)));
+        boardNextCursor = page.nextCursor;
+        cursor = boardNextCursor;
+        pages += 1;
+      } while (seekId && !boardItemByIdentifier(seekId) && cursor && pages < 10);
+      renderStudentBoard();
+      const found = seekId ? focusBoardItem(seekId) : true;
+      setBoardStatus(found ? `${boardItems.length}개의 게시물을 표시했습니다.` : '만료되었거나 볼 수 없는 게시물입니다.', found ? 'ready' : 'empty');
+      return found;
+    } catch (error) {
+      if (handleStudentAppSessionFailure(error)) return false;
+      if (requestId !== boardRequestId) return false;
+      console.warn('[board] load failed:', error);
+      renderStudentBoard();
+      setBoardStatus('게시판을 불러오지 못했습니다. 다시 시도해 주세요.', 'error');
+      return false;
+    } finally {
+      if (requestId === boardRequestId) {
+        boardLoading = false;
+        renderStudentBoard();
+      }
+    }
+  }
+  /* STUDENT_APP_BOARD_END */
 
   function getSurvey(ann) {
     const survey = ann?.survey;
@@ -2533,6 +3764,9 @@ window.todayLocalKey = function () {
   function updatePending() {
     pending = announcements.filter(ann => !isComplete(ann));
     setBadge(pending.length);
+    document.dispatchEvent(new CustomEvent('student-app:announcement-summary', {
+      detail: { pending: pending.length, total: announcements.length },
+    }));
   }
 
   function renderSurvey(ann) {
@@ -2704,7 +3938,7 @@ window.todayLocalKey = function () {
     `).join('');
     if (annImageDots) {
       annImageDots.innerHTML = images.map((_, index) => `
-        <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}></button>
+        <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}><span aria-hidden="true"></span></button>
       `).join('');
     }
 
@@ -2721,7 +3955,7 @@ window.todayLocalKey = function () {
       });
       if (annImageDots) {
         annImageDots.innerHTML = Array.from(annImageTrack.children).map((_, index) => `
-          <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}></button>
+          <button type="button" aria-label="이미지 ${index + 1} 보기" ${index === 0 ? 'aria-current="true"' : 'aria-current="false"'}><span aria-hidden="true"></span></button>
         `).join('');
       }
       updateImageCarousel(Math.min(imageCarouselIndex, annImageTrack.children.length - 1));
@@ -2760,13 +3994,13 @@ window.todayLocalKey = function () {
     renderSurvey(active);
     syncReplyLimitUi();
     if (annRead) annRead.textContent = isSurveyAnnouncement(active) && !hasSurveySubmission(active) ? '설문 제출 필요' : '읽었습니다.';
-    modal.style.display = 'flex';
+    openAnnouncementDialog(options.opener);
   }
 
   function showNextPending() {
     updatePending();
     if (!pending.length) {
-      modal.style.display = 'none';
+      closeAnnouncementDialog();
       active = null;
       activeFromHistory = false;
       return;
@@ -2775,7 +4009,7 @@ window.todayLocalKey = function () {
   }
 
   async function fetchJSON(url, init) {
-    const res = await fetch(url, init);
+    const res = await studentAppRequest(url, init);
     if (!res.ok) {
       let text = '';
       try { text = await res.text(); } catch {}
@@ -2784,20 +4018,83 @@ window.todayLocalKey = function () {
     return res.json();
   }
 
+  async function announcementSid() {
+    if (!STUDENT_APP_PUBLIC_MODE) return SID;
+    return (await STUDENT_APP_PUBLIC_SESSION.refreshSession()).activeSid;
+  }
+
+  function handleAnnouncementSessionFailure(error) {
+    if (!['login_required', 'unauthenticated', 'session_not_ready', 'sid_mismatch', 'sid_rotated'].includes(error?.code)) return;
+    handleStudentAppSessionFailure(error);
+  }
+
+  async function markBoardVideoRead(item) {
+    try {
+      const requestSid = await announcementSid();
+      await fetchJSON('/api/announce-ack', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ sid: requestSid, id: item.id }),
+      });
+      statusMap[item.id] = { ...(statusMap[item.id] || {}), acked: true };
+      boardItems = boardItems.map(row => row.id === item.id ? Object.freeze({ ...row, read: true }) : row);
+    } catch (error) {
+      handleAnnouncementSessionFailure(error);
+      console.warn('[board] read receipt failed:', error);
+    }
+  }
+
+  async function openStudentBoardItem(identifier, opener) {
+    const item = boardItemByIdentifier(identifier);
+    if (!item) return false;
+    if (item.type === 'video') {
+      if (item.locked) {
+        setBoardStatus('영상은 학원 네트워크에서만 재생할 수 있습니다.', 'locked');
+        focusBoardItem(item.id);
+        return false;
+      }
+      void markBoardVideoRead(item);
+      closeHistoryDialog({ restoreFocus: false });
+      historyReturnFocus = null;
+      document.dispatchEvent(new CustomEvent('student-app:play-board-video', { detail: { mid: item.videoMid } }));
+      return true;
+    }
+    let announcement = announcements.find(row => String(row?.id || '') === item.id);
+    if (!announcement) {
+      await loadAnnouncements({ showPopup: false });
+      announcement = announcements.find(row => String(row?.id || '') === item.id);
+    }
+    if (!announcement) {
+      setBoardStatus('만료되었거나 더 이상 볼 수 없는 공지입니다.', 'empty');
+      return false;
+    }
+    const returnFocus = historyReturnFocus || noticeBtn;
+    closeHistoryDialog({ restoreFocus: false });
+    historyReturnFocus = null;
+    renderActive(announcement, { fromHistory: true, opener: returnFocus });
+    return true;
+  }
+
   async function loadAnnouncements({ showPopup = true } = {}) {
     if (loading) return;
     loading = true;
     try {
+      const requestSid = await announcementSid();
       const [anns, stat] = await Promise.all([
-        fetchJSON(`/api/announcements?sid=${encodeURIComponent(SID)}`, { cache: 'no-store' }),
-        fetchJSON(`/api/announce-status?sid=${encodeURIComponent(SID)}`, { cache: 'no-store' }),
+        fetchJSON(`/api/announcements?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
+        fetchJSON(`/api/announce-status?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
       ]);
       announcements = Array.isArray(anns) ? anns : [];
       statusMap = stat && typeof stat === 'object' ? stat : {};
       updatePending();
       renderHistory();
+      if (showPopup && !announcementDeepLinkHandled) {
+        announcementDeepLinkHandled = studentAppOpenAnnouncementDeepLink(requestedAnnouncementId, announcements, ann => renderActive(ann, { fromHistory: true }));
+        if (announcementDeepLinkHandled || requestedAnnouncementId) return;
+      }
       if (showPopup) showNextPending();
     } catch (err) {
+      handleAnnouncementSessionFailure(err);
       console.warn('[announce] load failed:', err);
       if (historyList) historyList.innerHTML = '<div class="muted">공지를 불러오지 못했습니다.</div>';
     } finally {
@@ -2817,19 +4114,21 @@ window.todayLocalKey = function () {
     const id = active.id;
     const shouldContinuePending = !activeFromHistory;
     try {
+      const requestSid = await announcementSid();
       await fetchJSON('/api/announce-ack', {
         method: 'POST',
         headers: CT,
-        body: JSON.stringify({ sid: SID, id }),
+        body: JSON.stringify({ sid: requestSid, id }),
       });
       statusMap[id] = { ...(statusMap[id] || {}), acked: true };
-      modal.style.display = 'none';
       active = null;
       activeFromHistory = false;
       updatePending();
       renderHistory();
-      if (shouldContinuePending) showNextPending();
+      if (shouldContinuePending && pending.length) renderActive(pending[0]);
+      else closeAnnouncementDialog();
     } catch (err) {
+      handleAnnouncementSessionFailure(err);
       console.warn('[announce] ack failed:', err);
       if (annReplyStatus) annReplyStatus.textContent = '읽음 처리에 실패했습니다. 다시 눌러 주세요.';
     }
@@ -2885,11 +4184,12 @@ window.todayLocalKey = function () {
 
     annSurveySubmit.disabled = true;
     try {
+      const requestSid = await announcementSid();
       const saved = await fetchJSON('/api/announce-submit', {
         method: 'POST',
         headers: CT,
         body: JSON.stringify({
-          sid: SID,
+          sid: requestSid,
           id: active.id,
           surveyAnswers,
         }),
@@ -2918,12 +4218,13 @@ window.todayLocalKey = function () {
         const submittedAnnId = active.id;
         window.setTimeout(() => {
           if (active?.id !== submittedAnnId) return;
-          modal.style.display = 'none';
+          closeAnnouncementDialog({ restoreFocus: false });
           active = null;
           showNextPending();
         }, 650);
       }
     } catch (err) {
+      handleAnnouncementSessionFailure(err);
       console.warn('[announce] survey submit failed:', err);
       if (annSurveyError) annSurveyError.textContent = '설문 제출에 실패했습니다.';
     } finally {
@@ -2947,11 +4248,12 @@ window.todayLocalKey = function () {
     }
     annSendReply.disabled = true;
     try {
+      const requestSid = await announcementSid();
       const saved = await fetchJSON('/api/announce-submit', {
         method: 'POST',
         headers: CT,
         body: JSON.stringify({
-          sid: SID,
+          sid: requestSid,
           id: active.id,
           reply,
           anonymous: !!annAnonymous?.checked,
@@ -2979,6 +4281,7 @@ window.todayLocalKey = function () {
       syncReplyLimitUi();
       renderHistory();
     } catch (err) {
+      handleAnnouncementSessionFailure(err);
       console.warn('[announce] reply failed:', err);
       if (err?.message?.includes('reply limit') || err?.message?.includes('429')) {
         alert('이제 쉿!');
@@ -2992,6 +4295,7 @@ window.todayLocalKey = function () {
 
   function renderHistory() {
     if (!historyList) return;
+    if (renderStudentBoard()) return;
     if (!announcements.length) {
       historyList.innerHTML = '<div class="announce-history-empty">최근 4시간 안에 도착한 공지가 없습니다.</div>';
       return;
@@ -3043,24 +4347,32 @@ window.todayLocalKey = function () {
   function openHistoryAnnouncement(id) {
     const ann = announcements.find(item => String(item?.id) === String(id));
     if (!ann) return;
-    historyModal.style.display = 'none';
-    renderActive(ann, { fromHistory: true });
+    const returnFocus = historyReturnFocus || noticeBtn;
+    closeHistoryDialog({ restoreFocus: false });
+    historyReturnFocus = null;
+    renderActive(ann, { fromHistory: true, opener: returnFocus });
   }
 
   noticeBtn.addEventListener('click', async () => {
     await loadAnnouncements({ showPopup: false });
-    historyModal.style.display = 'flex';
+    openHistoryDialog(noticeBtn);
+    if (STUDENT_APP_PUBLIC_MODE) await loadStudentBoard({ reset: true });
   });
 
   historyClose?.addEventListener('click', () => {
-    historyModal.style.display = 'none';
+    closeHistoryDialog();
   });
 
   historyModal.addEventListener('click', (ev) => {
-    if (ev.target === historyModal) historyModal.style.display = 'none';
+    if (ev.target === historyModal) closeHistoryDialog();
   });
 
   historyList?.addEventListener('click', (ev) => {
+    const boardAction = ev.target.closest('[data-student-board-action]');
+    if (boardAction) {
+      void openStudentBoardItem(boardAction.dataset.studentBoardAction || '', boardAction);
+      return;
+    }
     const item = ev.target.closest('[data-ann-history-id]');
     if (!item) return;
     openHistoryAnnouncement(item.dataset.annHistoryId || '');
@@ -3072,6 +4384,19 @@ window.todayLocalKey = function () {
     if (!item) return;
     ev.preventDefault();
     openHistoryAnnouncement(item.dataset.annHistoryId || '');
+  });
+
+  boardFilters?.addEventListener('click', (ev) => {
+    const button = ev.target.closest('[data-student-board-type]');
+    const selected = button?.dataset.studentBoardType;
+    if (!['all', 'notice', 'video'].includes(selected) || selected === boardType) return;
+    boardType = selected;
+    void loadStudentBoard({ reset: true });
+  });
+
+  boardMore?.addEventListener('click', () => {
+    if (!boardNextCursor || boardLoading) return;
+    void loadStudentBoard();
   });
 
   annImagePrev?.addEventListener('click', (ev) => {
@@ -3147,6 +4472,22 @@ window.todayLocalKey = function () {
     moveImageCarousel(ev.key === 'ArrowLeft' ? -1 : 1);
   });
 
+  modal.addEventListener('keydown', (ev) => {
+    trapDialogFocus(modal, ev);
+    if (ev.key !== 'Escape' || (!activeFromHistory && !isComplete(active))) return;
+    ev.preventDefault();
+    closeAnnouncementDialog();
+    active = null;
+    activeFromHistory = false;
+  });
+
+  historyModal.addEventListener('keydown', (ev) => {
+    trapDialogFocus(historyModal, ev);
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    closeHistoryDialog();
+  });
+
   modal.addEventListener('click', (ev) => {
     if (ev.target === modal) ackActive();
   });
@@ -3169,7 +4510,13 @@ window.todayLocalKey = function () {
     }
   });
 
-  loadAnnouncements({ showPopup: true });
+  void loadAnnouncements({ showPopup: !requestedBoardId }).then(async () => {
+    if (!requestedBoardId) return;
+    openHistoryDialog(noticeBtn);
+    const found = await loadStudentBoard({ reset: true, seekId: requestedBoardId });
+    const item = found ? boardItemByIdentifier(requestedBoardId) : null;
+    if (item?.type === 'notice') await openStudentBoardItem(item.id, noticeBtn);
+  });
   window.setInterval(() => {
     if (!document.hidden) loadAnnouncements({ showPopup: !active });
   }, 30000);
@@ -3188,7 +4535,7 @@ window.todayLocalKey = function () {
   const CT = { 'Content-Type': 'application/json' };
   const OCR_TEST_SHEET_ENABLED = window.__OCR_TEST_SHEET_ENABLED__ === true;
   const OCR_PHASE2B_REVIEW_ENDPOINT = '/api/ocr-test-sheet-review';
-  const OCR_PHASE2E_FRESH_REVIEW_REQUESTED = OCR_TEST_SHEET_ENABLED && /(?:^|[?&])freshPhase2E=1(?:&|$)/.test(location.search || '');
+  const OCR_PHASE2E_FRESH_REVIEW_REQUESTED = STUDENT_APP_QUERY_FEATURES.freshPhase2E;
   const OCR_PHASE1_INELIGIBLE_MESSAGE = '이 시험은 아직 사진 인식 테스트 대상이 아닙니다.';
   const OCR_PHASE2B_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   const OCR_PHASE2B_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -3406,12 +4753,13 @@ window.todayLocalKey = function () {
   let answerLinkMapPromise = null;
   let answerLinkMapLoaded = false;
 
-  // ✅ sid는 이미 위에서 window.__STU_SID__ 세팅해둔 거 우선 사용
-  const sid = window.__STU_SID__ || (() => {
+  // 공개 앱은 URL/query가 아니라 세션 adapter의 active SID만 전송한다.
+  const sid = STUDENT_APP_PUBLIC_MODE ? '' : (window.__STU_SID__ || (() => {
     const lastSeg = decodeURIComponent(location.pathname.split("/").pop() || "");
     const q = new URLSearchParams(location.search);
     return q.get("sid") || lastSeg || "";
-  })();
+  })());
+  const currentStudentSid = () => STUDENT_APP_PUBLIC_MODE ? STUDENT_APP_PUBLIC_SESSION.activeSid() : sid;
 
   function studentAnswerAccessBlocked() {
     const access = window.__STUDENT_ACCESS__ || {};
@@ -3420,10 +4768,15 @@ window.todayLocalKey = function () {
 
   function studentTestSubmissionBlocked() {
     const access = window.__STUDENT_ACCESS__ || {};
-    return access.testSubmissionBlocked === true;
+    return access.testSubmissionBlocked === true
+      || (STUDENT_APP_PUBLIC_MODE && access.academyAccessAllowed !== true);
   }
 
   function showStudentTestSubmissionBlockedNotice() {
+    if (STUDENT_APP_PUBLIC_MODE && studentAnswerAccessBlocked()) {
+      showStudentAccessNotice();
+      return;
+    }
     alert('테스트용 학생 페이지에서는 제출 기록을 저장하지 않습니다.');
   }
 
@@ -3437,7 +4790,7 @@ window.todayLocalKey = function () {
   }
 
   async function fetchJSONSafe(url, init = {}) {
-    const res = await fetch(url, { cache: "no-store", ...init });
+    const res = await studentAppRequest(url, { cache: "no-store", ...init });
     const body = await res.text();
     if (!res.ok) throw new Error(`[student tests] ${init.method || "GET"} ${url} -> ${res.status}\n${body.slice(0, 300)}`);
     try { return body.trim() ? JSON.parse(body) : {}; }
@@ -3562,6 +4915,10 @@ window.todayLocalKey = function () {
       TEST_CFG = normalizeCfg(await fetchJSONSafe('/api/tests-config'));
       return;
     } catch { }
+    if (STUDENT_APP_PUBLIC_MODE) {
+      TEST_CFG = { categories: {} };
+      return;
+    }
     try {
       TEST_CFG = normalizeCfg(await fetchJSONSafe('/api/tests-config.json'));
     } catch {
@@ -4011,7 +5368,7 @@ window.todayLocalKey = function () {
       return TEST_ANSWER_LINK_MAP;
     }
     if (!answerLinkMapPromise) {
-      answerLinkMapPromise = fetch('/js/test_answer_link_map.json', { cache: 'no-store' })
+      answerLinkMapPromise = studentAppRequest('/js/test_answer_link_map.json', { cache: 'no-store' })
         .then(res => {
           if (!res.ok) throw new Error(String(res.status));
           return res.json();
@@ -6809,14 +8166,14 @@ window.todayLocalKey = function () {
 
     async function ocrReviewFetchRoutePayload(test, round, imageFile) {
       const form = new FormData();
-      form.append('sid', String(sid || ''));
+      form.append('sid', String(currentStudentSid() || ''));
       form.append('testId', String(test?.id || test?.testId || selTestId.value || ''));
       form.append('round', String(round || '1'));
       if (OCR_PHASE2E_FRESH_REVIEW_REQUESTED) {
         form.append('freshPhase2E', '1');
       }
       form.append('image', imageFile);
-      const res = await fetch(OCR_PHASE2B_REVIEW_ENDPOINT, {
+      const res = await studentAppRequest(OCR_PHASE2B_REVIEW_ENDPOINT, {
         method: 'POST',
         body: form,
         cache: 'no-store',
@@ -6938,11 +8295,13 @@ window.todayLocalKey = function () {
 
       renderSelection(preselectTestId);
       answersTextEl.value = '';
-      ocrReviewClearAnswersTextOrigin();
-      if (OCR_TEST_SHEET_ENABLED) ocrReviewEnsureAnswersTextLineCount();
       memoEl.value = '';
-      ocrTestSheetResetControls();
-      ocrPhase1UpdateEligibilityState();
+      if (OCR_TEST_SHEET_ENABLED) {
+        ocrReviewClearAnswersTextOrigin();
+        ocrReviewEnsureAnswersTextLineCount();
+        ocrTestSheetResetControls();
+        ocrPhase1UpdateEligibilityState();
+      }
       resetAnswerLink();
       resetResultPanel();
       if (!studentAnswerAccessBlocked()) void loadAnswerLinkMap();
@@ -6950,7 +8309,7 @@ window.todayLocalKey = function () {
       void testsConfigReady.then(() => {
         if (modal.style.display === 'none') return;
         renderSelection(selTestId.value || preselectTestId);
-        ocrPhase1UpdateEligibilityState();
+        if (OCR_TEST_SHEET_ENABLED) ocrPhase1UpdateEligibilityState();
       });
       return true;
     };
@@ -6968,58 +8327,63 @@ window.todayLocalKey = function () {
     selType.addEventListener('change', () => {
       resetAnswerLink();
       resetResultPanel();
-      ocrTestSheetSetStatus();
-      ocrReviewClearPanel();
-      ocrReviewClearFallback();
       renderTestOptions();
-      ocrReviewClearStaleAnswersText('시험 종류가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
-      ocrPhase1UpdateEligibilityState();
+      if (OCR_TEST_SHEET_ENABLED) {
+        ocrTestSheetSetStatus();
+        ocrReviewClearPanel();
+        ocrReviewClearFallback();
+        ocrReviewClearStaleAnswersText('시험 종류가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+        ocrPhase1UpdateEligibilityState();
+      }
     });
     selTestId.addEventListener('change', () => {
       resetAnswerLink();
       resetResultPanel();
-      ocrTestSheetSetStatus();
-      ocrReviewClearPanel();
-      ocrReviewClearFallback();
       const t = findTestById(selType.value, selTestId.value, currentCur());
       renderRoundOptions(t?.round || selRound.value);
       updateInfo();
-      ocrReviewClearStaleAnswersText('시험이 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
-      ocrPhase1UpdateEligibilityState();
+      if (OCR_TEST_SHEET_ENABLED) {
+        ocrTestSheetSetStatus();
+        ocrReviewClearPanel();
+        ocrReviewClearFallback();
+        ocrReviewClearStaleAnswersText('시험이 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+        ocrPhase1UpdateEligibilityState();
+      }
     });
     selRound.addEventListener('change', () => {
       resetAnswerLink();
       resetResultPanel();
-      ocrTestSheetSetStatus();
-      ocrReviewClearPanel();
-      ocrReviewClearFallback();
       const myCur = currentCur();
       const current = findTestById(selType.value, selTestId.value, myCur);
       const sibling = findSiblingTestByRound(selType.value, current, selRound.value, myCur);
       if (sibling) selTestId.value = sibling.id;
       updateInfo();
-      ocrReviewClearStaleAnswersText('회차가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
-      ocrPhase1UpdateEligibilityState();
+      if (OCR_TEST_SHEET_ENABLED) {
+        ocrTestSheetSetStatus();
+        ocrReviewClearPanel();
+        ocrReviewClearFallback();
+        ocrReviewClearStaleAnswersText('회차가 바뀌어 OCR로 채운 답안을 비웠습니다. 다시 인식하거나 직접 입력해주세요.');
+        ocrPhase1UpdateEligibilityState();
+      }
     });
 
     window.openAssignedTestSubmit = (testId = '') => open(testId);
-    window.ocrTestSheetStartCapture = (test = {}) => {
-      if (!OCR_TEST_SHEET_ENABLED) return false;
-      try {
-        const testId = String(test?.id || test?.testId || test?.label || '');
-        if (!open(testId)) return false;
-        if (!ocrPhase1UpdateEligibilityState()) return false;
-        ocrTestSheetSetStatus('사진 인식 결과 확인 버튼을 눌러주세요.');
-        setTimeout(() => {
-          try { btnOcrReviewOpen?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
-        }, 0);
-        return true;
-      } catch {
-        ocrTestSheetSetStatus('사진 인식 결과를 열지 못했습니다. 답안을 직접 입력해 주세요.', 'error');
-        return false;
-      }
-    };
     if (OCR_TEST_SHEET_ENABLED) {
+      window.ocrTestSheetStartCapture = (test = {}) => {
+        try {
+          const testId = String(test?.id || test?.testId || test?.label || '');
+          if (!open(testId)) return false;
+          if (!ocrPhase1UpdateEligibilityState()) return false;
+          ocrTestSheetSetStatus('사진 인식 결과 확인 버튼을 눌러주세요.');
+          setTimeout(() => {
+            try { btnOcrReviewOpen?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+          }, 0);
+          return true;
+        } catch {
+          ocrTestSheetSetStatus('사진 인식 결과를 열지 못했습니다. 답안을 직접 입력해 주세요.', 'error');
+          return false;
+        }
+      };
       const createReviewFixturePayloadForTest = () => {
         const t = findTestById(selType.value, selTestId.value, currentCur());
         if (!ocrPhase1TestEligible(t)) throw new Error(OCR_PHASE1_INELIGIBLE_MESSAGE);
@@ -7179,37 +8543,43 @@ window.todayLocalKey = function () {
       getResultPanelText: () => resultPanel?.textContent || '',
       hasAnswerPreview: () => Boolean(answerPreviewModal && answerPreviewFrame && answerPreviewOpenExternal),
     };
-    ocrPhase1UpdateEligibilityState();
-    ocrReviewUpdateSelectedImageDisplay();
-    btnOcrReviewPick?.addEventListener('click', () => {
-      try { ocrReviewImageEl?.click(); } catch {}
-    });
-    ocrReviewImageEl?.addEventListener('change', () => {
-      ocrReviewPayload = null;
-      ocrReviewClearPanel();
-      ocrReviewClearFallback();
-      const file = ocrReviewSelectedImage();
-      ocrReviewUpdateSelectedImageDisplay(file);
-      const validationMessage = ocrReviewImageValidationMessage(file);
-      if (validationMessage) ocrTestSheetSetStatus(validationMessage, file ? 'error' : '');
-      else ocrTestSheetSetStatus('사진이 선택되었습니다. 사진 인식 결과 확인 버튼을 눌러주세요.');
-    });
+    if (OCR_TEST_SHEET_ENABLED) {
+      ocrPhase1UpdateEligibilityState();
+      ocrReviewUpdateSelectedImageDisplay();
+      btnOcrReviewPick?.addEventListener('click', () => {
+        try { ocrReviewImageEl?.click(); } catch {}
+      });
+      ocrReviewImageEl?.addEventListener('change', () => {
+        ocrReviewPayload = null;
+        ocrReviewClearPanel();
+        ocrReviewClearFallback();
+        const file = ocrReviewSelectedImage();
+        ocrReviewUpdateSelectedImageDisplay(file);
+        const validationMessage = ocrReviewImageValidationMessage(file);
+        if (validationMessage) ocrTestSheetSetStatus(validationMessage, file ? 'error' : '');
+        else ocrTestSheetSetStatus('사진이 선택되었습니다. 사진 인식 결과 확인 버튼을 눌러주세요.');
+      });
+      btnOcrReviewOpen?.addEventListener('click', () => { void ocrReviewOpenRouteFlow(); });
+    }
     answersTextEl.addEventListener('input', () => {
-      if (answersTextEl.dataset.ocrProgrammaticFill === '1') return;
-      ocrReviewEnsureAnswersTextLineCount();
-      ocrReviewClearAnswersTextOrigin();
-      ocrReviewSyncPayloadFromAnswersText();
-      ocrReviewRefreshUnresolvedSummary();
+      if (OCR_TEST_SHEET_ENABLED) {
+        if (answersTextEl.dataset.ocrProgrammaticFill === '1') return;
+        ocrReviewEnsureAnswersTextLineCount();
+        ocrReviewClearAnswersTextOrigin();
+        ocrReviewSyncPayloadFromAnswersText();
+        ocrReviewRefreshUnresolvedSummary();
+      }
       resetResultPanel();
     });
-    btnOcrReviewOpen?.addEventListener('click', () => { void ocrReviewOpenRouteFlow(); });
 
     btnSubmit?.addEventListener('click', async () => {
       if (studentTestSubmissionBlocked()) {
         showStudentTestSubmissionBlockedNotice();
         return;
       }
-      const reviewBlock = ocrReviewSubmissionBlockState(selTestId.value, selRound.value);
+      const reviewBlock = OCR_TEST_SHEET_ENABLED
+        ? ocrReviewSubmissionBlockState(selTestId.value, selRound.value)
+        : null;
       if (reviewBlock?.blocked) {
         if (reviewBlock.firstQuestionNo) ocrReviewFocusQuestion(reviewBlock.firstQuestionNo);
         alert(reviewBlock.message);
@@ -7224,7 +8594,7 @@ window.todayLocalKey = function () {
       resetResultPanel();
 
       if (!testId) return alert('시험을 선택해주세요.');
-      if (!ocrReviewAnswersTextContextMatches()) {
+      if (OCR_TEST_SHEET_ENABLED && !ocrReviewAnswersTextContextMatches()) {
         return alert('OCR로 채운 답안이 현재 선택한 시험/회차와 맞지 않습니다. 다시 인식하거나 직접 입력해주세요.');
       }
 
@@ -7248,11 +8618,12 @@ window.todayLocalKey = function () {
       // ✅ 1) 서버 자동 채점/저장
       try {
         const requestAnswersText = submitAnswersTextForRequest(answersText, t.problems);
-        const res = await fetch('/api/submit-test', {
+        const requestSid = currentStudentSid();
+        const res = await studentAppRequest('/api/submit-test', {
           method: 'POST',
           headers: CT,
           body: JSON.stringify({
-            sid,
+            sid: requestSid,
             testId,
             round,
             answersText: requestAnswersText,
@@ -7269,7 +8640,10 @@ window.todayLocalKey = function () {
             alert(message);
             return;
           }
-          throw new Error(message || String(res.status));
+          const failure = new Error(message || String(res.status));
+          failure.status = res.status;
+          failure.code = String(data?.errorCode || data?.code || '');
+          throw failure;
         }
 
         updateInfo();
@@ -7286,13 +8660,24 @@ window.todayLocalKey = function () {
         try { localStorage.setItem('updPing', Date.now().toString()); } catch { }
         return;
       } catch (e) {
-        console.warn('[submit-test] server grade failed, fallback to client side', e);
+        console.warn('[submit-test] server submission failed', e);
         if (ocrFilledSubmission) {
           alert('OCR로 채운 답안은 서버 안전 검사를 통과해야 제출할 수 있습니다. 다시 인식하거나 직접 입력으로 바꾼 뒤 제출해주세요.');
           return;
         }
+        /* STUDENT_APP_PUBLIC_SUBMIT_FAILURE_GATE */
+        const failureDecision = await studentAppResolveSubmitFailure({
+          publicMode: STUDENT_APP_PUBLIC_MODE,
+          error: e,
+        });
+        if (!failureDecision.mayUseLegacyFallback) {
+          updateInfo(failureDecision.message);
+          alert(failureDecision.message);
+          return;
+        }
       }
 
+      /* STUDENT_APP_LOCAL_SUBMIT_FALLBACK_START */
       // ✅ 2) fallback: 클라 채점 후 기존 방식으로 저장(서버가 구버전일 때 대비)
       const key = getKeyForRound(t, round);
       if (!key) {
@@ -7305,7 +8690,8 @@ window.todayLocalKey = function () {
       const fullName = (type === 'UNIT' || type === '단원평가') ? t.name : `${typeLabel(type)} / ${t.name}`;
 
       // 구버전 서버는 name/score/wrong로 저장되던 방식
-      const payload = { sid, name: fullName, score, wrong: graded.wrong, memo };
+      const requestSid = currentStudentSid();
+      const payload = { sid: requestSid, name: fullName, score, wrong: graded.wrong, memo };
 
       try {
         const res = await fetch('/api/submit-test', { method: 'POST', headers: CT, body: JSON.stringify(payload) });
@@ -7314,7 +8700,7 @@ window.todayLocalKey = function () {
         // 마지막 백업: logs.json 직접 머지
         try {
           const today = todayLocalKey();
-          const logs = await fetch(`/api/logs/entry?date=${encodeURIComponent(today)}&sid=${encodeURIComponent(sid)}`, { cache: 'no-store' })
+          const logs = await fetch(`/api/logs/entry?date=${encodeURIComponent(today)}&sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' })
             .then(r => r.json()).catch(() => ({}));
           const entry = (logs && logs.entry && typeof logs.entry === 'object') ? logs.entry : {};
           const tests = Array.isArray(entry.tests) ? entry.tests.slice() : [];
@@ -7322,7 +8708,7 @@ window.todayLocalKey = function () {
           const ok = await fetch('/api/logs/patch', {
             method: 'POST',
             headers: CT,
-            body: JSON.stringify({ date: today, sid, entry: { tests } })
+            body: JSON.stringify({ date: today, sid: requestSid, entry: { tests } })
           });
           if (!ok.ok) throw new Error(String(ok.status));
         } catch {
@@ -7337,7 +8723,7 @@ window.todayLocalKey = function () {
           method: 'POST', headers: CT,
           body: JSON.stringify({
             [todayLocalKey()]: {
-              [sid]: [{
+              [requestSid]: [{
                 name: fullName,
                 score,
                 wrong: graded.wrong,

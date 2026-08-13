@@ -7,6 +7,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from core.makeup_sheet_sync import sync_makeups_from_sheet
 from core.paths import BASE
+from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 
 bp_api_makeup_carryover = Blueprint("api_makeup_carryover", __name__)
@@ -185,6 +186,37 @@ def _normalize_payload(raw: Any) -> Dict[str, Any]:
     }
 
 
+def _makeup_student_ids(raw: Any) -> set[str]:
+    """Collect only normalized student identifiers affected by makeup rows."""
+    normalized = _normalize_payload(raw)
+    out: set[str] = set()
+    for rows in normalized.get("by_absence", {}).values():
+        if not isinstance(rows, dict):
+            continue
+        for key, row in rows.items():
+            sid = str(key or "").split("|", 1)[0].strip()
+            if sid:
+                out.add(sid)
+            schedule = row.get("scheduledMakeup") if isinstance(row, dict) else None
+            scheduled_sid = str(schedule.get("studentId") or "").strip() if isinstance(schedule, dict) else ""
+            if scheduled_sid:
+                out.add(scheduled_sid)
+    for rows in normalized.get("manual", {}).values():
+        if not isinstance(rows, dict):
+            continue
+        for row in rows.values():
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("sid") or "").strip()
+            if sid:
+                out.add(sid)
+            schedule = row.get("scheduledMakeup")
+            scheduled_sid = str(schedule.get("studentId") or "").strip() if isinstance(schedule, dict) else ""
+            if scheduled_sid:
+                out.add(scheduled_sid)
+    return out
+
+
 @bp_api_makeup_carryover.get("/api/makeup-carryover")
 def api_makeup_carryover_get():
     return jsonify(_normalize_payload(load(MAKEUP_CARRYOVER_PATH)))
@@ -197,7 +229,9 @@ def api_makeup_carryover_post():
         abort(400, description="Invalid JSON body")
     normalized = _normalize_payload(payload)
     with file_lock(MAKEUP_CARRYOVER_PATH):
+        previous = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
         save_atomic(MAKEUP_CARRYOVER_PATH, normalized)
+    enqueue_current_schedule_changes(_makeup_student_ids(previous) | _makeup_student_ids(normalized))
     return jsonify(normalized)
 
 
@@ -217,4 +251,7 @@ def api_makeup_sheet_sync_post():
         except RuntimeError as exc:
             abort(400, description=str(exc))
         save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
+    enqueue_current_schedule_changes(
+        _makeup_student_ids(current) | _makeup_student_ids(result.get("carryover"))
+    )
     return jsonify(result)

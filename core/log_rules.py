@@ -165,6 +165,16 @@ def log_entry_conflicts_with_base(current: dict, base: dict) -> bool:
 
     current_entry = current if isinstance(current, dict) else {}
 
+    # Composite homework writes carry an exact snapshot so concurrent edits to
+    # unknown row metadata are not hidden by the legacy comparison projection.
+    if "__homeworkTableExact" in base:
+        expected_rows = base.get("__homeworkTableExact")
+        current_rows = current_entry.get("homeworkTable")
+        if not isinstance(expected_rows, list):
+            return True
+        if (current_rows if isinstance(current_rows, list) else []) != expected_rows:
+            return True
+
     if "notes" in base:
         current_notes = str(current_entry.get("notes") or "").strip()
         base_notes = str(base.get("notes") or "").strip()

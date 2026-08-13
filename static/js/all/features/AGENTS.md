@@ -22,6 +22,7 @@ All-students feature modules render the roster, inline-edit student fields, muta
 - Table search should keep `shared/search.js` Korean initials and keyboard-layout behavior.
 - The `.miniProgBtn` uses the admin unified launcher to open the fixed student tooltip plus log, video-assignment, and test-assignment modals together, with the row's real local date and `all-students-readonly` log access.
 - Keep the admin popup module graph behind the first `.miniProgBtn` interaction. Do not statically import `studentRecordPopup.js` from `all/main.js` or mount admin modal DOM during roster startup.
+- The shared admin hover tooltip itself is the narrow exception: `all/main.js` may initialize it after `loadAll()` and must synchronize the all-page roster state plus emit `all:rendered` after table replacement.
 - On mobile, the shared `영상 / 상담 / 테스트 / 학생정보` switcher must keep all four surfaces reachable without horizontal clipping.
 - In that mode notes/homework must never be patched; only right-click progress changes may reach `/api/progress/patch`.
 - Delete uses `DELETE /api/students/:sid` then a legacy POST fallback; the live Flask app currently has no fallback route.

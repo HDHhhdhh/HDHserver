@@ -12,6 +12,16 @@ import './features/escClose.js';
 import { mountNewStudentBar } from './features/addStudent.js';
 import { mountChatRosterExport } from './features/chatRosterExport.js';
 import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
+import { state as adminTooltipState } from '../admin/core/state.js';
+import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260813-phase11';
+
+function syncAdminTooltipState() {
+  adminTooltipState.students = state.students;
+  adminTooltipState.videos = state.videos;
+  adminTooltipState.progress = state.progress;
+  adminTooltipState.schoolCal = state.schoolCal;
+  adminTooltipState.homeworkBooksBySid = state.homeworkBooksBySid;
+}
 
 /** 이름+학교 기준으로 학생 dedup용 키 (table.js와 동일 로직) */
 function dedupKeyForStudent(s) {
@@ -56,8 +66,10 @@ function updateAllCount() {
 }
 
 function renderAll() {
+  syncAdminTooltipState();
   updateAllCount();
   renderTable();
+  document.dispatchEvent(new CustomEvent('all:rendered'));
   renderYoilStats();
   hookAllSort();
   hookDeleteButtons();
@@ -77,6 +89,8 @@ document.addEventListener('all:student-deleted', (event) => {
   if (!sid) return;
   state.students = state.students.filter(student => String(student?.id || '') !== sid);
   window.students = state.students;
+  syncAdminTooltipState();
+  document.dispatchEvent(new CustomEvent('all:rendered'));
   updateAllCount();
   renderYoilStats();
 });
@@ -84,6 +98,8 @@ document.addEventListener('all:student-deleted', (event) => {
 (async function init() {
   try {
     await loadAll();
+    syncAdminTooltipState();
+    initAdminHoverTooltip();
     initStudentTestRecordDetails(document);
     renderAll();
 

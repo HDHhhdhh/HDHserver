@@ -4,6 +4,22 @@
 // - 이벤트: admin:date-change (detail: { dateStr })
 
 const LS_KEY = 'adminSelectedDate';
+let inMemorySelectedDate = null;
+
+function isValidAdminDate(value) {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
 
 function todayISO() {
   const d = new Date();
@@ -18,18 +34,24 @@ export function getRealToday() {
 }
 
 export function getAdminDate() {
+  if (isValidAdminDate(inMemorySelectedDate)) return inMemorySelectedDate;
   try {
     const v = sessionStorage.getItem(LS_KEY);
-    if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    if (isValidAdminDate(v)) return v;
   } catch {}
   return todayISO();
 }
 
 export function setAdminDate(dateStr, { silent = false } = {}) {
   const v = String(dateStr || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+  if (!isValidAdminDate(v)) return;
 
-  try { sessionStorage.setItem(LS_KEY, v); } catch {}
+  let stored = false;
+  try {
+    sessionStorage.setItem(LS_KEY, v);
+    stored = true;
+  } catch {}
+  inMemorySelectedDate = stored ? null : v;
 
   if (!silent) {
     document.dispatchEvent(new CustomEvent('admin:date-change', { detail: { dateStr: v } }));
@@ -37,18 +59,21 @@ export function setAdminDate(dateStr, { silent = false } = {}) {
 }
 
 function shiftDays(dateStr, deltaDays) {
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return todayISO();
-  d.setDate(d.getDate() + deltaDays);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  if (!isValidAdminDate(dateStr)) return todayISO();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(0);
+  d.setUTCHours(12, 0, 0, 0);
+  d.setUTCFullYear(year, month - 1, day + deltaDays);
+  const yyyy = String(d.getUTCFullYear()).padStart(4, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const shifted = `${yyyy}-${mm}-${dd}`;
+  return isValidAdminDate(shifted) ? shifted : dateStr;
 }
 
 function formatShortDate(dateStr) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
-  if (!match) return '';
+  if (!isValidAdminDate(dateStr)) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   return `${match[1].slice(-2)}/${match[2]}/${match[3]}`;
 }
 
@@ -269,6 +294,6 @@ export function initAdminDateBar({ mountId = 'adminDateMount' } = {}) {
   // 다른 곳에서 날짜 바뀌면 표시도 동기화
   document.addEventListener('admin:date-change', (e) => {
     const d = e?.detail?.dateStr;
-    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) syncDisplay(d);
+    if (isValidAdminDate(d)) syncDisplay(d);
   });
 }

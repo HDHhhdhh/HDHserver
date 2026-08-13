@@ -15,7 +15,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 | Calendar/absence/makeup | `calendar.js`, `makeupPending.js`, `absentRecovery.js` | Absence, makeup, carryover, manual absence selection. |
 | Toolbar date modals | `extraModal.js`, `absentRegister.js` | Must freeze their opening date before any later save. |
 | Assistant notes | `hoverTooltip.js`, `assistantStudentNotes.js` | Student-scoped mount/load/save flow; not date-scoped or exportable. |
-| Exports/tooltips | `exportLogs.js`, `hoverTooltip.js` | Reporting and auxiliary UI. |
+| Exports/tooltips | `exportLogs.js`, `exportLogFormat.js`, `hoverTooltip.js` | Reporting, pure export serialization, and auxiliary UI. |
 | Event helpers | `timeGraph.js`, `uiEnhance.js`, `attendanceLedgerLink.js` | Consume render/refresh events; some initialize transitively. |
 
 ## Conventions
@@ -31,6 +31,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - `today.js` owns rendering and stale-request suppression; it emits `today:rendered`. Mutations coordinate through `admin:refresh` and `attendance:updated`.
 - `today.state.js` is the merge-safe client patch boundary. Preserve `__clear`, server-entry preference, unknown fields, and `done` behavior.
 - Assistant-note mounts use a per-mount token to suppress stale responses. Keep authors/content student-scoped and out of CSV/print, class-log notes, and browser storage.
+- Keep class-log export options memory-only and assistant notes excluded. TXT sections may be selected independently, but CSV must retain its canonical 14-column shape, homework row expansion, BOM/CRLF contract, and spreadsheet-formula neutralization.
 - `testModal.js` initializes through `logModal.js`; `attendanceLedgerLink.js` initializes through `uiEnhance.js`; `materials.js` is dormant/commented. Preserve topology before pruning imports.
 - After changes here, reload `/admin` and verify the affected modal/table.
 

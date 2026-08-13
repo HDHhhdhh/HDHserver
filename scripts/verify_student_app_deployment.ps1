@@ -17,9 +17,9 @@ param(
 
 $ErrorActionPreference = "Stop"; $serverRoot = if ($Root) { [IO.Path]::GetFullPath($Root) } else { Split-Path -Parent $PSScriptRoot }
 $originPort = if ($PublicHost -eq "dev-app.5a-math.com") { 8004 } else { 8003 }
-$results = [Collections.Generic.List[object]]::new()
-$blocked = $false
-$failed = $false
+$results = [Collections.Generic.List[object]]::new(); $fixtureInputs = @($EnvironmentFile, $PythonSnapshotPath, $KeyPolicySnapshotPath, $TaskXmlPath, $TunnelConfigPath, $ListenerSnapshotPath, $HealthSnapshotPath)
+if ($FixtureMode -and (-not $DryRun -or @($fixtureInputs | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count)) { throw "FixtureMode requires DryRun and every snapshot path." }
+$blocked = $false; $failed = $false
 
 function Add-Check([string]$Name, [string]$Status, [string]$Code) {
     $script:results.Add([ordered]@{ name = $Name; status = $Status; code = $Code })

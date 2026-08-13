@@ -5,9 +5,28 @@ import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../
 import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
 
 export function initHoverTooltip() {
+  if (document._adminHoverTooltipInitialized) return;
+  document._adminHoverTooltipInitialized = true;
+
   let tipEl = null;
   let tipMode = 'hover';        // 'hover' | 'fixed'
   let tipVariant = 'default';   // 'default' | 'log'  (log 모달용 축약 버전)
+  let activeHoverAnchor = null;
+  let pointerHoverAnchor = null;
+  let focusHoverAnchor = null;
+  let describedHoverAnchor = null;
+  let focusTooltipDismissed = false;
+  let focusTransitionEpoch = 0;
+  let lastPointerPoint = null;
+  let hoverPlacementFrame = 0;
+  let resizePlacementFrame = 0;
+  let pendingHoverPoint = null;
+  let hoverTipSize = null;
+  let indexedStudents = null;
+  let indexedStudentCount = -1;
+  let studentsBySid = new Map();
+  let studentsByName = new Map();
+  let placementEpoch = 0;
 
   const WCHR = '일월화수목금토';
   const LOG_TIP_POS_KEY = 'admin:logTipPos'; // 로그 모달 툴팁 위치 저장 키
@@ -33,7 +52,7 @@ export function initHoverTooltip() {
     if (tipEl) return tipEl;
     tipEl = document.createElement('div');
     tipEl.id = 'adminSchoolTip';
-    tipEl.setAttribute('aria-label', '툴팁 팝업');
+    tipEl.setAttribute('aria-hidden', 'true');
     tipEl.style.cssText = `
       position: fixed;
       top: 0; left: 0;
@@ -64,6 +83,10 @@ export function initHoverTooltip() {
         startY: ev.clientY,
         startLeft: rect.left,
         startTop: rect.top,
+        currentLeft: rect.left,
+        currentTop: rect.top,
+        width: rect.width,
+        height: rect.height,
       };
 
       try { tipEl.setPointerCapture(ev.pointerId); } catch { }
@@ -81,20 +104,20 @@ export function initHoverTooltip() {
 
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const rect = tipEl.getBoundingClientRect();
-
       let left = dragState.startLeft + dx;
       let top = dragState.startTop + dy;
 
       const pad = 12;
-      const maxLeft = vw - rect.width - pad;
-      const maxTop = vh - rect.height - pad;
+      const maxLeft = vw - dragState.width - pad;
+      const maxTop = vh - dragState.height - pad;
 
       left = Math.max(pad, Math.min(left, maxLeft));
       top = Math.max(pad, Math.min(top, maxTop));
 
       tipEl.style.left = `${left}px`;
       tipEl.style.top = `${top}px`;
+      dragState.currentLeft = left;
+      dragState.currentTop = top;
     });
 
     function endDrag(ev) {
@@ -104,9 +127,8 @@ export function initHoverTooltip() {
 
       try { tipEl.releasePointerCapture(dragState.pointerId); } catch { }
 
-      const rect = tipEl.getBoundingClientRect();
       // 고정 툴팁 위치를 공통으로 저장 (로그 모달에서 재사용)
-      saveLogTipPos(rect.left, rect.top);
+      saveLogTipPos(dragState.currentLeft, dragState.currentTop);
 
       tipEl.style.cursor = tipMode === 'fixed' ? 'grab' : 'default';
       dragState = null;
@@ -182,7 +204,7 @@ export function initHoverTooltip() {
 
   function todayInfoRow(icon, label, value) {
     return `
-      <div style="display:grid; grid-template-columns:38px 128px minmax(0,1fr); gap:12px; align-items:center;">
+      <div style="display:grid; grid-template-columns:38px minmax(92px,128px) minmax(0,1fr); gap:12px; align-items:center;">
         <span
           aria-hidden="true"
           style="
@@ -192,8 +214,8 @@ export function initHoverTooltip() {
             font-size:22px; line-height:1;
           "
         >${icon}</span>
-        <span style="opacity:.82; font-size:16px; font-weight:850; word-break:keep-all;">${escHtml(label)}</span>
-        <span style="font-size:19px; font-weight:950; word-break:keep-all;">${escHtml(value || '-')}</span>
+        <span style="min-width:0; opacity:.82; font-size:16px; font-weight:850; word-break:normal; overflow-wrap:anywhere;">${escHtml(label)}</span>
+        <span style="min-width:0; font-size:19px; font-weight:950; word-break:normal; overflow-wrap:anywhere;">${escHtml(value || '-')}</span>
       </div>`;
   }
 
@@ -436,6 +458,7 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   function renderProgressTables(stu, opts = {}) {
     const { includeVideo = true } = opts;
+    if (!includeVideo) return '';
     const today = getAdminDate();
 
     const allDates = Object.keys(state.progress || {}).filter(d => d <= today).sort();
@@ -449,22 +472,20 @@ export function initHoverTooltip() {
       });
     });
 
-    let progBlock = '';
-    if (includeVideo) {
-      const vids = (state.videos || [])
-        .filter(v => v.curriculum === stu.curriculum && v.subCurriculum === stu.subCurriculum)
-        .sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
+    const vids = (state.videos || [])
+      .filter(v => v.curriculum === stu.curriculum && v.subCurriculum === stu.subCurriculum)
+      .sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0));
 
-      const colorFor = (st) =>
-        st === 'done' ? '#10b981' :
-          st === 'interrupted' ? '#f59e0b' :
-            st === 'skip' ? '#6b7280' :
-              '#1f2937';
+    const colorFor = (st) =>
+      st === 'done' ? '#10b981' :
+        st === 'interrupted' ? '#f59e0b' :
+          st === 'skip' ? '#6b7280' :
+            '#1f2937';
 
-      const progCells = vids.map(v => {
-        const st = mergedProg[String(v.mid)] || 'none';
-        const color = colorFor(st);
-        return `
+    const progCells = vids.map(v => {
+      const st = mergedProg[String(v.mid)] || 'none';
+      const color = colorFor(st);
+      return `
           <div title="${v.chapter}차시 (${st})"
                style="
                  width: 26px; height: 26px; margin: 2px;
@@ -473,9 +494,9 @@ export function initHoverTooltip() {
                  border-radius:6px; flex: 0 0 auto;">
             ${v.chapter}
           </div>`;
-      }).join('');
+    }).join('');
 
-      progBlock = `
+    return `
         <div style="margin-top:10px;font-weight:800;font-size:13px">영상 진도</div>
         <div style="
           display:flex; flex-wrap:wrap; gap:0;
@@ -484,37 +505,57 @@ export function initHoverTooltip() {
           ${progCells || '<div style="padding:6px 8px;color:#bbb">해당 차시 없음</div>'}
         </div>
       `;
-    }
-
-    return progBlock;
   }
 
   // ───────────────────────────────────────────
   // 학생 찾기
   // ───────────────────────────────────────────
+  function refreshStudentIndex() {
+    const studs = Array.isArray(state.students) ? state.students : [];
+    if (studs === indexedStudents && studs.length === indexedStudentCount) return;
+
+    studentsBySid = new Map();
+    studentsByName = new Map();
+    studs.forEach((student) => {
+      if (!student || typeof student !== 'object') return;
+      if (student.id != null) studentsBySid.set(String(student.id), student);
+      const studentName = String(student.name || '').trim();
+      if (studentName && !studentsByName.has(studentName)) studentsByName.set(studentName, student);
+    });
+    indexedStudents = studs;
+    indexedStudentCount = studs.length;
+  }
+
   function findStudent(sid, name) {
-    const studs = state.students || [];
+    refreshStudentIndex();
     if (sid != null) {
-      const hit = studs.find(s => String(s.id) === String(sid));
+      const hit = studentsBySid.get(String(sid));
       if (hit) return hit;
     }
     if (name) {
       const nm = String(name).trim();
-      const hit2 = studs.find(s => (s.name || '').trim() === nm);
+      const hit2 = studentsByName.get(nm);
       if (hit2) return hit2;
     }
     return null;
   }
 
+  function studentSidForAnchor(anchorEl) {
+    return anchorEl?.dataset?.sid
+      || anchorEl?.dataset?.id
+      || anchorEl?.closest?.('tr[data-sid]')?.dataset?.sid
+      || null;
+  }
+
   // ───────────────────────────────────────────
   // 위치 계산
   // ───────────────────────────────────────────
-  function placeTooltipAt(x, y) {
+  function placeTooltipAt(x, y, measuredSize = null) {
     if (!tipEl) return;
 
     const pad = 12;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const rect = tipEl.getBoundingClientRect();
+    const rect = measuredSize || tipEl.getBoundingClientRect();
 
     let left = x + 12;
     let top = y + 12;
@@ -533,9 +574,30 @@ export function initHoverTooltip() {
     tipEl.style.top = `${top}px`;
   }
 
-  function placeTooltip(ev) {
-    if (!ev) return;
-    placeTooltipAt(ev.clientX, ev.clientY);
+  function cancelHoverPlacement() {
+    if (hoverPlacementFrame) cancelAnimationFrame(hoverPlacementFrame);
+    if (resizePlacementFrame) cancelAnimationFrame(resizePlacementFrame);
+    hoverPlacementFrame = 0;
+    resizePlacementFrame = 0;
+    pendingHoverPoint = null;
+  }
+
+  function scheduleHoverPlacement(x, y, { remeasure = false } = {}) {
+    pendingHoverPoint = { x: Number(x) || 0, y: Number(y) || 0 };
+    if (remeasure) hoverTipSize = null;
+    if (hoverPlacementFrame) return;
+
+    hoverPlacementFrame = requestAnimationFrame(() => {
+      hoverPlacementFrame = 0;
+      const point = pendingHoverPoint;
+      pendingHoverPoint = null;
+      if (!point || !tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;
+      if (!hoverTipSize) {
+        const rect = tipEl.getBoundingClientRect();
+        hoverTipSize = { width: rect.width, height: rect.height };
+      }
+      placeTooltipAt(point.x, point.y, hoverTipSize);
+    });
   }
 
   function placeForLogModal() {
@@ -785,7 +847,7 @@ export function initHoverTooltip() {
     const remainText = remain == null ? '-' : `${remain}회`;
 
     return `
-      <div style="min-width:420px; max-width:min(540px, 86vw); padding:4px 2px 6px;">
+      <div style="width:min(420px, calc(92vw - 36px)); max-width:100%; box-sizing:border-box; padding:4px 2px 6px;">
         <div style="display:flex; align-items:center; gap:14px; margin-bottom:20px;">
           <div style="font-weight:950; font-size:30px; line-height:1.12; letter-spacing:0; word-break:keep-all;">${escHtml(name || '-')}</div>
           ${levelBadgeHtml(level)}
@@ -802,17 +864,62 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // 핵심: 특정 요소 기준으로 툴팁 표시
   // ───────────────────────────────────────────
-  function showTooltipForElement(anchorEl, ev, opts = {}) {
-    if (!(anchorEl instanceof Element)) return;
+  function describedByTokens(anchorEl) {
+    return String(anchorEl?.getAttribute?.('aria-describedby') || '').trim().split(/\s+/).filter(Boolean);
+  }
 
-    const sid = anchorEl.dataset.sid;
+  function linkTooltipDescription(anchorEl) {
+    if (!(anchorEl instanceof Element)) return;
+    const tokens = describedByTokens(anchorEl);
+    if (!tokens.includes('adminSchoolTip')) tokens.push('adminSchoolTip');
+    anchorEl.setAttribute('aria-describedby', tokens.join(' '));
+  }
+
+  function unlinkTooltipDescription(anchorEl) {
+    if (!(anchorEl instanceof Element)) return;
+    const tokens = describedByTokens(anchorEl).filter(token => token !== 'adminSchoolTip');
+    if (tokens.length) anchorEl.setAttribute('aria-describedby', tokens.join(' '));
+    else anchorEl.removeAttribute('aria-describedby');
+  }
+
+  function setTooltipDescriptionOwner(anchorEl) {
+    if (describedHoverAnchor && describedHoverAnchor !== anchorEl) {
+      unlinkTooltipDescription(describedHoverAnchor);
+    }
+    describedHoverAnchor = anchorEl instanceof Element ? anchorEl : null;
+    linkTooltipDescription(describedHoverAnchor);
+  }
+
+  function clearTooltipDescriptionOwner() {
+    unlinkTooltipDescription(describedHoverAnchor);
+    describedHoverAnchor = null;
+  }
+
+  function hideHoverPresentation() {
+    if (tipMode !== 'hover') return;
+    placementEpoch += 1;
+    clearTooltipDescriptionOwner();
+    if (tipEl) {
+      tipEl.style.display = 'none';
+      tipEl.setAttribute('aria-hidden', 'true');
+    }
+    activeHoverAnchor = null;
+    hoverTipSize = null;
+    cancelHoverPlacement();
+  }
+
+  function showTooltipForElement(anchorEl, ev, opts = {}) {
+    if (!(anchorEl instanceof Element)) return false;
+
+    const sid = studentSidForAnchor(anchorEl);
     const name = (anchorEl.textContent || '').trim();
     const stu = findStudent(sid, name);
-    if (!stu) return;
+    if (!stu) return false;
 
     const variant = opts.variant || 'default';
     tipVariant = variant;
     tipMode = opts.fixed ? 'fixed' : 'hover';
+    const renderEpoch = ++placementEpoch;
 
     let includeVideo = true;
     let includeTests = false;
@@ -822,6 +929,20 @@ export function initHoverTooltip() {
     }
 
     const el = ensureTip();
+    if (tipMode === 'fixed') {
+      focusTransitionEpoch += 1;
+      clearTooltipDescriptionOwner();
+      focusHoverAnchor = null;
+      focusTooltipDismissed = false;
+      pointerHoverAnchor = null;
+      lastPointerPoint = null;
+      el.setAttribute('role', 'region');
+      el.setAttribute('aria-label', '학생 정보 팝업');
+    } else {
+      el.setAttribute('role', 'tooltip');
+      el.removeAttribute('aria-label');
+    }
+    el.setAttribute('aria-hidden', 'false');
     const useStudentWorkLayout = opts.layout === 'student-work';
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = variant === 'today'
@@ -844,19 +965,29 @@ export function initHoverTooltip() {
       el.style.cursor = 'default';
     }
 
-    requestAnimationFrame(() => {
-      if (useStudentWorkLayout) {
-        placeForStudentWorkLayout();
-      } else if (tipMode === 'fixed') {
-        placeForLogModal();
+    if (tipMode === 'hover') {
+      activeHoverAnchor = anchorEl;
+      setTooltipDescriptionOwner(anchorEl);
+      hoverTipSize = null;
+      if (ev) {
+        scheduleHoverPlacement(ev.clientX, ev.clientY, { remeasure: true });
       } else {
-        if (ev) placeTooltip(ev);
-        else {
+        requestAnimationFrame(() => {
+          if (placementEpoch !== renderEpoch || !tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;
           const r = anchorEl.getBoundingClientRect();
-          placeTooltipAt(r.right, r.top);
-        }
+          scheduleHoverPlacement(r.right, r.top, { remeasure: true });
+        });
       }
-    });
+    } else {
+      activeHoverAnchor = null;
+      cancelHoverPlacement();
+      requestAnimationFrame(() => {
+        if (placementEpoch !== renderEpoch || !tipEl || tipMode !== 'fixed' || tipEl.style.display === 'none') return;
+        if (useStudentWorkLayout) placeForStudentWorkLayout();
+        else placeForLogModal();
+      });
+    }
+    return true;
   }
 
   // ───────────────────────────────────────────
@@ -891,13 +1022,24 @@ export function initHoverTooltip() {
 
   window.hideStudentTooltip = function () {
     if (!tipEl) return;
+    focusTransitionEpoch += 1;
+    clearTooltipDescriptionOwner();
+    placementEpoch += 1;
     tipEl.style.display = 'none';
+    tipEl.setAttribute('aria-hidden', 'true');
     tipMode = 'hover';
     tipVariant = 'default';
     tipEl.style.pointerEvents = 'none';
     tipEl.style.cursor = 'default';
     resetStudentWorkTooltipPlacement();
     dragState = null;
+    activeHoverAnchor = null;
+    pointerHoverAnchor = null;
+    focusHoverAnchor = null;
+    focusTooltipDismissed = false;
+    lastPointerPoint = null;
+    hoverTipSize = null;
+    cancelHoverPlacement();
   };
 
   // ───────────────────────────────────────────
@@ -913,13 +1055,26 @@ export function initHoverTooltip() {
     if (!a) return;
     if (!getHoverTooltipHost(a)) return;
     if (tipMode === 'fixed') return;
+    pointerHoverAnchor = a;
+    lastPointerPoint = { x: ev.clientX, y: ev.clientY };
+    if (focusHoverAnchor) return;
+    if (activeHoverAnchor === a && tipEl?.style.display !== 'none') {
+      scheduleHoverPlacement(ev.clientX, ev.clientY);
+      return;
+    }
     showTooltipForElement(a, ev, { fixed: false, variant: 'today' });
   }
 
   function onMove(ev) {
+    if (!(ev.target instanceof Element)) return;
+    const a = ev.target.closest('a.stuName');
+    if (!a || !getHoverTooltipHost(a)) return;
+    pointerHoverAnchor = a;
+    lastPointerPoint = { x: ev.clientX, y: ev.clientY };
+    if (focusHoverAnchor) return;
     if (!tipEl || tipEl.style.display === 'none') return;
     if (tipMode !== 'hover') return;
-    placeTooltip(ev);
+    scheduleHoverPlacement(ev.clientX, ev.clientY);
   }
 
   function onOut(ev) {
@@ -931,7 +1086,70 @@ export function initHoverTooltip() {
     const to = (ev.relatedTarget instanceof Element) ? ev.relatedTarget.closest('a.stuName') : null;
     const toHost = getHoverTooltipHost(to);
     if (from && toHost === fromHost) return;
-    if (from && tipEl) tipEl.style.display = 'none';
+    if (from) {
+      if (pointerHoverAnchor === from) pointerHoverAnchor = null;
+      lastPointerPoint = null;
+      if (focusHoverAnchor && !focusTooltipDismissed) return;
+      hideHoverPresentation();
+    }
+  }
+
+  function onFocusIn(ev) {
+    if (!(ev.target instanceof Element)) return;
+    const a = ev.target.closest('a.stuName');
+    if (!a || !getHoverTooltipHost(a)) return;
+    if (tipMode === 'fixed') return;
+
+    focusTransitionEpoch += 1;
+    if (focusHoverAnchor && focusHoverAnchor !== a) unlinkTooltipDescription(focusHoverAnchor);
+    focusHoverAnchor = a;
+    focusTooltipDismissed = false;
+    if (showTooltipForElement(a, null, { fixed: false, variant: 'today' })) {
+      setTooltipDescriptionOwner(a);
+    } else {
+      focusHoverAnchor = null;
+      hideHoverPresentation();
+    }
+  }
+
+  function onFocusOut(ev) {
+    if (!(ev.target instanceof Element)) return;
+    const from = ev.target.closest('a.stuName');
+    if (!from || !getHoverTooltipHost(from) || focusHoverAnchor !== from) return;
+    const transitionEpoch = ++focusTransitionEpoch;
+    queueMicrotask(() => {
+      if (transitionEpoch !== focusTransitionEpoch || focusHoverAnchor !== from) return;
+      const active = document.activeElement;
+      const activeAnchor = active instanceof Element ? active.closest('a.stuName') : null;
+      if (activeAnchor && getHoverTooltipHost(activeAnchor)) return;
+
+      const wasDismissed = focusTooltipDismissed;
+      focusHoverAnchor = null;
+      focusTooltipDismissed = false;
+      if (tipMode === 'fixed') return;
+
+      if (!wasDismissed && pointerHoverAnchor && lastPointerPoint) {
+        showTooltipForElement(pointerHoverAnchor, lastPointerPoint, { fixed: false, variant: 'today' });
+        return;
+      }
+      hideHoverPresentation();
+    });
+  }
+
+  function onKeyDown(ev) {
+    if (ev.key !== 'Escape' || tipMode === 'fixed') return;
+    if (!(ev.target instanceof Element)) return;
+    const a = ev.target.closest('a.stuName');
+    if (!a || !getHoverTooltipHost(a) || focusHoverAnchor !== a) return;
+    if (focusTooltipDismissed || !tipEl || tipEl.style.display === 'none') return;
+
+    focusTransitionEpoch += 1;
+    focusTooltipDismissed = true;
+    pointerHoverAnchor = null;
+    lastPointerPoint = null;
+    hideHoverPresentation();
+    ev.preventDefault();
+    ev.stopPropagation();
   }
 
   function bindTooltipHosts() {
@@ -942,9 +1160,52 @@ export function initHoverTooltip() {
       host.addEventListener('pointerover', onOver);
       host.addEventListener('pointermove', onMove);
       host.addEventListener('pointerout', onOut);
+      host.addEventListener('focusin', onFocusIn);
+      host.addEventListener('focusout', onFocusOut);
+      host.addEventListener('keydown', onKeyDown);
     });
   }
+  function onTodayRendered() {
+    focusTransitionEpoch += 1;
+    if (tipMode === 'hover') {
+      hideHoverPresentation();
+    }
+    pointerHoverAnchor = null;
+    focusHoverAnchor = null;
+    focusTooltipDismissed = false;
+    lastPointerPoint = null;
+    bindTooltipHosts();
+  }
+  function onAllRendered() {
+    focusTransitionEpoch += 1;
+    if (tipMode === 'hover') {
+      hideHoverPresentation();
+    }
+    pointerHoverAnchor = null;
+    focusHoverAnchor = null;
+    focusTooltipDismissed = false;
+    lastPointerPoint = null;
+    bindTooltipHosts();
+  }
   bindTooltipHosts();
-  document.addEventListener('today:rendered', bindTooltipHosts);
+  document.addEventListener('today:rendered', onTodayRendered);
+  document.addEventListener('all:rendered', onAllRendered);
+  window.addEventListener('resize', () => {
+    hoverTipSize = null;
+    if (!tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;
+    if (!focusHoverAnchor && lastPointerPoint) {
+      scheduleHoverPlacement(lastPointerPoint.x, lastPointerPoint.y, { remeasure: true });
+      return;
+    }
+    const anchor = focusHoverAnchor || activeHoverAnchor;
+    if (!anchor || resizePlacementFrame) return;
+    const resizeEpoch = placementEpoch;
+    resizePlacementFrame = requestAnimationFrame(() => {
+      resizePlacementFrame = 0;
+      if (resizeEpoch !== placementEpoch || !tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;
+      const r = anchor.getBoundingClientRect();
+      scheduleHoverPlacement(r.right, r.top, { remeasure: true });
+    });
+  });
   // the fixed 상담 기록 tooltip explicitly through showStudentTooltipForSid().
 }

@@ -402,7 +402,7 @@ export async function runChecks() {
   assert.equal(studentFocusApi().normalizeCurrent({ ...normalized, sid: 'forbidden' }), null);
   checks += 1;
 
-  return { checks };
+  return { suite: 'student-mobile-app-focus', checks, passed: true };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {

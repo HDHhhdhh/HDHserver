@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import os
 import random
 import re
 import threading
@@ -10,7 +12,7 @@ from copy import deepcopy
 from urllib.parse import parse_qs, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
-from flask import Blueprint, abort, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, request
 
 from core.paths import (
     BASE,
@@ -29,6 +31,7 @@ from core import log_rules as _log_rules
 from core.network_access import (
     ACADEMY_ACCESS_MESSAGE,
     academy_network_allowed,
+    ip_allowed,
     strip_answer_link_fields,
 )
 from core.progress_rules import (
@@ -38,9 +41,19 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_progress_day_sid as _merge_progress_day_sid,
     merge_watch_entry as _merge_watch_entries_for_mid_migration,
+    normalize_watch_entry as _normalize_watch_entry,
+    watch_rank as _watch_rank,
     watch_auto_status as _watch_auto_status,
 )
 from core.video_review_rules import resolve_video_review_states_before_date
+from core.student_curriculum_progress import build_curriculum_progress
+from core.student_schedule_projection import project_student_schedule, select_next_schedule
+from core.student_notification_hooks import (
+    enqueue_current_schedule_changes,
+    enqueue_progress_milestones,
+    runtime_repository,
+    student_schedule_changed_sids,
+)
 from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
@@ -51,15 +64,6 @@ STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님�
 GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
 GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
 GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
-STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE = "studentReview"
-REVIEW_VIDEO_ASSIGNMENT_KEY = "reviewVideos"
-REVIEW_VIDEO_REGISTRATION_MIDS_KEY = "reviewVideoRegistrationMids"
-REVIEW_VIDEO_REGISTRATION_NOTE_KEY = "reviewVideoRegistrationNote"
-REVIEW_VIDEO_WATCHED_MIDS_KEY = "reviewVideoWatchedMids"
-REVIEW_VIDEO_WATCH_NOTE_KEY = "reviewVideoWatchNote"
-STUDENT_TRAINING_PACK_ASSIGN_SOURCE = "studentTrainingPack"
-TRAINING_PACK_VIDEO_SUBCURRICULUM = "트팩"
-TRAINING_PACK_ASSIGNMENT_KEY = "trainingPackVideos"
 _PROGRESS_CACHE_LOCK = threading.Lock()
 _PROGRESS_CACHE_SIGNATURE: tuple[str, int, int] | None = None
 _PROGRESS_CACHE_DATA: dict | None = None
@@ -441,92 +445,12 @@ def _normalize_video_assign_list(value) -> list[str]:
     return out
 
 
-def _normalize_review_video_mids(value) -> list[str]:
-    if isinstance(value, dict):
-        value = value.get(REVIEW_VIDEO_ASSIGNMENT_KEY)
-    return _normalize_video_assign_list(value)
-
-
-def _review_video_mids_for_assignment(value) -> list[str]:
-    if not isinstance(value, dict):
-        return []
-    return _normalize_review_video_mids(value)
-
-
-def _is_training_pack_video(video: dict | None) -> bool:
-    if not isinstance(video, dict):
-        return False
-    return str(video.get("subCurriculum") or "").strip().casefold() == TRAINING_PACK_VIDEO_SUBCURRICULUM.casefold()
-
-
-def _is_training_pack_student(stu: dict | None) -> bool:
-    if not isinstance(stu, dict):
-        return False
-    level = str(stu.get("level") or "").strip()
-    sub_curriculum = str(stu.get("subCurriculum") or "").strip().casefold()
-    return (
-        str(stu.get("curriculum") or "").strip()
-        and level in {"중", "하"}
-        and sub_curriculum in {"a:ble", "apex"}
-    )
-
-
-def _student_training_pack_videos(stu: dict, videos: list) -> list[dict]:
-    """Return the subject-wide training-pack catalog for an eligible student."""
-    if not _is_training_pack_student(stu):
-        return []
-    subject = str(stu.get("curriculum") or "").strip()
-    return sorted(
-        [
-            video for video in (videos or [])
-            if isinstance(video, dict)
-            and str(video.get("curriculum") or "").strip() == subject
-            and _is_training_pack_video(video)
-        ],
-        key=lambda video: (_chap_num(video), str(video.get("mid") or "")),
-    )
-
-
-def _normalize_training_pack_video_mids(value) -> list[str]:
-    if isinstance(value, dict):
-        value = value.get(TRAINING_PACK_ASSIGNMENT_KEY)
-    return _normalize_video_assign_list(value)
-
-
-def _training_pack_video_mids_for_assignment(value) -> list[str]:
-    if not isinstance(value, dict):
-        return []
-    return _normalize_training_pack_video_mids(value)
-
-
-def _normalize_assignment_video_metadata(assignment):
-    """Keep review/training metadata ordered and limited to assigned videos."""
-    if not isinstance(assignment, dict):
-        return assignment
-    assigned = set(_normalize_video_assign_list(assignment))
-    for key, normalizer in (
-        (REVIEW_VIDEO_ASSIGNMENT_KEY, _normalize_review_video_mids),
-        (TRAINING_PACK_ASSIGNMENT_KEY, _normalize_training_pack_video_mids),
-    ):
-        mids = [mid for mid in normalizer(assignment.get(key)) if mid in assigned]
-        if mids:
-            assignment[key] = mids
-        else:
-            assignment.pop(key, None)
-    return assignment
-
-
 def _is_manual_video_assignment(value) -> bool:
     if not isinstance(value, dict):
         return False
     source = str(value.get("source") or "").strip().lower()
     return (
-        source in {
-            "manual",
-            "selfstudy",
-            STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE.casefold(),
-            STUDENT_TRAINING_PACK_ASSIGN_SOURCE.casefold(),
-        }
+        source in {"manual", "selfstudy"}
         or value.get("manual") is True
         or value.get("manualVideoAssign") is True
     )
@@ -1105,24 +1029,10 @@ def _merge_update_assignment(current, incoming):
                 continue
             if key == "videos":
                 out["videos"] = videos
-            elif key == REVIEW_VIDEO_ASSIGNMENT_KEY:
-                review_mids = _normalize_review_video_mids(value)
-                if review_mids:
-                    out[REVIEW_VIDEO_ASSIGNMENT_KEY] = review_mids
-                else:
-                    out.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-            elif key == TRAINING_PACK_ASSIGNMENT_KEY:
-                training_pack_mids = _normalize_training_pack_video_mids(value)
-                if training_pack_mids:
-                    out[TRAINING_PACK_ASSIGNMENT_KEY] = training_pack_mids
-                else:
-                    out.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
             elif value is not None:
                 out[str(key)] = value
         if "videos" not in incoming and videos:
             out["videos"] = videos
-
-        _normalize_assignment_video_metadata(out)
         return out if out else (videos if videos else current)
 
     return current
@@ -1469,16 +1379,13 @@ def _ghost_student_bootstrap(date: str):
 
     # Code-only ghost for outside-Wi-Fi UI checks. It must never enter
     # students.json, updates.json, logs, progress, or tests data.
-    return nocache_resp({
+    payload = {
         "ok": True,
         "date": date,
         "students": [ghost_student],
         "student": ghost_student,
         "videos": [ghost_video],
         "reviewVideos": [],
-        "registeredReviewVideos": [],
-        "trainingPackVideos": [],
-        "registeredTrainingPackVideos": [],
         "updates": {date: {GHOST_STUDENT_ID: [GHOST_STUDENT_VIDEO_MID]}},
         "materials": {},
         "assigns": {GHOST_STUDENT_ID: []},
@@ -1493,7 +1400,8 @@ def _ghost_student_bootstrap(date: str):
         "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
         "ghostStudent": True,
         "testSubmissionBlocked": True,
-    })
+    }
+    return nocache_resp(_finalize_public_bootstrap(payload, GHOST_STUDENT_ID, False))
 
 
 # ─────────────────────────────────────────────
@@ -1665,29 +1573,6 @@ def _self_study_review_video_mids(
     return prior[-DEFAULT_AUTO_VIDEO_ASSIGN_COUNT:]
 
 
-def _video_is_auto_assignment_excluded(stu: dict, video: dict) -> bool:
-    """Mirror the progress-grid red rule for automatic video candidates."""
-    if not isinstance(stu, dict) or str(stu.get("level") or "").strip() != "하":
-        return False
-    ex_num = video.get("exNum") if isinstance(video, dict) else None
-    if not isinstance(ex_num, dict) or "하" not in ex_num:
-        return False
-    try:
-        return float(ex_num.get("하")) == 0
-    except (TypeError, ValueError):
-        return False
-
-
-def _auto_assignment_excluded_mids(stu: dict, videos: list[dict]) -> set[str]:
-    return {
-        str(video.get("mid") or "").strip()
-        for video in (videos or [])
-        if isinstance(video, dict)
-        and str(video.get("mid") or "").strip()
-        and _video_is_auto_assignment_excluded(stu, video)
-    }
-
-
 def _is_finished_video_progress_status(status) -> bool:
     return str(status or "").strip() in VIDEO_PROGRESS_FINISHED_STATUSES
 
@@ -1704,7 +1589,6 @@ def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
         if isinstance(v, dict)
         and (v.get("curriculum") or "").strip() == cur_key
         and (v.get("subCurriculum") or "").strip() == sub_key
-        and not _is_training_pack_video(v)
     ]
     if exact:
         exact.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
@@ -1714,7 +1598,6 @@ def _student_completion_videos(stu: dict, videos: list) -> list[dict]:
         v for v in (videos or [])
         if isinstance(v, dict)
         and (v.get("curriculum") or "").strip() == cur_key
-        and not _is_training_pack_video(v)
     ]
     fallback.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
     return fallback
@@ -1750,25 +1633,15 @@ def _student_eligible_review_video_mids(stu: dict, videos: list, progress: dict,
     }
 
 
-def _filter_self_study_assignment_for_response(
-    assignment,
-    eligible_mids: set[str],
-    training_pack_mids: set[str] | None = None,
-):
+def _filter_self_study_assignment_for_response(assignment, eligible_mids: set[str]):
     """Deep-copy and filter a self-study assignment without touching storage data."""
     eligible = {
         str(mid or "").strip() for mid in eligible_mids if str(mid or "").strip()
     }
-    training_pack = {
-        str(mid or "").strip()
-        for mid in (training_pack_mids or set())
-        if str(mid or "").strip()
-    }
-    allowed = eligible | training_pack
     if isinstance(assignment, list):
         return [
             mid for mid in _normalize_video_assign_list(assignment)
-            if mid in allowed
+            if mid in eligible
         ]
     if not isinstance(assignment, dict):
         return assignment
@@ -1777,24 +1650,8 @@ def _filter_self_study_assignment_for_response(
     if "videos" in response_assignment:
         response_assignment["videos"] = [
             mid for mid in _normalize_video_assign_list(response_assignment.get("videos"))
-            if mid in allowed
+            if mid in eligible
         ]
-    review_mids = [
-        mid for mid in _review_video_mids_for_assignment(response_assignment)
-        if mid in eligible
-    ]
-    if review_mids:
-        response_assignment[REVIEW_VIDEO_ASSIGNMENT_KEY] = review_mids
-    else:
-        response_assignment.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-    training_mids = [
-        mid for mid in _training_pack_video_mids_for_assignment(response_assignment)
-        if mid in training_pack
-    ]
-    if training_mids:
-        response_assignment[TRAINING_PACK_ASSIGNMENT_KEY] = training_mids
-    else:
-        response_assignment.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
     return response_assignment
 
 
@@ -1844,31 +1701,6 @@ def _student_review_video_projection(
         [entry[3] for entry in candidates],
         academy_allowed,
     )
-
-
-def _student_training_pack_projection(
-    student: dict,
-    videos_all: list,
-    assigned_mids,
-    academy_allowed: bool,
-) -> list[dict]:
-    """Build a sanitized subject-wide training-pack catalog."""
-    assigned = {
-        str(mid or "").strip() for mid in (assigned_mids or []) if str(mid or "").strip()
-    }
-    projected = []
-    for video in _student_training_pack_videos(student, videos_all):
-        mid = str(video.get("mid") or "").strip()
-        if not mid:
-            continue
-        item = deepcopy(video)
-        for internal_key in ("eventDate", "progress", "watch"):
-            item.pop(internal_key, None)
-        item["isExtraAssignment"] = True
-        item["isTrainingPack"] = True
-        item["trainingPackRegistered"] = mid in assigned
-        projected.append(item)
-    return _academy_restricted_student_videos(projected, academy_allowed)
 
 
 def _student_primary_video_mids(stu: dict, videos: list) -> set[str]:
@@ -1967,22 +1799,90 @@ def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
     return blocked
 
 
-def _auto_assignment_blocked_mids_for_student(
-    student: dict,
-    sid: str,
-    videos: list[dict],
-    progress: dict,
-    watch: dict,
-) -> set[str]:
-    blocked = set(
-        _build_auto_assignment_blocked_by_sid(progress, watch or {}).get(str(sid), set())
-    )
-    blocked.update(_auto_assignment_excluded_mids(student, videos))
-    return blocked
-
-
 def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
+
+
+def _student_dashboard_enabled() -> bool:
+    return bool(current_app.config.get("STUDENT_APP_DASHBOARD_ENABLED", False))
+
+
+def _student_homework_enabled() -> bool:
+    return bool(current_app.config.get("STUDENT_APP_HOMEWORK_ENABLED", False))
+
+
+def _dashboard_homework_count(sid: str, fallback: int) -> int:
+    if not _student_homework_enabled():
+        return fallback
+    try:
+        from core.student_homework_repository import StudentHomeworkRepository
+
+        database = os.environ.get("STUDENT_APP_DB_PATH", str(BASE / "app.sqlite"))
+        return StudentHomeworkRepository(database).count_open(sid)
+    except Exception:  # noqa: BROAD_EXCEPT_OK - an uninitialized additive store falls back to legacy data
+        return fallback
+
+
+def _dashboard_mapping(path) -> dict:
+    try:
+        value = load(path) or {}
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _student_dashboard_projection(
+    *,
+    student: dict,
+    sid: str,
+    date_key: str,
+    videos: list,
+    latest_status_by_sid: dict,
+    homework_books: list,
+    absences: dict,
+) -> dict:
+    start = dt.date.fromisoformat(date_key)
+    end = start + dt.timedelta(days=45)
+    calculated_at = dt.datetime.now(KST).replace(microsecond=0)
+    schedule_as_of = (
+        calculated_at
+        if start == calculated_at.date()
+        else dt.datetime.combine(start, dt.time.min, tzinfo=KST)
+    )
+    events = project_student_schedule(
+        student,
+        sid=sid,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        absence=absences,
+        extra=_dashboard_mapping(EXTRA_PATH),
+        weekend=_dashboard_mapping(WEEKEND_SLOTS_PATH),
+        makeup=_dashboard_mapping(BASE / "makeup_carryover.json"),
+    )
+    latest_for_student = latest_status_by_sid.get(str(sid), {})
+    if not isinstance(latest_for_student, dict):
+        latest_for_student = {}
+    curriculum_progress = build_curriculum_progress(
+        student,
+        videos,
+        latest_for_student,
+        calculated_at=calculated_at.isoformat(),
+    )
+    legacy_homework_count = len(homework_books) if isinstance(homework_books, list) else 0
+    homework_count = _dashboard_homework_count(sid, legacy_homework_count)
+    return {
+        "enabled": True,
+        "curriculumProgress": curriculum_progress,
+        "nextSchedule": select_next_schedule(
+            events,
+            as_of=schedule_as_of.isoformat(),
+        ),
+        "homeworkSummary": {
+            "count": homework_count,
+            "state": "assigned" if homework_count else "empty",
+        },
+        "unreadBoardCount": None,
+    }
 
 
 def _log_entry_for_date(logs, date_key: str, sid: str):
@@ -2086,58 +1986,6 @@ def _append_auto_assignment_videos(current, cur_vids: list[dict], blocked, targe
     return updated, True
 
 
-def _sanitize_auto_assignment_for_write(
-    assignment,
-    student: dict | None,
-    sid: str,
-    videos: list[dict],
-    progress: dict,
-    watch: dict,
-):
-    """Keep blocked videos out of automatic writes while preserving explicit reviews."""
-    is_auto = isinstance(assignment, list) or (
-        isinstance(assignment, dict)
-        and str(assignment.get("source") or "").strip().casefold() == "auto"
-    )
-    if not is_auto or not isinstance(student, dict):
-        return assignment
-
-    blocked = _auto_assignment_blocked_mids_for_student(
-        student,
-        sid,
-        videos,
-        progress,
-        watch,
-    )
-    review_mids = _review_video_mids_for_assignment(assignment)
-    training_pack_mids = _training_pack_video_mids_for_assignment(assignment)
-    protected_mids = set(review_mids) | set(training_pack_mids)
-    assigned = _normalize_video_assign_list(assignment)
-    next_videos = [
-        mid for mid in assigned
-        if mid in protected_mids or mid not in blocked
-    ]
-
-    if isinstance(assignment, list):
-        return next_videos
-    if not next_videos:
-        return None
-
-    updated = dict(assignment)
-    updated["videos"] = next_videos
-    next_review_mids = [mid for mid in review_mids if mid in next_videos]
-    if next_review_mids:
-        updated[REVIEW_VIDEO_ASSIGNMENT_KEY] = next_review_mids
-    else:
-        updated.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-    next_training_pack_mids = [mid for mid in training_pack_mids if mid in next_videos]
-    if next_training_pack_mids:
-        updated[TRAINING_PACK_ASSIGNMENT_KEY] = next_training_pack_mids
-    else:
-        updated.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
-    return updated
-
-
 def _expand_consecutive_auto_assignment_in_updates(
     updates: dict,
     date_key: str,
@@ -2189,13 +2037,7 @@ def _expand_consecutive_auto_assignment_in_updates(
         and str(video.get("subCurriculum") or "").strip() == sub_key
     ]
     cur_vids.sort(key=lambda video: (_chap_num(video), str(video.get("mid") or "")))
-    blocked = _auto_assignment_blocked_mids_for_student(
-        student,
-        sid,
-        cur_vids,
-        progress,
-        watch or {},
-    )
+    blocked = _build_auto_assignment_blocked_by_sid(progress, watch or {}).get(str(sid), set())
     target_count = _effective_auto_video_assign_count(student, sid, date_key, weekend_slots)
     expanded, changed = _append_auto_assignment_videos(current, cur_vids, blocked, target_count)
     if changed:
@@ -2284,6 +2126,7 @@ def _ensure_today_auto_assign(
                 valid_mids.add(mid)
 
     latest_status_by_sid = _build_latest_status_by_sid(progress)
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
     logs = logs if isinstance(logs, dict) else {}
     if extra is None:
         try:
@@ -2328,13 +2171,7 @@ def _ensure_today_auto_assign(
         if not _student_is_today_auto_target(stu, sid, today, extra=extra, absent=absent, logs=logs):
             continue
 
-        blocked = _auto_assignment_blocked_mids_for_student(
-            stu,
-            sid,
-            cur_vids,
-            progress,
-            watch or {},
-        )
+        blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
         max_assign = _effective_auto_video_assign_count(stu, sid, today, weekend_slots)
 
         self_study = _student_is_self_study_on_date(logs, today, sid, stu)
@@ -2396,129 +2233,6 @@ def _json_stable(obj) -> str:
         return ""
 
 
-def _review_video_note_block(label: str, mids: list[str]) -> str:
-    normalized = _normalize_video_assign_list(mids)
-    if not normalized:
-        return ""
-
-    catalog = {}
-    for video in (load(VID_PATH) or []):
-        if not isinstance(video, dict):
-            continue
-        mid = str(video.get("mid") or "").strip()
-        if mid and mid not in catalog:
-            catalog[mid] = video
-
-    lines = []
-    for mid in normalized:
-        video = catalog.get(mid) or {}
-        chapter = str(video.get("chapter") or "").strip()
-        title = str(video.get("title") or video.get("name") or mid).strip()
-        label_text = f"{chapter}차시: {title}" if chapter else title
-        lines.append(f"- {label_text}")
-    return f"[{label}]\n" + "\n".join(lines)
-
-
-def _replace_generated_note_block(notes, previous_block, next_block) -> str:
-    current = str(notes or "").strip()
-    previous = str(previous_block or "").strip()
-    next_value = str(next_block or "").strip()
-    if previous and previous in current:
-        current = current.replace(previous, next_value)
-    elif next_value:
-        current = f"{current}\n\n{next_value}" if current else next_value
-    return re.sub(r"\n{3,}", "\n\n", current).strip()
-
-
-def _patch_review_video_log(
-    date: str,
-    sid: str,
-    *,
-    active_review_mids: list[str] | None = None,
-    watched_mid: str = "",
-) -> dict:
-    repository = get_log_repository()
-    current = repository.read_entry(date, sid).entry
-    current = current if isinstance(current, dict) else {}
-    entry = {}
-    clear = []
-    next_notes = str(current.get("notes") or "").strip()
-    changed = False
-
-    if active_review_mids is not None:
-        active = _normalize_video_assign_list(active_review_mids)
-        previous_mids = _normalize_video_assign_list(current.get(REVIEW_VIDEO_REGISTRATION_MIDS_KEY))
-        previous_block = str(current.get(REVIEW_VIDEO_REGISTRATION_NOTE_KEY) or "").strip()
-        next_block = _review_video_note_block("복습 영상 등록", active)
-        if active != previous_mids or next_block != previous_block:
-            changed = True
-            if active:
-                entry[REVIEW_VIDEO_REGISTRATION_MIDS_KEY] = active
-            else:
-                clear.append(REVIEW_VIDEO_REGISTRATION_MIDS_KEY)
-            if next_block:
-                entry[REVIEW_VIDEO_REGISTRATION_NOTE_KEY] = next_block
-            else:
-                clear.append(REVIEW_VIDEO_REGISTRATION_NOTE_KEY)
-            next_notes = _replace_generated_note_block(next_notes, previous_block, next_block)
-
-    watched = _normalize_video_assign_list(current.get(REVIEW_VIDEO_WATCHED_MIDS_KEY))
-    watched_key = str(watched_mid or "").strip()
-    if watched_key and watched_key not in watched:
-        watched.append(watched_key)
-        previous_block = str(current.get(REVIEW_VIDEO_WATCH_NOTE_KEY) or "").strip()
-        next_block = _review_video_note_block("복습 영상 시청", watched)
-        changed = True
-        entry[REVIEW_VIDEO_WATCHED_MIDS_KEY] = watched
-        entry[REVIEW_VIDEO_WATCH_NOTE_KEY] = next_block
-        next_notes = _replace_generated_note_block(next_notes, previous_block, next_block)
-
-    if next_notes != str(current.get("notes") or "").strip():
-        changed = True
-        if next_notes:
-            entry["notes"] = next_notes
-        else:
-            clear.append("notes")
-
-    if not changed:
-        return current
-
-    entry["updatedAt"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    if clear:
-        entry["__clear"] = clear
-    result = repository.patch_entry(date, sid, entry, {})
-    if result.json_conflict_entry is not None or (not result.sqlite_ok and not result.json_ok):
-        raise RuntimeError("review video counseling record save failed")
-    return result.merged if isinstance(result.merged, dict) else {}
-
-
-def _sync_review_video_registration_log(date: str, sid: str, active_review_mids: list[str]) -> dict:
-    try:
-        return _patch_review_video_log(date, sid, active_review_mids=active_review_mids)
-    except Exception as exc:
-        # Assignment state remains canonical even if one log backend is briefly unavailable.
-        print("[review-video] registration log sync failed:", exc, flush=True)
-        return {}
-
-
-def record_review_video_watch(date: str, sid: str, mid: str) -> bool:
-    """Append a counseling note only for a video registered as a review video today."""
-    mid_key = str(mid or "").strip()
-    if not mid_key:
-        return False
-    try:
-        updates = load(UPD_PATH) or {}
-        day = updates.get(str(date or "").strip()) if isinstance(updates, dict) else {}
-        assignment = _sid_lookup(day if isinstance(day, dict) else {}, sid)
-        if mid_key not in _review_video_mids_for_assignment(assignment):
-            return False
-        _patch_review_video_log(str(date), str(sid), watched_mid=mid_key)
-        return True
-    except Exception as exc:
-        print("[review-video] watch log sync failed:", exc, flush=True)
-        return False
-
-
 def _load_updates_with_auto_assign(
     students=None,
     videos=None,
@@ -2578,6 +2292,127 @@ def _progress_sids_from_query() -> list[str]:
     return out
 
 
+def _notification_progress_snapshot(progress: dict, sid: str):
+    """Build a best-effort, default-off milestone snapshot without changing progress writes."""
+    repository = runtime_repository()
+    if repository is None:
+        return None
+    try:
+        students, videos = load(STU_PATH), load(VID_PATH)
+        student = next(
+            (row for row in students if isinstance(row, dict) and str(row.get("id") or "") == str(sid)),
+            None,
+        ) if isinstance(students, list) else None
+        if not isinstance(student, dict) or not isinstance(videos, list):
+            return None
+        statuses = _build_latest_status_by_sid(progress).get(str(sid), {})
+        summary = build_curriculum_progress(
+            student, videos, statuses,
+            calculated_at=dt.datetime.now(KST).replace(microsecond=0).isoformat(),
+        )
+        percent = summary.get("percent")
+        if not isinstance(percent, int):
+            return None
+        identity = json.dumps(
+            [summary.get("basis"), summary.get("scope"), summary.get("curriculum"), summary.get("subCurriculum")],
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        return repository, key, percent
+    except Exception:
+        return None
+
+
+def _notification_progress_commit(before, after, sid: str) -> int:
+    if before is None or after is None or before[1] != after[1]:
+        return 0
+    try:
+        return enqueue_progress_milestones(
+            after[0], str(sid), after[1], before[2], after[2], now=time.time(),
+        )
+    except Exception:
+        return 0
+
+
+def _is_public_student_request() -> bool:
+    return getattr(g, "student_app_public_request", False) is True
+
+
+def _public_session_sid() -> str | None:
+    if not _is_public_student_request():
+        return None
+    sid = getattr(g, "student_app_active_sid", None)
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _student_request_academy_allowed() -> bool:
+    if not _is_public_student_request():
+        return academy_network_allowed()
+    client_ip = getattr(g, "student_app_client_ip", None)
+    return ip_allowed(client_ip) if isinstance(client_ip, str) else False
+
+
+def _latest_student_watch_payload(watch_all, sid: str) -> dict:
+    """Project the existing /api/watch/latest shape for one session SID."""
+    out: dict[str, dict] = {}
+    for by_date in (watch_all.values() if isinstance(watch_all, dict) else []):
+        if not isinstance(by_date, dict):
+            continue
+        watched = next(
+            (by_date.get(key) for key in _sid_keys(sid) if isinstance(by_date.get(key), dict)),
+            None,
+        )
+        if not isinstance(watched, dict):
+            continue
+        for raw_mid, raw_entry in watched.items():
+            mid = str(raw_mid or "").strip()
+            if not mid:
+                continue
+            normalized = _normalize_watch_entry(raw_entry)
+            if mid not in out or _watch_rank(normalized) > _watch_rank(out[mid]):
+                out[mid] = normalized
+    return {"ok": True, "sid": sid, "date": "", "watch": out}
+
+
+def _strip_public_bootstrap_links(value, restricted_scope: bool = False):
+    """Recursively remove off-site answer and homework/material file authority."""
+    if isinstance(value, list):
+        return [_strip_public_bootstrap_links(item, restricted_scope) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    stripped, _ = strip_answer_link_fields(value)
+    out = {}
+    for raw_key, raw_value in stripped.items():
+        key = str(raw_key)
+        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if "answer" in normalized or "solution" in normalized:
+            continue
+        child_scope = restricted_scope or any(
+            marker in normalized
+            for marker in ("material", "homework", "attachment", "sourcefile", "video")
+        )
+        if child_scope and (
+            normalized in {"url", "link", "path", "src", "source", "fileid"}
+            or normalized.endswith(("url", "link", "path", "fileid"))
+        ):
+            continue
+        out[raw_key] = _strip_public_bootstrap_links(raw_value, child_scope)
+    return out
+
+
+def _finalize_public_bootstrap(payload: dict, sid: str, academy_allowed: bool) -> dict:
+    if not _is_public_student_request():
+        return payload
+    result = deepcopy(payload)
+    result["academyAccessAllowed"] = academy_allowed
+    result["outsideAcademyBlocked"] = not academy_allowed
+    result["networkBlocked"] = not academy_allowed
+    result["testSubmissionBlocked"] = not academy_allowed
+    result["watch"] = _latest_student_watch_payload(load(WATCH_PATH) or {}, sid)
+    return result if academy_allowed else _strip_public_bootstrap_links(result)
+
+
 def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
     out = {}
     days = [(date, data.get(date) if isinstance(data, dict) else {})] if date else (data.items() if isinstance(data, dict) else [])
@@ -2601,7 +2436,14 @@ def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
 # ─────────────────────────────────────────────
 @bp_api_basic.route("/api/students", methods=["GET", "POST"])
 def api_students():
-    return crud(STU_PATH)
+    if request.method == "GET":
+        return jsonify(load(STU_PATH))
+    previous = load(STU_PATH)
+    incoming = request.get_json(force=True)
+    save_atomic(STU_PATH, incoming)
+    affected = student_schedule_changed_sids(previous, incoming)
+    enqueue_current_schedule_changes(affected)
+    return "", 204
 
 
 @bp_api_basic.route("/api/videos", methods=["GET", "POST"])
@@ -2680,6 +2522,7 @@ def api_progress_patch():
     try:
         with _progress_lock():
             current = dict(_load_progress_strict())
+            notification_before = _notification_progress_snapshot(current, sid)
 
             current_day = current.get(date)
             day = dict(current_day) if isinstance(current_day, dict) else {}
@@ -2700,6 +2543,10 @@ def api_progress_patch():
                 current.pop(date, None)
 
             _save_progress_strict(current)
+
+            notification_after = _notification_progress_snapshot(current, sid)
+
+        _notification_progress_commit(notification_before, notification_after, sid)
 
         return jsonify({"ok": True, "progress": merged})
     except TimeoutError as e:
@@ -2754,45 +2601,17 @@ def api_updates_patch():
                 current[date] = {}
                 day = current[date]
 
-            previous_assignment = _sid_lookup(day, sid)
-            previous_review_mids = _review_video_mids_for_assignment(previous_assignment)
-
             if remove:
                 _write_sid_mapping(day, sid, None)
                 assignment = []
             else:
                 assignment = _merge_update_assignment(_sid_lookup(day, sid), incoming)
-                if isinstance(assignment, (dict, list)):
-                    students = load(STU_PATH) or []
-                    student = next(
-                        (
-                            row for row in students
-                            if isinstance(row, dict) and str(row.get("id") or "") == sid
-                        ),
-                        None,
-                    )
-                    if isinstance(student, dict):
-                        assignment = _sanitize_auto_assignment_for_write(
-                            assignment,
-                            student,
-                            sid,
-                            load(VID_PATH) or [],
-                            _load_progress_strict(),
-                            load(WATCH_PATH) or {},
-                        )
                 _write_sid_mapping(day, sid, assignment)
 
             if not day:
                 current.pop(date, None)
 
             save_atomic(UPD_PATH, current)
-
-        if previous_review_mids or (not remove and REVIEW_VIDEO_ASSIGNMENT_KEY in incoming):
-            _sync_review_video_registration_log(
-                date,
-                sid,
-                [] if remove else _review_video_mids_for_assignment(assignment),
-            )
         return jsonify({"ok": True, "assignment": assignment})
     except TimeoutError as e:
         return jsonify({"ok": False, "error": str(e)}), 409
@@ -2879,18 +2698,13 @@ def api_updates_self_study():
             if has_requested_videos:
                 day = fixed.setdefault(date, {})
                 current = _sid_lookup(day, sid)
-                current_videos = _normalize_video_assign_list(current)
-                existing_training_pack_mids = [
-                    mid for mid in _training_pack_video_mids_for_assignment(current)
-                    if mid in current_videos
-                ]
                 existing = (
-                    [mid for mid in current_videos if mid in eligible_review_mids]
+                    [mid for mid in _normalize_video_assign_list(current) if mid in eligible_review_mids]
                     if append_requested_videos
                     else []
                 )
                 selected = []
-                for mid in [*existing, *existing_training_pack_mids, *requested_videos]:
+                for mid in [*existing, *requested_videos]:
                     if mid not in selected:
                         selected.append(mid)
                 assignment = (
@@ -2898,9 +2712,6 @@ def api_updates_self_study():
                     if selected
                     else None
                 )
-                if isinstance(assignment, dict) and existing_training_pack_mids:
-                    assignment[TRAINING_PACK_ASSIGNMENT_KEY] = existing_training_pack_mids
-                    _normalize_assignment_video_metadata(assignment)
                 _write_sid_mapping(day, sid, assignment)
             else:
                 assignment = _sid_lookup(fixed.get(date, {}), sid)
@@ -2911,299 +2722,19 @@ def api_updates_self_study():
         return jsonify({"ok": False, "error": str(e)}), 409
 
 
-@bp_api_basic.post("/api/updates/review")
-def api_updates_review():
-    """Register or cancel student-selected historical review videos."""
-    body = request.get_json(force=True) or {}
-    date = str(body.get("date") or "").strip()
-    sid = str(body.get("sid") or "").strip()
-    action = str(body.get("action") or "register").strip().casefold()
-    is_remove = body.get("remove") is True or action in {"remove", "cancel", "unregister"}
-
-    if not date or not sid or not DATE_RE.match(date):
-        return jsonify({"ok": False, "error": "bad payload"}), 400
-    if _is_ghost_student_sid(sid):
-        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
-    if not isinstance(body.get("videos"), list):
-        return jsonify({"ok": False, "error": "videos must be an array"}), 400
-
-    requested_videos = _normalize_video_assign_list(body.get("videos"))
-    if not requested_videos:
-        return jsonify({"ok": False, "error": "videos must not be empty"}), 400
-
-    students = load(STU_PATH) or []
-    student = next(
-        (stu for stu in students if isinstance(stu, dict) and str(stu.get("id") or "") == sid),
-        None,
-    )
-    if not isinstance(student, dict):
-        abort(404, description="학생을 찾을 수 없습니다.")
-
-    logs = get_log_repository().read_logs(date, sid)
-    log_entry = _log_entry_for_date(logs, date, sid)
-    if isinstance(log_entry, dict) and _log_rules.truthy(log_entry.get("archived")):
-        return jsonify({"ok": False, "error": "student is archived"}), 409
-
-    absences = load_absent()
-    if _student_absent_on_date(absences, date, sid):
-        return jsonify({"ok": False, "error": "student is absent"}), 409
-
-    if not is_remove and not (
-        _student_is_registered_on_date(student, sid, date)
-        or _student_is_self_study_on_date(logs, date, sid, student)
-    ):
-        return jsonify({"ok": False, "error": "student is not active"}), 409
-
-    eligible_review_mids = set()
-    if not is_remove:
-        videos = load(VID_PATH) or []
-        progress = _load_progress_strict()
-        watch = load(WATCH_PATH) or {}
-        eligible_review_mids = _student_eligible_review_video_mids(
-            student,
-            videos,
-            progress,
-            watch,
-            date,
-        )
-
-    try:
-        with _updates_lock():
-            updates = load(UPD_PATH) or {}
-            day = updates.setdefault(date, {})
-            if not isinstance(day, dict):
-                updates[date] = {}
-                day = updates[date]
-
-            current = _sid_lookup(day, sid)
-            existing_videos = _normalize_video_assign_list(current)
-            existing_review_mids = [
-                mid for mid in _review_video_mids_for_assignment(current)
-                if mid in existing_videos
-            ]
-            existing_training_pack_mids = [
-                mid for mid in _training_pack_video_mids_for_assignment(current)
-                if mid in existing_videos
-            ]
-
-            if not is_remove:
-                invalid_requested_videos = [
-                    mid for mid in requested_videos
-                    if mid not in eligible_review_mids and mid not in existing_review_mids
-                ]
-                if invalid_requested_videos:
-                    return jsonify({
-                        "ok": False,
-                        "error": "video is not eligible for review registration",
-                        "invalidVideos": invalid_requested_videos,
-                    }), 409
-
-                next_review_mids = []
-                for mid in [*existing_review_mids, *requested_videos]:
-                    if mid not in next_review_mids:
-                        next_review_mids.append(mid)
-                next_videos = []
-                for mid in [*existing_videos, *requested_videos]:
-                    if mid not in next_videos:
-                        next_videos.append(mid)
-
-                if isinstance(current, dict):
-                    assignment = dict(current)
-                elif current is None:
-                    assignment = {"source": STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE}
-                else:
-                    assignment = {"source": "auto"}
-                assignment["videos"] = next_videos
-                assignment[REVIEW_VIDEO_ASSIGNMENT_KEY] = next_review_mids
-                if existing_training_pack_mids:
-                    assignment[TRAINING_PACK_ASSIGNMENT_KEY] = existing_training_pack_mids
-                _normalize_assignment_video_metadata(assignment)
-            else:
-                remove_set = set(requested_videos) & set(existing_review_mids)
-                next_review_mids = [mid for mid in existing_review_mids if mid not in remove_set]
-                next_videos = [mid for mid in existing_videos if mid not in remove_set]
-                assignment = dict(current) if isinstance(current, dict) else current
-                if isinstance(assignment, dict):
-                    assignment["videos"] = next_videos
-                    if next_review_mids:
-                        assignment[REVIEW_VIDEO_ASSIGNMENT_KEY] = next_review_mids
-                    else:
-                        assignment.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-                    if (
-                        not next_videos
-                        or assignment.get("source") == STUDENT_REVIEW_VIDEO_ASSIGN_SOURCE
-                    ) and not next_review_mids and not _training_pack_video_mids_for_assignment(assignment):
-                        assignment = None
-                    else:
-                        _normalize_assignment_video_metadata(assignment)
-                else:
-                    assignment = current
-
-            if assignment is None or assignment == []:
-                _write_sid_mapping(day, sid, None)
-                assignment = None
-            else:
-                _write_sid_mapping(day, sid, assignment)
-
-            if not day:
-                updates.pop(date, None)
-            save_atomic(UPD_PATH, updates)
-
-        active_review_mids = _review_video_mids_for_assignment(assignment)
-        _sync_review_video_registration_log(date, sid, active_review_mids)
-        return jsonify({
-            "ok": True,
-            "assignment": assignment,
-            "reviewVideos": active_review_mids,
-        })
-    except TimeoutError as e:
-        return jsonify({"ok": False, "error": str(e)}), 409
-
-
-@bp_api_basic.post("/api/updates/training-pack")
-def api_updates_training_pack():
-    """Register or cancel subject-wide training-pack videos for one student/date."""
-    body = request.get_json(force=True) or {}
-    date = str(body.get("date") or "").strip()
-    sid = str(body.get("sid") or "").strip()
-    action = str(body.get("action") or "register").strip().casefold()
-    is_remove = body.get("remove") is True or action in {"remove", "cancel", "unregister"}
-
-    if not date or not sid or not DATE_RE.match(date):
-        return jsonify({"ok": False, "error": "bad payload"}), 400
-    if _is_ghost_student_sid(sid):
-        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
-    if not isinstance(body.get("videos"), list):
-        return jsonify({"ok": False, "error": "videos must be an array"}), 400
-
-    requested_videos = _normalize_video_assign_list(body.get("videos"))
-    if not requested_videos:
-        return jsonify({"ok": False, "error": "videos must not be empty"}), 400
-
-    students = load(STU_PATH) or []
-    student = next(
-        (stu for stu in students if isinstance(stu, dict) and str(stu.get("id") or "") == sid),
-        None,
-    )
-    if not isinstance(student, dict):
-        abort(404, description="학생을 찾을 수 없습니다.")
-
-    logs = get_log_repository().read_logs(date, sid)
-    log_entry = _log_entry_for_date(logs, date, sid)
-    if isinstance(log_entry, dict) and _log_rules.truthy(log_entry.get("archived")):
-        return jsonify({"ok": False, "error": "student is archived"}), 409
-
-    absences = load_absent()
-    if _student_absent_on_date(absences, date, sid):
-        return jsonify({"ok": False, "error": "student is absent"}), 409
-
-    if not is_remove and not (
-        _student_is_registered_on_date(student, sid, date)
-        or _student_is_self_study_on_date(logs, date, sid, student)
-    ):
-        return jsonify({"ok": False, "error": "student is not active"}), 409
-
-    videos = load(VID_PATH) or []
-    catalog = _student_training_pack_videos(student, videos)
-    catalog_mids = {
-        str(video.get("mid") or "").strip()
-        for video in catalog
-        if isinstance(video, dict) and str(video.get("mid") or "").strip()
-    }
-
-    try:
-        with _updates_lock():
-            updates = load(UPD_PATH) or {}
-            day = updates.setdefault(date, {})
-            if not isinstance(day, dict):
-                updates[date] = {}
-                day = updates[date]
-
-            current = _sid_lookup(day, sid)
-            existing_videos = _normalize_video_assign_list(current)
-            existing_training_mids = [
-                mid for mid in existing_videos
-                if mid in catalog_mids
-            ]
-
-            if not is_remove:
-                invalid_requested_videos = [
-                    mid for mid in requested_videos
-                    if mid not in catalog_mids
-                ]
-                if invalid_requested_videos:
-                    return jsonify({
-                        "ok": False,
-                        "error": "video is not eligible for training pack",
-                        "invalidVideos": invalid_requested_videos,
-                    }), 409
-
-                next_training_mids = []
-                for mid in [*existing_training_mids, *requested_videos]:
-                    if mid not in next_training_mids:
-                        next_training_mids.append(mid)
-                next_videos = []
-                for mid in [*existing_videos, *requested_videos]:
-                    if mid not in next_videos:
-                        next_videos.append(mid)
-
-                if isinstance(current, dict):
-                    assignment = dict(current)
-                elif current is None:
-                    assignment = {"source": STUDENT_TRAINING_PACK_ASSIGN_SOURCE}
-                else:
-                    assignment = {"source": "auto"}
-                assignment["videos"] = next_videos
-                assignment[TRAINING_PACK_ASSIGNMENT_KEY] = next_training_mids
-                _normalize_assignment_video_metadata(assignment)
-            else:
-                remove_set = set(requested_videos) & set(existing_training_mids)
-                next_training_mids = [
-                    mid for mid in existing_training_mids if mid not in remove_set
-                ]
-                next_videos = [mid for mid in existing_videos if mid not in remove_set]
-                assignment = dict(current) if isinstance(current, dict) else current
-                if isinstance(assignment, dict):
-                    assignment["videos"] = next_videos
-                    if next_training_mids:
-                        assignment[TRAINING_PACK_ASSIGNMENT_KEY] = next_training_mids
-                    else:
-                        assignment.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
-                    if (
-                        not next_videos
-                        or assignment.get("source") == STUDENT_TRAINING_PACK_ASSIGN_SOURCE
-                    ) and not next_training_mids:
-                        assignment = None
-                    else:
-                        _normalize_assignment_video_metadata(assignment)
-
-            if assignment is None or assignment == []:
-                _write_sid_mapping(day, sid, None)
-                assignment = None
-            else:
-                _write_sid_mapping(day, sid, assignment)
-
-            if not day:
-                updates.pop(date, None)
-            save_atomic(UPD_PATH, updates)
-
-        active_training_mids = _training_pack_video_mids_for_assignment(assignment)
-        return jsonify({
-            "ok": True,
-            "assignment": assignment,
-            "trainingPackVideos": active_training_mids,
-        })
-    except TimeoutError as e:
-        return jsonify({"ok": False, "error": str(e)}), 409
-
-
 @bp_api_basic.get("/api/student/bootstrap")
 def api_student_bootstrap():
-    sid = str(request.args.get("sid") or "").strip()
+    caller_sid = str(request.args.get("sid") or "").strip()
+    session_sid = _public_session_sid()
+    if _is_public_student_request() and session_sid is None:
+        return jsonify({"ok": False, "code": "unauthenticated"}), 401
+    sid = session_sid if session_sid is not None else caller_sid
     date = str(request.args.get("date") or _today_kst_iso()).strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
-    if not DATE_RE.match(date):
+    try:
+        dt.date.fromisoformat(date)
+    except ValueError:
         return jsonify({"ok": False, "error": "bad date"}), 400
 
     if _is_ghost_student_sid(sid):
@@ -3213,7 +2744,7 @@ def api_student_bootstrap():
     student = next((s for s in students if isinstance(s, dict) and str(s.get("id")) == sid), None)
     if not student:
         return jsonify({"ok": False, "error": "student not found"}), 404
-    academy_allowed = academy_network_allowed()
+    academy_allowed = _student_request_academy_allowed()
 
     log_repo = get_log_repository()
     log_entry = log_repo.read_entry(date, sid).entry
@@ -3230,18 +2761,24 @@ def api_student_bootstrap():
     absent_today = _student_absent_on_date(absences, date, sid)
     registered_today = _student_is_registered_on_date(student, sid, date)
 
+    dashboard_enabled = _student_dashboard_enabled()
+    videos_all = None
+    progress_all = None
+    latest_status_by_sid = None
+    if dashboard_enabled:
+        videos_all = load(VID_PATH) or []
+        progress_all = _load_progress_strict()
+        latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+
     if (not registered_today and not self_study_day) or absent_today:
         redirect_sid = _active_student_alias_sid(students, student, sid, date, absences)
-        return nocache_resp({
+        payload = {
             "ok": True,
             "date": date,
             "students": [student],
             "student": student,
             "videos": [],
             "reviewVideos": [],
-            "registeredReviewVideos": [],
-            "trainingPackVideos": [],
-            "registeredTrainingPackVideos": [],
             "updates": {date: {sid: []}},
             "materials": {},
             "assigns": {sid: []},
@@ -3259,17 +2796,31 @@ def api_student_bootstrap():
             "redirectSid": redirect_sid,
             "recoveredSid": redirect_sid,
             "recoveryReason": "active_course_alias" if redirect_sid else "",
-        })
+        }
+        if dashboard_enabled:
+            payload["dashboard"] = _student_dashboard_projection(
+                student=student,
+                sid=sid,
+                date_key=date,
+                videos=videos_all,
+                latest_status_by_sid=latest_status_by_sid,
+                homework_books=[],
+                absences=absences,
+            )
+        return nocache_resp(_finalize_public_bootstrap(payload, sid, academy_allowed))
 
-    videos_all = load(VID_PATH) or []
-    progress_all = _load_progress_strict()
-    latest_status_by_sid = _build_latest_status_by_sid(progress_all)
+    if videos_all is None:
+        videos_all = load(VID_PATH) or []
+    if progress_all is None:
+        progress_all = _load_progress_strict()
+    if latest_status_by_sid is None:
+        latest_status_by_sid = _build_latest_status_by_sid(progress_all)
     course_videos_completed = _course_videos_completed(
         _student_completion_videos(student, videos_all),
         sid,
         latest_status_by_sid,
     )
-    if date == _today_kst_iso():
+    if date == _today_kst_iso() and not _is_public_student_request():
         updates = _load_updates_with_auto_assign(
             students=students,
             videos=videos_all,
@@ -3289,12 +2840,6 @@ def api_student_bootstrap():
         watch_all,
         date,
     )
-    training_pack_catalog = _student_training_pack_videos(student, videos_all)
-    training_pack_catalog_mids = {
-        str(video.get("mid") or "").strip()
-        for video in training_pack_catalog
-        if isinstance(video, dict) and str(video.get("mid") or "").strip()
-    }
     assignment_source = (
         str(assignment.get("source") or "").strip().casefold()
         if isinstance(assignment, dict)
@@ -3304,10 +2849,8 @@ def api_student_bootstrap():
         response_assignment = _filter_self_study_assignment_for_response(
             assignment,
             eligible_mids,
-            training_pack_catalog_mids,
         )
     assigned_videos = _normalize_video_assign_list(response_assignment)
-    registered_review_videos = _review_video_mids_for_assignment(response_assignment)
     assigned_set = set(assigned_videos)
 
     primary_video_mids = _student_primary_video_mids(student, videos_all)
@@ -3324,7 +2867,6 @@ def api_student_bootstrap():
     videos = _academy_restricted_student_videos(videos, academy_allowed)
 
     review_videos = []
-    training_pack_videos = []
     if not absent_today and not archived:
         review_videos = _student_review_video_projection(
             student,
@@ -3335,21 +2877,6 @@ def api_student_bootstrap():
             assigned_videos,
             academy_allowed,
         )
-        training_pack_videos = _student_training_pack_projection(
-            student,
-            videos_all,
-            assigned_videos,
-            academy_allowed,
-        )
-
-    registered_training_pack_videos = [
-        mid for mid in (
-            str(video.get("mid") or "").strip()
-            for video in training_pack_catalog
-            if isinstance(video, dict)
-        )
-        if mid and mid in assigned_set
-    ]
 
     assigns = load(ASN_PATH) or {}
     material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
@@ -3369,16 +2896,13 @@ def api_student_bootstrap():
     assigned_tests = _academy_restricted_assigned_tests(assigned_tests, academy_allowed)
     homework_books = _student_homework_book_names_from_log(log_entry)
 
-    return nocache_resp({
+    payload = {
         "ok": True,
         "date": date,
         "students": [student],
         "student": student,
         "videos": videos,
         "reviewVideos": review_videos,
-        "registeredReviewVideos": registered_review_videos,
-        "trainingPackVideos": training_pack_videos,
-        "registeredTrainingPackVideos": registered_training_pack_videos,
         "updates": {date: {sid: response_assignment or []}},
         "materials": materials,
         "assigns": {sid: material_assignment or []},
@@ -3392,7 +2916,18 @@ def api_student_bootstrap():
         "outsideAcademyBlocked": not academy_allowed,
         "networkBlocked": not academy_allowed,
         "academyOnlyMessage": ACADEMY_ACCESS_MESSAGE,
-    })
+    }
+    if dashboard_enabled:
+        payload["dashboard"] = _student_dashboard_projection(
+            student=student,
+            sid=sid,
+            date_key=date,
+            videos=videos_all,
+            latest_status_by_sid=latest_status_by_sid,
+            homework_books=homework_books,
+            absences=absences,
+        )
+    return nocache_resp(_finalize_public_bootstrap(payload, sid, academy_allowed))
 
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
@@ -3428,6 +2963,7 @@ def api_add_student():
     _apply_able_auto_video_assign_default(data)
     students.append(data)
     save_atomic(STU_PATH, students)
+    enqueue_current_schedule_changes([data["id"]])
     return jsonify({"id": data["id"]})
 
 
@@ -3466,6 +3002,13 @@ def api_extra_attend():
         # create-only initializer may assign this student once, but never
         # re-picks an existing daily snapshot.
         _load_updates_with_auto_assign(date_key=date_key, extra=body_map)
+    affected_sids = {
+        str(sid)
+        for date_key in changed_dates
+        for mapping in (previous_map.get(date_key), body_map.get(date_key))
+        for sid in (mapping.keys() if isinstance(mapping, dict) else [])
+    }
+    enqueue_current_schedule_changes(affected_sids)
     return "", 204
 
 
@@ -3498,6 +3041,11 @@ def api_weekend_slots():
         if not day:
             cur.pop(date, None)
     save_atomic(WEEKEND_SLOTS_PATH, cur)
+    enqueue_current_schedule_changes(
+        str(sid)
+        for mapping in (body.values() if isinstance(body, dict) else [])
+        for sid in (mapping.keys() if isinstance(mapping, dict) else [])
+    )
     for date, mapping in (body.items() if isinstance(body, dict) else []):
         if not isinstance(mapping, dict) or not DATE_RE.match(str(date)):
             continue
@@ -3700,6 +3248,8 @@ def api_update_student_field():
                     students=students,
                 )
                 _load_updates_with_auto_assign(students=students)
+            if re.fullmatch(r"(?:day|visitTime)\d+", str(field)):
+                enqueue_current_schedule_changes([str(sid)])
             return "OK"
     abort(404)
 
