@@ -50,7 +50,7 @@ import {
   renderToday,
   renderDone,
   bindTodayTableEvents,
-} from './today.render.js';
+} from './today.render.js?v=20260814-phase17';
 
 function dateQuery(dateKey) {
   return new URLSearchParams({ date: String(dateKey || '') }).toString();

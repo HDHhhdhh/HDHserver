@@ -57,6 +57,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/extraModal.js",
     ROOT / "static/js/admin/features/logModal.js",
     ROOT / "static/js/admin/features/today.js",
+    ROOT / "static/js/admin/features/todayActionMarkup.js",
     ROOT / "static/js/admin/features/todayDoneSummary.js",
     ROOT / "static/js/admin/features/today.state.js",
     ROOT / "static/js/admin/features/today.render.js",
@@ -79,6 +80,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
+    ROOT / "scripts/verify_admin_today_action_reachability.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
     ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
@@ -699,6 +701,20 @@ print("today order date-scoped mutation checks passed")
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_admin_today_action_reachability_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_today_action_reachability.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin today action reachability contract failed")
 
 
 def run_student_material_access_scope_checks() -> None:
@@ -7953,6 +7969,7 @@ const loadRenderModule = async () => {
     .replace("import { getAdminDate, getRealToday } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-06'; const getRealToday = () => '2026-06-06';")
     .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
     .replace("import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';", "const decorateStudentTestRecordButtons = async () => {};")
+    .replace("import { renderTodayActionButtons, renderTodayDocumentButton } from './todayActionMarkup.js';", "const renderTodayActionButtons = () => ''; const renderTodayDocumentButton = () => '';")
     .replace(/import \{[\s\S]*?\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
 const labelFor = () => '토1';
 const plannedTimeFor = () => '';
@@ -8130,6 +8147,7 @@ def run_unit_checks() -> bool:
         run_hover_tooltip_performance_checks,
         run_export_log_format_checks,
         run_today_completion_checks,
+        run_admin_today_action_reachability_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
@@ -8423,6 +8441,11 @@ def main() -> int:
         help="Run only absence recovery convergence and all-date unarchived done checks.",
     )
     parser.add_argument(
+        "--only-admin-today-actions",
+        action="store_true",
+        help="Run only admin today/done row action reachability and accessibility checks.",
+    )
+    parser.add_argument(
         "--only-student-install-guide",
         action="store_true",
         help="Run only the student-app install-guide boot and interaction flow checks.",
@@ -8587,6 +8610,8 @@ def main() -> int:
         selected_checks.append(run_export_log_format_checks)
     if args.only_today_completion:
         selected_checks.append(run_today_completion_checks)
+    if args.only_admin_today_actions:
+        selected_checks.append(run_admin_today_action_reachability_checks)
     if args.only_student_install_guide:
         selected_checks.append(run_student_mobile_pwa_flow_checks)
     if args.only_student_mobile_deployment:

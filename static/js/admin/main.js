@@ -13,7 +13,7 @@ import { initCalendar } from './features/calendar.js';
 import { initExport } from './features/exportLogs.js?v=20260813-phase12';
 import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js';
-import { loadTodayAndRender } from './features/today.js';
+import { loadTodayAndRender } from './features/today.js?v=20260814-phase17';
 import { initAbsentRecovery } from './features/absentRecovery.js';
 import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';

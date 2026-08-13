@@ -797,6 +797,68 @@ body.admin #doneWrap .done-table .today-actions button {
   vertical-align: middle;
 }
 
+body.admin #todayWrap .today-table .today-actions,
+body.admin #doneWrap .done-table .today-actions {
+  gap: 4px;
+}
+
+body.admin #todayWrap .today-table .today-actions button,
+body.admin #doneWrap .done-table .today-actions button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.admin #todayWrap .today-action-cell,
+body.admin #doneWrap .done-action-cell {
+  padding-right: 4px;
+  padding-left: 4px;
+}
+
+body.admin #doneWrap .done-action-date {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  body.admin #todayWrap .today-action-cell,
+  body.admin #doneWrap .done-action-cell {
+    text-align: left !important;
+  }
+
+  body.admin #todayWrap .today-actions,
+  body.admin #doneWrap .today-actions {
+    display: inline-grid;
+    grid-template-columns: repeat(3, 44px);
+    grid-auto-rows: 44px;
+    justify-content: start;
+    gap: 4px;
+  }
+
+  body.admin #doneWrap .done-action-date {
+    display: block;
+    width: max-content;
+    margin: 0 0 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--brand) 14%, transparent);
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  body.admin #todayWrap .today-actions button,
+  body.admin #doneWrap .today-actions button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 4px;
+  }
+}
+
 body.admin #todayWrap .today-table .chk4,
 body.admin #todayWrap .today-table .today-actions,
 body.admin #doneWrap .done-table .today-actions {
