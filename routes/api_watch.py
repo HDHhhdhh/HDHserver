@@ -12,7 +12,6 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_progress_day_sid,
     merge_watch_entry,
-    has_completed_video_before_date,
     normalize_watch_entry,
     watch_auto_status,
     watch_rank,
@@ -110,6 +109,7 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         raise ValueError("bad status")
 
     from routes.api_basic import (
+        _is_finished_video_progress_status,
         _load_progress_strict,
         _progress_lock,
         _save_progress_strict,
@@ -119,14 +119,6 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
     with _progress_lock():
         current = dict(_load_progress_strict(PRG_PATH))
 
-        if status == "interrupted" and has_completed_video_before_date(
-            current,
-            load(WATCH_PATH),
-            sid_keys=_sid_keys(sid),
-            mid=mid,
-            before_date=date,
-        ):
-            status = "done"
 
         current_day = current.get(date)
         day = dict(current_day) if isinstance(current_day, dict) else {}
@@ -155,17 +147,18 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
 
         _save_progress_strict(current, PRG_PATH)
 
-    try:
-        _reconcile_auto_assignment_after_progress(
-            date,
-            sid,
-            progress=current,
-            watch=load(WATCH_PATH) or {},
-        )
-    except Exception as exc:
-        # Playback progress must not fail because assignment cleanup is
-        # temporarily unavailable.
-        print("[watch] auto-assignment reconcile failed:", exc, flush=True)
+    if _is_finished_video_progress_status(merged.get(mid)):
+        try:
+            _reconcile_auto_assignment_after_progress(
+                date,
+                sid,
+                progress=current,
+                watch=load(WATCH_PATH) or {},
+            )
+        except Exception as exc:
+            # Playback persistence must not fail because its derived
+            # assignment snapshot could not be refreshed.
+            print("[watch] auto-assignment reconcile failed:", exc, flush=True)
 
     return merged
 

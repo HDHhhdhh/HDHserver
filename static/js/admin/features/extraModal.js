@@ -3,20 +3,9 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { setArriveOverride } from './today.state.js';
+import { clearTodayOrder, saveWeekendSlotsPatch, setArriveOverride } from './today.state.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
-
-// ────────────────────────────────────────────
-// (선택) 오늘 순서 캐시 삭제 → 새 보강 추가 시 하단 고정 현상 방지
-async function clearTodayOrder(dateStr) {
-  try {
-    const map = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
-    if (map && map[dateStr]) {
-      delete map[dateStr];
-      await fetch('/api/today_order', { method: 'POST', headers: CT, body: JSON.stringify(map) });
-    }
-  } catch { /* ignore */ }
-}
+import { ensureOk, sendJson } from '../../shared/api.js';
 
 function ensure() {
   if ($('#extraModal')) return;
@@ -319,6 +308,7 @@ export function initExtraModal() {
   // 열기
   btn.addEventListener('click', async () => {
     const today = getAdminDate();
+    exModal.dataset.date = today;
 
     const slotMap = await loadDaySlots();
     const perDay = slotMap[today] || {};
@@ -401,69 +391,102 @@ export function initExtraModal() {
   // 저장
   document.body.addEventListener('click', async (e) => {
     const saveBtn = e.target.closest?.('#extraModal .ex-save');
-    if (!saveBtn) return;
+    if (!saveBtn || saveBtn.disabled) return;
 
-    const today = getAdminDate();
-
-    // 선택 학생
-    const rows = Array.from(document.querySelectorAll('#exZone .row'));
-    const selectedRows = rows.filter(r => r.querySelector('.chk-sid')?.checked);
-    const selectedIds = selectedRows.map(r => String(r.dataset.sid));
-
-    // 1) 보강 명단 저장
-    state.extra[today] = selectedIds;
-    await fetch('/api/extra-attend', { method: 'POST', headers: CT, body: JSON.stringify(state.extra) });
-
-    // 2) ✅ 요일 슬롯 저장(1,2)
-    let slotMap = {};
-    try { slotMap = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { }
-    const perDay = slotMap[today] || {};
-
-    // 해제된 학생 삭제
-    Object.keys(perDay).forEach(sid => { if (!selectedIds.includes(String(sid))) delete perDay[sid]; });
-
-    // 선택된 학생: on 버튼 수집(없으면 [1])
-    for (const row of selectedRows) {
-      const sid = String(row.dataset.sid);
-      const nums = Array.from(row.querySelectorAll('.slot-btn.on'))
-        .map(b => parseInt(b.dataset.n, 10))
-        .filter(n => SLOT_NUMS.includes(n))
-        .sort((a, b) => a - b);
-      perDay[sid] = serializeSlots(mergedSlotsForStudent(sid, today, nums.length ? nums : [1]));
+    const today = String(exModal.dataset.date || '').trim();
+    if (!today) {
+      toast('보강 날짜를 다시 선택해 주세요.');
+      return;
     }
 
-    slotMap[today] = perDay;
-    await fetch('/api/weekend-slots', {
-      method: 'POST', headers: CT, body: JSON.stringify({ [today]: perDay })
-    });
+    const saveButtons = Array.from(exModal.querySelectorAll('.ex-save'));
+    saveButtons.forEach(button => { button.disabled = true; });
 
-    // 보강 슬롯에 맞춰 등원시간도 함께 갱신 (1교시=13:00, 2교시=18:00)
-    const arrivePatch = {};
-    for (const sid of selectedIds) {
-      const raw = perDay[sid];
-      const slots = Array.isArray(raw)
-        ? raw.map(Number).filter(n => SLOT_NUMS.includes(n))
-        : (Number.isInteger(raw) && SLOT_NUMS.includes(raw) ? [raw] : []);
-      const first = slots.length ? Math.min(...slots) : 1;
-      const t = ARRIVE_BY_SLOT[first] || '13:00';
-      arrivePatch[sid] = t;
-      // today.state 캐시도 같이 갱신해서 즉시 화면 반영
-      setArriveOverride(today, sid, t);
+    let extraSaved = false;
+    try {
+      // 선택 학생
+      const rows = Array.from(document.querySelectorAll('#exZone .row'));
+      const selectedRows = rows.filter(r => r.querySelector('.chk-sid')?.checked);
+      const selectedIds = selectedRows.map(r => String(r.dataset.sid));
+      const previousSelectedIds = new Set((state.extra?.[today] || []).map(String));
+
+      // 1) 현재 날짜의 보강 명단만 저장한다.
+      const extraResponse = await sendJson(
+        '/api/extra-attend',
+        { date: today, sids: selectedIds },
+        { method: 'PATCH' },
+      );
+      await ensureOk(extraResponse, '보강 명단 저장');
+      const extraResult = await extraResponse.json().catch(() => ({}));
+      state.extra ||= {};
+      state.extra[today] = Array.isArray(extraResult?.dates?.[today])
+        ? extraResult.dates[today].map(String)
+        : selectedIds;
+      extraSaved = true;
+
+      // 2) 요일 슬롯 저장(1,2)
+      const slotResponse = await fetch('/api/weekend-slots', { cache: 'no-store' });
+      await ensureOk(slotResponse, '보강 슬롯 불러오기');
+      const slotMap = await slotResponse.json();
+      const perDay = { ...(slotMap[today] || {}) };
+      const weekendPatch = {};
+
+      for (const sid of previousSelectedIds) {
+        if (selectedIds.includes(String(sid))) continue;
+        delete perDay[sid];
+        weekendPatch[sid] = [];
+      }
+
+      // 선택된 학생: on 버튼 수집(없으면 [1])
+      for (const row of selectedRows) {
+        const sid = String(row.dataset.sid);
+        const nums = Array.from(row.querySelectorAll('.slot-btn.on'))
+          .map(b => parseInt(b.dataset.n, 10))
+          .filter(n => SLOT_NUMS.includes(n))
+          .sort((a, b) => a - b);
+        const value = serializeSlots(mergedSlotsForStudent(sid, today, nums.length ? nums : [1]));
+        perDay[sid] = value;
+        weekendPatch[sid] = value;
+      }
+
+      await saveWeekendSlotsPatch(today, weekendPatch);
+
+      // 보강 슬롯에 맞춰 등원시간도 함께 갱신 (1교시=13:00, 2교시=18:00)
+      const arrivePatch = {};
+      for (const sid of selectedIds) {
+        const raw = perDay[sid];
+        const slots = Array.isArray(raw)
+          ? raw.map(Number).filter(n => SLOT_NUMS.includes(n))
+          : (Number.isInteger(raw) && SLOT_NUMS.includes(raw) ? [raw] : []);
+        const first = slots.length ? Math.min(...slots) : 1;
+        arrivePatch[sid] = ARRIVE_BY_SLOT[first] || '13:00';
+      }
+      if (Object.keys(arrivePatch).length) {
+        const arriveResponse = await sendJson('/arrive-time', { [today]: arrivePatch });
+        await ensureOk(arriveResponse, '등원시간 저장');
+        Object.entries(arrivePatch).forEach(([sid, time]) => setArriveOverride(today, sid, time));
+      }
+
+      // 3) 오늘 사용자 정렬 캐시 초기화 → 자동 정렬 반영
+      let orderReset = true;
+      try { await clearTodayOrder(today); }
+      catch (orderError) {
+        orderReset = false;
+        console.warn('[extra attendance] today order reset failed:', orderError);
+      }
+
+      toast(orderReset ? '보강 저장' : '보강은 저장됐지만 오늘표 순서 초기화 실패');
+      exModal.style.display = 'none';
+      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+      if (typeof window.recalcCalendarCounts === 'function') await window.recalcCalendarCounts();
+    } catch (error) {
+      console.error('[extra attendance] save failed:', error);
+      alert(extraSaved
+        ? '보강 명단은 저장됐지만 후속 정보 저장에 실패했습니다. 새로고침 후 다시 확인해 주세요.'
+        : '보강 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요.');
+      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    } finally {
+      saveButtons.forEach(button => { button.disabled = false; });
     }
-    if (Object.keys(arrivePatch).length) {
-      await fetch('/arrive-time', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify({ [today]: arrivePatch }),
-      });
-    }
-
-    // 3) 오늘 사용자 정렬 캐시 초기화 → 자동 정렬 반영
-    await clearTodayOrder(today);
-
-    toast('보강 저장');
-    exModal.style.display = 'none';
-    document.dispatchEvent(new CustomEvent('admin:refresh'));
-    if (typeof window.recalcCalendarCounts === 'function') window.recalcCalendarCounts();
   });
 }

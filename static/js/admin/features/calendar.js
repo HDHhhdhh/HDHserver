@@ -3,10 +3,12 @@
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { saveWeekendSlotsPatch } from './today.state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import { getAttendanceLedgerUrl } from './attendanceLedgerLink.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
+import { ensureOk, sendJson } from '../../shared/api.js';
 import {
   buildPendingMakeups,
   buildActiveScheduledMakeupRows,
@@ -724,7 +726,10 @@ export function initCalendar() {
   async function preloadExtraWeekend() {
     try { EXTRA = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch { EXTRA = {}; }
     try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
-    try { CARRYOVER = await fetch('/api/makeup-carryover', { cache: 'no-store' }).then(r => r.json()); } catch { CARRYOVER = {}; }
+    try {
+      const { payload } = await fetchMakeupCarryoverSnapshot();
+      CARRYOVER = payload;
+    } catch { CARRYOVER = {}; }
     try { applyAbsentPayload(await fetch('/api/absent', { cache: 'no-store' }).then(r => r.json())); } catch {}
     state.extra = EXTRA || {};
     window.extra = state.extra;
@@ -823,15 +828,47 @@ export function initCalendar() {
   }
 
   async function postJson(url, payload) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(payload),
+    const response = await sendJson(url, payload);
+    await ensureOk(response, url);
+    const text = await response.text().catch(() => '');
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function fetchMakeupCarryoverSnapshot() {
+    const response = await fetch('/api/makeup-carryover', { cache: 'no-store' });
+    await ensureOk(response, '보강 이월 불러오기');
+    const payload = normalizeCarryoverPayload(await response.json());
+    const revision = String(response.headers.get('X-Makeup-Carryover-Revision') || '').trim();
+    return { payload, revision };
+  }
+
+  async function postMakeupCarryoverSnapshot(payload, revision) {
+    const response = await sendJson('/api/makeup-carryover', payload, {
+      headers: revision ? { 'If-Match': revision } : {},
     });
-    const text = await res.text().catch(() => '');
-    const data = text ? JSON.parse(text) : null;
-    if (!res.ok) throw new Error(`${url} ${res.status}`);
-    return data;
+    if (response.status === 409 || response.status === 428) {
+      const error = new Error('다른 관리자 화면에서 보강 정보가 변경됐습니다. 새로고침 후 다시 시도해 주세요.');
+      error.status = response.status;
+      throw error;
+    }
+    await ensureOk(response, '보강 이월 저장');
+    return await response.json();
+  }
+
+  async function patchExtraAttendDates(extraMap, dateKeys) {
+    const dates = {};
+    Array.from(new Set(dateKeys || [])).forEach(rawDate => {
+      const date = String(rawDate || '').trim();
+      if (!DATE_RE.test(date)) return;
+      dates[date] = Array.isArray(extraMap?.[date])
+        ? Array.from(new Set(extraMap[date].map(sid => String(sid || '').trim()).filter(Boolean)))
+        : [];
+    });
+    if (!Object.keys(dates).length) return { ok: true, dates: {} };
+
+    const response = await sendJson('/api/extra-attend', { dates }, { method: 'PATCH' });
+    await ensureOk(response, '보강 명단 저장');
+    return await response.json();
   }
 
   function getScheduledMakeups(carryover = CARRYOVER) {
@@ -1204,8 +1241,7 @@ export function initCalendar() {
     if (btn) btn.disabled = true;
     try {
       await preloadExtraWeekend();
-      const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-      const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+      const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
       const next = normalizeCarryoverPayload(latest);
       const now = new Date().toISOString();
       const stu = (state.students || []).find(item => String(item?.id || '') === sid) || {};
@@ -1227,13 +1263,7 @@ export function initCalendar() {
         };
       });
 
-      const res = await fetch('/api/makeup-carryover', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify(next),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      const data = await postMakeupCarryoverSnapshot(next, revision);
       CARRYOVER = normalizeCarryoverPayload(data || next);
       cancelManualAbsenceSelection();
       await refreshMakeupPlanner();
@@ -1525,8 +1555,7 @@ export function initCalendar() {
     if (!sid || !absenceDate) return;
 
     if (item.source === 'manual') {
-      const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-      const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+      const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
       const next = normalizeCarryoverPayload(latest);
       const rows = next.manual?.[absenceDate] || {};
       const manualKey = String(item.manualKey || '').trim();
@@ -1539,13 +1568,7 @@ export function initCalendar() {
       if (Object.keys(rows).length) next.manual[absenceDate] = rows;
       else delete next.manual[absenceDate];
 
-      const res = await fetch('/api/makeup-carryover', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify(next),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+      const data = await postMakeupCarryoverSnapshot(next, revision);
       CARRYOVER = normalizeCarryoverPayload(data || next);
       if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
         setMakeupSelection(null);
@@ -1621,8 +1644,7 @@ export function initCalendar() {
     const absenceDate = String(item.absenceDate || '').trim();
     if (!sid || !absenceDate) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     if (item.source === 'manual') {
       const manualKey = String(item.manualKey || '').trim();
@@ -1651,13 +1673,7 @@ export function initCalendar() {
       };
     }
 
-    const res = await fetch('/api/makeup-carryover', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(next),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
 
     CARRYOVER = normalizeCarryoverPayload(data || next);
     if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
@@ -1677,8 +1693,7 @@ export function initCalendar() {
     const manualKey = String(item.manualKey || '').trim();
     if (!sid || !absenceDate || !manualKey) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     next.manual[absenceDate] = next.manual[absenceDate] || {};
     const prev = next.manual[absenceDate][manualKey] || {};
@@ -1694,13 +1709,7 @@ export function initCalendar() {
       course: prev.course || item.course || studentCourseLabel(item.student || {}) || '',
     };
 
-    const res = await fetch('/api/makeup-carryover', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(next),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -1710,8 +1719,7 @@ export function initCalendar() {
     const absenceDate = String(item.absenceDate || '').trim();
     if (!sid || !absenceDate) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const carryKey = makeupCarryoverKey(item);
     const prev = next.by_absence[absenceDate]?.[carryKey] || {};
@@ -1725,13 +1733,7 @@ export function initCalendar() {
       },
     };
 
-    const res = await fetch('/api/makeup-carryover', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(next),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -1835,7 +1837,10 @@ export function initCalendar() {
 
   async function postWeekendPatch(patch) {
     if (!patch || !Object.keys(patch).length) return;
-    await postJson('/api/weekend-slots', patch);
+    for (const [dateStr, mapping] of Object.entries(patch)) {
+      if (!mapping || typeof mapping !== 'object' || !Object.keys(mapping).length) continue;
+      await saveWeekendSlotsPatch(dateStr, mapping);
+    }
   }
 
   function mergeWeekendPatches(...patches) {
@@ -1856,8 +1861,7 @@ export function initCalendar() {
       throw new Error('Invalid makeup schedule');
     }
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const now = new Date().toISOString();
     const originalAbsenceId = item.originalAbsenceId || makeupOriginalAbsenceId(item);
@@ -1907,7 +1911,7 @@ export function initCalendar() {
       };
     }
 
-    const data = await postJson('/api/makeup-carryover', next);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
     return CARRYOVER;
   }
@@ -1918,8 +1922,7 @@ export function initCalendar() {
     const previousSchedule = getScheduledMakeupForItem(item);
     if (!previousSchedule) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const absenceDate = String(item.absenceDate || '').trim();
     const now = new Date().toISOString();
@@ -1950,12 +1953,12 @@ export function initCalendar() {
       };
     }
 
-    const data = await postJson('/api/makeup-carryover', next);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     const nextCarryover = normalizeCarryoverPayload(data || next);
     const nextExtra = clonePlainMap(EXTRA);
     const nextWeekend = clonePlainMap(WEEKEND);
     const weekendPatch = releaseScheduledAttendance(nextExtra, nextWeekend, item, previousSchedule, nextCarryover);
-    await postJson('/api/extra-attend', nextExtra);
+    await patchExtraAttendDates(nextExtra, [previousSchedule.makeupDate]);
     await postWeekendPatch(weekendPatch);
 
     CARRYOVER = nextCarryover;
@@ -1981,8 +1984,7 @@ export function initCalendar() {
     })).filter(item => item.sid);
     if (!date || !rowsToOpen.length) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const dateRows = { ...(next.by_absence[date] || {}) };
     const updatedAt = new Date().toISOString();
@@ -2002,13 +2004,7 @@ export function initCalendar() {
     });
 
     next.by_absence[date] = dateRows;
-    const res = await fetch('/api/makeup-carryover', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(next),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -2016,8 +2012,7 @@ export function initCalendar() {
     const targets = new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean));
     if (!targets.size) return;
 
-    const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-    const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const consumed = new Set();
     let changed = false;
@@ -2046,13 +2041,7 @@ export function initCalendar() {
     }
 
     if (!changed) return;
-    const res = await fetch('/api/makeup-carryover', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(next),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+    const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -2243,7 +2232,7 @@ export function initCalendar() {
         ? releaseScheduledAttendance(nextExtra, nextWeekend, selectedDemand, previousSchedule, nextCarryover)
         : {};
       const mergedWeekendPatch = mergeWeekendPatches(weekendPatch, releasePatch);
-      await postJson('/api/extra-attend', nextExtra);
+      await patchExtraAttendDates(nextExtra, [dateStr, previousSchedule?.makeupDate]);
       await postWeekendPatch(mergedWeekendPatch);
       const storedSlots = parseSlotNumbers(nextWeekend?.[dateStr]?.[sid]);
       await postJson('/arrive-time/patch', {
@@ -3023,12 +3012,17 @@ export function initCalendar() {
     await preloadExtraWeekend(); // 최신화
     const previousExtraSet = new Set((EXTRA[dateStr] || []).map(String));
     const nextSet = new Set(selectedIds);
-    EXTRA[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
+    const nextExtra = clonePlainMap(EXTRA);
+    nextExtra[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
     const newlyAddedExtraIds = selectedIds.filter(sid => !previousExtraSet.has(String(sid)));
 
-    const perDate = WEEKEND[dateStr] || {};
-    for (const sid of Object.keys(perDate)) {
-      if (!nextSet.has(String(sid))) delete perDate[sid];
+    const nextWeekend = clonePlainMap(WEEKEND);
+    const perDate = { ...(nextWeekend[dateStr] || {}) };
+    const weekendPatch = {};
+    for (const sid of previousExtraSet) {
+      if (nextSet.has(String(sid))) continue;
+      delete perDate[sid];
+      weekendPatch[sid] = [];
     }
     for (const li of items) {
       const sid = String(li.dataset.id);
@@ -3038,14 +3032,16 @@ export function initCalendar() {
         .filter(slot => MAKEUP_SLOTS.includes(slot))
         .sort((a, b) => a - b);
       const stu = (state.students || []).find(row => String(row?.id || '') === sid) || {};
-      perDate[sid] = serializeSlots(combinedSlotsForStudent(stu, dateStr, sel.length ? sel : [1]));
+      const value = serializeSlots(combinedSlotsForStudent(stu, dateStr, sel.length ? sel : [1]));
+      perDate[sid] = value;
+      weekendPatch[sid] = value;
     }
-    WEEKEND[dateStr] = perDate;
+    nextWeekend[dateStr] = perDate;
 
     try {
-      // 보강 맵 전체 저장
-      await fetch('/api/extra-attend', { method: 'POST', headers: CT, body: JSON.stringify(EXTRA) });
-      await fetch('/api/weekend-slots', { method: 'POST', headers: CT, body: JSON.stringify({ [dateStr]: perDate }) });
+      // 보강 명단과 학생별 슬롯 패치 저장
+      await patchExtraAttendDates(nextExtra, [dateStr]);
+      await postWeekendPatch({ [dateStr]: weekendPatch });
       const arrivePatch = {};
       for (const sid of selectedIds) {
         const slots = parseSlotNumbers(perDate[sid]);
@@ -3053,12 +3049,13 @@ export function initCalendar() {
         arrivePatch[sid] = MAKEUP_ARRIVE_BY_SLOT[first] || '';
       }
       if (Object.keys(arrivePatch).length) {
-        await fetch('/arrive-time', {
-          method: 'POST',
-          headers: CT,
-          body: JSON.stringify({ [dateStr]: arrivePatch }),
-        });
+        await postJson('/arrive-time', { [dateStr]: arrivePatch });
       }
+
+      EXTRA = nextExtra;
+      WEEKEND = nextWeekend;
+      state.extra = EXTRA;
+      window.extra = state.extra;
       await resolveFirstOpenMakeupDemandsForSids(newlyAddedExtraIds);
       alert('보강 저장 완료');
       selectionModal.style.display = 'none';
@@ -3070,7 +3067,8 @@ export function initCalendar() {
       else await refreshMakeupPlanner();
     } catch (e) {
       console.error(e);
-      alert('요청에 실패했습니다.');
+      await preloadExtraWeekend().catch(() => {});
+      alert(e?.message || '요청에 실패했습니다.');
     }
   });
 

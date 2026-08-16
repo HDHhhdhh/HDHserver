@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 from typing import Any, Dict
 
 from flask import Blueprint, abort, jsonify, request
@@ -12,6 +14,27 @@ from core.storage import load, save_atomic, file_lock
 bp_api_makeup_carryover = Blueprint("api_makeup_carryover", __name__)
 
 MAKEUP_CARRYOVER_PATH = BASE / "makeup_carryover.json"
+
+
+def _makeup_revision(payload: Any) -> str:
+    normalized = _normalize_payload(payload)
+    raw = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _makeup_response(
+    payload: Any,
+    status: int = 200,
+    *,
+    revision_payload: Any | None = None,
+):
+    response = jsonify(payload)
+    response.status_code = status
+    revision = _makeup_revision(payload if revision_payload is None else revision_payload)
+    response.headers["X-Makeup-Carryover-Revision"] = revision
+    response.headers["ETag"] = f'"{revision}"'
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _norm_date(value: Any) -> str:
@@ -187,7 +210,7 @@ def _normalize_payload(raw: Any) -> Dict[str, Any]:
 
 @bp_api_makeup_carryover.get("/api/makeup-carryover")
 def api_makeup_carryover_get():
-    return jsonify(_normalize_payload(load(MAKEUP_CARRYOVER_PATH)))
+    return _makeup_response(_normalize_payload(load(MAKEUP_CARRYOVER_PATH)))
 
 
 @bp_api_makeup_carryover.post("/api/makeup-carryover")
@@ -196,9 +219,23 @@ def api_makeup_carryover_post():
     if not isinstance(payload, dict):
         abort(400, description="Invalid JSON body")
     normalized = _normalize_payload(payload)
+    expected_revision = str(request.headers.get("If-Match") or "").strip().strip('"')
     with file_lock(MAKEUP_CARRYOVER_PATH):
+        previous = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
+        if not expected_revision:
+            return _makeup_response(
+                {"ok": False, "error": "makeup_revision_required"},
+                428,
+                revision_payload=previous,
+            )
+        if expected_revision != _makeup_revision(previous):
+            return _makeup_response(
+                {"ok": False, "error": "makeup_revision_conflict"},
+                409,
+                revision_payload=previous,
+            )
         save_atomic(MAKEUP_CARRYOVER_PATH, normalized)
-    return jsonify(normalized)
+    return _makeup_response(normalized)
 
 
 @bp_api_makeup_carryover.post("/api/makeup-sheet-sync")
@@ -217,4 +254,4 @@ def api_makeup_sheet_sync_post():
         except RuntimeError as exc:
             abort(400, description=str(exc))
         save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
-    return jsonify(result)
+    return _makeup_response(result, revision_payload=result.get("carryover"))

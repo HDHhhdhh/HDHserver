@@ -119,21 +119,31 @@ function weekdayCharForDate(dateKey) {
 
 function scheduledSlotsForDate(stu, dateKey) {
   const override = state.weekendSlots?.[dateKey]?.[String(stu?.id || '')];
+  let slots = [];
   if (override !== undefined && override !== null) {
     const overrideSlots = (Array.isArray(override) ? override : [override])
       .map(value => Number(value))
       .filter(value => Number.isInteger(value) && value >= 1 && value <= 6);
-    if (overrideSlots.length) return Array.from(new Set(overrideSlots)).sort((a, b) => a - b);
+    if (overrideSlots.length) slots = Array.from(new Set(overrideSlots)).sort((a, b) => a - b);
   }
 
-  const weekday = weekdayCharForDate(dateKey);
-  if (!weekday) return [];
+  if (!slots.length) {
+    const weekday = weekdayCharForDate(dateKey);
+    if (!weekday) return [];
 
-  const slotPattern = new RegExp(`${weekday}\\s*([1-6])(?!\\d|:)`, 'g');
-  const slots = studentScheduleValues(stu).flatMap(value =>
-    Array.from(value.matchAll(slotPattern), match => Number(match[1]))
-  );
-  return Array.from(new Set(slots)).sort((a, b) => a - b);
+    const slotPattern = new RegExp(`${weekday}\\s*([1-6])(?!\\d|:)`, 'g');
+    slots = studentScheduleValues(stu).flatMap(value =>
+      Array.from(value.matchAll(slotPattern), match => Number(match[1]))
+    );
+    slots = Array.from(new Set(slots)).sort((a, b) => a - b);
+  }
+
+  const absentRaw = state.absentSlotsByDate?.[dateKey]?.[String(stu?.id || '')];
+  const absentSlots = (Array.isArray(absentRaw) ? absentRaw : [absentRaw])
+    .map(value => Number(value))
+    .filter(value => Number.isInteger(value) && value >= 1 && value <= 6);
+  const absentSet = new Set(absentSlots);
+  return absentSet.size ? slots.filter(slot => !absentSet.has(slot)) : slots;
 }
 
 function hasConsecutiveClassesForDate(stu, dateKey) {
@@ -1265,14 +1275,7 @@ function nonReviewSelectionChanged(selected) {
   return !sameStringSet(selectedNonReview, initialNonReview);
 }
 
-function shouldSkipForLow(student, video) {
-  if (!student || student.level !== '하') return false;
-  const ex = video?.exNum;
-  if (!ex || typeof ex !== 'object') return false;
-  return Number(ex['하']) === 0;
-}
-
-function pickAutoVideos(curVids, blocked, count, student = null) {
+function pickAutoVideos(curVids, blocked, count) {
   const parsedCount = Number(count);
   const maxAssign = Number.isFinite(parsedCount)
     ? Math.max(MIN_AUTO_ASSIGN_COUNT, Math.min(MAX_EFFECTIVE_AUTO_ASSIGN_COUNT, Math.round(parsedCount)))
@@ -1282,7 +1285,6 @@ function pickAutoVideos(curVids, blocked, count, student = null) {
     const mid = String(v?.mid || '').trim();
     if (!mid) continue;
     if (blocked?.[mid]) continue;
-    if (shouldSkipForLow(student, v)) continue;
     picked.push(mid);
     if (picked.length >= maxAssign) break;
   }
@@ -1527,7 +1529,6 @@ async function saveAutoAssignCountForCurrent(count) {
     activeVideoList,
     activeBlockedMids,
     effectiveAutoAssignCountForStudent(stu, today),
-    stu,
   );
   const preservedReviewMids = Array.from(activeRegisteredReviewMids);
   const preservedTrainingPackMids = Array.from(activeRegisteredTrainingPackMids);

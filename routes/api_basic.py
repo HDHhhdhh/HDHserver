@@ -177,27 +177,43 @@ def _normalize_schedule_slots(raw) -> list[int]:
     return sorted(out)
 
 
-def _student_slots_for_date(student: dict, sid: str, date_key: str, weekend_slots=None) -> list[int]:
-    """Return the date-specific class slots, honoring makeup overrides first."""
+def _student_slots_for_date(
+    student: dict,
+    sid: str,
+    date_key: str,
+    weekend_slots=None,
+    absent=None,
+) -> list[int]:
+    """Return the date-specific class slots after slot absences are removed."""
     weekend = weekend_slots if isinstance(weekend_slots, dict) else {}
     day_override = weekend.get(str(date_key or "")) if isinstance(weekend, dict) else None
+    slots: list[int] = []
     if isinstance(day_override, dict):
         override_value = _sid_lookup(day_override, sid)
         override_slots = _normalize_schedule_slots(override_value)
         if override_slots:
-            return override_slots
+            slots = override_slots
 
-    weekday = _weekday_char_for_date(date_key)
-    if not weekday:
-        return []
-    slots = []
-    for key, value in (student or {}).items():
-        if not re.fullmatch(r"day\d+", str(key)):
-            continue
-        text = str(value or "")
-        if text.startswith(weekday):
-            slots.extend(_normalize_schedule_slots(text))
-    return sorted(set(slots))
+    if not slots:
+        weekday = _weekday_char_for_date(date_key)
+        if not weekday:
+            return []
+        for key, value in (student or {}).items():
+            if not re.fullmatch(r"day\d+", str(key)):
+                continue
+            text = str(value or "")
+            if text.startswith(weekday):
+                slots.extend(_normalize_schedule_slots(text))
+
+    absent_map = absent if isinstance(absent, dict) else {}
+    by_slot = absent_map.get("by_slot") if isinstance(absent_map, dict) else None
+    day_absences = by_slot.get(str(date_key or "")) if isinstance(by_slot, dict) else None
+    absent_slots = set(
+        _normalize_schedule_slots(_sid_lookup(day_absences, sid))
+        if isinstance(day_absences, dict)
+        else []
+    )
+    return [slot for slot in sorted(set(slots)) if slot not in absent_slots]
 
 
 def _has_consecutive_slots(slots) -> bool:
@@ -1772,9 +1788,15 @@ def _student_auto_video_assign_count(stu: dict) -> int:
     return _coerce_auto_video_assign_count(stu.get(AUTO_VIDEO_ASSIGN_FIELD), default=default)
 
 
-def _effective_auto_video_assign_count(stu: dict, sid: str, date_key: str, weekend_slots=None) -> int:
+def _effective_auto_video_assign_count(
+    stu: dict,
+    sid: str,
+    date_key: str,
+    weekend_slots=None,
+    absent=None,
+) -> int:
     configured = _student_auto_video_assign_count(stu)
-    slots = _student_slots_for_date(stu, sid, date_key, weekend_slots)
+    slots = _student_slots_for_date(stu, sid, date_key, weekend_slots, absent)
     return configured * 2 if _has_consecutive_slots(slots) else configured
 
 
@@ -2177,7 +2199,6 @@ def _auto_assignment_blocked_mids_for_student(
     blocked = set(
         _build_auto_assignment_blocked_by_sid(progress, watch or {}).get(str(sid), set())
     )
-    blocked.update(_auto_assignment_excluded_mids(student, videos))
     return blocked
 
 
@@ -2251,7 +2272,15 @@ def _active_student_alias_sid(students, student: dict, sid: str, date_key: str, 
     return candidates[0] if len(candidates) == 1 else ""
 
 
-def _append_auto_assignment_videos(current, cur_vids: list[dict], blocked, target_count: int):
+def _append_auto_assignment_videos(
+    current,
+    cur_vids: list[dict],
+    blocked,
+    target_count: int,
+    *,
+    allow_expand: bool = True,
+):
+    """Resize an existing automatic assignment without changing its shape or metadata."""
     legacy_list = isinstance(current, list)
     if legacy_list:
         if not current:
@@ -2262,20 +2291,23 @@ def _append_auto_assignment_videos(current, cur_vids: list[dict], blocked, targe
         return current, False
 
     assigned = _normalize_video_assign_list(current)
-    if len(assigned) >= target_count:
-        return current, False
+    try:
+        target_count = max(0, int(target_count))
+    except (TypeError, ValueError):
+        target_count = len(assigned)
 
     blocked_set = {str(mid or "").strip() for mid in (blocked or set()) if str(mid or "").strip()}
-    seen = set(assigned)
-    next_videos = list(assigned)
-    for video in cur_vids or []:
-        mid = str(video.get("mid") or "").strip() if isinstance(video, dict) else ""
-        if not mid or mid in seen or mid in blocked_set:
-            continue
-        next_videos.append(mid)
-        seen.add(mid)
-        if len(next_videos) >= target_count:
-            break
+    next_videos = list(assigned[:target_count])
+    seen = set(next_videos)
+    if allow_expand:
+        for video in cur_vids or []:
+            if len(next_videos) >= target_count:
+                break
+            mid = str(video.get("mid") or "").strip() if isinstance(video, dict) else ""
+            if not mid or mid in seen or mid in blocked_set:
+                continue
+            next_videos.append(mid)
+            seen.add(mid)
 
     if next_videos == assigned:
         return current, False
@@ -2377,8 +2409,7 @@ def _expand_consecutive_auto_assignment_in_updates(
         logs={} if logs is None else logs,
     ):
         return False
-    if not _has_consecutive_slots(_student_slots_for_date(student, sid, date_key, weekend_slots)):
-        return False
+    # Count reconciliation handles both entering and leaving a consecutive block.
 
     current = _sid_lookup(day, sid)
     if not isinstance(current, (dict, list)) or _is_manual_video_assignment(current):
@@ -2397,17 +2428,17 @@ def _expand_consecutive_auto_assignment_in_updates(
         and str(video.get("subCurriculum") or "").strip() == sub_key
     ]
     cur_vids.sort(key=lambda video: (_chap_num(video), str(video.get("mid") or "")))
-    blocked = _auto_assignment_blocked_mids_for_student(
+    blocked = _build_auto_assignment_blocked_by_sid(progress, watch or {}).get(str(sid), set())
+    target_count = _effective_auto_video_assign_count(
         student,
         sid,
-        cur_vids,
-        progress,
-        watch or {},
+        date_key,
+        weekend_slots,
+        absent,
     )
-    target_count = _effective_auto_video_assign_count(student, sid, date_key, weekend_slots)
-    expanded, changed = _append_auto_assignment_videos(current, cur_vids, blocked, target_count)
+    reconciled, changed = _append_auto_assignment_videos(current, cur_vids, blocked, target_count)
     if changed:
-        _write_sid_mapping(day, sid, expanded)
+        _write_sid_mapping(day, sid, reconciled)
     return changed
 
 
@@ -2464,6 +2495,171 @@ def _reconcile_consecutive_auto_assignment(
         return changed
 
 
+def _advance_existing_auto_assignment(
+    current,
+    cur_vids: list[dict],
+    blocked,
+    target_count: int,
+):
+    """Remove finished automatic videos and fill only their freed slots."""
+    is_legacy_auto = isinstance(current, list)
+    is_named_auto = (
+        isinstance(current, dict)
+        and str(current.get("source") or "").strip().casefold() == "auto"
+        and not _is_manual_video_assignment(current)
+    )
+    if not is_legacy_auto and not is_named_auto:
+        return current, False
+
+    assigned = _normalize_video_assign_list(current)
+    blocked_set = {
+        str(mid or "").strip()
+        for mid in (blocked or set())
+        if str(mid or "").strip()
+    }
+    if not assigned or not (set(assigned) & blocked_set):
+        return current, False
+
+    next_videos = [mid for mid in assigned if mid not in blocked_set][:target_count]
+    seen = set(next_videos)
+    for video in cur_vids or []:
+        if len(next_videos) >= target_count:
+            break
+        mid = str(video.get("mid") or "").strip() if isinstance(video, dict) else ""
+        if not mid or mid in seen or mid in blocked_set:
+            continue
+        next_videos.append(mid)
+        seen.add(mid)
+        if len(next_videos) >= target_count:
+            break
+
+    if not next_videos:
+        return None, True
+    if is_legacy_auto:
+        return next_videos, next_videos != current
+
+    next_assignment = dict(current)
+    next_assignment["videos"] = next_videos
+    return next_assignment, next_assignment != current
+
+
+def _progress_update_has_finished_video(merged: dict, incoming: dict) -> bool:
+    if not isinstance(merged, dict) or not isinstance(incoming, dict):
+        return False
+    return any(
+        not str(mid or "").startswith("__")
+        and str(mid or "") != "tests"
+        and _is_finished_video_progress_status(merged.get(str(mid)))
+        for mid in incoming
+    )
+
+
+def _reconcile_auto_assignment_after_progress(
+    date_key: str,
+    sid: str,
+    progress=None,
+    watch=None,
+) -> bool:
+    """Advance existing automatic snapshots after a finished progress write.
+
+    A progress mutation may update the assignment date and already-created
+    future snapshots. Historical snapshots, explicit manual/self-study
+    assignments, and dates without an existing snapshot remain untouched.
+    """
+    date_key = str(date_key or "").strip()
+    sid = str(sid or "").strip()
+    if not date_key or not sid or not DATE_RE.match(date_key):
+        return False
+
+    students = load(STU_PATH) or []
+    sid_keys = set(_sid_keys(sid))
+    student = next(
+        (
+            row for row in students
+            if isinstance(row, dict)
+            and str(row.get("id") or "").strip() in sid_keys
+        ),
+        None,
+    )
+    videos = (load(VID_PATH) or []) if isinstance(student, dict) else []
+    cur_key = str(student.get("curriculum") or "").strip() if isinstance(student, dict) else ""
+    sub_key = str(student.get("subCurriculum") or "").strip() if isinstance(student, dict) else ""
+    cur_vids = [
+        video for video in videos
+        if isinstance(video, dict)
+        and str(video.get("curriculum") or "").strip() == cur_key
+        and str(video.get("subCurriculum") or "").strip() == sub_key
+    ]
+    cur_vids.sort(key=lambda video: (_chap_num(video), str(video.get("mid") or "")))
+
+    progress = progress if isinstance(progress, dict) else _load_progress_strict()
+    watch = watch if isinstance(watch, dict) else load(WATCH_PATH) or {}
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch)
+    blocked: set[str] = set()
+    for key in sid_keys:
+        blocked.update(blocked_by_sid.get(key) or set())
+    if not blocked:
+        return False
+
+    try:
+        weekend_slots = load(WEEKEND_SLOTS_PATH) or {}
+    except Exception:
+        weekend_slots = {}
+    try:
+        absent = load_absent()
+    except Exception:
+        absent = {}
+
+    with _updates_lock():
+        updates = load(UPD_PATH) or {}
+        changed = False
+
+        for raw_assignment_date in sorted(updates.keys() if isinstance(updates, dict) else []):
+            assignment_date = str(raw_assignment_date or "").strip()
+            if not DATE_RE.match(assignment_date) or assignment_date < date_key:
+                continue
+
+            day = updates.get(raw_assignment_date)
+            if not isinstance(day, dict):
+                continue
+            current = _sid_lookup(day, sid)
+            assigned = _normalize_video_assign_list(current)
+            target_count = (
+                _effective_auto_video_assign_count(
+                    student,
+                    sid,
+                    assignment_date,
+                    weekend_slots,
+                    absent,
+                )
+                if isinstance(student, dict)
+                else len(assigned)
+            )
+            next_assignment, advanced = _advance_existing_auto_assignment(
+                current,
+                cur_vids,
+                blocked,
+                target_count,
+            )
+            next_assignment, resized = _append_auto_assignment_videos(
+                next_assignment,
+                cur_vids,
+                blocked,
+                target_count,
+                allow_expand=False,
+            )
+            if not advanced and not resized:
+                continue
+            _write_sid_mapping(day, sid, next_assignment)
+            changed = True
+            if not day:
+                updates.pop(raw_assignment_date, None)
+
+        if changed:
+            save_atomic(UPD_PATH, updates)
+        return changed
+
+
 def _ensure_today_auto_assign(
     updates,
     students,
@@ -2475,7 +2671,6 @@ def _ensure_today_auto_assign(
     extra=None,
     absent=None,
     weekend_slots=None,
-    existing_only: bool = False,
 ):
     today = date_key or _today_kst_iso()
 
@@ -2493,6 +2688,7 @@ def _ensure_today_auto_assign(
                 valid_mids.add(mid)
 
     latest_status_by_sid = _build_latest_status_by_sid(progress)
+    blocked_by_sid = _build_auto_assignment_blocked_by_sid(progress, watch or {})
     logs = logs if isinstance(logs, dict) else {}
     if extra is None:
         try:
@@ -2510,9 +2706,8 @@ def _ensure_today_auto_assign(
         except Exception:
             weekend_slots = {}
 
-    # Existing assignments are daily snapshots. Keep their order and unknown
-    # metadata, but remove finished automatic videos and fill only the slots
-    # made available by that explicit progress-aware reconciliation.
+    # Existing snapshots keep their order and metadata. Finished videos advance
+    # and schedule/absence count changes resize only automatic assignments.
     changed = False
 
     for stu in students or []:
@@ -2535,31 +2730,11 @@ def _ensure_today_auto_assign(
         cur_vids.sort(key=lambda v: (_chap_num(v), str(v.get("mid") or "")))
 
         cur = _sid_lookup(updates[today], sid)
-        is_today_target = _student_is_today_auto_target(
-            stu,
-            sid,
-            today,
-            extra=extra,
-            absent=absent,
-            logs=logs,
-        )
-        if not is_today_target:
-            can_reconcile_existing = (
-                existing_only
-                and cur is not None
-                and not _is_manual_video_assignment(cur)
-            )
-            if not can_reconcile_existing:
-                continue
+        if not _student_is_today_auto_target(stu, sid, today, extra=extra, absent=absent, logs=logs):
+            continue
 
-        blocked = _auto_assignment_blocked_mids_for_student(
-            stu,
-            sid,
-            cur_vids,
-            progress,
-            watch or {},
-        )
-        max_assign = _effective_auto_video_assign_count(stu, sid, today, weekend_slots)
+        blocked = {str(mid) for mid in (blocked_by_sid.get(sid) or set())}
+        max_assign = _effective_auto_video_assign_count(stu, sid, today, weekend_slots, absent)
 
         self_study = _student_is_self_study_on_date(logs, today, sid, stu)
         completion_videos = _student_completion_videos(stu, videos)
@@ -2595,88 +2770,35 @@ def _ensure_today_auto_assign(
                 _write_sid_mapping(updates[today], sid, next_assignment)
                 changed = True
             continue
+        next_assignment, assignment_changed = _advance_existing_auto_assignment(
+            cur,
+            cur_vids,
+            blocked,
+            max_assign,
+        )
+        if assignment_changed:
+            _write_sid_mapping(updates[today], sid, next_assignment)
+            cur = next_assignment
+            changed = True
 
-        had_existing_assignment = cur is not None
-        reconciled_from_finished = False
-        reconciled_assignment_changed = False
-        if cur is not None and not _is_manual_video_assignment(cur):
-            is_auto_snapshot = isinstance(cur, list) or (
-                isinstance(cur, dict)
-                and str(cur.get("source") or "").strip().casefold() == "auto"
-            )
-            assigned_before_reconcile = set(_normalize_video_assign_list(cur))
-            has_blocked_assigned = bool(assigned_before_reconcile & blocked)
-            if (
-                is_auto_snapshot
-                and (not isinstance(cur, list) or cur)
-                and has_blocked_assigned
-            ):
-                reconciled = _sanitize_auto_assignment_for_write(
-                    cur,
-                    stu,
-                    sid,
-                    videos or [],
-                    progress,
-                    watch or {},
-                )
-                if isinstance(reconciled, list) and assigned_before_reconcile and not reconciled:
-                    # Legacy list snapshots have no metadata container to
-                    # preserve. Treat an all-finished list like an empty
-                    # automatic snapshot so the next eligible videos can be
-                    # selected immediately.
-                    reconciled_from_finished = True
-                    reconciled = None
-                if reconciled is None:
-                    reconciled_from_finished = True
-                    if isinstance(cur, dict):
-                        # Preserve assignment metadata while allowing the
-                        # normal candidate picker to replace blocked videos.
-                        reconciled = dict(cur)
-                        reconciled["videos"] = []
-                        reconciled.pop(REVIEW_VIDEO_ASSIGNMENT_KEY, None)
-                        reconciled.pop(TRAINING_PACK_ASSIGNMENT_KEY, None)
-                        reconciled.pop(STUDENT_TRAINING_PACK_ASSIGNMENT_KEY, None)
-                if reconciled != cur:
-                    _write_sid_mapping(updates[today], sid, reconciled)
-                    cur = reconciled
-                    changed = True
-                    reconciled_assignment_changed = True
+        resized_assignment, resized = _append_auto_assignment_videos(
+            cur,
+            cur_vids,
+            blocked,
+            max_assign,
+            allow_expand=False,
+        )
+        if resized:
+            _write_sid_mapping(updates[today], sid, resized_assignment)
+            cur = resized_assignment
+            changed = True
 
         completion_videos = cur_vids or completion_videos
         if _course_videos_completed(completion_videos, sid, latest_status_by_sid):
-            # Completion blocks new work after finished videos are removed.
-            if reconciled_from_finished and cur is not None and not _normalize_video_assign_list(cur):
-                _write_sid_mapping(updates[today], sid, None)
-                changed = True
+            # Completion blocks new work after stale automatic videos are removed.
             continue
 
         if cur is not None:
-            is_auto_snapshot = isinstance(cur, list) or (
-                isinstance(cur, dict)
-                and str(cur.get("source") or "").strip().casefold() == "auto"
-            )
-            if (
-                is_auto_snapshot
-                and (not isinstance(cur, list) or cur)
-                and (reconciled_from_finished or reconciled_assignment_changed)
-            ):
-                expanded, expanded_changed = _append_auto_assignment_videos(
-                    cur,
-                    cur_vids,
-                    blocked,
-                    max_assign,
-                )
-                if expanded_changed:
-                    _write_sid_mapping(updates[today], sid, expanded)
-                    cur = expanded
-                    changed = True
-            if reconciled_from_finished and cur is not None and not _normalize_video_assign_list(cur):
-                _write_sid_mapping(updates[today], sid, None)
-                cur = None
-                changed = True
-            continue
-
-        if existing_only and not had_existing_assignment:
             continue
 
         if auto_candidates:
@@ -2685,76 +2807,6 @@ def _ensure_today_auto_assign(
             changed = True
 
     return updates
-
-
-def _reconcile_auto_assignment_after_progress(
-    date_key: str,
-    sid: str,
-    progress=None,
-    watch=None,
-) -> bool:
-    """Reconcile one existing automatic snapshot after progress changes.
-
-    Progress writes are explicit mutation events, so they may remove finished
-    videos from an existing automatic assignment. The existing-only flag keeps
-    this hook from creating a brand-new assignment for a date that had none.
-    """
-    date_key = str(date_key or "").strip()
-    sid = str(sid or "").strip()
-    if not date_key or not sid or not DATE_RE.match(date_key):
-        return False
-
-    students = load(STU_PATH) or []
-    student = next(
-        (
-            row for row in students
-            if isinstance(row, dict) and str(row.get("id") or "").strip() == sid
-        ),
-        None,
-    )
-    if not isinstance(student, dict):
-        return False
-
-    videos = load(VID_PATH) or []
-    progress = progress if isinstance(progress, dict) else _load_progress_strict()
-    watch = watch if isinstance(watch, dict) else load(WATCH_PATH) or {}
-    try:
-        logs = get_log_repository().read_logs(date_key)
-    except Exception:
-        logs = {}
-    try:
-        extra = load(EXTRA_PATH) or {}
-    except Exception:
-        extra = {}
-    try:
-        absent = load_absent()
-    except Exception:
-        absent = {}
-    try:
-        weekend_slots = load(WEEKEND_SLOTS_PATH) or {}
-    except Exception:
-        weekend_slots = {}
-
-    with _updates_lock():
-        updates = load(UPD_PATH) or {}
-        before = _json_stable(updates)
-        fixed = _ensure_today_auto_assign(
-            updates,
-            [student],
-            videos,
-            progress,
-            date_key=date_key,
-            watch=watch,
-            logs=logs,
-            extra=extra,
-            absent=absent,
-            weekend_slots=weekend_slots,
-            existing_only=True,
-        )
-        changed = _json_stable(fixed) != before
-        if changed:
-            save_atomic(UPD_PATH, fixed)
-        return changed
 
 
 def _json_stable(obj) -> str:
@@ -3070,17 +3122,18 @@ def api_progress_patch():
 
             _save_progress_strict(current)
 
-        try:
-            _reconcile_auto_assignment_after_progress(
-                date,
-                sid,
-                progress=current,
-                watch=load(WATCH_PATH) or {},
-            )
-        except Exception as exc:
-            # A progress save must remain successful even if assignment
-            # reconciliation is temporarily unavailable.
-            print("[progress] auto-assignment reconcile failed:", exc, flush=True)
+        if _progress_update_has_finished_video(merged, prog):
+            try:
+                _reconcile_auto_assignment_after_progress(
+                    date,
+                    sid,
+                    progress=current,
+                    watch=load(WATCH_PATH) or {},
+                )
+            except Exception as exc:
+                # Progress persistence remains authoritative even if the
+                # derived assignment snapshot cannot be refreshed immediately.
+                print("[progress] auto-assignment reconcile failed:", exc, flush=True)
 
         return jsonify({"ok": True, "progress": merged})
     except TimeoutError as e:
@@ -3917,32 +3970,85 @@ def api_feedback():
     return "", 204
 
 
-@bp_api_basic.route("/api/extra-attend", methods=["GET", "POST"])
+def _normalize_extra_attend_patch(payload) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid JSON body")
+
+    if "dates" in payload:
+        raw_dates = payload.get("dates")
+        if not isinstance(raw_dates, dict):
+            raise ValueError("dates must be an object")
+    else:
+        raw_dates = {payload.get("date"): payload.get("sids")}
+
+    normalized: dict[str, list[str]] = {}
+    for raw_date, raw_sids in raw_dates.items():
+        date_key = str(raw_date or "").strip()
+        try:
+            valid_date = bool(DATE_RE.fullmatch(date_key)) and dt.date.fromisoformat(date_key).isoformat() == date_key
+        except ValueError:
+            valid_date = False
+        if not valid_date:
+            raise ValueError("invalid date")
+        if not isinstance(raw_sids, list):
+            raise ValueError("sids must be a list")
+
+        sids: list[str] = []
+        seen: set[str] = set()
+        for raw_sid in raw_sids:
+            if isinstance(raw_sid, (dict, list)):
+                raise ValueError("invalid sid")
+            sid = str(raw_sid or "").strip()
+            if not sid or sid in seen:
+                continue
+            if _is_ghost_student_sid(sid):
+                raise PermissionError(GHOST_STUDENT_WRITE_ERROR)
+            seen.add(sid)
+            sids.append(sid)
+        normalized[date_key] = sids
+
+    if not normalized:
+        raise ValueError("date patch is required")
+    return normalized
+
+
+@bp_api_basic.route("/api/extra-attend", methods=["GET", "PATCH"])
 def api_extra_attend():
     if request.method == "GET":
         return jsonify(load(EXTRA_PATH))
 
-    body = request.get_json(force=True) or {}
-    if mapping_contains_ghost_student_sid(body):
-        return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
-    body_map = body if isinstance(body, dict) else {}
+    try:
+        date_patch = _normalize_extra_attend_patch(request.get_json(silent=True))
+    except PermissionError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    changed_dates: set[str] = set()
     with file_lock(EXTRA_PATH):
         previous = load(EXTRA_PATH) or {}
         previous_map = previous if isinstance(previous, dict) else {}
-        save_atomic(EXTRA_PATH, body_map)
+        next_map = dict(previous_map)
+        for date_key, sids in date_patch.items():
+            previous_sids = previous_map.get(date_key)
+            if _json_stable(previous_sids or []) == _json_stable(sids):
+                continue
+            changed_dates.add(date_key)
+            if sids:
+                next_map[date_key] = sids
+            else:
+                next_map.pop(date_key, None)
+        if changed_dates:
+            save_atomic(EXTRA_PATH, next_map)
 
-    changed_dates = {
-        str(date_key)
-        for date_key in set(previous_map.keys()) | set(body_map.keys())
-        if DATE_RE.match(str(date_key))
-        and _json_stable(previous_map.get(date_key)) != _json_stable(body_map.get(date_key))
-    }
     for date_key in sorted(changed_dates):
-        # A makeup registration is an explicit Today-membership event. The
-        # create-only initializer may assign this student once, but never
-        # re-picks an existing daily snapshot.
-        _load_updates_with_auto_assign(date_key=date_key, extra=body_map)
-    return "", 204
+        # Makeup registration creates membership only for the patched date.
+        _load_updates_with_auto_assign(date_key=date_key, extra=next_map)
+    return jsonify({
+        "ok": True,
+        "dates": {date_key: date_patch[date_key] for date_key in date_patch},
+        "changedDates": sorted(changed_dates),
+    })
 
 
 @bp_api_basic.route("/api/weekend-slots", methods=["GET", "POST"])

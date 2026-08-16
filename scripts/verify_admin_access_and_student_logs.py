@@ -77,22 +77,15 @@ def run_admin_basic_auth_checks() -> None:
     for path in ("/admin.html", "/ADMIN.HTML", "/admin.html.", "/students", "/video-manage.html"):
         check(request_page(path).status_code == 401, f"admin page alias must not bypass authentication: {path}")
     check(request_page("/demo/rh3123").status_code == 200, "admin demo route must remain public")
-    check(
-        request_page("/admin", remote="203.0.113.8").status_code == 401,
-        "external administrator requests without credentials must be challenged",
-    )
-    check(
-        request_page("/admin", "Basic Zm9vOmJhcg==", "203.0.113.8").status_code == 401,
-        "external administrator requests with bad credentials must fail",
-    )
-    check(
-        request_page("/admin", authorization, "203.0.113.8").status_code == 200,
-        "valid administrator credentials must open the page outside the academy network",
-    )
+    for header in (None, "Basic Zm9vOmJhcg==", authorization):
+        check(
+            request_page("/admin", header, "203.0.113.8").status_code == 403,
+            "administrator pages must remain unavailable outside the academy network",
+        )
     for path in ("/students", "/tests", "/video-manage", "/school-cal", "/file-manage"):
         check(
-            request_page(path, authorization, "203.0.113.8").status_code == 200,
-            f"valid external administrator credentials must open the page family: {path}",
+            request_page(path, authorization, "203.0.113.8").status_code == 403,
+            f"external administrator credentials must not bypass the academy-network boundary: {path}",
         )
 
 

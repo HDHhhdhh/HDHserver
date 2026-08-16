@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js';
+import { createDemoFetch } from './fetch.js?v=20260816-phase5';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
 import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { installDemoTutorial } from './tutorial.js';
@@ -115,6 +115,30 @@ function onReady(fn) {
   }
 }
 
+function canonicalDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function demoRevision(value) {
+  const text = JSON.stringify(value || {});
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function requestHeader(headers, name) {
+  if (headers?.get) return String(headers.get(name) || '');
+  const target = String(name || '').toLowerCase();
+  const found = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === target);
+  return String(found?.[1] || '');
+}
+
 function installFetchGuard(demo) {
   if (demo.fetchGuardInstalled) return;
 
@@ -171,7 +195,7 @@ function normalizeFetchRequest(input, init = {}) {
     const rawUrl = requestLike ? requestLike.url : input;
     const url = new URL(rawUrl, window.location.origin);
     const method = String(init.method || requestLike?.method || 'GET').toUpperCase();
-    return { method, url };
+    return { method, url, headers: init.headers || requestLike?.headers };
   } catch {
     return null;
   }
@@ -198,6 +222,62 @@ async function handleDemoApiRequest(request, input, init, demo) {
     });
   }
 
+  if (method === 'PATCH' && path === '/api/extra-attend') {
+    const body = await readJsonBody(input, init);
+    const rawDates = body?.dates && typeof body.dates === 'object'
+      ? body.dates
+      : { [body?.date]: body?.sids };
+    const dates = {};
+    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
+      const date = canonicalDate(rawDate);
+      if (!date || !Array.isArray(rawSids)) {
+        return demoJson({ ok: false, error: 'invalid date or sids' }, {
+          status: 400,
+          handler: 'bootstrap-fallback',
+        });
+      }
+      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
+    }
+    const store = loadDemoStore();
+    store.extraAttend = store.extraAttend && typeof store.extraAttend === 'object' ? store.extraAttend : {};
+    Object.entries(dates).forEach(([date, sids]) => {
+      if (sids.length) store.extraAttend[date] = sids;
+      else delete store.extraAttend[date];
+    });
+    saveDemoStore(store);
+    return demoJson({ ok: true, dates, changedDates: Object.keys(dates) }, {
+      handler: 'bootstrap-fallback',
+    });
+  }
+
+  if (method === 'POST' && path === '/api/makeup-carryover') {
+    const body = await readJsonBody(input, init);
+    const store = loadDemoStore();
+    const current = cloneDemoValue(store.makeupCarryover || {});
+    const currentRevision = demoRevision(current);
+    const expectedRevision = requestHeader(request.headers, 'If-Match').trim().replace(/^"|"$/g, '');
+    if (!expectedRevision || expectedRevision !== currentRevision) {
+      return demoJson({
+        ok: false,
+        error: expectedRevision ? 'makeup_revision_conflict' : 'makeup_revision_required',
+      }, {
+        status: expectedRevision ? 409 : 428,
+        handler: 'bootstrap-fallback',
+        headers: { 'X-Makeup-Carryover-Revision': currentRevision },
+      });
+    }
+    store.makeupCarryover = body && typeof body === 'object'
+      ? cloneDemoValue(body)
+      : {};
+    saveDemoStore(store);
+    return demoJson(cloneDemoValue(store.makeupCarryover), {
+      handler: 'bootstrap-fallback',
+      headers: {
+        'X-Makeup-Carryover-Revision': demoRevision(store.makeupCarryover),
+      },
+    });
+  }
+
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
     return demoJson(mutation, { handler: 'bootstrap-fallback' });
@@ -205,10 +285,15 @@ async function handleDemoApiRequest(request, input, init, demo) {
 
   const store = loadDemoStore();
   const payload = fallbackPayloadForGet(path, url.searchParams, store);
-  return demoJson(payload, { handler: 'bootstrap-fallback' });
+  return demoJson(payload, {
+    handler: 'bootstrap-fallback',
+    headers: path === '/api/makeup-carryover'
+      ? { 'X-Makeup-Carryover-Revision': demoRevision(payload) }
+      : {},
+  });
 }
 
-function demoJson(payload, { status = 200, handler = 'bootstrap' } = {}) {
+function demoJson(payload, { status = 200, handler = 'bootstrap', headers = {} } = {}) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
@@ -216,6 +301,7 @@ function demoJson(payload, { status = 200, handler = 'bootstrap' } = {}) {
       'Cache-Control': 'no-store',
       'X-Admin-Demo': '1',
       'X-Admin-Demo-Handler': handler,
+      ...headers,
     },
   });
 }

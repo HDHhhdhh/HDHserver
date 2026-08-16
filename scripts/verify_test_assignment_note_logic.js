@@ -8,7 +8,7 @@ const sourcePath = process.env.TEST_MODAL_SOURCE
   : path.join(root, 'static/js/admin/features/testModal.js');
 
 let source = fs.readFileSync(sourcePath, 'utf8');
-source = source.replace(/import[\s\S]*?from '\.\.\/core\/adminDate\.js';\s*/m, '');
+source = source.replace(/^import [^\r\n]+;\r?\n/gm, '');
 source = source.replace(/\bexport\s+/g, '');
 source += `
 function __setVerifierState(next) {

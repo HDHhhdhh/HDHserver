@@ -254,6 +254,9 @@ export async function setLogFlagRemote(dateKey, sid, field, checked) {
 // weekend-slots
 // ─────────────────────────────────────────────
 export let WEEKEND_SLOTS = {}; // { "YYYY-MM-DD": { sid: [1,2] | 1 } }
+let _weekendSlotsRevision = 0;
+let _weekendSlotsPendingWrites = 0;
+let _weekendSlotsWriteTail = Promise.resolve();
 
 function isWeekendDate(dateStr) {
   const w = yoilOf(dateStr);
@@ -275,13 +278,17 @@ function publishWeekendSlots() {
 }
 
 export async function loadWeekendSlots() {
+  const revision = _weekendSlotsRevision;
   try {
-    WEEKEND_SLOTS = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json());
-    if (!WEEKEND_SLOTS || typeof WEEKEND_SLOTS !== 'object') WEEKEND_SLOTS = {};
-  } catch {
-    WEEKEND_SLOTS = {};
-  }
-  publishWeekendSlots();
+    const response = await fetch('/api/weekend-slots', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`/api/weekend-slots load failed: ${response.status}`);
+    let next = await response.json();
+    if (!next || typeof next !== 'object' || Array.isArray(next)) next = {};
+    if (revision !== _weekendSlotsRevision || _weekendSlotsPendingWrites > 0) return WEEKEND_SLOTS;
+    WEEKEND_SLOTS = next;
+    publishWeekendSlots();
+  } catch {}
+  return WEEKEND_SLOTS;
 }
 
 export function parseSlotsFromText(txt, dateStr = '') {
@@ -302,6 +309,61 @@ function normalizeSlotValue(raw, dateStr = '') {
   const parsed = parseInt(String(raw ?? '').trim(), 10);
   if (Number.isInteger(parsed) && isAllowedSlotNumber(parsed, dateStr)) return [parsed];
   return [];
+}
+
+function applyWeekendSlotsPatch(dateStr, mapping) {
+  const next = { ...(WEEKEND_SLOTS || {}) };
+  const day = { ...(next[dateStr] || {}) };
+  Object.entries(mapping || {}).forEach(([sid, raw]) => {
+    const slots = normalizeSlotValue(raw, dateStr);
+    if (slots.length) day[String(sid)] = slots;
+    else delete day[String(sid)];
+  });
+  if (Object.keys(day).length) next[dateStr] = day;
+  else delete next[dateStr];
+  WEEKEND_SLOTS = next;
+  publishWeekendSlots();
+}
+
+export function saveWeekendSlotsPatch(dateKey, mapping) {
+  const dateStr = String(dateKey || '').trim();
+  if (!dateStr || !mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+    return Promise.reject(new Error('invalid weekend slots patch'));
+  }
+  const patch = {};
+  Object.entries(mapping).forEach(([sid, raw]) => {
+    const sidKey = String(sid || '').trim();
+    if (!sidKey) return;
+    const slots = normalizeSlotValue(raw, dateStr);
+    patch[sidKey] = slots.length ? slots : [];
+  });
+  if (!Object.keys(patch).length) return Promise.resolve({ saved: false });
+
+  const run = _weekendSlotsWriteTail.catch(() => {}).then(async () => {
+    _weekendSlotsPendingWrites += 1;
+    _weekendSlotsRevision += 1;
+    try {
+      const response = await fetch('/api/weekend-slots', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ [dateStr]: patch }),
+      });
+      if (!response.ok) {
+        let msg = '';
+        try { msg = await response.text(); } catch {}
+        throw new Error(`/api/weekend-slots save failed: ${response.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
+      }
+      _weekendSlotsRevision += 1;
+      applyWeekendSlotsPatch(dateStr, patch);
+      return { saved: true };
+    } finally {
+      _weekendSlotsPendingWrites -= 1;
+    }
+  });
+  _weekendSlotsWriteTail = run;
+  return run.finally(() => {
+    if (_weekendSlotsWriteTail === run) _weekendSlotsWriteTail = Promise.resolve();
+  });
 }
 
 function regularSlotsForStudent(dateStr, sid) {
@@ -525,47 +587,24 @@ export async function saveOrder(dateKey, newOrderIds) {
   _orderMap = { ...(_orderMap || {}), [dateKey]: order };
 }
 export async function clearTodayOrder(dateKey) {
-  try {
-    await patchTodayOrder({ date: dateKey, remove: true });
-    if (_orderMap) delete _orderMap[dateKey];
-  } catch {}
+  await patchTodayOrder({ date: dateKey, remove: true });
+  if (_orderMap) delete _orderMap[dateKey];
 }
 
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
   const dateStr = dateKey || getAdminDate();
-
-  const latestRes = await fetch('/api/weekend-slots', { cache: 'no-store' });
-  if (!latestRes.ok) {
-    throw new Error(`/api/weekend-slots load failed: ${latestRes.status}`);
-  }
-  let weekend = {};
-  try { weekend = await latestRes.json(); } catch (e) {
-    throw new Error(`/api/weekend-slots bad JSON: ${e?.message || e}`);
-  }
-  if (!weekend || typeof weekend !== 'object') weekend = {};
-
-  const perDay = (weekend[dateStr] && typeof weekend[dateStr] === 'object')
-    ? { ...weekend[dateStr] }
-    : {};
   const slots = parseSlotsFromText(labelText, dateStr);
+  await saveWeekendSlotsPatch(dateStr, { [String(sid)]: slots });
 
-  if (slots.length) perDay[String(sid)] = slots;
-  else delete perDay[String(sid)];
-
-  const saveRes = await fetch('/api/weekend-slots', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify({ [dateStr]: perDay }),
-  });
-  if (!saveRes.ok) {
-    let msg = '';
-    try { msg = await saveRes.text(); } catch {}
-    throw new Error(`/api/weekend-slots save failed: ${saveRes.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
+  let orderReset = true;
+  try {
+    await clearTodayOrder(dateStr);
+  } catch (error) {
+    orderReset = false;
+    console.warn('[weekend slots] today order reset failed:', error);
   }
-
-  await clearTodayOrder(dateStr);
-  await loadWeekendSlots();
-  await loadOrderMap();
+  await loadOrderMap({ force: true });
+  return { saved: true, orderReset };
 }
 
 // ─────────────────────────────────────────────

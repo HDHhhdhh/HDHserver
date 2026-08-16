@@ -25,6 +25,30 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function canonicalDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function demoRevision(value) {
+  const text = JSON.stringify(value || {});
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function requestHeader(headers, name) {
+  if (headers?.get) return String(headers.get(name) || '');
+  const target = String(name || '').toLowerCase();
+  const found = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === target);
+  return String(found?.[1] || '');
+}
+
 function stripTrailingSlash(pathname) {
   const value = String(pathname || '/');
   return value.length > 1 ? value.replace(/\/+$/, '') : value;
@@ -611,6 +635,23 @@ function mergeWholeMap(store, key, body) {
   return clone(store[key]);
 }
 
+function mergeWeekendSlotsPatch(store, body) {
+  store.weekendSlots = store.weekendSlots && typeof store.weekendSlots === 'object'
+    ? store.weekendSlots
+    : {};
+  Object.entries(body && typeof body === 'object' ? body : {}).forEach(([date, mapping]) => {
+    if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return;
+    const day = { ...(store.weekendSlots[date] || {}) };
+    Object.entries(mapping).forEach(([sid, value]) => {
+      if (value == null || value === false || (Array.isArray(value) && value.length === 0)) delete day[String(sid)];
+      else day[String(sid)] = clone(value);
+    });
+    if (Object.keys(day).length) store.weekendSlots[date] = day;
+    else delete store.weekendSlots[date];
+  });
+  return clone(store.weekendSlots);
+}
+
 function mergeAbsent(store, body) {
   store.absent = store.absent && typeof store.absent === 'object'
     ? store.absent
@@ -830,7 +871,12 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/attend') return attendResponse(root, store, url);
   if (path === '/api/weekend-slots') return responseJson(root, clone(store.weekendSlots || {}));
   if (path === '/api/today_order') return responseJson(root, clone(store.todayOrder || {}));
-  if (path === '/api/makeup-carryover') return responseJson(root, clone(store.makeupCarryover || {}));
+  if (path === '/api/makeup-carryover') {
+    const payload = clone(store.makeupCarryover || {});
+    return responseJson(root, payload, 200, {
+      'X-Makeup-Carryover-Revision': demoRevision(payload),
+    });
+  }
   if (path === '/api/school-calendar') return responseJson(root, clone(store.schoolCalendar || {}));
   if (path === '/api/tests-config') return responseJson(root, testsFlatConfig(store));
   if (path === '/api/tests') return responseJson(root, clone(store.tests || {}));
@@ -998,24 +1044,30 @@ async function handleWrite(root, ctx, store) {
     return ok(root, { ok: true, arriveTime: clone(store.arriveTime || {}) });
   }
 
-  if (method === 'POST' && (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all')) {
-    if (body?.date && body?.sid) {
-      const date = String(body.date);
-      const sid = String(body.sid);
-      const rows = ensureArrayDateMap(store, 'extraAttend', date);
-      const set = new Set(rows.map(String));
-      if (body.value === false || body.remove === true) set.delete(sid);
-      else set.add(sid);
-      store.extraAttend[date] = Array.from(set);
-    } else {
-      store.extraAttend = body && typeof body === 'object' ? clone(body) : {};
+  if (method === 'PATCH' && (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all')) {
+    const rawDates = body?.dates && typeof body.dates === 'object'
+      ? body.dates
+      : { [body?.date]: body?.sids };
+    const dates = {};
+    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
+      const date = canonicalDate(rawDate);
+      if (!date || !Array.isArray(rawSids)) return badRequest(root, 'invalid date or sids');
+      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
     }
-    saveDemoStore(store);
-    return ok(root, { ok: true, extraAttend: clone(store.extraAttend || {}) });
+    if (!Object.keys(dates).length) return badRequest(root, 'date patch is required');
+
+    const latest = loadDemoStore();
+    latest.extraAttend = latest.extraAttend && typeof latest.extraAttend === 'object' ? latest.extraAttend : {};
+    Object.entries(dates).forEach(([date, sids]) => {
+      if (sids.length) latest.extraAttend[date] = sids;
+      else delete latest.extraAttend[date];
+    });
+    saveDemoStore(latest);
+    return ok(root, { ok: true, dates: clone(dates), changedDates: Object.keys(dates) });
   }
 
   if (method === 'POST' && path === '/api/weekend-slots') {
-    const next = mergeWholeMap(store, 'weekendSlots', body);
+    const next = mergeWeekendSlotsPatch(store, body);
     saveDemoStore(store);
     return ok(root, next);
   }
@@ -1034,9 +1086,26 @@ async function handleWrite(root, ctx, store) {
 
 
   if (method === 'POST' && path === '/api/makeup-carryover') {
-    const next = setWholeMap(store, 'makeupCarryover', body);
-    saveDemoStore(store);
-    return ok(root, next);
+    const latest = loadDemoStore();
+    const current = clone(latest.makeupCarryover || {});
+    const currentRevision = demoRevision(current);
+    const expectedRevision = requestHeader(ctx.headers, 'If-Match').trim().replace(/^"|"$/g, '');
+    if (!expectedRevision) {
+      return responseJson(root, { ok: false, error: 'makeup_revision_required' }, 428, {
+        'X-Makeup-Carryover-Revision': currentRevision,
+      });
+    }
+    if (expectedRevision !== currentRevision) {
+      return responseJson(root, { ok: false, error: 'makeup_revision_conflict' }, 409, {
+        'X-Makeup-Carryover-Revision': currentRevision,
+      });
+    }
+
+    const next = setWholeMap(latest, 'makeupCarryover', body);
+    saveDemoStore(latest);
+    return responseJson(root, next, 200, {
+      'X-Makeup-Carryover-Revision': demoRevision(next),
+    });
   }
 
   if (method === 'POST' && path === '/api/absent') {

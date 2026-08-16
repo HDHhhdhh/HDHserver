@@ -11,6 +11,7 @@ import { $, toast } from '../core/utils.js';
 import { getAdminDate, getRealToday } from '../core/adminDate.js';
 import { state } from '../core/state.js';
 import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';
+import { ensureOk, sendJson } from '../../shared/api.js';
 
 import {
   yoilOf,
@@ -143,7 +144,9 @@ async function markMakeupDemandOpen(dateKey, sid, slots) {
   if (!date || !studentId) return;
 
   const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-  const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+  await ensureOk(latestRes, '보강 이월 불러오기');
+  const revision = String(latestRes.headers.get('X-Makeup-Carryover-Revision') || '').trim();
+  const latest = await latestRes.json();
   const next = latest && typeof latest === 'object' ? latest : {};
   const byAbsence = next.by_absence && typeof next.by_absence === 'object' ? next.by_absence : {};
   const dateRows = { ...(byAbsence[date] || {}) };
@@ -163,12 +166,13 @@ async function markMakeupDemandOpen(dateKey, sid, slots) {
   byAbsence[date] = dateRows;
   next.by_absence = byAbsence;
 
-  const res = await fetch('/api/makeup-carryover', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(next),
+  const res = await sendJson('/api/makeup-carryover', next, {
+    headers: revision ? { 'If-Match': revision } : {},
   });
-  if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+  if (res.status === 409 || res.status === 428) {
+    throw new Error('다른 관리자 화면에서 보강 정보가 변경됐습니다. 새로고침 후 다시 시도해 주세요.');
+  }
+  await ensureOk(res, '보강 이월 저장');
 }
 
 // Normalize absence maps once at module boot.

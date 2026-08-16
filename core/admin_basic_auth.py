@@ -4,11 +4,15 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import ipaddress
 import os
 from collections.abc import Mapping
 from typing import Final
 
 from werkzeug.security import check_password_hash
+
+from core.network_access import RequestLike, client_ip_from_request, ip_allowed
+
 
 ADMIN_USERNAME_ENV: Final = "ACADEMY_ADMIN_USERNAME"
 ADMIN_PASSWORD_HASH_ENV: Final = "ACADEMY_ADMIN_PASSWORD_HASH"
@@ -58,9 +62,21 @@ def verify_admin_authorization(
     return username_matches and password_matches
 
 
+def admin_network_allowed(request_like: RequestLike | None = None) -> bool:
+    """Allow administration only from academy ranges or the server itself."""
+    client_ip = client_ip_from_request(request_like)
+    if ip_allowed(client_ip):
+        return True
+    try:
+        return ipaddress.ip_address(client_ip).is_loopback
+    except ValueError:
+        return False
+
+
 __all__ = (
     "ADMIN_AUTH_CHALLENGE",
     "ADMIN_PASSWORD_HASH_ENV",
     "ADMIN_USERNAME_ENV",
+    "admin_network_allowed",
     "verify_admin_authorization",
 )
