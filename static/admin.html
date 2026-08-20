@@ -6,7 +6,8 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260813-student-logs-restored1">
+  <link rel="stylesheet" href="/css/admin.css?v=20260816-student-log-restore2">
+  <link rel="stylesheet" href="/css/student-work-light.css?v=20260819t11">
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
@@ -66,6 +67,8 @@
         <a href="/video-manage" class="btn secondary link-video" target="_blank" rel="noopener noreferrer">영상관리</a>
         <a href="/tests" class="btn secondary link-tests" target="_blank" rel="noopener noreferrer">테스트관리</a>
         <a href="/file-manage" class="btn secondary link-files" target="_blank" rel="noopener noreferrer">파일관리</a>
+        <button id="studentAccountsOpen" class="btn secondary link-student-accounts" type="button">학생앱 계정</button>
+        <button id="studentFocusOpen" class="btn secondary link-student-focus" type="button">집중 기록</button>
         <button id="attendanceLedgerSettings" class="btn secondary link-ledger link-ledger-settings" type="button" title="학원출석부 시트 링크 수정">시트 설정</button>
       </div>
 
@@ -212,6 +215,11 @@
             <label class="announcement-field announcement-field-content">
               <span>내용</span>
               <textarea id="annContent" rows="3" placeholder="학생에게 전달할 내용"></textarea>
+            </label>
+            <label id="annVideoField" class="announcement-field announcement-video-field" for="annVideoMid" hidden>
+              <span>재생 영상</span>
+              <select id="annVideoMid" autocomplete="off" aria-describedby="annVideoHelp"></select>
+              <small id="annVideoHelp">서버 영상 목록에 등록된 항목만 선택할 수 있습니다.</small>
             </label>
 
             <div class="announcement-target">
@@ -461,22 +469,58 @@
     </div>
   </div>
 
-  <div id="logModal" class="modal-backdrop">
-    <div class="modal-panel wide">
-      <h3 id="logTitle" class="mt-0"></h3>
-      <label>상담 기록:
-        <textarea id="logNotes" rows="2" placeholder=""></textarea>
-      </label>
-      <div id="logProgress" class="progress-grid mt-8"></div>
-      <label>숙제:
-        <textarea id="logHw" rows="2"></textarea>
-      </label>
-      <div class="modal-actions">
-        <button id="logSave" class="btn" type="button">저장</button>
-        <button id="logdoneBtn" class="btn" type="button">완료</button>
-        <button id="logClose" class="btn secondary" type="button">닫기</button>
-      </div>
-    </div>
+  <div id="exportLogsModal" class="modal-backdrop export-logs-modal" hidden>
+    <section class="modal-panel export-logs-panel" role="dialog" aria-modal="true"
+      aria-labelledby="exportLogsTitle" aria-describedby="exportLogsDescription">
+      <button id="exportLogsClose" class="modal-close" type="button" aria-label="수업 기록 내보내기 닫기">×</button>
+      <header class="export-logs-heading">
+        <p class="export-logs-kicker">CLASS LOG EXPORT</p>
+        <h3 id="exportLogsTitle">수업 기록 내보내기 설정</h3>
+        <p id="exportLogsDescription">파일 형식과 TXT에 담을 내용을 선택합니다. CSV 열 구조는 기존 연동을 위해 고정됩니다.</p>
+      </header>
+      <form id="exportLogsForm" class="export-logs-form">
+        <div class="export-logs-option-grid">
+          <fieldset>
+            <legend>파일 형식</legend>
+            <label class="export-logs-option">
+              <input id="exportLogsFormatTxt" type="checkbox" checked>
+              <span><strong>TXT 요약</strong><small>선택한 수업 내용을 읽기 쉬운 문단으로 저장</small></span>
+            </label>
+            <label class="export-logs-option">
+              <input id="exportLogsFormatCsv" type="checkbox" checked>
+              <span><strong>CSV 표</strong><small>기존 열 순서와 숙제 행 구조를 그대로 유지</small></span>
+            </label>
+          </fieldset>
+          <fieldset id="exportLogsTxtSections">
+            <legend>TXT 포함 내용</legend>
+            <label class="export-logs-option compact">
+              <input id="exportLogsSectionNotes" type="checkbox" checked>
+              <span>특이사항</span>
+            </label>
+            <label class="export-logs-option compact">
+              <input id="exportLogsSectionTests" type="checkbox" checked>
+              <span>테스트</span>
+            </label>
+            <label class="export-logs-option compact">
+              <input id="exportLogsSectionProgress" type="checkbox" checked>
+              <span>진도</span>
+            </label>
+            <label class="export-logs-option compact">
+              <input id="exportLogsSectionHomework" type="checkbox" checked>
+              <span>숙제</span>
+            </label>
+          </fieldset>
+        </div>
+        <p class="export-logs-privacy">학생 이름·학교·과정과 선택한 수업 기록이 포함됩니다. 다운로드한 파일은 안전하게 보관하세요. 설정은 현재 페이지에서만 유지됩니다.</p>
+        <p id="exportLogsStatus" class="export-logs-status" role="status" aria-live="polite"></p>
+        <div class="export-logs-actions">
+          <button id="exportLogsReset" class="btn secondary" type="button">기본값 복원</button>
+          <span class="export-logs-action-spacer"></span>
+          <button id="exportLogsCancel" class="btn secondary" type="button">취소</button>
+          <button id="exportLogsSubmit" class="btn" type="submit">선택 형식으로 내보내기</button>
+        </div>
+      </form>
+    </section>
   </div>
 
   <div id="yoilModal" class="modal-backdrop">
@@ -488,7 +532,66 @@
     </div>
   </div>
 
+  <div id="studentAccountsModal" class="modal-backdrop student-accounts-modal" hidden>
+    <section class="modal-panel wide student-accounts-panel" role="dialog" aria-modal="true" aria-labelledby="studentAccountsTitle">
+      <div class="student-accounts-heading">
+        <div>
+          <p class="student-accounts-kicker">STUDENT APP ACCESS</p>
+          <h3 id="studentAccountsTitle">학생앱 계정 관리</h3>
+          <p>학생 식별 그룹, 활성 세션과 푸시 연결 상태를 안전하게 관리합니다.</p>
+        </div>
+        <button id="studentAccountsClose" class="modal-close" type="button" aria-label="학생앱 계정 관리 닫기">×</button>
+      </div>
+      <div class="student-accounts-toolbar">
+        <label>
+          <span>검색</span>
+          <input id="studentAccountsSearch" type="search" autocomplete="off" placeholder="이름, 학교, SID, 계정 ID">
+        </label>
+        <label>
+          <span>상태</span>
+          <select id="studentAccountsFilter">
+            <option value="all">전체</option>
+            <option value="active">사용 중</option>
+            <option value="disabled">비활성</option>
+            <option value="activation">활성화 코드 필요</option>
+            <option value="must-change">자격 증명 변경 필요</option>
+          </select>
+        </label>
+        <button id="studentAccountsRefresh" class="btn secondary" type="button">새로고침</button>
+      </div>
+      <p id="studentAccountsStatus" class="student-accounts-status" role="status" aria-live="polite"></p>
+      <aside id="studentActivationCodePanel" class="student-accounts-code" aria-labelledby="studentActivationCodeTitle" hidden>
+        <div>
+          <strong id="studentActivationCodeTitle">일회용 활성화 코드</strong>
+          <code id="studentActivationCodeValue"></code>
+        </div>
+        <button id="studentActivationCodeCopy" class="btn" type="button">한 번 복사</button>
+        <button id="studentActivationCodeDismiss" class="btn secondary" type="button">지우기</button>
+      </aside>
+      <div id="studentAccountsList" class="student-accounts-list" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <div id="studentFocusAdminModal" class="modal-backdrop student-focus-admin-modal" hidden>
+    <section class="modal-panel wide student-focus-admin-panel" role="dialog" aria-modal="true" aria-labelledby="studentFocusAdminTitle">
+      <div class="student-focus-admin-heading">
+        <div>
+          <p class="student-focus-admin-kicker">FOCUS SUMMARY</p>
+          <h3 id="studentFocusAdminTitle">학생 집중 기록</h3>
+          <p>앱이 보이지 않았던 시간은 전화·잠금·권한창을 포함할 수 있어 ‘앱 이탈 추정’으로만 확인합니다.</p>
+        </div>
+        <button id="studentFocusAdminClose" class="modal-close" type="button" aria-label="학생 집중 기록 닫기">×</button>
+      </div>
+      <div class="student-focus-admin-toolbar">
+        <strong id="studentFocusAdminDate">조회 날짜</strong>
+        <button id="studentFocusAdminRefresh" class="btn secondary" type="button">새로고침</button>
+      </div>
+      <p id="studentFocusAdminStatus" class="student-focus-admin-status" role="status" aria-live="polite"></p>
+      <div id="studentFocusAdminList" class="student-focus-admin-list" aria-live="polite"></div>
+    </section>
+  </div>
+
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260816-phase5"></script>
-  <script type="module" src="/js/admin/main.js?v=20260816-phase5"></script>
+  <script type="module" src="/js/admin/main.js?v=20260819-homework-status1"></script>
 </body>
 </html>

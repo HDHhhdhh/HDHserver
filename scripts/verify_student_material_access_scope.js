@@ -481,7 +481,7 @@ async function main(options = {}) {
       if (text.startsWith('/api/watch/latest')) {
         return makeResponse({
           ok: true,
-          watch: legacyFallback ? { 'qa-video-1': { last: 100, dur: 100 } } : {},
+          watch: legacyFallback ? { 'qa-video-1': { last: 10, dur: 100 } } : {},
         });
       }
       if (legacyFallback && text.startsWith('/api/students')) return makeResponse([bootstrap.student]);
@@ -555,6 +555,7 @@ async function main(options = {}) {
   }
 
   const videoRow = document.getElementById('vidList').querySelector('li[data-mid]');
+  // The next assertion checks the restricted playlist surface.
   if (!videoRow) throw new Error('restricted video row did not render');
   const reviewToggle = document.getElementById('previousVideosToggle');
   const reviewPanel = document.getElementById('previousVideosPanel');

@@ -48,6 +48,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/core/adminDate.js",
     ROOT / "static/js/admin/demo/bootstrap.js",
     ROOT / "static/js/admin/demo/fetch.js",
+    ROOT / "static/js/admin/demo/assistantStudentNotesContract.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
     ROOT / "static/js/admin/features/absentRecovery.js",
     ROOT / "static/js/admin/features/absentRegister.js",
@@ -79,6 +80,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
+    ROOT / "scripts/verify_admin_assistant_notes_demo.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
     ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
@@ -686,6 +688,7 @@ print("today order date-scoped mutation checks passed")
     commands = [
         (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
+        (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
         (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
     ]
     for cmd, failure_message in [*command_groups, *commands]:
@@ -983,7 +986,9 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     admin_hover_js = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8")
     log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    student_work_light_css = (ROOT / "static/css/student-work-light.css").read_text("utf-8")
     add_student_js = (ROOT / "static/js/all/features/addStudent.js").read_text("utf-8")
+    esc_close_js = (ROOT / "static/js/all/features/escClose.js").read_text("utf-8")
 
     _assert_unit(
         "getJSONOr('/api/homework-books', {})" in state_js,
@@ -992,6 +997,14 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     _assert_unit(
         "state.homeworkBooksBySid" in table_js and "subBookInput" not in table_js,
         "all-students table must render linked homework books without legacy sub-book inputs",
+    )
+    _assert_unit(
+        "col.col-level      { width:7%; }" in table_js
+        and "col.col-docs       { width:15%; }" in table_js
+        and ".levelSelect{" in table_js
+        and "padding-left:5px;" in table_js
+        and "padding-right:14px;" in table_js,
+        "all-students level select must keep the two-character middle-high label visible",
     )
     _assert_unit(
         "state.homeworkBooksBySid" in hover_js and "stu.subBook" not in hover_js,
@@ -1006,9 +1019,21 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     _assert_unit(
         "studentRecordPopup.js" not in main_js
         and "initAllStudentsRecordPopup(state)" not in main_js
-        and "import('./studentRecordPopup.js')" in table_js
+        and re.search(
+            r"import\((['\"])\./studentRecordPopup\.js(?:\?[^'\"]*)?\1\)",
+            table_js,
+        )
         and "await initAllStudentsRecordPopup(state)" in table_js,
         "all-students startup must defer the admin popup module graph until the counseling action",
+    )
+    _assert_unit(
+        "function focusAllStudentSearch()" in esc_close_js
+        and "document.getElementById('allStudentSearchInput')" in esc_close_js
+        and "input.dispatchEvent(new Event('input', { bubbles: true }))" in esc_close_js
+        and "input.focus({ preventScroll: true })" in esc_close_js
+        and "if (!hadOpenTarget)" in esc_close_js
+        and "requestAnimationFrame(focusAllStudentSearch)" in esc_close_js,
+        "Escape must clear and focus the all-students search only when no popup has priority",
     )
     _assert_unit(
         "ADMIN_POPUP_STYLESHEETS" in record_popup_js
@@ -1053,10 +1078,32 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     _assert_unit(
         'id="tooltipHomeworkActions"' in admin_hover_js
         and "선택한 운영일 기준" not in admin_hover_js
-        and "complete.textContent = '숙검완료';" in log_modal_js
-        and "addRow.textContent = '교재추가';" in log_modal_js
-        and "if (save) save.hidden = true;" in log_modal_js,
-        "tooltip homework header must expose only compact complete/add actions and hide the separate save control",
+        and "complete.textContent = '숙검 완료';" in log_modal_js
+        and "addRow.textContent = '교재 추가';" in log_modal_js
+        and "removeRow.textContent = '교재 제거';" in log_modal_js
+        and 'id="hwRemoveRow"' in log_modal_js
+        and "actionHost.append(complete);" in log_modal_js
+        and log_modal_js.index("actionHost.append(complete);") < log_modal_js.index("actionHost.append(addRow);") < log_modal_js.index("actionHost.append(removeRow);")
+        and "if (save) save.hidden = true;" in log_modal_js
+        and not re.search(
+            r"#hwRemoveRow\s*,?[^{}]*\{[^{}]*display\s*:\s*none",
+            student_work_light_css,
+        ),
+        "tooltip homework header must expose compact complete/add/remove actions in order and hide the separate save control",
+    )
+    _assert_unit(
+        'class="hw-del-btn"' not in log_modal_js
+        and "function removeLastHomeworkRow()" in log_modal_js
+        and "$('hwRemoveRow')?.addEventListener('click', removeLastHomeworkRow);" in log_modal_js
+        and "canonicalHomework.removedAssignmentIds.add(assignmentId);" in log_modal_js
+        and "if (!hasRows) addHwRow('');" in log_modal_js,
+        "homework rows must use the header remove action while preserving canonical deletion and one blank fallback row",
+    )
+    _assert_unit(
+        "bubble.style.left = `${clamped}%`;" in log_modal_js
+        and "bubble.style.transform = `translateX(${-clamped}%)`;" in log_modal_js
+        and "#adminSchoolTip .pctBubble{ max-width:100%; box-sizing:border-box;" in log_modal_js,
+        "homework progress bubbles must stay inside the tooltip at both range endpoints",
     )
     _assert_unit(
         ".student-tooltip-homework-host" in log_modal_js
@@ -1548,6 +1595,7 @@ def run_progress_read_cache_unit_checks() -> None:
 
 
 def run_video_completion_unit_checks() -> None:
+    from core.progress_rules import PROGRESS_MANUAL_META_KEY
     import routes.api_basic as api_basic
 
     date = "2026-06-06"
@@ -1575,6 +1623,40 @@ def run_video_completion_unit_checks() -> None:
     _assert_unit(
         api_basic._course_videos_completed(videos, "s1", latest),
         "green done plus red skip video progress must finish the course",
+    )
+
+    reopened_progress = {
+        "2026-06-04": {"007": {"m1": "done"}},
+        "2026-06-05": {
+            "7": {
+                "m1": "interrupted",
+                PROGRESS_MANUAL_META_KEY: {"m1": True},
+            },
+        },
+    }
+    reopened_watch = {
+        "2026-06-04": {"007": {"m1": {"last": 100, "dur": 100, "completed": True}}},
+    }
+    reopened_blocked = api_basic._build_auto_assignment_blocked_by_sid(
+        reopened_progress,
+        reopened_watch,
+    )
+    _assert_unit(
+        "m1" not in api_basic._blocked_mids_for_sid(reopened_blocked, "007")
+        and "m1" not in api_basic._blocked_mids_for_sid(reopened_blocked, "7"),
+        "a later manual interrupted state must reopen a completed video for every numeric SID alias",
+    )
+
+    automatic_interrupted = {
+        "2026-06-04": {"s1": {"m1": "done"}},
+        "2026-06-05": {"s1": {"m1": "interrupted"}},
+    }
+    _assert_unit(
+        "m1" in api_basic._blocked_mids_for_sid(
+            api_basic._build_auto_assignment_blocked_by_sid(automatic_interrupted, {}),
+            "s1",
+        ),
+        "an unmarked interrupted state must not silently reopen a completed video",
     )
 
     updates = {date: {"s1": {"videos": ["m1"], "source": "auto"}}}
@@ -4082,6 +4164,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "_sid_keys",
         "_sid_lookup",
         "_normalize_video_assign_list",
+        "_blocked_mids_for_sid",
         "_chap_num",
         "_academy_restricted_student_videos",
         "_student_completion_videos",
@@ -4392,6 +4475,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "2026-06-02": {base_sid: {"m5": "done"}},
     }
     base_watch = {"2026-05-30": {"7": {"m5": {"last": 100, "dur": 100}}}}
+    route_namespace["_build_auto_assignment_blocked_by_sid"] = lambda _progress, _watch: {base_sid: {"m1", "m-current"}}
 
     def make_route_state() -> dict:
         return {
@@ -4470,6 +4554,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     assert_success_shape("regular", regular_payload, regular_status)
     regular_review = regular_payload["reviewVideos"]
     regular_review_mids = {item.get("mid") for item in regular_review}
+    regular_video_mids = {item.get("mid") for item in regular_payload["videos"]}
+    _assert_unit(
+        "m1" not in regular_video_mids,
+        "actual bootstrap route must hide finished assignment videos from the current playlist",
+    )
     _assert_unit(
         "m-current" not in regular_review_mids,
         "actual bootstrap route must exclude current-date review MID",
@@ -4479,20 +4568,20 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "actual bootstrap route must exclude skip review MID",
     )
     _assert_unit(
-        [item.get("mid") for item in regular_review] == ["m5", "m3", "m2"],
+        [item.get("mid") for item in regular_review] == ["m5", "m3", "m2", "m1"],
         "actual bootstrap route must wire exact-curriculum review ordering and SID aliases",
     )
     _assert_unit(
-        [item.get("reviewStatus") for item in regular_review] == ["done", "done", "interrupted"],
+        [item.get("reviewStatus") for item in regular_review] == ["done", "done", "interrupted", "done"],
         "actual bootstrap route must preserve done/interrupted review status",
     )
     _assert_unit(
-        "m1" not in regular_review_mids
+        "m1" in regular_review_mids
         and "m-current" not in regular_review_mids
         and "m-skip" not in regular_review_mids
         and "m-old" not in {item.get("mid") for item in regular_review}
         and "m-deleted" not in {item.get("mid") for item in regular_review},
-        "actual bootstrap route must exclude current assignment, current-date, skip, old-curriculum, and deleted MIDs",
+        "actual bootstrap route must expose the finished assignment in review while excluding current-date, skip, old-curriculum, and deleted MIDs",
     )
     _assert_unit(
         all(
@@ -4506,6 +4595,15 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     )
     _assert_unit(regular_payload["updates"] == regular_persisted, "regular assignment response must remain unchanged")
     _assert_unit(route_state["log_reads"] == 1, "bootstrap route must reuse one date-log read")
+
+    route_state = make_route_state()
+    route_state["updates"] = {base_date: {base_sid: {"videos": ["m-current"], "source": "auto"}}}
+    current_done_payload, current_done_status = invoke_route()
+    _assert_unit(current_done_status == 200, "current-date completed assignment bootstrap must succeed")
+    current_done_playlist = {item.get("mid") for item in current_done_payload["videos"]}
+    current_done_review = {item.get("mid") for item in current_done_payload["reviewVideos"]}
+    _assert_unit("m-current" not in current_done_playlist and "m-current" in current_done_review,
+                 "current-date completed assignment must move from playlist to video review")
 
     route_state["academy_allowed"] = False
     restricted_payload, restricted_status = invoke_route()
@@ -4534,11 +4632,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(
         self_study_payload["updates"][base_date][base_sid]["videos"] == ["m1"]
         and self_study_payload["updates"][base_date][base_sid]["unknown"] == {"keep": True}
-        and [item.get("mid") for item in self_study_payload["videos"]] == ["m1"],
+        and [item.get("mid") for item in self_study_payload["videos"]] == [],
         "actual bootstrap route must filter unwatched self-study response videos while preserving unknown fields",
     )
     _assert_unit(route_state["updates"] == self_study_persisted, "self-study response filtering must not mutate persisted updates")
-    _assert_unit("m1" not in {item.get("mid") for item in self_study_payload["reviewVideos"]}, "self-study response assignment MIDs must be excluded from review")
+    _assert_unit("m1" in {item.get("mid") for item in self_study_payload["reviewVideos"]}, "self-study completed assignment MID must remain available in review")
 
     route_state = make_route_state()
     route_state["log_entry"] = {"selfStudy": True}
@@ -4565,7 +4663,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(
         unscheduled_self_study_payload.get("courseBlocked") is not True
         and unscheduled_self_study_payload.get("selfStudy") is True
-        and [item.get("mid") for item in unscheduled_self_study_payload["videos"]] == ["m1"]
+        and [item.get("mid") for item in unscheduled_self_study_payload["videos"]] == []
         and unscheduled_self_study_payload["reviewVideos"],
         "self-study on a non-scheduled date must open the student page and expose assigned/review videos",
     )
@@ -6976,11 +7074,15 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "video popup must identify exact [고] title-prefix videos in the student's subject APEX catalog and expose the bulk exclude control",
     )
     _assert_unit(
-        "function excludeHighDifficultyVideosForStudent" in video_modal_js
-        and "applyVideoRowState(row, 'skip');" in video_modal_js
-        and "else setActiveVideoProgressState(mid, 'skip');" in video_modal_js
+        "function toggleHighDifficultyVideosForStudent" in video_modal_js
+        and "targets.every(({ stateValue }) => stateValue === 'skip')" in video_modal_js
+        and "? 'none'" in video_modal_js
+        and ": 'skip';" in video_modal_js
+        and "applyVideoRowState(row, nextState);" in video_modal_js
+        and "else setActiveVideoProgressState(mid, nextState);" in video_modal_js
+        and "기본(흰색) 상태" in video_modal_js
         and "저장 버튼을 눌러 적용하세요" in video_modal_js,
-        "high-difficulty bulk action must mark visible and hidden APEX matches excluded and keep save explicit",
+        "high-difficulty bulk action must toggle visible and hidden APEX matches between excluded and white while keeping save explicit",
     )
     _assert_unit(
         "new URLSearchParams({ date: dateKey, sid: sidKey })" in hydration_block
@@ -7030,11 +7132,13 @@ def run_admin_video_modal_preflight_source_checks() -> None:
 
 def run_admin_student_popup_scroll_source_checks() -> None:
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    skip_style_start = video_modal_js.index('#vidModal .vid-row[data-state="skip"]')
     assigned_style_start = video_modal_js.index('#vidModal .vid-row[data-state="assigned"]')
     done_style_start = video_modal_js.index('#vidModal .vid-row[data-state="done"]', assigned_style_start)
     interrupted_style_start = video_modal_js.index('#vidModal .vid-row[data-state="interrupted"]', done_style_start)
     scroll_target_style_start = video_modal_js.index('#vidModal .vid-row.is-scroll-target', interrupted_style_start)
     assigned_style = video_modal_js[assigned_style_start:done_style_start]
+    skip_style = video_modal_js[skip_style_start:assigned_style_start]
     done_style = video_modal_js[done_style_start:interrupted_style_start]
     interrupted_style = video_modal_js[interrupted_style_start:scroll_target_style_start]
     assigned_scroll_start = video_modal_js.index("function scrollVideoPopupToFirstAssigned()")
@@ -7062,6 +7166,45 @@ def run_admin_student_popup_scroll_source_checks() -> None:
         and "box-shadow:inset" not in interrupted_style,
         "only the green assigned video row may keep the thick left status accent",
     )
+    _assert_unit(
+        "border-color:#fb7185;" in skip_style
+        and "background:#fff8f9;" in skip_style
+        and "color:#be123c;" in skip_style
+        and "border-color:#60a5fa;" in done_style
+        and "background:#f7faff;" in done_style
+        and "color:#1d4ed8;" in done_style
+        and "border-color:#fb923c;" in interrupted_style
+        and "background:#fffaf5;" in interrupted_style
+        and "color:#c2410c;" in interrupted_style
+        and "border-color:#34d399;" in assigned_style
+        and "background:#ecfdf5;" in assigned_style,
+        "non-green video states must restore saturated hue cues on high-lightness surfaces while assigned green keeps the strongest accent",
+    )
+
+    _assert_unit(
+        "function nextExcludedVideoState(stateValue)" in video_modal_js
+        and ": 'none';\n}\n\nfunction nextExcludedVideoState" in video_modal_js
+        and "if (e.button !== 0 && e.button !== 2) return;" in video_modal_js
+        and "dragTargetState = dragButton === 2" in video_modal_js
+        and "? nextExcludedVideoState(startState)" in video_modal_js
+        and "applyVideoDragRange(row);" in video_modal_js
+        and "if (dragActive && dragButton === 2) suppressContextOnce = true;" in video_modal_js
+        and "applyVideoRowState(row, nextExcludedVideoState(row.dataset.state || 'none'));" in video_modal_js,
+        "video popup right-click drag must toggle a contiguous range between excluded and none without a duplicate context action",
+    )
+    _assert_unit(
+        "const VIDEO_KEYBOARD_STATUS_ORDER = ['none', 'interrupted', 'assigned', 'done', 'skip'];" in video_modal_js
+        and "function nextKeyboardVideoState(stateValue, direction = 1)" in video_modal_js
+        and "function applyKeyboardVideoStatusToSelection(direction)" in video_modal_js
+        and "if (e.ctrlKey || e.metaKey) return;" in video_modal_js
+        and "if (e.ctrlKey || e.metaKey) {" in video_modal_js
+        and "toggleVideoMultiSelection(row);" in video_modal_js
+        and ": nextVideoRowState(startState);" in video_modal_js
+        and "data-selection=\"${multiSelected ? 'selected' : 'none'}\"" in video_modal_js
+        and "applyKeyboardVideoStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)" in video_modal_js,
+        "video popup must support Ctrl/Cmd multi-selection, keyboard status changes, and orange/blue drag transitions",
+    )
+
     _assert_unit(
         "function scrollVideoPopupToFirstAssigned()" in video_modal_js
         and "#chkZone .vid-row[data-state=" in assigned_scroll_block

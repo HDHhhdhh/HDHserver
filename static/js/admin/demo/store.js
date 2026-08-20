@@ -1,7 +1,7 @@
 import { buildInitialDemoData } from './data.js';
 
 export const DEMO_STORAGE_KEY = 'academy.adminDemo.v1';
-export const DEMO_SCHEMA_VERSION = 1;
+export const DEMO_SCHEMA_VERSION = 3;
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 
@@ -41,6 +41,10 @@ export function isCurrentDemoStore(store) {
   if (store.schemaVersion !== DEMO_SCHEMA_VERSION) return false;
   if (!Array.isArray(store.students)) return false;
   if (!Array.isArray(store.videos)) return false;
+  if (!Array.isArray(store.studentAccounts)) return false;
+  if (!store.focusSummaries || typeof store.focusSummaries !== 'object' || Array.isArray(store.focusSummaries)) return false;
+  if (!Array.isArray(store.homeworkAssignments)) return false;
+  if (!store.homeworkOperations || typeof store.homeworkOperations !== 'object' || Array.isArray(store.homeworkOperations)) return false;
   return store.students.every(student =>
     student
     && typeof student === 'object'

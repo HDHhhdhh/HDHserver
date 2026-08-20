@@ -4,19 +4,14 @@ import os
 import pathlib
 import re
 import shutil
-from contextlib import contextmanager
 from typing import Any, Dict
 
-from flask import Blueprint, abort, jsonify, make_response, request, send_from_directory
-from core.material_state import (
-    load_material_state,
-    load_material_state_locked,
-    material_state_lock,
-    recover_material_state_locked,
-    save_material_state_locked,
-)
+from flask import Blueprint, abort, g, jsonify, make_response, request, send_from_directory
+from werkzeug.utils import secure_filename
+
 from core.paths import FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
-from core.storage import file_lock, load
+from core.student_public_surface_paths import resolve_raw_request_target, safe_announcement_file
+from core.storage import load, save_atomic
 
 bp_api_fs = Blueprint("api_fs", __name__)
 FILES_ROOT = FILES_DIR.resolve()
@@ -98,172 +93,15 @@ def _rel_from_url(url: str) -> str | None:
         return None
 
 def _load_mats_and_assigns():
-    mats, assigns, _page_folders = load_material_state_locked(
-        MAT_PATH,
-        ASN_PATH,
-        PAGE_FOLDERS_PATH,
-    )
+    mats = load(MAT_PATH)
     if not isinstance(mats, dict): mats = {}
+    assigns = load(ASN_PATH)
     if not isinstance(assigns, dict): assigns = {}
     return mats, assigns
 
-def _save_mats_and_assigns(mats, assigns, page_folders=None):
-    if page_folders is None:
-        page_folders = _load_page_folders()
-    save_material_state_locked(
-        MAT_PATH,
-        ASN_PATH,
-        PAGE_FOLDERS_PATH,
-        mats,
-        assigns,
-        page_folders,
-    )
-
-
-@contextmanager
-def _material_state_lock():
-    with material_state_lock(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH):
-        recover_material_state_locked(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH)
-        yield
-
-
-def _load_page_folders() -> dict:
-    value = load(PAGE_FOLDERS_PATH)
-    return value if isinstance(value, dict) else {}
-
-
-def _normalize_rel_path(value: Any) -> str:
-    return str(value or "").strip().lstrip("/").replace("\\", "/").rstrip("/")
-
-
-def _replace_rel_prefix(rel_path: Any, old_rel: Any, new_rel: Any) -> str | None:
-    rel = _normalize_rel_path(rel_path)
-    old = _normalize_rel_path(old_rel)
-    new = _normalize_rel_path(new_rel)
-    if not rel or not old:
-        return None
-    if rel == old:
-        return new
-    prefix = old + "/"
-    if rel.startswith(prefix):
-        suffix = rel[len(prefix):]
-        return f"{new}/{suffix}" if new else suffix
-    return None
-
-
-def _remap_rel_path(rel_path: Any, renames: list[tuple[str, str]]) -> str | None:
-    for old_rel, new_rel in renames:
-        remapped = _replace_rel_prefix(rel_path, old_rel, new_rel)
-        if remapped is not None:
-            return remapped
-    return None
-
-
-def _rewrite_path_references(mats, assigns, page_folders, renames) -> None:
-    normalized_renames = [
-        (_normalize_rel_path(old), _normalize_rel_path(new))
-        for old, new in renames
-        if _normalize_rel_path(old)
-    ]
-    if not normalized_renames:
-        return
-
-    for mid, meta in list(mats.items()):
-        if not isinstance(meta, dict):
-            continue
-        rel = _rel_from_url(meta.get("url"))
-        remapped = _remap_rel_path(rel, normalized_renames) if rel is not None else None
-        if remapped is not None:
-            next_meta = dict(meta)
-            next_meta["url"] = _url_for_rel(remapped)
-            mats[mid] = next_meta
-
-    for sid, values in list(assigns.items()):
-        if not isinstance(values, list):
-            continue
-        next_values = []
-        seen = set()
-        for value in values:
-            raw = str(value)
-            prefix = ""
-            rel = None
-            if raw.startswith("DIR:"):
-                prefix = "DIR:"
-                rel = raw[4:]
-            else:
-                url_rel = _rel_from_url(raw)
-                if url_rel is not None:
-                    prefix = "/files/"
-                    rel = url_rel
-                else:
-                    rel = raw
-            remapped = _remap_rel_path(rel, normalized_renames) if rel is not None else None
-            if remapped is None:
-                next_value = value
-            elif prefix == "DIR:":
-                next_value = f"DIR:{remapped}"
-            elif prefix == "/files/":
-                next_value = _url_for_rel(remapped)
-            else:
-                next_value = remapped
-            dedupe_key = str(next_value)
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            next_values.append(next_value)
-        assigns[sid] = next_values
-
-    for key, value in list(page_folders.items()):
-        remapped = _remap_rel_path(value, normalized_renames)
-        if remapped is not None:
-            page_folders[key] = remapped
-
-
-def _rel_is_deleted(rel_path: Any, deleted_roots: set[str]) -> bool:
-    rel = _normalize_rel_path(rel_path)
-    if not rel:
-        return False
-    return any(rel == root or rel.startswith(root + "/") for root in deleted_roots)
-
-
-def _prune_deleted_references(mats, assigns, page_folders, deleted_paths) -> None:
-    deleted_roots = {
-        _normalize_rel_path(value)
-        for value in deleted_paths
-        if _normalize_rel_path(value)
-    }
-    if not deleted_roots:
-        return
-
-    removed_ids = set()
-    for mid, meta in list(mats.items()):
-        rel = _rel_from_url(meta.get("url")) if isinstance(meta, dict) else None
-        if rel is not None and _rel_is_deleted(rel, deleted_roots):
-            removed_ids.add(str(mid))
-            mats.pop(mid, None)
-
-    for sid, values in list(assigns.items()):
-        if not isinstance(values, list):
-            continue
-        next_values = []
-        for value in values:
-            raw = str(value)
-            if raw in removed_ids:
-                continue
-            if raw.startswith("DIR:"):
-                rel = raw[4:]
-            else:
-                rel = _rel_from_url(raw)
-                if rel is None:
-                    rel = raw
-            if rel is not None and _rel_is_deleted(rel, deleted_roots):
-                continue
-            next_values.append(value)
-        assigns[sid] = next_values
-
-    for key, value in list(page_folders.items()):
-        if _rel_is_deleted(value, deleted_roots):
-            page_folders[key] = ""
+def _save_mats_and_assigns(mats, assigns):
+    save_atomic(MAT_PATH, mats)
+    save_atomic(ASN_PATH, assigns)
 
 def _ensure_dir(rel_dir: str):
     p = _safe_join(rel_dir)
@@ -307,8 +145,7 @@ def api_fs_folder():
     if not path:
         return jsonify({"ok": False, "error": "path required"}), 400
     try:
-        with file_lock(MAT_PATH):
-            _ensure_dir(path)
+        _ensure_dir(path)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -321,20 +158,39 @@ def api_fs_rename():
     if not src or not new_name:
         return jsonify({"ok": False, "error": "src/new_name required"}), 400
     try:
-        with _material_state_lock():
-            abs_src = _safe_join(src)
-            _reject_root_path(abs_src)
-            abs_dst = abs_src.parent / _clean_filename(new_name)
-            if abs_dst.exists():
-                return jsonify({"ok": False, "error": "already exists"}), 400
-            abs_src.rename(abs_dst)
+        abs_src = _safe_join(src)
+        _reject_root_path(abs_src)
+        abs_dst = abs_src.parent / secure_filename(new_name)
+        if abs_dst.exists():
+            return jsonify({"ok": False, "error": "already exists"}), 400
+        abs_src.rename(abs_dst)
 
-            old_rel = _normalize_rel_path(src)
-            new_rel = _rel_from_abs(abs_dst)
-            mats, assigns = _load_mats_and_assigns()
-            page_folders = _load_page_folders()
-            _rewrite_path_references(mats, assigns, page_folders, [(old_rel, new_rel)])
-            _save_mats_and_assigns(mats, assigns, page_folders)
+        old_rel = src.replace("\\", "/")
+        new_rel = _rel_from_abs(abs_dst)
+
+        mats, assigns = _load_mats_and_assigns()
+        old_url = _url_for_rel(old_rel)
+        new_url = _url_for_rel(new_rel)
+
+        for mid, meta in list(mats.items()):
+            if isinstance(meta, dict) and meta.get("url") == old_url:
+                meta["url"] = new_url
+                mats[mid] = meta
+
+        for sid, arr in list(assigns.items()):
+            if not isinstance(arr, list):
+                continue
+            changed = False
+            for i, v in enumerate(arr):
+                sval = str(v)
+                if sval == old_url:
+                    arr[i] = new_url; changed = True
+                elif sval.lstrip("/").replace("\\", "/") == old_rel:
+                    arr[i] = new_rel; changed = True
+            if changed:
+                assigns[sid] = arr
+
+        _save_mats_and_assigns(mats, assigns)
 
         return jsonify({"ok": True, "path": new_rel})
     except Exception as e:
@@ -350,25 +206,47 @@ def api_fs_delete():
     deleted, errors = [], []
     rel_set = set()
 
-    with _material_state_lock():
-        for rel in items:
-            try:
-                abs_p = _safe_join(rel)
-                _reject_root_path(abs_p)
-                if abs_p.is_dir():
-                    shutil.rmtree(abs_p)
-                elif abs_p.exists():
-                    abs_p.unlink()
-                deleted.append(rel)
-                rel_set.add(_normalize_rel_path(rel))
-            except Exception as e:
-                errors.append({"path": rel, "error": str(e)})
+    for rel in items:
+        try:
+            abs_p = _safe_join(rel)
+            _reject_root_path(abs_p)
+            if abs_p.is_dir():
+                shutil.rmtree(abs_p)
+            elif abs_p.exists():
+                abs_p.unlink()
+            deleted.append(rel)
+            rel_set.add(rel.replace("\\", "/"))
+        except Exception as e:
+            errors.append({"path": rel, "error": str(e)})
 
-        if rel_set:
-            mats, assigns = _load_mats_and_assigns()
-            page_folders = _load_page_folders()
-            _prune_deleted_references(mats, assigns, page_folders, rel_set)
-            _save_mats_and_assigns(mats, assigns, page_folders)
+    if rel_set:
+        mats, assigns = _load_mats_and_assigns()
+
+        ids_to_remove = []
+        for mid, meta in list(mats.items()):
+            url = (meta or {}).get("url")
+            rel = _rel_from_url(url)
+            if rel and rel in rel_set:
+                ids_to_remove.append(str(mid))
+
+        for mid in ids_to_remove:
+            mats.pop(mid, None)
+
+        for sid, arr in list(assigns.items()):
+            if not isinstance(arr, list):
+                continue
+            new_arr = []
+            for v in arr:
+                sval = str(v)
+                if sval in ids_to_remove:
+                    continue
+                rel = _rel_from_url(sval) or sval.lstrip("/").replace("\\", "/")
+                if rel in rel_set:
+                    continue
+                new_arr.append(v)
+            assigns[sid] = new_arr
+
+        _save_mats_and_assigns(mats, assigns)
 
     return jsonify({"ok": True, "deleted": deleted, "errors": errors})
 
@@ -377,42 +255,61 @@ def api_fs_move():
     body = request.get_json(force=True) or {}
     items = body.get("paths") or []
     dst   = (body.get("dst") or "").strip()
-    if not isinstance(items, list) or not items or not dst:
+    if not items or not dst:
         return jsonify({"ok": False, "error": "paths[] and dst required"}), 400
     try:
-        with _material_state_lock():
-            abs_dst = _ensure_dir(dst)
-            moved = []
-            renames: list[tuple[str, str]] = []
+        abs_dst = _ensure_dir(dst)
+        moved = []
+        renames: list[tuple[str, str]] = []
 
-            for rel in items:
-                abs_src = _safe_join(rel)
-                _reject_root_path(abs_src)
-                target = abs_dst / abs_src.name
-                if target.exists():
-                    if abs_src.is_file():
-                        target = abs_dst / _unique_name(abs_dst, abs_src.name)
-                    else:
-                        base = abs_src.name
-                        i = 1
-                        new = base
-                        while (abs_dst / new).exists():
-                            new = f"{base} ({i})"
-                            i += 1
-                        target = abs_dst / new
-                if abs_src.is_dir() and _is_relative_to(target, abs_src):
-                    raise ValueError("cannot move a folder into itself")
-                shutil.move(str(abs_src), str(target))
-                old_rel = _normalize_rel_path(rel)
-                new_rel = _rel_from_abs(target)
-                moved.append({"src": rel, "dst": new_rel})
-                renames.append((old_rel, new_rel))
+        for rel in items:
+            abs_src = _safe_join(rel)
+            _reject_root_path(abs_src)
+            target = abs_dst / abs_src.name
+            if target.exists():
+                if abs_src.is_file():
+                    target = abs_dst / _unique_name(abs_dst, abs_src.name)
+                else:
+                    base = abs_src.name
+                    i = 1
+                    new = base
+                    while (abs_dst / new).exists():
+                        new = f"{base} ({i})"
+                        i += 1
+                    target = abs_dst / new
+            if abs_src.is_dir() and _is_relative_to(target, abs_src):
+                raise ValueError("cannot move a folder into itself")
+            shutil.move(str(abs_src), str(target))
+            old_rel = rel.replace("\\", "/")
+            new_rel = _rel_from_abs(target)
+            moved.append({"src": rel, "dst": new_rel})
+            renames.append((old_rel, new_rel))
 
-            if renames:
-                mats, assigns = _load_mats_and_assigns()
-                page_folders = _load_page_folders()
-                _rewrite_path_references(mats, assigns, page_folders, renames)
-                _save_mats_and_assigns(mats, assigns, page_folders)
+        if renames:
+            mats, assigns = _load_mats_and_assigns()
+            for old_rel, new_rel in renames:
+                old_url = _url_for_rel(old_rel)
+                new_url = _url_for_rel(new_rel)
+
+                for mid, meta in list(mats.items()):
+                    if isinstance(meta, dict) and meta.get("url") == old_url:
+                        meta["url"] = new_url
+                        mats[mid] = meta
+
+                for sid, arr in list(assigns.items()):
+                    if not isinstance(arr, list):
+                        continue
+                    changed = False
+                    for i, v in enumerate(arr):
+                        sval = str(v)
+                        if sval == old_url:
+                            arr[i] = new_url; changed = True
+                        elif sval.lstrip("/").replace("\\", "/") == old_rel:
+                            arr[i] = new_rel; changed = True
+                    if changed:
+                        assigns[sid] = arr
+
+            _save_mats_and_assigns(mats, assigns)
 
         return jsonify({"ok": True, "moved": moved})
     except Exception as e:
@@ -421,81 +318,74 @@ def api_fs_move():
 @bp_api_fs.post("/api/fs/upload")
 def api_fs_upload():
     dst = (request.form.get("dst") or "").strip()
+    try:
+        abs_dst = _ensure_dir(dst)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"invalid dst: {e}"}), 400
+
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         return jsonify({"ok": False, "error": "no files"}), 400
 
     out = []
+    for f in files:
+        try:
+            fname = _unique_name(abs_dst, f.filename)
+            f.save(abs_dst / fname)
+            rel = (pathlib.Path(dst) / fname).as_posix() if dst else fname
+            out.append({"name": fname, "path": rel, "url": f"/files/{rel}"})
+        except Exception as e:
+            out.append({"name": f.filename, "error": str(e)})
+
     try:
-        with _material_state_lock():
-            try:
-                abs_dst = _ensure_dir(dst)
-            except Exception as exc:
-                return jsonify({"ok": False, "error": f"invalid dst: {exc}"}), 400
+        new_rel_urls = []
+        for it in out:
+            if it.get("error"):
+                continue
+            rel = str(it["path"]).lstrip("/").replace("\\", "/")
+            url = f"/files/{rel}"
+            new_rel_urls.append((rel, url))
 
-            for f in files:
-                try:
-                    fname = _unique_name(abs_dst, f.filename)
-                    f.save(abs_dst / fname)
-                    rel = (pathlib.Path(dst) / fname).as_posix() if dst else fname
-                    out.append({"name": fname, "path": rel, "url": f"/files/{rel}"})
-                except Exception as exc:
-                    out.append({"name": f.filename, "error": str(exc)})
+        if new_rel_urls:
+            mats, assigns = _load_mats_and_assigns()
+            changed = False
 
-            new_rel_urls = []
-            for item in out:
-                if item.get("error"):
+            for sid, arr in list(assigns.items()):
+                if not isinstance(arr, list):
                     continue
-                rel = _normalize_rel_path(item["path"])
-                new_rel_urls.append((rel, _url_for_rel(rel)))
 
-            if new_rel_urls:
-                try:
-                    _mats, assigns = _load_mats_and_assigns()
-                    changed = False
+                dir_tokens = []
+                for v in arr:
+                    s = str(v)
+                    if s.startswith("DIR:"):
+                        d = s[4:].lstrip("/").replace("\\", "/")
+                        if d:
+                            dir_tokens.append(d)
+                if not dir_tokens:
+                    continue
 
-                    for sid, arr in list(assigns.items()):
-                        if not isinstance(arr, list):
-                            continue
-                        dir_tokens = [
-                            _normalize_rel_path(str(value)[4:])
-                            for value in arr
-                            if str(value).startswith("DIR:") and _normalize_rel_path(str(value)[4:])
-                        ]
-                        if not dir_tokens:
-                            continue
-                        arr_set = set(map(str, arr))
-                        for rel, url in new_rel_urls:
-                            in_scope = any(rel == directory or rel.startswith(directory + "/") for directory in dir_tokens)
-                            if in_scope and url not in arr_set and rel not in arr_set:
-                                arr.append(url)
-                                arr_set.add(url)
-                                changed = True
-                        assigns[sid] = arr
+                arr_set = set(map(str, arr))
+                for rel, url in new_rel_urls:
+                    in_scope = any(rel == d or rel.startswith(d + "/") for d in dir_tokens)
+                    if not in_scope:
+                        continue
+                    if (url not in arr_set) and (rel not in arr_set):
+                        arr.append(url)
+                        arr_set.add(url)
+                        changed = True
 
-                    if changed:
-                        _save_mats_and_assigns(
-                            _mats,
-                            assigns,
-                            _load_page_folders(),
-                        )
-                except Exception as exc:
-                    print("[auto-assign DIR] error:", exc, flush=True)
-    except TimeoutError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 409
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+                assigns[sid] = arr
+
+            if changed:
+                save_atomic(ASN_PATH, assigns)
+    except Exception as e:
+        print("[auto-assign DIR] error:", e, flush=True)
 
     return jsonify({"ok": True, "files": out})
 
 @bp_api_fs.get("/api/fs/page-folders")
 def api_fs_get_page_folders():
-    _mats, _assigns, page_folders = load_material_state(
-        MAT_PATH,
-        ASN_PATH,
-        PAGE_FOLDERS_PATH,
-    )
-    return jsonify(page_folders)
+    return jsonify(load(PAGE_FOLDERS_PATH))
 
 @bp_api_fs.post("/api/fs/page-folders")
 def api_fs_set_page_folders():
@@ -508,13 +398,22 @@ def api_fs_set_page_folders():
                 _safe_join(v)
             except Exception:
                 body[k] = ""
-    with _material_state_lock():
-        mats, assigns = _load_mats_and_assigns()
-        _save_mats_and_assigns(mats, assigns, body)
+    save_atomic(PAGE_FOLDERS_PATH, body)
     return jsonify({"ok": True})
 
 @bp_api_fs.get("/files/<path:fname>")
 def files(fname: str):
+    if getattr(g, "student_app_public_request", False) is True:
+        raw_target = resolve_raw_request_target(request.environ, request.full_path.removesuffix("?"))
+        active_sid = getattr(g, "student_app_active_sid", None)
+        if not isinstance(active_sid, str) or not active_sid or raw_target is None:
+            abort(404)
+        if not safe_announcement_file(request.path, raw_target):
+            abort(404)
+        from routes.api_announcements import _student_can_access_announcement_image
+
+        if not _student_can_access_announcement_image(active_sid, fname):
+            abort(404)
     try:
         pth = _safe_join(fname)
     except ValueError:

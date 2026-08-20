@@ -1,10 +1,10 @@
-﻿// table.js — 전체 학생 테이블 렌더
+// table.js — 전체 학생 테이블 렌더
 // - "학교" 인라인 편집(자동 저장, 빈칸에서도 추가 가능)
 // - "학년" 인라인 편집(자동 저장)
 // - "커리큘럼/세부커리큘럼" 수정 가능 (고정 옵션 셀렉트)
 // - "요일" 밑 "등원시간" 행 추가 (월1~일1=13:00 / 월2~일2=18:00 기본, 수정 가능)
 // - "독스(docUrl)" 인라인 입력/저장 + 새 탭 열기 버튼
-// - 테이블에서 관리자 상담 기록 팝업(기록 읽기 전용, 영상 진도 우클릭 수정)
+// - 테이블에서 관리자 학생 운영 팝업(메모/숙제 읽기 전용, 영상 제외 상태 우클릭 수정)
 // - 커리별 학생 수(이름+학교 기준으로 중복 제거)
 
 import { $, toast } from '../core/utils.js';
@@ -281,7 +281,7 @@ export function renderTable() {
                  placeholder="https://docs.google.com/..."
                  value="${escapeHtml(doc)}">
           <button type="button" class="docOpen" title="새 탭에서 열기" data-id="${s.id}">🔗</button>
-          <button type="button" class="miniProgBtn" title="상담 기록 및 영상 진도 보기" data-id="${s.id}">상담</button>
+          <button type="button" class="miniProgBtn" title="학생 운영 팝업 보기" data-id="${s.id}">운영</button>
           <button type="button" class="studentTestRecordBtn" title="테스트 기록 보기" data-test-result-sid="${escapeHtml(s.id)}" data-test-result-name="${escapeHtml(s.name || s.id)}">기록</button>
         </div>
       </td>
@@ -323,11 +323,11 @@ export function renderTable() {
       #allWrap .studentsTable col.col-name       { width:6%; }
       #allWrap .studentsTable col.col-school     { width:7%; }
       #allWrap .studentsTable col.col-grade      { width:5%; }
-      #allWrap .studentsTable col.col-level      { width:6%; }
+      #allWrap .studentsTable col.col-level      { width:7%; }
       #allWrap .studentsTable col.col-curriculum { width:14%; }
       #allWrap .studentsTable col.col-schedule   { width:20%; }
       #allWrap .studentsTable col.col-books      { width:16%; }
-      #allWrap .studentsTable col.col-docs       { width:16%; }
+      #allWrap .studentsTable col.col-docs       { width:15%; }
       #allWrap .studentsTable col.col-del        { width:4%; }
       #allWrap .studentsTable col.col-clone      { width:6%; }
 
@@ -391,6 +391,10 @@ export function renderTable() {
         min-width:0;
         padding-left:8px;
         padding-right:22px;
+      }
+      #allWrap .studentsTable .levelSelect{
+        padding-left:5px;
+        padding-right:14px;
       }
 
       /* 요일 / 등원시간 행 스타일 */
@@ -1108,7 +1112,7 @@ function initGradeInlineEdit() {
   });
 }
 
-/* 행의 상담 기록 팝업 날짜는 실제 로컬 오늘을 사용한다. */
+/* 행의 학생 운영 팝업 날짜는 실제 로컬 오늘을 사용한다. */
 function todayLocalKey() {
   if (typeof window.todayLocalKey === 'function') return window.todayLocalKey();
   const d = new Date();
@@ -1122,7 +1126,7 @@ let studentRecordPopupModulePromise = null;
 
 async function ensureStudentRecordPopupReady() {
   if (!studentRecordPopupModulePromise) {
-    studentRecordPopupModulePromise = import('./studentRecordPopup.js').catch((error) => {
+    studentRecordPopupModulePromise = import('./studentRecordPopup.js?v=20260819-homework-status1').catch((error) => {
       studentRecordPopupModulePromise = null;
       throw error;
     });
@@ -1131,7 +1135,7 @@ async function ensureStudentRecordPopupReady() {
   await initAllStudentsRecordPopup(state);
 }
 
-// 관리자 통합 팝업은 첫 상담 클릭 때만 불러와 전체학생 초기 렌더를 막지 않는다.
+// 관리자 통합 팝업은 첫 운영 클릭 때만 불러와 전체학생 초기 렌더를 막지 않는다.
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.miniProgBtn');
   if (!btn) return;

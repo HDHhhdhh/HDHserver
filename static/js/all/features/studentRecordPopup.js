@@ -1,11 +1,13 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js';
-import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260819-textbook-delete1';
+import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260819-subject-days1';
 import { initVideoModal } from '../../admin/features/videoModal.js';
+import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260814-reminder-body-row2';
 
 const ADMIN_POPUP_STYLESHEETS = [
   '/css/main.css?v=20260417a',
   '/css/admin.css?v=20260527chat',
+  '/css/student-work-light.css?v=20260819t11',
 ];
 const ADMIN_POPUP_STYLESHEET_MARKER = 'data-all-students-admin-popup-style';
 
@@ -105,8 +107,9 @@ function installReadOnlyAssignmentGuard() {
   readOnlyAssignmentGuardInstalled = true;
 
   const mutationSelector = [
-    '#vidModal.student-work-layout .vid-save-btn',
-    '#vidModal.student-work-layout .vid-row input',
+    '#vidModal.student-work-layout .vid-row',
+    '#vidModal.student-work-layout .auto-count-btn',
+    '#vidModal.student-work-layout .vid-exclude-high-btn',
     '#vidModal.student-work-layout #autoAssignCountRange',
     '#vidModal.student-work-layout .vid-extra-add',
     '#vidModal.student-work-layout .vid-extra-controls input',
@@ -115,9 +118,16 @@ function installReadOnlyAssignmentGuard() {
     '#testModal.student-work-layout .test-row',
     '#testModal.student-work-layout .test-mini-actions button',
     '#testModal.student-work-layout .test-note-option input',
+    '#logModal.student-work-layout .assistant-note-compose',
+    '#logModal.student-work-layout .assistant-note-action-group',
   ].join(',');
   const blockMutation = (event) => {
-    if (!event.target?.closest?.(mutationSelector)) return;
+    const target = event.target?.closest?.(mutationSelector);
+    if (!target) return;
+    if (
+      target.closest?.('#vidModal .vid-row')
+      && (event.type === 'contextmenu' || (event.type === 'mousedown' && event.button === 2))
+    ) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   };
@@ -130,6 +140,7 @@ async function initializeAllStudentsRecordPopup() {
   await activateAdminPopupSkin();
   try {
     initAdminHoverTooltip();
+    initAssistantStudentNotes();
     initVideoModal();
     initLogModal();
     observeUnifiedPopupClose();

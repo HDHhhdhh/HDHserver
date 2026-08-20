@@ -74,7 +74,9 @@ def test_makeup_revision_guard() -> None:
         path = Path(tmpdir) / "makeup_carryover.json"
         path.write_text(json.dumps({"by_absence": {}, "manual": {}}), encoding="utf-8")
         original_path = api_makeup_carryover.MAKEUP_CARRYOVER_PATH
+        original_enqueue = api_makeup_carryover.enqueue_current_schedule_changes
         api_makeup_carryover.MAKEUP_CARRYOVER_PATH = path
+        api_makeup_carryover.enqueue_current_schedule_changes = lambda _sids: None
         try:
             app = Flask("verify-makeup-revision")
             app.register_blueprint(api_makeup_carryover.bp_api_makeup_carryover)
@@ -126,6 +128,7 @@ def test_makeup_revision_guard() -> None:
             assert current.headers.get("X-Makeup-Carryover-Revision") == accepted_revision
         finally:
             api_makeup_carryover.MAKEUP_CARRYOVER_PATH = original_path
+            api_makeup_carryover.enqueue_current_schedule_changes = original_enqueue
 
 
 if __name__ == "__main__":

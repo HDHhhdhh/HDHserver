@@ -4,22 +4,26 @@ import datetime as dt
 import mimetypes
 import os
 import pathlib
+import re
 import shutil
 import time
 import uuid
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from werkzeug.utils import secure_filename
 
-from core.paths import ANN_STATUS_PATH, ANNS_PATH, FILES_DIR, STU_PATH
+from core.paths import ANN_STATUS_PATH, ANNS_PATH, FILES_DIR, STU_PATH, VID_PATH
+from core.student_board_projection import student_board_announcement_visible
+from core.student_notification_events import deterministic_event_id
 from core.storage import file_lock, load, save_atomic, utc_now_isoz
 
 bp_api_announcements = Blueprint("api_announcements", __name__)
 
 ANN_TTL_SECONDS = 4 * 60 * 60
 TARGET_MODES = {"slot1", "slot2", "today", "all", "curriculum", "grade", "direct"}
-ANN_KINDS = {"announcement", "survey"}
+ANN_KINDS = {"announcement", "survey", "video"}
+VIDEO_MID_RE = re.compile(r"^[A-Za-z0-9_-]{4,128}$")
 SURVEY_STATUSES = {"draft", "public", "closed"}
 SURVEY_QUESTION_TYPES = {"single", "multiple", "short", "long"}
 ANN_IMAGE_DIR = FILES_DIR / "announcements"
@@ -476,19 +480,71 @@ def _safe_student_announcement(ann: dict[str, Any]) -> dict[str, Any]:
         "expiresAt": ann.get("expiresAt"),
         "targetLabel": ann.get("targetLabel") or "",
         "requireCompletion": bool(ann.get("requireCompletion", True)),
+        "notificationEventId": None,
     }
+    announcement_id = str(ann.get("id") or "").strip()
+    if announcement_id:
+        try:
+            row["notificationEventId"] = deterministic_event_id("announcement_published", announcement_id)
+        except ValueError:
+            pass
     if survey and survey.get("status") == "public":
         row["survey"] = survey
     return row
 
 
-def _student_visible(ann: dict[str, Any], sid: str) -> bool:
-    if not _targeted(ann, sid):
+def _student_visible(ann: dict[str, Any], sid: str, *, now: dt.datetime | None = None) -> bool:
+    return student_board_announcement_visible(ann, str(sid), now or _now())
+
+
+def _known_video_mid(value: Any) -> str:
+    mid = str(value or "").strip()
+    if not VIDEO_MID_RE.fullmatch(mid):
+        return ""
+    videos = load(VID_PATH)
+    if not isinstance(videos, list):
+        return ""
+    return mid if any(isinstance(row, dict) and str(row.get("mid") or "").strip() == mid for row in videos) else ""
+
+
+def _student_can_access_announcement_image(sid: str, image_path: str) -> bool:
+    requested = _normalize_image({"path": image_path})
+    if requested is None:
         return False
-    survey, _ = _normalize_survey(ann.get("survey"))
-    if survey:
-        return survey.get("status") == "public"
-    return True
+    expected_path = requested["path"]
+    now = _now()
+    for ann in _load_active_announcements():
+        if not _student_visible(ann, sid, now=now):
+            continue
+        images = _normalize_images(ann.get("images"), ann.get("image"))
+        if any(image.get("path") == expected_path for image in images):
+            return True
+    return False
+
+
+def _push_target_sids(ann: dict[str, Any]) -> list[str]:
+    """Select only targets for a currently visible saved announcement."""
+    now = _now()
+    target_sids = ann.get("targetSids")
+    if not isinstance(target_sids, list):
+        return []
+    return [
+        sid for sid in dict.fromkeys(target_sids)
+        if isinstance(sid, str) and _student_visible(ann, sid, now=now)
+    ]
+
+
+def _enqueue_saved_announcement(ann: dict[str, Any]) -> None:
+    """Best-effort post-commit seam; Push failures never undo announcement data."""
+    targets = _push_target_sids(ann)
+    if not targets:
+        return
+    try:
+        from routes.api_student_push import enqueue_announcement
+
+        enqueue_announcement(str(ann.get("id") or ""), targets)
+    except Exception:  # noqa: BROAD_EXCEPT_OK - durable announcement remains authoritative
+        return
 
 
 def _prune_status(active_ids: set[str]) -> None:
@@ -566,11 +622,17 @@ def _announcement_from_body(body: dict[str, Any], existing: dict[str, Any] | Non
     if survey_error:
         return None, (jsonify({"ok": False, "error": survey_error}), 400)
 
-    kind = str(body.get("kind") or existing.get("kind") or ("survey" if survey else "announcement")).strip()
+    kind = str(body.get("kind") or existing.get("kind") or ("survey" if survey else "announcement")).strip().lower()
     if kind not in ANN_KINDS:
         kind = "survey" if survey else "announcement"
     if kind == "survey" and not survey:
         return None, (jsonify({"ok": False, "error": "survey required"}), 400)
+    video_mid = ""
+    if kind == "video":
+        video_mid = _known_video_mid(body.get("videoMid") if "videoMid" in body else existing.get("videoMid"))
+        if not video_mid:
+            return None, (jsonify({"ok": False, "code": "invalid_video_mid"}), 400)
+        survey = None
 
     target_set = set(target_sids)
     snapshot = _normalize_snapshot(body.get("targetSnapshot"), target_set)
@@ -591,7 +653,7 @@ def _announcement_from_body(body: dict[str, Any], existing: dict[str, Any] | Non
         body.get("image") if "image" in body else existing.get("image"),
     )
 
-    return {
+    announcement = {
         "id": existing.get("id") or body.get("id") or f"ann_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
         "kind": kind,
         "title": title,
@@ -606,7 +668,11 @@ def _announcement_from_body(body: dict[str, Any], existing: dict[str, Any] | Non
         "targetSnapshot": snapshot,
         "survey": survey,
         "requireCompletion": bool(body.get("requireCompletion", existing.get("requireCompletion", True))),
-    }, None
+    }
+    if kind == "video":
+        announcement["videoMid"] = video_mid
+        announcement["requireCompletion"] = False
+    return announcement, None
 
 
 def _reply_rows_from_status_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
@@ -782,6 +848,12 @@ def _survey_results_for_admin(
 def _summary_for_admin(anns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     status = _as_status_map(load(ANN_STATUS_PATH))
     students = _student_map()
+    video_catalog = load(VID_PATH)
+    known_video_mids = {
+        str(row.get("mid") or "").strip()
+        for row in video_catalog if isinstance(video_catalog, list) and isinstance(row, dict)
+        if VIDEO_MID_RE.fullmatch(str(row.get("mid") or "").strip())
+    }
     rows: list[dict[str, Any]] = []
 
     for ann in anns:
@@ -815,7 +887,7 @@ def _summary_for_admin(anns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         replies.sort(key=lambda x: str(x.get("repliedAt") or ""), reverse=True)
         survey_results = _survey_results_for_admin(survey, status, students, aid, target_sids) if survey else None
         images = _normalize_images(ann.get("images"), ann.get("image"))
-        rows.append({
+        row = {
             "id": aid,
             "kind": kind,
             "title": ann.get("title") or "공지",
@@ -835,17 +907,39 @@ def _summary_for_admin(anns: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "readCount": read_count,
             "replyCount": len(replies),
             "replies": replies,
-        })
+        }
+        video_mid = str(ann.get("videoMid") or "").strip()
+        if kind == "video" and video_mid in known_video_mids:
+            row["videoMid"] = video_mid
+        rows.append(row)
     return rows
+
+
+def _is_public_student_request() -> bool:
+    return getattr(g, "student_app_public_request", False) is True
+
+
+def _student_request_sid(caller_sid: Any) -> str:
+    """Use only server-resolved session identity on the public host."""
+    if _is_public_student_request():
+        active_sid = getattr(g, "student_app_active_sid", None)
+        return active_sid if isinstance(active_sid, str) else ""
+    return str(caller_sid or "").strip()
 
 
 @bp_api_announcements.route("/api/announcements", methods=["GET", "POST"])
 def api_announcements():
     if request.method == "GET":
         anns = _load_active_announcements()
-        sid = str(request.args.get("sid") or "").strip()
+        sid = _student_request_sid(request.args.get("sid"))
+        if _is_public_student_request() and not sid:
+            return jsonify({"ok": False, "code": "unauthenticated"}), 401
         if sid:
-            return jsonify([_safe_student_announcement(a) for a in anns if _student_visible(a, sid)])
+            return jsonify([
+                _safe_student_announcement(a)
+                for a in anns
+                if a.get("kind") != "video" and _student_visible(a, sid)
+            ])
         return jsonify(anns)
 
     body = request.get_json(silent=True) or {}
@@ -866,6 +960,7 @@ def api_announcements():
         save_atomic(ANNS_PATH, active)
 
     _prune_status({str(a.get("id")) for a in active if a.get("id")})
+    _enqueue_saved_announcement(ann)
     return jsonify(ann), 201
 
 
@@ -933,6 +1028,7 @@ def api_announcement_update(aid: str):
     if not isinstance(body, dict):
         body = {}
 
+    saved: dict[str, Any] | None = None
     with file_lock(ANNS_PATH):
         anns = _as_ann_list(load(ANNS_PATH))
         for idx, current in enumerate(anns):
@@ -943,8 +1039,12 @@ def api_announcement_update(aid: str):
                 return error
             anns[idx] = ann
             save_atomic(ANNS_PATH, anns)
-            return jsonify(ann)
-    return jsonify({"ok": False, "error": "not found"}), 404
+            saved = ann
+            break
+    if saved is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    _enqueue_saved_announcement(saved)
+    return jsonify(saved)
 
 
 @bp_api_announcements.delete("/api/announcements/<aid>")
@@ -964,10 +1064,12 @@ def api_announcement_delete(aid: str):
 @bp_api_announcements.get("/api/announce-status")
 def api_announce_status():
     anns = _load_active_announcements()
-    sid = str(request.args.get("sid") or "").strip()
+    sid = _student_request_sid(request.args.get("sid"))
+    if _is_public_student_request() and not sid:
+        return jsonify({"ok": False, "code": "unauthenticated"}), 401
     status = _as_status_map(load(ANN_STATUS_PATH))
     if sid:
-        visible_ids = {str(a.get("id")) for a in anns if _targeted(a, sid)}
+        visible_ids = {str(a.get("id")) for a in anns if _student_visible(a, sid)}
         own = {
             aid: entry
             for aid, entry in (status.get(sid) or {}).items()
@@ -982,16 +1084,17 @@ def api_announce_ack():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         body = {}
-    sid = str(body.get("sid") or "").strip()
+    sid = _student_request_sid(body.get("sid"))
     aid = str(body.get("id") or "").strip()
     if not sid or not aid:
         return jsonify({"ok": False, "error": "missing sid/id"}), 400
 
-    ann = next((a for a in _load_active_announcements() if str(a.get("id")) == aid), None)
+    ann = next(
+        (a for a in _load_active_announcements() if str(a.get("id")) == aid and _student_visible(a, sid)),
+        None,
+    )
     if not ann:
         return jsonify({"ok": False, "error": "not found"}), 404
-    if not _targeted(ann, sid):
-        return jsonify({"ok": False, "error": "not targeted"}), 403
 
     with file_lock(ANN_STATUS_PATH):
         status = _as_status_map(load(ANN_STATUS_PATH))
@@ -1009,18 +1112,19 @@ def api_announce_submit():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         body = {}
-    sid = str(body.get("sid") or "").strip()
+    sid = _student_request_sid(body.get("sid"))
     aid = str(body.get("id") or "").strip()
     reply = str(body.get("reply") or "").strip()
     anonymous = bool(body.get("anonymous"))
     if not sid or not aid:
         return jsonify({"ok": False, "error": "missing sid/id"}), 400
 
-    ann = next((a for a in _load_active_announcements() if str(a.get("id")) == aid), None)
+    ann = next(
+        (a for a in _load_active_announcements() if str(a.get("id")) == aid and _student_visible(a, sid)),
+        None,
+    )
     if not ann:
         return jsonify({"ok": False, "error": "not found"}), 404
-    if not _targeted(ann, sid):
-        return jsonify({"ok": False, "error": "not targeted"}), 403
 
     survey_response: dict[str, Any] | None = None
     normalized_survey_answers: dict[str, Any] | None = None

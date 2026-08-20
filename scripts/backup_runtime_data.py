@@ -23,6 +23,17 @@ ROOT_DATA_SUFFIXES = {
     ".tmp",
 }
 DATA_DIRS = {"data", "files", "instance"}
+VAPID_PRIVATE_PATH = "instance/student-app-vapid-private.pem"
+TEST_PUSH_APPROVAL_PATH = "instance/student-test-push-approval.json"
+
+
+def is_excluded_secret(path: Path, root: Path) -> bool:
+    """Keep credentials and one-time approval capabilities out of archives."""
+    relative = path.relative_to(root).as_posix()
+    return any(
+        relative == prefix or relative.startswith(f"{prefix}.")
+        for prefix in (VAPID_PRIVATE_PATH, TEST_PUSH_APPROVAL_PATH)
+    )
 
 
 def utc_stamp() -> str:
@@ -50,6 +61,8 @@ def iter_runtime_files(root: Path):
             if path.is_dir():
                 continue
             if any(part in DEFAULT_SKIP_DIRS for part in path.relative_to(root).parts):
+                continue
+            if is_excluded_secret(path, root):
                 continue
             yield path
 

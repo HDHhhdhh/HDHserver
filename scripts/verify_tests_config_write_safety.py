@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 import routes.api_tests as api_tests
 import scripts.import_unit_test_catalog_csv as unit_catalog_import
+from core.test_config_safety import tests_config_revision
 
 
 def _fixture() -> dict:
@@ -51,6 +52,10 @@ def _fixture() -> dict:
 
 def _write_config(config_path: Path, value: dict) -> None:
     config_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+
+def _headers(config: dict) -> dict[str, str]:
+    return {"X-Tests-Config-Revision": tests_config_revision(config)}
 
 
 def _verify_unit_import_guard() -> None:
@@ -115,20 +120,58 @@ def main() -> None:
     app = Flask("tests-config-write-safety")
     app.register_blueprint(api_tests.bp_api_tests)
     original_path = api_tests.TESTS_CFG_PATH
+    original_academy_allowed = api_tests._academy_request_allowed
     try:
+        api_tests._academy_request_allowed = lambda: True
         with tempfile.TemporaryDirectory(prefix="tests-config-write-safety-") as temp_dir:
             config_path = Path(temp_dir) / "tests-config.json"
             api_tests.TESTS_CFG_PATH = config_path
 
             _write_config(config_path, current)
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/tests-config",
+                    base_url="http://127.0.0.1",
+                )
+            assert response.status_code == 200, response.get_data(as_text=True)
+            assert response.get_json() == current
+            assert response.headers.get("X-Tests-Config-Revision") == tests_config_revision(current)
+
             missing = copy.deepcopy(current)
             missing["categories"]["UNIT"]["tests"] = [
                 {"id": "keep", "name": "Keep"},
             ]
             with app.test_client() as client:
-                response = client.post("/api/tests-config", json=missing)
+                response = client.post(
+                    "/api/tests-config",
+                    json=missing,
+                    headers=_headers(current),
+                )
             assert response.status_code == 409, response.get_data(as_text=True)
             assert json.loads(config_path.read_text(encoding="utf-8")) == current
+
+            with app.test_client() as client:
+                response = client.post("/api/tests-config", json=current)
+            assert response.status_code == 428, response.get_data(as_text=True)
+            assert json.loads(config_path.read_text(encoding="utf-8")) == current
+
+            stale = copy.deepcopy(current)
+            server_changed = copy.deepcopy(current)
+            server_changed["categories"]["UNIT"]["tests"][0]["name"] = "Server edit"
+            server_changed["categories"]["UNIT"]["tests"] = [
+                server_changed["categories"]["UNIT"]["tests"][0]
+            ]
+            _write_config(config_path, server_changed)
+            with app.test_client() as client:
+                response = client.post(
+                    "/api/tests-config",
+                    json=stale,
+                    headers=_headers(current),
+                )
+            assert response.status_code == 409, response.get_data(as_text=True)
+            assert json.loads(config_path.read_text(encoding="utf-8")) == server_changed
+
+            _write_config(config_path, current)
 
             sanitized = copy.deepcopy(current)
             keep = sanitized["categories"]["UNIT"]["tests"][0]
@@ -137,9 +180,15 @@ def main() -> None:
             keep.pop("answerUrl")
             keep["sourceFiles"].pop("solutionFileId")
             with app.test_client() as client:
-                response = client.post("/api/tests-config", json=sanitized)
+                response = client.post(
+                    "/api/tests-config",
+                    json=sanitized,
+                    headers=_headers(current),
+                )
             assert response.status_code == 200, response.get_data(as_text=True)
+            saved_revision = response.headers.get("X-Tests-Config-Revision", "")
             saved = json.loads(config_path.read_text(encoding="utf-8"))
+            assert saved_revision == tests_config_revision(saved)
             saved_keep = saved["categories"]["UNIT"]["tests"][0]
             assert saved_keep["answerKey"] == ["1"]
             assert saved_keep["answerKeys"] == {"1": ["1"]}
@@ -153,7 +202,11 @@ def main() -> None:
             ]
             deleted["__removedTestIds"] = ["remove"]
             with app.test_client() as client:
-                response = client.post("/api/tests-config", json=deleted)
+                response = client.post(
+                    "/api/tests-config",
+                    json=deleted,
+                    headers=_headers(saved),
+                )
             assert response.status_code == 200, response.get_data(as_text=True)
             final = json.loads(config_path.read_text(encoding="utf-8"))
             final_ids = [
@@ -163,6 +216,7 @@ def main() -> None:
             assert "__removedTestIds" not in final
     finally:
         api_tests.TESTS_CFG_PATH = original_path
+        api_tests._academy_request_allowed = original_academy_allowed
 
 
 if __name__ == "__main__":

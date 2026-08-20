@@ -104,10 +104,32 @@ export function getActiveSchoolCalendarYear(payload) {
   return keys.sort((a, b) => String(a).localeCompare(String(b), 'ko')).at(-1) || active;
 }
 
-export function getSchoolCalendarSchoolMap(payload, year = getActiveSchoolCalendarYear(payload)) {
+export function getActiveSchoolCalendarSemester(payload, year = getActiveSchoolCalendarYear(payload)) {
+  if (!isSchoolCalendarV2(payload)) return '';
+
+  const yearKey = String(year || '');
+  const bundle = payload.years?.[yearKey] || {};
+  const rootSemester = yearKey === String(payload.activeYear || '')
+    ? String(payload.activeSemester || '')
+    : '';
+  const selected = String(bundle.activeSemester || rootSemester || '1');
+  return selected === '2' ? '2' : '1';
+}
+
+export function getSchoolCalendarSchoolMap(
+  payload,
+  year = getActiveSchoolCalendarYear(payload),
+  semester = getActiveSchoolCalendarSemester(payload, year),
+) {
   if (isSchoolCalendarV2(payload)) {
     const bundle = payload.years?.[String(year)] || {};
-    return isObject(bundle.schools) ? bundle.schools : {};
+    const semesterKey = String(semester || '1');
+    const semesterBundle = isObject(bundle.semesters?.[semesterKey])
+      ? bundle.semesters[semesterKey]
+      : {};
+    if (isObject(semesterBundle.schools)) return semesterBundle.schools;
+    if (semesterKey === '1' && isObject(bundle.schools)) return bundle.schools;
+    return {};
   }
 
   return isObject(payload) ? payload : {};

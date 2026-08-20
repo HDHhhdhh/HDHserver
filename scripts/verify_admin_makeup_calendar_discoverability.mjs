@@ -74,7 +74,6 @@ try {
   });
   page.on('requestfailed', request => diagnostics.requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`));
   await page.addInitScript(installCalendarFallback);
-  await page.addInitScript(() => sessionStorage.setItem('adminSelectedDate', '2026-07-10'));
   await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({ status: 200, body: '' }));
   await page.route('**/arrive-time/patch', async route => {
     const request = route.request();
@@ -171,7 +170,7 @@ try {
   await page.locator('#makeupPlannerList [data-makeup-action="check"]').click();
   await page.waitForFunction(() => document.querySelectorAll('.makeup-conflict-list').length > 0);
   const labels = await page.locator('.makeup-conflict-list').allTextContents();
-  assert(labels.some(text => text.includes('대수 - 1타임')), '등원일 확인 라벨이 표시되지 않았습니다.');
+  assert(labels.some(text => text.includes('대수 - 정규 - 1타임')), '등원일 확인 라벨이 표시되지 않았습니다.');
   assert(await page.locator('.makeup-slot-popover').count() === 0, '등원일 확인이 보강 슬롯 선택을 열었습니다.');
   assert(diagnostics.mutations.length === 0, `읽기 전용 확인 중 저장 요청 발생: ${diagnostics.mutations.join(', ')}`);
   const mutationsBeforeEscape = diagnostics.mutations.length;

@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ko">
 
 <head>
@@ -268,6 +268,50 @@
       color: var(--muted);
     }
 
+    body.admin.tests-page .catalog-search-group {
+      flex: 1 1 280px;
+      min-width: min(100%, 280px);
+    }
+
+    body.admin.tests-page .catalog-search-group input {
+      flex: 1 1 190px;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .catalog-order-hint {
+      margin-top: 10px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: color-mix(in oklab, var(--card) 96%, var(--fg) 4%);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="saving"] {
+      border-color: color-mix(in oklab, var(--accent) 42%, var(--line) 58%);
+      color: var(--fg);
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="success"] {
+      border-color: rgba(16, 185, 129, .38);
+      color: #047857;
+    }
+
+    body.dark.admin.tests-page .catalog-order-hint[data-kind="success"] {
+      color: #6ee7b7;
+    }
+
+    body.admin.tests-page .catalog-order-hint[data-kind="error"] {
+      border-color: rgba(239, 68, 68, .4);
+      color: #b91c1c;
+    }
+
+    body.dark.admin.tests-page .catalog-order-hint[data-kind="error"] {
+      color: #fca5a5;
+    }
+
     body.admin.tests-page .test-list {
       margin-top: 14px;
       border: 1px solid var(--line);
@@ -313,6 +357,31 @@
       margin-left: 6px;
     }
 
+    body.admin.tests-page .test-link-status {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 7px;
+      padding: 2px 7px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 850;
+      line-height: 1.35;
+      vertical-align: middle;
+    }
+
+    body.admin.tests-page .test-link-status.is-missing {
+      color: #9a3412;
+      border-color: rgba(234, 88, 12, .28);
+      background: rgba(251, 146, 60, .12);
+    }
+
+    body.dark.admin.tests-page .test-link-status.is-missing {
+      color: #fed7aa;
+      border-color: rgba(251, 146, 60, .4);
+      background: rgba(154, 52, 18, .28);
+    }
+
     body.admin.tests-page .test-list-group {
       margin: 0 0 10px;
       border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
@@ -345,6 +414,108 @@
 
     body.admin.tests-page .test-list-group-body {
       padding: 7px;
+    }
+
+    body.admin.tests-page .test-list-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      transition: opacity .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    body.admin.tests-page .test-list-item:last-child {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .test-list-item.is-dragging {
+      opacity: .48;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-before::before,
+    body.admin.tests-page .test-list-item.is-drop-after::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      right: 4px;
+      height: 3px;
+      z-index: 2;
+      border-radius: 999px;
+      background: var(--accent);
+      pointer-events: none;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-before::before {
+      top: -5px;
+    }
+
+    body.admin.tests-page .test-list-item.is-drop-after::after {
+      bottom: -5px;
+    }
+
+    body.admin.tests-page .test-drag-handle {
+      width: 24px;
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: grab;
+      user-select: none;
+    }
+
+    body.admin.tests-page .test-drag-handle:active {
+      cursor: grabbing;
+    }
+
+    body.admin.tests-page .test-drag-handle[aria-disabled="true"] {
+      opacity: .32;
+      cursor: not-allowed;
+    }
+
+    body.admin.tests-page .test-list button.test-select-button {
+      margin: 0;
+    }
+
+    body.admin.tests-page .test-order-controls {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    body.admin.tests-page .test-list button.test-order-button {
+      width: 32px;
+      min-width: 32px;
+      min-height: 32px;
+      margin: 0;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-color: var(--line);
+      background: color-mix(in oklab, var(--card) 94%, var(--fg) 6%);
+      text-align: center;
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    body.admin.tests-page .test-list button.test-order-button:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    body.admin.tests-page .test-list button.test-order-button:disabled {
+      opacity: .32;
+      cursor: not-allowed;
+      transform: none;
     }
 
     body.admin.tests-page .editor-panel {
@@ -432,6 +603,70 @@
     body.admin.tests-page .answers-help code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 11px;
+    }
+
+    body.admin.tests-page .answer-mode-block {
+      margin-top: 4px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in oklab, var(--card) 98%, var(--fg) 2%);
+    }
+
+    body.admin.tests-page .answer-mode-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    body.admin.tests-page .answer-mode-head .answer-label {
+      margin-bottom: 0;
+    }
+
+    body.admin.tests-page .answer-mode-summary {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--muted);
+    }
+
+    body.admin.tests-page .answer-mode-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    body.admin.tests-page .answer-mode-row {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+
+    body.admin.tests-page .answer-mode-row label {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    body.admin.tests-page .answer-mode-row select {
+      width: 100%;
+      min-width: 0;
+    }
+
+    body.admin.tests-page .answer-mode-empty {
+      padding: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
     }
 
     body.admin.tests-page .btn-row {
@@ -1552,6 +1787,12 @@
               <select id="cfgRoundFilter"></select>
             </div>
 
+            <div class="toolbar-group catalog-search-group">
+              <label class="toolbar-label" for="cfgCatalogSearch">목록 검색</label>
+              <input id="cfgCatalogSearch" type="search" autocomplete="off"
+                placeholder="시험명, ID, 과목, 난이도 검색" aria-describedby="catalogOrderHint">
+            </div>
+
             <div class="toolbar-spacer"></div>
             <button id="btnCsvTemplate" class="btn secondary" type="button">CSV 양식</button>
             <button id="btnImportCsv" class="btn secondary" type="button">CSV 가져오기</button>
@@ -1560,7 +1801,8 @@
           </div>
 
           <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
-          <div id="testList" class="test-list"></div>
+          <div id="catalogOrderHint" class="catalog-order-hint" role="status" aria-live="polite"></div>
+          <div id="testList" class="test-list" aria-label="시험 목록"></div>
         </div>
       </section>
 
@@ -1629,6 +1871,19 @@
               · 정답은 <code>1 3 4 2</code>, <code>1,3,4,2</code>, <code>1342</code> 모두 입력 가능합니다.<br>
               · 단원평가도 회차마다 독립 시험으로 저장되며, 현재 선택한 회차의 정답만 수정됩니다.<br>
               · CSV 가져오기는 1회차/2회차/3회차 정답 열을 각각 별도 시험으로 펼쳐 저장합니다.
+            </div>
+          </div>
+
+          <div class="answer-mode-block">
+            <div class="answer-mode-head">
+              <span class="answer-label">문항 유형</span>
+              <span id="cfgAnswerModeSummary" class="answer-mode-summary"></span>
+            </div>
+            <div id="cfgAnswerModes" class="answer-mode-grid" aria-label="문항별 답안 유형"></div>
+            <div class="answers-help">
+              · 객관식은 1~5만 허용합니다.<br>
+              · 단답형은 짧은 숫자·분수·루트 식을 OCR 후보와 입력 형식 확인에 사용합니다.<br>
+              · 자동 판정이 위험한 문항은 수동 검토로 지정합니다. 유형은 정답값과 분리해 회차별로 저장됩니다.
             </div>
           </div>
 
@@ -1736,7 +1991,7 @@
     })();
   </script>
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
-  <script src="/js/tests.js" type="module"></script>
+  <script src="/js/tests.js?v=20260814ocr2" type="module"></script>
 </body>
 
 </html>

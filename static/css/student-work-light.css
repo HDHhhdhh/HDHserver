@@ -1,0 +1,1949 @@
+/*
+ * Unified student-operation workspace.
+ * Visual treatment only: panel geometry and interaction logic stay in the
+ * existing modal modules.
+ */
+html body.admin.student-popup-open {
+  --work-panel: #fff;
+  --work-surface: #f7f8fa;
+  --work-line: #e4e7ec;
+  --work-line-strong: #cfd5de;
+  --work-ink: #172033;
+  --work-muted: #667085;
+  --work-brand: #2563eb;
+  --work-brand-hover: #1d4ed8;
+  --work-brand-soft: #eff6ff;
+  --work-success: #15803d;
+  --work-success-soft: #f0fdf4;
+  --work-warning: #b45309;
+  --work-warning-soft: #fffbeb;
+  --work-danger: #b42318;
+  --work-danger-soft: #fef3f2;
+  font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo",
+    "Malgun Gothic", "맑은 고딕", sans-serif;
+}
+
+html body.admin.student-popup-open #studentPopupScrim.is-open {
+  background: rgba(237, 240, 244, .84) !important;
+  backdrop-filter: blur(2px) saturate(.72) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-card,
+html body.admin.student-popup-open #logModal.student-work-layout .log-card,
+html body.admin.student-popup-open #testModal.student-work-layout .test-card,
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout {
+  border: 1px solid var(--work-line) !important;
+  border-radius: 10px !important;
+  background: var(--work-panel) !important;
+  color: var(--work-ink) !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .09) !important;
+  color-scheme: light !important;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout .vid-card,
+      #testModal.student-work-layout .test-card) {
+  padding: 14px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout .log-card {
+  padding: 0 !important;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout,
+      #logModal.student-work-layout,
+      #testModal.student-work-layout,
+      #adminSchoolTip.student-work-layout)
+  :is(input:not([type="range"]), select, textarea:not(.assistant-note-input)) {
+  box-sizing: border-box;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: var(--work-surface) !important;
+  color: var(--work-ink) !important;
+  box-shadow: none !important;
+  transition: border-color .14s ease, background-color .14s ease,
+    box-shadow .14s ease;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout,
+      #logModal.student-work-layout,
+      #testModal.student-work-layout,
+      #adminSchoolTip.student-work-layout)
+  :is(input:not([type="range"]), select, textarea):hover:not(:disabled) {
+  border-color: var(--work-line-strong) !important;
+  background: #fff !important;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout,
+      #logModal.student-work-layout,
+      #testModal.student-work-layout,
+      #adminSchoolTip.student-work-layout)
+  :is(input:not([type="range"]), select, textarea):focus {
+  border-color: #76a7fa !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .1) !important;
+  outline: none !important;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout,
+      #logModal.student-work-layout,
+      #testModal.student-work-layout,
+      #adminSchoolTip.student-work-layout)
+  :is(button, [role="button"]):focus-visible {
+  outline: 2px solid rgba(37, 99, 235, .48) !important;
+  outline-offset: 2px !important;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout .vid-course-list,
+      #vidModal.student-work-layout .vid-extra-list,
+      #logModal.student-work-layout .assistant-note-thread,
+      #testModal.student-work-layout .test-body,
+      #adminSchoolTip.student-work-layout .student-tooltip-homework-host) {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout .vid-course-list,
+      #vidModal.student-work-layout .vid-extra-list,
+      #logModal.student-work-layout .assistant-note-thread,
+      #testModal.student-work-layout .test-body,
+      #adminSchoolTip.student-work-layout .student-tooltip-homework-host)
+  ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+html body.admin.student-popup-open
+  :is(#vidModal.student-work-layout .vid-course-list,
+      #vidModal.student-work-layout .vid-extra-list,
+      #logModal.student-work-layout .assistant-note-thread,
+      #testModal.student-work-layout .test-body,
+      #adminSchoolTip.student-work-layout .student-tooltip-homework-host)
+  ::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+/* Video assignment: flat rows with quiet state labels. */
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-head {
+  gap: 10px !important;
+  padding: 0 0 10px !important;
+  border-bottom: 1px solid var(--work-line) !important;
+  background: #fff !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout #mTitle {
+  margin: 0 0 8px !important;
+  color: var(--work-ink) !important;
+  font-size: 19px !important;
+  font-weight: 800 !important;
+  line-height: 1.3 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  #autoAssignControl {
+  margin: 0 !important;
+  padding: 8px 0 0 !important;
+  border: 0 !important;
+  border-top: 1px solid #eef1f4 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  #autoAssignControl > div:first-child {
+  margin-bottom: 7px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  #autoAssignControl strong {
+  color: #344054 !important;
+  font-size: 18px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  #autoAssignCountLabel {
+  color: var(--work-muted) !important;
+  font-size: 16px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .auto-count-btn {
+  min-width: 38px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 9px !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: var(--work-surface) !important;
+  color: #475467 !important;
+  box-shadow: none !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .auto-count-btn:hover {
+  border-color: var(--work-line-strong) !important;
+  background: #fff !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .auto-count-btn[aria-pressed="true"] {
+  border-color: var(--work-brand) !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-actions {
+  gap: 6px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  :is(.vid-save-btn, .vid-exclude-high-btn) {
+  min-width: 64px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 11px !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-save-btn {
+  border-color: var(--work-brand) !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-save-btn:hover:not(:disabled) {
+  border-color: var(--work-brand-hover) !important;
+  background: var(--work-brand-hover) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-exclude-high-btn {
+  border-color: #f2c7c3 !important;
+  background: #fff !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout #chkZone {
+  padding-top: 8px !important;
+  gap: 8px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-state-legend {
+  gap: 3px 8px !important;
+  margin: 0 0 5px !important;
+  padding: 0 2px !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-state-legend span {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--work-muted) !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-row {
+  min-height: 42px !important;
+  margin: 0 !important;
+  padding: 7px 5px !important;
+  border: 0 !important;
+  border-bottom: 1px solid #edf0f3 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #344054 !important;
+  box-shadow: none !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-row:hover {
+  border-color: #dfe4ea !important;
+  background: var(--work-surface) !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="assigned"] {
+  background: var(--work-success-soft) !important;
+  color: #166534 !important;
+  box-shadow: inset 3px 0 0 #22c55e !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="done"] {
+  background: #f7faff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="interrupted"] {
+  background: var(--work-warning-soft) !important;
+  color: var(--work-warning) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="skip"] {
+  background: var(--work-danger-soft) !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-state-badge {
+  min-width: 0 !important;
+  padding: 3px 6px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: #f2f4f7 !important;
+  color: #667085 !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="assigned"] .vid-state-badge {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="done"] .vid-state-badge {
+  background: #eaf2ff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="interrupted"] .vid-state-badge {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-row[data-state="skip"] .vid-state-badge {
+  background: #fee4e2 !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  .vid-extra-section {
+  gap: 6px !important;
+  padding-top: 8px !important;
+  border-top-color: var(--work-line) !important;
+}
+
+html body.admin.student-popup-open #vidModal.student-work-layout
+  :is(.vid-extra-title span, .vid-extra-meta, .vid-extra-empty) {
+  color: var(--work-muted) !important;
+}
+
+/* Assistant memo: preserve the wide panel, remove dark card weight. */
+html body.admin.student-popup-open #logModal.student-work-layout,
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes {
+  --assistant-note-body-font-size: 21px;
+  --assistant-note-author-font-size: 22px;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes {
+  margin: 0 !important;
+  padding: 16px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  color: var(--work-ink) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-heading {
+  gap: 12px !important;
+  margin: 0 0 12px !important;
+  padding-bottom: 10px !important;
+  border-bottom: 1px solid var(--work-line) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-heading h3 {
+  margin: 0 !important;
+  color: var(--work-ink) !important;
+  font-size: 22px !important;
+  font-weight: 800 !important;
+  letter-spacing: -.02em;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-heading-actions {
+  gap: 6px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-heading-button {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 11px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #475467 !important;
+  box-shadow: none !important;
+  font-size: 17px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-save-close {
+  border-color: var(--work-brand) !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-thread {
+  display: grid !important;
+  align-content: start !important;
+  gap: 0 !important;
+  min-height: 180px !important;
+  max-height: none !important;
+  padding: 0 2px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-empty {
+  align-self: center !important;
+  margin: auto !important;
+  padding: 18px 10px !important;
+  color: #667085 !important;
+  font-size: 20px !important;
+  font-weight: 650 !important;
+  line-height: 1.5 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-empty.is-error {
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item {
+  --assistant-note-item-color: #475467;
+  --assistant-note-item-rgb: 71, 84, 103;
+  min-width: 0 !important;
+  padding: 11px 8px 11px 12px !important;
+  border: 0 !important;
+  border-bottom: 1px solid #edf0f3 !important;
+  border-left: 3px solid var(--assistant-note-item-color) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="귤"] {
+  --assistant-note-item-color: #c2410c;
+  --assistant-note-item-rgb: 194, 65, 12;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="세빈"] {
+  --assistant-note-item-color: #0369a1;
+  --assistant-note-item-rgb: 3, 105, 161;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="동훈"] {
+  --assistant-note-item-color: #15803d;
+  --assistant-note-item-rgb: 21, 128, 61;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="하영"] {
+  --assistant-note-item-color: #be185d;
+  --assistant-note-item-rgb: 190, 24, 93;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.is-pinned {
+  border-bottom-color: #f2dfaa !important;
+  border-left-color: #d4a72c !important;
+  background: #fffcf2 !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-item-author, .assistant-note-item-content) {
+  color: var(--assistant-note-item-color) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author {
+  font-size: var(--assistant-note-author-font-size) !important;
+  font-weight: 800 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content {
+  font-size: var(--assistant-note-body-font-size) !important;
+  font-weight: 650 !important;
+  line-height: 1.5 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-item-time, .assistant-note-reminder-dates) {
+  color: var(--work-muted) !important;
+  font-size: 17px !important;
+  font-weight: 650 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin {
+  background: transparent !important;
+  color: #667085 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin:hover {
+  background: var(--work-surface) !important;
+  color: #475467 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin[aria-pressed="true"] {
+  color: #c2410c !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author-group {
+  gap: 8px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin-icon {
+  width: 22px !important;
+  height: 22px !important;
+  stroke-width: 1.9 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-edit,
+      .assistant-note-delete,
+      .assistant-note-edit-actions button) {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 8px !important;
+  border-radius: 5px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  font-size: 16px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-edit {
+  border-color: #b9d1fb !important;
+  color: #2459a9 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-delete {
+  border-color: #f2c7c3 !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-reminder-badge {
+  border-color: #c7d7f5 !important;
+  background: var(--work-brand-soft) !important;
+  color: #335fa8 !important;
+  font-size: 17px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-reminder-arrow {
+  color: #d19a00 !important;
+  font-size: 19px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-compose {
+  margin-top: 12px !important;
+  padding-top: 12px !important;
+  border-top: 1px solid var(--work-line) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-mode-tabs {
+  gap: 3px !important;
+  margin-bottom: 9px !important;
+  padding: 3px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 8px !important;
+  background: var(--work-surface) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-mode-button {
+  min-height: 40px !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--work-muted) !important;
+  box-shadow: none !important;
+  font-size: 19px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-mode-button.is-selected {
+  border-color: #d8e4f7 !important;
+  background: #fff !important;
+  color: var(--work-brand) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .06) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons {
+  gap: 5px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button {
+  height: 40px !important;
+  min-height: 40px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  font-size: 19px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button[data-note-author="귤"] {
+  color: #c2410c !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button[data-note-author="세빈"] {
+  color: #0369a1 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button[data-note-author="동훈"] {
+  color: #15803d !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button[data-note-author="하영"] {
+  color: #be185d !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button.is-selected {
+  border-color: currentColor !important;
+  background: color-mix(in srgb, currentColor 8%, #fff 92%) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-compose-reminder {
+  margin: 8px 0 0 !important;
+  color: var(--work-muted) !important;
+  font-size: 18px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-compose-reminder-label {
+  color: #475467 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-remind-input {
+  width: 240px !important;
+  min-height: 38px !important;
+  padding: 5px 9px !important;
+  color-scheme: light !important;
+  font-size: 18px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-input, .assistant-note-edit-input) {
+  min-height: 110px !important;
+  padding: 10px 11px !important;
+  color: var(--work-ink) !important;
+  caret-color: var(--work-brand) !important;
+  font-size: var(--assistant-note-body-font-size) !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+  resize: vertical !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="귤"]
+  .assistant-note-input {
+  color: #a16207 !important;
+  caret-color: #a16207 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="세빈"]
+  .assistant-note-input {
+  color: #0369a1 !important;
+  caret-color: #0369a1 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="동훈"]
+  .assistant-note-input {
+  color: #15803d !important;
+  caret-color: #15803d !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="하영"]
+  .assistant-note-input {
+  color: #be185d !important;
+  caret-color: #be185d !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-compose-actions {
+  margin-top: 8px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-status {
+  color: var(--work-muted) !important;
+  font-size: 17px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-save {
+  min-height: 38px !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--work-brand) !important;
+  border-radius: 6px !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  font-size: 18px !important;
+  font-weight: 750 !important;
+}
+
+/* Student information and homework: clear hierarchy with fewer boxes. */
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout {
+  padding: 12px 13px !important;
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-identity-row {
+  gap: 4px 6px !important;
+  margin-bottom: 5px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-name-group {
+  color: var(--work-ink) !important;
+  font-size: 17px !important;
+  font-weight: 850 !important;
+  letter-spacing: -.02em;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-publisher {
+  color: #475467 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-publisher > span {
+  padding: 2px 6px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 999px !important;
+  background: var(--work-surface) !important;
+  color: #475467 !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-schedule-row {
+  gap: 3px 7px !important;
+  margin-bottom: 5px !important;
+  color: #475467 !important;
+  font-size: 12px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-school {
+  color: #344054 !important;
+  opacity: 1 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-row {
+  margin-top: 5px !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-timing-row {
+  gap: 6px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-timing-row > div {
+  min-width: 0 !important;
+  gap: 1px !important;
+  padding: 5px 8px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: var(--work-surface) !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-attendance {
+  margin-top: 5px !important;
+  color: var(--work-muted) !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-info {
+  margin-top: 5px !important;
+  padding: 6px 8px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-row details {
+  margin-top: 5px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-exam-row details > summary {
+  padding: 6px 8px !important;
+  color: #475467 !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework {
+  margin-top: 7px !important;
+  padding-top: 7px !important;
+  border-top: 1px solid var(--work-line) !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-heading {
+  margin-bottom: 5px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-heading h3 {
+  color: var(--work-ink) !important;
+  font-size: 14px !important;
+  font-weight: 850 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-actions {
+  gap: 3px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-actions button {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 21px !important;
+  min-height: 21px !important;
+  padding: 0 6px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 5px !important;
+  background: #fff !important;
+  color: #475467 !important;
+  box-shadow: none !important;
+  font-size: 9px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-actions #logCompleteBtn {
+  border-color: #a9dfbc !important;
+  background: var(--work-success-soft) !important;
+  color: var(--work-success) !important;
+}
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-cmt {
+  display: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .student-tooltip-homework-host {
+  padding-right: 3px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout #hwWrap {
+  margin: 0 !important;
+  color: var(--work-ink) !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout #hwBox {
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout #hwBody {
+  gap: 0 !important;
+  padding: 0 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout .hwItem {
+  gap: 5px !important;
+  padding: 7px 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid #edf0f3 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwItem:first-child {
+  padding-top: 2px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  :is(.hwTop, .hwBot, .thisCell) {
+  gap: 4px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  :is(.hw-book, .hw-this, .hw-cmt, .hw-next)::before {
+  margin: 0 0 2px !important;
+  color: #667085 !important;
+  font-size: 8.5px !important;
+  font-weight: 750 !important;
+  line-height: 1.15 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody input:not([type="range"]),
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwCanonical :is(input, select) {
+  width: 100% !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 3px 6px !important;
+  border: 1px solid transparent !important;
+  border-radius: 5px !important;
+  background: var(--work-surface) !important;
+  color: #344054 !important;
+  font-size: 10.5px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody input:disabled,
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwCanonical :is(input, select):disabled {
+  opacity: 1 !important;
+  -webkit-text-fill-color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwCanonical {
+  padding: 6px !important;
+  border: 1px solid #edf0f3 !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  :is(.hwCanonicalLabel, .hwCanonicalMeta) {
+  color: var(--work-muted) !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .pctWrap {
+  padding-top: 7px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .pctBubble {
+  border: 0 !important;
+  background: transparent !important;
+  color: #475467 !important;
+  box-shadow: none !important;
+  font-size: 9px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwPctRange {
+  accent-color: var(--work-brand) !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwPctRange::-webkit-slider-runnable-track {
+  background: #dbe7fb !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwPctRange::-webkit-slider-thumb {
+  background: var(--work-brand) !important;
+  border-color: #fff !important;
+}
+
+/* Test assignment: compact controls and row-list content. */
+html body.admin.student-popup-open #testModal.student-work-layout .test-head {
+  gap: 10px !important;
+  padding-bottom: 10px !important;
+  border-bottom: 1px solid var(--work-line) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout h3 {
+  margin: 0 0 3px !important;
+  color: var(--work-ink) !important;
+  font-size: 19px !important;
+  font-weight: 800 !important;
+  letter-spacing: -.02em;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-sub {
+  color: var(--work-muted) !important;
+  font-size: 11px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-save-btn {
+  min-width: 64px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 11px !important;
+  border: 1px solid var(--work-brand) !important;
+  border-radius: 6px !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-body {
+  gap: 8px !important;
+  padding-top: 9px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-tabbar {
+  gap: 3px !important;
+  padding: 3px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 8px !important;
+  background: var(--work-surface) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-tab {
+  min-height: 31px !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--work-muted) !important;
+  box-shadow: none !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-tab.is-active {
+  border-color: #d8e4f7 !important;
+  background: #fff !important;
+  color: var(--work-brand) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .06) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-filter-grid {
+  gap: 6px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-field :is(label, .test-field-label) {
+  margin-bottom: 3px !important;
+  color: var(--work-muted) !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(select, .test-override-btn) {
+  height: 32px !important;
+  min-height: 32px !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: var(--work-surface) !important;
+  color: #344054 !important;
+  box-shadow: none !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-override-btn.is-active {
+  border-color: #c7d7f5 !important;
+  background: var(--work-brand-soft) !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-level-setting-panel {
+  gap: 6px !important;
+  padding: 8px !important;
+  border: 1px solid #d8e4f7 !important;
+  border-radius: 7px !important;
+  background: #f8fbff !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-level-setting-option {
+  height: 30px !important;
+  border: 1px solid #d8e4f7 !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-level-setting-option.is-active {
+  border-color: var(--work-brand) !important;
+  background: var(--work-brand) !important;
+  color: #fff !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-toolbar {
+  gap: 6px !important;
+  padding-top: 2px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-selection-meta {
+  color: #5577ad !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-mini-actions {
+  gap: 4px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-mini-actions button {
+  min-height: 28px !important;
+  padding: 0 7px !important;
+  border: 1px solid var(--work-line) !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #475467 !important;
+  box-shadow: none !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-list {
+  gap: 0 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout .test-row {
+  min-height: 42px !important;
+  padding: 7px 5px !important;
+  border: 0 !important;
+  border-bottom: 1px solid #edf0f3 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #344054 !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row:not(:disabled):hover {
+  border-color: #dfe4ea !important;
+  background: var(--work-surface) !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="assigned"] {
+  background: var(--work-success-soft) !important;
+  color: #166534 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(.test-row[data-state="done"], .test-row.is-done) {
+  background: #f7faff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="interrupted"] {
+  background: var(--work-warning-soft) !important;
+  color: var(--work-warning) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="skip"] {
+  background: var(--work-danger-soft) !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-selection="selected"] {
+  outline: 2px solid rgba(37, 99, 235, .38) !important;
+  outline-offset: -2px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row-main strong {
+  color: inherit !important;
+  font-size: 13px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row-meta {
+  color: var(--work-muted) !important;
+  font-size: 10px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-difficulty-badge {
+  height: 17px !important;
+  min-width: 0 !important;
+  padding: 0 5px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: #f2f4f7 !important;
+  color: #667085 !important;
+  font-size: 9px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-difficulty-badge.is-high {
+  background: #eaf2ff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-difficulty-badge.is-middle {
+  background: #fff1e8 !important;
+  color: #b54708 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(.test-selection-status, .test-status) {
+  padding: 3px 6px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: #f2f4f7 !important;
+  color: #667085 !important;
+  font-size: 9.5px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="assigned"] .test-status {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(.test-row[data-state="done"], .test-row.is-done) .test-status {
+  background: #eaf2ff !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="interrupted"] .test-status {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-row[data-state="skip"] .test-status {
+  background: #fee4e2 !important;
+  color: var(--work-danger) !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-selection-status {
+  background: var(--work-brand-soft) !important;
+  color: #335fa8 !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(.test-note-option, .test-empty) {
+  border-color: var(--work-line) !important;
+  border-radius: 6px !important;
+  background: var(--work-surface) !important;
+  color: var(--work-muted) !important;
+  box-shadow: none !important;
+}
+
+/* Existing mobile flow still shows one of the same four panels at a time. */
+@media (max-width: 900px) {
+  html body.admin.student-popup-open #studentPopupMobileNav.is-open {
+    border: 1px solid var(--work-line) !important;
+    border-radius: 9px !important;
+    background: rgba(255, 255, 255, .97) !important;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, .1) !important;
+  }
+
+  html body.admin.student-popup-open #studentPopupMobileNav button {
+    min-height: 38px !important;
+    border: 1px solid transparent !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    color: var(--work-muted) !important;
+    font-size: 12px !important;
+    font-weight: 750 !important;
+  }
+
+  html body.admin.student-popup-open #studentPopupMobileNav
+    button[aria-pressed="true"] {
+    border-color: #d8e4f7 !important;
+    background: var(--work-brand-soft) !important;
+    color: var(--work-brand) !important;
+  }
+
+  html body.admin.student-popup-open
+    :is(#logModal.student-work-layout .log-card > *,
+        #testModal.student-work-layout .test-card > *,
+        #adminSchoolTip.student-work-layout > *) {
+    zoom: 1 !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout,
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-student-notes {
+    --assistant-note-body-font-size: 14px;
+    --assistant-note-author-font-size: 15px;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-student-notes {
+    padding: 12px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-heading h3 {
+    font-size: 17px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-heading-button {
+    height: 38px !important;
+    min-height: 38px !important;
+    font-size: 12px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    :is(.assistant-note-empty,
+        .assistant-note-mode-button,
+        .assistant-note-author-buttons button,
+        .assistant-note-save) {
+    font-size: 13px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    :is(.assistant-note-item-time,
+        .assistant-note-reminder-dates,
+        .assistant-note-reminder-badge,
+        .assistant-note-status,
+        .assistant-note-compose-reminder,
+        .assistant-note-remind-input) {
+    font-size: 12px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    :is(.assistant-note-edit,
+        .assistant-note-delete,
+        .assistant-note-edit-actions button) {
+    height: 34px !important;
+    min-height: 34px !important;
+    font-size: 12px !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    :is(.assistant-note-input, .assistant-note-edit-input) {
+    min-height: 96px !important;
+  }
+
+  html body.admin.student-popup-open
+    :is(#vidModal.student-work-layout .vid-row,
+        #testModal.student-work-layout .test-row) {
+    min-height: 44px !important;
+  }
+}
+/* Keep long reminder text inside the right-side date/action boundary. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-reminder-body.is-stacked {
+  grid-template-columns: minmax(0, 1fr) max-content !important;
+  column-gap: 10px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-reminder-body.is-stacked > .assistant-note-item-content {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+  white-space: pre-wrap !important;
+}
+/* Keep long regular memo text left of its date/action column. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item:not(.has-reminder) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 140px !important;
+  column-gap: 4px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item:not(.has-reminder) > .assistant-note-item-header {
+  grid-column: 1 / -1 !important;
+  min-width: 0 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item:not(.has-reminder) > .assistant-note-item-content {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+  white-space: pre-wrap !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item:not(.has-reminder) > :is(.assistant-note-edit-input, .assistant-note-edit-actions) {
+  grid-column: 1 !important;
+  min-width: 0 !important;
+}
+@media (max-width: 900px) {
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-item:not(.has-reminder) {
+    grid-template-columns: minmax(0, 1fr) 130px !important;
+    column-gap: 6px !important;
+  }
+}
+/* Textbook row delete affordance: only rows added after the two defaults. */
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hwBook {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  width: auto !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-book-delete {
+  flex: 0 0 22px !important;
+  width: 22px !important;
+  min-width: 22px !important;
+  height: 22px !important;
+  min-height: 22px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid #d0d5dd !important;
+  border-radius: 5px !important;
+  background: #fff !important;
+  color: #667085 !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-book-delete:hover,
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-book-delete:focus-visible {
+  border-color: #98a2b3 !important;
+  background: #f2f4f7 !important;
+  color: #344054 !important;
+}
+/* Author-colored compose field: selection carries through to the memo textarea. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author] {
+  --assistant-note-compose-color: var(--work-brand);
+  --assistant-note-compose-rgb: 37, 99, 235;
+  --assistant-note-compose-text: var(--work-ink);
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="귤"] {
+  --assistant-note-compose-color: #f59e0b;
+  --assistant-note-compose-rgb: 245, 158, 11;
+  --assistant-note-compose-text: #b45309;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="세빈"] {
+  --assistant-note-compose-color: #0284c7;
+  --assistant-note-compose-rgb: 2, 132, 199;
+  --assistant-note-compose-text: #0369a1;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="동훈"] {
+  --assistant-note-compose-color: #16a34a;
+  --assistant-note-compose-rgb: 22, 163, 74;
+  --assistant-note-compose-text: #15803d;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author="하영"] {
+  --assistant-note-compose-color: #db2777;
+  --assistant-note-compose-rgb: 219, 39, 119;
+  --assistant-note-compose-text: #be185d;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author]
+  .assistant-note-input {
+  border: 1px solid var(--assistant-note-compose-color) !important;
+  background: #fff !important;
+  color: var(--assistant-note-compose-text) !important;
+  caret-color: var(--assistant-note-compose-color) !important;
+  box-shadow: 0 0 0 3px rgba(var(--assistant-note-compose-rgb), .18) !important;
+  transition: border-color .16s ease, box-shadow .16s ease !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes[data-note-selected-author]
+  .assistant-note-input:focus {
+  outline: 2px solid var(--assistant-note-compose-color) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(var(--assistant-note-compose-rgb), .24) !important;
+}
+
+/* Brighter yellow-orange token for 규리 across existing notes and controls. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="귤"] {
+  --assistant-note-item-color: #f59e0b !important;
+  --assistant-note-item-rgb: 217, 119, 6 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-author-buttons button[data-note-author="귤"] {
+  color: #f59e0b !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-pin[aria-pressed="true"] {
+  color: #f59e0b !important;
+}
+/* Keep author compose emphasis above the injected modal reset. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author]
+  textarea.assistant-note-input {
+  border-color: var(--assistant-note-compose-color) !important;
+  background: #fff !important;
+  color: var(--assistant-note-compose-text) !important;
+  caret-color: var(--assistant-note-compose-color) !important;
+  box-shadow: 0 0 0 3px rgba(var(--assistant-note-compose-rgb), .18) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author]
+  textarea.assistant-note-input:focus {
+  outline: 2px solid var(--assistant-note-compose-color) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(var(--assistant-note-compose-rgb), .24) !important;
+}
+/* Explicit author tokens keep the selected field visible even when legacy modal rules use !important. */
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="귤"] textarea.assistant-note-input {
+  border: 1px solid #f59e0b !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, .18) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="귤"] textarea.assistant-note-input:focus {
+  outline: 2px solid #f59e0b !important;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, .24) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="세빈"] textarea.assistant-note-input {
+  border: 1px solid #0284c7 !important;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, .18) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="세빈"] textarea.assistant-note-input:focus {
+  outline: 2px solid #0284c7 !important;
+  box-shadow: 0 0 0 4px rgba(2, 132, 199, .24) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="동훈"] textarea.assistant-note-input {
+  border: 1px solid #16a34a !important;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .18) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="동훈"] textarea.assistant-note-input:focus {
+  outline: 2px solid #16a34a !important;
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, .24) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="하영"] textarea.assistant-note-input {
+  border: 1px solid #db2777 !important;
+  box-shadow: 0 0 0 3px rgba(219, 39, 119, .18) !important;
+}
+html body.admin.student-popup-open #logModal.student-work-layout #assistantStudentNotesHost
+  .assistant-student-notes[data-note-selected-author="하영"] textarea.assistant-note-input:focus {
+  outline: 2px solid #db2777 !important;
+  box-shadow: 0 0 0 4px rgba(219, 39, 119, .24) !important;
+}
+/* Memo compose/editor states: keep the light entry surface quiet, and make unsaved edits unmistakable. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes:not([data-note-selected-author])
+  .assistant-note-input {
+  border: 1px solid var(--work-line) !important;
+  background: #fff !important;
+  color: var(--work-ink) !important;
+  caret-color: var(--work-brand) !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-student-notes:not([data-note-selected-author])
+  .assistant-note-input:focus {
+  border-color: #76a7fa !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .12) !important;
+  outline: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-input {
+  border: 1px solid #1e40af !important;
+  background: #1d4ed8 !important;
+  color: #fff !important;
+  caret-color: #fff !important;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, .28) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-input:focus {
+  border-color: #1e3a8a !important;
+  background: #1d4ed8 !important;
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, .32) !important;
+  outline: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save {
+  border: 1px solid #1d4ed8 !important;
+  background: #1d4ed8 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:hover:not(:disabled),
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:focus-visible {
+  border-color: #1e40af !important;
+  background: #1e40af !important;
+  color: #fff !important;
+}
+/* Subtle text separator: distinguish author metadata from memo content without boxing the card. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content {
+  position: relative !important;
+  margin-top: 5px !important;
+  padding-top: 7px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content::before {
+  content: "" !important;
+  display: block !important;
+  width: 52px !important;
+  height: 1px !important;
+  margin: 0 0 7px !important;
+  background: #e4e7ec !important;
+}
+/* Homework fields: keep textbook and current assignment side by side on desktop. */
+@media (min-width: 901px) {
+  html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+    #hwBody .hwItem > .hwTop {
+    display: grid !important;
+    grid-template-columns: 112px minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 4px 8px !important;
+  }
+
+  html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+    #hwBody .hwItem > .hwTop > :is(.hw-book, .hw-this) {
+    min-width: 0 !important;
+  }
+  html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+    #hwBody .hwItem > .hwBot > .hw-next {
+    grid-column: 1 / -1 !important;
+  }
+}
+/* Memo author badges, full-width separators, and compact body text. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 29px !important;
+  padding: 3px 9px !important;
+  border: 1px solid color-mix(in srgb, var(--assistant-note-item-color) 30%, #fff) !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--assistant-note-item-color) 10%, #fff) !important;
+  color: var(--assistant-note-item-color) !important;
+  line-height: 1.1 !important;
+  white-space: nowrap !important;
+  font-size: calc(var(--assistant-note-author-font-size) - 2px) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-item-content, .assistant-note-input, .assistant-note-edit-input) {
+  font-size: 18px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content::before {
+  width: 100% !important;
+  max-width: none !important;
+}
+/* Keep memo header text on one vertical centerline and bring the divider toward the author. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-header {
+  align-items: center !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-meta {
+  align-items: center !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-time {
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-action-group {
+  align-items: center !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-edit, .assistant-note-delete) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content::before {
+  width: calc(100% - 14px) !important;
+  margin-right: 14px !important;
+}
+/* Force the next-homework field to use the full homework row. */
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody .hwItem > .hwBot {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody .hwItem > .hwBot > .hw-next {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+/* Neutral memo edit state: keep edits readable without the full blue treatment. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-input {
+  border: 1px solid var(--work-line-strong) !important;
+  background: var(--work-surface) !important;
+  color: var(--assistant-note-item-color) !important;
+  caret-color: var(--work-brand) !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-input:focus {
+  border-color: #98a2b3 !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, .18) !important;
+  outline: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save {
+  border: 1px solid var(--work-line-strong) !important;
+  background: #fff !important;
+  color: var(--work-ink) !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:hover:not(:disabled),
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:focus-visible {
+  border-color: #98a2b3 !important;
+  background: var(--work-surface) !important;
+  color: var(--work-ink) !important;
+}
+/* Two-point type bump for the outer assignment panels. */
+html body.admin.student-popup-open #vidModal.student-work-layout #mTitle {
+  font-size: 21px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout #autoAssignControl strong {
+  font-size: 20px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout #autoAssignCountLabel {
+  font-size: 18px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout .auto-count-btn {
+  font-size: 16px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout
+  :is(.vid-save-btn, .vid-exclude-high-btn) {
+  font-size: 14px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-state-legend span,
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-state-badge {
+  font-size: 12px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-row {
+  font-size: 16px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-extra-title strong,
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-extra-row,
+html body.admin.student-popup-open #vidModal.student-work-layout .vid-extra-empty {
+  font-size: 15px !important;
+}
+html body.admin.student-popup-open #vidModal.student-work-layout
+  :is(.vid-extra-title span, .vid-extra-meta) {
+  font-size: 13px !important;
+}
+
+html body.admin.student-popup-open #testModal.student-work-layout h3 {
+  font-size: 21px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-sub,
+html body.admin.student-popup-open #testModal.student-work-layout .test-tab {
+  font-size: 13px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-save-btn {
+  font-size: 14px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout
+  .test-field :is(label, .test-field-label),
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(select, .test-override-btn) {
+  font-size: 12.5px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-selection-meta,
+html body.admin.student-popup-open #testModal.student-work-layout .test-row-meta {
+  font-size: 12px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-mini-actions button,
+html body.admin.student-popup-open #testModal.student-work-layout .test-note-option {
+  font-size: 14px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-row-main strong {
+  font-size: 15px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-difficulty-badge {
+  font-size: 11px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout
+  :is(.test-selection-status, .test-status) {
+  font-size: 11.5px !important;
+}
+html body.admin.student-popup-open #testModal.student-work-layout .test-empty {
+  font-size: 15px !important;
+}
+/* Author-tinted memo surfaces: subtle backgrounds with readable dark text. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="귤"] {
+  --assistant-note-item-color: #9a5b00;
+  --assistant-note-item-rgb: 154, 91, 0;
+  background: #fff0c7 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="세빈"] {
+  --assistant-note-item-color: #075985;
+  --assistant-note-item-rgb: 7, 89, 133;
+  background: #e5f2ff !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="동훈"] {
+  --assistant-note-item-color: #166534;
+  --assistant-note-item-rgb: 22, 101, 52;
+  background: #e3f7ea !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item[data-note-author="하영"] {
+  --assistant-note-item-color: #9d174d;
+  --assistant-note-item-rgb: 157, 23, 77;
+  background: #ffe5f0 !important;
+}

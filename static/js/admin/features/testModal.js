@@ -27,6 +27,7 @@ const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const STUDENT_TEST_LEVEL_DEFAULTS_FIELD = 'testLevelDefaults';
 const STUDENT_LEVEL_SETTING_CATEGORY = 'UNIT';
+const TEST_RECENT_VIEW_STORAGE_PREFIX = 'admin.testAssignment.recentView.v1';
 const TEST_STATUS_LABELS = {
   assigned: '배정',
   done: '완료',
@@ -798,6 +799,7 @@ function toggleMultiSelection(row) {
   if (!row || row.disabled) return;
   const key = row.dataset.testKey || '';
   if (!key) return;
+  rememberCurrentTestView(catalogByKey.get(key));
   if (multiSelectedKeys.has(key)) multiSelectedKeys.delete(key);
   else multiSelectedKeys.add(key);
   applyTestRowSelection(row);
@@ -949,6 +951,7 @@ function applyTestRowStatus(row, status) {
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
   if (statusEl) statusEl.textContent = testStatusLabel(next);
+  rememberCurrentTestView(catalogByKey.get(key));
 }
 
 function renderList() {
@@ -958,8 +961,8 @@ function renderList() {
   const tests = visibleTests();
   const count = $('testVisibleCount');
   if (count) count.textContent = `${tests.length}개`;
-  renderMultiSelectionMeta();
 
+  renderMultiSelectionMeta();
   if (!tests.length) {
     list.innerHTML = `
       <div class="test-empty">
@@ -989,9 +992,9 @@ function renderList() {
     return `
       <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}${multiSelected ? ' is-multi-selected' : ''}"
         data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}"
-        data-selection="${multiSelected ? 'selected' : 'none'}" aria-selected="${multiSelected ? 'true' : 'false'}"
         data-category="${escapeHtml(test.categoryKey)}" data-curriculum="${escapeHtml(test.curriculum)}"
         data-difficulty="${escapeHtml(test.difficulty)}" data-term="${escapeHtml(test.term || '')}"
+        data-selection="${multiSelected ? 'selected' : 'none'}" aria-selected="${multiSelected ? 'true' : 'false'}"
         data-round="${escapeHtml(test.round || '')}" ${done ? ' disabled' : ''}>
         <span class="test-row-main">
           <strong>${escapeHtml(displayNameFor(test))}</strong>
@@ -1089,16 +1092,32 @@ function ensureStyles() {
     body.dark #testModal .test-level-setting-option{ border-color:#8b5cf6; background:#1e1b4b; color:#ddd6fe; }
     body.dark #testModal .test-level-setting-option.is-active{ border-color:#8b5cf6; background:#8b5cf6; color:#fff; }
     #testModal .test-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+    #testModal .test-mini-actions{ display:flex; gap:6px; flex-wrap:wrap; }
     #testModal .test-toolbar-copy{ min-width:0; display:flex; flex-direction:column; gap:2px; }
     #testModal .test-selection-meta{ color:#7c3aed; font-size:11px; font-weight:900; line-height:1.3; }
     body.dark #testModal .test-selection-meta{ color:#c4b5fd; }
-    #testModal .test-mini-actions{ display:flex; gap:6px; flex-wrap:wrap; }
     #testModal .test-mini-actions button{
       min-height:30px; padding:0 9px; border:1px solid #cbd5e1; border-radius:8px;
       background:#f8fafc; color:#0f172a; font-weight:800; cursor:pointer; font-size:12px;
     }
     body.dark #testModal .test-mini-actions button{ background:#334155; color:#e5e7eb; border-color:#475569; }
     #testModal .test-list{ display:flex; flex-direction:column; gap:6px; }
+    #testModal.student-work-layout .test-tabbar{
+      grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    #testModal.student-work-layout .test-filter-grid{
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:7px;
+    }
+    #testModal.student-work-layout .test-toolbar{
+      align-items:stretch;
+      flex-direction:column;
+    }
+    #testModal.student-work-layout .test-mini-actions{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    #testModal.student-work-layout .test-mini-actions button{ width:100%; padding:0 5px; }
     #testModal .test-row{
       display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; text-align:left;
       min-height:46px; padding:7px 8px; border:1px solid #e5e7eb; border-radius:9px;
@@ -1115,8 +1134,8 @@ function ensureStyles() {
     #testModal .test-row[data-state="interrupted"]{ background:#f59e0b22; border-color:#f59e0b70; }
     #testModal .test-row[data-state="skip"]{ background:#ef444422; border-color:#ef444470; }
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
-    #testModal .test-row[data-selection="selected"]{ outline:2px solid #7c3aed; outline-offset:1px; }
     #testModal .test-row-main{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+    #testModal .test-row[data-selection="selected"]{ outline:2px solid #7c3aed; outline-offset:1px; }
     #testModal .test-row-main strong{ font-size:13px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #testModal .test-row-meta{
       min-width:0; display:flex; align-items:center; gap:5px; font-size:11px;
@@ -1141,11 +1160,11 @@ function ensureStyles() {
       justify-self:end; padding:3px 7px; border-radius:999px; background:#f1f5f9; color:#334155;
       font-size:11px; font-weight:900; white-space:nowrap;
     }
+    body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
+    #testModal .test-row[data-state="assigned"] .test-status{ background:#10b981; color:#fff; }
     #testModal .test-selection-status{ display:none; background:#7c3aed; color:#fff; }
     #testModal .test-row[data-selection="selected"] .test-selection-status{ display:inline-flex; }
     body.dark #testModal .test-selection-status{ background:#8b5cf6; color:#fff; }
-    body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
-    #testModal .test-row[data-state="assigned"] .test-status{ background:#10b981; color:#fff; }
     #testModal .test-row[data-state="done"] .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-row[data-state="interrupted"] .test-status{ background:#f59e0b; color:#111827; }
     #testModal .test-row[data-state="skip"] .test-status{ background:#ef4444; color:#fff; }
@@ -1181,6 +1200,7 @@ function ensureModal() {
               <span id="testVisibleCount">0개</span>
             </div>
           </div>
+          <input id="testAppendNotes" type="checkbox" hidden aria-hidden="true">
           <button id="testSave" class="test-save-btn" type="button">저장</button>
         </div>
 
@@ -1228,13 +1248,8 @@ function ensureModal() {
               <button id="testPickNone" type="button">선택 해제</button>
             </div>
           </div>
-
           <div id="testAssignList" class="test-list"></div>
 
-          <label class="test-note-option">
-            <input id="testAppendNotes" type="checkbox" checked>
-            <span>상담 기록에 테스트 배정 내역 추가</span>
-          </label>
         </div>
       </div>
     </div>
@@ -1286,14 +1301,14 @@ function closeModal() {
   editingSid = null;
   editingDate = null;
   activeStudent = null;
-  levelSettingOpen = false;
   activeCatalog = [];
+  levelSettingOpen = false;
   catalogByKey = new Map();
   initialTestMap = {};
   selectedKeys = new Set();
   selectedStatuses = new Map();
-  multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
+  multiSelectedKeys = new Set();
   testSelectionTouched = false;
   activeRound = '1';
   activeTerm = defaultTermFromSchoolCalendar();
@@ -1315,10 +1330,160 @@ function firstInProgressAssignmentTest(categoryKey = '') {
 function chooseInitialCategory() {
   const activeTest = firstInProgressAssignmentTest();
   if (activeTest?.categoryKey) return activeTest.categoryKey;
-  const hasUnit = activeCatalog.some(t => t.categoryKey === 'UNIT' && t.curriculum === activeSubject);
+  const hasUnit = activeCatalog.some(t =>
+    t.categoryKey === 'UNIT' && normalizeSubject(t.curriculum) === normalizeSubject(activeSubject)
+  );
   if (hasUnit) return 'UNIT';
-  const hit = CATEGORY_KEYS.find(key => activeCatalog.some(t => t.categoryKey === key && t.curriculum === activeSubject));
+  const hit = CATEGORY_KEYS.find(key => activeCatalog.some(t =>
+    t.categoryKey === key && normalizeSubject(t.curriculum) === normalizeSubject(activeSubject)
+  ));
   return hit || 'UNIT';
+}
+
+function activeStudentCurriculumSubject() {
+  const rawSubject = String(activeStudent?.curriculum || '').trim();
+  return rawSubject ? normalizeSubject(rawSubject) : '';
+}
+
+function recentTestViewStorageKey(sid = editingSid) {
+  const normalizedSid = String(sid || '').trim();
+  return normalizedSid
+    ? `${TEST_RECENT_VIEW_STORAGE_PREFIX}:${encodeURIComponent(normalizedSid)}`
+    : '';
+}
+
+function testViewFromTest(test) {
+  if (!test) return null;
+  const categoryKey = canonicalCategoryKey(test.categoryKey, test.categoryLabel);
+  return {
+    categoryKey,
+    subject: normalizeSubject(test.curriculum),
+    difficulty: String(test.difficulty || '').trim(),
+    term: isTermCategory(categoryKey) ? normalizeTerm(test.term, test.name) : '',
+    round: isUnitCategory(categoryKey) ? normalizeRound(test.round, test.name) : '',
+  };
+}
+
+function currentTestView() {
+  return {
+    categoryKey: activeCategory,
+    subject: activeSubject,
+    difficulty: activeDifficulty,
+    term: isTermCategory(activeCategory) ? activeTerm : '',
+    round: isUnitCategory(activeCategory) ? activeRound : '',
+  };
+}
+
+function testMatchesView(test, view) {
+  if (!test || !view) return false;
+  if (test.categoryKey !== view.categoryKey) return false;
+  if (normalizeSubject(test.curriculum) !== normalizeSubject(view.subject)) return false;
+  if (String(test.difficulty || '') !== String(view.difficulty || '')) return false;
+  if (isTermCategory(view.categoryKey) && normalizeTerm(test.term, test.name) !== view.term) return false;
+  if (isUnitCategory(view.categoryKey) && normalizeRound(test.round, test.name) !== view.round) return false;
+  return true;
+}
+
+function normalizeRecentTestView(rawView, requiredSubject = '') {
+  if (!rawView || typeof rawView !== 'object' || Array.isArray(rawView)) return null;
+  const categoryKey = canonicalCategoryKey(rawView.categoryKey || rawView.category, rawView.categoryLabel);
+  const rawSubject = String(rawView.subject || rawView.curriculum || '').trim();
+  const difficulty = String(rawView.difficulty || '').trim();
+  const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
+  if (!CATEGORY_BY_KEY[categoryKey] || !rawSubject || !difficulties.includes(difficulty)) return null;
+
+  const subject = normalizeSubject(rawSubject);
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  if (curriculumSubject && subject !== curriculumSubject) return null;
+
+  const candidate = {
+    categoryKey,
+    subject,
+    difficulty,
+    term: isTermCategory(categoryKey) ? normalizeTerm(rawView.term, '') : '',
+    round: isUnitCategory(categoryKey) ? normalizeRound(rawView.round, '') : '',
+  };
+  const matchingTest = activeCatalog.find(test => testMatchesView(test, candidate));
+  return matchingTest ? testViewFromTest(matchingTest) : null;
+}
+
+function readRecentTestView(sid = editingSid, requiredSubject = '') {
+  const key = recentTestViewStorageKey(sid);
+  if (!key) return null;
+  try {
+    return normalizeRecentTestView(JSON.parse(localStorage.getItem(key) || 'null'), requiredSubject);
+  } catch {
+    return null;
+  }
+}
+
+function rememberCurrentTestView(test = null) {
+  const key = recentTestViewStorageKey();
+  if (!key) return;
+  const curriculumSubject = activeStudentCurriculumSubject();
+  const view = normalizeRecentTestView(
+    test ? testViewFromTest(test) : currentTestView(),
+    curriculumSubject,
+  );
+  if (!view) return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...view, updatedAt: new Date().toISOString() }));
+  } catch {}
+}
+
+function latestAssignmentTestFromHistory(requiredSubject = '') {
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  const orderedKeys = Array.from(new Set([
+    ...Object.keys(initialTestMap || {}),
+    ...Array.from(selectedStatuses.keys()),
+  ])).reverse();
+
+  for (const key of orderedKeys) {
+    const rawStatus = Object.prototype.hasOwnProperty.call(initialTestMap, key)
+      ? initialTestMap[key]
+      : selectedStatuses.get(key);
+    if (isExplicitBlankTestStatus(rawStatus) || !normalizeAssignmentStatus(rawStatus)) continue;
+    const test = catalogByKey.get(key);
+    if (test && (!curriculumSubject || normalizeSubject(test.curriculum) === curriculumSubject)) return test;
+  }
+  return null;
+}
+
+function applyTestView(view, requiredSubject = '') {
+  if (!view) return false;
+  const viewSubject = normalizeSubject(view.subject);
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  if (curriculumSubject && viewSubject !== curriculumSubject) return false;
+  activeCategory = view.categoryKey;
+  activeSubject = curriculumSubject || viewSubject;
+  activeDifficulty = view.difficulty;
+  if (isTermCategory(activeCategory)) activeTerm = view.term;
+  activeRound = isUnitCategory(activeCategory) ? view.round : '';
+  return true;
+}
+
+function restorePreferredInitialTestView(requiredSubject = activeStudentCurriculumSubject()) {
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  const storedView = readRecentTestView(editingSid, curriculumSubject);
+  if (storedView) {
+    applyTestView(storedView, curriculumSubject);
+    return 'stored';
+  }
+
+  const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);
+  if (recentAssignment) {
+    applyTestView(testViewFromTest(recentAssignment), curriculumSubject);
+    return 'assignment';
+  }
+  return '';
 }
 
 async function openModalForRow(rowOrButton, opts = {}) {
@@ -1334,17 +1499,20 @@ async function openModalForRow(rowOrButton, opts = {}) {
     return;
   }
 
-  activeSubject = normalizeSubject(activeStudent.curriculum);
-  levelSettingOpen = false;
+  const curriculumSubject = activeStudentCurriculumSubject();
+  activeSubject = curriculumSubject || normalizeSubject(activeStudent.curriculum);
   renderLoadingState(activeStudent);
+  levelSettingOpen = false;
   setModalOpen(true, opts.layout);
   await hydrateForTestPopup(editingDate, editingSid);
   if (openSeq !== testOpenSeq || editingSid !== String(tr?.dataset?.sid || '').trim()) return;
   activeTerm = defaultTermFromSchoolCalendar();
   syncSelectedFromProgress();
 
-  activeCategory = chooseInitialCategory();
-  applyRuleDefaults(activeCategory);
+  if (!restorePreferredInitialTestView(curriculumSubject)) {
+    activeCategory = chooseInitialCategory();
+    applyRuleDefaults(activeCategory);
+  }
   testSelectionTouched = false;
 
   renderAll();
@@ -1352,9 +1520,9 @@ async function openModalForRow(rowOrButton, opts = {}) {
     const el = $(id);
     if (el) el.disabled = false;
   });
+  const termEl = $('testTerm');
   const overrideBtn = $('testDifficultyOverride');
   if (overrideBtn) overrideBtn.disabled = false;
-  const termEl = $('testTerm');
   if (termEl) termEl.disabled = !isTermCategory(activeCategory);
   const roundEl = $('testRound');
   if (roundEl) roundEl.disabled = !isUnitCategory(activeCategory);
@@ -1771,6 +1939,7 @@ function bindEventsOnce() {
       levelSettingOpen = false;
       clearMultiSelection();
       applyRuleDefaults(activeCategory);
+      rememberCurrentTestView();
       renderAll();
       return;
     }
@@ -1779,6 +1948,7 @@ function bindEventsOnce() {
       visibleTests().forEach(test => {
         if (!isSubmitted(test)) setTestStatus(test._key, 'assigned');
       });
+      rememberCurrentTestView();
       testSelectionTouched = true;
       renderList();
       return;
@@ -1788,6 +1958,7 @@ function bindEventsOnce() {
       visibleTests().forEach(test => {
         if (!isSubmitted(test)) setTestStatus(test._key, 'skip');
       });
+      rememberCurrentTestView();
       testSelectionTouched = true;
       renderList();
       return;
@@ -1878,6 +2049,7 @@ function bindEventsOnce() {
       levelSettingOpen = false;
       clearMultiSelection();
       applyRuleDefaults(activeCategory);
+      rememberCurrentTestView();
       renderAll();
       return;
     }
@@ -1886,6 +2058,7 @@ function bindEventsOnce() {
       activeDifficulty = e.target.value || activeDifficulty;
       clearMultiSelection();
       activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
+      rememberCurrentTestView();
       renderAll();
       return;
     }
@@ -1893,6 +2066,7 @@ function bindEventsOnce() {
     if (e.target?.id === 'testTerm') {
       activeTerm = TERM_OPTIONS.includes(e.target.value) ? e.target.value : defaultTermFromSchoolCalendar();
       clearMultiSelection();
+      rememberCurrentTestView();
       renderList();
       return;
     }
@@ -1900,6 +2074,7 @@ function bindEventsOnce() {
     if (e.target?.id === 'testRound') {
       activeRound = String(e.target.value || '1');
       clearMultiSelection();
+      rememberCurrentTestView();
       renderList();
     }
   });

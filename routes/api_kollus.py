@@ -7,10 +7,9 @@ import re
 import time
 from urllib.parse import urlencode
 
-import jwt
-from flask import Blueprint, abort, jsonify, request
+from flask import Blueprint, abort, g, jsonify, request
 
-from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, client_ip_from_request
+from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, client_ip_from_request, ip_allowed
 from core.paths import STU_PATH, VID_PATH
 from core.progress_rules import WATCH_DONE_RATIO, WATCH_INTERRUPTED_RATIO
 from core.storage import load
@@ -21,20 +20,11 @@ from routes.api_watch import (
 
 bp_api_kollus = Blueprint("api_kollus", __name__)
 
-KOLLUS_POLICY_KEY = "서비스키"
-KOLLUS_SERVICE_KEY = "시크릿키"
-TOKEN_EXPIRE_SEC = 36000
 KST = dt.timezone(dt.timedelta(hours=9))
 MID_RE = re.compile(r"^[A-Za-z0-9_-]{4,128}$")
 
 
 def kollus_signed_url(mid: str, client_ip: str, sid: str = "") -> str:
-    payload = {
-        "service_key": KOLLUS_SERVICE_KEY,
-        "expired_at": int(time.time()) + TOKEN_EXPIRE_SEC,
-        "allow_ip": client_ip,
-    }
-    _token = jwt.encode(payload, KOLLUS_POLICY_KEY, algorithm="HS256")
     query = {}
     if sid:
         query["uservalue0"] = sid
@@ -43,7 +33,25 @@ def kollus_signed_url(mid: str, client_ip: str, sid: str = "") -> str:
 
 
 def get_real_client_ip() -> str:
+    if getattr(g, "student_app_public_request", False) is True:
+        resolved = getattr(g, "student_app_client_ip", None)
+        if isinstance(resolved, str):
+            return resolved
     return client_ip_from_request()
+
+
+def _academy_request_allowed() -> bool:
+    if getattr(g, "student_app_public_request", False) is True:
+        resolved = getattr(g, "student_app_client_ip", None)
+        return isinstance(resolved, str) and ip_allowed(resolved)
+    return academy_network_allowed()
+
+
+def _public_sid_matches(sid: str) -> bool:
+    if getattr(g, "student_app_public_request", False) is not True:
+        return True
+    active_sid = getattr(g, "student_app_active_sid", None)
+    return isinstance(active_sid, str) and bool(sid) and sid == active_sid
 
 
 def local_only(f):
@@ -51,7 +59,7 @@ def local_only(f):
 
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if not academy_network_allowed():
+        if not _academy_request_allowed():
             return jsonify({
                 "ok": False,
                 "error": "academy_network_required",
@@ -208,6 +216,8 @@ def _extract_callback_fields() -> dict:
 def api_get_url():
     mid = str(request.args.get("mid", "") or "").strip()
     sid = str(request.args.get("sid", "") or "").strip()
+    if not _public_sid_matches(sid):
+        return jsonify({"ok": False, "code": "sid_mismatch", "error": "sid_mismatch"}), 403
     if not mid or not MID_RE.fullmatch(mid):
         return jsonify({"ok": False, "error": "missing mid"}), 400
     if not _known_mid(mid):

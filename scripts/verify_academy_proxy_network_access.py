@@ -317,7 +317,7 @@ def test_answer_map_allows_trusted_cf_connecting_ip() -> None:
         raise AssertionError(f"trusted CF-Connecting-IP answer map request failed: {response.status_code}")
 
 
-def test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_chain() -> None:
+def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
     # Given
     import routes.api_kollus as api_kollus
 
@@ -326,7 +326,8 @@ def test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_cha
     old_signed_url = api_kollus.kollus_signed_url
     api_kollus._known_mid = lambda _mid: True
     api_kollus._known_sid = lambda _sid: True
-    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    signed_calls: list[tuple[str, str]] = []
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": signed_calls.append((client_ip, sid)) or "signed"
     client = create_app().test_client()
 
     try:
@@ -347,13 +348,13 @@ def test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_cha
         api_kollus.kollus_signed_url = old_signed_url
 
     # Then
-    if response.status_code != 200:
-        raise AssertionError(f"trusted Cloudflare get-url request failed: {response.status_code} {body}")
-    if body != "signed:110.14.147.14:student1":
-        raise AssertionError(f"get-url used the wrong client IP: {body!r}")
+    if response.status_code != 404:
+        raise AssertionError(f"Cloudflare peer must not select the local-host route: {response.status_code}")
+    if body or signed_calls:
+        raise AssertionError("blocked local-host request must be generic and must not reach the signer")
 
 
-def test_get_url_allows_configured_public_proxy_cf_connecting_ip() -> None:
+def test_get_url_blocks_configured_public_proxy_targeting_local_host() -> None:
     # Given
     import routes.api_kollus as api_kollus
 
@@ -362,7 +363,8 @@ def test_get_url_allows_configured_public_proxy_cf_connecting_ip() -> None:
     old_signed_url = api_kollus.kollus_signed_url
     api_kollus._known_mid = lambda _mid: True
     api_kollus._known_sid = lambda _sid: True
-    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": f"signed:{client_ip}:{sid}"
+    signed_calls: list[tuple[str, str]] = []
+    api_kollus.kollus_signed_url = lambda _mid, client_ip, sid="": signed_calls.append((client_ip, sid)) or "signed"
     client = create_app().test_client()
 
     try:
@@ -384,10 +386,10 @@ def test_get_url_allows_configured_public_proxy_cf_connecting_ip() -> None:
         api_kollus.kollus_signed_url = old_signed_url
 
     # Then
-    if response.status_code != 200:
-        raise AssertionError(f"configured public proxy get-url request failed: {response.status_code} {body}")
-    if body != "signed:110.14.147.14:student1":
-        raise AssertionError(f"configured public proxy get-url used the wrong client IP: {body!r}")
+    if response.status_code != 404:
+        raise AssertionError(f"configured public proxy must not select the local-host route: {response.status_code}")
+    if body or signed_calls:
+        raise AssertionError("blocked configured-proxy request must be generic and must not reach the signer")
 
 
 def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> None:
@@ -542,8 +544,10 @@ def test_answer_map_blocks_direct_public_spoofed_cf_connecting_ip() -> None:
     )
 
     # Then
-    if response.status_code != 403:
+    if response.status_code != 404:
         raise AssertionError(f"direct public spoofed CF request should be blocked, got {response.status_code}")
+    if response.get_data(as_text=True):
+        raise AssertionError("direct public spoofed CF response must not expose internal access wording")
 
 
 def test_file_download_route_is_not_academy_network_gated() -> None:
@@ -612,8 +616,8 @@ def main() -> None:
             test_configured_public_proxy_uses_cf_connecting_ip,
             test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
-            test_get_url_allows_cloudflare_proxy_cf_connecting_ip_with_forwarded_for_chain,
-            test_get_url_allows_configured_public_proxy_cf_connecting_ip,
+            test_get_url_blocks_cloudflare_proxy_targeting_local_host,
+            test_get_url_blocks_configured_public_proxy_targeting_local_host,
             test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,
             test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header,
             test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header,

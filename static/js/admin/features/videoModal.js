@@ -32,6 +32,7 @@ let activeVideoProgress = {};
 let activeVideoProgressInitial = {};
 let activeVideoProgressPatch = {};
 let activeVideoAccessMode = 'full';
+let activeVideoMultiSelectedMids = new Set();
 let videoOpenSeq = 0;
 let studentPopupScrollPosition = null;
 
@@ -43,6 +44,7 @@ const MIN_AUTO_ASSIGN_COUNT = 1;
 const MAX_AUTO_ASSIGN_COUNT = 6;
 const MAX_EFFECTIVE_AUTO_ASSIGN_COUNT = MAX_AUTO_ASSIGN_COUNT * 2;
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
+const VIDEO_KEYBOARD_STATUS_ORDER = ['none', 'interrupted', 'assigned', 'done', 'skip'];
 const WATCH_DONE_RATIO = 0.90;
 const WATCH_INTERRUPTED_RATIO = 0.05;
 const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
@@ -52,9 +54,11 @@ window.__studentPopupBaseDpr = STUDENT_POPUP_BASE_DPR;
 const STUDENT_POPUP_LAYOUT = {
   gap: 15,
   side: 435,
-  log: 1011,
+  // Rebalance the existing four-panel workspace: memo is 80% of its old width,
+  // while the homework/info panel receives the released space.
+  log: 809,
   test: 435,
-  tip: 435,
+  tip: 573,
   height: 1188,
 };
 const STUDENT_POPUP_MAX_SCALE = 2;
@@ -177,10 +181,10 @@ function injectStudentPopupLayoutStyles() {
     :root{
       --student-popup-top:50px;
       --student-popup-gap:15px;
-      --student-popup-side-w:513px;
-      --student-popup-test-w:513px;
-      --student-popup-tip-w:435px;
-      --student-popup-log-w:855px;
+      --student-popup-side-w:435px;
+      --student-popup-test-w:435px;
+      --student-popup-tip-w:573px;
+      --student-popup-log-w:809px;
       --student-popup-h:1188px;
       --student-popup-content-zoom:1;
       --student-tooltip-content-zoom:1.8;
@@ -391,7 +395,7 @@ function injectStudentPopupLayoutStyles() {
     #vidModal .vid-row[data-state="none"]{ color:#334155; }
     #vidModal .vid-row[data-state="skip"]{
       border-color:#fb7185;
-      background:#fff1f2;
+      background:#fff8f9;
       color:#be123c;
     }
     #vidModal .vid-row[data-state="assigned"]{
@@ -402,18 +406,42 @@ function injectStudentPopupLayoutStyles() {
     }
     #vidModal .vid-row[data-state="done"]{
       border-color:#60a5fa;
-      background:#eff6ff;
+      background:#f7faff;
       color:#1d4ed8;
     }
     #vidModal .vid-row[data-state="interrupted"]{
       border-color:#fb923c;
-      background:#fff7ed;
+      background:#fffaf5;
       color:#c2410c;
+    }
+    #vidModal .vid-row[data-selection="selected"]{
+      outline:2px solid #7c3aed;
+      outline-offset:1px;
     }
     #vidModal .vid-row.is-scroll-target{
       outline:2px solid rgba(16,185,129,.42);
       outline-offset:2px;
     }
+    #vidModal .vid-selection-badge{
+      display:none;
+      flex:0 0 auto;
+      padding:4px 7px;
+      border-radius:999px;
+      background:#7c3aed;
+      color:#fff;
+      font-size:11px;
+      font-weight:900;
+      line-height:1;
+    }
+    #vidModal .vid-row[data-selection="selected"] .vid-selection-badge{ display:inline-flex; }
+    #vidModal .vid-selection-meta{
+      margin:0 0 8px;
+      color:#7c3aed;
+      font-size:11px;
+      font-weight:900;
+      line-height:1.3;
+    }
+    body.dark #vidModal .vid-selection-meta{ color:#c4b5fd; }
     #vidModal .vid-state-legend{
       display:flex;
       flex-wrap:wrap;
@@ -429,10 +457,10 @@ function injectStudentPopupLayoutStyles() {
       font-size:10px;
       font-weight:900;
     }
-    #vidModal .vid-state-legend [data-state="skip"]{ border-color:#fb7185;background:#fff1f2;color:#be123c; }
+    #vidModal .vid-state-legend [data-state="skip"]{ border-color:#fb7185;background:#fff8f9;color:#be123c; }
     #vidModal .vid-state-legend [data-state="assigned"]{ border-color:#34d399;background:#ecfdf5;color:#047857; }
-    #vidModal .vid-state-legend [data-state="done"]{ border-color:#60a5fa;background:#eff6ff;color:#1d4ed8; }
-    #vidModal .vid-state-legend [data-state="interrupted"]{ border-color:#fb923c;background:#fff7ed;color:#c2410c; }
+    #vidModal .vid-state-legend [data-state="done"]{ border-color:#60a5fa;background:#f7faff;color:#1d4ed8; }
+    #vidModal .vid-state-legend [data-state="interrupted"]{ border-color:#fb923c;background:#fffaf5;color:#c2410c; }
     #vidModal .vid-extra-section{
       min-height:0;
       display:flex;
@@ -684,7 +712,7 @@ function ensureStudentPopupScrim() {
     nav.setAttribute('aria-label', '학생 통합 팝업');
     nav.innerHTML = `
       <button type="button" data-student-popup-target="video" aria-pressed="false">영상</button>
-      <button type="button" data-student-popup-target="log" aria-pressed="true">쓰레드</button>
+      <button type="button" data-student-popup-target="log" aria-pressed="true">조교 메모</button>
       <button type="button" data-student-popup-target="student" aria-pressed="false">숙제·정보</button>
       <button type="button" data-student-popup-target="test" aria-pressed="false">테스트</button>
     `;
@@ -775,8 +803,8 @@ function ensureModal() {
           <div class="vid-actions">
             <button id="mSave" class="vid-save-btn" type="button">저장</button>
             <button id="excludeHighDifficultyVideos" class="vid-exclude-high-btn" type="button"
-                    aria-label="[고]로 시작하는 고난도 영상 모두 제외"
-                    title="[고]로 시작하는 고난도 영상을 제외 상태로 변경">[고] 제외</button>
+                    aria-label="[고]로 시작하는 고난도 영상 모두 제외 또는 해제"
+                    title="[고]로 시작하는 고난도 영상을 제외 상태와 기본 상태로 전환">[고] 제외</button>
           </div>
         </div>
         <div id="chkZone"></div>
@@ -1022,13 +1050,17 @@ function renderVideoCheckbox(v, assignedSet, extra = false) {
   if (!mid) return '';
   const checked = assignedSet.has(mid);
   const stateValue = visualVideoState(mid, assignedSet);
+  const multiSelected = activeVideoMultiSelectedMids.has(mid);
   return `
-    <label class="vid-row${extra ? ' vid-extra-row' : ''}${checked ? ' is-selected' : ''}"
+    <label class="vid-row${extra ? ' vid-extra-row' : ''}${checked ? ' is-selected' : ''}${multiSelected ? ' is-multi-selected' : ''}"
            data-mid="${escapeHtml(mid)}" data-state="${stateValue}"
+           data-selection="${multiSelected ? 'selected' : 'none'}"
+           role="button" tabindex="0" aria-selected="${multiSelected ? 'true' : 'false'}"
            data-high-difficulty="${isHighDifficultyVideo(v) ? '1' : '0'}"
-           title="클릭: 상태 변경 · 우클릭: 제외">
+           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
       <input type="checkbox" value="${escapeHtml(mid)}" ${checked ? 'checked' : ''} aria-label="${escapeHtml(videoRowLabel(v))}">
       <span class="vid-row-main">${escapeHtml(videoRowLabel(v))}</span>
+      <span class="vid-selection-badge">선택</span>
       <span class="vid-state-badge">${videoStateLabel(stateValue)}</span>
     </label>
   `;
@@ -1037,11 +1069,16 @@ function renderVideoCheckbox(v, assignedSet, extra = false) {
 function renderUnknownExtraVideo(mid) {
   const key = String(mid || '').trim();
   if (!key) return '';
+  const multiSelected = activeVideoMultiSelectedMids.has(key);
   return `
-    <label class="vid-row vid-extra-row is-selected" data-mid="${escapeHtml(key)}" data-state="assigned"
-           title="클릭: 상태 변경 · 우클릭: 제외">
+    <label class="vid-row vid-extra-row is-selected${multiSelected ? ' is-multi-selected' : ''}"
+           data-mid="${escapeHtml(key)}" data-state="assigned"
+           data-selection="${multiSelected ? 'selected' : 'none'}"
+           role="button" tabindex="0" aria-selected="${multiSelected ? 'true' : 'false'}"
+           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
       <input type="checkbox" value="${escapeHtml(key)}" checked aria-label="알 수 없는 영상">
       <span class="vid-row-main">알 수 없는 영상</span>
+      <span class="vid-selection-badge">선택</span>
       <span class="vid-state-badge">배정</span>
     </label>
   `;
@@ -1237,6 +1274,7 @@ function buildVideoAssignmentHtml(courseVids, assigned, noteHtml, stu) {
         <span data-state="done">파랑 완료</span>
         <span data-state="interrupted">주황 시청 중</span>
       </div>
+      <div id="vidSelectionMeta" class="vid-selection-meta" role="status" aria-live="polite">Ctrl/Cmd+클릭으로 다중 선택 · ←/→로 선택 상태 변경</div>
       ${noteHtml || ''}
       ${courseRows}
     </div>
@@ -1382,6 +1420,7 @@ function updateVideoRowPresentation(row, stateValue, checked) {
   const checkbox = row.querySelector('input[type="checkbox"]');
   if (checkbox) checkbox.checked = !!checked;
   const badge = row.querySelector('.vid-state-badge');
+  applyVideoRowSelection(row);
   if (badge) badge.textContent = videoStateLabel(normalizedVisual);
 }
 
@@ -1407,31 +1446,107 @@ function applyVideoRowState(row, stateValue) {
   markVideoSelectionDirty();
 }
 
-function excludeHighDifficultyVideosForStudent(stu) {
+function videoRowState(row) {
+  const value = String(row?.dataset?.state || '').trim();
+  return ['none', 'skip', 'assigned', 'done', 'interrupted'].includes(value) ? value : 'none';
+}
+
+function applyVideoRowSelection(row) {
+  if (!row) return;
+  const mid = String(row.dataset?.mid || '').trim();
+  const selected = !!mid && activeVideoMultiSelectedMids.has(mid);
+  row.classList.toggle('is-multi-selected', selected);
+  row.dataset.selection = selected ? 'selected' : 'none';
+  row.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
+
+function renderVideoMultiSelectionMeta() {
+  const meta = document.getElementById('vidSelectionMeta');
+  if (!meta) return;
+  const visibleCount = Array.from(document.querySelectorAll('#chkZone .vid-row[data-mid]'))
+    .filter(row => activeVideoMultiSelectedMids.has(String(row.dataset.mid || '').trim()))
+    .length;
+  meta.textContent = visibleCount
+    ? `선택 ${visibleCount}개 · ←/→로 상태 변경`
+    : 'Ctrl/Cmd+클릭으로 다중 선택 · ←/→로 선택 상태 변경';
+}
+
+function toggleVideoMultiSelection(row) {
+  if (!row) return;
+  const mid = String(row.dataset?.mid || '').trim();
+  if (!mid) return;
+  if (activeVideoMultiSelectedMids.has(mid)) activeVideoMultiSelectedMids.delete(mid);
+  else activeVideoMultiSelectedMids.add(mid);
+  applyVideoRowSelection(row);
+  renderVideoMultiSelectionMeta();
+}
+
+function clearVideoMultiSelection() {
+  activeVideoMultiSelectedMids.clear();
+  document.querySelectorAll('#chkZone .vid-row[data-mid]').forEach(applyVideoRowSelection);
+  renderVideoMultiSelectionMeta();
+}
+
+function nextKeyboardVideoState(stateValue, direction = 1) {
+  const normalized = videoRowState({ dataset: { state: stateValue } });
+  const currentIndex = Math.max(0, VIDEO_KEYBOARD_STATUS_ORDER.indexOf(normalized));
+  const step = Number(direction) < 0 ? -1 : 1;
+  const nextIndex = (currentIndex + step + VIDEO_KEYBOARD_STATUS_ORDER.length) % VIDEO_KEYBOARD_STATUS_ORDER.length;
+  return VIDEO_KEYBOARD_STATUS_ORDER[nextIndex];
+}
+
+function applyKeyboardVideoStatusToSelection(direction) {
+  const rows = Array.from(document.querySelectorAll('#chkZone .vid-row[data-mid]'))
+    .filter(row => activeVideoMultiSelectedMids.has(String(row.dataset.mid || '').trim()));
+  if (!rows.length) return false;
+
+  rows.forEach(row => {
+    applyVideoRowState(row, nextKeyboardVideoState(videoRowState(row), direction));
+  });
+  renderVideoMultiSelectionMeta();
+  return true;
+}
+
+function toggleHighDifficultyVideosForStudent(stu) {
   const videos = highDifficultyVideosForStudent(stu);
   const rowsByMid = new Map(
     Array.from(document.querySelectorAll('#chkZone .vid-row[data-mid]'))
       .map(row => [String(row.dataset.mid || '').trim(), row])
       .filter(([mid]) => mid)
   );
+  const targets = videos
+    .map((video) => {
+      const mid = videoMid(video);
+      const row = rowsByMid.get(mid);
+      const rowState = String(row?.dataset?.state || '').trim();
+      const stateValue = ['none', 'skip', 'assigned', 'done', 'interrupted'].includes(rowState)
+        ? rowState
+        : normalizeVideoProgressState(activeVideoProgress[mid]);
+      return { mid, row, stateValue };
+    })
+    .filter(({ mid }) => mid);
+  const nextState = targets.length > 0 && targets.every(({ stateValue }) => stateValue === 'skip')
+    ? 'none'
+    : 'skip';
   let changed = 0;
-  videos.forEach((video) => {
-    const mid = videoMid(video);
-    if (!mid || normalizeVideoProgressState(activeVideoProgress[mid]) === 'skip') return;
-    const row = rowsByMid.get(mid);
-    if (row) applyVideoRowState(row, 'skip');
-    else setActiveVideoProgressState(mid, 'skip');
+  targets.forEach(({ mid, row, stateValue }) => {
+    if (stateValue === nextState) return;
+    if (row) applyVideoRowState(row, nextState);
+    else setActiveVideoProgressState(mid, nextState);
     changed += 1;
   });
-  return { total: videos.length, changed };
+  return { total: targets.length, changed, state: nextState };
 }
-
 function nextVideoRowState(stateValue) {
   return stateValue === 'none' ? 'assigned'
     : stateValue === 'assigned' ? 'interrupted'
       : stateValue === 'interrupted' ? 'done'
         : stateValue === 'done' ? 'none'
           : 'none';
+}
+
+function nextExcludedVideoState(stateValue) {
+  return stateValue === 'skip' ? 'none' : 'skip';
 }
 
 function setCheckedMids(mids, options = {}) {
@@ -1759,6 +1874,7 @@ export function initVideoModal() {
           !Array.isArray(rawAssignment) &&
           rawAssignment.source === 'auto'))
     );
+    activeVideoMultiSelectedMids.clear();
     activeVideoSelectionDirty = false;
     // Opening the popup is read-only. The server owns date/makeup/consecutive
     // assignment events, so progress changes cannot re-pick this snapshot.
@@ -1803,6 +1919,7 @@ export function initVideoModal() {
   window.openVideoAssignmentPopupForRow = openVideoModalForRow;
   window.clearVideoAssignmentPopupForCurrent = () => {
     setCheckedMids([]);
+    clearVideoMultiSelection();
   };
   window.hasManualVideoAssignmentSelection = () => (
     selectedVideoMids().length > 0 && (activeVideoSelectionDirty || activeAssignmentManual)
@@ -1813,6 +1930,7 @@ export function initVideoModal() {
     activeVideoProgress = {};
     activeVideoProgressInitial = {};
     activeVideoProgressPatch = {};
+    activeVideoMultiSelectedMids.clear();
     activeVideoAccessMode = 'full';
     delete vidModal.dataset.accessMode;
     vidModal.style.display = 'none';
@@ -1847,22 +1965,19 @@ export function initVideoModal() {
   excludeHighDifficultyVideos?.addEventListener('click', () => {
     if (activeVideoAccessMode === 'all-students-readonly') return;
     const stu = (state.students || []).find(x => String(x.id) === String(editingSid));
-    const { total, changed } = excludeHighDifficultyVideosForStudent(stu);
+    const { total, changed, state: nextState } = toggleHighDifficultyVideosForStudent(stu);
     if (!total) {
       toast('[고]로 시작하는 고난도 영상이 없습니다.');
       return;
     }
-    if (!changed) {
-      toast('[고] 영상이 이미 모두 제외 상태입니다.');
-      return;
-    }
-    toast(`[고] 영상 ${changed}개를 제외 상태로 변경했습니다. 저장 버튼을 눌러 적용하세요.`);
+    const stateLabel = nextState === 'none' ? '기본(흰색) 상태' : '제외 상태';
+    toast(`[고] 영상 ${changed}개를 ${stateLabel}로 변경했습니다. 저장 버튼을 눌러 적용하세요.`);
   });
-
   chkZone.addEventListener('click', (e) => {
     const btn = e.target.closest('#extraVideoAddBtn');
     if (!btn) return;
     e.preventDefault();
+    activeVideoMultiSelectedMids.clear();
     const selected = selectedVideoMids();
     activeExtraVideoSearchOpen = !activeExtraVideoSearchOpen;
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -1878,6 +1993,7 @@ export function initVideoModal() {
   chkZone.addEventListener('input', (e) => {
     if (e.target?.id !== 'extraVideoSearch') return;
     applySearchPlaceholder(e.target, '영상 제목 검색');
+    activeVideoMultiSelectedMids.clear();
     const selected = selectedVideoMids();
     activeExtraQuery = String(e.target.value || '');
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -1893,65 +2009,77 @@ export function initVideoModal() {
   /* ───────────── 드래그 다중 선택 ───────────── */
   let pointerDown = false;
   let dragActive = false;
-  let dragCheckValue = null;
-  let startCheckbox = null;
+  let dragTargetState = null;
+  let dragButton = 0;
+  let startState = 'none';
   let startChecked = false;
+  let startIndex = -1;
   let suppressClickOnce = false;
+  let suppressContextOnce = false;
+  let dragRows = [];
+  let dragInitialStates = [];
 
-  function findCheckboxFromEventTarget(target) {
-    const label = target.closest('label');
-    if (!label) return null;
-    return label.querySelector('input[type="checkbox"]');
+  const videoRowFromEventTarget = (target) => target?.closest?.('#chkZone .vid-row[data-mid]');
+
+  function rebuildVideoDragRows() {
+    dragRows = Array.from(document.querySelectorAll('#chkZone .vid-row[data-mid]'));
+    dragInitialStates = dragRows.map(row => row.dataset.state || 'none');
+  }
+
+  function applyVideoDragRange(currentRow) {
+    if (!pointerDown || !dragActive) return;
+    const currentIndex = dragRows.indexOf(currentRow);
+    if (currentIndex === -1 || startIndex === -1) return;
+
+    const lo = Math.min(startIndex, currentIndex);
+    const hi = Math.max(startIndex, currentIndex);
+    dragRows.forEach((row, index) => {
+      const initialState = dragInitialStates[index] || 'none';
+      const nextState = (index >= lo && index <= hi) ? dragTargetState : initialState;
+      applyVideoRowState(row, nextState);
+    });
+  }
+
+  function handleVideoDragMove(e) {
+    if (!pointerDown) return;
+    const row = videoRowFromEventTarget(e.target);
+    if (!row) return;
+
+    if (!dragActive) {
+      dragActive = true;
+      dragTargetState = dragButton === 2
+        ? nextExcludedVideoState(startState)
+        : nextVideoRowState(startState);
+    }
+    applyVideoDragRange(row);
+    e.preventDefault();
   }
 
   chkZone.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    const cb = findCheckboxFromEventTarget(e.target);
-    if (!cb) return;
+    if (e.button !== 0 && e.button !== 2) return;
+    if (e.ctrlKey || e.metaKey) return;
+    const row = videoRowFromEventTarget(e.target);
+    if (!row) return;
+    if (e.button === 2) e.preventDefault();
+
+    rebuildVideoDragRows();
+    startIndex = dragRows.indexOf(row);
+    if (startIndex === -1) return;
 
     pointerDown = true;
     dragActive = false;
-    dragCheckValue = null;
-    startCheckbox = cb;
-    startChecked = cb.checked;
+    dragTargetState = null;
+    dragButton = e.button;
+    startState = row.dataset.state || 'none';
+    startChecked = !!row.querySelector('input[type="checkbox"]')?.checked;
   });
 
-  chkZone.addEventListener('mousemove', (e) => {
-    if (!pointerDown) return;
-    const cb = findCheckboxFromEventTarget(e.target);
-    if (!cb) return;
-
-    if (!dragActive) {
-      dragActive = true;
-      dragCheckValue = !startChecked;
-      if (startCheckbox) {
-        applyVideoRowState(startCheckbox.closest('.vid-row'), dragCheckValue ? 'assigned' : 'none');
-      }
-    }
-
-    applyVideoRowState(cb.closest('.vid-row'), dragCheckValue ? 'assigned' : 'none');
-    e.preventDefault();
-  });
-
-  chkZone.addEventListener('mouseover', (e) => {
-    if (!pointerDown) return;
-    const cb = findCheckboxFromEventTarget(e.target);
-    if (!cb) return;
-
-    if (!dragActive) {
-      dragActive = true;
-      dragCheckValue = !startChecked;
-      if (startCheckbox) {
-        applyVideoRowState(startCheckbox.closest('.vid-row'), dragCheckValue ? 'assigned' : 'none');
-      }
-    }
-
-    applyVideoRowState(cb.closest('.vid-row'), dragCheckValue ? 'assigned' : 'none');
-    e.preventDefault();
-  });
+  chkZone.addEventListener('mousemove', handleVideoDragMove);
+  chkZone.addEventListener('mouseover', handleVideoDragMove);
 
   chkZone.addEventListener('change', (e) => {
     if (e.target?.id === 'extraVideoSubject') {
+      activeVideoMultiSelectedMids.clear();
       const selected = selectedVideoMids();
       activeExtraSubject = String(e.target.value || '').trim();
       activeExtraSubCurriculum = '';
@@ -1960,6 +2088,7 @@ export function initVideoModal() {
     }
 
     if (e.target?.id === 'extraVideoSubCurriculum') {
+      activeVideoMultiSelectedMids.clear();
       const selected = selectedVideoMids();
       activeExtraSubCurriculum = String(e.target.value || '').trim();
       chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -1969,6 +2098,7 @@ export function initVideoModal() {
     if (e.target?.matches?.('input[type="checkbox"]')) {
       applyVideoRowState(e.target.closest('.vid-row'), e.target.checked ? 'assigned' : 'none');
       if (e.target.closest('.vid-extra-section')) {
+        activeVideoMultiSelectedMids.clear();
         const selected = selectedVideoMids();
         requestAnimationFrame(() => {
           chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -1982,6 +2112,10 @@ export function initVideoModal() {
     if (!row) return;
     e.preventDefault();
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleVideoMultiSelection(row);
+      return;
+    }
     if (suppressClickOnce) {
       suppressClickOnce = false;
       return;
@@ -1994,19 +2128,42 @@ export function initVideoModal() {
     if (!row) return;
     e.preventDefault();
     e.stopPropagation();
-    applyVideoRowState(row, row.dataset.state === 'skip' ? 'none' : 'skip');
+    if (suppressContextOnce) {
+      suppressContextOnce = false;
+      return;
+    }
+    applyVideoRowState(row, nextExcludedVideoState(row.dataset.state || 'none'));
   });
 
   document.addEventListener('mouseup', () => {
     if (!pointerDown) return;
     pointerDown = false;
-    if (dragActive) suppressClickOnce = true;
+    if (dragActive && dragButton === 0) suppressClickOnce = true;
+    if (dragActive && dragButton === 2) suppressContextOnce = true;
 
     dragActive = false;
-    dragCheckValue = null;
-    startCheckbox = null;
+    dragTargetState = null;
+    dragButton = 0;
+    startState = 'none';
+    startChecked = false;
+    startIndex = -1;
+    dragRows = [];
+    dragInitialStates = [];
   });
 
+
+  document.body.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const modal = vidModal;
+    if (!modal || modal.style.display === 'none' || !activeVideoMultiSelectedMids.size) return;
+    if (!modal.contains(document.activeElement)) return;
+    if (document.activeElement?.matches?.('#vidModal select, #vidModal input, #vidModal textarea, #vidModal button, [contenteditable="true"]')) return;
+
+    if (applyKeyboardVideoStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
   async function saveVideoAssignmentForCurrent(options = {}) {
     const { showPopup = true, refresh = true, forceEmpty = false } = options || {};
     const sid = String(editingSid || '').trim();

@@ -424,6 +424,54 @@ export function initHoverTooltip() {
     return [...set];
   }
 
+  function tooltipStudentSchool(student) {
+    return String(
+      student?.school ||
+      student?.highSchool || student?.schoolHigh || student?.high || student?.highschool || student?.high_school || student?.['고등학교'] ||
+      student?.middleSchool || student?.schoolMiddle || student?.middle || student?.middleschool || student?.middle_school || student?.['중학교'] ||
+      '',
+    ).trim();
+  }
+
+  function subjectMatchesTooltipContext(value, contextKey) {
+    const key = normalizeSubjectKey(value);
+    return Boolean(key && contextKey && (
+      key === contextKey || key.includes(contextKey) || contextKey.includes(key)
+    ));
+  }
+
+  function sameTooltipStudent(left, right) {
+    const leftId = String(left?.id || '').trim();
+    const rightId = String(right?.id || '').trim();
+    if (leftId && rightId && leftId === rightId) return true;
+
+    const leftName = String(left?.name || '').trim();
+    const rightName = String(right?.name || '').trim();
+    if (!leftName || leftName !== rightName) return false;
+
+    const leftSchool = tooltipStudentSchool(left);
+    const rightSchool = tooltipStudentSchool(right);
+    if (leftSchool && rightSchool && leftSchool !== rightSchool) return false;
+
+    const leftGrade = String(left?.grade || '').trim();
+    const rightGrade = String(right?.grade || '').trim();
+    if (leftGrade && rightGrade && leftGrade !== rightGrade) return false;
+    return true;
+  }
+
+  function attendanceDaysForTooltip(stu, subjectContext = '') {
+    const fallback = regularAttendanceDaysForStudent(stu);
+    const contextKey = normalizeSubjectKey(subjectContext);
+    if (!contextKey || subjectMatchesTooltipContext(stu?.curriculum, contextKey)) return fallback;
+
+    const records = Array.isArray(state.students) ? state.students : [];
+    const subjectRecords = records.filter((record) => (
+      sameTooltipStudent(record, stu) && subjectMatchesTooltipContext(record?.curriculum, contextKey)
+    ));
+    if (!subjectRecords.length) return fallback;
+
+    return [...new Set(subjectRecords.flatMap(record => regularAttendanceDaysForStudent(record)))];
+  }
   // "시험 시작일" 직전까지 등원 요일만 카운트
   function calcRemainingSessions(sc, stu) {
     if (!sc || !stu) return null;
@@ -567,6 +615,15 @@ export function initHoverTooltip() {
   }
 
   // ───────────────────────────────────────────
+
+  function tooltipSubjectForAnchor(anchorEl, explicitSubject = '') {
+    return String(
+      explicitSubject ||
+      anchorEl?.dataset?.curriculum ||
+      anchorEl?.closest?.('tr[data-curriculum]')?.dataset?.curriculum ||
+      '',
+    ).trim();
+  }
   // 위치 계산
   // ───────────────────────────────────────────
   function placeTooltipAt(x, y, measuredSize = null) {
@@ -708,10 +765,10 @@ export function initHoverTooltip() {
     return '';
   }
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = false, studentWorkLayout = false } = opts;
+    const { includeVideo = true, includeTests = false, studentWorkLayout = false, attendanceSubject = "" } = opts;
 
     const name = (stu.name || '').trim();
-    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const days = attendanceDaysForTooltip(stu, attendanceSubject).join('·');
     const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
@@ -827,9 +884,9 @@ export function initHoverTooltip() {
     return `${mainBlock}${examBlock}${homeworkBlock}${progBlock}`;
   }
 
-  function buildTodayNameTipHtml(stu) {
+  function buildTodayNameTipHtml(stu, opts = {}) {
     const name = String(stu?.name || '').trim();
-    const days = regularAttendanceDaysForStudent(stu).join(' · ');
+    const days = attendanceDaysForTooltip(stu, opts.attendanceSubject).join(' · ');
 
     const schoolName =
       stu.school ||
@@ -917,6 +974,7 @@ export function initHoverTooltip() {
     const sid = studentSidForAnchor(anchorEl);
     const name = (anchorEl.textContent || '').trim();
     const stu = findStudent(sid, name);
+    const attendanceSubject = tooltipSubjectForAnchor(anchorEl, opts.subject);
     if (!stu) return false;
 
     const variant = opts.variant || 'default';
@@ -949,8 +1007,8 @@ export function initHoverTooltip() {
     const useStudentWorkLayout = opts.layout === 'student-work';
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
     el.innerHTML = variant === 'today'
-      ? buildTodayNameTipHtml(stu)
-      : buildTipHtml(stu, { includeVideo, includeTests, studentWorkLayout: useStudentWorkLayout });
+      ? buildTodayNameTipHtml(stu, { attendanceSubject })
+      : buildTipHtml(stu, { includeVideo, includeTests, studentWorkLayout: useStudentWorkLayout, attendanceSubject });
     el.style.display = 'block';
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
@@ -995,7 +1053,8 @@ export function initHoverTooltip() {
       showTooltipForElement(anchorEl, null, {
         fixed: !!(opts && opts.fixed),
         variant: opts?.variant || 'default',
-        layout: opts?.layout
+        layout: opts?.layout,
+        subject: opts?.subject
       });
     } catch (e) { console.warn(e); }
   };
@@ -1011,7 +1070,8 @@ export function initHoverTooltip() {
         showTooltipForElement(el, null, {
           fixed: !!(opts && opts.fixed),
           variant: opts?.variant || 'default',
-          layout: opts?.layout
+          layout: opts?.layout,
+          subject: opts?.subject || tooltipSubjectForAnchor(el)
         });
       } catch (e) { console.warn(e); }
     }

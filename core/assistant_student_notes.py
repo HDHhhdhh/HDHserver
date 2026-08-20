@@ -182,7 +182,6 @@ class AssistantStudentNoteRepository:
                 con.execute("ROLLBACK;")
                 raise
         return bool(cur.rowcount)
-
     def set_remind_on(self, student_id: str, note_id: int, remind_on: str) -> dict | None:
         now = self._now_iso()
         with closing(self._connect()) as con:

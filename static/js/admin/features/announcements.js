@@ -411,6 +411,47 @@ function isSurveyItem(item) {
   return !!item?.survey || item?.kind === 'survey';
 }
 
+function isVideoItem(item) {
+  return item?.kind === 'video' && /^[A-Za-z0-9_-]{4,128}$/.test(String(item?.videoMid || ''));
+}
+
+function itemComposeMode(item) {
+  if (isSurveyItem(item)) return 'survey';
+  return isVideoItem(item) ? 'video' : 'announcement';
+}
+
+function videoCatalogRows() {
+  const rows = Array.isArray(state.videos) ? state.videos : [];
+  const seen = new Set();
+  return rows.flatMap((row) => {
+    const mid = String(row?.mid || '').trim();
+    if (!/^[A-Za-z0-9_-]{4,128}$/.test(mid) || seen.has(mid)) return [];
+    seen.add(mid);
+    const title = String(row?.title || row?.chapter || mid).trim().slice(0, 200) || mid;
+    return [{ mid, title }];
+  });
+}
+
+function syncVideoCatalog(selected = '') {
+  const select = $('annVideoMid');
+  if (!select) return;
+  const rows = videoCatalogRows();
+  const current = String(selected || select.value || '').trim();
+  select.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = rows.length ? '영상을 선택하세요' : '등록된 영상이 없습니다';
+  select.append(placeholder);
+  rows.forEach((row) => {
+    const option = document.createElement('option');
+    option.value = row.mid;
+    option.textContent = row.title;
+    option.selected = row.mid === current;
+    select.append(option);
+  });
+  select.disabled = rows.length === 0;
+}
+
 function surveyStatusLabel(status) {
   if (status === 'draft') return '작성 중';
   if (status === 'closed') return '마감';
@@ -1065,9 +1106,10 @@ function syncExpiryUi() {
 }
 
 function setComposeMode(mode) {
-  composeMode = mode === 'survey' ? 'survey' : 'announcement';
+  composeMode = ['announcement', 'survey', 'video'].includes(mode) ? mode : 'announcement';
   const isSurvey = composeMode === 'survey';
-  if (!isSurvey) {
+  const isVideo = composeMode === 'video';
+  if (!isSurvey && !isVideo) {
     editingAnnouncementId = '';
     editingFallbackTargets = [];
   }
@@ -1079,18 +1121,22 @@ function setComposeMode(mode) {
   const publish = $('annPublish');
   const boardSummary = document.querySelector('#annBoardShell summary');
   const boardTitle = document.querySelector('.announcement-board-title');
+  const videoField = $('annVideoField');
 
-  if (heading) heading.textContent = isSurvey ? '설문조사' : '공지';
-  if (sub) sub.textContent = isSurvey ? '대상과 마감 시간을 선택해 설문 표시' : '대상과 마감 시간을 선택해 표시';
+  if (heading) heading.textContent = isSurvey ? '설문조사' : isVideo ? '영상 게시물' : '공지';
+  if (sub) sub.textContent = isSurvey ? '대상과 마감 시간을 선택해 설문 표시' : isVideo ? '학생 게시판에 보여줄 영상을 선택' : '대상과 마감 시간을 선택해 표시';
   if (toggle) {
-    toggle.textContent = isSurvey ? '공지' : '설문조사';
-    toggle.setAttribute('aria-pressed', isSurvey ? 'true' : 'false');
+    toggle.textContent = isSurvey ? '영상' : isVideo ? '공지' : '설문조사';
+    toggle.dataset.nextMode = isSurvey ? 'video' : isVideo ? 'announcement' : 'survey';
+    toggle.setAttribute('aria-label', `${toggle.textContent} 작성 모드로 전환`);
   }
-  if (title) title.placeholder = isSurvey ? '설문 제목' : '공지 제목';
-  if (content) content.placeholder = isSurvey ? '학생에게 보여줄 설문 설명' : '학생에게 전달할 내용';
-  if (publish) publish.textContent = isSurvey ? '등록' : '등록';
-  if (boardSummary) boardSummary.textContent = isSurvey ? '발행한 설문 · 결과 확인' : '발행한 공지 · 답장 확인';
-  if (boardTitle) boardTitle.textContent = isSurvey ? '발행한 설문' : '발행한 공지';
+  if (title) title.placeholder = isSurvey ? '설문 제목' : isVideo ? '게시판에 표시할 영상 제목' : '공지 제목';
+  if (content) content.placeholder = isSurvey ? '학생에게 보여줄 설문 설명' : isVideo ? '영상 시청 안내' : '학생에게 전달할 내용';
+  if (publish) publish.textContent = '등록';
+  if (boardSummary) boardSummary.textContent = isSurvey ? '발행한 설문 · 결과 확인' : isVideo ? '발행한 영상 게시물' : '발행한 공지 · 답장 확인';
+  if (boardTitle) boardTitle.textContent = isSurvey ? '발행한 설문' : isVideo ? '발행한 영상' : '발행한 공지';
+  if (videoField) videoField.hidden = !isVideo;
+  if (isVideo) syncVideoCatalog();
 
   renderSurveyChip();
   selectedAnnouncementId = '';
@@ -1105,23 +1151,27 @@ function isComposeExpandOpen() {
 
 function syncComposeExpandUi() {
   const isSurvey = composeMode === 'survey';
+  const isVideo = composeMode === 'video';
   const isEditing = !!editingAnnouncementId;
   const title = $('annComposeExpandTitle');
   const meta = $('annComposeExpandMeta');
   const toggle = $('annComposeModeToggle');
-  if (title) title.textContent = isSurvey ? '설문조사 등록' : '공지 등록';
-  if (title && isEditing) title.textContent = isSurvey ? '설문조사 수정' : '공지 수정';
+  if (title) title.textContent = isSurvey ? '설문조사 등록' : isVideo ? '영상 게시물 등록' : '공지 등록';
+  if (title && isEditing) title.textContent = isSurvey ? '설문조사 수정' : isVideo ? '영상 게시물 수정' : '공지 수정';
   if (meta) {
     meta.textContent = isSurvey
       ? '질문 구성과 대상을 넓은 화면에서 확인하고 설문을 등록합니다.'
-      : '제목, 내용, 대상, 이미지를 넓은 화면에서 확인하고 공지를 등록합니다.';
+      : isVideo
+        ? '서버 영상 목록에서 재생할 항목과 공개 대상을 선택합니다.'
+        : '제목, 내용, 대상, 이미지를 넓은 화면에서 확인하고 공지를 등록합니다.';
   }
   if (meta && isEditing) {
-    meta.textContent = '수정한 내용은 학생 페이지의 공지/설문 팝업과 관리자 답장판에 바로 반영됩니다.';
+    meta.textContent = '수정한 내용은 학생 페이지의 게시판과 관리자 확인판에 바로 반영됩니다.';
   }
   if (toggle) {
-    toggle.textContent = isSurvey ? '공지' : '설문조사';
-    toggle.setAttribute('aria-pressed', isSurvey ? 'true' : 'false');
+    toggle.textContent = isSurvey ? '영상' : isVideo ? '공지' : '설문조사';
+    toggle.dataset.nextMode = isSurvey ? 'video' : isVideo ? 'announcement' : 'survey';
+    toggle.setAttribute('aria-label', `${toggle.textContent} 작성 모드로 전환`);
   }
 }
 
@@ -1133,7 +1183,7 @@ function syncEditStateUi() {
     if (!btn) return;
     btn.disabled = isEditing;
     if (isEditing) {
-      btn.title = '수정 중에는 공지/설문 전환을 할 수 없습니다.';
+      btn.title = '수정 중에는 공지/설문/영상 전환을 할 수 없습니다.';
     } else {
       btn.removeAttribute('title');
     }
@@ -1182,7 +1232,7 @@ function renderAnnouncementStudentPreview() {
   const host = $('annComposeStudentPreview');
   if (!host) return;
   const images = normalizeImages(selectedAnnouncementImages);
-  if (composeMode !== 'announcement' || !images.length) {
+  if (composeMode === 'survey' || !images.length) {
     host.hidden = true;
     host.innerHTML = '';
     return;
@@ -1803,7 +1853,8 @@ function bindSurveyBuilder() {
   const questionsHost = $('annSurveyQuestions');
 
   const toggleComposeMode = () => {
-    setComposeMode(composeMode === 'survey' ? 'announcement' : 'survey');
+    const next = composeMode === 'announcement' ? 'survey' : composeMode === 'survey' ? 'video' : 'announcement';
+    setComposeMode(next);
     if (isComposeExpandOpen()) renderComposeExpandBody();
   };
 
@@ -2184,6 +2235,7 @@ async function publishAnnouncement() {
   syncRoster();
 
   const isSurvey = composeMode === 'survey';
+  const isVideo = composeMode === 'video';
   const title = ($('annTitle')?.value || '').trim();
   const content = ($('annContent')?.value || '').trim();
   const isEditing = !!editingAnnouncementId;
@@ -2208,6 +2260,12 @@ async function publishAnnouncement() {
     openSurveyBuilder();
     return;
   }
+  const videoMid = isVideo ? String($('annVideoMid')?.value || '').trim() : '';
+  if (isVideo && !/^[A-Za-z0-9_-]{4,128}$/.test(videoMid)) {
+    alert('게시판에서 재생할 영상을 선택해 주세요.');
+    $('annVideoMid')?.focus();
+    return;
+  }
   if (!rows.length) {
     alert(isSurvey ? '설문 대상 학생을 선택해 주세요.' : '공지 대상 학생을 선택해 주세요.');
     return;
@@ -2221,7 +2279,7 @@ async function publishAnnouncement() {
 
   const images = normalizeImages(selectedAnnouncementImages);
   const payload = {
-    kind: isSurvey ? 'survey' : 'announcement',
+    kind: isSurvey ? 'survey' : isVideo ? 'video' : 'announcement',
     title,
     content,
     targetMode,
@@ -2235,6 +2293,7 @@ async function publishAnnouncement() {
     survey,
     requireCompletion: isSurvey,
   };
+  if (isVideo) payload.videoMid = videoMid;
 
   const res = await fetch(isEditing ? `/api/announcements/${encodeURIComponent(editingAnnouncementId)}` : '/api/announcements', {
     method: isEditing ? 'PUT' : 'POST',
@@ -2253,6 +2312,7 @@ async function publishAnnouncement() {
   syncEditStateUi();
   $('annTitle').value = '';
   $('annContent').value = '';
+  if ($('annVideoMid')) $('annVideoMid').value = '';
   setSelectedImages([]);
   resetExpiryDefaults();
   $('annTargetMenu')?.setAttribute('hidden', '');
@@ -2261,7 +2321,8 @@ async function publishAnnouncement() {
     surveyDraft = emptySurveyDraft();
     renderSurveyBuilder();
   }
-  toast(isEditing ? '설문 수정 완료' : (isSurvey ? '설문 등록 완료' : '공지 등록 완료'));
+  const noun = isSurvey ? '설문' : isVideo ? '영상 게시물' : '공지';
+  toast(isEditing ? `${noun} 수정 완료` : `${noun} 등록 완료`);
   await loadAndRenderAnnouncements();
   if (isComposeExpandOpen()) {
     closeComposeExpandModal();
@@ -2273,7 +2334,7 @@ async function publishAnnouncement() {
 async function deleteAnnouncement(id) {
   if (!id) return;
   const item = latestAnnouncements.find(row => String(row?.id) === String(id));
-  if (!confirm(`이 ${isSurveyItem(item) ? '설문' : '공지'}을 삭제할까요? 학생 페이지에서도 바로 사라집니다.`)) return;
+  if (!confirm(`이 ${isSurveyItem(item) ? '설문' : isVideoItem(item) ? '영상 게시물' : '공지'}을 삭제할까요? 학생 페이지에서도 바로 사라집니다.`)) return;
   const res = await fetch(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`공지 삭제 실패 (${res.status})`);
   if (String(selectedAnnouncementId) === String(id)) selectedAnnouncementId = '';
@@ -2326,13 +2387,15 @@ function beginAnnouncementEdit(id) {
   const item = latestAnnouncements.find(row => String(row?.id) === String(id));
   if (!item) return;
   const isSurvey = isSurveyItem(item);
-  setComposeMode(isSurvey ? 'survey' : 'announcement');
+  const isVideo = isVideoItem(item);
+  setComposeMode(itemComposeMode(item));
   editingAnnouncementId = String(item.id || '');
   selectedAnnouncementId = editingAnnouncementId;
   $('annTitle').value = item.title || '';
   $('annContent').value = item.content || '';
   setSelectedImages(normalizeImages(item.images, item.image));
   surveyDraft = isSurvey ? cloneSurveyForDraft(item.survey) : emptySurveyDraft();
+  if (isVideo) syncVideoCatalog(item.videoMid);
 
   const sids = Array.isArray(item.targetSids) ? item.targetSids.map(String) : [];
   editingFallbackTargets = sids.map((sid) => {
@@ -2359,7 +2422,7 @@ function beginAnnouncementEdit(id) {
   renderSurveyBuilder();
   syncEditStateUi();
   openComposeExpandModal();
-  toast(isSurvey ? '설문 수정 모드입니다.' : '공지 수정 모드입니다.');
+  toast(isSurvey ? '설문 수정 모드입니다.' : isVideo ? '영상 게시물 수정 모드입니다.' : '공지 수정 모드입니다.');
 }
 
 function renderAnnouncementList(items) {
@@ -2367,11 +2430,11 @@ function renderAnnouncementList(items) {
   if (!host) return;
 
   const visibleItems = (Array.isArray(items) ? items : [])
-    .filter(item => (composeMode === 'survey') === isSurveyItem(item));
+    .filter(item => itemComposeMode(item) === composeMode);
 
   if (!visibleItems.length) {
     selectedAnnouncementId = '';
-    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : '공지'}가 없습니다.</div>`;
+    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`;
     renderReplyDock(null);
     renderExpandedAnnouncementList([]);
     return;
@@ -2389,7 +2452,7 @@ function renderAnnouncementList(items) {
 
 function visibleAnnouncementItems() {
   return (Array.isArray(latestAnnouncements) ? latestAnnouncements : [])
-    .filter(item => (composeMode === 'survey') === isSurveyItem(item));
+    .filter(item => itemComposeMode(item) === composeMode);
 }
 
 function renderAnnouncementListItem(item, { compact = false } = {}) {
@@ -2397,18 +2460,21 @@ function renderAnnouncementListItem(item, { compact = false } = {}) {
   const images = normalizeImages(item.images, item.image);
   const image = images[0] || null;
   const isSurvey = isSurveyItem(item);
+  const isVideo = isVideoItem(item);
   const survey = item.survey || {};
   const surveyResults = item.surveyResults || {};
   const responseCount = Number(surveyResults.responseCount || item.surveyResponseCount || 0);
   const imagePrefix = images.length > 1 ? `이미지 ${images.length}장 · ` : (image ? '이미지 첨부 · ' : '');
   const meta = isSurvey
     ? `설문 · ${surveyStatusLabel(survey.status)} · ${escapeHtml(item.targetLabel || `${item.targetCount || 0}명`)} · 응답 ${responseCount}/${Number(item.targetCount || 0)}`
-    : `${imagePrefix}${escapeHtml(item.targetLabel || `${item.targetCount || 0}명`)} · 읽음 ${Number(item.readCount || 0)}/${Number(item.targetCount || 0)} · 답장 ${Number(item.replyCount || 0)}`;
+    : isVideo
+      ? `영상 · ${escapeHtml(item.targetLabel || `${item.targetCount || 0}명`)} · 읽음 ${Number(item.readCount || 0)}/${Number(item.targetCount || 0)}`
+      : `${imagePrefix}${escapeHtml(item.targetLabel || `${item.targetCount || 0}명`)} · 읽음 ${Number(item.readCount || 0)}/${Number(item.targetCount || 0)} · 답장 ${Number(item.replyCount || 0)}`;
   return `
     <button class="ann-list-item ${compact ? 'is-compact' : ''} ${active ? 'is-active' : ''} ${image ? 'has-image' : ''} ${isSurvey ? 'is-survey' : ''}" type="button" data-ann-id="${escapeHtml(item.id)}">
       ${image ? `<img class="ann-list-thumb" src="${escapeHtml(image.url)}" alt="">` : ''}
       <span>
-        <strong>${escapeHtml(item.title || (isSurvey ? '설문조사' : '공지'))}</strong>
+        <strong>${escapeHtml(item.title || (isSurvey ? '설문조사' : isVideo ? '영상' : '공지'))}</strong>
         <em>${meta}</em>
       </span>
       <small>${escapeHtml(timeLeftText(item.expiresAt))}</small>
@@ -2423,7 +2489,7 @@ function renderExpandedAnnouncementList(items = visibleAnnouncementItems()) {
   const visibleItems = Array.isArray(items) ? items : [];
   if (count) count.textContent = `${visibleItems.length}건`;
   if (!visibleItems.length) {
-    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : '공지'}가 없습니다.</div>`;
+    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`;
     return;
   }
   host.innerHTML = visibleItems.map(item => renderAnnouncementListItem(item, { compact: true })).join('');
@@ -2450,9 +2516,10 @@ function renderReplyDock(item) {
 
   if (!item) {
     const isSurveyMode = composeMode === 'survey';
-    title.textContent = isSurveyMode ? '설문 결과' : '공지 답장';
-    meta.textContent = isSurveyMode ? '발행한 설문을 선택하면 결과가 표시됩니다.' : '발행한 공지를 선택하면 답장이 표시됩니다.';
-    content.textContent = isSurveyMode ? '아직 선택된 설문이 없습니다.' : '아직 선택된 공지가 없습니다.';
+    const isVideoMode = composeMode === 'video';
+    title.textContent = isSurveyMode ? '설문 결과' : isVideoMode ? '영상 게시물' : '공지 답장';
+    meta.textContent = isSurveyMode ? '발행한 설문을 선택하면 결과가 표시됩니다.' : isVideoMode ? '발행한 영상 게시물을 선택하면 대상과 읽음 상태가 표시됩니다.' : '발행한 공지를 선택하면 답장이 표시됩니다.';
+    content.textContent = isSurveyMode ? '아직 선택된 설문이 없습니다.' : isVideoMode ? '아직 선택된 영상이 없습니다.' : '아직 선택된 공지가 없습니다.';
     count.textContent = '0건';
     if (imageLink) {
       imageLink.hidden = true;
@@ -2462,7 +2529,7 @@ function renderReplyDock(item) {
       imagePreview.removeAttribute('src');
       imagePreview.alt = '';
     }
-    feed.innerHTML = `<div class="ann-empty">${isSurveyMode ? '설문' : '공지'} 목록에서 항목을 선택하세요.</div>`;
+    feed.innerHTML = `<div class="ann-empty">${isSurveyMode ? '설문' : isVideoMode ? '영상' : '공지'} 목록에서 항목을 선택하세요.</div>`;
     if (deleteBtn) {
       deleteBtn.hidden = true;
       delete deleteBtn.dataset.annDelete;

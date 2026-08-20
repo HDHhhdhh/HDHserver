@@ -1,46 +1,51 @@
-# PROJECT SUMMARY (한 장 요약)
+# PROJECT SUMMARY
 
-## 0) 현재 버전
-- 버전: v0.2 (2025-09-20)
-- 안정 스냅샷: SNAPSHOT_2025-09-20.md 참조
+**기준일:** 2026-08-13
+**기준 브랜치/커밋:** `codex/apple-clean-redesign` / `d7cb5d4` 이후 현재 작업 트리
 
-## 1) 폴더 구조(요약)
-- /static/js/admin/... : 관리자 JS 기능 모듈
-  - today.js : 오늘표(정렬, 결석/복구, 완료처리)
-  - calendar.js : 월 캘린더 + 보강/결석 + 주말 타임 선택
-  - clinicModal.js : 클리닉 지정(주말 타임 연동)
-  - hoverTooltip.js : 학생 Hover 툴팁 (영상 진도 + 단원평가/파이널/헬 표시)
-  - features/exportLogs.js : TXT 내보내기 (건너뜀 제외, 정렬 반영)
-- /static/js/student.js : 학생 페이지 (영상 자동 배정, 테스트 제출 모달)
-- /static/js/tests.js : 테스트 관리 페이지 (카테고리/시험 추가·편집·통계)
-- /api/* : Flask 엔드포인트 (students, videos, logs, progress, extra-attend, weekend-slots, tests 등)
+이 파일은 한 장짜리 안내다. 기능과 로직의 정본은 [docs/PROJECT_FUNCTIONS_AND_LOGIC.md](docs/PROJECT_FUNCTIONS_AND_LOGIC.md), 최근 2주 이슈와 해결 여부는 [docs/SESSION_AUDIT_2026-07-30_2026-08-13.md](docs/SESSION_AUDIT_2026-07-30_2026-08-13.md)를 따른다.
 
-## 2) 핵심 엔드포인트
-- GET/POST /api/students, /api/videos, /api/progress
-- GET/POST /api/logs (tests 병합 안전 저장)
-- GET/POST /api/extra-attend   (보강 명단)
-- GET/POST /api/weekend-slots  (주말 타임 1/2/3, 배열 [1,2] 지원)
-- GET /api/attend?date=YYYY-MM-DD  (특정 날짜 출석자)
-- POST /api/submit-test (학생 테스트 성적 제출, logs + tests.json 동시 기록)
-- GET/POST /api/tests-config (테스트 카테고리/시험/문항수 관리)
+## 시스템
 
-## 3) 프론트 핵심 기능
-- 오늘표: 보강 자동 정렬, 당일 slot 수정 가능, 결석 복구 가능
-- HoverTooltip: 영상 진도 + 단원평가/FINAL/HELL 응시 여부 색상 표시
-- 내보내기: 오늘 변경 로그만 TXT로, 건너뜀 제외, 정렬 반영
-- 자료 관리: 다중 파일 업로드 지원
-- 테스트 관리(/tests): 카테고리·시험 추가/삭제, 문항수 수정, 통계 표시
+`C:/server`는 학생 명단, 출결, 오늘 순서, 수업·숙제 로그, 영상 배정/시청, 시험 배정/채점, 보강, 공지, 캘린더, 자료 파일을 운영하는 Flask + 정적 JavaScript 학원 운영 허브다. JSON과 `app.sqlite`는 실제 운영 데이터이므로 코드와 별도로 보호한다.
 
-## 4) 규칙
-- 주말 타임: 토/일 → slot 1~3 (연강: 배열 [1,2] 허용)
-- today_order, extra-attend, weekend-slots는 전부 문자열 sid 키
-- 완료 표시: logs[date][sid].done === true
-- 자유의 몸: archived === false 인 학생 전부 포함 (날짜 무관)
-- 다크 모드: body.dark 클래스 토글, 흰색 UI 요소 제거 (전부 다크 톤 통일)
-- 테스트 이름 정규화: 공백 제거 + lower-case → FINAL/HELL 매칭 보강
+## 주요 화면
 
-## 5) 열린 TODO
-- [ ] tests.js 통계 갱신 성능 최적화 (logs.json 전수 스캔 최소화)
-- [ ] tests-config UI 개선 (drag-sort, 검색 추가)
-- [ ] HoverTooltip 성능 개선 (학생 수 많을 때 렉 최소화)
-- [ ] exportLogs 포맷 사용자 커스터마이즈 옵션 제공
+- `/`: 학생 로그인
+- `/admin`, `/dh1130`: 날짜별 관리자 운영판
+- `/students`: 전체 학생
+- `/student/<sid>`, `/student-test/<sid>`: 학생 영상·시험
+- `/video-manage`, `/tests`, `/school-cal`, `/file-manage`: 카탈로그·일정·자료 관리
+- `/demo/rh3123/*`: live write를 막는 데모
+
+## 핵심 불변식
+
+- 관리자 변경은 실제 오늘이 아니라 선택 날짜와 행의 `data-date`를 우선한다.
+- 로그는 SQLite 우선 + `logs.json` 결손 보충이며 빈 값이 의미 있는 값을 지우지 않는다.
+- 학생 bootstrap의 `assignedTests`는 최상위 배열이다.
+- progress 수동 상태가 watch 자동 상태보다 우선한다.
+- watch `updatedAt`은 epoch milliseconds이며 비트 연산으로 줄이지 않는다.
+- 영상 자동 배정은 조회/모달 열기로 실행하지 않고 수동 흰색·skip·완료·자습·복습을 보존한다.
+- tests-config의 기존 시험은 명시적 delete ID 없이 삭제하지 않는다.
+- 관리자 페이지군은 학원 네트워크 경계 통과 후 fail-closed Basic 인증을 요구하며, 학생 영상·답지도 학원 네트워크로 제한한다.
+- 공개 두 도메인의 HTTP는 HTTPS로 308, 학원 LAN HTTP는 유지한다.
+- 데모는 실서버 write를 만들지 않는다.
+
+## 운영 상태
+
+- Waitress: Windows 예약 작업, localhost/LAN 8003
+- 공개: Cloudflare Tunnel을 통해 `5a-math.com`, `app.5a-math.com`
+- 학생 JWT: 영구 `AUTH_SECRET`으로 30일 자동 로그인
+- PWA/별도 학생 앱: 의도적으로 제거
+- 열린 외부 항목: 모든 백업에 없는 과거 시험 점수 원본, Waitress/cloudflared의 사용자 로그온 종속
+
+## 검증
+
+```powershell
+python -m compileall -q app.py routes core scripts
+python scripts/verify_refactor_safety.py
+python scripts/verify_academy_proxy_network_access.py
+node --check static/js/student.js
+```
+
+배포·대량 복구 전에는 `python scripts/backup_runtime_data.py`를 먼저 실행하고, Git에는 runtime JSON/SQLite/업로드를 넣지 않는다.

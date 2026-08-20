@@ -11,7 +11,8 @@ body.student-page {
   --stu-line-strong: #b8cde8;
   --stu-text: #16253b;
   --stu-muted: #5f7697;
-  --stu-accent: #2e77ec;
+  --stu-accent: #2263cd;
+  --stu-on-accent: #ffffff;
   --stu-accent-2: #16a2c3;
   --stu-ok: #13a66f;
   --stu-shadow: 0 14px 30px rgba(16, 38, 68, 0.12);
@@ -38,6 +39,7 @@ body.student-page.dark {
   --stu-text: #e6f0ff;
   --stu-muted: #9db8dd;
   --stu-accent: #76b5ff;
+  --stu-on-accent: #0d1219;
   --stu-accent-2: #55d0eb;
   --stu-ok: #40cd98;
   --stu-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
@@ -95,7 +97,7 @@ body.student-page .notice-btn {
   border-radius: 11px;
   border: 1px solid var(--stu-line-strong);
   background: var(--stu-accent);
-  color: #f6fbff;
+  color: var(--stu-on-accent);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -356,7 +358,7 @@ body.student-page #vidList li:hover {
 
 body.student-page #vidList li.active {
   background: var(--stu-accent);
-  color: #f8fcff !important;
+  color: var(--stu-on-accent) !important;
   border-color: transparent;
   font-weight: 700;
 }
@@ -374,56 +376,13 @@ body.student-page #vidList li .essay-badge {
 }
 
 body.student-page #vidList li.active .essay-badge {
-  color: #e4f5ff;
+  color: var(--stu-on-accent);
 }
 
 body.student-page #vidList .badge-done {
   margin-left: 6px;
   font-size: 12px;
   font-weight: 600;
-}
-
-body.student-page #vidList li[data-review-registered="true"] {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-body.student-page #vidList li[data-review-registered="true"] .video-main {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-body.student-page .playlist-review-cancel {
-  flex: 0 0 auto;
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 1px solid var(--stu-line-strong);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--stu-muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-}
-
-body.student-page .playlist-review-cancel:hover:not(:disabled),
-body.student-page .playlist-review-cancel:focus-visible {
-  border-color: var(--stu-accent);
-  color: var(--stu-accent);
-  background: color-mix(in srgb, var(--stu-accent) 10%, transparent);
-}
-
-body.student-page .playlist-review-cancel:disabled {
-  cursor: wait;
-  opacity: .65;
-}
-
-body.student-page #vidList li.active .playlist-review-cancel {
-  border-color: rgb(255 255 255 / 60%);
-  color: #f8fcff;
 }
 
 /* =========================================
@@ -975,7 +934,7 @@ body.student-page .announce-close {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--stu-accent) 72%, #000 8%);
   background: var(--stu-accent);
-  color: #ffffff;
+  color: var(--stu-on-accent);
   font-size: 14px;
   font-weight: 650;
   letter-spacing: 0;
@@ -1110,7 +1069,7 @@ body.student-page #matList li[data-type="dir"]:hover {
 
 body.student-page #vidList li.active {
   background: var(--stu-accent);
-  color: #ffffff !important;
+  color: var(--stu-on-accent) !important;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--stu-accent) 24%, transparent);
 }
 
@@ -2188,25 +2147,34 @@ body.student-page #announceModal .announce-image-dots {
 }
 
 body.student-page #announceModal .announce-image-dots button {
-  width: 8px;
-  height: 8px;
-  min-height: 8px;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
   padding: 0;
+  display: grid;
+  place-items: center;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, .58);
+  background: transparent;
   cursor: pointer;
+}
+
+body.student-page #announceModal .announce-image-dots button span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .58);
   transition-property: transform, width, background-color;
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
-body.student-page #announceModal .announce-image-dots button.is-active {
+body.student-page #announceModal .announce-image-dots button.is-active span {
   width: 18px;
   background: #ffffff;
 }
 
-body.student-page #announceModal .announce-image-dots button:active {
+body.student-page #announceModal .announce-image-dots button:active span {
   transform: scale(0.96);
 }
 
@@ -3063,7 +3031,7 @@ body.student-page .previous-videos-register {
   border: 1px solid var(--stu-accent);
   border-radius: var(--stu-radius-md);
   background: var(--stu-accent);
-  color: var(--stu-card);
+  color: var(--stu-on-accent);
   font: inherit;
   font-weight: var(--stu-review-control-weight);
   line-height: var(--stu-review-copy-line-height);
@@ -3195,4 +3163,1282 @@ body.student-page .previous-video-row.is-restricted .previous-video-title {
     padding-left: var(--stu-review-mobile-control-pad-inline);
   }
 
+}
+
+/* Public PWA stays phone-shaped even when an installed desktop/tablet window is wide. */
+body.student-page.student-app-mobile-surface {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+}
+
+body.student-page.student-app-mobile-surface .student-shell {
+  width: min(100%, 32rem);
+  margin-inline: auto;
+}
+
+body.student-page.student-app-mobile-surface .student-topbar,
+body.student-page.student-app-mobile-surface .hero-bar,
+body.student-page.student-app-mobile-surface .student-main,
+body.student-page.student-app-mobile-surface .panel {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body.student-page.student-app-mobile-surface .student-topbar {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface .student-topbar .clock-header {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
+body.student-page.student-app-mobile-surface .student-topbar .notice-btn,
+body.student-page.student-app-mobile-surface .student-topbar .settings-btn {
+  flex: 1 1 calc(50% - 4px);
+  margin-left: 0;
+}
+
+body.student-page.student-app-mobile-surface .hero-bar {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+body.student-page.student-app-mobile-surface .ts-btn {
+  width: 100%;
+}
+
+body.student-page.student-app-mobile-surface #playerBox,
+body.student-page.student-app-mobile-surface .assigned-test-btn {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.student-page.student-app-mobile-surface #player {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+}
+
+body.student-page.student-app-mobile-surface #setPanel {
+  right: max(8px, calc((100vw - min(32rem, calc(100vw - 16px))) / 2));
+  width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 88px);
+  max-height: calc(100dvh - 88px);
+  overflow-y: auto;
+}
+
+/* Installed PWA overlays share the same safe, phone-shaped content boundary. */
+body.student-page.student-app-mobile-surface .announce-modal,
+body.student-page.student-app-mobile-surface #testSubmitModal,
+body.student-page.student-app-mobile-surface #testAnswerPreviewModal {
+  box-sizing: border-box;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+}
+
+body.student-page.student-app-mobile-surface #announceModal .announce-card,
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card,
+body.student-page.student-app-mobile-surface #testSubmitModal .ts-card,
+body.student-page.student-app-mobile-surface #testAnswerPreviewModal .ts-preview-card {
+  width: min(100%, 32rem) !important;
+  max-width: 32rem !important;
+  max-height: 100% !important;
+}
+
+body.student-page.student-app-mobile-surface #testAnswerPreviewModal .ts-preview-card {
+  height: min(760px, 100%) !important;
+}
+
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card,
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-list {
+  min-height: 0;
+}
+
+body.student-page.student-app-mobile-surface .student-session-recovery {
+  box-sizing: border-box;
+  width: min(100%, 32rem);
+  min-height: min(520px, calc(100vh - 24px));
+  min-height: min(520px, calc(100dvh - 24px));
+  margin: max(8px, env(safe-area-inset-top)) auto max(12px, env(safe-area-inset-bottom));
+  padding: clamp(24px, 7vw, 48px);
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-xl);
+  background: var(--stu-card);
+  color: var(--stu-text);
+  box-shadow: var(--stu-shadow);
+}
+
+body.student-page.student-app-mobile-surface .student-session-recovery h1,
+body.student-page.student-app-mobile-surface .student-session-recovery p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface .student-session-recovery h1 {
+  font-size: clamp(26px, 7vw, 38px);
+  line-height: 1.16;
+}
+
+body.student-page.student-app-mobile-surface .student-session-recovery p {
+  color: var(--stu-muted);
+  line-height: 1.6;
+}
+
+body.student-page.student-app-mobile-surface .student-session-recovery button {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  font: inherit;
+  font-weight: 800;
+}
+
+/* Public focus sessions stay opt-in, privacy-explicit, and phone-shaped on every viewport. */
+body.student-page.student-app-mobile-surface .student-focus-launcher {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 16px;
+  align-items: center;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-lg);
+  background: linear-gradient(145deg, var(--stu-card), var(--stu-card-soft));
+  color: var(--stu-text);
+  box-shadow: var(--stu-shadow-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-launcher[hidden] { display: none; }
+
+body.student-page.student-app-mobile-surface .student-focus-launcher-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-launcher h2,
+body.student-page.student-app-mobile-surface .student-focus-launcher p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-launcher h2 {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+body.student-page.student-app-mobile-surface #studentFocusLauncherStatus {
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+body.student-page.student-app-mobile-surface #studentFocusStart {
+  min-width: 104px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-accent);
+  color: var(--stu-on-accent);
+  font: inherit;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface #studentFocusStart:disabled {
+  border: 1px solid var(--stu-line);
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-disclosure {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--stu-line);
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+body.student-page.student-focus-open { overflow: hidden; }
+
+body.student-page.student-app-mobile-surface .student-focus-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 3600;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    max(10px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(10px, env(safe-area-inset-left));
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--stu-bg-0) 92%, transparent 8%);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-modal[hidden] { display: none; }
+
+body.student-page.student-app-mobile-surface .student-focus-sheet {
+  box-sizing: border-box;
+  width: min(100%, 32rem);
+  max-height: calc(100dvh - max(20px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  padding: clamp(18px, 5vw, 28px);
+  display: grid;
+  gap: 18px;
+  overflow: auto;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-xl);
+  background: var(--stu-card);
+  color: var(--stu-text);
+  box-shadow: var(--stu-shadow);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-head h2 {
+  margin: 3px 0 0;
+  font-size: clamp(22px, 6vw, 30px);
+  line-height: 1.2;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface #studentFocusMinimize,
+body.student-page.student-app-mobile-surface .student-focus-end-actions button {
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  font: inherit;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-countdown {
+  min-width: 0;
+  padding: clamp(18px, 6vw, 28px);
+  display: grid;
+  gap: 8px;
+  text-align: center;
+  border: 1px solid color-mix(in srgb, var(--stu-accent) 42%, var(--stu-line) 58%);
+  border-radius: var(--stu-radius-lg);
+  background: color-mix(in srgb, var(--stu-accent) 12%, var(--stu-card) 88%);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-countdown span {
+  color: var(--stu-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-countdown strong {
+  font-family: "Sora", "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: clamp(34px, 11vw, 52px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-shortcuts a {
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--stu-line);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-stats div {
+  min-width: 0;
+  padding: 12px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--stu-line);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-stats dt {
+  color: var(--stu-muted);
+  font-size: 12px;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-stats dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-live-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.student-page.student-app-mobile-surface .student-focus-end-actions {
+  display: grid;
+  gap: 10px;
+}
+
+body.student-page.student-app-mobile-surface #studentFocusEnd,
+body.student-page.student-app-mobile-surface #studentFocusEndConfirmButton {
+  border-color: var(--stu-accent);
+  background: var(--stu-accent);
+  color: var(--stu-on-accent);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-end-confirm {
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-focus-end-confirm[hidden] { display: none; }
+
+body.student-page.student-app-mobile-surface .student-focus-end-confirm p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+@media (max-width: 25rem) {
+  body.student-page.student-app-mobile-surface .student-focus-launcher {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.student-page.student-app-mobile-surface #studentFocusStart { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.student-page.student-app-mobile-surface .student-focus-modal,
+  body.student-page.student-app-mobile-surface .student-focus-sheet { scroll-behavior: auto; }
+}
+
+/* Short landscape screens use one scroll owner so announcement regions never overlap. */
+@media (orientation: landscape) and (max-height: 32.5rem) {
+  body.student-page.student-app-mobile-surface #announceModal .announce-card {
+    display: block !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+
+  body.student-page.student-app-mobile-surface #announceModal :is(
+    .announce-head,
+    .announce-body,
+    .announce-title-section,
+    .announce-post-scroll,
+    .announce-content-section,
+    .announce-reply,
+    .announce-status,
+    .announce-actions
+  ) {
+    position: static !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  body.student-page.student-app-mobile-surface #announceModal .announce-body,
+  body.student-page.student-app-mobile-surface #announceModal .announce-post-scroll {
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  body.student-page.student-app-mobile-surface #announceModal .announce-reply {
+    display: grid !important;
+    overflow: visible !important;
+  }
+}
+
+/* Student app usability layer: public dashboard, reachable controls, and calm focus states. */
+body.student-page .student-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+body.student-page .student-skip-link {
+  position: fixed;
+  inset-block-start: max(8px, env(safe-area-inset-top));
+  inset-inline-start: max(8px, env(safe-area-inset-left));
+  z-index: 4000;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--stu-text);
+  color: var(--stu-bg-0);
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(-180%);
+}
+
+body.student-page .student-skip-link:focus { transform: translateY(0); }
+
+body.student-page #setPanel .student-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--stu-line);
+}
+
+body.student-page #setPanel .student-settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+body.student-page #setPanel .student-settings-close {
+  width: auto;
+  min-width: 52px;
+  height: 36px;
+  padding-inline: 12px;
+  border-color: var(--stu-line-strong);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  box-shadow: none;
+}
+
+body.student-page.student-app-mobile-surface #studentAppSettings {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+body.student-page.student-app-mobile-surface #studentAppSettings[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface .student-notification-preferences {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--stu-line);
+  border-radius: 8px;
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+}
+
+body.student-page.student-app-mobile-surface .student-notification-preferences[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface .student-notification-preferences legend {
+  padding-inline: 4px;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 800;
+}
+
+body.student-page.student-app-mobile-surface :is(
+  #studentAppNotificationStatus,
+  #studentNotificationPreferencesHelp,
+  .student-notification-preferences-status
+) {
+  min-width: 0;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-notification-toggle {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 48px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--stu-line);
+  border-radius: 8px;
+  background: var(--stu-card);
+  color: var(--stu-text);
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 160ms cubic-bezier(0.2, 0, 0, 1), background-color 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+body.student-page.student-app-mobile-surface .student-notification-toggle:active {
+  background: color-mix(in srgb, var(--stu-card) 78%, var(--stu-accent) 22%);
+}
+
+body.student-page.student-app-mobile-surface .student-notification-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--stu-accent);
+}
+
+body.student-page.student-app-mobile-surface .student-notification-toggle input[type="checkbox"]:focus-visible {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 3px;
+}
+
+body.student-page.student-app-mobile-surface .student-notification-preferences[aria-busy="true"] .student-notification-toggle {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+body.student-page.student-app-mobile-surface .student-notification-preferences-retry {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface .student-today-overview.student-app-deep-link-target {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 3px;
+}
+
+body.student-page.student-app-mobile-surface :is(.notice-btn, .settings-btn, .announce-close) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+body.student-page.student-app-mobile-surface #announceHistoryModal {
+  box-sizing: border-box;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card {
+  box-sizing: border-box;
+  width: min(100%, 32rem);
+  max-width: 32rem;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  overflow: hidden;
+}
+
+body.student-page.student-app-mobile-surface .student-board-filters {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--stu-line);
+  border-radius: 10px;
+  background: var(--stu-card-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-board-filters[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface .student-board-filters button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--stu-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface .student-board-filters button[aria-pressed="true"] {
+  background: var(--stu-accent);
+  color: var(--stu-on-accent);
+  box-shadow: var(--stu-shadow-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-board-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body.student-page.student-app-mobile-surface .student-board-status[data-state="error"] {
+  color: var(--stu-accent);
+}
+
+body.student-page.student-app-mobile-surface #annHistoryList {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  grid-auto-rows: max-content;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card {
+  box-sizing: border-box;
+  min-width: 0;
+  align-self: start;
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid var(--stu-line);
+  border-radius: 10px;
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  overflow: hidden;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card.student-app-deep-link-target {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 1px;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface :is(.student-board-kind, .student-board-read-state) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+body.student-page.student-app-mobile-surface .student-board-kind {
+  background: color-mix(in srgb, var(--stu-accent) 18%, var(--stu-card) 82%);
+  color: var(--stu-accent);
+}
+
+body.student-page.student-app-mobile-surface .student-board-read-state {
+  background: var(--stu-card);
+  color: var(--stu-muted);
+}
+
+body.student-page.student-app-mobile-surface .student-board-card h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card p {
+  display: -webkit-box;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card time {
+  color: var(--stu-muted);
+  font-size: 11px;
+}
+
+body.student-page.student-app-mobile-surface .student-board-thumbnail {
+  width: 100%;
+  max-height: 168px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--stu-card);
+}
+
+body.student-page.student-app-mobile-surface :is(.student-board-card button, .student-board-more) {
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 8px;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface .student-board-card button[data-locked="true"] {
+  border-color: var(--stu-line);
+  background: var(--stu-card);
+  color: var(--stu-muted);
+}
+
+body.student-page.student-app-mobile-surface .student-board-more {
+  width: 100%;
+}
+
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-close {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+body.student-page #vidList li {
+  padding: 0;
+  cursor: default;
+}
+
+body.student-page #vidList .video-row-action {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 11px;
+  display: block;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  word-break: keep-all;
+  cursor: pointer;
+}
+
+body.student-page #vidList .video-row-action:focus-visible {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 2px;
+}
+
+body.student-page.student-app-mobile-surface .student-topbar {
+  top: max(8px, env(safe-area-inset-top));
+}
+
+body.student-page.student-app-mobile-surface #setPanel {
+  bottom: auto;
+  height: auto;
+  max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 96px - max(8px, env(safe-area-inset-bottom)));
+}
+
+body.student-page.student-app-mobile-surface .student-today-overview {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-lg);
+  background: var(--stu-card);
+  box-shadow: var(--stu-shadow-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-today-overview-head {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+body.student-page.student-app-mobile-surface .student-today-kicker {
+  margin: 0 0 2px;
+  color: var(--stu-accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+body.student-page.student-app-mobile-surface .student-today-overview h2 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+body.student-page.student-app-mobile-surface #studentTodaySummary {
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--stu-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics > div {
+  min-width: 0;
+  padding: 11px 12px;
+  background: var(--stu-card-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics > div:nth-child(odd) {
+  border-right: 1px solid var(--stu-line);
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics > div:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--stu-line);
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics dt {
+  color: var(--stu-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body.student-page.student-app-mobile-surface .student-today-metrics dd {
+  margin: 4px 0 0;
+  color: var(--stu-text);
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.2;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-details {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--stu-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-details[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-card {
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  background: var(--stu-card-soft);
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-card + .student-dashboard-card {
+  border-left: 1px solid var(--stu-line);
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-card-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-card h3 {
+  min-width: 0;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-card-head strong {
+  min-width: 0;
+  color: var(--stu-accent);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-align: right;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-primary,
+body.student-page.student-app-mobile-surface .student-dashboard-meta {
+  min-width: 0;
+  margin: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-primary {
+  color: var(--stu-text);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+body.student-page.student-app-mobile-surface .student-dashboard-meta {
+  color: var(--stu-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+body.student-page.student-app-mobile-surface #studentCurriculumProgress {
+  width: 100%;
+  max-width: 100%;
+  height: 8px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  appearance: none;
+  accent-color: var(--stu-accent-2);
+  background: var(--stu-line);
+}
+
+body.student-page.student-app-mobile-surface #studentCurriculumProgress[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface #studentCurriculumProgress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--stu-line);
+}
+
+body.student-page.student-app-mobile-surface #studentCurriculumProgress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--stu-accent-2);
+}
+
+body.student-page.student-app-mobile-surface #studentCurriculumProgress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--stu-accent-2);
+}
+
+body.student-page.student-app-mobile-surface .student-today-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.student-page.student-app-mobile-surface .student-today-actions :is(a, button) {
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 10px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: 8px;
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.3;
+  text-align: center;
+  text-decoration: none;
+  word-break: keep-all;
+  cursor: pointer;
+}
+
+body.student-page.student-app-mobile-surface .student-today-actions :is(a, button):hover {
+  border-color: var(--stu-accent);
+  background: color-mix(in srgb, var(--stu-card) 78%, var(--stu-accent) 22%);
+}
+
+body.student-page.student-app-mobile-surface .student-today-access {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--stu-accent);
+  background: var(--stu-card-soft);
+  color: var(--stu-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+body.student-page.student-app-mobile-surface :is(#studentHomeworkPanel, #studentVideoPanel, #assignedTestsPanel) {
+  scroll-margin-top: calc(max(8px, env(safe-area-inset-top)) + 122px);
+}
+
+body.student-page.student-app-mobile-surface .student-homework-heading {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-heading .section-title {
+  margin: 0;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-status {
+  min-width: 0;
+  margin: 0;
+  color: var(--stu-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.5;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-list {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-list[hidden] {
+  display: none;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card,
+body.student-page.student-app-mobile-surface .student-homework-empty {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--stu-line);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card {
+  display: grid;
+  gap: 8px;
+  scroll-margin-block: calc(max(8px, env(safe-area-inset-top)) + 132px);
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card-heading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card h3,
+body.student-page.student-app-mobile-surface .student-homework-details,
+body.student-page.student-app-mobile-surface .student-homework-timing {
+  min-width: 0;
+  margin: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card h3 {
+  color: var(--stu-text);
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.4;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-state {
+  min-width: max-content;
+  padding: 4px 8px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: 999px;
+  color: var(--stu-accent);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+  text-align: center;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-card.is-overdue .student-homework-state,
+body.student-page.student-app-mobile-surface .student-homework-card.is-cancelled .student-homework-state {
+  color: var(--stu-text);
+  background: color-mix(in srgb, var(--stu-card) 74%, var(--stu-accent-2) 26%);
+}
+
+body.student-page.student-app-mobile-surface .student-homework-details {
+  color: var(--stu-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-timing,
+body.student-page.student-app-mobile-surface .student-homework-empty {
+  color: var(--stu-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-deep-link {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 2px;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-retry {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  border: 1px solid var(--stu-line-strong);
+  border-radius: var(--stu-radius-md);
+  background: var(--stu-card-soft);
+  color: var(--stu-text);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-retry:focus-visible {
+  outline: 3px solid var(--stu-accent);
+  outline-offset: 2px;
+}
+
+body.student-page.student-app-mobile-surface .student-homework-retry:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+body.student-page.dark.student-app-mobile-surface :is(.settings-btn, .ts-btn) {
+  border-color: #8ecbff;
+  background: #8ecbff;
+  color: #0d1219;
+}
+
+@media (max-width: 22rem) {
+  body.student-page.student-app-mobile-surface .student-dashboard-details,
+  body.student-page.student-app-mobile-surface .student-today-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.student-page.student-app-mobile-surface .student-dashboard-card + .student-dashboard-card {
+    border-top: 1px solid var(--stu-line);
+    border-left: 0;
+  }
+
+  body.student-page.student-app-mobile-surface .student-homework-card-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.student-page.student-app-mobile-surface .student-homework-state {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 47.5rem) {
+  body.student-page.student-app-mobile-surface #setPanel {
+    max-height: calc(100vh - 144px);
+    max-height: calc(100dvh - 144px - max(8px, env(safe-area-inset-bottom)));
+  }
+}
+
+body.student-page.student-app-mobile-surface :where(
+  #setPanel button,
+  #setPanel select,
+  #setPanel input:not([type="checkbox"]):not([type="radio"]),
+  .mbox input[type="search"],
+  .mbox .toggle,
+  #announceModal button,
+  #testSubmitModal button,
+  #testAnswerPreviewModal button
+) {
+  min-height: 44px;
+}
+
+body.student-page.student-app-mobile-surface #setPanel button,
+body.student-page.student-app-mobile-surface #setPanel select,
+body.student-page.student-app-mobile-surface #setPanel input:not([type="checkbox"]):not([type="radio"]),
+body.student-page.student-app-mobile-surface .mbox input[type="search"],
+body.student-page.student-app-mobile-surface .mbox .toggle,
+body.student-page.student-app-mobile-surface #announceModal button,
+body.student-page.student-app-mobile-surface #testSubmitModal button,
+body.student-page.student-app-mobile-surface #testAnswerPreviewModal button,
+body.student-page.student-app-mobile-surface #announceModal .announce-survey-option,
+body.student-page.student-app-mobile-surface #announceModal .announce-anonymous {
+  min-height: 44px !important;
+}
+
+body.student-page.student-app-mobile-surface #announceModal .announce-image-nav,
+body.student-page.student-app-mobile-surface #announceModal .announce-image-dots button {
+  width: 44px !important;
+  min-width: 44px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.student-page :where(button, a, #vidList li, #setPanel, .student-notification-toggle) {
+    animation: none !important;
+    transition: none !important;
+  }
+  body.student-page { scroll-behavior: auto; }
 }

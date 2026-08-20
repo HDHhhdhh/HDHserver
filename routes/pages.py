@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import os
 
-from flask import Blueprint, Response, abort, current_app, make_response, request
+from flask import Blueprint, Response, abort, current_app, g, make_response, request
 from werkzeug.utils import safe_join
 
 from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, admin_network_allowed, verify_admin_authorization
+from core.network_access import ip_allowed
 
 bp_pages = Blueprint("pages", __name__)
 
@@ -98,9 +99,31 @@ def root():
 
 @bp_pages.get("/js/test_answer_link_map.json")
 def student_answer_link_map():
+    if getattr(g, "student_app_public_request", False) is True:
+        active_sid = getattr(g, "student_app_active_sid", None)
+        client_ip = getattr(g, "student_app_client_ip", None)
+        if not isinstance(active_sid, str) or not active_sid:
+            abort(404)
+        if not isinstance(client_ip, str) or not ip_allowed(client_ip):
+            abort(404)
     response = current_app.send_static_file("js/test_answer_link_map.json")
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@bp_pages.get("/app")
+@bp_pages.get("/app/")
+@bp_pages.get("/app/login")
+@bp_pages.get("/app/help")
+@bp_pages.get("/app/home")
+@bp_pages.get("/app/checks")
+@bp_pages.get("/app/inbox")
+@bp_pages.get("/app/materials")
+@bp_pages.get("/app/tests")
+@bp_pages.get("/app/videos")
+def page_student_app():
+    return current_app.send_static_file("student-app.html")
+
 
 @bp_pages.get("/admin")
 @bp_pages.get("/dh1130")

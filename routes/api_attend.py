@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import re
 from typing import Dict, List, Any
 
 from flask import Blueprint, abort, jsonify, request
 
-from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, LOGS_PATH
+from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, LOGS_PATH, ABS_PATH
+from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 from core.absent import load_absent, save_absent, DATE_RE
 
@@ -36,6 +39,22 @@ def _norm_date(date_key: str) -> str:
     except Exception:
         abort(400, description="Invalid date format")
     return s
+
+
+def _absence_revision(payload: dict) -> str:
+    normalized = payload if isinstance(payload, dict) else {}
+    raw = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _absence_response(payload: dict, status: int = 200, *, revision_payload: dict | None = None):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["X-Absence-Revision"] = _absence_revision(
+        revision_payload if revision_payload is not None else payload
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _load_flag_all(path) -> Dict[str, Dict[str, int]]:
@@ -539,7 +558,7 @@ def api_attend():
 # ------------------------------------------------------------------
 @bp_api_attend.get("/api/absent")
 def api_absent_get():
-    return jsonify(load_absent())
+    return _absence_response(load_absent())
 
 
 @bp_api_attend.post("/api/absent")
@@ -547,17 +566,79 @@ def api_absent_post():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         abort(400, description="Invalid JSON body")
-    before = load_absent()
-    new_pairs = _absence_pairs(payload) - _absence_pairs(before)
-    if new_pairs:
-        try:
-            _clear_assignments_for_new_absences(new_pairs)
-        except TimeoutError as e:
-            abort(409, description=f"Failed to clear absence assignments: {e}")
-        except Exception as e:
-            abort(500, description=f"Failed to clear absence assignments: {e}")
-    save_absent(payload)
-    return jsonify(load_absent())
+    with file_lock(ABS_PATH):
+        before = load_absent()
+        expected_revision = str(request.headers.get("If-Match") or "").strip().strip('"')
+        if not expected_revision:
+            return _absence_response(
+                {"ok": False, "error": "absence_revision_required"},
+                428,
+                revision_payload=before,
+            )
+        if expected_revision and expected_revision != _absence_revision(before):
+            return _absence_response(
+                {"ok": False, "error": "absence_revision_conflict"},
+                409,
+                revision_payload=before,
+            )
+        before_pairs = _absence_pairs(before)
+        after_pairs = _absence_pairs(payload)
+        new_pairs = after_pairs - before_pairs
+        if new_pairs:
+            try:
+                _clear_assignments_for_new_absences(new_pairs)
+            except TimeoutError as e:
+                abort(409, description=f"Failed to clear absence assignments: {e}")
+            except Exception as e:
+                abort(500, description=f"Failed to clear absence assignments: {e}")
+        save_absent(payload, locked=True)
+        saved = load_absent()
+    enqueue_current_schedule_changes(sid for _date, sid in before_pairs ^ after_pairs)
+    return _absence_response(saved)
+
+
+@bp_api_attend.post("/api/absent/recover")
+def api_absent_recover():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, description="Invalid JSON body")
+
+    date_key = _norm_date(str(payload.get("date") or ""))
+    raw_sids = payload.get("sids")
+    if not isinstance(raw_sids, list):
+        abort(400, description="sids must be a list")
+    selected = tuple(dict.fromkeys(
+        str(value or "").strip() for value in raw_sids if str(value or "").strip()
+    ))
+    if not selected:
+        abort(400, description="sids must not be empty")
+
+    selected_set = set(selected)
+    with file_lock(ABS_PATH):
+        latest = load_absent()
+        by_date = dict(latest.get("by_date") or {})
+        by_student = dict(latest.get("by_student") or {})
+        by_slot = {
+            str(date): dict(sid_map) if isinstance(sid_map, dict) else {}
+            for date, sid_map in (latest.get("by_slot") or {}).items()
+        }
+
+        by_date[date_key] = [
+            sid for sid in (by_date.get(date_key) or [])
+            if str(sid).strip() not in selected_set
+        ]
+        for sid in selected:
+            if str(by_student.get(sid) or "") == date_key:
+                by_student.pop(sid, None)
+            by_slot.get(date_key, {}).pop(sid, None)
+        if date_key in by_slot and not by_slot[date_key]:
+            by_slot.pop(date_key, None)
+
+        save_absent({"by_date": by_date, "by_student": by_student, "by_slot": by_slot}, locked=True)
+        saved = load_absent()
+
+    enqueue_current_schedule_changes(selected)
+    return _absence_response(saved)
 
 
 # ------------------------------------------------------------------

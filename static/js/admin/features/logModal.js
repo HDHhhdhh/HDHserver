@@ -22,6 +22,7 @@ let logModalReady = true;
 let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 let logModalAccessMode = 'full';
+let saveAllStudentPopupPromise = null;
 let canonicalHomework = createCanonicalHomeworkState();
 
 function createCanonicalHomeworkState() {
@@ -433,30 +434,14 @@ function injectStyles() {
     #logModal{position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center}
     #logModal .log-card{
       position:relative; width:760px; max-width:96vw; max-height:82vh; overflow:auto;
-      padding:12px; border-radius:12px; border:1px solid #e5e7eb; background:#ffffff; color:#0f172a;
+      padding:0; border-radius:12px; border:1px solid #243047; background:#111827; color:#e5e7eb;
       box-shadow:0 12px 34px rgba(0,0,0,.34);
     }
     body.dark #logModal .log-card{ background:#0f172a; color:#e5e7eb; border-color:#334155; }
 
-    #logModal .log-header-row{
-      position:sticky;
-      top:0;
-      z-index:6;
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:12px;
-      margin:-2px 0 10px;
-      padding:2px 0 10px;
-      background:#ffffff;
-      border-bottom:1px solid rgba(226,232,240,.9);
-    }
-    body.dark #logModal .log-header-row{
-      background:#0f172a;
-      border-bottom-color:#334155;
-    }
-    #logModal #logTitle{ margin:6px 0 0; font-size:36px; font-weight:900; line-height:1.12; }
-    #logModal label{ display:block; margin:10px 0 8px; font-size:14px; }
+
+
+    #logModal label{ display:block; margin:10px 0 8px; font-size:28px; }
 
     #assistantStudentNotesHost{
       flex:1 1 auto;
@@ -587,8 +572,8 @@ function injectStyles() {
       gap:8px 12px;
       align-items:start;
     }
-    .hwHeaderTop{ grid-template-columns: 1.1fr 1fr 44px; }
-    .hwHeaderBot{ grid-template-columns: 1fr 1fr 44px; margin-top:8px; }
+    .hwHeaderTop{ grid-template-columns: 1.1fr 1fr; }
+    .hwHeaderBot{ grid-template-columns: 1fr 1fr; margin-top:8px; }
 
     .hwHeader .h{
       font-size:12px;
@@ -610,13 +595,13 @@ function injectStyles() {
 
     .hwTop{
       display:grid;
-      grid-template-columns: 1.1fr 1fr 44px;
+      grid-template-columns: 1.1fr 1fr;
       gap:8px 12px;
       align-items:start;
     }
     .hwBot{
       display:grid;
-      grid-template-columns: 1fr 1fr 44px;
+      grid-template-columns: 1fr 1fr;
       gap:8px 12px;
       align-items:start;
     }
@@ -726,7 +711,7 @@ function injectStyles() {
     #logModal .actions{ display:flex; gap:12px; justify-content:flex-end; margin:0; flex-wrap:wrap; }
     #logModal .actions button{
       height:54px; min-width:96px; padding:0 18px; border-radius:14px; border:1px solid #e5e7eb; background:#f8fafc; color:#0f172a; cursor:pointer;
-      font-size:20px; font-weight:900; white-space:nowrap;
+      font-size:var(--assistant-note-body-font-size, 26px); font-weight:900; line-height:1; white-space:nowrap;
     }
     #logModal .actions #logCompleteBtn{ min-width:180px; }
     body.dark #logModal .actions button{ border-color:#334155; background:#1f2937; color:#e5e7eb; }
@@ -858,7 +843,7 @@ function injectStyles() {
       font-size:10px;
     }
     #adminSchoolTip .pctWrap{ padding-top:7px; }
-    #adminSchoolTip .pctBubble{ padding:1px 4px; font-size:10px; }
+    #adminSchoolTip .pctBubble{ max-width:100%; box-sizing:border-box; padding:1px 4px; font-size:10px; }
     #adminSchoolTip .hwPctRange{
       height:20px !important;
       min-height:20px !important;
@@ -923,20 +908,7 @@ function injectStyles() {
       #logModal{ align-items:stretch; }
       #logModal .log-card{
         width:100%; max-width:100vw; max-height:100dvh;
-        padding:12px; border-radius:0;
-      }
-      #logModal .log-header-row{ display:block; }
-      #logModal #logTitle{
-        margin:0; font-size:24px; line-height:1.2;
-        word-break:keep-all; overflow-wrap:normal;
-      }
-      #logModal .actions{
-        display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
-        gap:8px; margin-top:12px;
-      }
-      #logModal .actions button{
-        width:100%; min-width:0; height:44px;
-        padding:0 10px; border-radius:10px; font-size:16px;
+        padding:0; border-radius:0;
       }
       #logModal #logNotes{
         height:40vh; min-height:220px;
@@ -953,15 +925,8 @@ function injectStyles() {
 
 function modalTemplateHTML() {
   return `
-      <div id="logModal" aria-label="학생 메모 쓰레드 팝업">
+      <div id="logModal" aria-label="학생 조교 메모 팝업">
         <div class="log-card">
-          <div class="log-header-row">
-            <h3 id="logTitle">학생 메모</h3>
-            <div class="actions" aria-label="쓰레드 작업">
-              <button type="button" id="logClose">닫기</button>
-            </div>
-          </div>
-
           <div id="assistantStudentNotesHost" class="assistant-student-notes-host"></div>
 
           <div id="logLegacyWorkspace" hidden aria-hidden="true">
@@ -973,20 +938,21 @@ function modalTemplateHTML() {
                   <div class="hwHeaderTop">
                     <div class="h">교재</div>
                     <div class="h">이번 숙제 / 진행률</div>
-                    <div class="h h-del"></div>
+
                   </div>
                   <div class="hwHeaderBot">
                     <div class="h">코멘트</div>
                     <div class="h">다음 숙제</div>
-                    <div class="h h-del"></div>
+
                   </div>
                 </div>
                 <div id="hwBody" aria-label="숙제 목록"></div>
               </div>
 
               <div class="hw-actions">
-                <button type="button" id="hwAddRow">+ 추가</button>
                 <button type="button" id="logCompleteBtn">숙제 검사 완료</button>
+                <button type="button" id="hwAddRow">+ 추가</button>
+                <button type="button" id="hwRemoveRow">- 제거</button>
                 <button type="button" id="logSave">저장</button>
               </div>
             </div>
@@ -1060,15 +1026,20 @@ function parkHomeworkWorkspace() {
   if (actions) {
     actions.hidden = false;
     const addRow = $('hwAddRow');
+    const removeRow = $('hwRemoveRow');
     const complete = $('logCompleteBtn');
     const save = $('logSave');
+    if (complete) {
+      complete.textContent = '숙제 검사 완료';
+      actions.append(complete);
+    }
     if (addRow) {
       addRow.textContent = '+ 추가';
       actions.append(addRow);
     }
-    if (complete) {
-      complete.textContent = '숙제 검사 완료';
-      actions.append(complete);
+    if (removeRow) {
+      removeRow.textContent = '- 제거';
+      actions.append(removeRow);
     }
     if (save) {
       save.hidden = isContextMenuOnlyAccess();
@@ -1089,15 +1060,20 @@ function mountHomeworkInTooltip() {
   if (actionHost) {
     const complete = $('logCompleteBtn');
     const addRow = $('hwAddRow');
+    const removeRow = $('hwRemoveRow');
     const save = $('logSave');
     actionHost.replaceChildren();
     if (complete) {
-      complete.textContent = '숙검완료';
+      complete.textContent = '숙검 완료';
       actionHost.append(complete);
     }
     if (addRow) {
-      addRow.textContent = '교재추가';
+      addRow.textContent = '교재 추가';
       actionHost.append(addRow);
+    }
+    if (removeRow) {
+      removeRow.textContent = '교재 제거';
+      actionHost.append(removeRow);
     }
     if (save) save.hidden = true;
   }
@@ -1239,9 +1215,11 @@ function updatePctBubble(wrapEl, value, { isPlaceholder = false } = {}) {
   if (!bubble) return;
 
   const v = snap10(value);
+  const clamped = Math.max(0, Math.min(100, v));
   bubble.textContent = `${v}%`;
   bubble.classList.toggle('is-ph', !!isPlaceholder);
-  bubble.style.left = `${Math.max(0, Math.min(100, v))}%`;
+  bubble.style.left = `${clamped}%`;
+  bubble.style.transform = `translateX(${-clamped}%)`;
 }
 
 function assignmentForHomeworkRow(row, claimedIds) {
@@ -1383,6 +1361,9 @@ function renderHwTable(mergedRows) {
   const itemHtml = (i) => {
     const r = rows[i] || { book: '', this: '', pct: '', comment: '', next: '', _deleted: false, _ph: {} };
     const ph = r._ph || {};
+    const deleteButtonHtml = i >= 2
+      ? `<button type="button" class="hw-del-btn hw-book-delete" title="교재 칸 삭제" aria-label="${i + 1}번째 교재 칸 삭제">×</button>`
+      : '';
 
     const bookVal = (r.book || '').trim();
     const thisVal = (r.this || '').trim();
@@ -1407,7 +1388,10 @@ function renderHwTable(mergedRows) {
       <div class="hwItem" data-idx="${i}" data-deleted="${delAttr}" ${hideStyle}>
         <div class="hwTop">
           <div class="hw-book">
-            <input class="hwBook" type="text" value="${escapeAttr(bookVal)}" placeholder="">
+            <div class="hw-book-input-row">
+              <input class="hwBook" type="text" value="${escapeAttr(bookVal)}" placeholder="">
+              ${deleteButtonHtml}
+            </div>
           </div>
 
           <div class="hw-this">
@@ -1424,9 +1408,7 @@ function renderHwTable(mergedRows) {
             </div>
           </div>
 
-          <div class="hwDelCell">
-            <button type="button" class="hw-del-btn" title="삭제">✕</button>
-          </div>
+
         </div>
 
         <div class="hwBot">
@@ -1438,9 +1420,7 @@ function renderHwTable(mergedRows) {
             <input class="hwNext" type="text" value="${escapeAttr(nextVal)}" placeholder="${escapeAttr(phNext)}">
           </div>
 
-          <div class="hwDelCell">
-            <button type="button" class="hw-del-btn" title="삭제">✕</button>
-          </div>
+
         </div>
       </div>`;
   };
@@ -1484,11 +1464,19 @@ function addHwRow(bookCarry = '') {
   const host = $('hwBody');
   if (!host) return;
 
+  const rowIndex = host.querySelectorAll('.hwItem').length;
+  const deleteButtonHtml = rowIndex >= 2
+    ? `<button type="button" class="hw-del-btn hw-book-delete" title="교재 칸 삭제" aria-label="${rowIndex + 1}번째 교재 칸 삭제">×</button>`
+    : '';
+
   host.insertAdjacentHTML('beforeend', `
     <div class="hwItem" data-idx="" data-deleted="0">
       <div class="hwTop">
         <div class="hw-book">
-          <input class="hwBook" type="text" value="${escapeAttr(bookCarry)}" placeholder="">
+          <div class="hw-book-input-row">
+            <input class="hwBook" type="text" value="${escapeAttr(bookCarry)}" placeholder="">
+            ${deleteButtonHtml}
+          </div>
         </div>
 
         <div class="hw-this">
@@ -1504,9 +1492,7 @@ function addHwRow(bookCarry = '') {
           </div>
         </div>
 
-        <div class="hwDelCell">
-          <button type="button" class="hw-del-btn" title="삭제">✕</button>
-        </div>
+
       </div>
 
       <div class="hwBot">
@@ -1518,9 +1504,7 @@ function addHwRow(bookCarry = '') {
           <input class="hwNext" type="text" value="" placeholder="">
         </div>
 
-        <div class="hwDelCell">
-          <button type="button" class="hw-del-btn" title="삭제">✕</button>
-        </div>
+
       </div>
     </div>
   `);
@@ -1538,6 +1522,26 @@ function addHwRow(bookCarry = '') {
       appendCanonicalHomeworkEditor(item, row, null, host.querySelectorAll('.hwItem').length - 1);
     }
   }
+}
+
+function removeLastHomeworkRow() {
+  if (isContextMenuOnlyAccess()) return false;
+  const host = $('hwBody');
+  if (!host) return false;
+  const items = Array.from(host.querySelectorAll('.hwItem'))
+    .filter(item => item.dataset.deleted !== '1' && item.style.display !== 'none');
+  const item = items.at(-1);
+  if (!item) return false;
+
+  const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
+  if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
+  if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+  item.remove();
+
+  const hasRows = Array.from(host.querySelectorAll('.hwItem'))
+    .some(row => row.dataset.deleted !== '1' && row.style.display !== 'none');
+  if (!hasRows) addHwRow('');
+  return true;
 }
 
 function collectHwTable() {
@@ -2074,10 +2078,10 @@ export function initLogModal() {
   initTestModal();
 
   const logModal = $('logModal');
-  const logTitle = $('logTitle');
+
   const logNotes = $('logNotes');
   const logSave = $('logSave');
-  const logClose = $('logClose');
+
   const progEl = $('logProgress');
   const logComplete = $('logCompleteBtn');
   const applyReadOnlyRecordAccess = () => {
@@ -2098,6 +2102,11 @@ export function initLogModal() {
     if (addRow) {
       addRow.hidden = readOnly;
       addRow.disabled = retryLocked || homeworkBlocked;
+    }
+    const removeRow = $('hwRemoveRow');
+    if (removeRow) {
+      removeRow.hidden = readOnly;
+      removeRow.disabled = retryLocked || homeworkBlocked;
     }
     if (logComplete) logComplete.hidden = readOnly;
     if (logSave) {
@@ -2178,6 +2187,8 @@ export function initLogModal() {
       .slice(-1)[0] || '';
     addHwRow(lastBook);
   });
+
+  $('hwRemoveRow')?.addEventListener('click', removeLastHomeworkRow);
 
   const nextStateOf = (s) =>
     s === 'none' ? 'done'
@@ -2286,7 +2297,7 @@ export function initLogModal() {
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
     parkHomeworkWorkspace();
-    logTitle.textContent = `${stu.name} 메모 쓰레드`;
+
     mountAssistantThread(stu);
     const today = editingLogDate;
     const sid = String(editingLogSid);
@@ -2576,7 +2587,11 @@ export function initLogModal() {
     }
   });
 
-  const close = () => {
+  const close = (event = null) => {
+    if (event?.detail?.saveAll) {
+      void saveAllStudentPopupChangesAndClose();
+      return;
+    }
     logOpenSeq += 1;
     const wasUnified = logModal.classList.contains('student-work-layout');
     parkHomeworkWorkspace();
@@ -2598,7 +2613,7 @@ export function initLogModal() {
     try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
   window.closeStudentWorkPopups = close;
-  logClose.addEventListener('click', close);
+  logModal.addEventListener('admin:assistant-notes-close', close);
 
   function isCurrentLogProgressAllDone() {
     const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
@@ -2751,6 +2766,81 @@ export function initLogModal() {
       state.logs[today][sid] = saved;
       window.logs = state.logs;
     }
+  }
+
+  async function waitForStudentPopupSaveReady(selector, label) {
+    const control = document.querySelector(selector);
+    if (!control) return;
+    const deadline = Date.now() + 10000;
+    while (control.disabled && Date.now() < deadline) {
+      await new Promise(resolve => window.setTimeout(resolve, 50));
+    }
+    if (control.disabled) {
+      throw new Error(`${label} 팝업을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.`);
+    }
+  }
+
+  function lockStudentPopupControls(selectors) {
+    const controls = selectors
+      .flatMap(selector => Array.from(document.querySelectorAll(selector)))
+      .filter(Boolean);
+    const previous = controls.map(control => [control, control.disabled]);
+    controls.forEach(control => { control.disabled = true; });
+    return () => {
+      previous.forEach(([control, disabled]) => {
+        if (control.isConnected) control.disabled = disabled;
+      });
+    };
+  }
+
+  async function saveAllStudentPopupChangesAndClose() {
+    if (saveAllStudentPopupPromise) return saveAllStudentPopupPromise;
+
+    saveAllStudentPopupPromise = (async () => {
+      const unified = logModal.classList.contains('student-work-layout');
+      const closeUnlock = lockStudentPopupControls([
+        '#assistantStudentNotes [data-note-save-close]',
+        '#assistantStudentNotes [data-note-close]',
+      ]);
+      let allUnlock = null;
+      try {
+        await waitForStudentPopupSaveReady('#logSave', '숙제');
+        if (unified) {
+          await waitForStudentPopupSaveReady('#mSave', '영상 배정');
+          await waitForStudentPopupSaveReady('#testSave', '테스트 배정');
+          allUnlock = lockStudentPopupControls([
+            '#assistantStudentNotes [data-note-save-close]',
+            '#assistantStudentNotes [data-note-close]',
+            '#logSave',
+            '#logCompleteBtn',
+            '#mSave',
+            '#testSave',
+          ]);
+          if (typeof window.saveVideoAssignmentPopup === 'function') {
+            await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+          }
+          if (typeof window.saveTestAssignmentPopup === 'function') {
+            await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+          }
+        }
+        await saveRecordPopupForCurrent();
+        if (!isContextMenuOnlyAccess()) {
+          await reapplyCarriedTestAssignmentForCurrent();
+        }
+        close();
+        toast('영상·테스트·쓰레드·숙제를 모두 저장하고 닫았습니다.');
+        document.dispatchEvent(new CustomEvent('admin:refresh'));
+      } catch (error) {
+        console.error('[logModal] save all student popup changes failed:', error);
+        alert(error?.message || '모든 팝업 변경사항 저장에 실패했습니다. 팝업을 닫지 않았습니다.');
+      } finally {
+        allUnlock?.();
+        closeUnlock();
+      }
+    })().finally(() => {
+      saveAllStudentPopupPromise = null;
+    });
+    return saveAllStudentPopupPromise;
   }
 
   logSave.addEventListener('click', async () => {

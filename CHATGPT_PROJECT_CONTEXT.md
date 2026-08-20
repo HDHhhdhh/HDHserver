@@ -1,10 +1,12 @@
 # 학원 운영 허브 — ChatGPT 프로젝트 컨텍스트
 
 > 대상: ChatGPT 5.6 Pro의 `학원 운영 허브` 세션
-> 기준일: 2026-07-25
+> 기준일: 2026-08-13
 > 저장소: `C:\server`
-> 기준 브랜치/커밋: `codex/apple-clean-redesign` / `58648c8`
-> 주의: 현재 작업 트리에는 커밋되지 않은 변경이 있으므로, 실제 파일과 `AGENTS.md`가 이 문서보다 우선한다.
+> 기준 브랜치/커밋: `codex/apple-clean-redesign` / `d7cb5d4` 이후 현재 작업 트리
+> 현재 기능·상태 전이 정본: `docs/PROJECT_FUNCTIONS_AND_LOGIC.md`
+> 최근 이슈·변화 감사: `docs/SESSION_AUDIT_2026-07-30_2026-08-13.md`
+> 주의: 실제 파일, `AGENTS.md`, 위 정본 문서가 이 확장 컨텍스트보다 우선한다.
 
 ## 0. ChatGPT에 이 문서를 주는 방법
 
@@ -256,7 +258,13 @@ core 규칙·저장소·네트워크 판정
 - 데이터 미러 파일별 최대 스냅샷 수: `24`
 - 스냅샷 최소 간격: `3600초`
 
-`Academy Server Waitress` 예약 작업의 설치 여부와 실행 계정은 저장소 코드만으로 보장되지 않는다. 2026-07-25 현재 이 문서를 작성한 명령 실행 컨텍스트에서는 예약 작업과 8003 listener가 확인되지 않았다. 다른 Windows 사용자나 권한 컨텍스트에서 실행 중일 가능성이 있으므로 장애 진단 때 반드시 실제 PC에서 다시 확인한다.
+2026-08-13 감사 시점에는 `Academy Server Waitress` 예약 작업과 8003 listener가 실행 중이다. 다만 작업의 로그온 유형이 Interactive이고 cloudflared도 사용자 AppData/HKCU Run에 의존해 사용자가 로그아웃하면 공개 서비스가 멈출 위험이 있다. 무인 운영이 필요하면 관리자 권한으로 둘 다 Windows service 또는 비대화형 service-account 작업으로 전환하고 logout/reboot 생존을 검증한다.
+
+- 관리자 페이지군은 학원망 내부에서만 `ACADEMY_ADMIN_USERNAME`, `ACADEMY_ADMIN_PASSWORD_HASH` 기반 fail-closed Basic 인증을 허용하며, 외부망은 403으로 차단한다.
+- 운영 런처는 영구 `AUTH_SECRET`을 Machine 우선, 예약 작업 사용자 범위 fallback으로 읽는다.
+- `5a-math.com`과 `app.5a-math.com`은 같은 앱의 별칭이며 cross-domain redirect는 하지 않는다.
+- 공개 두 host의 HTTP는 같은 URL의 HTTPS로 308 전환하고 학원 LAN HTTP는 유지한다.
+- PWA/별도 학생 앱은 현재 운영 범위에서 제거됐다.
 
 ### 개발 실행
 
@@ -271,13 +279,14 @@ python app.py
 - 앱은 로컬 사설망과 등록된 학원 공인 주소를 학원 네트워크로 판정한다.
 - Cloudflare 프록시 주소와 관련 헤더를 안전하게 해석하는 코드가 있다.
 - `TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_CIDRS`, `DB_PATH` 같은 환경 변수가 동작을 바꿀 수 있다.
+- forwarded HTTPS와 클라이언트 IP는 신뢰 프록시 peer에서 온 경우에만 인정한다.
 - 그러나 터널 프로세스, 도메인, 방화벽, 공유기 포트포워딩 구성은 이 저장소만으로 확정할 수 없다.
 
 ## 9. 주요 코드 지도
 
 | 위치 | 책임 |
 |---|---|
-| `app.py` | Flask 앱 생성, 쓰기 요청의 출처 검사, 학원 전용 답지 파일 차단, Blueprint 등록 |
+| `app.py` | Flask 앱 생성, 공개 HTTPS, 쓰기 요청 출처 검사, 학원 전용 답지 파일 차단, Blueprint 등록 |
 | `routes/pages.py` | 정적 HTML 화면 주소 |
 | `routes/api_basic.py` | 학생·영상·배정·진도·로그·학교 일정·학생 bootstrap 등 넓은 핵심 API |
 | `routes/api_attend.py` | 오늘 대상, 출석, 결석, 연락 상태 |

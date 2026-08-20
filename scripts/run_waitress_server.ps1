@@ -2,21 +2,154 @@ param(
     [string]$Listen = "0.0.0.0:8003",
     [int]$Threads = 16,
     [int]$ConnectionLimit = 400,
-    [int]$ChannelTimeout = 60
+    [int]$ChannelTimeout = 60,
+    [string]$PublicHostOverride = "",
+    [ValidateSet("0", "1")][string]$PublicEnabledOverride = "",
+    [ValidateSet("0", "1")][string]$DashboardEnabledOverride = "",
+    [ValidateSet("0", "1")][string]$HomeworkEnabledOverride = "",
+    [ValidateSet("0", "1")][string]$RemindersEnabledOverride = "",
+    [ValidateSet("0", "1")][string]$FocusEnabledOverride = "",
+    [string]$CanarySidsOverride = "",
+    [string]$VapidSubjectOverride = "",
+    [string]$VapidPrivateKeyPathOverride = "",
+    [string]$RuntimeRootOverride = "",
+    [switch]$DevelopmentIsolation
 )
 
 $ErrorActionPreference = "Stop"
+$serverRoot = Split-Path -Parent $PSScriptRoot
 
-$adminMachineEnv = @(
+$studentAppMachineEnv = @(
+    "STUDENT_APP_PUBLIC_ENABLED",
+    "STUDENT_APP_PUBLIC_HOST",
+    "STUDENT_APP_LEGACY_HOST",
+    "STUDENT_APP_LEGACY_REDIRECT_ENABLED",
+    "STUDENT_APP_TRUSTED_PROXIES",
+    "STUDENT_APP_CANARY_SIDS",
+    "STUDENT_APP_SESSION_COOKIE_SECURE",
+    "STUDENT_APP_SESSION_SAMESITE",
+    "STUDENT_APP_DASHBOARD_ENABLED",
+    "STUDENT_APP_HOMEWORK_ENABLED",
+    "STUDENT_APP_REMINDERS_ENABLED",
+    "STUDENT_APP_FOCUS_ENABLED",
+    "STUDENT_APP_VAPID_SUBJECT",
+    "STUDENT_APP_VAPID_PRIVATE_KEY_PATH",
     "ACADEMY_ADMIN_USERNAME",
-    "ACADEMY_ADMIN_PASSWORD_HASH"
+    "ACADEMY_ADMIN_PASSWORD_HASH",
+    "TRUST_PROXY_HEADERS"
 )
-foreach ($name in $adminMachineEnv) {
-    $value = [Environment]::GetEnvironmentVariable($name, "Machine")
-    if ($null -ne $value) {
-        Set-Item -LiteralPath "Env:$name" -Value $value
-    } else {
+
+if ($DevelopmentIsolation) {
+    $isolationEnv = $studentAppMachineEnv + @(
+        "STUDENT_APP_VAPID_PRIVATE_KEY",
+        "STUDENT_APP_PUSH_ENDPOINT_ALLOWLIST",
+        "STUDENT_APP_TEST_INSECURE_COOKIE",
+        "STUDENT_APP_ALLOW_INSECURE_COOKIE_FOR_TESTS",
+        "STUDENT_APP_INSECURE_COOKIE_FOR_TESTS"
+    )
+    foreach ($name in $isolationEnv) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+    $env:STUDENT_APP_PUBLIC_ENABLED = "0"
+    $env:STUDENT_APP_LEGACY_REDIRECT_ENABLED = "0"
+    $env:STUDENT_APP_TRUSTED_PROXIES = "127.0.0.1/32"
+    $env:STUDENT_APP_SESSION_COOKIE_SECURE = "1"
+    $env:STUDENT_APP_SESSION_SAMESITE = "Lax"
+    $env:STUDENT_APP_DASHBOARD_ENABLED = "0"
+    $env:STUDENT_APP_HOMEWORK_ENABLED = "0"
+    $env:STUDENT_APP_REMINDERS_ENABLED = "0"
+    $env:STUDENT_APP_FOCUS_ENABLED = "0"
+    # The public-surface policy requires ProxyFix provenance. Waitress first
+    # filters proxy headers to the loopback tunnel, then ProxyFix records the
+    # original peer/scheme values consumed by the Flask boundary.
+    $env:TRUST_PROXY_HEADERS = "1"
+    foreach ($name in @("ACADEMY_ADMIN_USERNAME", "ACADEMY_ADMIN_PASSWORD_HASH")) {
+        $value = [Environment]::GetEnvironmentVariable($name, "Machine")
+        if ($null -ne $value) {
+            Set-Item -LiteralPath "Env:$name" -Value $value
+        }
+    }
+} else {
+    foreach ($name in $studentAppMachineEnv) {
+        $value = [Environment]::GetEnvironmentVariable($name, "Machine")
+        if ($null -ne $value) {
+            Set-Item -LiteralPath "Env:$name" -Value $value
+        } else {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+if ($PublicHostOverride) {
+    $normalizedPublicHost = $PublicHostOverride.Trim().ToLowerInvariant()
+    if ($normalizedPublicHost -notmatch '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$') {
+        throw "PublicHostOverride must be an exact DNS hostname."
+    }
+    $env:STUDENT_APP_PUBLIC_HOST = $normalizedPublicHost
+}
+if ($PSBoundParameters.ContainsKey("PublicEnabledOverride")) {
+    $env:STUDENT_APP_PUBLIC_ENABLED = $PublicEnabledOverride
+}
+if ($PSBoundParameters.ContainsKey("DashboardEnabledOverride")) {
+    $env:STUDENT_APP_DASHBOARD_ENABLED = $DashboardEnabledOverride
+}
+if ($PSBoundParameters.ContainsKey("HomeworkEnabledOverride")) {
+    $env:STUDENT_APP_HOMEWORK_ENABLED = $HomeworkEnabledOverride
+}
+if ($PSBoundParameters.ContainsKey("RemindersEnabledOverride")) {
+    $env:STUDENT_APP_REMINDERS_ENABLED = $RemindersEnabledOverride
+}
+if ($PSBoundParameters.ContainsKey("FocusEnabledOverride")) {
+    $env:STUDENT_APP_FOCUS_ENABLED = $FocusEnabledOverride
+}
+if ($PSBoundParameters.ContainsKey("CanarySidsOverride")) {
+    $env:STUDENT_APP_CANARY_SIDS = $CanarySidsOverride
+}
+if ($PSBoundParameters.ContainsKey("VapidSubjectOverride") -xor $PSBoundParameters.ContainsKey("VapidPrivateKeyPathOverride")) {
+    throw "VAPID overrides must be provided together."
+}
+if ($PSBoundParameters.ContainsKey("VapidSubjectOverride")) {
+    $vapidSubject = $VapidSubjectOverride.Trim()
+    $vapidSubjectUri = $null
+    $isHttpsSubject = [Uri]::TryCreate($vapidSubject, [UriKind]::Absolute, [ref]$vapidSubjectUri) -and
+        $vapidSubjectUri.Scheme -eq "https" -and -not [string]::IsNullOrWhiteSpace($vapidSubjectUri.Host)
+    $isMailtoSubject = $vapidSubject -match '^mailto:[^@\s]+@[^@\s]+$'
+    if (-not ($isHttpsSubject -or $isMailtoSubject)) {
+        throw "VapidSubjectOverride must be an HTTPS URL or mailto address."
+    }
+    $vapidPrivateKeyPath = [IO.Path]::GetFullPath($VapidPrivateKeyPathOverride)
+    if (-not (Test-Path -LiteralPath $vapidPrivateKeyPath -PathType Leaf)) {
+        throw "VapidPrivateKeyPathOverride must be an existing file."
+    }
+    if ($DevelopmentIsolation) {
+        $developmentInstanceRoot = [IO.Path]::GetFullPath((Join-Path $serverRoot "instance"))
+        $developmentInstancePrefix = $developmentInstanceRoot.TrimEnd("\") + "\"
+        if (-not $vapidPrivateKeyPath.StartsWith($developmentInstancePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Development VAPID keys must stay inside the repository instance directory."
+        }
+    }
+    $env:STUDENT_APP_VAPID_SUBJECT = $vapidSubject
+    $env:STUDENT_APP_VAPID_PRIVATE_KEY_PATH = $vapidPrivateKeyPath
+}
+
+if ($RuntimeRootOverride) {
+    $runtimeRoot = [IO.Path]::GetFullPath($RuntimeRootOverride)
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
+        throw "RuntimeRootOverride must be an existing directory: $runtimeRoot"
+    }
+    $runtimeFiles = @{
+        "STUDENT_APP_RUNTIME_ROOT" = $runtimeRoot
+        "STUDENT_APP_ACCOUNTS_PATH" = Join-Path $runtimeRoot "auth_accounts.json"
+        "STUDENT_APP_STUDENTS_PATH" = Join-Path $runtimeRoot "students.json"
+        "STUDENT_APP_DB_PATH" = Join-Path $runtimeRoot "app.sqlite"
+        "STUDENT_APP_LOGS_PATH" = Join-Path $runtimeRoot "logs.json"
+        "STUDENT_APP_ABSENT_PATH" = Join-Path $runtimeRoot "absent.json"
+        "STUDENT_APP_EXTRA_PATH" = Join-Path $runtimeRoot "extra_attend.json"
+        "STUDENT_APP_WEEKEND_PATH" = Join-Path $runtimeRoot "weekend_slots.json"
+        "STUDENT_APP_MAKEUP_PATH" = Join-Path $runtimeRoot "makeup_carryover.json"
+    }
+    foreach ($entry in $runtimeFiles.GetEnumerator()) {
+        Set-Item -LiteralPath "Env:$($entry.Key)" -Value $entry.Value
     }
 }
 
@@ -30,7 +163,6 @@ if ([string]::IsNullOrWhiteSpace($authSecret) -or $authSecret -eq "CHANGE_ME_AUT
 }
 Set-Item -LiteralPath "Env:AUTH_SECRET" -Value $authSecret
 
-$serverRoot = Split-Path -Parent $PSScriptRoot
 $waitressPath = Join-Path $serverRoot "venv\Scripts\waitress-serve.exe"
 if (-not (Test-Path -LiteralPath $waitressPath)) {
     throw "Waitress is not installed in the server virtual environment: $waitressPath"
@@ -54,5 +186,9 @@ Set-Location -LiteralPath $serverRoot
     "--channel-timeout=$ChannelTimeout" `
     "--cleanup-interval=15" `
     "--channel-request-lookahead=1" `
+    "--trusted-proxy=127.0.0.1" `
+    "--trusted-proxy-count=1" `
+    "--trusted-proxy-headers=x-forwarded-proto" `
+    "--clear-untrusted-proxy-headers" `
     "app:app"
 exit $LASTEXITCODE

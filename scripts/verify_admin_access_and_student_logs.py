@@ -293,9 +293,45 @@ console.log('admin access and student logs demo checks passed');
     check(process.returncode == 0, "student logs demo behavior driver failed")
 
 
+
+def run_student_log_ui_contract_checks() -> None:
+    app_source = (ROOT / "app.py").read_text("utf-8")
+    html_source = (ROOT / "static/admin.html").read_text("utf-8")
+    css_source = (ROOT / "static/css/admin.css").read_text("utf-8")
+    main_source = (ROOT / "static/js/admin/main.js").read_text("utf-8")
+
+    check(
+        "from routes.api_student_logs import bp_api_student_logs" in app_source
+        and "app.register_blueprint(bp_api_student_logs)" in app_source,
+        "student log blueprint must stay imported and registered in app.py",
+    )
+    for token in (
+        'class="hero-note-rail"',
+        'id="studentLogPanel"',
+        'id="studentLogClear"',
+        'id="studentLogList"',
+        'id="studentLogStatus"',
+    ):
+        check(html_source.count(token) == 1, f"admin student log DOM contract missing or duplicated: {token}")
+    check(
+        "import { initStudentLogs } from './features/studentLogs.js" in main_source
+        and main_source.count("initStudentLogs();") == 1,
+        "admin main entrypoint must import and initialize student logs exactly once",
+    )
+    for selector in (
+        "body.admin .hero-note-rail",
+        "body.admin .student-log-panel",
+        "body.admin .student-log-delete",
+    ):
+        check(selector in css_source, f"admin student log CSS contract missing: {selector}")
+    check(
+        "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);" in css_source,
+        "memo and student log boxes must keep the equal desktop split",
+    )
 def main() -> int:
     run_admin_basic_auth_checks()
     run_auth_secret_startup_contract_checks()
+    run_student_log_ui_contract_checks()
     run_student_operation_log_checks()
     run_student_log_demo_checks()
     print("admin access and student operation log checks passed")

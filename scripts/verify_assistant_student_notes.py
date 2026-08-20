@@ -220,23 +220,54 @@ def source_boundary_checks() -> None:
     check("assistantStudentNotes" not in export_source, "assistant notes must not enter export projection")
 
     tooltip_source = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8-sig")
+    log_modal_source = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8-sig")
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
-    check("assistantStudentNotes" in tooltip_source, "student sidebar must mount assistant notes")
-    check("<h3>조교 메모</h3>" in tooltip_source, "assistant memo title is missing")
-    check("조교 메모방" not in tooltip_source, "legacy assistant memo title remains")
-    check("data-note-remind-input" in tooltip_source and "assistant-note-compose-reminder" in tooltip_source, "confirmation-date composer is missing")
+    check("assistantStudentNotes" not in tooltip_source, "student info/homework popup must not retain assistant notes")
+    check("assistantStudentNotesTemplate" in log_modal_source, "main popup must mount assistant notes")
+    check('id="logTitle"' not in log_modal_source and "메모 쓰레드" not in log_modal_source, "thread popup must not render the oversized student-name title")
+    check(
+        'class="log-header-row"' not in log_modal_source
+        and 'id="logClose"' not in log_modal_source
+        and "body.admin #logModal .log-card" in admin_css
+        and "padding: 0 !important;" in admin_css,
+        "thread popup must remove the empty white header and outer padding",
+    )
+    check("<h3>조교 메모</h3>" in notes_source, "assistant memo title is missing")
+    check(
+        "data-note-count" not in notes_source
+        and "assistant-note-count" not in notes_source
+        and "댓글 ${notes.length}개" not in notes_source,
+        "thread popup must not render a comment-count badge",
+    )
+    check(
+        "data-note-save-close" in notes_source
+        and ">저장 후 닫기</button>" in notes_source
+        and "data-note-close" in notes_source
+        and ">닫기</button>" in notes_source
+        and "assistant-note-heading-actions" in admin_css
+        and "assistant-note-heading-button" in admin_css,
+        "assistant memo heading must expose save-and-close and close actions",
+    )
+    check(
+        "await saveNote({ closeAfter: true })" in notes_source
+        and "admin:assistant-notes-close" in notes_source
+        and "logModal.addEventListener('admin:assistant-notes-close', close)" in log_modal_source,
+        "save-and-close must reuse comment creation and close only through the popup owner",
+    )
+    check("조교 메모방" not in notes_source, "legacy assistant memo title remains")
+    check("data-note-remind-input" in notes_source and "assistant-note-compose-reminder" in notes_source, "confirmation-date composer is missing")
 
-    check('data-note-list role="log"' in tooltip_source, "scrollable assistant comment thread is missing")
-    check("댓글 등록" in tooltip_source and "data-note-save" in tooltip_source, "comment composer is missing")
-    check('data-note-author="귤" aria-pressed="false">규리</button>' in tooltip_source, "gyuri author button label is missing")
+    check('data-note-list role="log"' in notes_source, "scrollable assistant comment thread is missing")
+    check("댓글 등록" in notes_source and "data-note-save" in notes_source, "comment composer is missing")
+    check('data-note-author="귤" aria-pressed="false">규리</button>' in notes_source, "gyuri author button label is missing")
     check(
         "content.textContent = String(note.content || '')" in notes_source,
         "note text must use safe text rendering",
     )
     check("localStorage" not in notes_source and "sessionStorage" not in notes_source, "assistant notes must not use browser storage")
     for author in ("귤", "세빈", "동훈", "하영"):
-        check(f'data-note-author="{author}"' in tooltip_source, f"missing author button: {author}")
+        check(f'data-note-author="{author}"' in notes_source, f"missing author button: {author}")
         check(f'button[data-note-author="{author}"]' in admin_css, f"missing author color style: {author}")
         check(
             f'.assistant-student-notes[data-note-selected-author="{author}"] .assistant-note-input' in admin_css,
@@ -251,8 +282,43 @@ def source_boundary_checks() -> None:
         and "color: var(--assistant-note-item-color);" in admin_css,
         "comment content must retain its author's assigned color",
     )
+    check(
+        "--assistant-note-body-font-size: 26px;" in admin_css
+        and "font-size: var(--assistant-note-body-font-size);" in admin_css,
+        "assistant note content and inputs must use the doubled 26px type scale",
+    )
+    check(
+        "--assistant-note-author-font-size: 28px;" in admin_css
+        and "font-size: var(--assistant-note-author-font-size);" in admin_css
+        and "font-weight: 900;" in admin_css,
+        "assistant note author names must stay larger and bolder at the doubled 28px scale",
+    )
+    check(
+        "body.admin #logModal .assistant-note-heading h3" in admin_css
+        and "body.admin #logModal .assistant-note-mode-button" in admin_css
+        and "font-size: 24px;" in admin_css
+        and "font-size: 21px;" in admin_css
+        and "font-size: 22px;" in admin_css
+        and "font-size: 20px;" in admin_css,
+        "all assistant-note text roles must use the doubled type scale",
+    )
+    check(
+        "font-size:72px;" not in log_modal_source
+        and "font-size:40px;" not in log_modal_source
+        and "font-size:48px;" not in log_modal_source
+        and "font-size:32px;" not in log_modal_source,
+        "thread popup must not restore the removed oversized title or close-button type scales",
+    )
+    check(
+        "@media (max-width: 600px)" in admin_css
+        and ".assistant-note-reminder-body > .assistant-note-item-content" in admin_css
+        and "grid-column: 1 / -1;" in admin_css,
+        "larger reminder-note text must use the full mobile card width",
+    )
     check("author: selectedAuthor" in notes_source, "selected author must be included in save requests")
     check("root.dataset.noteSelectedAuthor" in notes_source, "selected author must drive the pressed author button")
+    check("body.admin #logModal .assistant-student-notes" in admin_css, "assistant notes styles must be scoped to the main popup")
+    check("body.admin #adminSchoolTip .assistant-student-notes" not in admin_css, "tooltip assistant-note styles must be removed")
     check(
         ".assistant-note-author-buttons [data-note-author]" in notes_source,
         "author selection must not treat rendered comment cards as author buttons",
@@ -280,7 +346,12 @@ def source_boundary_checks() -> None:
     check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
     check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
     check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
-    check("notes.slice().reverse()" in notes_source, "existing notes must render from oldest to newest")
+    check(
+        "const newestFirst = notes.slice()" in notes_source
+        and "compareNewestNoteFirst(left, right)" in notes_source
+        and "notes.slice().reverse()" not in notes_source,
+        "existing notes must render from newest to oldest",
+    )
     check(
         "remind_on" in notes_source
         and "assistant-note-reminder-info" in notes_source
@@ -302,11 +373,14 @@ def source_boundary_checks() -> None:
     )
     check(
         ".assistant-note-item.has-reminder .assistant-note-action-group" in admin_css
-        and "flex-direction: column;" in admin_css,
-        "reminder edit button must stack below delete when dates need the row",
+        and ".assistant-note-reminder-body.is-stacked" in admin_css
+        and "header.append(reminderInfoRow);" in notes_source
+        and "reminderBody.append(authorGroup, content, actionGroup);" in notes_source
+        and "header.append(reminderInfoRow, actionGroup)" not in notes_source,
+        "reminder dates need their own row above the author, content, and actions",
     )
     check("assistant-note-compose-reminder" in admin_css, "confirmation-date composer style is missing")
-    check("list.scrollTop = list.scrollHeight" in notes_source, "comment thread must scroll to the latest note")
+    check("list.scrollTop = 0" in notes_source, "newest-first comment thread must stay scrolled to the top")
     check("notes = [data.note, ...notes.filter" in notes_source, "new comments must be added to the loaded thread")
     check("if (!content)" in notes_source, "blank comments must be blocked in the composer")
     check("input.value = ''" in notes_source, "the composer must stay separate from saved comments")

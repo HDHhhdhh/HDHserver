@@ -17,10 +17,10 @@ const $ = id => document.getElementById(id);
 (() => {
     const CUR = ['공수1', '공수2', '미적분1', '미적분2', '대수', '기하', '확통'];
     const SUB = {
-        '공수1': ['A:Ble', 'APEX', '트팩'], '공수2': ['A:Ble', 'APEX', '트팩'],
-        '미적분1': ['A:Ble', 'APEX', '트팩'], '미적분2': ['A:Ble', 'APEX', '트팩'],
-        '대수': ['A:Ble', 'APEX', '트팩'], '기하': ['A:Ble', 'APEX', '트팩'],
-        '확통': ['A:Ble', 'APEX', '트팩']
+        '공수1': ['A:Ble', 'APEX'], '공수2': ['A:Ble', 'APEX'],
+        '미적분1': ['A:Ble', 'APEX'], '미적분2': ['A:Ble', 'APEX'],
+        '대수': ['A:Ble', 'APEX'], '기하': ['A:Ble', 'APEX'],
+        '확통': ['A:Ble', 'APEX']
     };
 
     let videos = [];
@@ -286,8 +286,7 @@ const $ = id => document.getElementById(id);
     ];
     const subCurricula = [
         'A:Ble',
-        'APEX',
-        '트팩'
+        'APEX'
     ];
     const filterDiv = document.createElement('div');
     filterDiv.className = 'video-filter-row';

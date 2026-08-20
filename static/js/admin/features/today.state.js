@@ -553,42 +553,38 @@ export function applySavedOrder(list, dateKey) {
   for (const s of list) if (!used.has(String(s.id))) ordered.push(s);
   return ordered;
 }
-
-async function patchTodayOrder(payload) {
-  const response = await fetch('/api/today_order/patch', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify(payload),
-  });
-  if (response.ok) return;
-  if (response.status !== 404) {
-    throw new Error(`/api/today_order/patch failed: ${response.status}`);
-  }
-
-  // Rolling-deploy compatibility: a running worker may still expose only the
-  // legacy whole-map route until it is restarted with the new backend.
-  const legacyLoad = await fetch('/api/today_order', { cache: 'no-store' });
-  if (!legacyLoad.ok) throw new Error(`/api/today_order load failed: ${legacyLoad.status}`);
-  const latest = await legacyLoad.json();
-  const next = latest && typeof latest === 'object' && !Array.isArray(latest) ? latest : {};
-  if (payload.remove === true) delete next[payload.date];
-  else next[payload.date] = payload.order;
-  const legacySave = await fetch('/api/today_order', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify(next),
-  });
-  if (!legacySave.ok) throw new Error(`/api/today_order save failed: ${legacySave.status}`);
-}
-
 export async function saveOrder(dateKey, newOrderIds) {
-  const order = newOrderIds.map(String);
-  await patchTodayOrder({ date: dateKey, order });
-  _orderMap = { ...(_orderMap || {}), [dateKey]: order };
+  const date = String(dateKey || '').trim();
+  const order = Array.from(new Set((Array.isArray(newOrderIds) ? newOrderIds : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)));
+  const response = await fetch('/api/today_order', {
+    method: 'PATCH',
+    headers: CT,
+    body: JSON.stringify({ date, order }),
+  });
+  if (!response.ok) throw new Error(`/api/today_order save failed: ${response.status}`);
+  const payload = await response.json();
+  const savedOrder = Array.isArray(payload?.order) ? payload.order.map(String) : order;
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap, [date]: savedOrder };
+  } else {
+    _orderMap = null;
+  }
+  return savedOrder;
 }
 export async function clearTodayOrder(dateKey) {
-  await patchTodayOrder({ date: dateKey, remove: true });
-  if (_orderMap) delete _orderMap[dateKey];
+  const date = String(dateKey || '').trim();
+  const response = await fetch(`/api/today_order?${new URLSearchParams({ date }).toString()}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(`/api/today_order clear failed: ${response.status}`);
+  const payload = await response.json();
+  if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
+    _orderMap = { ..._orderMap };
+    delete _orderMap[date];
+  }
+  return payload?.cleared === true;
 }
 
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {

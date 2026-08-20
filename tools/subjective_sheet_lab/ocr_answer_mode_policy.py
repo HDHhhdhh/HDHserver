@@ -3,6 +3,10 @@ from __future__ import annotations
 import re
 from typing import Final
 
+from core.short_answer import is_supported_short_answer
+from core.test_answer_modes import ANSWER_VALUE
+
+
 DEFAULT_TEST_ID: Final[str] = "t_unit_daesu_01_lv3_r1"
 CHOICE_NUMBER_QUESTIONS: Final[frozenset[int]] = frozenset((1, 3, 5, 9, 13, 14, 17, 19))
 ANSWER_MODE_BY_TEST_ID: Final[dict[str, dict[str, frozenset[int]]]] = {
@@ -18,14 +22,13 @@ ANSWER_MODE_BY_TEST_ID: Final[dict[str, dict[str, frozenset[int]]]] = {
 CHOICE_NUMBER_VALUES: Final[frozenset[str]] = frozenset(("1", "2", "3", "4", "5"))
 UNCLEAR_TEXTS: Final[frozenset[str]] = frozenset(("", "?", "??", "unknown", "unclear"))
 MULTIPLE_NUMERIC_ANSWER_RE: Final[re.Pattern[str]] = re.compile(r"^[-+]?\d+(?:/\d+)?(?:\.\d+)?\s*,\s*[-+]?\d+(?:/\d+)?(?:\.\d+)?")
-SIMPLE_FINAL_ANSWER_RE: Final[re.Pattern[str]] = re.compile(r"^[-+]?\d+(?:/\d+|\.\d+)?$")
 ANSWER_VALUE_LETTER_CONFUSION_WARNING: Final[str] = "answer_value_letter_confusion"
 DIGIT_SHAPE_CONFUSION_WARNING: Final[str] = "digit_shape_confusion"
 ANSWER_MODE_UNVERIFIED_WARNING: Final[str] = "answer_mode_unverified"
 DIGIT_SHAPE_CONFUSION_CASES: Final[frozenset[tuple[int, str]]] = frozenset(
     (
         (18, "90"),
-    ),
+    )
 )
 
 
@@ -44,9 +47,11 @@ def answer_mode_auto_grade_warning(question_no: int, answer: str, test_id: str =
         return DIGIT_SHAPE_CONFUSION_WARNING
     if answer_mode == "":
         return None if is_simple_final_answer(normalized) else ANSWER_MODE_UNVERIFIED_WARNING
+    if is_simple_final_answer(normalized):
+        return None
     if contains_letter(normalized):
         return ANSWER_VALUE_LETTER_CONFUSION_WARNING
-    return None
+    return "expression_operator_confusion"
 
 
 def answer_mode_for_question(test_id: str, question_no: int) -> str:
@@ -61,7 +66,7 @@ def answer_mode_for_question(test_id: str, question_no: int) -> str:
 
 
 def is_simple_final_answer(value: str) -> bool:
-    return SIMPLE_FINAL_ANSWER_RE.match(value.strip()) is not None
+    return is_supported_short_answer(value, ANSWER_VALUE)
 
 
 def contains_letter(value: str) -> bool:

@@ -1,21 +1,26 @@
 # routes/api_todaymeta.py
 from __future__ import annotations
 
+import datetime as dt
 import json
-from datetime import date as date_cls
+import os
 from pathlib import Path
 from typing import Any, Dict
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, abort, request, jsonify
 
-from core.paths import DATA_DIR, TODAY_ORDER_PATH
-from core.storage import file_lock
+from core.storage import file_lock, save_atomic
 
 bp_api_todaymeta = Blueprint("bp_api_todaymeta", __name__)
 
 # ✅ JSON 저장 위치
 # - 환경변수 DATA_DIR 있으면 거기 사용
 # - 없으면 프로젝트 루트의 data/ 폴더 사용 (없으면 생성)
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def _read_json(path: Path, default: Any) -> Any:
     try:
         if not path.exists():
@@ -34,6 +39,43 @@ def _write_json(path: Path, data: Any) -> None:
 def _get_date_arg() -> str:
     # today.js: ?date=YYYY-MM-DD 로 때림
     return (request.args.get("date") or "").strip()
+
+
+def _canonical_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = dt.date.fromisoformat(raw)
+    except ValueError:
+        abort(400, description="Invalid date format")
+    if parsed.isoformat() != raw:
+        abort(400, description="Invalid date format")
+    return raw
+
+
+def _clean_order(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        abort(400, description="order must be a list")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        sid = str(item or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+    return out
+
+
+def _read_object_for_mutation(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise ValueError("today order store is unreadable") from exc
+    if not isinstance(value, dict):
+        raise ValueError("today order store must be an object")
+    return value
 
 
 # ─────────────────────────────────────────────
@@ -160,78 +202,58 @@ def api_arrive_time():
 # ─────────────────────────────────────────────
 # /api/today_order
 # - GET  /api/today_order -> { "YYYY-MM-DD": ["sid",...], ... }
-# - POST /api/today_order body: 위와 동일(전체맵 저장)
-# - POST /api/today_order/patch body: { date, order } 또는 { date, remove: true }
+# - POST /api/today_order body: 위와 동일(전체맵 저장, legacy)
+# - PATCH /api/today_order body: {date, order} 날짜 하나만 저장
+# - DELETE /api/today_order?date=YYYY-MM-DD 날짜 하나만 초기화
 # ─────────────────────────────────────────────
-@bp_api_todaymeta.route("/api/today_order", methods=["GET", "POST"])
+@bp_api_todaymeta.route("/api/today_order", methods=["GET", "POST", "PATCH", "DELETE"])
 def api_today_order():
-    p = TODAY_ORDER_PATH
+    p = DATA_DIR / "today_order.json"
 
     if request.method == "GET":
-        return jsonify(_read_json(p, {}))
+        value = _read_json(p, {})
+        return jsonify(value if isinstance(value, dict) else {})
+
+    if request.method == "DELETE":
+        date_key = _canonical_date(request.args.get("date"))
+        try:
+            with file_lock(p):
+                latest = _read_object_for_mutation(p)
+                cleared = date_key in latest
+                latest.pop(date_key, None)
+                if cleared:
+                    save_atomic(p, latest)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "date": date_key, "cleared": cleared})
 
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "bad body"}), 400
 
+    if request.method == "PATCH":
+        date_key = _canonical_date(payload.get("date"))
+        order = _clean_order(payload.get("order"))
+        try:
+            with file_lock(p):
+                latest = _read_object_for_mutation(p)
+                latest[date_key] = order
+                save_atomic(p, latest)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "date": date_key, "order": order})
+
     cleaned: Dict[str, list] = {}
     for d, arr in payload.items():
-        if not isinstance(d, str):
+        if not isinstance(d, str) or not isinstance(arr, list):
             continue
-        if isinstance(arr, list):
-            cleaned[d] = [str(x) for x in arr if str(x).strip()]
+        try:
+            date_key = dt.date.fromisoformat(d).isoformat()
+        except ValueError:
+            continue
+        if date_key != d:
+            continue
+        cleaned[date_key] = _clean_order(arr)
     with file_lock(p):
-        _write_json(p, cleaned)
+        save_atomic(p, cleaned)
     return jsonify({"ok": True})
-
-
-def _parse_iso_date(value: Any) -> str | None:
-    raw = str(value or "").strip()
-    try:
-        parsed = date_cls.fromisoformat(raw)
-    except ValueError:
-        return None
-    return raw if parsed.isoformat() == raw else None
-
-
-def _clean_order_ids(value: Any) -> list[str] | None:
-    if not isinstance(value, list):
-        return None
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        sid = str(item).strip()
-        if not sid or sid in seen:
-            continue
-        seen.add(sid)
-        result.append(sid)
-    return result
-
-
-@bp_api_todaymeta.route("/api/today_order/patch", methods=["POST"])
-def api_today_order_patch():
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"ok": False, "error": "bad body"}), 400
-
-    date = _parse_iso_date(payload.get("date"))
-    if not date:
-        return jsonify({"ok": False, "error": "invalid date"}), 400
-
-    remove = payload.get("remove") is True
-    order = [] if remove else _clean_order_ids(payload.get("order"))
-    if order is None:
-        return jsonify({"ok": False, "error": "order must be a list"}), 400
-
-    p = TODAY_ORDER_PATH
-    with file_lock(p):
-        all_map = _read_json(p, {})
-        if not isinstance(all_map, dict):
-            all_map = {}
-        if remove:
-            all_map.pop(date, None)
-        else:
-            all_map[date] = order
-        _write_json(p, all_map)
-
-    return jsonify({"ok": True, "date": date, "order": order, "removed": remove})

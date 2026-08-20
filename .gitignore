@@ -22,6 +22,7 @@ progress.json.*.tmp
 /.codex-remote-attachments/
 /.codex_drive_download/
 /generated/
+/tmp/
 /.omo/evidence/
 /.omo/plans/
 /.omo/ulw-loop/
@@ -35,16 +36,24 @@ progress.json.*.tmp
 
 # Local Codex, browser, and QA working artifacts
 /.codex-temp/
+/.playwright-cli/
 /.omo/frontend-design/
+/.omo/product-design-audit*/
 /.omo/reviews/
+/.omo/review-*
+/output/
 /qa-evidence*/
 /browser-*.png
 /browser-*.jpg
 /task-1-*.txt
 /design-qa.md
+/CHATGPT_PROJECT_CONTEXT.md
+/CODEX-HANDOFF.md
+/CODEX-REMOVALS.txt
 
 # Machine-local backups and one-off system remediation scripts
 /runtime_backup_*/
+/serverr.zip
 /scripts/admin_cleanup_unrelated.ps1
 /scripts/admin_security_finalize.ps1
 
@@ -59,7 +68,6 @@ progress.json.*.tmp
 /homework_excel_*.txt
 /homework_excel_*_notepad.md
 /tools/subjective_sheet_lab/*
-/serverr.zip
 
 # Python/runtime artifacts
 __pycache__/

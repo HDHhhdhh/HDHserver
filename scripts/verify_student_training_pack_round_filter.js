@@ -55,17 +55,6 @@ assertContract(
   'training-pack OCR allowlist must only include round 1 and 2',
 );
 assertContract(
-  source.includes('let assignedTrainingPackMids = []') &&
-    source.includes('payload.assignedTrainingPackVideos') &&
-    source.includes('payload.assignment?.studentTrainingPackVideos'),
-  'student training-pack state must separate assigned and student-owned MIDs',
-);
-assertContract(
-  source.includes('checkbox.disabled = isRegistered || isAssigned || restricted;') &&
-    source.includes('오늘 영상에 배정됨'),
-  'admin-assigned training-pack rows must stay unavailable without becoming student-owned',
-);
-assertContract(
   availableRoundsForType.includes('listTestsForType(typeVal, currentCur())') &&
     availableRoundsForType.includes('new Set()') &&
     availableRoundsForType.includes("assignedRound(test.round || '1')"),

@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const root = path.resolve(import.meta.dirname, '..');
+const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
+
+const login = read('static/index.html');
+const files = read('static/file-manage.html');
+const calendar = read('static/school-cal.html');
+const shared = read('static/css/style.css');
+const admin = read('static/css/admin.css');
+const student = read('static/css/student.css');
+const studentApp = read('static/css/student-app.css');
+const testsHtml = read('static/tests.html');
+const testsJs = read('static/js/tests.js');
+const demoBootstrap = read('static/js/admin/demo/bootstrap.js');
+
+assert.match(login, /input\s*\{[^}]*min-height:\s*44px/s);
+assert.match(login, /button\s*\{[^}]*min-height:\s*44px/s);
+assert.match(files, /@media\s*\(max-width:\s*1080px\)[\s\S]*?\.btn,\s*\.btn\.small,\s*input,\s*select,\s*\.ctx-i\s*\{\s*min-height:\s*44px;/s);
+assert.match(calendar, /@media\s*\(max-width:\s*980px\)[\s\S]*?:where\(\.btn,\s*\.link-back,\s*\.select-field,\s*\.search-field,\s*\.seg button\)[^{]*\{\s*min-height:\s*44px;/s);
+assert.match(calendar, /<body class="school-calendar-page">/);
+assert.match(shared, /body\.video-manage-page\s+:where\(button,\s*input,\s*select\)[\s\S]*?min-height:\s*44px\s*!important/s);
+assert.match(shared, /body\.all-page\s+:where\(button,\s*a,\s*input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\),\s*select\)[\s\S]*?min-height:\s*44px\s*!important/s);
+assert.match(shared, /body\.all-page\s+\.topbar a\s*\{\s*min-height:\s*44px\s*!important;/s);
+assert.match(shared, /body\.all-page #allWrap \.studentsTable \.dayInputRow input\.dayInput,[\s\S]*?height:\s*44px\s*!important;\s*min-height:\s*44px\s*!important;/s);
+assert.match(shared, /#allPageShell #allWrap \.studentsTable \.docBox\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*44px\s*44px\s*!important;/s);
+assert.match(shared, /#allPageShell #allWrap \.studentsTable :is\([\s\S]*?\.docOpen,[\s\S]*?\.miniProgBtn,[\s\S]*?\.btn-del-stu,[\s\S]*?\.btn-clone-stu[\s\S]*?width:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(shared, /body\.video-manage-page #vidTable \.delV[\s\S]*?width:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(shared, /@media\s*\(max-width:\s*1024px\)[\s\S]*?\.dayInputRow, \.timeInputRow[\s\S]*?grid-template-columns:\s*repeat\(5,\s*44px\)\s*!important;/s);
+assert.match(shared, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.video-manage-page\s+:where\(button,\s*input,\s*select\)[\s\S]*?min-height:\s*44px\s*!important/s);
+assert.match(shared, /@media\s*\(max-width:\s*1024px\)[\s\S]*?#allPageShell #allWrap \.studentsTable :is\([\s\S]*?\.docOpen,[\s\S]*?\.btn-clone-stu[\s\S]*?height:\s*44px\s*!important;/s);
+assert.match(shared, /body\.all-page #allWrap \.studentsTable \.stuName\s*\{\s*min-width:\s*44px\s*!important;/s);
+assert.match(shared, /body\.video-manage-page > header a[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(shared, /body\.school-calendar-page :where\([\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(admin, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin\s+:where\([\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(admin, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin button\s*\{\s*min-width:\s*44px\s*!important;/s);
+assert.match(admin, /body\.admin #calendar \.makeup-slot-close,[\s\S]*?width:\s*44px\s*!important;[\s\S]*?height:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(admin, /body\.admin \.global-links \.btn,[\s\S]*?body\.admin\.admin-simple \.hero-actions \.btn\s*\{[\s\S]*?height:\s*44px\s*!important;\s*min-height:\s*44px\s*!important;/s);
+assert.match(student, /body\.student-page\.student-app-mobile-surface\s+:where\([\s\S]*?#setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#testSubmitModal button[\s\S]*?min-height:\s*44px;/s);
+assert.match(student, /body\.student-page\.student-app-mobile-surface #setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#testAnswerPreviewModal button,[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(student, /#announceModal \.announce-survey-option,[\s\S]*?#announceModal \.announce-anonymous\s*\{\s*min-height:\s*44px\s*!important;/s);
+assert.match(student, /#announceModal \.announce-image-nav,[\s\S]*?#announceModal \.announce-image-dots button\s*\{[\s\S]*?width:\s*44px\s*!important;[\s\S]*?height:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(studentApp, /\.skip-link\s*\{[\s\S]*?min-block-size:\s*44px;[\s\S]*?align-items:\s*center;/s);
+assert.match(studentApp, /\.student-app-brand\s*\{[\s\S]*?min-block-size:\s*44px;/s);
+assert.match(testsHtml, /\.rule-check-target\s*\{[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/s);
+assert.match(testsHtml, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin\.tests-page :where\([\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(testsJs, /<label class="rule-check-target" aria-label="\$\{escapeAttr\(`/);
+assert.match(demoBootstrap, /'min-width:44px',[\s\S]*?'min-height:44px'/s);
+
+console.log('mobile touch target checks passed: 30');
