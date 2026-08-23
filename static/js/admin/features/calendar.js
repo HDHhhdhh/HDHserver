@@ -1,4 +1,4 @@
-﻿// /js/admin/features/calendar.js
+// /js/admin/features/calendar.js
 // FullCalendar 월 뷰 + 날짜별 인원 카운트 뱃지 + 출결 모달(+주말 슬롯 선택/보강 병합 저장 - 멀티 슬롯 지원)
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
@@ -2248,7 +2248,7 @@ export function initCalendar() {
       await patchExtraAttendDates(nextExtra, [dateStr, previousSchedule?.makeupDate]);
       await postWeekendPatch(mergedWeekendPatch);
       const storedSlots = parseSlotNumbers(nextWeekend?.[dateStr]?.[sid]);
-      await postJson('/arrive-time/patch', {
+      await postJson('/api/arrive-time/patch', {
         date: dateStr,
         sid,
         value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...(storedSlots.length ? storedSlots : [slot]))] || '',
@@ -3063,7 +3063,7 @@ export function initCalendar() {
         arrivePatch[sid] = MAKEUP_ARRIVE_BY_SLOT[first] || '';
       }
       if (Object.keys(arrivePatch).length) {
-        await postJson('/arrive-time', { [dateStr]: arrivePatch });
+        await postJson('/api/arrive-time', { [dateStr]: arrivePatch });
       }
 
       EXTRA = nextExtra;

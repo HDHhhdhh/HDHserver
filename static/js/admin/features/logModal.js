@@ -24,6 +24,7 @@ let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 let logModalAccessMode = 'full';
 let saveAllStudentPopupPromise = null;
 let canonicalHomework = createCanonicalHomeworkState();
+let homeworkRemoveSelectionActive = false;
 
 function createCanonicalHomeworkState() {
   return {
@@ -1020,6 +1021,7 @@ function mountAssistantThread(student) {
 }
 
 function parkHomeworkWorkspace() {
+  setHomeworkRemoveSelection(false);
   const workspace = $('logLegacyWorkspace');
   const homework = $('hwWrap');
   const actions = homework?.querySelector('.hw-actions');
@@ -1050,6 +1052,7 @@ function parkHomeworkWorkspace() {
 }
 
 function mountHomeworkInTooltip() {
+  setHomeworkRemoveSelection(false);
   const host = $('tooltipHomeworkHost');
   const actionHost = $('tooltipHomeworkActions');
   const homework = $('hwWrap');
@@ -1361,9 +1364,7 @@ function renderHwTable(mergedRows) {
   const itemHtml = (i) => {
     const r = rows[i] || { book: '', this: '', pct: '', comment: '', next: '', _deleted: false, _ph: {} };
     const ph = r._ph || {};
-    const deleteButtonHtml = i >= 2
-      ? `<button type="button" class="hw-del-btn hw-book-delete" title="교재 칸 삭제" aria-label="${i + 1}번째 교재 칸 삭제">×</button>`
-      : '';
+    const removeChoiceHtml = `<button type="button" class="hw-remove-choice" aria-label="${i + 1}번째 교재 선택 제거" hidden>선택</button>`;
 
     const bookVal = (r.book || '').trim();
     const thisVal = (r.this || '').trim();
@@ -1390,7 +1391,7 @@ function renderHwTable(mergedRows) {
           <div class="hw-book">
             <div class="hw-book-input-row">
               <input class="hwBook" type="text" value="${escapeAttr(bookVal)}" placeholder="">
-              ${deleteButtonHtml}
+              ${removeChoiceHtml}
             </div>
           </div>
 
@@ -1426,6 +1427,7 @@ function renderHwTable(mergedRows) {
   };
 
   host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
+  setHomeworkRemoveSelection(false);
 
   const claimedIds = new Set();
   host.querySelectorAll('.hwItem').forEach((item, index) => {
@@ -1465,9 +1467,7 @@ function addHwRow(bookCarry = '') {
   if (!host) return;
 
   const rowIndex = host.querySelectorAll('.hwItem').length;
-  const deleteButtonHtml = rowIndex >= 2
-    ? `<button type="button" class="hw-del-btn hw-book-delete" title="교재 칸 삭제" aria-label="${rowIndex + 1}번째 교재 칸 삭제">×</button>`
-    : '';
+  const removeChoiceHtml = `<button type="button" class="hw-remove-choice" aria-label="${rowIndex + 1}번째 교재 선택 제거" hidden>선택</button>`;
 
   host.insertAdjacentHTML('beforeend', `
     <div class="hwItem" data-idx="" data-deleted="0">
@@ -1475,7 +1475,7 @@ function addHwRow(bookCarry = '') {
         <div class="hw-book">
           <div class="hw-book-input-row">
             <input class="hwBook" type="text" value="${escapeAttr(bookCarry)}" placeholder="">
-            ${deleteButtonHtml}
+            ${removeChoiceHtml}
           </div>
         </div>
 
@@ -1522,25 +1522,73 @@ function addHwRow(bookCarry = '') {
       appendCanonicalHomeworkEditor(item, row, null, host.querySelectorAll('.hwItem').length - 1);
     }
   }
+  syncHomeworkRemovalControls();
 }
 
-function removeLastHomeworkRow() {
-  if (isContextMenuOnlyAccess()) return false;
-  const host = $('hwBody');
-  if (!host) return false;
-  const items = Array.from(host.querySelectorAll('.hwItem'))
+function visibleHomeworkRows(host = $('hwBody')) {
+  if (!host) return [];
+  return Array.from(host.querySelectorAll('.hwItem'))
     .filter(item => item.dataset.deleted !== '1' && item.style.display !== 'none');
-  const item = items.at(-1);
-  if (!item) return false;
+}
 
+function syncHomeworkRemovalControls() {
+  const host = $('hwBody');
+  const removeRow = $('hwRemoveRow');
+  const addRow = $('hwAddRow');
+  const readOnly = isContextMenuOnlyAccess();
+  const retryLocked = Boolean(canonicalHomework.pendingPayload);
+  const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+  const active = homeworkRemoveSelectionActive && !readOnly && !retryLocked && !homeworkBlocked;
+  homeworkRemoveSelectionActive = active;
+
+  host?.classList.toggle('is-remove-selecting', active);
+  visibleHomeworkRows(host).forEach((item, index) => {
+    item.dataset.idx = String(index);
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const itemLabel = book || `${index + 1}번째 교재`;
+    const deleteButton = item.querySelector('.hw-book-delete');
+    if (deleteButton) {
+      deleteButton.hidden = readOnly || active || index < 2;
+      deleteButton.disabled = retryLocked || homeworkBlocked;
+      deleteButton.setAttribute('aria-label', `${index + 1}번째 교재 칸 삭제`);
+    }
+    const choiceButton = item.querySelector('.hw-remove-choice');
+    if (choiceButton) {
+      choiceButton.hidden = readOnly || !active;
+      choiceButton.disabled = retryLocked || homeworkBlocked;
+      choiceButton.setAttribute('aria-label', `${itemLabel} 선택 제거`);
+    }
+  });
+
+  if (removeRow) {
+    removeRow.textContent = active
+      ? '취소'
+      : (removeRow.closest('#tooltipHomeworkActions') ? '교재 제거' : '- 제거');
+    removeRow.setAttribute('aria-pressed', active ? 'true' : 'false');
+    removeRow.disabled = retryLocked || homeworkBlocked;
+  }
+  if (addRow) addRow.disabled = readOnly || retryLocked || homeworkBlocked || active;
+}
+
+function setHomeworkRemoveSelection(active) {
+  homeworkRemoveSelectionActive = Boolean(active);
+  syncHomeworkRemovalControls();
+}
+
+function ensureMinimumHomeworkRows(minimum = 2) {
+  const host = $('hwBody');
+  if (!host) return;
+  while (visibleHomeworkRows(host).length < minimum) addHwRow('');
+}
+
+function removeHomeworkRow(item) {
+  if (isContextMenuOnlyAccess() || !item) return false;
   const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
   if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
   if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
   item.remove();
-
-  const hasRows = Array.from(host.querySelectorAll('.hwItem'))
-    .some(row => row.dataset.deleted !== '1' && row.style.display !== 'none');
-  if (!hasRows) addHwRow('');
+  ensureMinimumHomeworkRows(2);
+  syncHomeworkRemovalControls();
   return true;
 }
 
@@ -1633,6 +1681,7 @@ function collectCanonicalHomeworkRows() {
 }
 
 function setCanonicalRetryLock(locked) {
+  if (locked) setHomeworkRemoveSelection(false);
   const readOnly = isContextMenuOnlyAccess();
   const notes = $('logNotes');
   if (notes) notes.readOnly = readOnly || locked;
@@ -2094,14 +2143,11 @@ export function initLogModal() {
     document.querySelectorAll('#hwBody input, #hwBody select').forEach(input => {
       input.disabled = readOnly || retryLocked || homeworkBlocked;
     });
-    document.querySelectorAll('#hwBody .hw-del-btn').forEach(button => {
-      button.hidden = readOnly;
-      button.disabled = retryLocked || homeworkBlocked;
-    });
+    syncHomeworkRemovalControls();
     const addRow = $('hwAddRow');
     if (addRow) {
       addRow.hidden = readOnly;
-      addRow.disabled = retryLocked || homeworkBlocked;
+      addRow.disabled = retryLocked || homeworkBlocked || homeworkRemoveSelectionActive;
     }
     const removeRow = $('hwRemoveRow');
     if (removeRow) {
@@ -2128,7 +2174,7 @@ export function initLogModal() {
   if (!window.__hwDelDelegatedBound) {
     window.__hwDelDelegatedBound = true;
     document.addEventListener('click', (e) => {
-      const btn = e.target.closest('button.hw-del-btn');
+      const btn = e.target.closest('button.hw-del-btn, button.hw-remove-choice');
       if (!btn) return;
       if (!btn.closest('#hwWrap')) return;
       if (isContextMenuOnlyAccess()) return;
@@ -2139,18 +2185,9 @@ export function initLogModal() {
       const item = btn.closest('.hwItem');
       if (!item) return;
 
-      const assignmentId = String(item.__homeworkAssignment?.id || item.__homeworkOriginalRow?.assignmentId || '').trim();
-      if (assignmentId) canonicalHomework.removedAssignmentIds.add(assignmentId);
-      if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
-
-      item.remove();
-
-      const host = document.getElementById('hwBody');
-      if (host) {
-        const hasRows = Array.from(host.querySelectorAll('.hwItem'))
-          .some(x => x.style.display !== 'none');
-        if (!hasRows) addHwRow('');
-      }
+      const selectedFromHeader = btn.classList.contains('hw-remove-choice');
+      if (selectedFromHeader && !homeworkRemoveSelectionActive) return;
+      if (removeHomeworkRow(item) && selectedFromHeader) setHomeworkRemoveSelection(false);
     }, true);
   }
 
@@ -2188,7 +2225,10 @@ export function initLogModal() {
     addHwRow(lastBook);
   });
 
-  $('hwRemoveRow')?.addEventListener('click', removeLastHomeworkRow);
+  $('hwRemoveRow')?.addEventListener('click', () => {
+    if (isContextMenuOnlyAccess()) return;
+    setHomeworkRemoveSelection(!homeworkRemoveSelectionActive);
+  });
 
   const nextStateOf = (s) =>
     s === 'none' ? 'done'

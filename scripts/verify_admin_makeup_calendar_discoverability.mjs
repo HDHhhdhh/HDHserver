@@ -75,9 +75,9 @@ try {
   page.on('requestfailed', request => diagnostics.requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`));
   await page.addInitScript(installCalendarFallback);
   await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({ status: 200, body: '' }));
-  await page.route('**/arrive-time/patch', async route => {
+  await page.route('**/api/arrive-time/patch', async route => {
     const request = route.request();
-    diagnostics.directRequests.push({ phase: evidencePhase, method: request.method(), path: '/arrive-time/patch', fixture: true });
+    diagnostics.directRequests.push({ phase: evidencePhase, method: request.method(), path: '/api/arrive-time/patch', fixture: true });
     if (!allowScheduledCarryover) { await route.abort(); return; }
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });

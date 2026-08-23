@@ -60,7 +60,7 @@ def _isolated_routes(root: Path):
         "STU_PATH": "students.json", "VID_PATH": "videos.json", "PRG_PATH": "progress.json",
         "UPD_PATH": "updates.json", "ASN_PATH": "assigns.json", "MAT_PATH": "materials.json",
         "CAL_PATH": "calendar.json", "EXTRA_PATH": "extra.json", "LOGS_PATH": "logs.json",
-        "CLINIC_PATH": "clinic.json", "TODAY_ORDER_PATH": "today_order.json",
+        "CLINIC_PATH": "clinic.json", "TODAY_ORDER_PATH": "data/today_order.json",
         "WEEKEND_SLOTS_PATH": "weekend_slots.json", "WATCH_PATH": "watch.json",
         "TESTS_CFG_PATH": "tests-config.json", "ABS_PATH": "absent.json",
         "ANN_STATUS_PATH": "announcement_status.json", "ANNS_PATH": "announcements.json",
@@ -257,14 +257,29 @@ def run_checks() -> dict[str, object]:
             body = external.get_json()
             dumped = json.dumps(body, ensure_ascii=False)
             _check(state, external.status_code == 200 and body["student"]["id"] == "sid-a" and "sid-b" not in dumped, "public bootstrap was not bound to active SID")
-            _check(state, body["academyAccessAllowed"] is False and body["testSubmissionBlocked"] is True, "external policy flags mismatch")
+            _check(state, body["academyAccessAllowed"] is False and "testSubmissionBlocked" not in body, "external policy flags mismatch")
             _check(state, body["assignedTests"] and body["homeworkBooks"] == ["A교재"] and body["materials"]["mat-a"]["title"] == "A자료", "public bootstrap lost progress/homework shape")
             _check(state, "secret.example" not in dumped and "/files/material-a.pdf" not in dumped and "/files/private-a.pdf" not in dumped, "external recursive link sanitizer leaked a restricted URL")
             _check(state, body["watch"] == {"ok": True, "sid": "sid-a", "date": "", "watch": {"mid-a": {"last": 55, "dur": 100, "completed": False, "updatedAt": 20}}}, "public watch projection differs from /api/watch/latest shape")
             _check(state, client.get("/api/watch", base_url="https://app.5a-math.com", headers=edge).status_code == 404, "public watch GET exposed the raw multi-SID store")
 
             inside = client.get(f"/api/student/bootstrap?sid=sid-a&date={DATE}", base_url="https://app.5a-math.com", headers={"CF-Connecting-IP": "192.168.1.20"}).get_json()
-            _check(state, inside["academyAccessAllowed"] is True and inside["testSubmissionBlocked"] is False and inside["assignedTests"][0]["answerUrl"].startswith("https://secret.example"), "academy public response lost answer precedence")
+            _check(state, inside["academyAccessAllowed"] is True and "testSubmissionBlocked" not in inside and inside["assignedTests"][0]["answerUrl"].startswith("https://secret.example"), "academy public response lost answer precedence")
+            mobile_ipv6 = client.get(
+                f"/api/student/bootstrap?sid=sid-a&date={DATE}",
+                base_url="https://app.5a-math.com",
+                headers={
+                    "CF-Connecting-IP": "240.0.0.44",
+                    "CF-Connecting-IPv6": "2a09:bac2:46d9::44",
+                },
+            ).get_json()
+            _check(
+                state,
+                mobile_ipv6["academyAccessAllowed"] is True
+                and "testSubmissionBlocked" not in mobile_ipv6
+                and mobile_ipv6["assignedTests"][0]["answerUrl"].startswith("https://secret.example"),
+                "academy IPv6 mobile bootstrap was misclassified through Cloudflare Pseudo IPv4",
+            )
             forged = client.get(f"/api/student/bootstrap?date={DATE}", base_url="https://app.5a-math.com", headers={"CF-Connecting-IP": "192.168.1.20"}, environ_overrides={"REMOTE_ADDR": "198.51.100.9"}).get_json()
             _check(state, forged["academyAccessAllowed"] is False and "secret.example" not in json.dumps(forged), "untrusted peer forged academy IP")
 

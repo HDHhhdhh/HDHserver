@@ -1,13 +1,13 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js?v=20260819-textbook-delete1';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260821-homework-remove-select1';
 import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260819-subject-days1';
 import { initVideoModal } from '../../admin/features/videoModal.js';
-import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260814-reminder-body-row2';
+import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260821-note-body-row2';
 
 const ADMIN_POPUP_STYLESHEETS = [
   '/css/main.css?v=20260417a',
   '/css/admin.css?v=20260527chat',
-  '/css/student-work-light.css?v=20260819t11',
+  '/css/student-work-light.css?v=20260821-note-reminder-vertical1',
 ];
 const ADMIN_POPUP_STYLESHEET_MARKER = 'data-all-students-admin-popup-style';
 

@@ -50,7 +50,7 @@ import {
   renderToday,
   renderDone,
   bindTodayTableEvents,
-} from './today.render.js?v=20260819-homework-status-reverse3';
+} from './today.render.js?v=20260821-log-batch1';
 
 function dateQuery(dateKey) {
   return new URLSearchParams({ date: String(dateKey || '') }).toString();

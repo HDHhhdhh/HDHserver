@@ -13,6 +13,16 @@
   </header>
 
   <section id="videoSection">
+    <aside id="videoSafetyNotice" class="video-safety-notice" role="status" aria-live="polite" data-state="normal">
+      <strong>일반 모드 보호:</strong>
+      제목·챕터·같은 MID의 서명 URL 보정과 새 영상 추가는 가능하지만, 기존 영상의 MID 변경과 삭제는 저장되지 않습니다.
+    </aside>
+    <div class="video-correction-actions" aria-label="영상 수정 모드">
+      <button id="videoCorrectionMode" type="button" class="btn">수정 모드 켜기</button>
+      <button id="videoCorrectionDownload" type="button" class="btn" hidden>수정안 다운로드</button>
+      <button id="videoCorrectionCancel" type="button" class="btn" hidden>수정 취소</button>
+      <span id="videoCorrectionStatus">수정 모드는 운영 데이터를 즉시 바꾸지 않고 별도 파일만 만듭니다.</span>
+    </div>
     <div class="form-row">
       <select id="vCur" aria-label="커리큘럼"></select>
       <select id="subVidSel" aria-label="세부과정">

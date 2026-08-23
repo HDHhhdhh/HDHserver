@@ -120,7 +120,7 @@ function renderDetailHtml(record, detailPayload, detailRecord) {
     <strong>${escapeHtml(wrongText)}</strong>
     ${detailRows ? `<ul class="student-test-record-wrong-list">${detailRows}</ul>` : (
       Array.isArray(wrong) && wrong.length
-        ? '<p class="student-test-record-meta">이전 제출 기록이라 제출 답안 원본이 없어 내 답/정답 비교는 표시할 수 없습니다. 새 제출 기록부터 문항별 비교가 표시됩니다.</p>'
+        ? '<p class="student-test-record-meta">과거 기록에 답안 원본이 없어 내 답/정답 비교를 표시할 수 없습니다.</p>'
         : ''
     )}
   `;
@@ -174,7 +174,7 @@ async function openStudentRecords(sid, name = '') {
   if (body) {
     body.innerHTML = activeRecords.length
       ? activeRecords.map(recordRowHtml).join('')
-      : '<p class="student-test-record-meta">아직 제출된 테스트 기록이 없습니다.</p>';
+      : '<p class="student-test-record-meta">저장된 테스트 기록이 없습니다.</p>';
   }
 }
 
@@ -234,6 +234,6 @@ export async function decorateStudentTestRecordButtons(root = document) {
     button.textContent = latest ? `기록 ${pctText(latest)}` : '기록';
     button.title = latest
       ? `테스트 기록 보기 · ${recordTitle(latest)} · ${pctText(latest)} · 오답 ${wrongCount(latest)}개`
-      : '제출된 테스트 기록 없음';
+      : '저장된 테스트 기록 없음';
   });
 }

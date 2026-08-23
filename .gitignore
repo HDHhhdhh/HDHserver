@@ -2,7 +2,6 @@
 /*.json
 /*.sqlite
 /*.sqlite-*
-/*.db
 /*.db-*
 /*.csv
 /*.tmp
@@ -31,7 +30,6 @@ progress.json.*.tmp
 /.omo/drafts/
 /.omo/ultraresearch/
 /worktrees/
-/static/js/test_answer_link_map.js
 /.debug-journal.md
 
 # Local Codex, browser, and QA working artifacts

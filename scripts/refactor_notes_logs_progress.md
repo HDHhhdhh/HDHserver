@@ -385,7 +385,7 @@ Safe default checks:
 - `GET /api/progress?date=YYYY-MM-DD&sid=<sid>`
 - `GET /api/attendance?date=YYYY-MM-DD`
 - `GET /api/contact?date=YYYY-MM-DD`
-- `GET /arrive-time?date=YYYY-MM-DD`
+- `GET /api/arrive-time?date=YYYY-MM-DD`
 - `GET /api/watch/latest?date=YYYY-MM-DD&sid=<sid>`
 
 Checks to treat as risky:

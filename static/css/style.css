@@ -2003,7 +2003,7 @@ body.all-page :where(.docOpen, .miniProgBtn, .btn-del-stu, .btn-clone-stu),
   vertical-align: middle;
 }
 
-body :where(#setBtn, #submitFeedback, #openTestSubmit) {
+body :where(#setBtn, #submitFeedback) {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -2258,6 +2258,79 @@ body.video-manage-page > header label {
 body.video-manage-page #videoSection {
   padding: 14px;
   overflow: auto;
+}
+
+body.video-manage-page .video-safety-notice {
+  margin: 0 0 12px;
+  padding: 11px 13px;
+  border: 1px solid #f0c36a;
+  border-radius: 8px;
+  background: #fff8e7;
+  color: #714b09;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.video-manage-page .video-safety-notice[data-state="blocked"] {
+  border-color: #ef9a9a;
+  background: #fff1f1;
+  color: #9f2424;
+}
+
+body.video-manage-page.dark .video-safety-notice {
+  border-color: #7a5d21;
+  background: #312816;
+  color: #f6d88d;
+}
+
+body.video-manage-page.dark .video-safety-notice[data-state="blocked"] {
+  border-color: #8f4444;
+  background: #351c22;
+  color: #ffb3b3;
+}
+
+body.video-manage-page .video-safety-notice[data-state="correction"] {
+  border-color: #6e8ed8;
+  background: #eef4ff;
+  color: #244781;
+}
+
+body.video-manage-page.dark .video-safety-notice[data-state="correction"] {
+  border-color: #5873b0;
+  background: #1d2942;
+  color: #bfd2ff;
+}
+
+body.video-manage-page .video-correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 12px;
+}
+
+body.video-manage-page .video-correction-actions [hidden] {
+  display: none !important;
+}
+
+body.video-manage-page .video-correction-actions .btn {
+  min-height: 38px;
+}
+
+body.video-manage-page #videoCorrectionStatus {
+  flex: 1 1 320px;
+  color: #5d6878;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+body.video-manage-page.dark #videoCorrectionStatus {
+  color: #b8c1d1;
+}
+
+body.video-manage-page #saveVid:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 body.video-manage-page .video-filter-row {

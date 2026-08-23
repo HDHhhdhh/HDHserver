@@ -6,6 +6,11 @@ import { getAdminDate } from '../core/adminDate.js';
 import { clearTodayOrder, saveWeekendSlotsPatch, setArriveOverride } from './today.state.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 import { ensureOk, sendJson } from '../../shared/api.js';
+import {
+  legacyExtraAttendanceIds,
+  legacyStudentName,
+  mergeExtraAttendanceSelection,
+} from './extraAttendanceMerge.js?v=20260821-safe-merge1';
 
 function ensure() {
   if ($('#extraModal')) return;
@@ -138,6 +143,11 @@ function ensure() {
     background:color-mix(in oklab, var(--accent,#2563eb) 14%, var(--card-light,#fff));
     border-color:color-mix(in oklab, var(--accent,#2563eb) 45%, var(--line,#e5e7eb));
   }
+  #exZone .row.legacy{ border-style:dashed; }
+  #exZone .row.legacy small{
+    color:color-mix(in oklab, currentColor 62%, #f59e0b);
+    font-weight:700;
+  }
 
   #exZone .row label{ display:flex; align-items:center; gap:10px; cursor:pointer; flex:1; color:inherit; font-size:17px }
   #exZone .row small{ opacity:.75; color:inherit }
@@ -180,6 +190,7 @@ export function initExtraModal() {
   const exSearchHint = $('exSearchHint');
   const btn = $('extraBtn');
   if (!btn) return;
+  let baselineSelectedIds = [];
 
   // 유틸
   const WCHR = '일월화수목금토';
@@ -227,9 +238,18 @@ export function initExtraModal() {
   }
 
   // 최신 slots 로드(엔드포인트명은 유지)
+  async function loadExtraAttend() {
+    const response = await fetch('/api/extra-attend', { cache: 'no-store' });
+    await ensureOk(response, '\uBCF4\uAC15 \uBA85\uB2E8 \uBD88\uB7EC\uC624\uAE30');
+    const payload = await response.json();
+    return payload && typeof payload === 'object' ? payload : {};
+  }
+
   async function loadDaySlots() {
-    try { return await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); }
-    catch { return {}; }
+    const response = await fetch('/api/weekend-slots', { cache: 'no-store' });
+    await ensureOk(response, '\uBCF4\uAC15 \uC2AC\uB86F \uBD88\uB7EC\uC624\uAE30');
+    const payload = await response.json();
+    return payload && typeof payload === 'object' ? payload : {};
   }
 
   const getRows = () => Array.from(document.querySelectorAll('#exZone .row'));
@@ -310,15 +330,33 @@ export function initExtraModal() {
     const today = getAdminDate();
     exModal.dataset.date = today;
 
-    const slotMap = await loadDaySlots();
-    const perDay = slotMap[today] || {};
+    let extraMap;
+    let slotMap;
+    try {
+      [extraMap, slotMap] = await Promise.all([loadExtraAttend(), loadDaySlots()]);
+    } catch (error) {
+      console.error('[extra attendance] open failed:', error);
+      toast('\uCD5C\uC2E0 \uBCF4\uAC15 \uBA85\uB2E8\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.');
+      return;
+    }
 
+    state.extra = extraMap;
+    window.extra = state.extra;
+    const perDay = slotMap[today] || {};
     const checked = (state.extra[today] || []).map(String);
+    baselineSelectedIds = checked.slice();
 
     const sorted = (state.students || []).slice()
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
+    const displayRows = [
+      ...sorted.map(student => ({ student, isLegacy: false })),
+      ...legacyExtraAttendanceIds(sorted, checked).map(sid => ({
+        student: { id: sid, name: legacyStudentName(sid), curriculum: '\uC774\uC804 \uD559\uC0DD \uAE30\uB85D' },
+        isLegacy: true,
+      })),
+    ];
 
-    exZone.innerHTML = sorted.map(s => {
+    exZone.innerHTML = displayRows.map(({ student: s, isLegacy }) => {
       const sid = String(s.id);
       const isOn = checked.includes(sid);
 
@@ -339,10 +377,10 @@ export function initExtraModal() {
         </div>`;
 
       return `
-        <div class="row ${isOn ? 'on' : ''}" data-sid="${sid}" data-search-key="${escapeAttr(studentSearchKey(s))}">
+        <div class="row ${isOn ? 'on' : ''} ${isLegacy ? 'legacy' : ''}" data-sid="${escapeAttr(sid)}" data-search-key="${escapeAttr(studentSearchKey(s))}">
           <label>
             <input type="checkbox" class="chk-sid" ${isOn ? 'checked' : ''}>
-            <span class="student-name">${s.name}</span>
+            <span class="student-name">${escapeAttr(s.name)}</span>
             <small>${s.curriculum || ''}${s.subCurriculum ? ' · ' + s.subCurriculum : ''}</small>
           </label>
           ${slotBox}
@@ -407,8 +445,17 @@ export function initExtraModal() {
       // 선택 학생
       const rows = Array.from(document.querySelectorAll('#exZone .row'));
       const selectedRows = rows.filter(r => r.querySelector('.chk-sid')?.checked);
-      const selectedIds = selectedRows.map(r => String(r.dataset.sid));
-      const previousSelectedIds = new Set((state.extra?.[today] || []).map(String));
+      const uiSelectedIds = selectedRows.map(r => String(r.dataset.sid));
+      const latestExtraResponse = await fetch('/api/extra-attend', { cache: 'no-store' });
+      await ensureOk(latestExtraResponse, '\uCD5C\uC2E0 \uBCF4\uAC15 \uBA85\uB2E8 \uBD88\uB7EC\uC624\uAE30');
+      const latestExtra = await latestExtraResponse.json();
+      const selection = mergeExtraAttendanceSelection(
+        latestExtra?.[today] || [],
+        baselineSelectedIds,
+        uiSelectedIds,
+      );
+      const selectedIds = selection.selectedIds;
+      const removedIds = new Set(selection.removedIds);
 
       // 1) 현재 날짜의 보강 명단만 저장한다.
       const extraResponse = await sendJson(
@@ -418,10 +465,11 @@ export function initExtraModal() {
       );
       await ensureOk(extraResponse, '보강 명단 저장');
       const extraResult = await extraResponse.json().catch(() => ({}));
-      state.extra ||= {};
+      state.extra = latestExtra && typeof latestExtra === 'object' ? latestExtra : {};
       state.extra[today] = Array.isArray(extraResult?.dates?.[today])
         ? extraResult.dates[today].map(String)
         : selectedIds;
+      window.extra = state.extra;
       extraSaved = true;
 
       // 2) 요일 슬롯 저장(1,2)
@@ -431,8 +479,7 @@ export function initExtraModal() {
       const perDay = { ...(slotMap[today] || {}) };
       const weekendPatch = {};
 
-      for (const sid of previousSelectedIds) {
-        if (selectedIds.includes(String(sid))) continue;
+      for (const sid of removedIds) {
         delete perDay[sid];
         weekendPatch[sid] = [];
       }
@@ -453,7 +500,7 @@ export function initExtraModal() {
 
       // 보강 슬롯에 맞춰 등원시간도 함께 갱신 (1교시=13:00, 2교시=18:00)
       const arrivePatch = {};
-      for (const sid of selectedIds) {
+      for (const sid of uiSelectedIds) {
         const raw = perDay[sid];
         const slots = Array.isArray(raw)
           ? raw.map(Number).filter(n => SLOT_NUMS.includes(n))
@@ -462,7 +509,7 @@ export function initExtraModal() {
         arrivePatch[sid] = ARRIVE_BY_SLOT[first] || '13:00';
       }
       if (Object.keys(arrivePatch).length) {
-        const arriveResponse = await sendJson('/arrive-time', { [today]: arrivePatch });
+        const arriveResponse = await sendJson('/api/arrive-time', { [today]: arrivePatch });
         await ensureOk(arriveResponse, '등원시간 저장');
         Object.entries(arrivePatch).forEach(([sid, time]) => setArriveOverride(today, sid, time));
       }

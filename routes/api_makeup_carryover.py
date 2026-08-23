@@ -7,10 +7,15 @@ from typing import Any, Dict
 
 from flask import Blueprint, abort, jsonify, request
 
-from core.makeup_sheet_sync import sync_makeups_from_sheet
-from core.paths import BASE
+from core.absent import load_absent, save_absent
+from core.makeup_sheet_sync import (
+    build_additive_sheet_sync_result,
+    read_additive_sheet_candidates,
+)
+from core.paths import ABS_PATH, BASE
 from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
+from routes.api_attend import _clear_assignments_for_new_absences
 
 bp_api_makeup_carryover = Blueprint("api_makeup_carryover", __name__)
 
@@ -280,14 +285,29 @@ def api_makeup_sheet_sync_post():
     date_key = _norm_date(payload.get("date") or dt.date.today().isoformat())
     if not sheet_url:
         abort(400, description="Missing sheetUrl")
+    try:
+        sheet = read_additive_sheet_candidates(sheet_url, date_key)
+    except RuntimeError as exc:
+        abort(400, description=str(exc))
+
+    # Network parsing is complete before live JSON locks are acquired.
     with file_lock(MAKEUP_CARRYOVER_PATH):
-        current = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
-        try:
-            result = sync_makeups_from_sheet(sheet_url, date_key, current)
-        except RuntimeError as exc:
-            abort(400, description=str(exc))
-        save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
-    enqueue_current_schedule_changes(
-        _makeup_student_ids(current) | _makeup_student_ids(result.get("carryover"))
-    )
+        with file_lock(ABS_PATH):
+            current = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
+            current_absent = load_absent()
+            result = build_additive_sheet_sync_result(sheet, current, current_absent)
+            if result.get("added"):
+                new_pairs = {
+                    (str(item.get("date") or ""), str(item.get("sid") or ""))
+                    for item in result.get("addedPairs") or []
+                }
+                _clear_assignments_for_new_absences(new_pairs)
+                save_absent(result["absent"], locked=True)
+                try:
+                    save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
+                except Exception:
+                    save_absent(current_absent, locked=True)
+                    raise
+    if result.get("added"):
+        enqueue_current_schedule_changes(result.get("addedSids") or [])
     return _makeup_response(result, revision_payload=result.get("carryover"))

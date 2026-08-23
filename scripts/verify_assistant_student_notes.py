@@ -223,6 +223,7 @@ def source_boundary_checks() -> None:
     log_modal_source = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8-sig")
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
+    light_css = (ROOT / "static/css/student-work-light.css").read_text("utf-8-sig")
     check("assistantStudentNotes" not in tooltip_source, "student info/homework popup must not retain assistant notes")
     check("assistantStudentNotesTemplate" in log_modal_source, "main popup must mount assistant notes")
     check('id="logTitle"' not in log_modal_source and "메모 쓰레드" not in log_modal_source, "thread popup must not render the oversized student-name title")
@@ -242,7 +243,7 @@ def source_boundary_checks() -> None:
     )
     check(
         "data-note-save-close" in notes_source
-        and ">저장 후 닫기</button>" in notes_source
+        and ">저장</button>" in notes_source
         and "data-note-close" in notes_source
         and ">닫기</button>" in notes_source
         and "assistant-note-heading-actions" in admin_css
@@ -374,10 +375,12 @@ def source_boundary_checks() -> None:
     check(
         ".assistant-note-item.has-reminder .assistant-note-action-group" in admin_css
         and ".assistant-note-reminder-body.is-stacked" in admin_css
-        and "header.append(reminderInfoRow);" in notes_source
+        and "reminderBody.className = 'assistant-note-reminder-body is-stacked';" in notes_source
+        and "scheduleReminderBodyLayout" not in notes_source
+        and "authorGroup.append(reminderInfoRow);" in notes_source
         and "reminderBody.append(authorGroup, content, actionGroup);" in notes_source
-        and "header.append(reminderInfoRow, actionGroup)" not in notes_source,
-        "reminder dates need their own row above the author, content, and actions",
+        and "header.append(reminderInfoRow);" not in notes_source,
+        "reminder metadata must stay on the first row while memo content always starts on the second row",
     )
     check("assistant-note-compose-reminder" in admin_css, "confirmation-date composer style is missing")
     check("list.scrollTop = 0" in notes_source, "newest-first comment thread must stay scrolled to the top")
@@ -386,7 +389,33 @@ def source_boundary_checks() -> None:
     check("input.value = ''" in notes_source, "the composer must stay separate from saved comments")
     check("max-height: 210px" in admin_css and "overflow-y: auto" in admin_css, "comment thread must be scrollable")
     check("white-space: pre-wrap" in admin_css, "comment line breaks must be preserved")
+    check(
+        "/* Compact saved-note controls and author row. */" in light_css
+        and "min-height: 18px !important;" in light_css
+        and "height: 26px !important;" in light_css
+        and "font-size: 13px !important;" in light_css,
+        "light-theme saved-note author row and edit/delete controls must stay compact",
+    )
 
+    check(
+        "/* Saved memo body copy stays compact while the composer keeps its larger input size. */" in light_css
+        and light_css.count("border-left-color: #d4a72c !important;") == 0
+        and "border-left-color: var(--assistant-note-item-color) !important;" in light_css
+        and "#assistantStudentNotesHost .assistant-note-edit-input" in light_css
+        and "font-size: 16px !important;" in light_css,
+        "pinned memo rails must retain the author color and saved memo copy must use the compact type size",
+    )
+    check(
+        "/* Compact reminder memo metadata without changing the memo body. */" in light_css
+        and "padding: 6px 8px 8px 12px !important;" in light_css
+        and "width: 30px !important;" in light_css
+        and "min-height: 24px !important;" in light_css
+        and "font-size: 17px !important;" in light_css
+        and "margin-top: 2px !important;" in light_css
+        and "padding-top: 3px !important;" in light_css
+        and "white-space: pre-wrap !important;" in light_css,
+        "reminder memo metadata rows must stay vertically compact without changing wrapping",
+    )
 
 def main() -> int:
     repository_checks()

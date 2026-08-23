@@ -483,7 +483,7 @@ html body.admin.student-popup-open #logModal.student-work-layout
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item.is-pinned {
   border-bottom-color: #f2dfaa !important;
-  border-left-color: #d4a72c !important;
+  border-left-color: var(--assistant-note-item-color) !important;
   background: #fffcf2 !important;
   box-shadow: none !important;
 }
@@ -938,7 +938,7 @@ html body.admin.student-popup-open #adminSchoolTip.student-work-layout #hwBody {
 }
 
 html body.admin.student-popup-open #adminSchoolTip.student-work-layout .hwItem {
-  gap: 5px !important;
+  gap: 0 !important;
   padding: 7px 0 !important;
   border: 0 !important;
   border-bottom: 1px solid #edf0f3 !important;
@@ -958,12 +958,22 @@ html body.admin.student-popup-open #adminSchoolTip.student-work-layout
 }
 
 html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hwItem > .hwBot {
+  margin-top: -4px !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
   :is(.hw-book, .hw-this, .hw-cmt, .hw-next)::before {
   margin: 0 0 2px !important;
   color: #667085 !important;
   font-size: 8.5px !important;
   font-weight: 750 !important;
   line-height: 1.15 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-next::before {
+  margin-bottom: 0 !important;
 }
 
 html body.admin.student-popup-open #adminSchoolTip.student-work-layout
@@ -1744,15 +1754,15 @@ html body.admin.student-popup-open #logModal.student-work-layout
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  min-height: 29px !important;
-  padding: 3px 9px !important;
+  min-height: 22px !important;
+  padding: 1px 7px !important;
   border: 1px solid color-mix(in srgb, var(--assistant-note-item-color) 30%, #fff) !important;
   border-radius: 999px !important;
   background: color-mix(in srgb, var(--assistant-note-item-color) 10%, #fff) !important;
   color: var(--assistant-note-item-color) !important;
-  line-height: 1.1 !important;
+  line-height: 1 !important;
   white-space: nowrap !important;
-  font-size: calc(var(--assistant-note-author-font-size) - 2px) !important;
+  font-size: calc(var(--assistant-note-author-font-size) - 5px) !important;
 }
 
 html body.admin.student-popup-open #logModal.student-work-layout
@@ -1919,31 +1929,198 @@ html body.admin.student-popup-open #testModal.student-work-layout
 html body.admin.student-popup-open #testModal.student-work-layout .test-empty {
   font-size: 15px !important;
 }
-/* Author-tinted memo surfaces: subtle backgrounds with readable dark text. */
+/* Author cues: keep memo cards neutral and distinguish authors with an accent rail and dot badge. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item[data-note-author="귤"] {
-  --assistant-note-item-color: #9a5b00;
-  --assistant-note-item-rgb: 154, 91, 0;
-  background: #fff0c7 !important;
+  --assistant-note-item-color: #d97706;
+  --assistant-note-item-rgb: 217, 119, 6;
+
 }
 
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item[data-note-author="세빈"] {
-  --assistant-note-item-color: #075985;
-  --assistant-note-item-rgb: 7, 89, 133;
-  background: #e5f2ff !important;
+  --assistant-note-item-color: #0284c7;
+  --assistant-note-item-rgb: 2, 132, 199;
+
 }
 
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item[data-note-author="동훈"] {
-  --assistant-note-item-color: #166534;
-  --assistant-note-item-rgb: 22, 101, 52;
-  background: #e3f7ea !important;
+  --assistant-note-item-color: #16a34a;
+  --assistant-note-item-rgb: 22, 163, 74;
+
 }
 
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item[data-note-author="하영"] {
-  --assistant-note-item-color: #9d174d;
-  --assistant-note-item-rgb: 157, 23, 77;
-  background: #ffe5f0 !important;
+  --assistant-note-item-color: #db2777;
+  --assistant-note-item-rgb: 219, 39, 119;
+
+}
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item {
+  background: #fff !important;
+  border-left-width: 4px !important;
+  border-left-color: var(--assistant-note-item-color) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author {
+  gap: 6px !important;
+  border-color: var(--assistant-note-item-color) !important;
+  background: #fff !important;
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author::before {
+  content: "" !important;
+  display: inline-block !important;
+  flex: 0 0 8px !important;
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  background: var(--assistant-note-item-color) !important;
+  box-shadow: 0 0 0 2px rgba(var(--assistant-note-item-rgb), .14) !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content {
+  color: #344054 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.is-pinned {
+  background: #fff !important;
+  border-left-color: var(--assistant-note-item-color) !important;
+  box-shadow: inset 0 0 0 1px #f2dfaa !important;
+}
+
+/* Saved memo body copy stays compact while the composer keeps its larger input size. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-content,
+html body.admin.student-popup-open #logModal.student-work-layout
+  #assistantStudentNotesHost .assistant-note-edit-input {
+  font-size: 16px !important;
+}
+/* Compact saved-note controls and author row. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-author {
+  min-height: 18px !important;
+  padding: 0 6px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item-header {
+  margin-bottom: 1px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-reminder-body {
+  row-gap: 1px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-action-group {
+  gap: 2px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  :is(.assistant-note-edit, .assistant-note-delete) {
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 6px !important;
+  border-radius: 5px !important;
+  font-size: 13px !important;
+}
+/* Textbook removal: choose the target row instead of deleting the last row. */
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-remove-choice {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 38px !important;
+  height: 22px !important;
+  min-height: 22px !important;
+  margin: 0 !important;
+  padding: 0 7px !important;
+  border: 1px solid #f0b8b3 !important;
+  border-radius: 5px !important;
+  background: #fff !important;
+  color: #b42318 !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody.is-remove-selecting .hwItem {
+  border-color: #f2c7c3 !important;
+  background: #fffbfa !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-remove-choice:hover,
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-book-input-row > .hw-remove-choice:focus-visible {
+  border-color: #d92d20 !important;
+  background: #fff1f0 !important;
+  color: #912018 !important;
+}
+/* Compact reminder memo metadata without changing the memo body. */
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder {
+  padding: 6px 8px 8px 12px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-pin {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-pin-icon {
+  width: 22px !important;
+  height: 22px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-reminder-badge {
+  padding: 0 6px !important;
+  font-size: 17px !important;
+  line-height: 1.15 !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-reminder-dates {
+  font-size: 17px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-reminder-arrow {
+  font-size: 19px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder :is(.assistant-note-edit, .assistant-note-delete) {
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 6px !important;
+  font-size: 13px !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-item-content {
+  margin-top: 2px !important;
+  padding-top: 3px !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+}
+
+html body.admin.student-popup-open #logModal.student-work-layout
+  .assistant-note-item.has-reminder .assistant-note-item-content::before {
+  margin-bottom: 4px !important;
 }

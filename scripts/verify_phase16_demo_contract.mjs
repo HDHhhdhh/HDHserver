@@ -28,12 +28,25 @@ const root = {
   },
 };
 const demoFetch = createDemoFetch({ window: root, originalFetch });
+const initialOrderMap = await (await demoFetch('/api/today_order')).json();
 
-await demoFetch('/api/today_order', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ '2026-06-16': ['keep'], '2026-06-17': ['old'] }),
-});
+for (const [date, order] of Object.entries({ '2026-06-16': ['keep'], '2026-06-17': ['old'] })) {
+  const seeded = await demoFetch('/api/today_order', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, order }),
+  });
+  assert.equal(seeded.status, 200);
+}
+assert.equal(
+  (await demoFetch('/api/today_order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ '2026-06-16': ['overwrite'] }),
+  })).status,
+  404,
+  'demo accepted the retired whole-map today-order POST',
+);
 const patched = await demoFetch('/api/today_order', {
   method: 'PATCH',
   headers: { 'Content-Type': 'application/json' },
@@ -49,7 +62,9 @@ const deleted = await demoFetch('/api/today_order?date=2026-06-17', { method: 'D
 assert.equal(deleted.status, 200);
 assert.equal((await deleted.json()).cleared, true);
 orderMap = await (await demoFetch('/api/today_order')).json();
-assert.deepEqual(orderMap, { '2026-06-16': ['keep'] }, 'demo DELETE overwrote another date');
+const expectedAfterDelete = { ...initialOrderMap, '2026-06-16': ['keep'] };
+delete expectedAfterDelete['2026-06-17'];
+assert.deepEqual(orderMap, expectedAfterDelete, 'demo DELETE overwrote another date');
 assert.equal(
   (await demoFetch('/api/today_order', {
     method: 'PATCH',
@@ -59,6 +74,135 @@ assert.equal(
   400,
   'demo accepted an impossible order date',
 );
+
+const updatesBeforeRetiredPost = await (await demoFetch('/api/updates')).json();
+const retiredUpdatesPost = await demoFetch('/api/updates', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ '2026-06-16': { 'demo-s001': { videos: ['overwrite'], source: 'manual' } } }),
+});
+assert.equal(retiredUpdatesPost.status, 404, 'demo accepted retired base POST /api/updates');
+const updatesAfterRetiredPost = await (await demoFetch('/api/updates')).json();
+assert.deepEqual(updatesAfterRetiredPost, updatesBeforeRetiredPost, 'retired updates POST changed demo data');
+
+const extraDate = '2026-06-16';
+const extraSaved = await demoFetch('/api/extra-attend', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: extraDate, sids: ['demo-extra-sid'] }),
+});
+assert.equal(extraSaved.status, 200);
+const extraBeforeRetiredAliases = await (await demoFetch('/api/extra-attend')).json();
+for (const retiredPath of ['/api/extra', '/api/extra_attend', '/api/extra-attend/all']) {
+  assert.equal((await demoFetch(retiredPath)).status, 404, `demo accepted retired extra-attend GET: ${retiredPath}`);
+  assert.equal((await demoFetch(retiredPath, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: extraDate, sids: ['overwrite'] }),
+  })).status, 404, `demo accepted retired extra-attend PATCH: ${retiredPath}`);
+}
+const extraAfterRetiredAliases = await (await demoFetch('/api/extra-attend')).json();
+assert.deepEqual(extraAfterRetiredAliases, extraBeforeRetiredAliases, 'retired extra-attend alias changed demo data');
+
+for (const { basePath, patchPath, key } of [
+  { basePath: '/api/attendance', patchPath: '/api/attendance/patch', key: 'attendance' },
+  { basePath: '/api/contact', patchPath: '/api/contact/patch', key: 'contact' },
+]) {
+  const patchedFlag = await demoFetch(patchPath, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: '2026-06-16', sid: `demo-${key}-sid`, value: true }),
+  });
+  assert.equal(patchedFlag.status, 200);
+  const beforeRetiredBulk = await (await demoFetch(`${basePath}?date=2026-06-16`)).json();
+  const retiredBulk = await demoFetch(basePath, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: '2026-06-16', map: { overwrite: 1 }, replace: true }),
+  });
+  assert.equal(retiredBulk.status, 404, `demo accepted retired bulk POST: ${basePath}`);
+  const afterRetiredBulk = await (await demoFetch(`${basePath}?date=2026-06-16`)).json();
+  assert.deepEqual(afterRetiredBulk, beforeRetiredBulk, `retired bulk POST changed ${key} data`);
+}
+
+const arriveDate = '2026-06-16';
+const arriveSaved = await demoFetch('/api/arrive-time', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ [arriveDate]: { 'demo-arrive-sid': '15:00' } }),
+});
+assert.equal(arriveSaved.status, 200);
+const arrivePatched = await demoFetch('/api/arrive-time/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: arriveDate, sid: 'demo-arrive-sid', value: '16:30' }),
+});
+assert.equal(arrivePatched.status, 200);
+const arriveBeforeRetiredRequests = await (await demoFetch(`/api/arrive-time?date=${arriveDate}`)).json();
+assert.deepEqual(arriveBeforeRetiredRequests, { 'demo-arrive-sid': '16:30' });
+for (const [retiredUrl, init] of [
+  [`/arrive-time?date=${arriveDate}`, undefined],
+  ['/arrive-time', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [arriveDate]: { 'demo-arrive-sid': 'overwrite' } }),
+  }],
+  ['/arrive-time/patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: arriveDate, sid: 'demo-arrive-sid', value: 'overwrite' }),
+  }],
+]) {
+  const retiredResponse = await demoFetch(retiredUrl, init);
+  assert.equal(retiredResponse.status, 404, `demo accepted retired arrive-time route: ${retiredUrl}`);
+}
+const arriveAfterRetiredRequests = await (await demoFetch(`/api/arrive-time?date=${arriveDate}`)).json();
+assert.deepEqual(arriveAfterRetiredRequests, arriveBeforeRetiredRequests, 'retired demo arrive-time route changed data');
+
+const demoUnitLabel = '단원평가 / 대수 / Lv.5 / 1회차 / 단원';
+const demoSchoolLabel = '학군지 기출 / 대수 / 중상 / 기말고사 / 학군지';
+const firstTestAssignment = await (await demoFetch('/api/progress/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-19',
+    sid: 'test-order-sid',
+    progress: {
+      tests: { [demoUnitLabel]: 'assigned', [demoSchoolLabel]: 'assigned' },
+      __testAssignmentTouchedKeys: [demoUnitLabel, demoSchoolLabel],
+    },
+  }),
+})).json();
+assert.equal(firstTestAssignment.progress.__testAssignmentChangeOrder[demoUnitLabel], 1);
+assert.equal(firstTestAssignment.progress.__testAssignmentChangeOrder[demoSchoolLabel], 1);
+assert.equal(firstTestAssignment.progress.__testAssignmentTouchedKeys, undefined, 'touch hints must not persist');
+
+const schoolReassignment = await (await demoFetch('/api/progress/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-19',
+    sid: 'test-order-sid',
+    progress: {
+      tests: { [demoUnitLabel]: 'assigned', [demoSchoolLabel]: 'assigned' },
+      __testAssignmentTouchedKeys: [demoSchoolLabel],
+    },
+  }),
+})).json();
+assert.equal(schoolReassignment.progress.__testAssignmentChangeOrder[demoUnitLabel], 1);
+assert.equal(schoolReassignment.progress.__testAssignmentChangeOrder[demoSchoolLabel], 2);
+
+const laterCompletion = await (await demoFetch('/api/progress/patch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-19',
+    sid: 'test-order-sid',
+    progress: { tests: { [demoUnitLabel]: 'done', [demoSchoolLabel]: 'assigned' } },
+  }),
+})).json();
+assert.equal(laterCompletion.progress.__testAssignmentChangeOrder[demoUnitLabel], 3);
+assert.equal(laterCompletion.progress.__testAssignmentChangeOrder[demoSchoolLabel], 2);
 
 await demoFetch('/api/absent', {
   method: 'POST',
@@ -120,7 +264,12 @@ for (const row of summary.rows || []) {
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
+assert.doesNotMatch(fallbackSource, /path === '\/api\/today_order' && method === 'POST'/);
+assert.doesNotMatch(fallbackSource, /path === '\/api\/updates' && method === 'POST'/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'DELETE'/);
+assert.match(fallbackSource, /case '\/api\/arrive-time':/);
+assert.doesNotMatch(fallbackSource, /case '\/arrive-time':/);
+assert.match(fallbackSource, /path === '\/arrive-time'/, 'retired arrive-time requests must remain demo-blocked');
 assert.match(fallbackSource, /path === '\/api\/absent\/recover'/);
 assert.match(fallbackSource, /status: mutation\?\.ok === false \? 400 : 200/, 'fallback mutations must preserve HTTP error status');
 assert.equal(forwarded, 0, 'Phase16 demo API escaped to the live fetch implementation');

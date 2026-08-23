@@ -7,13 +7,29 @@ PROGRESS_ALL_STUDENTS_META_KEY = "__allStudentsProgressMids"
 WATCH_AUTO_PROGRESS_META_KEY = "__autoWatchProgressMids"
 PROGRESS_MANUAL_META_KEY = "__manualProgressMids"
 TEST_ASSIGN_CLEAR_META_KEY = "__testsClearedAt"
+TEST_ASSIGN_CHANGE_ORDER_META_KEY = "__testAssignmentChangeOrder"
+TEST_ASSIGN_TOUCHED_KEYS_META_KEY = "__testAssignmentTouchedKeys"
 
 WATCH_INTERRUPTED_RATIO = 0.05
 WATCH_DONE_RATIO = 0.90
+WATCH_UPDATED_AT_MIN_MS = 1_000_000_000_000
 
 VALID_VIDEO_PROGRESS_STATUSES = frozenset({"", "done", "interrupted", "none", "skip"})
 AUTO_OWNED_PROGRESS_STATUSES = frozenset({"done", "interrupted", "skip"})
 AUTO_EMPTY_PRESERVED_STATUSES = frozenset({"done", "interrupted", "skip", "none"})
+
+
+def normalize_incoming_watch_updated_at(value: Any, fallback_ms: Any) -> int:
+    """Replace seconds/Int32 timestamps from stale clients with server epoch ms."""
+    try:
+        updated_at = int(value or 0)
+    except Exception:
+        updated_at = 0
+    try:
+        fallback = max(0, int(fallback_ms or 0))
+    except Exception:
+        fallback = 0
+    return updated_at if updated_at >= WATCH_UPDATED_AT_MIN_MS else fallback
 
 
 def _is_watch_auto_owned_status(mid: str, status: str, watch_auto_meta: dict) -> bool:
@@ -50,6 +66,73 @@ def _auto_skip_should_apply(prev_status: str) -> bool:
 def _copy_meta(entry: dict, key: str) -> dict:
     meta = entry.get(key)
     return dict(meta) if isinstance(meta, dict) else {}
+
+
+def _test_assignment_status_name(value: Any) -> str:
+    if isinstance(value, dict):
+        if value.get("remove") is True:
+            return ""
+        value = value.get("status")
+    if value is None or value is False:
+        return ""
+    status = str(value).strip()
+    return "" if status == "none" else status
+
+
+def _test_assignment_change_order(entry: dict) -> dict[str, int]:
+    raw = entry.get(TEST_ASSIGN_CHANGE_ORDER_META_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for label, value in raw.items():
+        label_s = str(label or "").strip()
+        if not label_s:
+            continue
+        try:
+            order = int(value)
+        except (TypeError, ValueError):
+            continue
+        if order > 0:
+            out[label_s] = order
+    return out
+
+
+def advance_test_assignment_change_order(entry: dict, labels: Any) -> dict:
+    """Give one batch of changed tests the next per-entry ordering token."""
+    out = dict(entry) if isinstance(entry, dict) else {}
+    tests = out.get("tests")
+    tests = tests if isinstance(tests, dict) else {}
+    order_by_label = _test_assignment_change_order(out)
+
+    for label in list(order_by_label):
+        if label not in tests or not _test_assignment_status_name(tests.get(label)):
+            order_by_label.pop(label, None)
+
+    changed_labels: list[str] = []
+    seen: set[str] = set()
+    for label in labels or []:
+        label_s = str(label or "").strip()
+        if (
+            not label_s
+            or label_s in seen
+            or label_s not in tests
+            or not _test_assignment_status_name(tests.get(label_s))
+        ):
+            continue
+        seen.add(label_s)
+        changed_labels.append(label_s)
+
+    if changed_labels:
+        next_order = max(order_by_label.values(), default=0) + 1
+        for label in changed_labels:
+            order_by_label[label] = next_order
+
+    if order_by_label:
+        out[TEST_ASSIGN_CHANGE_ORDER_META_KEY] = order_by_label
+    else:
+        out.pop(TEST_ASSIGN_CHANGE_ORDER_META_KEY, None)
+    out.pop(TEST_ASSIGN_TOUCHED_KEYS_META_KEY, None)
+    return out
 
 
 def normalize_watch_entry(entry: Any) -> dict[str, Any]:
@@ -152,6 +235,15 @@ def merge_progress_day_sid(
     all_page_meta = _copy_meta(out, PROGRESS_ALL_STUDENTS_META_KEY)
     watch_auto_meta = _copy_meta(out, WATCH_AUTO_PROGRESS_META_KEY)
     manual_meta = _copy_meta(out, PROGRESS_MANUAL_META_KEY)
+    raw_touched_test_keys = incoming.get(TEST_ASSIGN_TOUCHED_KEYS_META_KEY)
+    touched_test_keys = {
+        str(key or "").strip()
+        for key in (raw_touched_test_keys if isinstance(raw_touched_test_keys, list) else [])
+        if str(key or "").strip()
+    }
+    patched_test_keys: set[str] = set()
+    changed_test_keys: set[str] = set()
+    saw_tests_patch = False
 
     for mid, status in incoming.items():
         mid_s = str(mid).strip()
@@ -166,9 +258,13 @@ def merge_progress_day_sid(
                 out.pop(test_clear_meta_key, None)
             continue
 
+        if mid_s == TEST_ASSIGN_TOUCHED_KEYS_META_KEY:
+            continue
+
         if mid_s == "tests":
             if not isinstance(status, dict):
                 continue
+            saw_tests_patch = True
 
             cur_tests = out.get("tests")
             cur_tests = dict(cur_tests) if isinstance(cur_tests, dict) else {}
@@ -177,27 +273,28 @@ def merge_progress_day_sid(
                 test_key_s = str(test_key or "").strip()
                 if not test_key_s:
                     continue
+                patched_test_keys.add(test_key_s)
+                before_status = _test_assignment_status_name(cur_tests.get(test_key_s))
 
                 if test_status is None or test_status is False:
                     cur_tests.pop(test_key_s, None)
-                    continue
-
-                if isinstance(test_status, str):
+                elif isinstance(test_status, str):
                     status_s = test_status.strip()
                     if status_s in ("", "none"):
                         cur_tests.pop(test_key_s, None)
                     else:
                         cur_tests[test_key_s] = status_s
-                    continue
-
-                if isinstance(test_status, dict):
+                elif isinstance(test_status, dict):
                     if test_status.get("remove") is True:
                         cur_tests.pop(test_key_s, None)
                     else:
                         cur_tests[test_key_s] = dict(test_status)
-                    continue
+                else:
+                    cur_tests[test_key_s] = str(test_status).strip()
 
-                cur_tests[test_key_s] = str(test_status).strip()
+                after_status = _test_assignment_status_name(cur_tests.get(test_key_s))
+                if before_status != after_status:
+                    changed_test_keys.add(test_key_s)
 
             if cur_tests:
                 out["tests"] = cur_tests
@@ -276,6 +373,17 @@ def merge_progress_day_sid(
         out[PROGRESS_MANUAL_META_KEY] = manual_meta
     else:
         out.pop(PROGRESS_MANUAL_META_KEY, None)
+
+    if saw_tests_patch:
+        # The popup sends the complete test map plus the rows the user actually
+        # touched. Other callers send only changed statuses, so status diffing is
+        # their authoritative change signal.
+        ordered_test_keys = (
+            touched_test_keys & patched_test_keys
+            if touched_test_keys
+            else changed_test_keys
+        )
+        out = advance_test_assignment_change_order(out, sorted(ordered_test_keys))
 
     return out
 

@@ -183,9 +183,6 @@ export async function runShellChecks() {
     assert.match(studentCss, /body\.student-page\.student-app-mobile-surface\s+#player\s*\{[^}]*height:\s*auto[^}]*aspect-ratio:\s*16\s*\/\s*9[^}]*min-height:\s*0/s);
     assert.match(studentCss, /body\.student-page\.student-app-mobile-surface\s*\{[^}]*box-sizing:\s*border-box[^}]*margin:\s*0/s);
     assert.match(studentCss, /student-app-mobile-surface\s+\.student-session-recovery\s*\{[^}]*width:\s*min\(100%,\s*32rem\)/s);
-    assert.match(studentCss, /body\.student-page\.student-app-mobile-surface\s+#testAnswerPreviewModal\s*\{[^}]*padding:\s*max\([^;]+safe-area-inset-top[^;]+safe-area-inset-right[^;]+safe-area-inset-bottom[^;]+safe-area-inset-left[^;]+;/s);
-    assert.match(studentCss, /student-app-mobile-surface\s+#testAnswerPreviewModal\s+\.ts-preview-card\s*\{[^}]*width:\s*min\(100%,\s*32rem\)[^}]*max-height:\s*100%/s);
-    assert.match(studentCss, /student-app-mobile-surface\s+#testAnswerPreviewModal\s+\.ts-preview-card\s*\{[^}]*height:\s*min\(760px,\s*100%\)/s);
     assert.match(studentCss, /@media\s*\(orientation:\s*landscape\)\s*and\s*\(max-height:[^)]+\)[\s\S]*#announceModal\s+\.announce-card\s*\{[\s\S]*overflow-y:\s*auto\s*!important/s);
   });
 
@@ -248,7 +245,7 @@ export async function runShellChecks() {
     assert.match(studentJs, /createElement\(['"]button['"]\)[\s\S]*?className\s*=\s*['"]video-row-action['"]/);
     assert.match(studentCss, /\.video-row-action\s*\{[^}]*min-height:\s*44px/s);
     assert.match(studentCss, /\.student-settings-close\s*\{[^}]*color:\s*var\(--stu-text\)[^}]*box-shadow:\s*none/s);
-    assert.match(studentCss, /body\.student-page\.student-app-mobile-surface\s+:where\([\s\S]*?#setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#testSubmitModal button[\s\S]*?\)\s*\{[^}]*min-height:\s*44px/s);
+    assert.match(studentCss, /body\.student-page\.student-app-mobile-surface\s+:where\([\s\S]*?#setPanel button,[\s\S]*?#announceModal button[\s\S]*?\)\s*\{[^}]*min-height:\s*44px/s);
     assert.match(studentCss, /\.announce-image-dots\s+button\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s);
     assert.match(studentCss, /--stu-on-accent:\s*#(?:ffffff|0d1219)/i);
     assert.match(studentCss, /#vidList\s+li\.active\s*\{[^}]*color:\s*var\(--stu-on-accent\)\s*!important/s);

@@ -17,9 +17,12 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 ## Conventions
 - Five shells load `bootstrap.js` before their normal entrypoint: admin, all-students, tests, video manager, and school calendar.
 - Production paths must remain untouched; activation uses normalized exact demo paths.
-- Same-origin `/api/*` and `/arrive-time*` requests never fall through to original `fetch`. Non-API assets may forward.
+- Same-origin `/api/*` requests and retired `/arrive-time*` aliases never fall through to original `fetch`. The retired aliases are rejection guards only and must return synthetic unsupported responses.
 - Keep `fetch.js` primary responses and `bootstrap.js` fallback responses compatible for endpoint shape, disabled behavior, and mutations.
 - Mutations stay in `sessionStorage`. Schema mismatch or non-demo student IDs reset the store.
+- Today order supports GET/PATCH/DELETE only; do not emulate the retired whole-map POST.
+- `/api/updates` is GET-only; assignment mutations use `/api/updates/patch` or `/api/updates/self-study`, and the retired base POST must return a synthetic unsupported response.
+- Extra attendance supports only `/api/extra-attend`; obsolete `/api/extra`, `/api/extra_attend`, and `/api/extra-attend/all` requests must return synthetic unsupported responses.
 - Keep fixed synthetic time/schema changes synchronized across `data.js`, `store.js`, and request handlers.
 - New demo pages require coordinated changes to `DEMO_PATHS`, `DEMO_ROUTE_MAP`, `routes/pages.py`, shell script order, and tutorial page resolution.
 - Navigation and `window.open` remain sandboxed; production aliases remap to demo routes and external/unknown targets block.

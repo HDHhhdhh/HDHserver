@@ -90,7 +90,7 @@ def create_app() -> Flask:
     @app.before_request
     def block_academy_only_answer_files():
         p = (request.path or "")
-        if p not in {"/js/test_answer_link_map.json", "/js/test_answer_link_map.js"}:
+        if p != "/js/test_answer_link_map.json":
             return
         if getattr(g, "student_app_public_request", False) is True:
             if not ip_allowed(getattr(g, "student_app_client_ip", "")):

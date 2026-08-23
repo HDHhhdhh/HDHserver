@@ -365,7 +365,7 @@ assert.match(testsHtml, /<label class="toolbar-label" for="cfgCatalogSearch">목
 assert.match(testsHtml, /id="cfgCatalogSearch"[^>]*type="search"/);
 assert.match(testsHtml, /id="catalogOrderHint"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="statSearch"[^>]*type="search"/);
-assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260814ocr2" type="module"><\/script>/);
+assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260823" type="module"><\/script>/);
 assert.doesNotMatch(testsHtml, /sortable(?:\.min)?\.js|jquery-ui/i);
 assert.match(source, /\.test-drag-handle\[draggable="true"\]/);
 assert.match(source, /data-move="up"/);

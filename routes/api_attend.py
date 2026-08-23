@@ -10,6 +10,7 @@ from typing import Dict, List, Any
 from flask import Blueprint, abort, jsonify, request
 
 from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, LOGS_PATH, ABS_PATH
+from core.progress_rules import advance_test_assignment_change_order
 from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 from core.absent import load_absent, save_absent, DATE_RE
@@ -100,33 +101,7 @@ def _patch_flag(path, date_key: str, sid: str, checked: bool) -> None:
         _save_flag_all(path, all_map)
 
 
-def _merge_day_map(base_day: Dict[str, int] | None, patch_day: Dict[str, Any]) -> Dict[str, int]:
-    out = dict(base_day or {})
-    for sid_raw, value in patch_day.items():
-        sid = str(sid_raw).strip()
-        if not sid:
-            continue
-        if bool(value):
-            out[sid] = 1
-        else:
-            out.pop(sid, None)
-    return out
 
-
-def _apply_day_map(path, date_key: str, day_map: Dict[str, Any], replace_mode: bool) -> Dict[str, int]:
-    with file_lock(path):
-        all_map = _load_flag_all(path)
-        if replace_mode:
-            next_day = {
-                str(sid): 1
-                for sid, value in day_map.items()
-                if str(sid).strip() and bool(value)
-            }
-        else:
-            next_day = _merge_day_map(all_map.get(date_key, {}), day_map)
-        all_map[date_key] = next_day
-        _save_flag_all(path, all_map)
-        return next_day
 
 
 ASSIGNMENT_LOG_CLEAR_FIELDS = (
@@ -457,6 +432,13 @@ def _clear_absence_progress_tests(pairs: set[tuple[str, str]]) -> None:
                 next_entry["tests"] = next_tests
             else:
                 next_entry.pop("tests", None)
+            changed_test_labels = [
+                str(label)
+                for label, status in tests.items()
+                if _normalize_assignment_status(status)
+                != _normalize_assignment_status(next_tests.get(str(label)))
+            ]
+            next_entry = advance_test_assignment_change_order(next_entry, changed_test_labels)
             _write_sid_mapping(day, sid, next_entry if next_entry else None)
             if not day:
                 progress.pop(date_key, None)
@@ -651,37 +633,7 @@ def api_attendance_get():
     return jsonify(all_map.get(date_key, {}))
 
 
-@bp_api_attend.post("/api/attendance")
-def api_attendance_post():
-    """
-    Overwrite mode:
-      1) { "YYYY-MM-DD": { "sid": 1 } }
-      2) { "date": "YYYY-MM-DD", "map": { "sid": 1 } }
-    """
-    payload: Any = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="Invalid JSON body")
 
-    if "date" in payload and "map" in payload:
-        date_key = _norm_date(str(payload.get("date") or ""))
-        day_map = payload.get("map")
-    else:
-        if len(payload) != 1:
-            abort(400, description="Body must contain exactly one date key")
-        date_key = _norm_date(str(next(iter(payload.keys()))))
-        day_map = payload.get(date_key)
-
-    if not isinstance(day_map, dict):
-        abort(400, description="Attendance map must be an object")
-
-    replace_mode = bool(payload.get("replace") or payload.get("__replace__"))
-    saved = _apply_day_map(ATTENDANCE_PATH, date_key, day_map, replace_mode)
-    return jsonify({
-        "ok": True,
-        "date": date_key,
-        "count": len(saved),
-        "mode": "replace" if replace_mode else "merge",
-    })
 
 
 @bp_api_attend.post("/api/attendance/patch")
@@ -714,37 +666,7 @@ def api_contact_get():
     return jsonify(all_map.get(date_key, {}))
 
 
-@bp_api_attend.post("/api/contact")
-def api_contact_post():
-    """
-    Overwrite mode:
-      1) { "YYYY-MM-DD": { "sid": 1 } }
-      2) { "date": "YYYY-MM-DD", "map": { "sid": 1 } }
-    """
-    payload: Any = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="Invalid JSON body")
 
-    if "date" in payload and "map" in payload:
-        date_key = _norm_date(str(payload.get("date") or ""))
-        day_map = payload.get("map")
-    else:
-        if len(payload) != 1:
-            abort(400, description="Body must contain exactly one date key")
-        date_key = _norm_date(str(next(iter(payload.keys()))))
-        day_map = payload.get(date_key)
-
-    if not isinstance(day_map, dict):
-        abort(400, description="Contact map must be an object")
-
-    replace_mode = bool(payload.get("replace") or payload.get("__replace__"))
-    saved = _apply_day_map(CONTACT_PATH, date_key, day_map, replace_mode)
-    return jsonify({
-        "ok": True,
-        "date": date_key,
-        "count": len(saved),
-        "mode": "replace" if replace_mode else "merge",
-    })
 
 
 @bp_api_attend.post("/api/contact/patch")

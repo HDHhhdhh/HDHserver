@@ -440,7 +440,6 @@ function fallbackPayloadForGet(path, params, store) {
       return dateMapPayload(store.attendance || {}, params);
     case '/api/contact':
       return dateMapPayload(store.contact || {}, params);
-    case '/arrive-time':
     case '/api/arrive-time':
       return dateMapPayload(store.arriveTime || {}, params);
     case '/api/announce-status':
@@ -577,11 +576,6 @@ async function handleFallbackMutation(path, input, init) {
     delete store.todayOrder[date];
     saveDemoStore(store);
     return { ok: true, demo: true, date, cleared };
-  }
-
-  if (path === '/api/today_order' && method === 'POST') {
-    saveDemoStore({ ...loadDemoStore(), todayOrder: body && typeof body === 'object' ? body : {} });
-    return { ok: true, demo: true };
   }
 
   if (path === '/api/announcements/image') {

@@ -13,6 +13,7 @@
 
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { fetchJsonChecked } from '../../shared/api.js';
 import { getAdminDate } from '../core/adminDate.js';
 import {
   HW_HEADER_LINE,
@@ -21,7 +22,7 @@ import {
   recordsToCsv,
   renderClassLogText,
   validateExportLogOptions,
-} from './exportLogFormat.js?v=20260813-phase12';
+} from './exportLogFormat.js?v=20260823-no-done-exports1';
 import {
   loadWeekendSlots,
   hasWeekday,
@@ -30,6 +31,13 @@ import {
   labelFor,
   getSlots,
 } from './today.state.js';
+import {
+  collectUnarchivedDoneLatestPerStudent,
+  collectUnarchivedLogsForDate,
+} from './exportLogTargets.js?v=20260823-export-perf1';
+
+const EXPORT_TARGET_DONE = 'done';
+const EXPORT_TARGET_DATE = 'date';
 
 const ALL_STUDENTS_PROGRESS_META = '__allStudentsProgressMids';
 const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
@@ -48,6 +56,7 @@ function resetRosterHistoryCache() {
     logsRef: state.logs || null,
     datesByTarget: new Map(),
     testRelevantDatesByTarget: new Map(),
+    videoStatusesByTargetSid: new Map(),
     previousAssignedByKey: new Map(),
     previousActiveByKey: new Map(),
   };
@@ -62,6 +71,106 @@ function ensureRosterHistoryCache() {
     resetRosterHistoryCache();
   }
   return rosterHistoryCache;
+}
+
+function canonicalSid(value) {
+  const sid = String(value ?? '').trim();
+  return /^\d+$/.test(sid) ? sid.replace(/^0+(?=\d)/, '') : sid;
+}
+
+function replaceSidHistories(current, incoming, sids) {
+  const wanted = new Set((sids || []).flatMap(sid => {
+    const raw = String(sid ?? '').trim();
+    return raw ? [raw, canonicalSid(raw)] : [];
+  }));
+  const out = {};
+
+  Object.entries(current || {}).forEach(([date, bySid]) => {
+    if (!bySid || typeof bySid !== 'object' || Array.isArray(bySid)) return;
+    const kept = {};
+    Object.entries(bySid).forEach(([sid, entry]) => {
+      if (wanted.has(String(sid)) || wanted.has(canonicalSid(sid))) return;
+      kept[sid] = entry;
+    });
+    if (Object.keys(kept).length) out[date] = kept;
+  });
+
+  Object.entries(incoming || {}).forEach(([date, bySid]) => {
+    if (!bySid || typeof bySid !== 'object' || Array.isArray(bySid)) return;
+    out[date] = { ...(out[date] || {}), ...bySid };
+  });
+  return out;
+}
+
+function summaryTargetRefs(summary) {
+  if (summary?.rowsAvailable !== true || !Array.isArray(summary?.rows)) return null;
+  return summary.rows
+    .map(row => ({
+      sid: String(row?.sid ?? '').trim(),
+      date: String(row?.date ?? '').trim(),
+    }))
+    .filter(row => row.sid && /^\d{4}-\d{2}-\d{2}$/.test(row.date));
+}
+
+function historyUrl(path, sids, targetRefs = null) {
+  const params = new URLSearchParams({ sids: sids.join(',') });
+  if (Array.isArray(targetRefs)) {
+    params.set('exportTargets', JSON.stringify(
+      targetRefs.map(row => [String(row.sid), String(row.date)]),
+    ));
+  }
+  return `${path}?${params.toString()}`;
+}
+
+async function loadClassLogExportData({ selectedDateMode, selectedDate, signal }) {
+  let seedLogs = {};
+  let targetRefs = [];
+
+  if (selectedDateMode) {
+    seedLogs = await fetchJsonChecked(
+      `/api/logs?date=${encodeURIComponent(selectedDate)}`,
+      'selected-date export logs',
+      { cache: 'no-store', signal },
+    );
+    targetRefs = collectUnarchivedLogsForDate(seedLogs, selectedDate);
+  } else {
+    const summary = await fetchJsonChecked(
+      '/api/logs/unarchived-summary',
+      'unarchived export summary',
+      { cache: 'no-store', signal },
+    );
+    const refs = summaryTargetRefs(summary);
+    if (refs === null) {
+      const [logs, progress] = await Promise.all([
+        fetchJsonChecked('/api/logs', 'export logs fallback', { cache: 'no-store', signal }),
+        fetchJsonChecked('/api/progress', 'export progress fallback', { cache: 'no-store', signal }),
+      ]);
+      const targets = collectUnarchivedDoneLatestPerStudent(logs);
+      return {
+        logs,
+        progress,
+        targets,
+        sids: Array.from(new Set(targets.map(row => String(row.sid)))),
+      };
+    }
+    targetRefs = refs;
+  }
+
+  const sids = Array.from(new Set(targetRefs.map(row => String(row.sid)).filter(Boolean)));
+  if (!sids.length) return { logs: seedLogs, progress: {}, targets: [], sids: [] };
+
+  const [logs, progress] = await Promise.all([
+    fetchJsonChecked(historyUrl('/api/logs', sids, targetRefs), 'export log history', { cache: 'no-store', signal }),
+    fetchJsonChecked(historyUrl('/api/progress', sids), 'export progress history', { cache: 'no-store', signal }),
+  ]);
+  const historyLogs = { ...logs };
+  Object.entries(seedLogs || {}).forEach(([date, bySid]) => {
+    historyLogs[date] = { ...(historyLogs[date] || {}), ...(bySid || {}) };
+  });
+  const targets = selectedDateMode
+    ? collectUnarchivedLogsForDate(historyLogs, selectedDate)
+    : collectUnarchivedDoneLatestPerStudent(historyLogs);
+  return { logs: historyLogs, progress, targets, sids };
 }
 
 /* ─────────────────────────────────────────────
@@ -189,32 +298,6 @@ function schoolForStudent(stu) {
 function curriculumForStudent(stu) {
   if (!stu || typeof stu !== 'object') return '';
   return normStr(`${stu.curriculum || ''}${stu.subCurriculum ? ` ${stu.subCurriculum}` : ''}`);
-}
-
-/* ─────────────────────────────────────────────
- * ✅ 날짜 상관없이 "done=true && archived!=true" 인 로그들 중
- *    학생별 최신 1건만 수집
- *   반환: [{ sid, date, entry }]
- * ────────────────────────────────────────────*/
-function collectUnarchivedDoneLatestPerStudent() {
-  const logs = state.logs || {};
-  const dates = Object.keys(logs).sort(); // ISO 오름차순
-
-  const latestBySid = new Map(); // sid -> { date, entry }
-  for (const date of dates) {
-    const dayMap = logs[date] || {};
-    for (const sid of Object.keys(dayMap)) {
-      const e = dayMap[sid] || {};
-      const done = e.done === true || e.done === 'true';
-      const archived = e.archived === true || e.archived === 'true';
-      if (!done || archived) continue;
-      latestBySid.set(String(sid), { date, entry: e });
-    }
-  }
-
-  const out = [];
-  for (const [sid, v] of latestBySid.entries()) out.push({ sid, date: v.date, entry: v.entry });
-  return out;
 }
 
 /* ─────────────────────────────────────────────
@@ -378,6 +461,37 @@ function rosterAssignedVideoMids(dateStr, sid) {
   return raw.map(mid => String(mid || '').trim()).filter(Boolean);
 }
 
+function normalizeRosterVideoStatus(status) {
+  if (status && typeof status === 'object') status = status.status;
+  return normStr(status);
+}
+
+function rosterVideoStatusesThroughDate(dateStr, sid) {
+  const cache = ensureRosterHistoryCache();
+  const target = String(dateStr || '');
+  const studentId = String(sid ?? '').trim();
+  const cacheKey = `${target}${ROSTER_HISTORY_CACHE_SEP}${studentId}`;
+  if (cache.videoStatusesByTargetSid.has(cacheKey)) {
+    return cache.videoStatusesByTargetSid.get(cacheKey);
+  }
+
+  const statuses = {};
+  Object.keys(state.progress || {})
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) <= target)
+    .sort()
+    .forEach(date => {
+      const entry = lookupSidEntry(state.progress?.[date], studentId);
+      if (!entry || typeof entry !== 'object') return;
+      Object.entries(entry).forEach(([mid, status]) => {
+        if (String(mid).startsWith('__') || mid === 'tests') return;
+        statuses[String(mid)] = normalizeRosterVideoStatus(status);
+      });
+    });
+
+  cache.videoStatusesByTargetSid.set(cacheKey, statuses);
+  return statuses;
+}
+
 function rosterDateKeysBefore(dateStr, source) {
   return Object.keys(source || {})
     .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) < String(dateStr))
@@ -466,7 +580,9 @@ function videoMapForRoster() {
 
 function rosterVideoText(dateStr, sid, videoMap) {
   const seen = new Set();
+  const statuses = rosterVideoStatusesThroughDate(dateStr, sid);
   const videos = rosterAssignedVideoMids(dateStr, sid)
+    .filter(mid => statuses[mid] !== 'done')
     .map(mid => videoMap.get(mid))
     .filter(Boolean)
     .filter(video => {
@@ -528,43 +644,6 @@ function cleanRosterRound(value) {
   return m ? m[1] : raw.replace(/회차|회/g, '').trim();
 }
 
-function roundListText(rounds) {
-  const uniq = Array.from(new Set(rounds.map(cleanRosterRound).filter(Boolean)))
-    .sort((a, b) => {
-      const an = Number(a);
-      const bn = Number(b);
-      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
-      return String(a).localeCompare(String(b), 'ko');
-    });
-  if (!uniq.length) return '';
-  if (uniq.length === 1) return `${uniq[0]}회차`;
-  return `${uniq.slice(0, -1).join(', ')}, ${uniq[uniq.length - 1]}회차`;
-}
-
-function stripRosterUnitLevel(name, level) {
-  let out = normStr(name);
-  const lv = normStr(level).replace('.', '\\.');
-  if (lv) out = out.replace(new RegExp(`\\s*${lv}\\s*$`, 'i'), '').trim();
-  return out;
-}
-
-function rosterPastDifficultyLabel(categoryKey, difficulty) {
-  if (categoryKey === 'ILSAN_PAST' && difficulty === '그래프 포함') return '그래프부터';
-  return difficulty;
-}
-
-function rosterPastRowLabel(item) {
-  const round = cleanRosterRound(item.round);
-  let name = normStr(item.name);
-  if (item.categoryKey === 'ILSAN_PAST' && item.difficulty === '그래프 포함') {
-    name = name.replace(/^삼각함수\s*그래프\s*포함\s*/u, '').trim();
-  }
-  if (round) {
-    name = name.replace(new RegExp(`^${round}\\s*회차\\s*`, 'u'), '').trim();
-  }
-  if (!round && !name) return '';
-  return `${round ? `${round}회차` : ''}${name ? ` ${name}` : ''}`.trim();
-}
 
 function parseRosterTestLabel(label, status = 'assigned', meta = {}) {
   const parts = String(label || '').split('/').map(part => part.trim()).filter(Boolean);
@@ -813,57 +892,36 @@ function rosterSortTests(items) {
   );
 }
 
-function appendRosterTestSections(lines, tests) {
-  const byCategory = tests.reduce((acc, item) => {
-    (acc[item.categoryKey] ||= []).push(item);
-    return acc;
-  }, {});
-
-  const reviewRounds = (byCategory.REVIEW || []).map(item => item.round);
-  if (reviewRounds.length) {
-    lines.push('', `복테 : ${roundListText(reviewRounds)}`);
+function rosterTestName(item) {
+  const label = normStr(item?.label);
+  let name = normStr(item?.name);
+  if (!name && label) {
+    name = label.split('/').map(part => part.trim()).filter(Boolean).pop() || label;
   }
+  if (!name) return '';
 
-  const appendUnitGroups = () => {
-    const groups = new Map();
-    (byCategory.UNIT || []).forEach(item => {
-      const key = item.difficulty || 'Lv.';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(stripRosterUnitLevel(item.name, key));
-    });
-    Array.from(groups.entries())
-      .sort(([a], [b]) => a.localeCompare(b, 'ko', { numeric: true }))
-      .forEach(([level, names]) => {
-        lines.push('', `단원평가(${level})(30분) :`);
-        Array.from(new Set(names.filter(Boolean))).forEach(name => lines.push(name));
-      });
-  };
+  const source = item?.categoryKey === 'SCHOOL_PAST'
+    ? '학군지'
+    : item?.categoryKey === 'ILSAN_PAST'
+      ? '일산'
+      : '';
+  if (!source) return name;
 
-  const appendPastGroups = (categoryKey, title, difficultyOrder) => {
-    const groups = new Map();
-    (byCategory[categoryKey] || []).forEach(item => {
-      const key = item.difficulty || '';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(item);
-    });
-    Array.from(groups.entries())
-      .sort(([a], [b]) => {
-        const ai = difficultyOrder.indexOf(a);
-        const bi = difficultyOrder.indexOf(b);
-        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b, 'ko');
-      })
-      .forEach(([difficulty, items]) => {
-        const rows = rosterSortTests(items)
-          .map(rosterPastRowLabel)
-          .filter(Boolean);
-        lines.push('', `${title}(${rosterPastDifficultyLabel(categoryKey, difficulty)})(50분) :`);
-        Array.from(new Set(rows)).forEach(row => lines.push(row));
-      });
-  };
+  const difficulty = normStr(item?.difficulty);
+  const round = cleanRosterRound(item?.round);
+  if (item?.categoryKey === 'ILSAN_PAST' && difficulty === '그래프 포함') {
+    name = name.replace(/^삼각함수\s*그래프\s*포함\s*/u, '').trim();
+  }
+  const nameRound = name.match(/(\d{1,2})\s*회차/u)?.[1] || '';
+  const hasRound = round && nameRound === round;
+  if (round && !hasRound) name = `${round}회차 ${name}`;
+  return `${source}${difficulty ? `(${difficulty})` : ''} ${name}`.trim();
+}
 
-  appendUnitGroups();
-  appendPastGroups('SCHOOL_PAST', '학군지기출', ['상', '중상', '중']);
-  appendPastGroups('ILSAN_PAST', '일산기출', ['중', '중상', '그래프 포함']);
+function rosterAssignedTestNames(dateStr, sid, student = null) {
+  return Array.from(new Set(
+    rosterAssignedTests(dateStr, sid, student).map(rosterTestName).filter(Boolean)
+  ));
 }
 
 function rosterTaskText(dateStr, stu, videoMap) {
@@ -872,7 +930,8 @@ function rosterTaskText(dateStr, stu, videoMap) {
   const lines = [ROSTER_TEXT_DEFAULT, '', `오늘 할 일${subject ? ` (${subject})` : ''}`];
   const videos = rosterVideoText(dateStr, sid, videoMap);
   if (videos) lines.push('', `영상 : ${videos}`);
-  appendRosterTestSections(lines, rosterAssignedTests(dateStr, sid, stu));
+  const testNames = rosterAssignedTestNames(dateStr, sid, stu);
+  if (testNames.length) lines.push('', '테스트 :', ...testNames);
   return lines.join('\n');
 }
 
@@ -1089,6 +1148,9 @@ export function initExport() {
   const sectionTests = $('exportLogsSectionTests');
   const sectionProgress = $('exportLogsSectionProgress');
   const sectionHomework = $('exportLogsSectionHomework');
+  const targetDone = $('exportLogsTargetDone');
+  const targetDate = $('exportLogsTargetDate');
+  const targetDateLabel = $('exportLogsTargetDateLabel');
   const rosterButtons = [
     $('exportRoster'),
     $('exportRosterRail'),
@@ -1101,26 +1163,23 @@ export function initExport() {
 
   if (!btn) return;
 
-  async function exportClassLogs(rawOptions, { signal } = {}) {
+  async function exportClassLogs(rawOptions, { signal, targetMode = EXPORT_TARGET_DONE, targetDate = '' } = {}) {
     const options = normalizeExportLogOptions(rawOptions);
+    const selectedDateMode = targetMode === EXPORT_TARGET_DATE;
+    const selectedDate = String(targetDate || getAdminDate() || '').trim();
+    let exportData;
     try {
-      const [logs, progress] = await Promise.all([
-        fetch('/api/logs', { cache: 'no-store', signal }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-        fetch('/api/progress', { cache: 'no-store', signal }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      ]);
-      if (logs && typeof logs === 'object') {
-        state.logs = logs;
+      exportData = await loadClassLogExportData({ selectedDateMode, selectedDate, signal });
+      if (exportData.sids.length) {
+        state.logs = replaceSidHistories(state.logs, exportData.logs, exportData.sids);
+        state.progress = replaceSidHistories(state.progress, exportData.progress, exportData.sids);
         window.logs = state.logs;
-        resetRosterHistoryCache();
-      }
-      if (progress && typeof progress === 'object') {
-        state.progress = progress;
         window.progressData = state.progress;
         resetRosterHistoryCache();
       }
     } catch (err) {
       if (err?.name === 'AbortError') throw err;
-      console.warn('[exportLogs] full history load failed:', err);
+      console.warn('[exportLogs] scoped history load failed:', err);
       toast('내보내기 데이터 로드 실패');
       throw new Error('내보내기 데이터를 불러오지 못했습니다. 잠시 후 다시 시도하세요.');
     }
@@ -1145,12 +1204,14 @@ export function initExport() {
       return null;
     };
 
-    // ✅ 대상: 자유의 몸(done=true && archived!=true) 학생들(학생별 최신 1건)
-    const targets = collectUnarchivedDoneLatestPerStudent();
+    const targets = exportData.targets;
 
     if (!targets.length) {
-      toast('내보낼 (완료 & 미정리) 기록이 없습니다.');
-      return { downloaded: [], message: '내보낼 완료·미정리 기록이 없습니다.' };
+      const message = selectedDateMode
+        ? `${selectedDate}에 내보낼 저장 로그가 없습니다.`
+        : '내보낼 완료·미정리 기록이 없습니다.';
+      toast(message);
+      return { downloaded: [], message };
     }
 
     // 이름순 정렬 (동일하면 날짜)
@@ -1175,24 +1236,26 @@ export function initExport() {
       const before = buildPriorBefore(date, String(sid));
       const exportSkipMids = allStudentsProgressMids(progThatDay);
 
-      // 변화만 + skip 제외 + 챕터순
+      // 내보내기 공통 당일 변화 목록: done/skip/none 제외 + 챕터순
       const diffObjs = Object.entries(progThatDay)
-        .filter(([mid, st]) =>
+        .map(([mid, status]) => ({ mid, st: normalizeRosterVideoStatus(status) }))
+        .filter(({ mid, st }) =>
           !String(mid).startsWith('__') &&
           mid !== 'tests' &&
           !exportSkipMids.has(String(mid)) &&
-          before[mid] !== st &&
+          normalizeRosterVideoStatus(before[mid]) !== st &&
           st !== 'none' &&
           st !== 'skip'
         )
-        .map(([mid, st]) => {
+        .map(({ mid, st }) => {
           const v = videoMap.get(String(mid)) || {};
           return { mid, st, chap: chapterNum(v) };
         })
         .sort((a, b) => a.chap - b.chap);
 
       const diffs = diffObjs
-        .map(o => labelFor(o.mid, o.st))
+        .filter(item => item.st !== 'done')
+        .map(item => labelFor(item.mid, item.st))
         .filter(Boolean);
 
       // ✅ 숙제 블록 만들기(헤더 포함)
@@ -1203,18 +1266,8 @@ export function initExport() {
         hwBlock = buildHwBlockFromLegacyString(logEntry.homework || '');
       }
 
-      // 테스트
-      const tests = Array.isArray(logEntry.tests) ? logEntry.tests : [];
-      const testLines = tests.map(t => {
-        const nm = t.name || '';
-        const sc = t.score || '';
-        const wrong = Array.isArray(t.wrong) ? t.wrong.join(', ') : '';
-        const memo = (t.memo || '').trim();
-        const wrongPart = wrong ? ` (오답: ${wrong})` : '';
-        const memoPart = memo ? ` – ${memo}` : '';
-        return `${nm} ${sc}${wrongPart}${memoPart}`.trim();
-      }).filter(Boolean);
-
+      // 테스트: 진도 상태가 초록색(assigned)인 배정 이름만 내보낸다.
+      const testLines = rosterAssignedTestNames(date, String(sid), stu);
       const hasTests = testLines.length > 0;
       const homeworkRows = homeworkRowsForCsv(logEntry);
 
@@ -1261,20 +1314,22 @@ export function initExport() {
     }
 
     const stamp = exportDateStamp();
+    const fileStem = selectedDateMode
+      ? `수업기록_선택일_${selectedDate}` : `수업기록_완료미정리_${stamp}`;
     const downloaded = [];
     let txtSkipped = false;
 
     if (options.formats.txt) {
       const out = renderClassLogText(records, options);
       if (out.trim()) {
-        downloadTextFile(`수업기록_완료미정리_${stamp}.txt`, out, 'text/plain;charset=utf-8');
+        downloadTextFile(`${fileStem}.txt`, out, 'text/plain;charset=utf-8');
         downloaded.push('TXT');
       } else {
         txtSkipped = true;
       }
     }
     if (options.formats.csv) {
-      downloadTextFile(`수업기록_완료미정리_${stamp}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
+      downloadTextFile(`${fileStem}.csv`, recordsToCsv(records), 'text/csv;charset=utf-8');
       downloaded.push('CSV');
     }
 
@@ -1289,13 +1344,16 @@ export function initExport() {
   }
 
   let currentOptions = defaultExportLogOptions();
+  let currentTargetMode = EXPORT_TARGET_DONE;
+  let exportTargetDate = '';
   let exportInFlight = false;
   let activeExportController = null;
   let restoreFocus = null;
 
   const dialogReady = !!(
     modal && form && closeButton && cancelButton && resetButton && submitButton && status &&
-    formatTxt && formatCsv && txtSections && sectionNotes && sectionTests && sectionProgress && sectionHomework
+    targetDone && targetDate && targetDateLabel && formatTxt && formatCsv &&
+    txtSections && sectionNotes && sectionTests && sectionProgress && sectionHomework
   );
 
   if (!dialogReady) {
@@ -1315,6 +1373,8 @@ export function initExport() {
 
   const optionControls = [
     formatTxt,
+    targetDone,
+    targetDate,
     formatCsv,
     sectionNotes,
     sectionTests,
@@ -1342,6 +1402,16 @@ export function initExport() {
     sectionProgress.checked = options.sections.progress;
     sectionHomework.checked = options.sections.homework;
     syncTxtSectionState();
+  }
+
+  function writeTargetModeToForm(value) {
+    const mode = value === EXPORT_TARGET_DATE ? EXPORT_TARGET_DATE : EXPORT_TARGET_DONE;
+    targetDone.checked = mode === EXPORT_TARGET_DONE;
+    targetDate.checked = mode === EXPORT_TARGET_DATE;
+  }
+
+  function readTargetModeFromForm() {
+    return targetDate.checked ? EXPORT_TARGET_DATE : EXPORT_TARGET_DONE;
   }
 
   function readOptionsFromForm() {
@@ -1387,12 +1457,15 @@ export function initExport() {
   function openDialog() {
     if (exportInFlight) return;
     restoreFocus = document.activeElement;
+    exportTargetDate = String(getAdminDate() || '').trim();
+    targetDateLabel.textContent = exportTargetDate;
+    writeTargetModeToForm(currentTargetMode);
     writeOptionsToForm(currentOptions);
     setStatus('설정을 확인한 뒤 내보내기를 실행하세요.');
     modal.hidden = false;
     modal.style.display = 'flex';
     document.body.classList.add('export-logs-open');
-    requestAnimationFrame(() => formatTxt.focus());
+    requestAnimationFrame(() => (targetDate.checked ? targetDate : targetDone).focus());
   }
 
   btn.addEventListener('click', openDialog);
@@ -1400,6 +1473,8 @@ export function initExport() {
   cancelButton.addEventListener('click', closeDialog);
   resetButton.addEventListener('click', () => {
     writeOptionsToForm(defaultExportLogOptions());
+    currentTargetMode = EXPORT_TARGET_DONE;
+    writeTargetModeToForm(currentTargetMode);
     setStatus('기본 설정으로 되돌렸습니다. 내보내기를 실행하면 현재 페이지에 적용됩니다.', 'success');
   });
   formatTxt.addEventListener('change', syncTxtSectionState);
@@ -1446,12 +1521,18 @@ export function initExport() {
 
     currentOptions = validation.options;
     const controller = new AbortController();
+    currentTargetMode = readTargetModeFromForm();
+    const targetDateForExport = exportTargetDate;
     activeExportController = controller;
     setBusy(true);
     setStatus('수업 기록을 안전하게 준비하고 있습니다.');
     let closeAfterExport = false;
     try {
-      const result = await exportClassLogs(currentOptions, { signal: controller.signal });
+      const result = await exportClassLogs(currentOptions, {
+        signal: controller.signal,
+        targetMode: currentTargetMode,
+        targetDate: targetDateForExport,
+      });
       if (result.downloaded.length) {
         setStatus(result.message, 'success');
         closeAfterExport = true;

@@ -24,6 +24,8 @@ const TERM_OPTIONS = ['중간고사', '기말고사'];
 const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
+const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
+const TEST_ASSIGN_TOUCHED_KEYS_KEY = '__testAssignmentTouchedKeys';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const STUDENT_TEST_LEVEL_DEFAULTS_FIELD = 'testLevelDefaults';
 const STUDENT_LEVEL_SETTING_CATEGORY = 'UNIT';
@@ -53,6 +55,9 @@ let selectedKeys = new Set();
 let selectedStatuses = new Map();
 let multiSelectedKeys = new Set();
 let explicitBlankKeys = new Set();
+let touchedTestKeys = new Set();
+let testChangeOrderByKey = {};
+let pendingCenteredTestKey = '';
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
@@ -107,6 +112,11 @@ async function fetchJSONCached(url, ttlMs = 2500) {
   const promise = fetchJSONSafe(url).catch(() => ({}));
   cache.set(url, { ts: now, promise });
   return promise;
+}
+
+function invalidateStudentWorkFetchCache(url) {
+  const cache = window.__studentWorkFetchCache;
+  if (cache && typeof cache.delete === 'function') cache.delete(url);
 }
 
 function escapeHtml(s) {
@@ -295,6 +305,11 @@ function setTestStatus(key, status) {
     selectedStatuses.delete(k);
     selectedKeys.delete(k);
   }
+}
+
+function markTestTouched(key) {
+  const normalizedKey = String(key || '').trim();
+  if (normalizedKey) touchedTestKeys.add(normalizedKey);
 }
 
 function testKey(test) {
@@ -698,7 +713,10 @@ async function hydrateForTestPopup(date, sid) {
     });
   }
 
-  activeCatalog = collectCatalog(state.testsConfig);
+  const curriculumSubject = activeStudentCurriculumSubject();
+  activeCatalog = collectCatalog(state.testsConfig).filter(test =>
+    curriculumSubject && normalizeSubject(test.curriculum) === curriculumSubject
+  );
   catalogByKey = new Map(activeCatalog.map(test => [test._key, test]));
 }
 
@@ -735,6 +753,45 @@ function getCurrentProgressTests() {
   return {};
 }
 
+function progressEntryForCurrentTestHistory() {
+  const currentEntry = currentProgressEntry();
+  const currentTests = currentEntry?.tests;
+  if (currentTests && typeof currentTests === 'object' && Object.keys(currentTests).length) {
+    return currentEntry;
+  }
+  if (currentEntry && typeof currentEntry === 'object' && currentEntry[TEST_ASSIGN_CLEAR_KEY]) {
+    return null;
+  }
+  if (Object.keys(logAssignmentStatusMap(currentLogEntry())).length) return null;
+
+  const sid = String(editingSid || '').trim();
+  const date = String(editingDate || '').trim();
+  if (!sid || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const dates = Object.keys(state.progress || {})
+    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < date)
+    .sort()
+    .reverse();
+  for (const d of dates) {
+    const entry = entryForDateSid(state.progress, d, sid);
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry[TEST_ASSIGN_CLEAR_KEY]) return null;
+    if (entry.tests && typeof entry.tests === 'object' && Object.keys(entry.tests).length) return entry;
+  }
+  return null;
+}
+
+function currentTestChangeOrderMap() {
+  const raw = progressEntryForCurrentTestHistory()?.[TEST_ASSIGN_CHANGE_ORDER_KEY];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).flatMap(([key, value]) => {
+    const order = Number(value);
+    return String(key || '').trim() && Number.isFinite(order) && order > 0
+      ? [[String(key), order]]
+      : [];
+  }));
+}
+
 function isSubmitted(test) {
   if (!test) return false;
   const name = canonText(test.name);
@@ -758,10 +815,13 @@ function visibleTests() {
 
 function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
+  testChangeOrderByKey = currentTestChangeOrderMap();
   selectedKeys = new Set();
   selectedStatuses = new Map();
   multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
+  touchedTestKeys = new Set();
+  pendingCenteredTestKey = '';
   Object.entries(initialTestMap).forEach(([key, status]) => {
     if (isExplicitBlankTestStatus(status)) {
       explicitBlankKeys.add(key);
@@ -884,9 +944,12 @@ function renderFilters() {
   const roundSel = $('testRound');
   const termSel = $('testTerm');
   if (subjectSel) {
-    subjectSel.innerHTML = SUBJECTS.map(subject =>
-      `<option value="${escapeHtml(subject)}"${subject === activeSubject ? ' selected' : ''}>${escapeHtml(subject)}</option>`
-    ).join('');
+    const curriculumSubject = activeStudentCurriculumSubject();
+    activeSubject = curriculumSubject || activeSubject;
+    subjectSel.innerHTML = activeSubject
+      ? `<option value="${escapeHtml(activeSubject)}" selected>${escapeHtml(activeSubject)}</option>`
+      : '<option value="">현재 커리큘럼 없음</option>';
+    subjectSel.disabled = true;
   }
 
   const allDifficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
@@ -941,17 +1004,47 @@ function renderFilters() {
   renderLevelSettingPanel();
 }
 
-function applyTestRowStatus(row, status) {
+function applyTestRowStatus(row, status, options = {}) {
   if (!row || row.disabled) return;
   const key = row.dataset.testKey || '';
   const next = normalizeAssignmentStatus(status);
   setTestStatus(key, next);
+  if (options.touch !== false) markTestTouched(key);
   explicitBlankKeys.delete(key);
   row.dataset.state = next || 'none';
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
   if (statusEl) statusEl.textContent = testStatusLabel(next);
   rememberCurrentTestView(catalogByKey.get(key));
+}
+
+function centerTestRowInScroller(row, scroller) {
+  if (!row || !scroller) return false;
+  const scrollHeight = Number(scroller.scrollHeight) || 0;
+  const clientHeight = Number(scroller.clientHeight) || 0;
+  if (!clientHeight || scrollHeight <= clientHeight + 1) return false;
+
+  const rowRect = row.getBoundingClientRect?.();
+  const scrollerRect = scroller.getBoundingClientRect?.();
+  if (!rowRect || !scrollerRect) return false;
+  const rowHeight = Number(rowRect.height) || Math.max(0, Number(rowRect.bottom) - Number(rowRect.top));
+  const scrollerHeight = Number(scrollerRect.height) || clientHeight;
+  const currentTop = Number(scroller.scrollTop) || 0;
+  const targetTop = currentTop
+    + (Number(rowRect.top) + rowHeight / 2)
+    - (Number(scrollerRect.top) + scrollerHeight / 2);
+  scroller.scrollTop = Math.max(0, Math.min(scrollHeight - clientHeight, targetTop));
+  return true;
+}
+
+function centerPendingTestRow() {
+  const key = String(pendingCenteredTestKey || '').trim();
+  pendingCenteredTestKey = '';
+  if (!key) return false;
+  const list = $('testAssignList');
+  const rows = Array.from(list?.querySelectorAll?.('.test-row') || []);
+  const row = rows.find(candidate => String(candidate.dataset?.testKey || '') === key);
+  return centerTestRowInScroller(row, list);
 }
 
 function renderList() {
@@ -1011,6 +1104,7 @@ function renderList() {
       </button>
     `;
   }).join('');
+  centerPendingTestRow();
 }
 
 function renderAll() {
@@ -1048,7 +1142,7 @@ function ensureStyles() {
       flex:0 0 auto; min-width:66px; height:38px; padding:0 14px; border-radius:10px;
       border:1px solid #2563eb; background:#2563eb; color:#fff; font-weight:900; cursor:pointer;
     }
-    #testModal .test-body{ flex:1 1 auto; min-height:0; overflow:auto; padding-top:10px; display:flex; flex-direction:column; gap:10px; }
+    #testModal .test-body{ flex:1 1 auto; min-height:0; overflow:hidden; padding-top:10px; display:flex; flex-direction:column; gap:10px; }
     #testModal .test-tabbar{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
     #testModal .test-tab{
       min-height:34px; border:1px solid #cbd5e1; border-radius:999px; background:#fff;
@@ -1101,7 +1195,7 @@ function ensureStyles() {
       background:#f8fafc; color:#0f172a; font-weight:800; cursor:pointer; font-size:12px;
     }
     body.dark #testModal .test-mini-actions button{ background:#334155; color:#e5e7eb; border-color:#475569; }
-    #testModal .test-list{ display:flex; flex-direction:column; gap:6px; }
+    #testModal .test-list{ flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px; }
     #testModal.student-work-layout .test-tabbar{
       grid-template-columns:repeat(2,minmax(0,1fr));
     }
@@ -1309,6 +1403,9 @@ function closeModal() {
   selectedStatuses = new Map();
   explicitBlankKeys = new Set();
   multiSelectedKeys = new Set();
+  touchedTestKeys = new Set();
+  testChangeOrderByKey = {};
+  pendingCenteredTestKey = '';
   testSelectionTouched = false;
   activeRound = '1';
   activeTerm = defaultTermFromSchoolCalendar();
@@ -1433,24 +1530,56 @@ function rememberCurrentTestView(test = null) {
   } catch {}
 }
 
-function latestAssignmentTestFromHistory(requiredSubject = '') {
+function latestAssignmentTestFromHistory(requiredSubject = '', requiredCategory = '') {
   const curriculumSubject = String(requiredSubject || '').trim()
     ? normalizeSubject(requiredSubject)
+    : '';
+  const categoryKey = String(requiredCategory || '').trim()
+    ? canonicalCategoryKey(requiredCategory)
     : '';
   const orderedKeys = Array.from(new Set([
     ...Object.keys(initialTestMap || {}),
     ...Array.from(selectedStatuses.keys()),
-  ])).reverse();
+  ]));
+  const candidates = [];
 
-  for (const key of orderedKeys) {
+  orderedKeys.forEach((key, legacyIndex) => {
     const rawStatus = Object.prototype.hasOwnProperty.call(initialTestMap, key)
       ? initialTestMap[key]
       : selectedStatuses.get(key);
-    if (isExplicitBlankTestStatus(rawStatus) || !normalizeAssignmentStatus(rawStatus)) continue;
+    const status = normalizeAssignmentStatus(rawStatus);
+    if (isExplicitBlankTestStatus(rawStatus) || status === 'skip' || !status) return;
     const test = catalogByKey.get(key);
-    if (test && (!curriculumSubject || normalizeSubject(test.curriculum) === curriculumSubject)) return test;
-  }
-  return null;
+    if (
+      test &&
+      (!curriculumSubject || normalizeSubject(test.curriculum) === curriculumSubject) &&
+      (!categoryKey || test.categoryKey === categoryKey)
+    ) {
+      const order = Number(testChangeOrderByKey?.[key]);
+      candidates.push({
+        test,
+        order: Number.isFinite(order) && order > 0 ? order : 0,
+        legacyIndex,
+      });
+    }
+  });
+  if (!candidates.length) return null;
+
+  const hasExplicitOrder = candidates.some(candidate => candidate.order > 0);
+  candidates.sort((left, right) => {
+    if (hasExplicitOrder && right.order !== left.order) return right.order - left.order;
+    if (
+      hasExplicitOrder
+      && left.order > 0
+      && left.order === right.order
+      && left.test.categoryKey !== right.test.categoryKey
+    ) {
+      if (left.test.categoryKey === 'UNIT') return -1;
+      if (right.test.categoryKey === 'UNIT') return 1;
+    }
+    return right.legacyIndex - left.legacyIndex;
+  });
+  return candidates[0].test;
 }
 
 function applyTestView(view, requiredSubject = '') {
@@ -1472,16 +1601,35 @@ function restorePreferredInitialTestView(requiredSubject = activeStudentCurricul
   const curriculumSubject = String(requiredSubject || '').trim()
     ? normalizeSubject(requiredSubject)
     : '';
+  const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);
+  if (recentAssignment) {
+    applyTestView(testViewFromTest(recentAssignment), curriculumSubject);
+    pendingCenteredTestKey = recentAssignment._key;
+    return 'assignment';
+  }
+
   const storedView = readRecentTestView(editingSid, curriculumSubject);
   if (storedView) {
     applyTestView(storedView, curriculumSubject);
     return 'stored';
   }
+  return '';
+}
 
-  const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);
+function restorePreferredCategoryTestView(categoryKey, requiredSubject = activeSubject) {
+  const targetCategory = canonicalCategoryKey(categoryKey);
+  const subject = normalizeSubject(requiredSubject);
+  const recentAssignment = latestAssignmentTestFromHistory(subject, targetCategory);
   if (recentAssignment) {
-    applyTestView(testViewFromTest(recentAssignment), curriculumSubject);
+    applyTestView(testViewFromTest(recentAssignment), subject);
+    pendingCenteredTestKey = recentAssignment._key;
     return 'assignment';
+  }
+
+  const storedView = readRecentTestView(editingSid, subject);
+  if (storedView?.categoryKey === targetCategory) {
+    applyTestView(storedView, subject);
+    return 'stored';
   }
   return '';
 }
@@ -1516,10 +1664,10 @@ async function openModalForRow(rowOrButton, opts = {}) {
   testSelectionTouched = false;
 
   renderAll();
-  ['testSubject', 'testDifficulty'].forEach((id) => {
-    const el = $(id);
-    if (el) el.disabled = false;
-  });
+  const subjectEl = $('testSubject');
+  if (subjectEl) subjectEl.disabled = true;
+  const difficultyEl = $('testDifficulty');
+  if (difficultyEl) difficultyEl.disabled = false;
   const termEl = $('testTerm');
   const overrideBtn = $('testDifficultyOverride');
   if (overrideBtn) overrideBtn.disabled = false;
@@ -1791,12 +1939,16 @@ function ensureProgressEntryForTestSave(date, sid) {
 }
 
 function buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus) {
+  const touchedKeys = Array.from(touchedTestKeys).filter(key =>
+    Object.prototype.hasOwnProperty.call(patchTests || {}, key)
+  );
   return {
     date,
     sid,
     progress: {
       tests: patchTests,
       [TEST_ASSIGN_CLEAR_KEY]: hasAnyTestStatus ? '' : new Date().toISOString(),
+      ...(touchedKeys.length ? { [TEST_ASSIGN_TOUCHED_KEYS_KEY]: touchedKeys } : {}),
     },
   };
 }
@@ -1834,12 +1986,16 @@ async function saveModal(options = {}) {
   });
 
   applyTestProgressPatchResult(editingDate, editingSid, progressRes);
+  invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(editingSid)}`);
 
   await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
+  invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(editingSid)}`);
 
   if (options.showPopup !== false) toast('테스트 배정 저장됨');
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
+  testChangeOrderByKey = currentTestChangeOrderMap();
+  touchedTestKeys = new Set();
   testSelectionTouched = false;
   return items;
 }
@@ -1874,8 +2030,9 @@ function bindEventsOnce() {
     const hi = Math.max(startIndex, curIndex);
     dragRows.forEach((row, idx) => {
       const initial = dragInitialStatuses[idx] || '';
-      const next = (idx >= lo && idx <= hi) ? dragTarget : initial;
-      applyTestRowStatus(row, next);
+      const inRange = idx >= lo && idx <= hi;
+      const next = inRange ? dragTarget : initial;
+      applyTestRowStatus(row, next, { touch: inRange });
     });
   }
 
@@ -1938,7 +2095,9 @@ function bindEventsOnce() {
       activeCategory = categoryBtn.dataset.category || activeCategory;
       levelSettingOpen = false;
       clearMultiSelection();
-      applyRuleDefaults(activeCategory);
+      if (!restorePreferredCategoryTestView(activeCategory, activeSubject)) {
+        applyRuleDefaults(activeCategory);
+      }
       rememberCurrentTestView();
       renderAll();
       return;
@@ -1946,7 +2105,10 @@ function bindEventsOnce() {
 
     if (e.target.closest('#testPickAll')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) setTestStatus(test._key, 'assigned');
+        if (!isSubmitted(test)) {
+          setTestStatus(test._key, 'assigned');
+          markTestTouched(test._key);
+        }
       });
       rememberCurrentTestView();
       testSelectionTouched = true;
@@ -1956,7 +2118,10 @@ function bindEventsOnce() {
 
     if (e.target.closest('#testPickNone')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) setTestStatus(test._key, 'skip');
+        if (!isSubmitted(test)) {
+          setTestStatus(test._key, 'skip');
+          markTestTouched(test._key);
+        }
       });
       rememberCurrentTestView();
       testSelectionTouched = true;
@@ -2045,12 +2210,8 @@ function bindEventsOnce() {
 
   document.body.addEventListener('change', (e) => {
     if (e.target?.id === 'testSubject') {
-      activeSubject = normalizeSubject(e.target.value);
-      levelSettingOpen = false;
-      clearMultiSelection();
-      applyRuleDefaults(activeCategory);
-      rememberCurrentTestView();
-      renderAll();
+      activeSubject = activeStudentCurriculumSubject();
+      e.target.value = activeSubject;
       return;
     }
 

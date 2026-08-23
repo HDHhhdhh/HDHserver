@@ -61,7 +61,7 @@ PUBLIC_STATIC_PATHS: Final[frozenset[str]] = frozenset(
     }
 )
 PUBLIC_SENSITIVE_STATIC_PATHS: Final[frozenset[str]] = frozenset(
-    {"/js/test_answer_link_map.json", "/js/test_answer_link_map.js"}
+    {"/js/test_answer_link_map.json"}
 )
 PUBLIC_API_ROUTE_METHODS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
@@ -95,7 +95,7 @@ PUBLIC_API_ROUTE_METHODS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("/api/announce-ack", "POST"),
         ("/api/announce-submit", "POST"),
         ("/api/tests-config", "GET"),
-        ("/api/submit-test", "POST"),
+
     }
 )
 

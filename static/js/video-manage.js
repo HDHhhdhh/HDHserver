@@ -1,5 +1,6 @@
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
 import { nextVideoId } from './shared/videoIds.js';
+import { buildVideoCorrectionDraft, protectedVideoIdentityChanges, videoCorrectionSummary } from './shared/videoCatalogIdentity.js';
 
 const toast = msg => {
     const d = document.createElement('div');
@@ -27,20 +28,229 @@ const $ = id => document.getElementById(id);
     const CT = { "Content-Type": "application/json" };
     const vidTable = $('vidTable');
     const saveVidBtn = $('saveVid');
+    const correctionModeBtn = $('videoCorrectionMode');
+    const correctionDownloadBtn = $('videoCorrectionDownload');
+    const correctionCancelBtn = $('videoCorrectionCancel');
+    const correctionStatus = $('videoCorrectionStatus');
     let autoSaveTimer = null;
     let autoSaveClick = false;
     let lastSavedVideoBody = '';
     let saveInFlight = false;
     let queuedSaveMode = null;
+    let correctionMode = false;
+    let correctionBaseVideos = null;
+    const VIDEO_IDENTITY_CHANGE_ERROR = 'video_catalog_identity_change_blocked';
+    const VIDEO_SAFETY_DEFAULT_MESSAGE = '일반 모드 보호: 제목·챕터·같은 MID의 서명 URL 보정과 새 영상 추가는 가능하지만, 기존 영상의 MID 변경과 삭제는 저장되지 않습니다.';
+    const VIDEO_CORRECTION_MESSAGE = '수정 모드: 지금 편집은 운영 서버에 저장되지 않습니다. 수정안 파일을 내려받은 뒤 점검·백업·서버 정지 절차로만 적용됩니다.';
+
+    function setVideoSafetyNotice(message = VIDEO_SAFETY_DEFAULT_MESSAGE, state = 'normal') {
+        const notice = $('videoSafetyNotice');
+        if (!notice) return;
+        const resolvedState = state === true ? 'blocked' : (state === false ? 'normal' : state);
+        const blocked = resolvedState === 'blocked';
+        notice.textContent = message;
+        notice.dataset.state = resolvedState;
+        notice.setAttribute('role', blocked ? 'alert' : 'status');
+        notice.setAttribute('aria-live', blocked ? 'assertive' : 'polite');
+        if (blocked) {
+            notice.tabIndex = -1;
+            notice.focus({ preventScroll: true });
+        }
+    }
+
+    function restoreLastSavedVideos() {
+        try {
+            const saved = JSON.parse(lastSavedVideoBody || '[]');
+            if (!Array.isArray(saved)) return false;
+            videos = saved;
+            drawVid();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    function cloneVideoRows(rows) {
+        return JSON.parse(JSON.stringify(Array.isArray(rows) ? rows : []));
+    }
+
+    function parseLastSavedVideoRows() {
+        const saved = JSON.parse(lastSavedVideoBody || '[]');
+        if (!Array.isArray(saved)) throw new Error('saved video catalog is unavailable');
+        return saved;
+    }
+
+    function syncVisibleVideoRowsFromTable() {
+        document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
+            const i = +tr.dataset.idx;
+            const row = videos[i];
+            const cells = tr.children;
+            if (!row || cells.length < 9) return;
+
+            row.curriculum = cells[1].innerText.trim();
+            row.subCurriculum = cells[2].innerText.trim();
+            row.chapter = +cells[3].innerText.trim() || 1;
+            const exS = cells[4].innerText.trim();
+            const exM = cells[5].innerText.trim();
+            const exH = cells[6].innerText.trim();
+            if (exS || exM || exH) {
+                row.exNum = {};
+                if (exS) row.exNum['상'] = +exS;
+                if (exM) row.exNum['중'] = +exM;
+                if (exH) row.exNum['하'] = +exH;
+            } else {
+                delete row.exNum;
+            }
+            row.title = cells[7].innerText.trim();
+            row.url = cells[8].innerText.trim();
+            const nextMid = extractKollusMid(row.url);
+            if (nextMid) row.mid = nextMid;
+        });
+    }
+
+    function hasCorrectionChanges(summary) {
+        return Boolean(
+            summary?.removedIds?.length ||
+            summary?.midChanges?.length ||
+            summary?.newIds?.length ||
+            summary?.modifiedIds?.length
+        );
+    }
+
+    function correctionSummaryText(summary) {
+        const midChangedIds = new Set((summary.midChanges || []).map(change => change.id));
+        const metadataCount = (summary.modifiedIds || []).filter(id => !midChangedIds.has(id)).length;
+        const parts = [];
+        if (summary.midChanges.length) parts.push(`MID 변경 ${summary.midChanges.length}건`);
+        if (summary.removedIds.length) parts.push(`삭제 ${summary.removedIds.length}건`);
+        if (summary.newIds.length) parts.push(`신규 ${summary.newIds.length}건`);
+        if (metadataCount) parts.push(`기타 내용 변경 ${metadataCount}건`);
+        return parts.length ? parts.join(' · ') : '아직 변경 없음';
+    }
+
+    function updateCorrectionControls() {
+        if (correctionModeBtn) {
+            correctionModeBtn.hidden = correctionMode;
+            correctionModeBtn.disabled = !lastSavedVideoBody;
+        }
+        if (correctionDownloadBtn) correctionDownloadBtn.hidden = !correctionMode;
+        if (correctionCancelBtn) correctionCancelBtn.hidden = !correctionMode;
+        if (saveVidBtn) saveVidBtn.disabled = correctionMode;
+        if (!correctionMode && correctionStatus) {
+            correctionStatus.textContent = '수정 모드는 운영 데이터를 즉시 바꾸지 않고 별도 파일만 만듭니다.';
+        }
+    }
+
+    function updateCorrectionStatus(suffix = '') {
+        if (!correctionMode || !correctionBaseVideos) return;
+        syncVisibleVideoRowsFromTable();
+        const summary = videoCorrectionSummary(correctionBaseVideos, videos);
+        if (correctionStatus) {
+            correctionStatus.textContent = `서버 미반영 · ${correctionSummaryText(summary)}${suffix}`;
+        }
+    }
+
+    function enterCorrectionMode() {
+        if (saveInFlight) {
+            alert('일반 저장이 끝난 뒤 다시 시도하세요.');
+            return;
+        }
+        const confirmed = window.confirm(
+            '수정 모드를 켜면 화면을 마지막 저장 상태로 되돌리고 시작합니다.\n' +
+            '이후 편집은 서버에 저장되지 않으며, 수정안 파일로만 내려받습니다.'
+        );
+        if (!confirmed) return;
+        let baseRows;
+        try {
+            baseRows = parseLastSavedVideoRows();
+        } catch {
+            alert('저장된 영상 목록을 아직 불러오지 못했습니다. 잠시 뒤 다시 시도하세요.');
+            return;
+        }
+        if (autoSaveTimer) clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        autoSaveClick = false;
+        correctionBaseVideos = cloneVideoRows(baseRows);
+        videos = cloneVideoRows(baseRows);
+        correctionMode = true;
+        drawVid();
+        updateCorrectionControls();
+        setVideoSafetyNotice(VIDEO_CORRECTION_MESSAGE, 'correction');
+        updateCorrectionStatus();
+    }
+
+    function cancelCorrectionMode() {
+        syncVisibleVideoRowsFromTable();
+        const summary = videoCorrectionSummary(correctionBaseVideos || [], videos);
+        if (hasCorrectionChanges(summary) && !window.confirm('작성 중인 수정안을 버리고 일반 모드로 돌아갈까요?')) {
+            return;
+        }
+        if (autoSaveTimer) clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        autoSaveClick = false;
+        correctionMode = false;
+        correctionBaseVideos = null;
+        restoreLastSavedVideos();
+        updateCorrectionControls();
+        setVideoSafetyNotice();
+        toast('수정안 취소됨 · 서버 데이터 변화 없음');
+    }
+
+    function downloadCorrectionDraft() {
+        if (!correctionMode || !correctionBaseVideos) return;
+        syncVisibleVideoRowsFromTable();
+        const summary = videoCorrectionSummary(correctionBaseVideos, videos);
+        if (!hasCorrectionChanges(summary)) {
+            alert('변경한 내용이 없습니다.');
+            return;
+        }
+        const draft = buildVideoCorrectionDraft(correctionBaseVideos, videos);
+        const blob = new Blob([`${JSON.stringify(draft, null, 2)}\n`], { type: 'application/json;charset=utf-8' });
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+        anchor.href = objectUrl;
+        anchor.download = `video-correction-${stamp}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+        updateCorrectionStatus(' · 수정안 다운로드 완료(아직 서버 미반영)');
+        toast('수정안 파일 다운로드 완료');
+    }
+
+    correctionModeBtn?.addEventListener('click', enterCorrectionMode);
+    correctionDownloadBtn?.addEventListener('click', downloadCorrectionDraft);
+    correctionCancelBtn?.addEventListener('click', cancelCorrectionMode);
+    updateCorrectionControls();
+
+    function showVideoIdentityBlocked(changes, serverMessage = '') {
+        const midCount = Array.isArray(changes?.midChanges) ? changes.midChanges.length : 0;
+        const removedCount = Array.isArray(changes?.removedIds) ? changes.removedIds.length : 0;
+        const details = [];
+        if (midCount) details.push(`기존 MID 변경 ${midCount}건`);
+        if (removedCount) details.push(`기존 영상 삭제 ${removedCount}건`);
+        const reason = details.length ? details.join(' · ') : '보호된 영상 식별자 변경';
+        restoreLastSavedVideos();
+        setVideoSafetyNotice(
+            `${reason}이 차단되었습니다. ${serverMessage || '입력 화면을 마지막 저장 상태로 되돌렸습니다. 별도 수정 모드에서 처리해야 합니다.'}`,
+            true,
+        );
+        toast('보호된 영상 변경 차단됨');
+    }
 
     function scheduleVideoAutoSave(delay = 800) {
         if (!saveVidBtn) return;
         if (autoSaveTimer) clearTimeout(autoSaveTimer);
         autoSaveTimer = setTimeout(() => {
             autoSaveTimer = null;
+            if (correctionMode) {
+                updateCorrectionStatus();
+                return;
+            }
             autoSaveClick = true;
             saveVidBtn.click();
-        }, delay);
+        }, correctionMode ? Math.min(delay, 200) : delay);
     }
 
     if (vidTable) {
@@ -157,6 +367,7 @@ const $ = id => document.getElementById(id);
         videos = vids;
         lastSavedVideoBody = JSON.stringify(videos);
         drawVid();
+        updateCorrectionControls();
     });
 
     /***** ───── 영상 관리 테이블 ───── */
@@ -238,36 +449,11 @@ const $ = id => document.getElementById(id);
             });
         });
 
-        // ⑥ 편집 셀 blur 시 자동 저장 (서버 POST)
+        // ⑥ 편집 셀 blur 시 현재 화면을 배열에 반영한다. 저장 여부는 모드가 결정한다.
         vidTable.querySelectorAll('td[contenteditable]').forEach(td => {
             td.addEventListener('blur', () => {
-                const tr = td.closest('tr');
-                const i = +tr.dataset.idx;
-                const cells = tr.children;
-                // 값 읽고 반영
-                videos[i].chapter = +cells[3].innerText.trim() || 1;
-                const exS = cells[4].innerText.trim();
-                const exM = cells[5].innerText.trim();
-                const exH = cells[6].innerText.trim();
-                if (exS || exM || exH) {
-                    videos[i].exNum = {};
-                    if (exS) videos[i].exNum['상'] = +exS;
-                    if (exM) videos[i].exNum['중'] = +exM;
-                    if (exH) videos[i].exNum['하'] = +exH;
-                } else {
-                    delete videos[i].exNum;
-                }
-                videos[i].title = cells[7].innerText.trim();
-                videos[i].url = cells[8].innerText.trim();
-                const nextMid = extractKollusMid(videos[i].url);
-                if (nextMid) videos[i].mid = nextMid;
-                // 서버에 저장
-                /*fetch('/api/videos', {
-                  method:  'POST',
-                  headers: CT,
-                  body:    JSON.stringify(videos)
-                }).then(() => toast('저장 완료'))
-                  .catch(() => toast('저장 실패'));*/
+                syncVisibleVideoRowsFromTable();
+                if (correctionMode) updateCorrectionStatus();
             });
         });
     }
@@ -394,46 +580,28 @@ const $ = id => document.getElementById(id);
             clearTimeout(autoSaveTimer);
             autoSaveTimer = null;
         }
-        // ① 테이블 행 순회
-        document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
-            const i = +tr.dataset.idx;
-            const cells = tr.children;
-
-            // ② 각 칸에서 텍스트 읽기
-            const chap = +cells[3].innerText.trim() || 1;
-            const exS = cells[4].innerText.trim();
-            const exM = cells[5].innerText.trim();
-            const exH = cells[6].innerText.trim();
-            const title = cells[7].innerText.trim();
-            const url = cells[8].innerText.trim();
-
-            videos[i].curriculum = cells[1].innerText.trim();
-            videos[i].subCurriculum = cells[2].innerText.trim();
-
-            // ③ videos 배열에 반영
-            videos[i].chapter = chap;
-
-            // exNum 객체 생성 / 삭제
-            if (exS || exM || exH) {
-                videos[i].exNum = {};
-                if (exS) videos[i].exNum['상'] = +exS;
-                if (exM) videos[i].exNum['중'] = +exM;
-                if (exH) videos[i].exNum['하'] = +exH;
-            } else {
-                delete videos[i].exNum;
-            }
-
-            videos[i].title = title;
-            videos[i].url = url;
-            const nextMid = extractKollusMid(url);
-            if (nextMid) videos[i].mid = nextMid;
-        });
+        syncVisibleVideoRowsFromTable();
+        if (correctionMode) {
+            updateCorrectionStatus();
+            toast('수정 모드에서는 서버 저장 안 됨');
+            return;
+        }
 
         // ④ 서버에 저장
         const body = JSON.stringify(videos);
         if (body === lastSavedVideoBody) {
             if (!isAutoSave) toast('변경사항 없음');
             return;
+        }
+        try {
+            const previousVideos = JSON.parse(lastSavedVideoBody || '[]');
+            const protectedChanges = protectedVideoIdentityChanges(previousVideos, videos);
+            if (protectedChanges.removedIds.length || protectedChanges.midChanges.length) {
+                showVideoIdentityBlocked(protectedChanges);
+                return;
+            }
+        } catch {
+            // The server remains authoritative if the local comparison snapshot is unavailable.
         }
         if (saveInFlight) {
             queuedSaveMode = isAutoSave ? (queuedSaveMode || 'auto') : 'manual';
@@ -446,12 +614,23 @@ const $ = id => document.getElementById(id);
             headers: CT,
             body
         })
-            .then(res => {
-                if (!res.ok) throw new Error(`video save failed: ${res.status}`);
+            .then(async res => {
+                if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    const error = new Error(payload?.message || `video save failed: ${res.status}`);
+                    error.status = res.status;
+                    error.payload = payload;
+                    throw error;
+                }
                 lastSavedVideoBody = body;
+                setVideoSafetyNotice();
                 toast(isAutoSave ? '영상 자동 저장 완료' : '영상 저장 완료');
             })
             .catch(err => {
+                if (err?.status === 409 && err?.payload?.error === VIDEO_IDENTITY_CHANGE_ERROR) {
+                    showVideoIdentityBlocked(err.payload, err.payload.message);
+                    return;
+                }
                 console.error('[video-manage] save failed', err);
                 toast('영상 저장 실패');
             })

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import pathlib
 import json
+import os
 from typing import Any
 
 BASE = pathlib.Path(__file__).resolve().parents[1]
+DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", str(BASE / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 FILES_DIR = BASE / "files"
 FILES_DIR.mkdir(exist_ok=True)
 
@@ -22,7 +25,7 @@ MAT_PATH   = ensure_json(BASE / "materials.json", {})
 ASN_PATH   = ensure_json(BASE / "mat_assign.json", {})
 UPD_PATH   = ensure_json(BASE / "updates.json", {})
 
-TODAY_ORDER_PATH = ensure_json(BASE / "today_order.json", {})
+TODAY_ORDER_PATH = ensure_json(DATA_DIR / "today_order.json", {})
 EXTRA_PATH = ensure_json(BASE / "extra_attend.json", {})
 LOGS_PATH  = ensure_json(BASE / "logs.json", {})
 TESTS_PATH = ensure_json(BASE / "tests.json", {})

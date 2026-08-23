@@ -34,13 +34,15 @@ def read_sheet_makeup_rows(
     sheet_url: str,
     target_date: dt.date,
     students: list[dict[str, Any]],
+    *,
+    max_sheet_row: int = 127,
 ) -> tuple[dict[int, str], list[tuple[int, list[str], dict[str, Any]]]]:
     rows = _download_csv_rows(sheet_url)
     date_columns = _date_columns(rows, target_date.year, target_date.month)
     if not date_columns:
         msg = f"{target_date.year}년 {target_date.month}월 날짜 열을 찾지 못했습니다."
         raise RuntimeError(msg)
-    matched_rows = _match_sheet_rows(rows, students)
+    matched_rows = _match_sheet_rows(rows, students, max_sheet_row=max_sheet_row)
     if not matched_rows:
         raise RuntimeError("시트에서 현재 학생 명단과 맞는 행을 찾지 못했습니다.")
     return date_columns, matched_rows
@@ -85,20 +87,29 @@ def _date_columns(rows: list[list[str]], year: int, month: int) -> dict[int, str
     return out
 
 
-def _match_sheet_rows(rows: list[list[str]], students: list[dict[str, Any]]) -> list[tuple[int, list[str], dict[str, Any]]]:
+def _match_sheet_rows(
+    rows: list[list[str]],
+    students: list[dict[str, Any]],
+    *,
+    max_sheet_row: int = 127,
+) -> list[tuple[int, list[str], dict[str, Any]]]:
     out: list[tuple[int, list[str], dict[str, Any]]] = []
     used_sids: set[str] = set()
-    for row_index, row in enumerate(rows[5:], start=6):
+    safe_last_row = min(max(6, int(max_sheet_row)), 127)
+    for row_index, row in enumerate(rows[5:safe_last_row], start=6):
         name = _clean_name(sheet_cell(row, 2))
         course = _course_key(sheet_cell(row, 3))
         school = _clean_text(sheet_cell(row, 5) or sheet_cell(row, 4))
         if not name or not course:
             continue
-        for student in _matching_students(students, name, school, course):
-            sid = str(student.get("id") or "").strip()
-            if sid and sid not in used_sids:
-                out.append((row_index, row, student))
-                used_sids.add(sid)
+        matches = _matching_students(students, name, school, course)
+        if len(matches) != 1:
+            continue
+        student = matches[0]
+        sid = str(student.get("id") or "").strip()
+        if sid and sid not in used_sids:
+            out.append((row_index, row, student))
+            used_sids.add(sid)
     return out
 
 

@@ -170,7 +170,7 @@ function Get-RuntimeFingerprints([string]$Root) {
     $paths = @(
         'students.json', 'auth_accounts.json', 'updates.json', 'progress.json', 'logs.json',
         'app.sqlite', 'watch.json', 'attendance.json', 'contact.json', 'arrive_time.json',
-        'extra_attend.json', 'absent.json', 'weekend_slots.json', 'today_order.json',
+        'extra_attend.json', 'absent.json', 'weekend_slots.json',
         'school_calendar.json', 'tests.json', 'announcements.json', 'announce_status.json',
         'data/today_order.json'
     )

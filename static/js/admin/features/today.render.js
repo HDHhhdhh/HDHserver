@@ -33,6 +33,7 @@ import {
   nowHHMM,
   nowISO,
   patchLog,
+  patchLogsBatch,
   truthy,
 } from './today.state.js';
 
@@ -207,7 +208,7 @@ async function patchFlagRemote(kind, date, sid, checked) {
 }
 
 async function patchArriveTimeRemote(date, sid, hhmm) {
-  await _postJSON('/arrive-time/patch', { date, sid: String(sid), value: String(hhmm || '') });
+  await _postJSON('/api/arrive-time/patch', { date, sid: String(sid), value: String(hhmm || '') });
 }
 
 function syncTodayRowVisual(tr) {
@@ -685,31 +686,30 @@ function assignedTestCompletionPatch(progressEntry) {
   return patch;
 }
 
-function hasCleanupAssignmentItems(entry) {
-  return Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY]) || Array.isArray(entry?.assignedTests);
+function useLatestLogEntryForCleanup(dateKey, sid, entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('최신 하원 기록을 확인할 수 없습니다.');
+  }
+  if (!truthy(entry.done)) throw new Error('이미 하원이 취소된 기록입니다.');
+  if (truthy(entry.archived)) throw new Error('이미 정리된 기록입니다.');
+
+  state.logs = state.logs || {};
+  state.logs[dateKey] = state.logs[dateKey] || {};
+  state.logs[dateKey][String(sid)] = entry;
+  window.logs = state.logs;
+  ensureWindowStateAlias();
+  return entry;
 }
 
 async function fetchLogEntryForCleanup(dateKey, sid) {
-  const current = logEntryForSid(dateKey, sid);
-  if (hasCleanupAssignmentItems(current)) return current;
-
   const res = await fetch(`/api/logs/entry?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
     cache: 'no-store',
   });
-  if (!res.ok) return current;
-  const data = await res.json().catch(() => ({}));
-  const entry = data?.entry && typeof data.entry === 'object' ? data.entry : {};
-  if (Object.keys(entry).length) {
-    state.logs = state.logs || {};
-    state.logs[dateKey] = state.logs[dateKey] || {};
-    state.logs[dateKey][String(sid)] = entry;
-    window.logs = state.logs;
-    ensureWindowStateAlias();
-    return entry;
-  }
-  return current;
-}
+  if (!res.ok) throw new Error(`/api/logs/entry ${res.status}`);
 
+  const data = await res.json().catch(() => null);
+  return useLatestLogEntryForCleanup(dateKey, sid, data?.entry);
+}
 function recordCleanupLogTestPatch(entry) {
   const patch = {};
 
@@ -747,44 +747,100 @@ function completedTestLabelsFromLogPatch(logPatch) {
   return labels;
 }
 
-function hasProgressTestStatuses(entry) {
-  const tests = entry?.tests;
-  return !!(tests && typeof tests === 'object' && Object.keys(tests).some(label => String(label || '').trim()));
-}
-
-async function fetchProgressEntryForCleanup(dateKey, sid) {
-  const current = progressEntryForSid(state.progress?.[dateKey], sid);
-  if (hasProgressTestStatuses(current)) return current;
-
-  const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) return {};
-  const data = await res.json().catch(() => ({}));
-  const day = data?.[dateKey] && typeof data[dateKey] === 'object' ? data[dateKey] : {};
-  const entry = progressEntryForSid(day, sid);
-  if (Object.keys(entry).length) {
-    state.progress = state.progress || {};
-    state.progress[dateKey] = state.progress[dateKey] || {};
-    state.progress[dateKey][String(sid)] = entry;
-    window.progressData = state.progress;
-    ensureWindowStateAlias();
+function useLatestProgressEntryForCleanup(dateKey, sid, entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('최신 진행 기록을 확인할 수 없습니다.');
   }
+
+  const sidKey = String(sid);
+  state.progress = state.progress || {};
+  state.progress[dateKey] = state.progress[dateKey] || {};
+  state.progress[dateKey][sidKey] = entry;
+  window.progressData = state.progress;
+  ensureWindowStateAlias();
   return entry;
 }
 
-export async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
-  if (isSidAbsentOn(dateKey, sid)) return {};
+async function fetchProgressEntryForCleanup(dateKey, sid) {
+  const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`/api/progress ${res.status}`);
 
-  const logEntry = await fetchLogEntryForCleanup(dateKey, sid);
+  const data = await res.json().catch(() => null);
+  const day = data?.[dateKey];
+  const sidKey = String(sid);
+  if (!day || typeof day !== 'object' || Array.isArray(day)
+      || !Object.prototype.hasOwnProperty.call(day, sidKey)
+      || !day[sidKey] || typeof day[sidKey] !== 'object' || Array.isArray(day[sidKey])) {
+    throw new Error('최신 진행 기록을 확인할 수 없습니다.');
+  }
+  return useLatestProgressEntryForCleanup(dateKey, sid, progressEntryForSid(day, sid));
+}
+
+export async function preloadRecordCleanupEntries(targets) {
+  const groups = new Map();
+  (Array.isArray(targets) ? targets : []).forEach(([date, sid]) => {
+    const dateKey = String(date || '').trim();
+    const sidKey = String(sid || '').trim();
+    if (!dateKey || !sidKey) return;
+    if (!groups.has(dateKey)) groups.set(dateKey, []);
+    if (!groups.get(dateKey).includes(sidKey)) groups.get(dateKey).push(sidKey);
+  });
+
+  const latest = new Map();
+  await Promise.all(Array.from(groups.entries()).map(async ([dateKey, sids]) => {
+    const progressQuery = new URLSearchParams({ date: dateKey, sids: sids.join(',') });
+    const [logsRes, progressRes] = await Promise.all([
+      fetch(`/api/logs?date=${encodeURIComponent(dateKey)}`, { cache: 'no-store' }),
+      fetch(`/api/progress?${progressQuery.toString()}`, { cache: 'no-store' }),
+    ]);
+    if (!logsRes.ok) throw new Error(`/api/logs ${logsRes.status}`);
+    if (!progressRes.ok) throw new Error(`/api/progress ${progressRes.status}`);
+
+    const [logsData, progressData] = await Promise.all([
+      logsRes.json().catch(() => null),
+      progressRes.json().catch(() => null),
+    ]);
+    if (!logsData || typeof logsData !== 'object' || Array.isArray(logsData)) {
+      throw new Error('최신 하원 기록 묶음을 확인할 수 없습니다.');
+    }
+    if (!progressData || typeof progressData !== 'object' || Array.isArray(progressData)) {
+      throw new Error('최신 진행 기록 묶음을 확인할 수 없습니다.');
+    }
+
+    const logDay = logsData[dateKey] && typeof logsData[dateKey] === 'object' ? logsData[dateKey] : {};
+    const progressDay = progressData[dateKey] && typeof progressData[dateKey] === 'object'
+      ? progressData[dateKey]
+      : {};
+    sids.forEach(sid => {
+      const key = `${dateKey}\u0000${sid}`;
+      latest.set(key, {
+        authoritative: true,
+        logEntry: Object.prototype.hasOwnProperty.call(logDay, sid) ? logDay[sid] : null,
+        progressEntry: Object.prototype.hasOwnProperty.call(progressDay, sid) ? progressDay[sid] : {},
+      });
+    });
+  }));
+  return latest;
+}
+
+export async function completeAssignedTestsForRecordCleanup(dateKey, sid, preloaded = null) {
+  const logEntry = preloaded?.authoritative
+    ? useLatestLogEntryForCleanup(dateKey, sid, preloaded.logEntry)
+    : await fetchLogEntryForCleanup(dateKey, sid);
   const logPatch = recordCleanupLogTestPatch(logEntry);
-  const progressEntry = await fetchProgressEntryForCleanup(dateKey, sid);
+  if (isSidAbsentOn(dateKey, sid)) return logPatch;
+
+  const progressEntry = preloaded?.authoritative
+    ? useLatestProgressEntryForCleanup(dateKey, sid, preloaded.progressEntry)
+    : await fetchProgressEntryForCleanup(dateKey, sid);
   const progressTests = assignedTestCompletionPatch(progressEntry);
   const currentProgressTests = progressEntry?.tests && typeof progressEntry.tests === 'object'
     ? progressEntry.tests
     : {};
   completedTestLabelsFromLogPatch(logPatch).forEach(label => {
-    if (!normalizeTestAssignmentStatus(currentProgressTests[label])) {
+    if (!Object.prototype.hasOwnProperty.call(currentProgressTests, label)) {
       progressTests[label] = 'done';
     }
   });
@@ -1893,43 +1949,37 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const prevText = homeworkLeaveBtn.textContent;
         const t = nowHHMM();
         const leaveAt = nowISO();
-        let ok = 0;
-        let failed = 0;
 
         homeworkLeaveBtn.disabled = true;
         homeworkLeaveBtn.textContent = '처리중';
+        homeworkLeaveBtn.setAttribute('aria-busy', 'true');
 
         try {
-          for (const target of targets) {
-            try {
-              await patchLog(target.dateKey, target.sid, {
-                done: true,
-                leaveTime: t,
-                leaveAt,
-              }, ['archived']);
-              ok += 1;
-            } catch (err) {
-              failed += 1;
-              console.error('[today] homework leave failed:', target, err);
-            }
-          }
+          await patchLogsBatch(targets.map(target => ({
+            date: target.dateKey,
+            sid: target.sid,
+            entry: {
+              done: true,
+              leaveTime: t,
+              leaveAt,
+            },
+            clearKeys: ['archived'],
+          })));
 
-          if (ok) document.dispatchEvent(new CustomEvent('attendance:updated'));
-          await loadTodayAndRender({ force: true });
-
-          if (failed) {
-            toast(`숙검하원 ${ok}/${targets.length}명 처리됨`);
-            if (!ok) alert('숙검하원 저장 실패');
-          } else {
-            toast(`숙검하원 ${ok}명 하원 처리됨 (${t})`);
-          }
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
+          await loadTodayAndRender();
+          toast(`숙검하원 ${targets.length}명 하원 처리됨 (${t})`);
+        } catch (err) {
+          console.error('[today] homework leave batch failed:', err);
+          alert('숙검하원 저장 실패');
+          await loadTodayAndRender({ force: true, forceDatePayloads: true });
         } finally {
           homeworkLeaveBtn.disabled = false;
           homeworkLeaveBtn.textContent = prevText || '숙검하원';
+          homeworkLeaveBtn.removeAttribute('aria-busy');
         }
         return;
       }
-
       const docBtn = e.target.closest('.btn-doc');
       if (docBtn) {
         const url = docBtn.dataset.docUrl;

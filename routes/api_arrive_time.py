@@ -51,7 +51,6 @@ def _apply_time_value(day_map: Dict[str, str], sid: str, value: Any) -> str:
     return v
 
 
-@bp_api_arrive_time.get("/arrive-time")
 @bp_api_arrive_time.get("/api/arrive-time")
 def api_arrive_time_get():
     """
@@ -68,7 +67,6 @@ def api_arrive_time_get():
     return jsonify(_day_map(all_map, date_key))
 
 
-@bp_api_arrive_time.post("/arrive-time")
 @bp_api_arrive_time.post("/api/arrive-time")
 def api_arrive_time_post():
     """
@@ -103,7 +101,6 @@ def api_arrive_time_post():
     return jsonify({"ok": True})
 
 
-@bp_api_arrive_time.post("/arrive-time/patch")
 @bp_api_arrive_time.post("/api/arrive-time/patch")
 def api_arrive_time_patch():
     """

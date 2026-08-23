@@ -7147,6 +7147,17 @@ body.admin #exportLogsModal .export-logs-option-grid {
   gap: 12px;
 }
 
+body.admin #exportLogsModal .export-logs-target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.admin #exportLogsModal #exportLogsTargetDateLabel {
+  color: var(--brand);
+  font-weight: 900;
+}
+
 body.admin #exportLogsModal fieldset {
   min-width: 0;
   margin: 0;
@@ -7270,6 +7281,10 @@ body.admin #exportLogsModal .export-logs-actions .btn {
   }
 
   body.admin #exportLogsModal .export-logs-option-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #exportLogsModal .export-logs-target-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

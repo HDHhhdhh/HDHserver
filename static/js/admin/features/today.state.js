@@ -8,9 +8,7 @@
 //   -> patch가 done을 명시(done:false 포함)하면 그 값을 존중
 //   -> 단, patch가 done을 언급하지 않을 때만(prev done/하원흔적) done 유지
 //
-// ✅ FIX (arrive-time URL)
-// - Flask bp_api_arrive_time가 url_prefix 없이 등록된 경우 실제 경로는 /arrive-time 이므로
-//   ARRIVE_URL을 /arrive-time 으로 맞춤 (기존 /api/arrive-time 불일치 가능성)
+// - 등원시간 API는 표준 `/api/arrive-time` 경로만 사용
 
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
@@ -77,6 +75,35 @@ export function minutesFromTimeStr(str) {
 // ─────────────────────────────────────────────
 // logs.patch (유실 방지)
 // ─────────────────────────────────────────────
+function applyLogPatchLocal(dateKey, sid, entry, clearKeys = null, serverEntry = null) {
+  state.logs = state.logs || {};
+  state.logs[dateKey] = state.logs[dateKey] || {};
+  const ksid = String(sid);
+
+  const prev = state.logs[dateKey][ksid] || {};
+  const hasServerEntry = !!(serverEntry && typeof serverEntry === 'object');
+  const patch = hasServerEntry ? serverEntry : (entry || {});
+  const next = hasServerEntry ? { ...serverEntry } : { ...prev, ...patch };
+
+  if (Array.isArray(clearKeys)) {
+    for (const k of clearKeys) delete next[String(k)];
+  }
+
+  const clearsDone = Array.isArray(clearKeys) && clearKeys.map(String).includes('done');
+  const patchMentionsDone = Object.prototype.hasOwnProperty.call(patch, 'done');
+  const prevWasDone = truthy(prev?.done);
+  const hasLeaveHint =
+    !!(prev?.leaveTime || prev?.leaveAt || prev?.doneTime || next?.leaveTime || next?.leaveAt || next?.doneTime);
+
+  if (!clearsDone && !patchMentionsDone && (prevWasDone || hasLeaveHint)) next.done = true;
+
+  const patchMentionsArchived = Object.prototype.hasOwnProperty.call(patch, 'archived');
+  if (patchMentionsDone && truthy(next.done) && !patchMentionsArchived) delete next.archived;
+
+  state.logs[dateKey][ksid] = next;
+  return next;
+}
+
 export async function patchLog(dateKey, sid, entry, clearKeys = null) {
   const body = { date: dateKey, sid: String(sid), entry: entry || {} };
   if (Array.isArray(clearKeys) && clearKeys.length) body.__clear = clearKeys;
@@ -108,47 +135,33 @@ export async function patchLog(dateKey, sid, entry, clearKeys = null) {
     }
   } catch { /* ignore */ }
 
-  // 로컬 state 즉시 반영
-  state.logs = state.logs || {};
-  state.logs[dateKey] = state.logs[dateKey] || {};
-  const ksid = String(sid);
+  applyLogPatchLocal(dateKey, sid, entry, clearKeys, serverEntry);
+}
 
-  const prev = state.logs[dateKey][ksid] || {};
-  const hasServerEntry = !!(serverEntry && typeof serverEntry === 'object');
-  const patch = hasServerEntry ? serverEntry : (entry || {});
-  const next = hasServerEntry ? { ...serverEntry } : { ...prev, ...patch };
+export async function patchLogsBatch(patches) {
+  const rows = Array.isArray(patches) ? patches.filter(row => row && typeof row === 'object') : [];
+  if (!rows.length) return { ok: true, count: 0 };
 
-  // clearKeys 반영
-  if (Array.isArray(clearKeys)) {
-    for (const k of clearKeys) delete next[String(k)];
+  const payload = rows.map(row => ({
+    date: String(row.date || '').trim(),
+    sid: String(row.sid || '').trim(),
+    entry: row.entry && typeof row.entry === 'object' ? row.entry : {},
+    ...(Array.isArray(row.clearKeys) && row.clearKeys.length ? { __clear: row.clearKeys } : {}),
+  }));
+  const res = await fetch('/api/logs/patch-batch', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify({ patches: payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error || `logs/patch-batch failed: ${res.status}`);
   }
 
-  // ✅ 핵심: "done 상태에서 부분 patch"로 done이 사라지는 케이스 방지
-  // 단, "하원 취소(done:false)"를 지원하려면 done을 명시한 patch는 존중해야 함.
-  const clearsDone = Array.isArray(clearKeys) && clearKeys.map(String).includes('done');
-  const patchMentionsDone = Object.prototype.hasOwnProperty.call(patch, 'done');
-  const prevWasDone = truthy(prev?.done);
-
-  // 하원 흔적: prev 또는 merge된 next 둘 중 하나라도 있으면 "하원 상태로 봄"
-  const hasLeaveHint =
-    !!(prev?.leaveTime || prev?.leaveAt || prev?.doneTime || next?.leaveTime || next?.leaveAt || next?.doneTime);
-
-  // (A) patch가 done을 언급하지 않으면: 기존 done/하원흔적 있으면 done 유지
-  //     (부분 patch가 done을 떨어뜨리는 문제 방지)
-  if (!clearsDone && !patchMentionsDone) {
-    if (prevWasDone || hasLeaveHint) next.done = true;
-  }
-
-  const patchMentionsArchived = Object.prototype.hasOwnProperty.call(patch, 'archived');
-  if (patchMentionsDone && truthy(next.done) && !patchMentionsArchived) {
-    delete next.archived;
-  }
-
-  // (B) ✅ 하원 취소 지원:
-  //     patch가 done을 명시(done:false 포함)하면 그 값 그대로 둔다.
-  //     (기존처럼 done:false를 강제로 true로 바꾸지 않음)
-
-  state.logs[dateKey][ksid] = next;
+  rows.forEach(row => {
+    applyLogPatchLocal(row.date, row.sid, row.entry, row.clearKeys);
+  });
+  return data;
 }
 
 export function getLeaveTime(dateKey, sid) {
@@ -694,8 +707,8 @@ export function isContacted(dateKey, sid) {
 // ─────────────────────────────────────────────
 // arrive-time override (서버 + 로컬백업)
 // ─────────────────────────────────────────────
-// ✅ 서버 bp_api_arrive_time 경로가 /arrive-time 로 등록된 경우에 맞춤
-const ARRIVE_URL = '/arrive-time';
+// 서버 표준 API 경로
+const ARRIVE_URL = '/api/arrive-time';
 const ARRIVE_PREFIX = 'arrive_time:';
 const _arriveCache = new Map();      // dateKey -> { sid:"HH:MM", ... }
 

@@ -9,6 +9,8 @@ const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=
 const PATCH_METHODS = new Set(['POST', 'PATCH']);
 const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const DEMO_UPLOAD_URL = '/demo-assets/images/uploaded-demo-image.png';
+const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
+const TEST_ASSIGN_TOUCHED_KEYS_KEY = '__testAssignmentTouchedKeys';
 
 function getLocationOrigin(root) {
   const loc = root?.location || globalThis.location;
@@ -283,6 +285,22 @@ function mergeProgressPatch(store, body) {
   const manualMeta = next.__manualProgressMids && typeof next.__manualProgressMids === 'object'
     ? { ...next.__manualProgressMids }
     : {};
+  const touchedTestKeys = new Set(
+    Array.isArray(patch[TEST_ASSIGN_TOUCHED_KEYS_KEY])
+      ? patch[TEST_ASSIGN_TOUCHED_KEYS_KEY].map(key => String(key || '').trim()).filter(Boolean)
+      : [],
+  );
+  const patchedTestKeys = new Set();
+  const changedTestKeys = new Set();
+  let sawTestsPatch = false;
+  const testStatusName = (value) => {
+    if (value && typeof value === 'object') {
+      if (value.remove === true) return '';
+      value = value.status;
+    }
+    const status = String(value ?? '').trim();
+    return status === 'none' ? '' : status;
+  };
 
   Object.entries(patch).forEach(([key, rawValue]) => {
     const mid = String(key || '').trim();
@@ -297,10 +315,13 @@ function mergeProgressPatch(store, body) {
 
     if (mid === 'tests') {
       if (!rawValue || typeof rawValue !== 'object') return;
+      sawTestsPatch = true;
       const tests = next.tests && typeof next.tests === 'object' ? { ...next.tests } : {};
       Object.entries(rawValue).forEach(([testKey, testStatus]) => {
         const normalizedKey = String(testKey || '').trim();
         if (!normalizedKey) return;
+        patchedTestKeys.add(normalizedKey);
+        const beforeStatus = testStatusName(tests[normalizedKey]);
         if (testStatus == null || testStatus === false) {
           delete tests[normalizedKey];
         } else if (typeof testStatus === 'string') {
@@ -313,6 +334,7 @@ function mergeProgressPatch(store, body) {
         } else {
           tests[normalizedKey] = String(testStatus).trim();
         }
+        if (beforeStatus !== testStatusName(tests[normalizedKey])) changedTestKeys.add(normalizedKey);
       });
       if (Object.keys(tests).length) {
         next.tests = tests;
@@ -337,6 +359,28 @@ function mergeProgressPatch(store, body) {
 
   if (Object.keys(manualMeta).length) next.__manualProgressMids = manualMeta;
   else delete next.__manualProgressMids;
+  if (sawTestsPatch) {
+    const tests = next.tests && typeof next.tests === 'object' ? next.tests : {};
+    const rawOrder = next[TEST_ASSIGN_CHANGE_ORDER_KEY];
+    const orderByKey = {};
+    if (rawOrder && typeof rawOrder === 'object' && !Array.isArray(rawOrder)) {
+      Object.entries(rawOrder).forEach(([key, value]) => {
+        const order = Number(value);
+        if (String(key || '').trim() && Number.isInteger(order) && order > 0 && testStatusName(tests[key])) {
+          orderByKey[key] = order;
+        }
+      });
+    }
+    const orderedKeys = Array.from(touchedTestKeys.size ? touchedTestKeys : changedTestKeys)
+      .filter(key => patchedTestKeys.has(key) && testStatusName(tests[key]));
+    if (orderedKeys.length) {
+      const nextOrder = Math.max(0, ...Object.values(orderByKey)) + 1;
+      orderedKeys.forEach(key => { orderByKey[key] = nextOrder; });
+    }
+    if (Object.keys(orderByKey).length) next[TEST_ASSIGN_CHANGE_ORDER_KEY] = orderByKey;
+    else delete next[TEST_ASSIGN_CHANGE_ORDER_KEY];
+  }
+  delete next[TEST_ASSIGN_TOUCHED_KEYS_KEY];
   bySid[sid] = next;
   return { progress: clone(next) };
 }
@@ -965,11 +1009,11 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
   if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url));
-  if (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all') return extraAttendResponse(root, store, url);
+  if (path === '/api/extra-attend') return extraAttendResponse(root, store, url);
   if (path === '/api/absent') return responseJson(root, clone(store.absent || { by_date: {}, by_student: {}, by_slot: {} }));
   if (path === '/api/attendance') return dayMapResponse(root, store, 'attendance', url);
   if (path === '/api/contact') return dayMapResponse(root, store, 'contact', url);
-  if (path === '/api/arrive-time' || path === '/arrive-time') return dayMapResponse(root, store, 'arriveTime', url);
+  if (path === '/api/arrive-time') return dayMapResponse(root, store, 'arriveTime', url);
   if (path === '/api/attend') return attendResponse(root, store, url);
   if (path === '/api/weekend-slots') return responseJson(root, clone(store.weekendSlots || {}));
   if (path === '/api/today_order') return responseJson(root, clone(store.todayOrder || {}));
@@ -1174,21 +1218,21 @@ async function handleWrite(root, ctx, store) {
     return ok(root, { ok: true, contact: result.map, date: result.date, sid: result.sid, value: result.value });
   }
 
-  if (PATCH_METHODS.has(method) && (path === '/api/arrive-time/patch' || path === '/arrive-time/patch')) {
+  if (PATCH_METHODS.has(method) && path === '/api/arrive-time/patch') {
     const result = upsertArriveTime(store, body);
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, arriveTime: result.map, date: result.date, sid: result.sid, value: result.value });
   }
 
-  if (PATCH_METHODS.has(method) && (path === '/api/arrive-time' || path === '/arrive-time')) {
+  if (PATCH_METHODS.has(method) && path === '/api/arrive-time') {
     const result = body?.sid ? upsertArriveTime(store, body) : { map: mergeWholeMap(store, 'arriveTime', body) };
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, arriveTime: clone(store.arriveTime || {}) });
   }
 
-  if (method === 'PATCH' && (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all')) {
+  if (method === 'PATCH' && path === '/api/extra-attend') {
     const rawDates = body?.dates && typeof body.dates === 'object'
       ? body.dates
       : { [body?.date]: body?.sids };
@@ -1212,12 +1256,6 @@ async function handleWrite(root, ctx, store) {
 
   if (method === 'POST' && path === '/api/weekend-slots') {
     const next = mergeWeekendSlotsPatch(store, body);
-    saveDemoStore(store);
-    return ok(root, next);
-  }
-
-  if (method === 'POST' && path === '/api/today_order') {
-    const next = setWholeMap(store, 'todayOrder', body);
     saveDemoStore(store);
     return ok(root, next);
   }

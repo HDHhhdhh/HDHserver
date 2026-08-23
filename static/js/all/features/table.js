@@ -1126,7 +1126,7 @@ let studentRecordPopupModulePromise = null;
 
 async function ensureStudentRecordPopupReady() {
   if (!studentRecordPopupModulePromise) {
-    studentRecordPopupModulePromise = import('./studentRecordPopup.js?v=20260819-homework-status1').catch((error) => {
+    studentRecordPopupModulePromise = import('./studentRecordPopup.js?v=20260821-note-body-row2').catch((error) => {
       studentRecordPopupModulePromise = null;
       throw error;
     });

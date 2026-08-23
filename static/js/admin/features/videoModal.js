@@ -33,6 +33,7 @@ let activeVideoProgressInitial = {};
 let activeVideoProgressPatch = {};
 let activeVideoAccessMode = 'full';
 let activeVideoMultiSelectedMids = new Set();
+let activeVideoMultiSelectionAnchorMid = '';
 let videoOpenSeq = 0;
 let studentPopupScrollPosition = null;
 
@@ -111,6 +112,7 @@ function studentScheduleValues(stu) {
     .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)))
     .map(key => String(stu[key]));
 }
+
 
 function weekdayCharForDate(dateKey) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
@@ -874,20 +876,17 @@ async function hydrateLogsEntry(today, sid) {
 
 async function hydrateExtraAttend(today) {
   // 있으면 사용, 없으면 무시
-  const candidates = ['/api/extra-attend', '/api/extra', '/api/extra_attend', '/api/extra-attend/all'];
-  for (const url of candidates) {
-    try {
-      const { res, data } = await getJSON(url);
-      if (!res.ok) continue;
+  try {
+    const { res, data } = await getJSON('/api/extra-attend');
+    if (!res.ok) return false;
 
-      const obj = unwrapOkPayload(data, 'extra') || unwrapOkPayload(data, 'data') || data;
-      if (obj && typeof obj === 'object') {
-        state.extra = obj;
-        if (!Array.isArray(state.extra[today])) state.extra[today] = state.extra[today] || [];
-        return true;
-      }
-    } catch {}
-  }
+    const obj = unwrapOkPayload(data, 'extra') || unwrapOkPayload(data, 'data') || data;
+    if (obj && typeof obj === 'object') {
+      state.extra = obj;
+      if (!Array.isArray(state.extra[today])) state.extra[today] = state.extra[today] || [];
+      return true;
+    }
+  } catch {}
   return false;
 }
 
@@ -895,22 +894,42 @@ async function hydrateProgressMaybe(date = '', sid = '') {
   try {
     const dateKey = String(date || '').trim();
     const sidKey = String(sid || '').trim();
-    const scoped = Boolean(dateKey && sidKey);
-    if (!scoped && state.progress && typeof state.progress === 'object' && Object.keys(state.progress).length) return true;
+    const studentScoped = Boolean(sidKey);
+    if (!studentScoped && state.progress && typeof state.progress === 'object' && Object.keys(state.progress).length) return true;
 
-    const params = scoped ? new URLSearchParams({ date: dateKey, sid: sidKey }) : null;
+    // Automatic assignment depends on every prior status for this student.
+    // A date-scoped read makes completed/skipped videos look unseen again when
+    // the popup is reopened, so keep the request student-scoped instead.
+    const params = studentScoped ? new URLSearchParams({ sid: sidKey }) : null;
     const { res, data } = await getJSON(`/api/progress${params ? `?${params.toString()}` : ''}`);
     if (!res.ok) return false;
 
     const obj = unwrapOkPayload(data, 'progress') || unwrapOkPayload(data, 'data') || data;
     if (obj && typeof obj === 'object') {
-      if (scoped) {
-        const entry = obj?.[dateKey]?.[sidKey];
+      if (studentScoped) {
         state.progress = state.progress && typeof state.progress === 'object' ? state.progress : {};
-        state.progress[dateKey] = state.progress[dateKey] && typeof state.progress[dateKey] === 'object'
-          ? state.progress[dateKey]
-          : {};
-        state.progress[dateKey][sidKey] = entry && typeof entry === 'object' ? entry : {};
+        const historyEntries = Object.entries(obj)
+          .filter(([progressDate, day]) => /^\d{4}-\d{2}-\d{2}$/.test(progressDate) && day && typeof day === 'object');
+        if (Object.keys(obj).length && !historyEntries.length) return false;
+
+        Object.entries(state.progress).forEach(([progressDate, day]) => {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(progressDate) || !day || typeof day !== 'object') return;
+          delete day[sidKey];
+        });
+        historyEntries.forEach(([progressDate, day]) => {
+          const entry = day?.[sidKey];
+          if (!entry || typeof entry !== 'object') return;
+          state.progress[progressDate] = state.progress[progressDate] && typeof state.progress[progressDate] === 'object'
+            ? state.progress[progressDate]
+            : {};
+          state.progress[progressDate][sidKey] = entry;
+        });
+        if (dateKey) {
+          state.progress[dateKey] = state.progress[dateKey] && typeof state.progress[dateKey] === 'object'
+            ? state.progress[dateKey]
+            : {};
+          state.progress[dateKey][sidKey] = state.progress[dateKey][sidKey] || {};
+        }
       } else {
         state.progress = obj;
       }
@@ -955,6 +974,22 @@ function videoCurriculum(v) {
 
 function videoSubCurriculum(v) {
   return String(v?.subCurriculum || '').trim();
+}
+
+function currentCurriculumVideosForStudent(stu, videos = state.videos) {
+  const curriculumKey = String(stu?.curriculum || '').trim().toLowerCase();
+  const subCurriculumKey = String(stu?.subCurriculum || '').trim().toLowerCase();
+  if (!curriculumKey) return [];
+
+  return (videos || [])
+    .filter(video =>
+      video &&
+      typeof video === 'object' &&
+      videoCurriculum(video).toLowerCase() === curriculumKey &&
+      (!subCurriculumKey || videoSubCurriculum(video).toLowerCase() === subCurriculumKey)
+    )
+    .slice()
+    .sort(byChapterAsc);
 }
 
 function videoByMid(mid) {
@@ -1057,7 +1092,7 @@ function renderVideoCheckbox(v, assignedSet, extra = false) {
            data-selection="${multiSelected ? 'selected' : 'none'}"
            role="button" tabindex="0" aria-selected="${multiSelected ? 'true' : 'false'}"
            data-high-difficulty="${isHighDifficultyVideo(v) ? '1' : '0'}"
-           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
+           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · Ctrl+Shift+클릭: 범위 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
       <input type="checkbox" value="${escapeHtml(mid)}" ${checked ? 'checked' : ''} aria-label="${escapeHtml(videoRowLabel(v))}">
       <span class="vid-row-main">${escapeHtml(videoRowLabel(v))}</span>
       <span class="vid-selection-badge">선택</span>
@@ -1075,7 +1110,7 @@ function renderUnknownExtraVideo(mid) {
            data-mid="${escapeHtml(key)}" data-state="assigned"
            data-selection="${multiSelected ? 'selected' : 'none'}"
            role="button" tabindex="0" aria-selected="${multiSelected ? 'true' : 'false'}"
-           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
+           title="클릭/드래그: 상태 변경 · Ctrl+클릭: 다중 선택 · Ctrl+Shift+클릭: 범위 선택 · ←/→: 선택 상태 변경 · 우클릭/우드래그: 제외">
       <input type="checkbox" value="${escapeHtml(key)}" checked aria-label="알 수 없는 영상">
       <span class="vid-row-main">알 수 없는 영상</span>
       <span class="vid-selection-badge">선택</span>
@@ -1274,7 +1309,7 @@ function buildVideoAssignmentHtml(courseVids, assigned, noteHtml, stu) {
         <span data-state="done">파랑 완료</span>
         <span data-state="interrupted">주황 시청 중</span>
       </div>
-      <div id="vidSelectionMeta" class="vid-selection-meta" role="status" aria-live="polite">Ctrl/Cmd+클릭으로 다중 선택 · ←/→로 선택 상태 변경</div>
+      <div id="vidSelectionMeta" class="vid-selection-meta" role="status" aria-live="polite">Ctrl/Cmd+클릭으로 다중 선택 · Ctrl/Cmd+Shift+클릭으로 범위 선택 · ←/→로 상태 변경</div>
       ${noteHtml || ''}
       ${courseRows}
     </div>
@@ -1467,8 +1502,8 @@ function renderVideoMultiSelectionMeta() {
     .filter(row => activeVideoMultiSelectedMids.has(String(row.dataset.mid || '').trim()))
     .length;
   meta.textContent = visibleCount
-    ? `선택 ${visibleCount}개 · ←/→로 상태 변경`
-    : 'Ctrl/Cmd+클릭으로 다중 선택 · ←/→로 선택 상태 변경';
+    ? '선택 ' + visibleCount + '개 · Ctrl/Cmd+Shift+클릭으로 범위 추가 · ←/→로 상태 변경'
+    : 'Ctrl/Cmd+클릭으로 다중 선택 · Ctrl/Cmd+Shift+클릭으로 범위 선택 · ←/→로 상태 변경';
 }
 
 function toggleVideoMultiSelection(row) {
@@ -1477,12 +1512,55 @@ function toggleVideoMultiSelection(row) {
   if (!mid) return;
   if (activeVideoMultiSelectedMids.has(mid)) activeVideoMultiSelectedMids.delete(mid);
   else activeVideoMultiSelectedMids.add(mid);
+  activeVideoMultiSelectionAnchorMid = mid;
   applyVideoRowSelection(row);
   renderVideoMultiSelectionMeta();
 }
 
-function clearVideoMultiSelection() {
+function videoMultiSelectionRangeMids(rows, anchorMid, targetMid) {
+  const visibleMids = (rows || [])
+    .map(row => String(row?.dataset?.mid || '').trim())
+    .filter(Boolean);
+  const targetIndex = visibleMids.indexOf(String(targetMid || '').trim());
+  if (targetIndex < 0) return [];
+  const anchorIndex = visibleMids.indexOf(String(anchorMid || '').trim());
+  if (anchorIndex < 0) return [visibleMids[targetIndex]];
+  const lo = Math.min(anchorIndex, targetIndex);
+  const hi = Math.max(anchorIndex, targetIndex);
+  return visibleMids.slice(lo, hi + 1);
+}
+
+function addVideoMultiSelectionRange(row) {
+  if (!row) return;
+  const targetMid = String(row.dataset?.mid || '').trim();
+  if (!targetMid) return;
+  const rows = Array.from(document.querySelectorAll('#chkZone .vid-row[data-mid]'));
+  const anchorVisible = rows.some(candidate =>
+    String(candidate.dataset?.mid || '').trim() === activeVideoMultiSelectionAnchorMid
+  );
+  const rangeMids = new Set(videoMultiSelectionRangeMids(
+    rows,
+    activeVideoMultiSelectionAnchorMid,
+    targetMid
+  ));
+  if (!rangeMids.size) return;
+  if (!anchorVisible) activeVideoMultiSelectionAnchorMid = targetMid;
+  rows.forEach(candidate => {
+    const mid = String(candidate.dataset?.mid || '').trim();
+    if (!rangeMids.has(mid)) return;
+    activeVideoMultiSelectedMids.add(mid);
+    applyVideoRowSelection(candidate);
+  });
+  renderVideoMultiSelectionMeta();
+}
+
+function resetVideoMultiSelectionState() {
   activeVideoMultiSelectedMids.clear();
+  activeVideoMultiSelectionAnchorMid = '';
+}
+
+function clearVideoMultiSelection() {
+  resetVideoMultiSelectionState();
   document.querySelectorAll('#chkZone .vid-row[data-mid]').forEach(applyVideoRowSelection);
   renderVideoMultiSelectionMeta();
 }
@@ -1685,7 +1763,6 @@ function renderAutoAssignControl(stu) {
 
   const current = autoAssignCountForStudent(stu);
   const effective = effectiveAutoAssignCountForStudent(stu, editingVideoDate || getAdminDate());
-
   if (label) {
     label.textContent = effective === current
       ? `${current}개`
@@ -1719,26 +1796,6 @@ async function saveAutoAssignCountForCurrent(count) {
     body: JSON.stringify({ id: sid, field: AUTO_ASSIGN_FIELD, value: nextCount })
   });
   if (!res.ok) throw new Error('auto assign count save failed');
-
-  if (!activeAllowAutoAssign || !activeAutoGenerated) return;
-
-  const today = editingVideoDate || getAdminDate();
-  const assigned = pickAutoVideos(
-    activeVideoList,
-    activeBlockedMids,
-    effectiveAutoAssignCountForStudent(stu, today)
-  );
-  setCheckedMids(assigned);
-
-  state.updates = state.updates || {};
-  writeAssignFor(state.updates, today, sid, assigned, 'auto');
-  await fetch('/api/updates/patch', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify({ date: today, sid, entry: { videos: assigned, source: 'auto' } })
-  });
-  activeAssignmentManual = false;
-  activeVideoSelectionDirty = false;
 }
 
 /* ───────────── 오늘 학생 표(오늘 수업 대상) 판정 ───────────── */
@@ -1837,25 +1894,9 @@ export function initVideoModal() {
     mTitle.textContent = `${stu.name} – ${stu.curriculum} (${stu.subCurriculum || '전체'})`;
     renderAutoAssignControl(stu);
 
-    const curKey = (stu.curriculum || '').trim().toLowerCase();
-    const subKey = (stu.subCurriculum || '').trim().toLowerCase();
-
-    // ① 과목+소과목 필터
-    let curVids = (state.videos || [])
-      .filter(v =>
-        String(v.curriculum || '').trim().toLowerCase() === curKey &&
-        String(v.subCurriculum || '').trim().toLowerCase() === subKey
-      )
-      .slice()
-      .sort(byChapterAsc);
-
-    // fallback: 소과목 안 맞으면 과목만
-    if (!curVids.length) {
-      curVids = (state.videos || [])
-        .filter(v => String(v.curriculum || '').trim().toLowerCase() === curKey)
-        .slice()
-        .sort(byChapterAsc);
-    }
+    // Automatic assignment is scoped to the student's current curriculum.
+    // Cross-curriculum videos belong only to the explicit manual-add section.
+    const curVids = currentCurriculumVideosForStudent(stu);
     activePrimaryVideoMids = new Set(curVids.map(videoMid).filter(Boolean));
     activeExtraVideoSearchOpen = false;
     activeExtraSubject = '';
@@ -1864,8 +1905,11 @@ export function initVideoModal() {
     ensureExtraVideoFilters(stu);
 
     const rawAssignment = readAssignValueFor(state.updates, today, editingSid);
-    const assigned = readAssignFor(state.updates, today, editingSid);
+    const storedAssigned = readAssignFor(state.updates, today, editingSid);
     activeAssignmentManual = isManualVideoAssignment(rawAssignment);
+    const assigned = activeAssignmentManual
+      ? storedAssigned
+      : storedAssigned.filter(mid => activePrimaryVideoMids.has(String(mid)));
     const existingAssignmentAuto = !!(
       !activeAssignmentManual &&
       ((Array.isArray(rawAssignment) && rawAssignment.length > 0) ||
@@ -1874,7 +1918,7 @@ export function initVideoModal() {
           !Array.isArray(rawAssignment) &&
           rawAssignment.source === 'auto'))
     );
-    activeVideoMultiSelectedMids.clear();
+    resetVideoMultiSelectionState();
     activeVideoSelectionDirty = false;
     // Opening the popup is read-only. The server owns date/makeup/consecutive
     // assignment events, so progress changes cannot re-pick this snapshot.
@@ -1930,7 +1974,7 @@ export function initVideoModal() {
     activeVideoProgress = {};
     activeVideoProgressInitial = {};
     activeVideoProgressPatch = {};
-    activeVideoMultiSelectedMids.clear();
+    resetVideoMultiSelectionState();
     activeVideoAccessMode = 'full';
     delete vidModal.dataset.accessMode;
     vidModal.style.display = 'none';
@@ -1977,7 +2021,7 @@ export function initVideoModal() {
     const btn = e.target.closest('#extraVideoAddBtn');
     if (!btn) return;
     e.preventDefault();
-    activeVideoMultiSelectedMids.clear();
+    resetVideoMultiSelectionState();
     const selected = selectedVideoMids();
     activeExtraVideoSearchOpen = !activeExtraVideoSearchOpen;
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -1993,7 +2037,7 @@ export function initVideoModal() {
   chkZone.addEventListener('input', (e) => {
     if (e.target?.id !== 'extraVideoSearch') return;
     applySearchPlaceholder(e.target, '영상 제목 검색');
-    activeVideoMultiSelectedMids.clear();
+    resetVideoMultiSelectionState();
     const selected = selectedVideoMids();
     activeExtraQuery = String(e.target.value || '');
     chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -2079,7 +2123,7 @@ export function initVideoModal() {
 
   chkZone.addEventListener('change', (e) => {
     if (e.target?.id === 'extraVideoSubject') {
-      activeVideoMultiSelectedMids.clear();
+      resetVideoMultiSelectionState();
       const selected = selectedVideoMids();
       activeExtraSubject = String(e.target.value || '').trim();
       activeExtraSubCurriculum = '';
@@ -2088,7 +2132,7 @@ export function initVideoModal() {
     }
 
     if (e.target?.id === 'extraVideoSubCurriculum') {
-      activeVideoMultiSelectedMids.clear();
+      resetVideoMultiSelectionState();
       const selected = selectedVideoMids();
       activeExtraSubCurriculum = String(e.target.value || '').trim();
       chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -2098,7 +2142,7 @@ export function initVideoModal() {
     if (e.target?.matches?.('input[type="checkbox"]')) {
       applyVideoRowState(e.target.closest('.vid-row'), e.target.checked ? 'assigned' : 'none');
       if (e.target.closest('.vid-extra-section')) {
-        activeVideoMultiSelectedMids.clear();
+        resetVideoMultiSelectionState();
         const selected = selectedVideoMids();
         requestAnimationFrame(() => {
           chkZone.innerHTML = buildVideoAssignmentHtml(activeVideoList, selected, activeVideoNoteHtml, state.students.find(x => String(x.id) === String(editingSid)));
@@ -2113,7 +2157,8 @@ export function initVideoModal() {
     e.preventDefault();
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey) {
-      toggleVideoMultiSelection(row);
+      if (e.shiftKey) addVideoMultiSelectionRange(row);
+      else toggleVideoMultiSelection(row);
       return;
     }
     if (suppressClickOnce) {

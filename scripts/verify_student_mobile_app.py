@@ -66,7 +66,6 @@ RUNTIME_FILE_NAMES: Final[tuple[str, ...]] = (
     "materials.json",
     "mat_assign.json",
     "updates.json",
-    "today_order.json",
     "extra_attend.json",
     "logs.json",
     "tests.json",

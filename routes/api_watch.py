@@ -12,6 +12,7 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_progress_day_sid,
     merge_watch_entry,
+    normalize_incoming_watch_updated_at,
     normalize_watch_entry,
     watch_auto_status,
     watch_rank,
@@ -62,8 +63,10 @@ def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
         raise ValueError("missing date/sid/mid")
 
     merged_incoming = normalize_watch_entry(incoming)
-    if not merged_incoming["updatedAt"]:
-        merged_incoming["updatedAt"] = int(time.time() * 1000)
+    merged_incoming["updatedAt"] = normalize_incoming_watch_updated_at(
+        merged_incoming["updatedAt"],
+        int(time.time() * 1000),
+    )
 
     with _watch_lock():
         data = load(WATCH_PATH)
@@ -123,12 +126,10 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         raise ValueError("bad status")
 
     from routes.api_basic import (
-        _is_finished_video_progress_status,
         _load_progress_strict,
         _notification_progress_commit,
         _notification_progress_snapshot,
         _progress_lock,
-        _reconcile_auto_assignment_after_progress,
         _save_progress_strict,
     )
 
@@ -166,18 +167,6 @@ def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
         notification_after = _notification_progress_snapshot(current, sid)
 
     _notification_progress_commit(notification_before, notification_after, sid)
-    if _is_finished_video_progress_status(merged.get(mid)):
-        try:
-            _reconcile_auto_assignment_after_progress(
-                date,
-                sid,
-                progress=current,
-                watch=load(WATCH_PATH) or {},
-            )
-        except Exception as exc:
-            # Playback persistence must not fail because its derived
-            # assignment snapshot could not be refreshed.
-            print("[watch] auto-assignment reconcile failed:", exc, flush=True)
 
 
 

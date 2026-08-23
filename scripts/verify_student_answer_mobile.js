@@ -42,11 +42,6 @@ function extractFunction(name) {
 
 const actionElement = extractFunction("createAssignedTestActionElement");
 const sameTabHelper = extractFunction("shouldOpenAssignedTestAnswerInSameTab");
-const fallbackStart = source.indexOf("window.openAssignedTestAnswerLink = async");
-assertContract(fallbackStart !== -1, "missing window.openAssignedTestAnswerLink async handler");
-const fallbackEnd = source.indexOf("function normalizeAnswerLinkMap", fallbackStart);
-assertContract(fallbackEnd !== -1, "missing end marker after window.openAssignedTestAnswerLink");
-const fallbackOpener = source.slice(fallbackStart, fallbackEnd);
 const renderStart = source.indexOf("function renderAssignedTests()");
 const renderEnd = source.indexOf("async function recoverStudentSid", renderStart);
 assertContract(renderStart !== -1 && renderEnd !== -1, "missing renderAssignedTests block");
@@ -81,13 +76,6 @@ for (const snippet of [
   assertContract(sameTabHelper.includes(snippet), `mobile/tablet same-tab detection missing: ${snippet}`);
 }
 
-for (const snippet of [
-  "window.location.assign(url)",
-  "window.open('about:blank', '_blank')",
-  "popup.location.replace(url)",
-]) {
-  assertContract(fallbackOpener.includes(snippet), `fallback opener contract missing: ${snippet}`);
-}
 
 for (const snippet of [
   "const answerUrl = assignedTestAnswerUrl(test);",
@@ -96,10 +84,22 @@ for (const snippet of [
   "const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);",
   "if (answerUrl) btn.dataset.answerUrl = answerUrl;",
   "if (answerRestricted) btn.dataset.answerRestricted = '1';",
-  "window.openAssignedTestAnswerLink(test)",
-  "showAcademyOnlyNotice();",
+  "btn.disabled = true;",
+  "btn.setAttribute('aria-disabled', 'true');",
+  "btn.addEventListener('click', showAcademyOnlyNotice);",
 ]) {
   assertContract(renderBlock.includes(snippet), `assigned-test render contract missing: ${snippet}`);
+}
+
+for (const retiredSurface of [
+  'openAssignedTestSubmit',
+  'openAssignedTestAnswerLink',
+  '/api/submit-test',
+  '/api/ocr-test-sheet',
+  'testSubmitModal',
+  'testAnswerPreviewModal',
+]) {
+  assertContract(!source.includes(retiredSurface), `retired submission surface remains: ${retiredSurface}`);
 }
 
 console.log("student answer mobile frontend contract ok");

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import subprocess
 import sys
@@ -15,7 +14,6 @@ if str(ROOT) not in sys.path:
 from core.network_access import strip_tests_config_answer_links
 from core.short_answer import normalize_short_answer
 from core.test_answer_modes import ANSWER_VALUE, CHOICE_NUMBER, answer_modes_for_round
-from routes.api_tests import _phase2a_review_payload_with_answer_modes
 
 
 def verify_answer_mode_schema() -> None:
@@ -61,27 +59,6 @@ def verify_short_answers() -> None:
         assert normalize_short_answer(unsupported, ANSWER_VALUE) is None
     assert normalize_short_answer("5", CHOICE_NUMBER) == "5"
     assert normalize_short_answer("6", CHOICE_NUMBER) is None
-
-
-def verify_review_payload_modes() -> None:
-    original = {
-        "items": [
-            {"question_no": 1, "status": "safe_auto_grade", "warnings": [], "final_answer": "2", "source": "local"},
-            {"question_no": 2, "status": "safe_auto_grade", "warnings": [], "final_answer": "1/2", "source": "local"},
-            {"question_no": 3, "status": "safe_auto_grade", "warnings": [], "final_answer": "7", "source": "local"},
-        ],
-    }
-    snapshot = copy.deepcopy(original)
-    normalized = _phase2a_review_payload_with_answer_modes(
-        original,
-        [CHOICE_NUMBER, ANSWER_VALUE, "manual_review"],
-    )
-    assert original == snapshot
-    assert normalized is not None
-    assert [item["answer_mode"] for item in normalized["items"]] == [CHOICE_NUMBER, ANSWER_VALUE, "manual_review"]
-    assert normalized["items"][2]["status"] == "safe_auto_grade"
-    assert normalized["items"][2]["final_answer"] == "7"
-    assert normalized["items"][2]["warnings"] == []
 
 
 def verify_test_management_ui() -> None:
@@ -155,7 +132,6 @@ def main() -> int:
     verify_answer_mode_schema()
     verify_public_projection()
     verify_short_answers()
-    verify_review_payload_modes()
     verify_test_management_ui()
     verify_migration_preview()
     print("test answer modes: OK")

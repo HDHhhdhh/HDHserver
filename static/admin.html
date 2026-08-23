@@ -6,8 +6,8 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260816-student-log-restore2">
-  <link rel="stylesheet" href="/css/student-work-light.css?v=20260819t11">
+  <link rel="stylesheet" href="/css/admin.css?v=20260821-makeup-export1">
+  <link rel="stylesheet" href="/css/student-work-light.css?v=20260821-note-reminder-vertical1">
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
@@ -476,9 +476,28 @@
       <header class="export-logs-heading">
         <p class="export-logs-kicker">CLASS LOG EXPORT</p>
         <h3 id="exportLogsTitle">수업 기록 내보내기 설정</h3>
-        <p id="exportLogsDescription">파일 형식과 TXT에 담을 내용을 선택합니다. CSV 열 구조는 기존 연동을 위해 고정됩니다.</p>
+        <p id="exportLogsDescription">내보낼 기록과 파일 형식을 선택합니다. CSV 열 구조는 기존 연동을 위해 고정됩니다.</p>
       </header>
       <form id="exportLogsForm" class="export-logs-form">
+        <fieldset class="export-logs-targets">
+          <legend>내보낼 기록</legend>
+          <div class="export-logs-target-grid">
+            <label class="export-logs-option">
+              <input id="exportLogsTargetDone" name="exportLogsTarget" type="radio" value="done" checked>
+              <span>
+                <strong>하원 완료·미정리</strong>
+                <small>기존 방식 그대로 학생별 최신 완료 기록을 내보냅니다.</small>
+              </span>
+            </label>
+            <label class="export-logs-option">
+              <input id="exportLogsTargetDate" name="exportLogsTarget" type="radio" value="date">
+              <span>
+                <strong>선택일 숙검 완료</strong>
+                <small><span id="exportLogsTargetDateLabel">선택 날짜</span> · 하원하지 않아도 숙검 완료된 기록만 포함합니다.</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
         <div class="export-logs-option-grid">
           <fieldset>
             <legend>파일 형식</legend>
@@ -592,6 +611,6 @@
   </div>
 
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260816-phase5"></script>
-  <script type="module" src="/js/admin/main.js?v=20260819-homework-status1"></script>
+  <script type="module" src="/js/admin/main.js?v=20260823-export-perf1"></script>
 </body>
 </html>

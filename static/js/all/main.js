@@ -2,7 +2,7 @@
 import { $ } from './core/utils.js';
 import { loadAll, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
-import { renderTable } from './features/table.js';
+import { renderTable } from './features/table.js?v=20260821-note-body-row2';
 import './features/progressModal.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';

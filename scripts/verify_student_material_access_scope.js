@@ -352,7 +352,6 @@ function createBaseDocument() {
     'submitFeedback',
     'goLogin',
     'stuName',
-    'openTestSubmit',
     'studentHomeworkPanel',
     'studentHomeworkBooks',
     'player',
@@ -402,7 +401,7 @@ function runPreviousVideoVerifier() {
 }
 
 async function main(options = {}) {
-  const legacyFallback = options.legacyFallback === true;
+  const bootstrapFailure = options.bootstrapFailure === true;
   const alerts = [];
   const document = createBaseDocument();
   const storage = new Map();
@@ -427,7 +426,7 @@ async function main(options = {}) {
       mid: 'qa-review-1',
       title: 'restricted review',
       chapter: 2,
-      reviewStatus: 'interrupted',
+      reviewStatus: 'done',
       playbackRestricted: true,
     }],
     updates: { [TODAY]: { [SID]: ['qa-video-1'] } },
@@ -476,25 +475,17 @@ async function main(options = {}) {
       fetchCalls.push(text);
       if (text.startsWith('/api/watch') && method !== 'GET') watchMutations.push({ text, method });
       if (text.startsWith('/api/student/bootstrap')) {
-        return makeResponse(bootstrap, legacyFallback ? 404 : 200);
+        return makeResponse(bootstrap, bootstrapFailure ? 404 : 200);
       }
       if (text.startsWith('/api/watch/latest')) {
         return makeResponse({
           ok: true,
-          watch: legacyFallback ? { 'qa-video-1': { last: 10, dur: 100 } } : {},
+          watch: {},
         });
       }
-      if (legacyFallback && text.startsWith('/api/students')) return makeResponse([bootstrap.student]);
-      if (legacyFallback && text.startsWith('/api/videos')) return makeResponse(bootstrap.videos);
-      if (legacyFallback && text.startsWith('/api/updates')) return makeResponse(bootstrap.updates);
-      if (legacyFallback && text.startsWith('/api/materials')) return makeResponse(bootstrap.materials);
-      if (legacyFallback && text.startsWith('/api/mat-assign')) return makeResponse(bootstrap.assigns);
-      if (legacyFallback && text.startsWith('/api/absent')) return makeResponse(bootstrap.absent);
-      if (legacyFallback && text.startsWith('/api/logs')) return makeResponse(bootstrap.logs);
+
       if (text.startsWith('/api/get-url')) {
-        return legacyFallback
-          ? makeResponse('https://video.example.test/embed')
-          : makeResponse('academy network required', 403);
+        return makeResponse('academy network required', 403);
       }
       if (text.startsWith('/js/test_answer_link_map')) return makeResponse('academy network required', 403);
       return makeResponse({});
@@ -532,6 +523,27 @@ async function main(options = {}) {
   vm.runInContext(source, context, { filename: 'static/js/student.js' });
   await new Promise(resolve => setTimeout(resolve, 50));
 
+  if (bootstrapFailure) {
+    if (!alerts.some(message => message.includes('데이터 로드 실패') && message.includes('bootstrap 404'))) {
+      throw new Error(`bootstrap failure did not surface a load error: ${JSON.stringify(alerts)}`);
+    }
+    const retiredPrefixes = [
+      '/api/students',
+      '/api/videos',
+      '/api/updates',
+      '/api/materials',
+      '/api/mat-assign',
+      '/api/absent',
+      '/api/logs',
+    ];
+    const retiredCall = fetchCalls.find(url => retiredPrefixes.some(prefix => String(url).startsWith(prefix)));
+    if (retiredCall) {
+      throw new Error(`bootstrap failure called retired multi-GET fallback: ${retiredCall}`);
+    }
+    console.log('student bootstrap failure stops without legacy fallback');
+    return;
+  }
+
   if (alerts.length) {
     throw new Error(`student page showed academy alert on load: ${JSON.stringify(alerts)}`);
   }
@@ -562,16 +574,6 @@ async function main(options = {}) {
   const reviewList = document.getElementById('previousVidList');
   if (!reviewToggle || !reviewPanel || !reviewList) {
     throw new Error('restricted review fixture must expose the previous-video controls');
-  }
-  if (legacyFallback) {
-    if (!fetchCalls.some(url => String(url).startsWith('/api/videos'))) {
-      throw new Error('legacy bootstrap fallback must fetch /api/videos for today assignment compatibility');
-    }
-    if (!reviewToggle.disabled || reviewList.querySelector('button[data-mid]')) {
-      throw new Error('legacy bootstrap fallback must keep previous-video review disabled and empty');
-    }
-    console.log('student legacy bootstrap review fallback contract ok');
-    return;
   }
 
   const player = document.getElementById('player');
@@ -635,7 +637,7 @@ async function main(options = {}) {
 
 runPreviousVideoVerifier();
 main()
-  .then(() => main({ legacyFallback: true }))
+  .then(() => main({ bootstrapFailure: true }))
   .catch(error => {
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);

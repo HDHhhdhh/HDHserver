@@ -163,6 +163,29 @@ if ([string]::IsNullOrWhiteSpace($authSecret) -or $authSecret -eq "CHANGE_ME_AUT
 }
 Set-Item -LiteralPath "Env:AUTH_SECRET" -Value $authSecret
 
+$masterPassword = [Environment]::GetEnvironmentVariable("MASTER_PW", "Machine")
+if ([string]::IsNullOrWhiteSpace($masterPassword)) {
+    $masterPassword = [Environment]::GetEnvironmentVariable("MASTER_PW", "User")
+}
+if ([string]::IsNullOrWhiteSpace($masterPassword)) {
+    Remove-Item -LiteralPath "Env:MASTER_PW" -ErrorAction SilentlyContinue
+} else {
+    Set-Item -LiteralPath "Env:MASTER_PW" -Value $masterPassword
+}
+
+$kollusCallbackSecret = [Environment]::GetEnvironmentVariable("KOLLUS_CALLBACK_SECRET", "Machine")
+if ([string]::IsNullOrWhiteSpace($kollusCallbackSecret)) {
+    $kollusCallbackSecret = [Environment]::GetEnvironmentVariable("KOLLUS_CALLBACK_SECRET", "User")
+}
+if ([string]::IsNullOrWhiteSpace($kollusCallbackSecret) -or $kollusCallbackSecret.Length -lt 32) {
+    Remove-Item -LiteralPath "Env:KOLLUS_CALLBACK_SECRET" -ErrorAction SilentlyContinue
+    if ($env:STUDENT_APP_PUBLIC_ENABLED -eq "1") {
+        throw "KOLLUS_CALLBACK_SECRET Machine or User environment variable must contain at least 32 characters."
+    }
+} else {
+    Set-Item -LiteralPath "Env:KOLLUS_CALLBACK_SECRET" -Value $kollusCallbackSecret
+}
+
 $waitressPath = Join-Path $serverRoot "venv\Scripts\waitress-serve.exe"
 if (-not (Test-Path -LiteralPath $waitressPath)) {
     throw "Waitress is not installed in the server virtual environment: $waitressPath"

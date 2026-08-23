@@ -317,6 +317,36 @@ def test_answer_map_allows_trusted_cf_connecting_ip() -> None:
         raise AssertionError(f"trusted CF-Connecting-IP answer map request failed: {response.status_code}")
 
 
+def test_legacy_answer_map_js_is_retired() -> None:
+    legacy_path = ROOT / "static" / "js" / "test_answer_link_map.js"
+    if legacy_path.exists():
+        raise AssertionError("retired test_answer_link_map.js must stay absent")
+
+    legacy_url_literals = (
+        '"/js/test_answer_link_map.js"',
+        "'/js/test_answer_link_map.js'",
+    )
+    for source_path in (ROOT / "app.py", ROOT / "core" / "student_app_config.py"):
+        source_text = source_path.read_text(encoding="utf-8")
+        if any(literal in source_text for literal in legacy_url_literals):
+            raise AssertionError(f"retired answer-map URL remains in {source_path.name}")
+
+    ignored_paths = {
+        line.strip()
+        for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if "/static/js/test_answer_link_map.js" in ignored_paths:
+        raise AssertionError("retired answer-map file remains ignored")
+
+    response = create_app().test_client().get(
+        "/js/test_answer_link_map.js",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    if response.status_code != 404:
+        raise AssertionError(f"retired answer-map URL must return 404, got {response.status_code}")
+
+
 def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
     # Given
     import routes.api_kollus as api_kollus
@@ -616,6 +646,7 @@ def main() -> None:
             test_configured_public_proxy_uses_cf_connecting_ip,
             test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
+            test_legacy_answer_map_js_is_retired,
             test_get_url_blocks_cloudflare_proxy_targeting_local_host,
             test_get_url_blocks_configured_public_proxy_targeting_local_host,
             test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,

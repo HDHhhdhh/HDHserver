@@ -1,21 +1,23 @@
 # 프로젝트 문서 안내
 
-**기준일:** 2026-08-13
+**기준일:** 2026-08-23
 **기준 저장소:** `C:/server`
 
 이 폴더는 코드와 별도로 유지하는 프로젝트의 장기 기억이다. 기능을 고치거나 점검할 때는 세션 기록을 다시 뒤지기 전에 아래 순서로 읽는다.
 
 1. [PROJECT_FUNCTIONS_AND_LOGIC.md](PROJECT_FUNCTIONS_AND_LOGIC.md) — 현재 기능, 데이터 원본, 상태 전이, 주요 로직, 패치·검증 기준
-2. [SESSION_AUDIT_2026-07-30_2026-08-13.md](SESSION_AUDIT_2026-07-30_2026-08-13.md) — 최근 2주 세션 감사, 이슈별 해결 여부, 기능 변화
-3. 저장소 루트의 `AGENTS.md`와 수정 대상 폴더의 하위 `AGENTS.md` — 작업 안전 규칙
-4. `CODEX-HANDOFF.md` — 현재 배포 후보와 운영 환경의 짧은 인수인계
-5. `CHATGPT_PROJECT_CONTEXT.md` — 외부 ChatGPT 세션에 첨부할 확장 컨텍스트
+2. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md) — 기존 영상 MID 변경·삭제용 오프라인 수정 모드와 적용 절차
+3. [SESSION_AUDIT_2026-07-30_2026-08-13.md](SESSION_AUDIT_2026-07-30_2026-08-13.md) — 최근 2주 세션 감사, 이슈별 해결 여부, 기능 변화
+4. 저장소 루트의 `AGENTS.md`와 수정 대상 폴더의 하위 `AGENTS.md` — 작업 안전 규칙
+5. `CODEX-HANDOFF.md` — 현재 배포 후보와 운영 환경의 짧은 인수인계
+6. `CHATGPT_PROJECT_CONTEXT.md` — 외부 ChatGPT 세션에 첨부할 확장 컨텍스트
 
 ## 문서의 역할
 
 | 문서 | 답하는 질문 | 갱신 시점 |
 |---|---|---|
 | 기능·로직 기준서 | “현재 시스템은 무엇을 하고, 어떤 원본과 우선순위를 따르는가?” | 동작, 상태, API, 데이터 원본이 바뀔 때 |
+| 영상 수정 모드 | “기존 MID를 어떻게 안전하게 바꾸거나 삭제하는가?” | 수정 모드·적용·롤백 절차가 바뀔 때 |
 | 세션 감사 | “최근 어떤 문제가 있었고 실제로 해결됐는가?” | 감사 기간을 새로 닫을 때 |
 | AGENTS 지침 | “코드를 어떻게 안전하게 수정·검증하는가?” | 개발·운영 규칙이 바뀔 때 |
 | HANDOFF | “지금 배포/운영에서 주의할 것은 무엇인가?” | 배포 방식이나 열린 운영 위험이 바뀔 때 |
@@ -25,9 +27,10 @@
 1. 현재 실행 코드와 런타임 환경
 2. 루트 및 하위 `AGENTS.md`
 3. `PROJECT_FUNCTIONS_AND_LOGIC.md`
-4. `CODEX-HANDOFF.md`
-5. 과거 세션 감사와 `CHATGPT_PROJECT_CONTEXT.md`
-6. 오래된 스냅샷·회고
+4. `VIDEO_CATALOG_CORRECTION_MODE.md`(영상 MID 유지보수 작업)
+5. `CODEX-HANDOFF.md`
+6. 과거 세션 감사와 `CHATGPT_PROJECT_CONTEXT.md`
+7. 오래된 스냅샷·회고
 
 문서와 코드가 다르면 코드를 먼저 검증하고, 같은 패치에서 기준 문서도 함께 고친다. 세션의 “완료” 문구만으로 해결을 판단하지 말고 현재 코드, 테스트, 운영 응답을 다시 확인한다.
 

@@ -220,18 +220,6 @@ function compareNewestNoteFirst(left, right) {
   return Number(right?.id || 0) - Number(left?.id || 0);
 }
 
-function scheduleReminderBodyLayout(reminderBody) {
-  requestAnimationFrame(() => {
-    if (!reminderBody?.isConnected) return;
-    const content = reminderBody.querySelector('.assistant-note-item-content');
-    if (!content) return;
-
-    reminderBody.classList.remove('is-stacked');
-    const lineHeight = Number.parseFloat(window.getComputedStyle(content).lineHeight) || 16;
-    reminderBody.classList.toggle('is-stacked', content.scrollHeight > lineHeight * 1.4);
-  });
-}
-
 function renderNotes(
   root,
   notes,
@@ -377,15 +365,13 @@ function renderNotes(
       targetDate.textContent = reminderInfo.targetDate;
       reminderDates.append(writtenDate, arrow, targetDate);
       reminderInfoRow.append(reminderBadge, reminderDates);
+      authorGroup.append(reminderInfoRow);
 
       const reminderBody = document.createElement('div');
-      reminderBody.className = 'assistant-note-reminder-body';
+      reminderBody.className = 'assistant-note-reminder-body is-stacked';
       reminderBody.append(authorGroup, content, actionGroup);
 
-      header.classList.add('is-reminder');
-      header.append(reminderInfoRow);
-      article.append(header, reminderBody);
-      scheduleReminderBodyLayout(reminderBody);
+      article.append(reminderBody);
     } else {
       header.append(authorGroup, meta);
       article.append(header, content);
@@ -504,7 +490,6 @@ async function mountMemo(root, studentId) {
     const content = article?.querySelector('.assistant-note-item-content');
     if (!article || !content || article.querySelector('.assistant-note-edit-input')) return;
     const reminderBody = article.querySelector('.assistant-note-reminder-body');
-    const reminderWasStacked = reminderBody?.classList.contains('is-stacked') || false;
     reminderBody?.classList.add('is-stacked');
 
     const editor = document.createElement('textarea');
@@ -536,7 +521,6 @@ async function mountMemo(root, studentId) {
       editor.replaceWith(content);
       editActions.remove();
       editButton.disabled = false;
-      if (reminderBody && !reminderWasStacked) scheduleReminderBodyLayout(reminderBody);
     };
     cancelButton.addEventListener('click', () => {
       closeEditor();

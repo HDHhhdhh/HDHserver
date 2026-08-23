@@ -5,17 +5,23 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const formatPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportLogFormat.js');
+const targetPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportLogTargets.js');
 const exporterPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportLogs.js');
 const htmlPath = path.join(ROOT, 'static', 'admin.html');
 const cssPath = path.join(ROOT, 'static', 'css', 'admin.css');
 const mainPath = path.join(ROOT, 'static', 'js', 'admin', 'main.js');
+const apiBasicPath = path.join(ROOT, 'routes', 'api_basic.py');
+const logRepositoryPath = path.join(ROOT, 'core', 'log_repository.py');
 
 const format = await import(`${pathToFileURL(formatPath).href}?verify=${Date.now()}`);
+const targets = await import(`${pathToFileURL(targetPath).href}?verify=${Date.now()}`);
 const exporterSource = fs.readFileSync(exporterPath, 'utf8');
 const formatSource = fs.readFileSync(formatPath, 'utf8');
 const htmlSource = fs.readFileSync(htmlPath, 'utf8');
 const cssSource = fs.readFileSync(cssPath, 'utf8');
 const mainSource = fs.readFileSync(mainPath, 'utf8');
+const apiBasicSource = fs.readFileSync(apiBasicPath, 'utf8');
+const logRepositorySource = fs.readFileSync(logRepositoryPath, 'utf8');
 
 let checks = 0;
 function ok(value, message) {
@@ -32,6 +38,31 @@ equal(defaults, {
   formats: { txt: true, csv: true },
   sections: { notes: true, tests: true, progress: true, homework: true },
 }, 'default options no longer preserve the former dual export');
+
+const targetLogs = {
+  '2026-08-20': {
+    's-active': { notes: 'draft' },
+    's-done': { done: true },
+    's-archived': { done: true, archived: true },
+  },
+  '2026-08-21': {
+    's-active': { notes: 'today' },
+    's-done': { done: 'true', hwChecked: true },
+    's-homework': { notes: 'checked before leave', hwChecked: 'true' },
+    's-homework-false': { notes: 'not checked', hwChecked: false },
+    's-archived': { notes: 'old', hwChecked: true, archived: 'true' },
+  },
+};
+equal(
+  targets.collectUnarchivedDoneLatestPerStudent(targetLogs).map(row => `${row.sid}@${row.date}`),
+  ['s-done@2026-08-21'],
+  'default completed export target no longer keeps only the latest unarchived done row',
+);
+equal(
+  targets.collectUnarchivedLogsForDate(targetLogs, '2026-08-21').map(row => row.sid).sort(),
+  ['s-done', 's-homework'],
+  'selected-date export target must include only homework-checked, unarchived rows',
+);
 
 const normalized = format.normalizeExportLogOptions({
   formats: { txt: false, csv: true, pdf: true },
@@ -73,8 +104,8 @@ const records = [
     school: '빛가람고',
     curriculum: '대수 정규',
     notes: '발표 좋음',
-    testLines: ['단원 90 (오답: 2)'],
-    diffs: ['1차시', '2차시(중단)'],
+    testLines: ['함수의 극한', '수열'],
+    diffs: ['2차시(중단)'],
     homeworkRows: [
       { book: '교재', thisHw: '10쪽', pct: '50%', comment: '확인', nextHw: '12쪽' },
       { book: '부교재', thisHw: '3번', pct: '', comment: '', nextHw: '4번' },
@@ -106,8 +137,8 @@ const records = [
 const expectedDefaultText =
   `(8/12) 김하늘\n` +
   `특이사항 : 발표 좋음\n\n` +
-  `테스트 : 단원 90 (오답: 2)\n\n` +
-  `진도 (대수 정규) : 1차시, 2차시(중단)\n\n` +
+  `테스트 :\n함수의 극한\n수열\n\n` +
+  `진도 (대수 정규) : 2차시(중단)\n\n` +
   `숙제 :\n${format.HW_HEADER_LINE}\n교재 / 10쪽 / 50% / 확인 / 12쪽\n\n\n` +
   `(8/13) 이바다\n` +
   `특이사항 : 연락 필요\n\n` +
@@ -135,11 +166,18 @@ ok(!notesText.includes('숙제 :'), 'notes-only TXT leaked homework');
 const testsText = format.renderClassLogText(records, onlySection('tests'));
 ok(testsText.includes('(8/12) 김하늘'), 'tests-only TXT dropped matching record');
 ok(!testsText.includes('이바다'), 'tests-only TXT retained an empty record');
-ok(testsText.includes('테스트 : 단원 90'), 'tests-only TXT omitted test content');
+ok(testsText.includes('테스트 :\n함수의 극한\n수열'), 'tests-only TXT omitted line-separated assigned test names');
 
 const progressText = format.renderClassLogText(records, onlySection('progress'));
 ok(progressText.includes('진도 (대수 정규)'), 'progress-only TXT omitted progress');
+ok(progressText.includes('2차시(중단)'), 'progress-only TXT omitted interrupted video');
+ok(!progressText.includes('1차시'), 'progress-only TXT retained a blue done video');
 ok(!progressText.includes('이바다'), 'progress-only TXT retained a record with no progress change');
+equal(
+  format.filterClassLogRecords([{ diffs: [] }], onlySection('progress')).length,
+  0,
+  'done-only progress still creates an empty TXT record',
+);
 
 const homeworkText = format.renderClassLogText(records, onlySection('homework'));
 ok(homeworkText.includes('교재 / 10쪽'), 'homework-only TXT omitted homework');
@@ -152,6 +190,9 @@ ok(csv.endsWith('\r\n'), 'CSV no longer ends with CRLF');
 equal(csv.split('\r\n').length, 5, 'CSV homework row expansion changed');
 ok(csv.includes('2026-08-12,sid-a,김하늘,빛가람고'), 'CSV lost the first record');
 ok(csv.includes('2026-08-13,sid-b,이바다,하늘고'), 'CSV lost the no-homework record');
+ok(csv.includes('"함수의 극한\n수열"'), 'CSV tests cell does not keep one test name per line');
+ok(csv.includes(',2차시(중단),'), 'CSV progress omitted the interrupted video');
+ok(!csv.includes('1차시'), 'CSV progress retained a blue done video');
 equal(format.csvCell('한글,쉼표'), '"한글,쉼표"', 'CSV comma escaping changed');
 equal(format.csvCell('따옴표"값'), '"따옴표""값"', 'CSV quote escaping changed');
 equal(format.csvCell('줄1\n줄2'), '"줄1\n줄2"', 'CSV newline escaping changed');
@@ -161,6 +202,7 @@ equal(format.csvCell('-1'), "'-1", 'minus-prefixed CSV formula was not neutraliz
 
 for (const id of [
   'exportLogsModal', 'exportLogsForm', 'exportLogsClose', 'exportLogsFormatTxt', 'exportLogsFormatCsv',
+  'exportLogsTargetDone', 'exportLogsTargetDate', 'exportLogsTargetDateLabel',
   'exportLogsTxtSections', 'exportLogsSectionNotes', 'exportLogsSectionTests', 'exportLogsSectionProgress',
   'exportLogsSectionHomework', 'exportLogsReset', 'exportLogsCancel', 'exportLogsSubmit', 'exportLogsStatus',
 ]) {
@@ -171,19 +213,45 @@ ok(htmlSource.includes('설정은 현재 페이지에서만 유지됩니다.'), 
 ok(htmlSource.includes('CSV 열 구조는 기존 연동을 위해 고정됩니다.'), 'UI does not disclose stable CSV schema');
 ok(cssSource.includes('body.admin #exportLogsModal .export-logs-panel'), 'export modal styles are not narrowly scoped');
 ok(cssSource.includes('@media (max-width: 640px)'), 'export modal has no mobile breakpoint');
-ok(mainSource.includes("exportLogs.js?v=20260813-phase12"), 'admin entry lacks Phase 12 export cache bust');
+ok(mainSource.includes("exportLogs.js?v=20260823-export-perf1"), 'admin entry lacks homework-checked export cache bust');
+ok(htmlSource.includes("/js/admin/main.js?v=20260823-export-perf1"), 'admin shell lacks the homework-checked export cache bust');
+ok(htmlSource.includes('선택일 숙검 완료'), 'selected-date export label does not disclose the homework-check requirement');
+ok(htmlSource.includes('숙검 완료된 기록만 포함합니다.'), 'selected-date export help omits the homework-check filter');
 
 ok(exporterSource.includes("btn.addEventListener('click', openDialog)"), 'button does not open the settings dialog');
-ok(exporterSource.includes('async function exportClassLogs(rawOptions, { signal } = {})'), 'export execution was not isolated from dialog open');
+ok(exporterSource.includes("targetMode = EXPORT_TARGET_DONE, targetDate = ''"), 'export execution lacks an independent target mode');
 ok(exporterSource.indexOf("btn.addEventListener('click', openDialog)") > exporterSource.indexOf('async function exportClassLogs'), 'dialog wiring is malformed');
 ok(exporterSource.includes("if (options.formats.txt)"), 'TXT format selection is ignored');
 ok(exporterSource.includes("if (options.formats.csv)"), 'CSV format selection is ignored');
+ok(exporterSource.includes('const testLines = rosterAssignedTestNames(date, String(sid), stu);'), 'class-log export does not share the green assigned-test selector');
+ok(exporterSource.includes("const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned']);"), 'green assigned status is not the sole export status');
+ok(!exporterSource.includes('Array.isArray(logEntry.tests)') && !exporterSource.includes('t.score') && !exporterSource.includes('t.wrong'), 'class-log export still includes grading data');
+ok(exporterSource.includes("if (testNames.length) lines.push('', '테스트 :', ...testNames);"), 'roster export does not emit one test name per line');
+ok(exporterSource.includes("? '학군지'") && exporterSource.includes("? '일산'"), 'past-test exports do not label school/Ilsan source');
+ok(exporterSource.includes('`${source}${difficulty ? `(${difficulty})`'), 'past-test exports do not include difficulty');
+ok(exporterSource.includes(".filter(mid => statuses[mid] !== 'done')"), 'roster export does not exclude cumulative blue done videos');
+ok(exporterSource.includes(".filter(item => item.st !== 'done')"), 'class-log exports do not exclude blue done videos');
+ok(!formatSource.includes('textDiffs'), 'TXT/CSV progress projections diverged again');
 ok(exporterSource.includes('recordsToCsv(records)'), 'CSV projection no longer uses the stable full record schema');
 ok(!exporterSource.includes('localStorage') && !exporterSource.includes('sessionStorage'), 'export preferences leaked into browser storage');
 ok(!exporterSource.includes('assistantStudentNotes') && !formatSource.includes('assistantStudentNotes'), 'assistant notes entered the export surface');
 ok(exporterSource.includes("event.key === 'Escape'"), 'export dialog has no Escape handler');
 ok(exporterSource.includes("event.key !== 'Tab'"), 'export dialog has no focus trap');
+ok(exporterSource.includes('collectUnarchivedLogsForDate(historyLogs, selectedDate)'), 'selected-date logs are not wired into scoped export history');
+ok(cssSource.includes('.export-logs-target-grid'), 'export target selector lacks scoped layout styles');
 ok(exporterSource.includes('if (exportInFlight) return'), 'export dialog lacks duplicate-submit protection');
+ok(exporterSource.includes("'/api/logs/unarchived-summary'"), 'default export still skips the lightweight target summary');
+ok(exporterSource.includes("historyUrl('/api/logs', sids, targetRefs)"), 'export does not request projected log history by target students');
+ok(exporterSource.includes("historyUrl('/api/progress', sids)"), 'export does not batch progress history by target students');
+ok(exporterSource.includes('replaceSidHistories(state.logs, exportData.logs, exportData.sids)'), 'scoped history does not preserve unrelated in-memory students');
+ok(apiBasicSource.includes('sid_filters = _progress_sids_from_query()'), 'logs route does not accept batch sids');
+ok(apiBasicSource.includes('sid_filters=sid_filters'), 'logs route does not pass batch sids to the repository');
+ok(logRepositorySource.includes('def _sqlite_dump_sids('), 'log repository lacks a batched SQLite reader');
+ok(logRepositorySource.includes('WHERE sid IN ({placeholders})'), 'batched log reads do not use one SQLite IN query');
+ok(exporterSource.includes("params.set('exportTargets'"), 'export history request omits per-student target dates');
+ok(apiBasicSource.includes('repository.read_export_history(export_targets)'), 'logs route does not select the projected export history');
+ok(logRepositorySource.includes('def read_export_history('), 'log repository lacks the projected export-history reader');
+ok(logRepositorySource.includes('"__exportHistoryActivity": True'), 'historical log projection no longer preserves activity boundaries');
 
 async function verifyBusyEscapeAbortsAndRestoresFocus() {
   class FakeClassList {
@@ -232,6 +300,7 @@ async function verifyBusyEscapeAbortsAndRestoresFocus() {
     'exportLogsReset', 'exportLogsSubmit', 'exportLogsStatus', 'exportLogsFormatTxt',
     'exportLogsFormatCsv', 'exportLogsTxtSections', 'exportLogsSectionNotes',
     'exportLogsSectionTests', 'exportLogsSectionProgress', 'exportLogsSectionHomework',
+    'exportLogsTargetDone', 'exportLogsTargetDate', 'exportLogsTargetDateLabel',
   ];
   const fakeDocument = {
     activeElement: null,
@@ -242,6 +311,7 @@ async function verifyBusyEscapeAbortsAndRestoresFocus() {
     getElementById(id) { return this.elements.get(id) || null; },
   };
   fakeDocument.elements = new Map(ids.map(id => [id, new FakeElement(id, fakeDocument)]));
+  fakeDocument.elements.get('exportLogsTargetDate').checked = false;
   const modal = fakeDocument.elements.get('exportLogsModal');
   for (const [id, element] of fakeDocument.elements) {
     if (!['exportLogs', 'exportLogsModal'].includes(id)) fakeDocument.modalChildren.add(element);
@@ -276,7 +346,7 @@ async function verifyBusyEscapeAbortsAndRestoresFocus() {
   modal.dispatch('keydown', escape);
   await new Promise(resolve => setTimeout(resolve, 0));
 
-  equal(abortedSignals.length, 2, 'submit did not start both guarded export reads');
+  equal(abortedSignals.length, 1, 'submit did not start the guarded target lookup');
   ok(abortedSignals.every(signal => signal.aborted), 'Escape did not abort every export read');
   ok(modal.hidden && modal.style.display === 'none', 'Escape did not close the busy dialog');
   ok(!fakeDocument.body.classList.contains('export-logs-open'), 'Escape left the page scroll lock active');

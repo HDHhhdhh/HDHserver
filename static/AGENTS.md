@@ -7,7 +7,7 @@ Static HTML/CSS assets define the browser surfaces. Flask serves these files dir
 ```
 static/
 |-- admin.html          # admin shell
-|-- student.html        # student shell for /student/<sid> and /student-test/<sid>
+|-- student.html        # student shell for /student/<sid>; the /student-test alias is retired
 |-- all.html            # all-students shell
 |-- tests.html          # test management shell
 |-- css/                # shared and page-specific styles
@@ -18,13 +18,12 @@ static/
 | Task | Location | Notes |
 |---|---|---|
 | Admin shell | `admin.html` | Loads `js/admin/main.js`. Keep required DOM ids stable. |
-| Student shell | `student.html` | Loads `js/student.js`; used by multiple student routes. |
+| Student shell | `student.html` | Loads `js/student.js`; `#vidList` and the immediately following `#previousVideos` share the one `#player` surface. |
 | All-students shell | `all.html` | Loads `js/all/main.js`. |
 | Test management shell | `tests.html` | Loads `js/tests.js`. |
 | Video/calendar/files | `video-manage.html`, `school-cal.html`, `file-manage.html` | Standalone management shells and page scripts. |
 | Admin styling | `css/admin.css` | Large shared admin stylesheet; cascade changes can affect many panels. |
 | Student styling | `css/student.css` | Student-page layout and announcement/test card styling. |
-| Legacy/direct assets | `main.html`, `student copy.html`, `js/student copy.js` | Not route-mapped, but still directly servable by filename. |
 
 ## Conventions
 - Treat HTML shells as DOM contracts for their JS modules.
@@ -32,6 +31,7 @@ static/
 - Admin/all/tests/video/school-calendar shells load `js/admin/demo/bootstrap.js` before their normal entrypoint. Preserve that ordering.
 - Keep Korean UI text readable as UTF-8.
 - Do not remove ids/classes that feature modules query unless you update every caller.
+- Preserve the student review DOM contract: `#previousVideosToggle` controls `#previousVideosPanel`, `#previousVideosRegister` is a separate action, and `#previousVidList` introduces neither a second player nor a modal.
 - Prefer scoped CSS changes. `admin.css` is broad and selector collisions are easy.
 - Follow `css/AGENTS.md` for stylesheet-specific cascade, modal, responsive, and font rules.
 - Generated screenshots and QA artifacts belong under `generated/`, not `static/`, unless the app serves them intentionally.

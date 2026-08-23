@@ -187,6 +187,40 @@ class LogRepository:
                 out.setdefault(date, {})[sid_s] = self.repair_entry(entry, sid_s)
         return out
 
+    def _sqlite_dump_sids(
+        self,
+        con: sqlite3.Connection,
+        sids: list[str],
+        date: str = "",
+    ) -> dict:
+        wanted = self._normalize_sid_filters(sids)
+        if not wanted:
+            return {date: {}} if date else {}
+
+        placeholders = ",".join("?" for _ in wanted)
+        if date:
+            rows = con.execute(
+                f"SELECT date, sid, entry_json FROM logs WHERE date=? AND sid IN ({placeholders});",
+                (date, *wanted),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                f"SELECT date, sid, entry_json FROM logs WHERE sid IN ({placeholders});",
+                tuple(wanted),
+            ).fetchall()
+
+        out: Dict[str, Dict[str, dict]] = {date: {}} if date else {}
+        for row in rows:
+            date_s = str(row["date"])
+            sid_s = str(row["sid"])
+            try:
+                entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
+            except Exception:
+                entry = {}
+            if isinstance(entry, dict) and entry:
+                out.setdefault(date_s, {})[sid_s] = self.repair_entry(entry, sid_s)
+        return out
+
     def _sqlite_dump_date_sid(self, con: sqlite3.Connection, date: str, sid: str) -> dict:
         out: Dict[str, Dict[str, dict]] = {date: {}}
         entry = self._sqlite_get_entry(con, date, sid)
@@ -245,6 +279,43 @@ class LogRepository:
                 if isinstance(entry, dict)
             }
 
+        return out
+
+    @staticmethod
+    def _normalize_sid_filters(sids) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw_sid in sids or []:
+            sid = str(raw_sid or "").strip()
+            if not sid:
+                continue
+            aliases = [sid]
+            if sid.isdigit():
+                aliases.append(str(int(sid)))
+            for alias in aliases:
+                if alias and alias not in seen:
+                    seen.add(alias)
+                    out.append(alias)
+        return out
+
+    def _filter_json_map_sids(self, data: dict, sids: list[str], date_filter: str = "") -> dict:
+        if not isinstance(data, dict):
+            return {}
+        wanted = set(self._normalize_sid_filters(sids))
+        dates = [date_filter] if date_filter else sorted(data.keys())
+        out: Dict[str, Dict[str, dict]] = {date_filter: {}} if date_filter else {}
+        for date in dates:
+            by_sid = data.get(date)
+            if not isinstance(by_sid, dict):
+                continue
+            for sid, entry in by_sid.items():
+                sid_s = str(sid or "").strip()
+                aliases = {sid_s}
+                if sid_s.isdigit():
+                    aliases.add(str(int(sid_s)))
+                if not (aliases & wanted) or not isinstance(entry, dict):
+                    continue
+                out.setdefault(str(date), {})[sid_s] = self.repair_entry(entry, sid_s)
         return out
 
     @staticmethod
@@ -337,14 +408,22 @@ class LogRepository:
 
         return LogEntryResult("json", self._json_entry(date, sid))
 
-    def read_logs(self, date_filter: str = "", sid_filter: str = "") -> dict:
+    def read_logs(
+        self,
+        date_filter: str = "",
+        sid_filter: str = "",
+        sid_filters: list[str] | None = None,
+    ) -> dict:
+        requested_sids = self._normalize_sid_filters(sid_filters)
         sqlite_map = {}
         sqlite_ok = False
         con = None
         try:
             con = self._connect()
             self._ensure_schema(con)
-            if date_filter and sid_filter:
+            if requested_sids:
+                sqlite_map = self._sqlite_dump_sids(con, requested_sids, date_filter)
+            elif date_filter and sid_filter:
                 sqlite_map = self._sqlite_dump_date_sid(con, date_filter, sid_filter)
             elif date_filter:
                 sqlite_map = self._sqlite_dump_date(con, date_filter)
@@ -363,13 +442,117 @@ class LogRepository:
                 pass
 
         json_map = self.read_json_map()
-        if date_filter or sid_filter:
+        if requested_sids:
+            json_map = self._filter_json_map_sids(json_map, requested_sids, date_filter)
+        elif date_filter or sid_filter:
             json_map = self._filter_json_map(json_map, date_filter, sid_filter)
 
         if not sqlite_ok:
             return json_map
 
         return self._merge_json_fallback_map(sqlite_map, json_map)
+
+    def _export_history_entry(self, entry: dict, sid: str, *, full: bool) -> dict:
+        if not isinstance(entry, dict) or not entry:
+            return {}
+        if full:
+            return self.repair_entry(entry, sid)
+
+        # Previous rows are used only to reconstruct assigned-test carry-over
+        # and to detect that the student had activity on that date.
+        out = {"__exportHistoryActivity": True}
+        for key in ("testAssignmentDailyTests", "assignedTests"):
+            value = entry.get(key)
+            if isinstance(value, list):
+                out[key] = value
+        return out
+
+    def read_export_history(self, target_dates: dict[str, str]) -> dict:
+        normalized_targets: dict[str, str] = {}
+        for raw_sid, raw_date in (target_dates.items() if isinstance(target_dates, dict) else []):
+            date = str(raw_date or "").strip()
+            if not date:
+                continue
+            for sid in self._normalize_sid_filters([raw_sid]):
+                previous = normalized_targets.get(sid, "")
+                if date > previous:
+                    normalized_targets[sid] = date
+        if not normalized_targets:
+            return {}
+
+        wanted = list(normalized_targets)
+        placeholders = ",".join("?" for _ in wanted)
+        sqlite_map: Dict[str, Dict[str, dict]] = {}
+        sqlite_ok = False
+        con = None
+        try:
+            con = self._connect()
+            self._ensure_schema(con)
+            rows = con.execute(
+                f"SELECT date, sid, entry_json FROM logs WHERE sid IN ({placeholders});",
+                tuple(wanted),
+            ).fetchall()
+            for row in rows:
+                date = str(row["date"])
+                sid = str(row["sid"])
+                target_date = normalized_targets.get(sid)
+                if not target_date or date > target_date:
+                    continue
+                try:
+                    entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
+                except Exception:
+                    entry = {}
+                projected = self._export_history_entry(entry, sid, full=date == target_date)
+                if projected:
+                    sqlite_map.setdefault(date, {})[sid] = projected
+            sqlite_ok = True
+        except Exception as exc:
+            print("[logs.export-history] sqlite GET failed:", exc, flush=True)
+        finally:
+            try:
+                if con is not None:
+                    con.close()
+            except Exception:
+                pass
+
+        json_projected: Dict[str, Dict[str, dict]] = {}
+        json_map = self.read_json_map()
+        for date, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
+            if not isinstance(by_sid, dict):
+                continue
+            date_s = str(date)
+            for raw_sid, entry in by_sid.items():
+                sid = str(raw_sid or "").strip()
+                target_date = normalized_targets.get(sid)
+                if not target_date or date_s > target_date:
+                    continue
+                projected = self._export_history_entry(entry, sid, full=date_s == target_date)
+                if projected:
+                    json_projected.setdefault(date_s, {})[sid] = projected
+
+        if not sqlite_ok:
+            return json_projected
+
+        out = {date: dict(by_sid) for date, by_sid in sqlite_map.items()}
+        for date, by_sid in json_projected.items():
+            day = out.setdefault(date, {})
+            for sid, fallback in by_sid.items():
+                existing = day.get(sid)
+                target_date = normalized_targets.get(sid)
+                if not isinstance(existing, dict):
+                    day[sid] = fallback
+                    continue
+                if date == target_date:
+                    day[sid] = self._merge_json_fallback_fields(existing, fallback, sid)
+                    continue
+                merged = dict(existing)
+                for key, value in fallback.items():
+                    if key not in merged or (
+                        is_empty_value(merged.get(key)) and not is_empty_value(value)
+                    ):
+                        merged[key] = value
+                day[sid] = merged
+        return out
 
     def legacy_post(self, incoming: dict) -> LogPostResult:
         sqlite_ok = False
@@ -542,54 +725,6 @@ class LogRepository:
             json_ok=json_ok,
             json_error=json_err,
         )
-
-    def append_record(self, date: str, sid: str, record: dict, append_fn: MergeFn) -> bool:
-        logs_saved = False
-        merged_entry = {}
-        con = None
-
-        try:
-            con = self._connect()
-            self._ensure_schema(con)
-            con.execute("BEGIN IMMEDIATE;")
-            cur = self._sqlite_get_entry(con, date, sid)
-            merged_entry = append_fn(cur, record)
-            self._sqlite_upsert_entry(con, date, sid, merged_entry)
-            con.execute("COMMIT;")
-        except Exception as exc:
-            try:
-                if con is not None:
-                    con.execute("ROLLBACK;")
-            except Exception:
-                pass
-            print("[submit-test] sqlite logs save failed:", exc, flush=True)
-            merged_entry = {}
-        finally:
-            try:
-                if con is not None:
-                    con.close()
-            except Exception:
-                pass
-
-        try:
-            lock = self.lock_factory() if self.lock_factory else None
-            context = lock if lock is not None else _NullContext()
-            with context:
-                logs = self.read_json_map()
-                day = logs.setdefault(date, {})
-                if not isinstance(day, dict):
-                    logs[date] = {}
-                    day = logs[date]
-
-                cur_json = day.get(sid, {})
-                day[sid] = merged_entry if isinstance(merged_entry, dict) and merged_entry else append_fn(cur_json, record)
-                logs[date] = day
-                save_atomic(self.logs_path, logs)
-                logs_saved = True
-        except Exception as exc:
-            print("[submit-test] json logs save failed:", exc, flush=True)
-
-        return logs_saved
 
     def transform_entries(self, pairs: set[tuple[str, str]], transform_fn: Callable[[dict, str], tuple[dict, bool]]) -> None:
         if not pairs:

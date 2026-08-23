@@ -14,6 +14,7 @@ from .student_app_config_parsing import IPNetwork
 HeaderValues: TypeAlias = Mapping[str, tuple[str, ...]]
 _SAFE_FILE_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _STUDENT_PAGE_RE: Final[re.Pattern[str]] = re.compile(r"^/student/([^/]+)$")
+_CLOUDFLARE_PSEUDO_IPV4_NETWORK: Final = ipaddress.ip_network("240.0.0.0/4")
 _FORWARDED_HEADERS: Final[tuple[str, ...]] = (
     "forwarded",
     "x-forwarded-for",
@@ -109,13 +110,25 @@ def resolve_client_ip(peer: str | None, headers: HeaderValues, trusted: tuple[IP
         return ClientIPResolution(peer_ip, peer_ip, False, True)
     if any(_values(headers, name) for name in _FORWARDED_HEADERS):
         return ClientIPResolution(peer_ip, peer_ip, True, False)
-    if _values(headers, "cf-pseudo-ipv4") or _values(headers, "cf-connecting-ipv6"):
-        return ClientIPResolution(peer_ip, peer_ip, True, False)
     connecting = _values(headers, "cf-connecting-ip")
     if len(connecting) != 1:
         return ClientIPResolution(peer_ip, peer_ip, True, False)
     client_ip = strict_ip(connecting[0])
     if client_ip is None:
+        return ClientIPResolution(peer_ip, peer_ip, True, False)
+    client_address = ipaddress.ip_address(client_ip)
+    connecting_ipv6 = _values(headers, "cf-connecting-ipv6")
+    pseudo_ipv4 = _values(headers, "cf-pseudo-ipv4")
+    if isinstance(client_address, ipaddress.IPv4Address) and client_address in _CLOUDFLARE_PSEUDO_IPV4_NETWORK:
+        # In Cloudflare's Pseudo IPv4 overwrite mode, the Class E address is
+        # synthetic and the original IPv6 identity is carried in this header.
+        if pseudo_ipv4 or len(connecting_ipv6) != 1:
+            return ClientIPResolution(peer_ip, peer_ip, True, False)
+        real_client_ip = strict_ip(connecting_ipv6[0])
+        if real_client_ip is None or not isinstance(ipaddress.ip_address(real_client_ip), ipaddress.IPv6Address):
+            return ClientIPResolution(peer_ip, peer_ip, True, False)
+        return ClientIPResolution(real_client_ip, peer_ip, True, True)
+    if pseudo_ipv4 or connecting_ipv6:
         return ClientIPResolution(peer_ip, peer_ip, True, False)
     return ClientIPResolution(client_ip, peer_ip, True, True)
 
