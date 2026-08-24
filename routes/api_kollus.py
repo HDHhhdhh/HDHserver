@@ -13,13 +13,10 @@ from urllib.parse import urlencode
 from flask import Blueprint, abort, g, jsonify, request
 
 from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, client_ip_from_request, ip_allowed
-from core.paths import STU_PATH, VID_PATH
+from core.paths import PRG_PATH, STU_PATH, VID_PATH, WATCH_PATH
 from core.progress_rules import WATCH_DONE_RATIO, WATCH_INTERRUPTED_RATIO
 from core.storage import load
-from routes.api_watch import (
-    _save_progress_status,
-    _save_watch_entry,
-)
+from core.watch_progress_writer import save_progress_status, save_watch_entry
 
 bp_api_kollus = Blueprint("api_kollus", __name__)
 
@@ -312,7 +309,8 @@ def api_kollus_lms_callback():
     if not has_progress:
         return jsonify({"ok": True, "ignored": True})
 
-    watch = _save_watch_entry(
+    watch = save_watch_entry(
+        WATCH_PATH,
         payload["date"],
         sid,
         mid,
@@ -333,7 +331,11 @@ def api_kollus_lms_callback():
     elif (payload["pct"] / 100) >= WATCH_INTERRUPTED_RATIO:
         status = "interrupted"
 
-    progress = _save_progress_status(payload["date"], sid, mid, status) if status else {}
+    progress = (
+        save_progress_status(PRG_PATH, STU_PATH, VID_PATH, payload["date"], sid, mid, status)
+        if status
+        else {}
+    )
 
     return jsonify({
         "ok": True,

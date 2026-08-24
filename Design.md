@@ -1,6 +1,6 @@
 # Server Student UI Design System
 
-This document captures the existing student-page modal design system so future OCR UI work stays consistent. It is intentionally narrow: the current contract covers the student test submit modal, hidden `?ocr=1` OCR review flow, submit result panel, and answer-preview modal.
+This document mixes current UI contracts with a retired student test-submit/OCR design reference. The test submit modal, hidden `?ocr=1` flow, OCR routes, and submit result are not current product surfaces and must not be restored without a new feature decision. The admin components, answer-link preview rules, and student previous-video review section remain active where current code uses them.
 
 ## 1. Atmosphere & Identity
 
@@ -238,7 +238,7 @@ The previous-video review surface is a deliberately opened study utility within 
 
 - **Disclosure**: `.previous-videos` contains a native `영상 복습` button with a count. It controls one hidden panel, starts disabled when no fresh server-authorized rows exist, and exposes `aria-expanded`/`aria-controls`.
 - **Chooser/list**: `.previous-videos-panel` contains a native `영상 등록` button and `.previous-videos-list`. Every eligible `reviewVideosCache` row is a semantic label containing exactly one native checkbox followed by one visible title node, `${chapter}. ${title}`. The chooser keeps the server order and title-only copy; `reviewStatus` never renders as status/meta text.
-- **Authorization state**: `reviewStatus` (`done` or `interrupted`) remains internal server-authorized membership metadata. It must not create a visible status badge, `완료`/`시청 중단` row copy, or `차시 N` metadata.
+- **Authorization state**: `reviewStatus: "done"` remains internal server-authorized membership metadata. `interrupted` is not eligible. The status must not create a visible badge, `완료` row copy, or `차시 N` metadata.
 - **Registered state**: checked registered rows remain in the chooser, stay checked and disabled, and expose `등록됨` through the checkbox accessible name. Registration never removes or rewrites the fresh server review set.
 - **Local registration**: the browser stores only an ordered, deduped SID/date-scoped MID list. On load it parses storage and intersects it with the current server review set, so storage-only MIDs cannot enter the playlist. Clicking `영상 등록` only updates this local list and rerenders the playlist; it never writes/fetches a server assignment. Repeated registration is idempotent and issues no network request.
 - **Playlist**: registered review items append after today's existing assignment rows, deduped by MID. Registration rerenders with `autoPlay: false`; it never changes the current player. Only the existing delegated `#vidList li[data-mid]` handler can play an appended row.

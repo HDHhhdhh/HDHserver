@@ -4,8 +4,19 @@ from __future__ import annotations
 import os
 from urllib.parse import urlparse
 
-from flask import Flask, g, request, abort, render_template_string
+from flask import Flask, g, request, abort, jsonify, make_response, render_template_string
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+from core.admin_basic_auth import (
+    ADMIN_AUTH_CHALLENGE,
+    external_admin_api_auth_required,
+    verify_admin_authorization,
+)
+from core.material_state import (
+    MaterialStateRecoveryRequiredError,
+    recover_material_state_if_needed,
+)
+from core.paths import ASN_PATH, MAT_PATH, PAGE_FOLDERS_PATH
 
 from core.network_access import (
     academy_network_allowed,
@@ -43,11 +54,47 @@ from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_student_logs import bp_api_student_logs
 from routes.api_non_student_ocr import bp_api_non_student_ocr
+from routes.absence_assignment_cleanup import (
+    AbsenceRecoveryRequiredError,
+    absence_read_barrier,
+    recover_pending_absence_transactions,
+)
 
 
 def create_app() -> Flask:
+    recovered_absence_transaction = recover_pending_absence_transactions()
+    if recovered_absence_transaction:
+        print(
+            f"[absence-transaction] recovered {recovered_absence_transaction}",
+            flush=True,
+        )
+
+    material_state_recovery_error = ""
+    try:
+        recovered_material_state = recover_material_state_if_needed(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+        )
+    except MaterialStateRecoveryRequiredError as exc:
+        material_state_recovery_error = str(exc)
+        print(
+            f"[material-state] writes degraded; recovery required: {exc}",
+            flush=True,
+        )
+    except Exception as exc:
+        material_state_recovery_error = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[material-state] writes degraded; startup check failed: {exc}",
+            flush=True,
+        )
+    else:
+        if recovered_material_state:
+            print("[material-state] recovered pending transaction", flush=True)
+
     app = Flask(__name__, static_folder="static", static_url_path="")
     app.json.ensure_ascii = False
+    app.config["MATERIAL_STATE_WRITES_DEGRADED"] = bool(material_state_recovery_error)
     student_app_config = load_student_app_config()
     install_student_public_surface(
         app,
@@ -69,6 +116,75 @@ def create_app() -> Flask:
     }
     if trust_proxy_headers:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+    @app.before_request
+    def require_external_admin_api_auth():
+        public_request = getattr(g, "student_app_public_request", False) is True
+        student_scoped = bool(str(request.args.get("sid") or "").strip())
+        if not external_admin_api_auth_required(
+            request.path,
+            request,
+            method=request.method,
+            public_request=public_request,
+            student_scoped=student_scoped,
+        ):
+            return None
+        verifier = app.config.get("ACADEMY_ADMIN_AUTHORIZER")
+        if not callable(verifier):
+            verifier = verify_admin_authorization
+        if verifier(request.headers.get("Authorization")):
+            return None
+        response = make_response(jsonify({"ok": False, "code": "admin_auth_required"}), 401)
+        response.headers.update({"WWW-Authenticate": ADMIN_AUTH_CHALLENGE, "Cache-Control": "no-store"})
+        return response
+
+    def needs_absence_consistency_barrier() -> bool:
+        path = str(request.path or "").rstrip("/") or "/"
+        if request.method == "POST" and path in {"/api/absent", "/api/makeup-sheet-sync"}:
+            return False
+        exact_paths = {
+            "/api/absent",
+            "/api/absent/recover",
+            "/api/attend",
+            "/api/homework-books",
+            "/api/kollus/lms-callback",
+            "/api/makeup-carryover",
+            "/api/student/bootstrap",
+            "/api/tests-records",
+            "/api/tests-stats",
+            "/api/today",
+            "/api/watch",
+            "/api/watch-status",
+        }
+        prefixes = (
+            "/api/admin/student-homework",
+            "/api/logs",
+            "/api/mobile/student/homework",
+            "/api/progress",
+            "/api/updates",
+        )
+        return path in exact_paths or path.startswith(prefixes)
+
+    @app.before_request
+    def wait_for_absence_transaction():
+        if not needs_absence_consistency_barrier():
+            return
+        barrier = absence_read_barrier()
+        try:
+            barrier.__enter__()
+        except (AbsenceRecoveryRequiredError, TimeoutError) as exc:
+            abort(503, description=f"Absence transaction unavailable: {exc}")
+        g.absence_consistency_barrier = barrier
+
+    @app.teardown_request
+    def release_absence_transaction_barrier(exc):
+        barrier = getattr(g, "absence_consistency_barrier", None)
+        if barrier is not None:
+            barrier.__exit__(
+                type(exc) if exc is not None else None,
+                exc,
+                exc.__traceback__ if exc is not None else None,
+            )
 
     @app.before_request
     def block_cross_origin_writes():

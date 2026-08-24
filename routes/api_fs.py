@@ -4,14 +4,28 @@ import os
 import pathlib
 import re
 import shutil
-from typing import Any, Dict
+import uuid
+from contextlib import contextmanager
+from typing import Iterator
 
 from flask import Blueprint, abort, g, jsonify, make_response, request, send_from_directory
-from werkzeug.utils import secure_filename
 
-from core.paths import FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
+from core.announcement_image_access import student_can_access_announcement_image_from_store
+from core.material_reference_rules import (
+    path_is_same_or_descendant,
+    remove_material_file_references,
+    rewrite_material_file_references,
+)
+from core.material_state import (
+    MaterialStateRecoveryRequiredError,
+    load_material_state_locked,
+    material_state_journal_path,
+    material_state_lock,
+    save_material_state_locked,
+)
+from core.paths import ANNS_PATH, FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
 from core.student_public_surface_paths import resolve_raw_request_target, safe_announcement_file
-from core.storage import load, save_atomic
+from core.storage import file_lock
 
 bp_api_fs = Blueprint("api_fs", __name__)
 FILES_ROOT = FILES_DIR.resolve()
@@ -78,30 +92,69 @@ def _scan_tree() -> dict:
             })
     return root
 
-def _url_for_rel(rel_path: str) -> str:
-    rel = rel_path.lstrip("/").replace("\\", "/")
-    return f"/files/{rel}"
 
-def _rel_from_url(url: str) -> str | None:
+@contextmanager
+def _file_material_state_scope() -> Iterator[None]:
+    # Filesystem mutations always acquire the file-tree lock before the three
+    # deterministic material-state locks. Keep this order for every writer.
+    with file_lock(FILES_DIR):
+        with material_state_lock(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH):
+            yield
+
+
+def _load_material_state_checked_locked() -> tuple[dict, dict, dict]:
+    materials, assignments, page_folders = load_material_state_locked(
+        MAT_PATH,
+        ASN_PATH,
+        PAGE_FOLDERS_PATH,
+    )
+    if not isinstance(materials, dict):
+        raise RuntimeError("materials store must be an object")
+    if not isinstance(assignments, dict):
+        raise RuntimeError("assignments store must be an object")
+    if not isinstance(page_folders, dict):
+        raise RuntimeError("pageFolders store must be an object")
+    return materials, assignments, page_folders
+
+
+def _save_material_state_locked(
+    materials: dict,
+    assignments: dict,
+    page_folders: dict,
+) -> None:
+    save_material_state_locked(
+        MAT_PATH,
+        ASN_PATH,
+        PAGE_FOLDERS_PATH,
+        materials,
+        assignments,
+        page_folders,
+    )
+
+
+def _material_commit_started() -> bool:
+    return material_state_journal_path(MAT_PATH).exists()
+
+
+def _rollback_completed_moves(completed: list[tuple[pathlib.Path, pathlib.Path]]) -> None:
+    for source, target in reversed(completed):
+        try:
+            if target.exists() and not source.exists():
+                source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(source))
+        except Exception as exc:
+            print(f"[file-manager] rollback failed: {target} -> {source}: {exc}", flush=True)
+
+
+def _remove_staging_dir(path: pathlib.Path | None) -> None:
+    if path is None:
+        return
     try:
-        u = str(url or "").strip()
-        if not u: return None
-        if "/files/" in u:
-            return u.split("/files/", 1)[1].replace("\\", "/")
-        return None
-    except Exception:
-        return None
+        if path.exists():
+            shutil.rmtree(path)
+    except Exception as exc:
+        print(f"[file-manager] staging cleanup failed: {path}: {exc}", flush=True)
 
-def _load_mats_and_assigns():
-    mats = load(MAT_PATH)
-    if not isinstance(mats, dict): mats = {}
-    assigns = load(ASN_PATH)
-    if not isinstance(assigns, dict): assigns = {}
-    return mats, assigns
-
-def _save_mats_and_assigns(mats, assigns):
-    save_atomic(MAT_PATH, mats)
-    save_atomic(ASN_PATH, assigns)
 
 def _ensure_dir(rel_dir: str):
     p = _safe_join(rel_dir)
@@ -115,6 +168,60 @@ def _clean_filename(name: str) -> str:
     name = SAFE_NAME_RE.sub("", name)
     name = name.rstrip(" .")
     return name or "파일"
+
+
+def _clean_requested_name(name: str) -> str:
+    raw = str(name or "").strip()
+    if not raw or "/" in raw or "\\" in raw:
+        raise ValueError("new_name must be one file or folder name")
+    cleaned = SAFE_NAME_RE.sub("", raw).rstrip(" .")
+    if not cleaned or cleaned in {".", ".."}:
+        raise ValueError("new_name contains no supported characters")
+    return cleaned
+
+
+def _validate_non_overlapping_sources(paths: list[str]) -> None:
+    for index, path in enumerate(paths):
+        for other in paths[index + 1:]:
+            if path_is_same_or_descendant(path, other) or path_is_same_or_descendant(other, path):
+                raise ValueError("paths must not overlap")
+
+
+def _planned_move_target(
+    destination: pathlib.Path,
+    source: pathlib.Path,
+    reserved_names: set[str],
+) -> pathlib.Path:
+    original_name = source.name
+    candidate_name = original_name
+    candidate_key = candidate_name.casefold()
+    if not (destination / candidate_name).exists() and candidate_key not in reserved_names:
+        reserved_names.add(candidate_key)
+        return destination / candidate_name
+
+    if source.is_file():
+        stem, dot, extension = original_name.rpartition(".")
+        if not dot:
+            stem, extension = original_name, ""
+        index = 1
+        while True:
+            suffix = f" ({index})"
+            candidate_name = f"{stem}{suffix}.{extension}" if extension else f"{stem}{suffix}"
+            candidate_key = candidate_name.casefold()
+            if not (destination / candidate_name).exists() and candidate_key not in reserved_names:
+                reserved_names.add(candidate_key)
+                return destination / candidate_name
+            index += 1
+
+    index = 1
+    while True:
+        candidate_name = f"{original_name} ({index})"
+        candidate_key = candidate_name.casefold()
+        if not (destination / candidate_name).exists() and candidate_key not in reserved_names:
+            reserved_names.add(candidate_key)
+            return destination / candidate_name
+        index += 1
+
 
 def _unique_name(dst_dir: pathlib.Path, filename: str) -> str:
     base = _clean_filename(filename)
@@ -132,7 +239,8 @@ def _unique_name(dst_dir: pathlib.Path, filename: str) -> str:
 # 트리 조회
 @bp_api_fs.get("/api/fs/tree")
 def api_fs_tree():
-    tree = _scan_tree()
+    with file_lock(FILES_DIR):
+        tree = _scan_tree()
     resp = make_response(jsonify({"tree": tree}))
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -145,56 +253,64 @@ def api_fs_folder():
     if not path:
         return jsonify({"ok": False, "error": "path required"}), 400
     try:
-        _ensure_dir(path)
+        with _file_material_state_scope():
+            _load_material_state_checked_locked()
+            _ensure_dir(path)
         return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        print(f"[file-manager] folder create failed: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "folder create failed"}), 500
 
 @bp_api_fs.post("/api/fs/rename")
 def api_fs_rename():
     body = request.get_json(force=True) or {}
-    src = (body.get("src") or "").strip()
-    new_name = (body.get("new_name") or "").strip()
+    src = str(body.get("src") or "").strip()
+    new_name = str(body.get("new_name") or "").strip()
     if not src or not new_name:
         return jsonify({"ok": False, "error": "src/new_name required"}), 400
+
     try:
-        abs_src = _safe_join(src)
-        _reject_root_path(abs_src)
-        abs_dst = abs_src.parent / secure_filename(new_name)
-        if abs_dst.exists():
-            return jsonify({"ok": False, "error": "already exists"}), 400
-        abs_src.rename(abs_dst)
+        cleaned_name = _clean_requested_name(new_name)
+        with _file_material_state_scope():
+            materials, assignments, page_folders = _load_material_state_checked_locked()
+            abs_src = _safe_join(src)
+            _reject_root_path(abs_src)
+            if not abs_src.exists():
+                raise FileNotFoundError("source does not exist")
 
-        old_rel = src.replace("\\", "/")
-        new_rel = _rel_from_abs(abs_dst)
+            abs_dst = abs_src.parent / cleaned_name
+            if abs_dst.exists():
+                raise FileExistsError("already exists")
 
-        mats, assigns = _load_mats_and_assigns()
-        old_url = _url_for_rel(old_rel)
-        new_url = _url_for_rel(new_rel)
+            old_rel = _rel_from_abs(abs_src)
+            new_rel = _rel_from_abs(abs_dst)
+            next_state = rewrite_material_file_references(
+                materials,
+                assignments,
+                page_folders,
+                [(old_rel, new_rel)],
+            )
 
-        for mid, meta in list(mats.items()):
-            if isinstance(meta, dict) and meta.get("url") == old_url:
-                meta["url"] = new_url
-                mats[mid] = meta
-
-        for sid, arr in list(assigns.items()):
-            if not isinstance(arr, list):
-                continue
-            changed = False
-            for i, v in enumerate(arr):
-                sval = str(v)
-                if sval == old_url:
-                    arr[i] = new_url; changed = True
-                elif sval.lstrip("/").replace("\\", "/") == old_rel:
-                    arr[i] = new_rel; changed = True
-            if changed:
-                assigns[sid] = arr
-
-        _save_mats_and_assigns(mats, assigns)
+            abs_src.rename(abs_dst)
+            try:
+                _save_material_state_locked(*next_state)
+            except Exception:
+                if not _material_commit_started():
+                    _rollback_completed_moves([(abs_src, abs_dst)])
+                raise
 
         return jsonify({"ok": True, "path": new_rel})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    except (ValueError, FileNotFoundError, FileExistsError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        print(f"[file-manager] rename failed: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "rename failed"}), 500
 
 @bp_api_fs.post("/api/fs/delete")
 def api_fs_delete():
@@ -203,203 +319,242 @@ def api_fs_delete():
     if not isinstance(items, list) or not items:
         return jsonify({"ok": False, "error": "paths[] required"}), 400
 
-    deleted, errors = [], []
-    rel_set = set()
+    deleted: list[str] = []
+    errors: list[dict] = []
+    staging_dir: pathlib.Path | None = None
+    staged_moves: list[tuple[pathlib.Path, pathlib.Path]] = []
 
-    for rel in items:
-        try:
-            abs_p = _safe_join(rel)
-            _reject_root_path(abs_p)
-            if abs_p.is_dir():
-                shutil.rmtree(abs_p)
-            elif abs_p.exists():
-                abs_p.unlink()
-            deleted.append(rel)
-            rel_set.add(rel.replace("\\", "/"))
-        except Exception as e:
-            errors.append({"path": rel, "error": str(e)})
+    try:
+        with _file_material_state_scope():
+            materials, assignments, page_folders = _load_material_state_checked_locked()
+            deleted_prefixes: list[str] = []
 
-    if rel_set:
-        mats, assigns = _load_mats_and_assigns()
+            for raw_rel in items:
+                try:
+                    if not isinstance(raw_rel, str) or not raw_rel.strip():
+                        raise ValueError("path must be a non-empty string")
+                    abs_path = _safe_join(raw_rel)
+                    _reject_root_path(abs_path)
+                    canonical_rel = _rel_from_abs(abs_path)
 
-        ids_to_remove = []
-        for mid, meta in list(mats.items()):
-            url = (meta or {}).get("url")
-            rel = _rel_from_url(url)
-            if rel and rel in rel_set:
-                ids_to_remove.append(str(mid))
+                    if abs_path.exists():
+                        if staging_dir is None:
+                            staging_dir = (
+                                pathlib.Path(FILES_DIR).parent
+                                / f".file-delete-stage-{uuid.uuid4().hex}"
+                            )
+                            staging_dir.mkdir(parents=True, exist_ok=False)
+                        staged_path = staging_dir / str(len(staged_moves))
+                        shutil.move(str(abs_path), str(staged_path))
+                        staged_moves.append((abs_path, staged_path))
 
-        for mid in ids_to_remove:
-            mats.pop(mid, None)
+                    deleted.append(raw_rel)
+                    deleted_prefixes.append(canonical_rel)
+                except Exception as exc:
+                    errors.append({"path": raw_rel, "error": str(exc)})
 
-        for sid, arr in list(assigns.items()):
-            if not isinstance(arr, list):
-                continue
-            new_arr = []
-            for v in arr:
-                sval = str(v)
-                if sval in ids_to_remove:
-                    continue
-                rel = _rel_from_url(sval) or sval.lstrip("/").replace("\\", "/")
-                if rel in rel_set:
-                    continue
-                new_arr.append(v)
-            assigns[sid] = new_arr
+            if deleted_prefixes:
+                try:
+                    next_state = remove_material_file_references(
+                        materials,
+                        assignments,
+                        page_folders,
+                        deleted_prefixes,
+                    )
+                    _save_material_state_locked(*next_state)
+                except Exception:
+                    if not _material_commit_started():
+                        _rollback_completed_moves(staged_moves)
+                    raise
 
-        _save_mats_and_assigns(mats, assigns)
+            _remove_staging_dir(staging_dir)
 
-    return jsonify({"ok": True, "deleted": deleted, "errors": errors})
+        return jsonify({"ok": True, "deleted": deleted, "errors": errors})
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        _rollback_completed_moves(staged_moves)
+        _remove_staging_dir(staging_dir)
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        if _material_commit_started():
+            # The journal contains the forward state; startup/next mutation can
+            # finish it, so staged deleted content must not be restored.
+            _remove_staging_dir(staging_dir)
+        else:
+            _rollback_completed_moves(staged_moves)
+            _remove_staging_dir(staging_dir)
+        print(f"[file-manager] delete failed: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "delete failed"}), 500
 
 @bp_api_fs.post("/api/fs/move")
 def api_fs_move():
     body = request.get_json(force=True) or {}
-    items = body.get("paths") or []
-    dst   = (body.get("dst") or "").strip()
-    if not items or not dst:
+    items = body.get("paths")
+    dst_value = body.get("dst")
+    if not isinstance(items, list) or not items or not isinstance(dst_value, str):
         return jsonify({"ok": False, "error": "paths[] and dst required"}), 400
+    dst = dst_value.strip()
+
+    completed_moves: list[tuple[pathlib.Path, pathlib.Path]] = []
     try:
-        abs_dst = _ensure_dir(dst)
-        moved = []
-        renames: list[tuple[str, str]] = []
+        with _file_material_state_scope():
+            materials, assignments, page_folders = _load_material_state_checked_locked()
+            abs_dst = _safe_join(dst)
+            planned_sources: list[tuple[str, pathlib.Path, str]] = []
 
-        for rel in items:
-            abs_src = _safe_join(rel)
-            _reject_root_path(abs_src)
-            target = abs_dst / abs_src.name
-            if target.exists():
-                if abs_src.is_file():
-                    target = abs_dst / _unique_name(abs_dst, abs_src.name)
-                else:
-                    base = abs_src.name
-                    i = 1
-                    new = base
-                    while (abs_dst / new).exists():
-                        new = f"{base} ({i})"
-                        i += 1
-                    target = abs_dst / new
-            if abs_src.is_dir() and _is_relative_to(target, abs_src):
-                raise ValueError("cannot move a folder into itself")
-            shutil.move(str(abs_src), str(target))
-            old_rel = rel.replace("\\", "/")
-            new_rel = _rel_from_abs(target)
-            moved.append({"src": rel, "dst": new_rel})
-            renames.append((old_rel, new_rel))
+            for raw_rel in items:
+                if not isinstance(raw_rel, str) or not raw_rel.strip():
+                    raise ValueError("every source path must be a non-empty string")
+                abs_src = _safe_join(raw_rel)
+                _reject_root_path(abs_src)
+                if not abs_src.exists():
+                    raise FileNotFoundError(f"source does not exist: {raw_rel}")
+                old_rel = _rel_from_abs(abs_src)
+                planned_sources.append((raw_rel, abs_src, old_rel))
 
-        if renames:
-            mats, assigns = _load_mats_and_assigns()
-            for old_rel, new_rel in renames:
-                old_url = _url_for_rel(old_rel)
-                new_url = _url_for_rel(new_rel)
+            _validate_non_overlapping_sources([item[2] for item in planned_sources])
+            for _raw_rel, abs_src, _old_rel in planned_sources:
+                if abs_src.parent.resolve() == abs_dst.resolve():
+                    raise ValueError("source is already in the destination")
+                if abs_src.is_dir() and _is_relative_to(abs_dst, abs_src):
+                    raise ValueError("cannot move a folder into itself")
 
-                for mid, meta in list(mats.items()):
-                    if isinstance(meta, dict) and meta.get("url") == old_url:
-                        meta["url"] = new_url
-                        mats[mid] = meta
+            reserved_names: set[str] = set()
+            move_plan: list[tuple[str, pathlib.Path, pathlib.Path, str, str]] = []
+            replacements: list[tuple[str, str]] = []
+            for raw_rel, abs_src, old_rel in planned_sources:
+                target = _planned_move_target(abs_dst, abs_src, reserved_names)
+                new_rel = _rel_from_abs(target)
+                move_plan.append((raw_rel, abs_src, target, old_rel, new_rel))
+                replacements.append((old_rel, new_rel))
 
-                for sid, arr in list(assigns.items()):
-                    if not isinstance(arr, list):
-                        continue
-                    changed = False
-                    for i, v in enumerate(arr):
-                        sval = str(v)
-                        if sval == old_url:
-                            arr[i] = new_url; changed = True
-                        elif sval.lstrip("/").replace("\\", "/") == old_rel:
-                            arr[i] = new_rel; changed = True
-                    if changed:
-                        assigns[sid] = arr
+            next_state = rewrite_material_file_references(
+                materials,
+                assignments,
+                page_folders,
+                replacements,
+            )
 
-            _save_mats_and_assigns(mats, assigns)
+            abs_dst.mkdir(parents=True, exist_ok=True)
+            try:
+                for _raw_rel, abs_src, target, _old_rel, _new_rel in move_plan:
+                    shutil.move(str(abs_src), str(target))
+                    completed_moves.append((abs_src, target))
+            except Exception:
+                _rollback_completed_moves(completed_moves)
+                raise
+
+            try:
+                _save_material_state_locked(*next_state)
+            except Exception:
+                if not _material_commit_started():
+                    _rollback_completed_moves(completed_moves)
+                raise
+
+            moved = [
+                {"src": raw_rel, "dst": new_rel}
+                for raw_rel, _abs_src, _target, _old_rel, new_rel in move_plan
+            ]
 
         return jsonify({"ok": True, "moved": moved})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    except (ValueError, FileNotFoundError, FileExistsError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        print(f"[file-manager] move failed: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "move failed"}), 500
 
 @bp_api_fs.post("/api/fs/upload")
 def api_fs_upload():
-    dst = (request.form.get("dst") or "").strip()
-    try:
-        abs_dst = _ensure_dir(dst)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"invalid dst: {e}"}), 400
-
+    dst = str(request.form.get("dst") or "").strip()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         return jsonify({"ok": False, "error": "no files"}), 400
 
-    out = []
-    for f in files:
-        try:
-            fname = _unique_name(abs_dst, f.filename)
-            f.save(abs_dst / fname)
-            rel = (pathlib.Path(dst) / fname).as_posix() if dst else fname
-            out.append({"name": fname, "path": rel, "url": f"/files/{rel}"})
-        except Exception as e:
-            out.append({"name": f.filename, "error": str(e)})
-
+    out: list[dict] = []
+    uploaded_paths: list[pathlib.Path] = []
     try:
-        new_rel_urls = []
-        for it in out:
-            if it.get("error"):
-                continue
-            rel = str(it["path"]).lstrip("/").replace("\\", "/")
-            url = f"/files/{rel}"
-            new_rel_urls.append((rel, url))
+        with _file_material_state_scope():
+            materials, assignments, page_folders = _load_material_state_checked_locked()
+            abs_dst = _ensure_dir(dst)
 
-        if new_rel_urls:
-            mats, assigns = _load_mats_and_assigns()
-            changed = False
+            for uploaded_file in files:
+                try:
+                    filename = _unique_name(abs_dst, uploaded_file.filename)
+                    target = abs_dst / filename
+                    uploaded_file.save(target)
+                    uploaded_paths.append(target)
+                    relative = _rel_from_abs(target)
+                    out.append({
+                        "name": filename,
+                        "path": relative,
+                        "url": f"/files/{relative}",
+                    })
+                except Exception as exc:
+                    out.append({"name": uploaded_file.filename, "error": str(exc)})
 
-            for sid, arr in list(assigns.items()):
-                if not isinstance(arr, list):
-                    continue
-
-                dir_tokens = []
-                for v in arr:
-                    s = str(v)
-                    if s.startswith("DIR:"):
-                        d = s[4:].lstrip("/").replace("\\", "/")
-                        if d:
-                            dir_tokens.append(d)
-                if not dir_tokens:
-                    continue
-
-                arr_set = set(map(str, arr))
-                for rel, url in new_rel_urls:
-                    in_scope = any(rel == d or rel.startswith(d + "/") for d in dir_tokens)
-                    if not in_scope:
+            new_rel_urls = [
+                (str(item["path"]), str(item["url"]))
+                for item in out
+                if not item.get("error")
+            ]
+            assignments_changed = False
+            if new_rel_urls:
+                for sid, tokens in list(assignments.items()):
+                    if not isinstance(tokens, list):
                         continue
-                    if (url not in arr_set) and (rel not in arr_set):
-                        arr.append(url)
-                        arr_set.add(url)
-                        changed = True
 
-                assigns[sid] = arr
+                    directory_tokens: list[str] = []
+                    for token in tokens:
+                        text_token = str(token)
+                        if not text_token.startswith("DIR:"):
+                            continue
+                        directory = text_token[4:].lstrip("/").replace("\\", "/")
+                        if directory:
+                            directory_tokens.append(directory)
+                    if not directory_tokens:
+                        continue
 
-            if changed:
-                save_atomic(ASN_PATH, assigns)
-    except Exception as e:
-        print("[auto-assign DIR] error:", e, flush=True)
+                    token_set = set(map(str, tokens))
+                    for relative, url in new_rel_urls:
+                        try:
+                            in_scope = any(
+                                path_is_same_or_descendant(relative, directory)
+                                for directory in directory_tokens
+                            )
+                        except ValueError:
+                            in_scope = False
+                        if not in_scope or url in token_set or relative in token_set:
+                            continue
+                        tokens.append(url)
+                        token_set.add(url)
+                        assignments_changed = True
 
-    return jsonify({"ok": True, "files": out})
+                    assignments[sid] = tokens
 
-@bp_api_fs.get("/api/fs/page-folders")
-def api_fs_get_page_folders():
-    return jsonify(load(PAGE_FOLDERS_PATH))
+            if assignments_changed:
+                _save_material_state_locked(materials, assignments, page_folders)
 
-@bp_api_fs.post("/api/fs/page-folders")
-def api_fs_set_page_folders():
-    body = request.get_json(force=True) or {}
-    if not isinstance(body, dict):
-        return jsonify({"ok": False, "error": "dict required"}), 400
-    for k, v in list(body.items()):
-        if v:
+        return jsonify({"ok": True, "files": out})
+    except ValueError as exc:
+        for uploaded_path in uploaded_paths:
             try:
-                _safe_join(v)
-            except Exception:
-                body[k] = ""
-    save_atomic(PAGE_FOLDERS_PATH, body)
-    return jsonify({"ok": True})
+                uploaded_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return jsonify({"ok": False, "error": f"invalid dst: {exc}"}), 400
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        if not _material_commit_started():
+            for uploaded_path in uploaded_paths:
+                try:
+                    uploaded_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        print(f"[file-manager] upload failed: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "upload failed"}), 500
+
 
 @bp_api_fs.get("/files/<path:fname>")
 def files(fname: str):
@@ -410,9 +565,9 @@ def files(fname: str):
             abort(404)
         if not safe_announcement_file(request.path, raw_target):
             abort(404)
-        from routes.api_announcements import _student_can_access_announcement_image
-
-        if not _student_can_access_announcement_image(active_sid, fname):
+        if not student_can_access_announcement_image_from_store(
+            ANNS_PATH, active_sid, fname
+        ):
             abort(404)
     try:
         pth = _safe_join(fname)

@@ -5,24 +5,22 @@ from flask import Blueprint, g, jsonify, request
 
 from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
 from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, ip_allowed
-from core.paths import WATCH_PATH, PRG_PATH
+from core.paths import PRG_PATH, STU_PATH, VID_PATH, WATCH_PATH
 from core.progress_rules import (
-    PROGRESS_MANUAL_META_KEY,
     VALID_VIDEO_PROGRESS_STATUSES,
-    WATCH_AUTO_PROGRESS_META_KEY,
-    merge_progress_day_sid,
-    merge_watch_entry,
-    normalize_incoming_watch_updated_at,
     normalize_watch_entry,
     watch_auto_status,
     watch_rank,
 )
-from core.storage import load, save_atomic, nocache_resp
+from core.storage import load, nocache_resp
+from core.watch_progress_writer import (
+    get_watch_entry,
+    save_progress_status,
+    save_watch_entry,
+    sid_keys,
+)
 
 bp_api_watch = Blueprint("api_watch", __name__)
-
-AUTO_PROGRESS_META_KEY = WATCH_AUTO_PROGRESS_META_KEY
-MANUAL_PROGRESS_META_KEY = PROGRESS_MANUAL_META_KEY
 
 
 def _academy_request_allowed() -> bool:
@@ -39,140 +37,6 @@ def _public_sid_matches(sid: str) -> bool:
     return isinstance(active_sid, str) and bool(sid) and sid == active_sid
 
 
-def _watch_lock():
-    from routes.api_basic import _InterProcessFileLock
-
-    wp = str(getattr(WATCH_PATH, "__fspath__", lambda: str(WATCH_PATH))())
-    return _InterProcessFileLock(wp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
-
-
-def _sid_keys(sid: str) -> list[str]:
-    keys = [str(sid or "").strip()]
-    if keys[0].isdigit():
-        alt = str(int(keys[0]))
-        if alt not in keys:
-            keys.append(alt)
-    return [k for k in keys if k]
-
-
-def _save_watch_entry(date: str, sid: str, mid: str, incoming) -> dict:
-    date = str(date or "").strip()
-    sid = str(sid or "").strip()
-    mid = str(mid or "").strip()
-    if not date or not sid or not mid:
-        raise ValueError("missing date/sid/mid")
-
-    merged_incoming = normalize_watch_entry(incoming)
-    merged_incoming["updatedAt"] = normalize_incoming_watch_updated_at(
-        merged_incoming["updatedAt"],
-        int(time.time() * 1000),
-    )
-
-    with _watch_lock():
-        data = load(WATCH_PATH)
-        if not isinstance(data, dict):
-            data = {}
-
-        by_date = data.setdefault(date, {})
-        if not isinstance(by_date, dict):
-            by_date = {}
-            data[date] = by_date
-
-        by_sid = None
-        sid_key = sid
-        for key in _sid_keys(sid):
-            cand = by_date.get(key)
-            if isinstance(cand, dict):
-                by_sid = cand
-                sid_key = key
-                break
-
-        if by_sid is None:
-            by_sid = {}
-            by_date[sid_key] = by_sid
-
-        prev = by_sid.get(mid, {})
-        merged = merge_watch_entry(prev, merged_incoming)
-        by_sid[mid] = merged
-
-        save_atomic(WATCH_PATH, data)
-
-    return merged
-
-
-def _get_watch_entry(date: str, sid: str, mid: str) -> dict:
-    data = load(WATCH_PATH)
-    if not isinstance(data, dict):
-        return {}
-    by_date = data.get(str(date or "").strip())
-    if not isinstance(by_date, dict):
-        return {}
-    for key in _sid_keys(sid):
-        by_sid = by_date.get(key)
-        if isinstance(by_sid, dict):
-            return normalize_watch_entry(by_sid.get(str(mid or "").strip()))
-    return {}
-
-
-def _save_progress_status(date: str, sid: str, mid: str, status: str) -> dict:
-    date = str(date or "").strip()
-    sid = str(sid or "").strip()
-    mid = str(mid or "").strip()
-    status = str(status or "").strip()
-
-    if not date or not sid or not mid:
-        raise ValueError("missing date/sid/mid")
-    if status not in VALID_VIDEO_PROGRESS_STATUSES:
-        raise ValueError("bad status")
-
-    from routes.api_basic import (
-        _load_progress_strict,
-        _notification_progress_commit,
-        _notification_progress_snapshot,
-        _progress_lock,
-        _save_progress_strict,
-    )
-
-    with _progress_lock():
-        current = dict(_load_progress_strict(PRG_PATH))
-        notification_before = _notification_progress_snapshot(current, sid)
-
-        current_day = current.get(date)
-        day = dict(current_day) if isinstance(current_day, dict) else {}
-        current[date] = day
-
-        sid_key = sid
-        cur_sid = None
-        for key in _sid_keys(sid):
-            cand = day.get(key)
-            if isinstance(cand, dict):
-                sid_key = key
-                cur_sid = cand
-                break
-        if cur_sid is None:
-            cur_sid = {}
-
-        merged = merge_progress_day_sid(cur_sid, {mid: status}, source="auto")
-
-        if merged:
-            day[sid_key] = merged
-        else:
-            day.pop(sid_key, None)
-
-        if not day:
-            current.pop(date, None)
-
-        _save_progress_strict(current, PRG_PATH)
-
-        notification_after = _notification_progress_snapshot(current, sid)
-
-    _notification_progress_commit(notification_before, notification_after, sid)
-
-
-
-    return merged
-
-
 @bp_api_watch.get("/api/watch/latest")
 def api_watch_latest():
     sid = str(request.args.get("sid") or "").strip()
@@ -185,7 +49,7 @@ def api_watch_latest():
         data = {}
 
     out = {}
-    keys = _sid_keys(sid)
+    keys = sid_keys(sid)
     date_items = [(date, data.get(date))] if date else data.items()
     for _, by_date in date_items:
         if not isinstance(by_date, dict):
@@ -251,9 +115,13 @@ def api_watch():
         "updatedAt": updated_at,
     }
 
-    merged = _save_watch_entry(date, sid, mid, incoming)
+    merged = save_watch_entry(WATCH_PATH, date, sid, mid, incoming)
     status = watch_auto_status(merged)
-    progress = _save_progress_status(date, sid, mid, status) if status else {}
+    progress = (
+        save_progress_status(PRG_PATH, STU_PATH, VID_PATH, date, sid, mid, status)
+        if status
+        else {}
+    )
 
     return jsonify({"ok": True, "watch": merged, "progress": progress})
 
@@ -284,12 +152,12 @@ def api_watch_status():
 
     if status == "interrupted":
         try:
-            watch = _get_watch_entry(date, sid, mid)
+            watch = get_watch_entry(WATCH_PATH, date, sid, mid)
             if watch_auto_status(watch) == "done":
                 status = "done"
         except Exception:
             pass
 
-    merged = _save_progress_status(date, sid, mid, status)
+    merged = save_progress_status(PRG_PATH, STU_PATH, VID_PATH, date, sid, mid, status)
 
     return jsonify({"ok": True, "progress": merged})

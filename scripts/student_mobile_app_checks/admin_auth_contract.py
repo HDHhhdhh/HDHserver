@@ -5,6 +5,7 @@ import base64
 import os
 from collections.abc import MutableMapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from flask import Flask
@@ -14,6 +15,7 @@ from core.admin_basic_auth import (
     ADMIN_AUTH_CHALLENGE,
     ADMIN_PASSWORD_HASH_ENV,
     ADMIN_USERNAME_ENV,
+    external_admin_api_auth_required,
     verify_admin_authorization,
 )
 from routes.pages import bp_pages
@@ -52,6 +54,101 @@ def run_admin_auth_contract(count: list[int], check: Callable[[list[int], bool, 
     check(count, not verify_admin_authorization("Basic !!!", values), "malformed Basic credentials are rejected")
     check(count, not verify_admin_authorization(TEST_AUTHORIZATION, {}), "missing administrator configuration fails closed")
 
+    external_request = SimpleNamespace(remote_addr="203.0.113.8", headers={})
+    local_request = SimpleNamespace(remote_addr="127.0.0.1", headers={})
+    proxied_external_request = SimpleNamespace(
+        remote_addr="127.0.0.1",
+        headers={"X-Forwarded-For": "203.0.113.8"},
+    )
+    check(
+        count,
+        external_admin_api_auth_required("/api/students", external_request),
+        "external non-public administrator APIs require Basic authentication",
+    )
+    check(
+        count,
+        external_admin_api_auth_required("/api/students", proxied_external_request),
+        "trusted-proxy external administrator APIs require Basic authentication",
+    )
+    check(
+        count,
+        not external_admin_api_auth_required("/api/students", local_request),
+        "loopback administrator APIs retain their local operational access",
+    )
+    check(
+        count,
+        not external_admin_api_auth_required(
+            "/api/mobile/student/homework",
+            external_request,
+            public_request=True,
+        ),
+        "public student APIs retain their session and CSRF boundary instead of admin Basic auth",
+    )
+    check(
+        count,
+        all(
+            not external_admin_api_auth_required(path, external_request)
+            for path in (
+                "/api/get-url",
+                "/api/student/bootstrap",
+                "/api/watch-status",
+                "/api/auth/me",
+            )
+        ),
+        "legacy student routes retain their own academy, session, and credential gates",
+    )
+    check(
+        count,
+        not external_admin_api_auth_required(
+            "/api/announcements",
+            external_request,
+            method="GET",
+            student_scoped=True,
+        )
+        and external_admin_api_auth_required(
+            "/api/announcements",
+            external_request,
+            method="GET",
+        )
+        and external_admin_api_auth_required(
+            "/api/announcements",
+            external_request,
+            method="POST",
+        ),
+        "student-scoped announcement reads stay available while admin reads and writes require Basic auth",
+    )
+    check(
+        count,
+        not external_admin_api_auth_required(
+            "/api/watch",
+            external_request,
+            method="POST",
+        )
+        and external_admin_api_auth_required(
+            "/api/watch",
+            external_request,
+            method="GET",
+        )
+        and not external_admin_api_auth_required(
+            "/api/watch/latest",
+            external_request,
+            method="GET",
+            student_scoped=True,
+        )
+        and external_admin_api_auth_required(
+            "/api/watch/latest",
+            external_request,
+            method="GET",
+        ),
+        "watch writes keep the academy gate while whole-map reads require Basic auth",
+    )
+    check(
+        count,
+        not external_admin_api_auth_required("/api/kollus/lms-callback", external_request)
+        and not external_admin_api_auth_required("/api/ping", external_request),
+        "Kollus callback and health checks retain their dedicated external contracts",
+    )
+
     app = Flask("admin-page-auth", static_folder=str(root / "static"), static_url_path="")
     app.config["ACADEMY_ADMIN_AUTHORIZER"] = test_authorizer
     app.register_blueprint(bp_pages)
@@ -67,7 +164,9 @@ def run_admin_auth_contract(count: list[int], check: Callable[[list[int], bool, 
     )]
     related_page = _request(client, "/students")
     demo = _request(client, "/demo/rh3123")
-    off_network = _request(client, "/admin", TEST_AUTHORIZATION, "203.0.113.8")
+    off_network_missing = _request(client, "/admin", None, "203.0.113.8")
+    off_network_bad = _request(client, "/admin", "Basic Zm9vOmJhcg==", "203.0.113.8")
+    off_network_valid = _request(client, "/admin", TEST_AUTHORIZATION, "203.0.113.8")
     check(count, missing.status_code == 401 and missing.headers.get("WWW-Authenticate") == ADMIN_AUTH_CHALLENGE, "admin page challenges missing credentials")
     check(count, bad.status_code == 401, "admin page rejects bad credentials")
     check(count, valid.status_code == 200, "valid credentials open the admin page")
@@ -76,7 +175,9 @@ def run_admin_auth_contract(count: list[int], check: Callable[[list[int], bool, 
     expected_ntfs = 401 if os.name == "nt" else 404
     check(count, all(response.status_code == expected_ntfs for response in ntfs_bypasses), "NTFS 8.3 and alternate-stream aliases cannot bypass authentication")
     check(count, demo.status_code == 200, "demo admin route remains transparent")
-    check(count, off_network.status_code == 403, "administrator credentials do not bypass the academy network gate")
+    check(count, off_network_missing.status_code == 401, "external admin page challenges missing credentials")
+    check(count, off_network_bad.status_code == 401, "external admin page rejects bad credentials")
+    check(count, off_network_valid.status_code == 200, "valid credentials open the external admin page")
 
 
 __all__ = ("TEST_AUTHORIZATION", "add_test_authorization", "run_admin_auth_contract", "test_authorizer")

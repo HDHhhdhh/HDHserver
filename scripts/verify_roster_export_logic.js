@@ -473,7 +473,7 @@ assertEqual(
 );
 
 assertEqual(
-  'video export excludes blue done videos using cumulative status through the selected date',
+  'video export keeps every video in the selected-date assignment snapshot',
   videoTextFor({
     logs: {},
     progress: {
@@ -490,7 +490,43 @@ assertEqual(
       '2026-06-03': { s1: { videos: ['v41', 'v43', 'v44'], source: 'auto' } },
     },
   }, '2026-06-03'),
-  '44차시',
+  '41차시, 43차시, 44차시',
+);
+
+const combinedVideoAndTestText = taskTextFor({
+  logs: {
+    '2026-06-03': {
+      s1: {
+        testAssignmentDailyTests: [
+          { label: greenLabel, name: '초록 테스트', status: 'assigned', categoryKey: 'UNIT', curriculum: '대수' },
+        ],
+      },
+    },
+  },
+  progress: {
+    '2026-06-03': {
+      s1: {
+        v41: 'done',
+        v43: { status: 'done' },
+        tests: { [greenLabel]: 'assigned' },
+      },
+    },
+  },
+  videos: [
+    { mid: 'v41', chapter: 41, title: 'video 41' },
+    { mid: 'v43', chapter: 43, title: 'video 43' },
+  ],
+  updates: {
+    '2026-06-03': { s1: { videos: ['v41', 'v43'], source: 'manual' } },
+  },
+}, '2026-06-03');
+assertEqual(
+  'roster task export keeps videos and tests together when assigned videos were already done',
+  [
+    combinedVideoAndTestText.includes('영상 : 41차시, 43차시'),
+    exportedTaskTestNames(combinedVideoAndTestText),
+  ],
+  [true, ['초록 테스트']],
 );
 
 {

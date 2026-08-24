@@ -18,9 +18,12 @@ from core.makeup_sheet_sync import (
     merge_additive_sheet_absences,
     read_additive_sheet_candidates,
 )
-from core.paths import ABS_PATH
+from core.paths import ABS_PATH, PRG_PATH, UPD_PATH
 from core.storage import file_lock, load, save_atomic
-from routes.api_attend import _clear_assignments_for_new_absences
+from routes.absence_assignment_cleanup import (
+    absence_write_scope,
+    commit_new_absences_locked,
+)
 
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -115,10 +118,28 @@ def run(*, dry_run: bool = False, today: dt.date | None = None) -> dict:
     operating_date = today or dt.datetime.now(KST).date()
     candidates, months = collect_candidates(config["sheetUrl"], operating_date)
 
-    # Sheet/network work is complete before either live-data lock is acquired.
-    # The two-second timeout deliberately yields to an administrator saving in the UI.
-    with file_lock(CARRYOVER_PATH, timeout_sec=2.0):
-        with file_lock(ABS_PATH, timeout_sec=2.0):
+    # Sheet/network work is complete before live-data locks are acquired.
+    # Dry-run keeps the legacy mutation-free two-file read scope.
+    if dry_run:
+        with file_lock(CARRYOVER_PATH, timeout_sec=2.0):
+            with file_lock(ABS_PATH, timeout_sec=2.0):
+                current_carryover = load(CARRYOVER_PATH)
+                current_absent = load_absent()
+                merged = merge_additive_sheet_absences(
+                    current_carryover if isinstance(current_carryover, dict) else {},
+                    current_absent,
+                    candidates,
+                )
+                backup_path = ""
+    else:
+        # The two-second timeout deliberately yields to an administrator saving in the UI.
+        with absence_write_scope(
+            absent_path=ABS_PATH,
+            carryover_path=CARRYOVER_PATH,
+            updates_path=UPD_PATH,
+            progress_path=PRG_PATH,
+            lock_timeout_sec=2.0,
+        ) as journal_dir:
             current_carryover = load(CARRYOVER_PATH)
             current_absent = load_absent()
             merged = merge_additive_sheet_absences(
@@ -127,21 +148,23 @@ def run(*, dry_run: bool = False, today: dt.date | None = None) -> dict:
                 candidates,
             )
             backup_path = ""
-            if merged["added"] and not dry_run:
+            if merged["added"]:
                 backup_path = str(backup_before_write())
                 new_pairs = {
                     (str(item.get("date") or ""), str(item.get("sid") or ""))
                     for item in merged.get("addedPairs") or []
                 }
-                _clear_assignments_for_new_absences(new_pairs)
-                save_absent(merged["absent"], locked=True)
-                try:
-                    save_atomic(CARRYOVER_PATH, merged["carryover"])
-                except Exception:
-                    # No carryover write means the absence write is rolled back while
-                    # both live locks are still held.
-                    save_absent(current_absent, locked=True)
-                    raise
+                commit_new_absences_locked(
+                    new_pairs,
+                    absent_after=merged["absent"],
+                    carryover_after=merged["carryover"],
+                    absent_path=ABS_PATH,
+                    carryover_path=CARRYOVER_PATH,
+                    updates_path=UPD_PATH,
+                    progress_path=PRG_PATH,
+                    journal_dir=journal_dir,
+                    kind="makeup-sheet-offline",
+                )
 
     result = {
         "ok": True,

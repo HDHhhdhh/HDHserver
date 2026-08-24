@@ -13,6 +13,7 @@ from typing import Any
 from flask import Blueprint, g, jsonify, request
 from werkzeug.utils import secure_filename
 
+from core.announcement_image_access import ANNOUNCEMENT_IMAGE_EXTENSIONS
 from core.paths import ANN_STATUS_PATH, ANNS_PATH, FILES_DIR, STU_PATH, VID_PATH
 from core.student_board_projection import student_board_announcement_visible
 from core.student_notification_events import deterministic_event_id
@@ -29,7 +30,7 @@ SURVEY_QUESTION_TYPES = {"single", "multiple", "short", "long"}
 ANN_IMAGE_DIR = FILES_DIR / "announcements"
 ANN_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 ANN_REPLY_LIMIT = 3
-ANN_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+ANN_IMAGE_EXTS = set(ANNOUNCEMENT_IMAGE_EXTENSIONS)
 ANN_IMAGE_MIMES = {
     "image/jpeg",
     "image/png",
@@ -505,21 +506,6 @@ def _known_video_mid(value: Any) -> str:
     if not isinstance(videos, list):
         return ""
     return mid if any(isinstance(row, dict) and str(row.get("mid") or "").strip() == mid for row in videos) else ""
-
-
-def _student_can_access_announcement_image(sid: str, image_path: str) -> bool:
-    requested = _normalize_image({"path": image_path})
-    if requested is None:
-        return False
-    expected_path = requested["path"]
-    now = _now()
-    for ann in _load_active_announcements():
-        if not _student_visible(ann, sid, now=now):
-            continue
-        images = _normalize_images(ann.get("images"), ann.get("image"))
-        if any(image.get("path") == expected_path for image in images):
-            return True
-    return False
 
 
 def _push_target_sids(ann: dict[str, Any]) -> list[str]:

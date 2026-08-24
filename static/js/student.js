@@ -1446,102 +1446,12 @@ window.todayLocalKey = function () {
     alert("데이터 로드 실패\n" + err);
   });
 
-  /* ───────────── 자동배정 헬퍼 ───────────── */
-
-  // 오늘 요일 기준으로 정규 수업 있는지
-  function hasRegularToday(stu, todayStr) {
-    if (!stu) return false;
-    const wchr = '일월화수목금토'[new Date(todayStr).getDay()];
-    const vals = Object.keys(stu)
-      .filter(k => /^day\d+$/.test(k) && stu[k])
-      .map(k => String(stu[k]));
-    return vals.some(v => String(v).startsWith(wchr));
-  }
-
   // /api/absent 응답에서 by_date 부분만 뽑기
   function normalizeAbsentByDate(payload) {
     if (!payload || typeof payload !== 'object') return {};
     if (payload.by_date && typeof payload.by_date === 'object') return payload.by_date;
     if (payload.byDate && typeof payload.byDate === 'object') return payload.byDate;
     return payload;
-  }
-
-  // “오늘 학생표 기준으로 자동배정 허용해도 되는지” 판단
-  function isAllowedTodayForAutoAssign(sidVal, today) {
-    if (!stuCache) return false;
-    const sidStr = String(sidVal);
-
-    // 1) 오늘 요일에 정규 수업이 있어야 함
-    if (!hasRegularToday(stuCache, today)) return false;
-
-    // 2) 결석 리스트에 있으면 안 됨
-    const absList = (absentByDateCache[today] || []);
-    const absSet = new Set(absList.map(String));
-    if (absSet.has(sidStr)) return false;
-
-    // 3) 오늘 로그가 done=true면 자유의 몸 → 안 됨
-    // 3) 오늘 로그가 archived=true면 안 됨 (done은 허용!)
-    const logsToday = (logsCache || {})[today] || {};
-    const entry = logsToday[sidStr] || logsToday[sidVal] || {};
-    const archived = entry.archived === true || entry.archived === 'true';
-    if (archived) return false;
-
-    return true;
-
-  }
-
-  // updates 전체에서 이 sid의 "마지막 배정" 찾기 (sid 키 숫자/문자 둘 다 허용)
-  function getLastAssignedVideosForSid(sidVal, updatesObj) {
-    const sidStr = String(sidVal);
-    const sidNum = Number.isFinite(+sidVal) ? String(+sidVal) : null;
-    const days = Object.keys(updatesObj || {}).sort();
-    for (let i = days.length - 1; i >= 0; i--) {
-      const day = days[i];
-      const perDay = updatesObj[day] || {};
-      const raw = perDay[sidStr] ?? (sidNum != null ? perDay[sidNum] : undefined);
-      if (!raw) continue;
-      if (Array.isArray(raw)) return raw.slice();
-      if (raw && Array.isArray(raw.videos)) return raw.videos.slice();
-    }
-    return null;
-  }
-
-  // “오늘 학생표에 있는 애”만 자동 배정 (자동배정 로직 내부에서만 today 허용 체크)
-  async function ensureTodayAssignmentIfMissing() {
-    if (STUDENT_APP_PUBLIC_MODE) return false;
-    const today = todayLocalKey();
-    const dayMap = updatesCache[today] || {};
-    const sidStr = String(sid);
-    const sidNum = Number.isFinite(+sid) ? String(+sid) : null;
-
-    const rawToday = dayMap[sidStr] ?? (sidNum != null ? dayMap[sidNum] : undefined);
-    const hasToday = Array.isArray(rawToday)
-      ? rawToday.length > 0
-      : Array.isArray(rawToday?.videos)
-        ? rawToday.videos.length > 0
-        : (rawToday !== undefined); // 혹시라도 값만 있으면 "있다"로 간주
-
-    if (hasToday) return false;
-
-    // 오늘 학생표 대상이 아니면 자동 배정 금지 (수동 배정은 보여줘야 함)
-    if (!isAllowedTodayForAutoAssign(sid, today)) return false;
-
-    const last = getLastAssignedVideosForSid(sid, updatesCache);
-    if (!last || !last.length) return false;
-
-    const nextUpdates = { ...(updatesCache || {}) };
-    const todayMap = { ...(nextUpdates[today] || {}) };
-    todayMap[sidStr] = last.map(String);
-    nextUpdates[today] = todayMap;
-
-    await fetch('/api/updates/patch', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify({ date: today, sid: sidStr, videos: last.map(String) })
-    });
-
-    updatesCache = nextUpdates;
-    return true;
   }
 
   /* ───────────── [추가] updates에서 배정 읽기 공통 함수 ───────────── */

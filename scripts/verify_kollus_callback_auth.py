@@ -37,11 +37,12 @@ def main() -> int:
     original = {
         "known_sid": api_kollus._known_sid,
         "known_mid": api_kollus._known_mid,
-        "save_watch": api_kollus._save_watch_entry,
-        "save_progress": api_kollus._save_progress_status,
+        "save_watch": api_kollus.save_watch_entry,
+        "save_progress": api_kollus.save_progress_status,
         "time": api_kollus.time.time,
     }
     saved: list[dict] = []
+    progress_saved: list[tuple] = []
 
     os.environ["KOLLUS_CALLBACK_SECRET"] = secret
     api_kollus.time.time = lambda: fixed_now
@@ -53,8 +54,12 @@ def main() -> int:
 
     api_kollus._known_sid = lambda sid: sid == "sid-1"
     api_kollus._known_mid = lambda mid: mid == "mid-1"
-    api_kollus._save_watch_entry = lambda date, sid, mid, incoming: saved.append(incoming) or incoming
-    api_kollus._save_progress_status = lambda date, sid, mid, status: {mid: status}
+    api_kollus.save_watch_entry = lambda _path, date, sid, mid, incoming: saved.append(incoming) or incoming
+    api_kollus.save_progress_status = (
+        lambda progress_path, students_path, videos_path, date, sid, mid, status:
+        progress_saved.append((progress_path, students_path, videos_path, date, sid, mid, status))
+        or {mid: status}
+    )
     app = Flask("verify-kollus-callback-auth")
     app.register_blueprint(api_kollus.bp_api_kollus)
     client = app.test_client()
@@ -64,7 +69,7 @@ def main() -> int:
             "/api/kollus/lms-callback",
             json=_callback_body("sid-1"),
         )
-        if missing.status_code != 403 or saved:
+        if missing.status_code != 403 or saved or progress_saved:
             raise AssertionError("unsigned Kollus callback must fail before persistence")
 
         tampered_token = callback_token[:-1] + ("0" if callback_token[-1] != "0" else "1")
@@ -72,15 +77,20 @@ def main() -> int:
             "/api/kollus/lms-callback",
             json=_callback_body(tampered_token),
         )
-        if tampered.status_code != 403 or saved:
+        if tampered.status_code != 403 or saved or progress_saved:
             raise AssertionError("callback signature must be scoped to SID and MID")
 
         valid = client.post(
             "/api/kollus/lms-callback",
             json=_callback_body(callback_token),
         )
-        if valid.status_code != 200 or len(saved) != 1:
-            raise AssertionError("valid signed callback must reach watch persistence")
+        if valid.status_code != 200 or len(saved) != 1 or len(progress_saved) != 1:
+            raise AssertionError("valid signed callback must reach watch and progress persistence")
+        progress_call = progress_saved[0]
+        if progress_call[:3] != (api_kollus.PRG_PATH, api_kollus.STU_PATH, api_kollus.VID_PATH):
+            raise AssertionError("Kollus callback must inject canonical progress notification paths")
+        if progress_call[4:] != ("sid-1", "mid-1", "interrupted"):
+            raise AssertionError("10 percent Kollus callback must persist interrupted progress")
 
         expired_at = str(fixed_now - api_kollus.CALLBACK_TOKEN_MAX_AGE_SEC - 1)
         expired_token = api_kollus._encode_callback_token(secret, "sid-1", "mid-1", expired_at)
@@ -88,7 +98,7 @@ def main() -> int:
             "/api/kollus/lms-callback",
             json=_callback_body(expired_token),
         )
-        if expired.status_code != 403 or len(saved) != 1:
+        if expired.status_code != 403 or len(saved) != 1 or len(progress_saved) != 1:
             raise AssertionError("expired callback signature must be rejected")
 
         static_secret = client.post(
@@ -96,7 +106,7 @@ def main() -> int:
             headers={"X-Kollus-Secret": secret},
             json=_callback_body("sid-1"),
         )
-        if static_secret.status_code != 200 or len(saved) != 2:
+        if static_secret.status_code != 200 or len(saved) != 2 or len(progress_saved) != 2:
             raise AssertionError("explicit provider secret must remain a valid callback authentication path")
 
         os.environ.pop("KOLLUS_CALLBACK_SECRET", None)
@@ -104,13 +114,13 @@ def main() -> int:
             "/api/kollus/lms-callback",
             json=_callback_body(callback_token),
         )
-        if unconfigured.status_code != 403 or len(saved) != 2:
+        if unconfigured.status_code != 403 or len(saved) != 2 or len(progress_saved) != 2:
             raise AssertionError("callback endpoint must fail closed without its secret")
     finally:
         api_kollus._known_sid = original["known_sid"]
         api_kollus._known_mid = original["known_mid"]
-        api_kollus._save_watch_entry = original["save_watch"]
-        api_kollus._save_progress_status = original["save_progress"]
+        api_kollus.save_watch_entry = original["save_watch"]
+        api_kollus.save_progress_status = original["save_progress"]
         api_kollus.time.time = original["time"]
         if old_secret is None:
             os.environ.pop("KOLLUS_CALLBACK_SECRET", None)

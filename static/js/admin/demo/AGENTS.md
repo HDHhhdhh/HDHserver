@@ -23,6 +23,7 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 - Today order supports GET/PATCH/DELETE only; do not emulate the retired whole-map POST.
 - `/api/updates` is GET-only; assignment mutations use `/api/updates/patch` or `/api/updates/self-study`, and the retired base POST must return a synthetic unsupported response.
 - Extra attendance supports only `/api/extra-attend`; obsolete `/api/extra`, `/api/extra_attend`, and `/api/extra-attend/all` requests must return synthetic unsupported responses.
+- `/api/delete-student` and `/api/material-upload` are retired and stay unsupported. Demo deletion uses canonical `DELETE /api/students/:sid`; material state uses `/api/materials`.
 - Keep fixed synthetic time/schema changes synchronized across `data.js`, `store.js`, and request handlers.
 - New demo pages require coordinated changes to `DEMO_PATHS`, `DEMO_ROUTE_MAP`, `routes/pages.py`, shell script order, and tutorial page resolution.
 - Navigation and `window.open` remain sandboxed; production aliases remap to demo routes and external/unknown targets block.

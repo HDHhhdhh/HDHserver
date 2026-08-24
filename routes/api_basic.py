@@ -1,22 +1,20 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import os
 import random
 import re
-import threading
 import time
 import json
 from copy import deepcopy
 from urllib.parse import parse_qs, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
-from flask import Blueprint, abort, current_app, g, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, make_response, request
 
 from core.paths import (
     BASE,
-    STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH,
+    STU_PATH, VID_PATH, PRG_PATH, UPD_PATH, ASN_PATH, MAT_PATH, CAL_PATH, PAGE_FOLDERS_PATH,
     EXTRA_PATH, LOGS_PATH, CLINIC_PATH, WEEKEND_SLOTS_PATH,
     WATCH_PATH, TESTS_CFG_PATH,
 )
@@ -28,6 +26,14 @@ from core.ghost_student import (
 )
 from core.log_repository import LogRepository
 from core import log_rules as _log_rules
+from core.material_state import (
+    MaterialStateConflictError,
+    MaterialStateRecoveryRequiredError,
+    load_material_state,
+    load_material_state_last_good,
+    material_state_revision,
+    replace_material_state_component,
+)
 from core.network_access import (
     ACADEMY_ACCESS_MESSAGE,
     academy_network_allowed,
@@ -39,20 +45,22 @@ from core.progress_rules import (
     PROGRESS_MANUAL_META_KEY,
     TEST_ASSIGN_CLEAR_META_KEY,
     WATCH_AUTO_PROGRESS_META_KEY,
+    latest_video_status_by_sid,
     merge_progress_day_sid as _merge_progress_day_sid,
     normalize_watch_entry as _normalize_watch_entry,
     watch_rank as _watch_rank,
     watch_auto_status as _watch_auto_status,
 )
+from core.progress_notifications import commit_progress_notifications, progress_notification_snapshot
+from core.progress_store import load_progress_strict, progress_file_lock, save_progress_strict
 from core.video_review_rules import resolve_video_review_states_before_date
 from core.student_curriculum_progress import build_curriculum_progress
 from core.student_schedule_projection import project_student_schedule, select_next_schedule
 from core.student_notification_hooks import (
     enqueue_current_schedule_changes,
-    enqueue_progress_milestones,
-    runtime_repository,
     student_schedule_changed_sids,
 )
+from core.test_answer_links import resolve_test_assignment_answer_url
 from core.storage import InterProcessFileLock, file_lock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
@@ -63,10 +71,6 @@ STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님�
 GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
 GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
 GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
-_PROGRESS_CACHE_LOCK = threading.Lock()
-_PROGRESS_CACHE_SIGNATURE: tuple[str, int, int] | None = None
-_PROGRESS_CACHE_DATA: dict | None = None
-
 # ─────────────────────────────────────────────
 # 공통 CRUD
 # ─────────────────────────────────────────────
@@ -78,49 +82,65 @@ def crud(path):
     return "", 204
 
 
-def _progress_file_signature(path=None) -> tuple[str, int, int] | None:
-    progress_path = path or PRG_PATH
+def _load_material_state_for_read() -> tuple[dict, dict, dict, bool]:
+    """Load one coherent snapshot; fall back without disabling the whole server."""
     try:
-        stat = progress_path.stat()
-    except FileNotFoundError:
-        return None
-    return str(progress_path), stat.st_mtime_ns, stat.st_size
+        materials, assignments, page_folders = load_material_state(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+        )
+    except Exception as primary_error:
+        try:
+            materials, assignments, page_folders = load_material_state_last_good(MAT_PATH)
+        except Exception:
+            current_app.logger.error(
+                "Material state read degraded without a last-good snapshot: %s",
+                primary_error,
+            )
+            return {}, {}, {}, True
+        current_app.logger.warning(
+            "Material state read is using the last-good snapshot: %s",
+            primary_error,
+        )
+        return materials, assignments, page_folders, True
+    return materials, assignments, page_folders, False
+
+
+def _material_state_json_response(
+    value: dict,
+    materials: dict,
+    assignments: dict,
+    page_folders: dict,
+    *,
+    degraded: bool,
+):
+    response = make_response(jsonify(value))
+    response.headers["X-Material-State-Revision"] = material_state_revision(
+        materials,
+        assignments,
+        page_folders,
+    )
+    if degraded:
+        response.headers["X-Material-State-Degraded"] = "1"
+    return response
+
+
+def _normalize_material_state_revision(value: str | None) -> str:
+    revision = str(value or "").strip()
+    if revision.startswith("W/"):
+        revision = revision[2:].strip()
+    return revision.strip('"')
 
 
 def _load_progress_strict(path=None) -> dict:
-    global _PROGRESS_CACHE_DATA, _PROGRESS_CACHE_SIGNATURE
-
-    progress_path = path or PRG_PATH
-    signature = _progress_file_signature(progress_path)
-    with _PROGRESS_CACHE_LOCK:
-        if _PROGRESS_CACHE_SIGNATURE == signature and _PROGRESS_CACHE_DATA is not None:
-            return _PROGRESS_CACHE_DATA
-
-        try:
-            data = {} if signature is None else json.loads(progress_path.read_text("utf-8-sig"))
-        except Exception as e:
-            raise RuntimeError(f"progress.json read failed: {e}") from e
-
-        if not isinstance(data, dict):
-            raise RuntimeError("progress.json must be an object")
-
-        _PROGRESS_CACHE_SIGNATURE = signature
-        _PROGRESS_CACHE_DATA = data
-        return data
+    """Compatibility wrapper around the shared progress store."""
+    return load_progress_strict(path or PRG_PATH)
 
 
 def _save_progress_strict(data: dict, path=None) -> None:
-    global _PROGRESS_CACHE_DATA, _PROGRESS_CACHE_SIGNATURE
-
-    if not isinstance(data, dict):
-        raise RuntimeError("progress.json must be an object")
-
-    progress_path = path or PRG_PATH
-    save_atomic(progress_path, data, compact=True)
-    signature = _progress_file_signature(progress_path)
-    with _PROGRESS_CACHE_LOCK:
-        _PROGRESS_CACHE_SIGNATURE = signature
-        _PROGRESS_CACHE_DATA = data
+    """Compatibility wrapper around the shared progress store."""
+    save_progress_strict(path or PRG_PATH, data)
 
 
 def _student_has_schedule_on_date(student: dict, date_key: str) -> bool:
@@ -330,8 +350,7 @@ def _sid_keys(sid: str) -> list[str]:
 
 
 def _progress_lock():
-    pp = str(getattr(PRG_PATH, "__fspath__", lambda: str(PRG_PATH))())
-    return _InterProcessFileLock(pp + ".lock", timeout_sec=30.0, poll_sec=0.05, stale_sec=30.0)
+    return progress_file_lock(PRG_PATH)
 
 
 def _updates_lock():
@@ -563,19 +582,6 @@ def _latest_previous_test_statuses_from_sources(
     return {}
 
 
-def _normalize_test_answer_round(round_value) -> str:
-    raw = str(round_value or "1").strip()
-    match = re.search(r"\d+", raw)
-    if match:
-        return match.group(0)
-    return "1"
-
-
-def _drive_file_url(file_id: str) -> str:
-    fid = str(file_id or "").strip()
-    return f"https://drive.google.com/file/d/{fid}/view?usp=drivesdk" if fid else ""
-
-
 def _load_tests_config_for_answer_links() -> dict:
     try:
         mtime = TESTS_CFG_PATH.stat().st_mtime
@@ -620,191 +626,12 @@ def _load_test_answer_link_map() -> dict:
     return data
 
 
-def _answer_url_from_link_entry(entry) -> str:
-    if isinstance(entry, str):
-        return entry.strip()
-    if isinstance(entry, dict):
-        for key in ("answerUrl", "answer_url", "solutionUrl", "solution_url", "url", "link"):
-            value = str(entry.get(key) or "").strip()
-            if value:
-                return value
-    return ""
-
-
-def _assignment_direct_answer_url(item: dict) -> str:
-    direct = _answer_url_from_link_entry(item)
-    if direct:
-        return direct
-
-    source_files = item.get("sourceFiles") or item.get("source_files")
-    if isinstance(source_files, dict):
-        direct = _answer_url_from_link_entry(source_files)
-        if direct:
-            return direct
-
-    return ""
-
-
-def _test_assignment_category_key(item: dict) -> str:
-    source = " ".join(str(item.get(key) or "") for key in (
-        "category", "categoryKey", "categoryLabel", "label", "type"
-    ))
-    upper = source.upper()
-    compact = re.sub(r"\s+", "", source)
-    if re.search(r"\bUNIT\b", upper) or "\ub2e8\uc6d0\ud3c9\uac00" in source or "\ub2e8\uc6d0" in source:
-        return "UNIT"
-    if "REVIEW" in upper or "\ubcf5\uc2b5" in compact:
-        return "REVIEW"
-    if "SCHOOL_PAST" in upper or "SCHOOL" in upper or "\ud559\uad70\uc9c0" in compact or "\ud559\uad50\ubcc4" in compact:
-        return "SCHOOL_PAST"
-    if "ILSAN_PAST" in upper or "ILSAN" in upper or "\uc77c\uc0b0" in compact:
-        return "ILSAN_PAST"
-    return ""
-
-
-def _normalize_test_assignment_difficulty(category_key: str, value) -> str:
-    text = str(value or "").strip()
-    if category_key == "ILSAN_PAST":
-        if "\uadf8\ub798\ud504" in text:
-            return "\uadf8\ub798\ud504 \ud3ec\ud568"
-        if text == "\uc0c1" or "\uc911\uc0c1" in text:
-            return "\uc911\uc0c1"
-        if "\uc911" in text:
-            return "\uc911"
-    return text
-
-
-def _test_assignment_has_answer_link(item: dict) -> bool:
-    return _test_assignment_category_key(item) in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}
-
-
-def _test_config_answer_url(test: dict) -> str:
-    if not isinstance(test, dict):
-        return ""
-    direct = _answer_url_from_link_entry(test)
-    if direct:
-        return direct
-    source_files = test.get("sourceFiles") or test.get("source_files")
-    if isinstance(source_files, dict):
-        direct = _answer_url_from_link_entry(source_files)
-        if direct:
-            return direct
-        for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
-            url = _drive_file_url(source_files.get(key))
-            if url:
-                return url
-    for key in ("solutionFileId", "solution_file_id", "answerFileId", "answer_file_id"):
-        url = _drive_file_url(test.get(key))
-        if url:
-            return url
-    return ""
-
-
-def _candidate_test_ids(item: dict) -> list[str]:
-    candidates = []
-    for key in ("id", "testId", "sourceId", "source_id"):
-        raw = str(item.get(key) or "").strip()
-        if not raw:
-            continue
-        candidates.append(raw)
-        stripped = re.sub(r"_r[123]$", "", raw)
-        if stripped != raw:
-            candidates.append(stripped)
-    out = []
-    seen = set()
-    for value in candidates:
-        if value and value not in seen:
-            seen.add(value)
-            out.append(value)
-    return out
-
-
-def _find_test_config_for_assignment(item: dict) -> dict:
-    category_key = _test_assignment_category_key(item)
-    if category_key not in {"UNIT", "REVIEW", "SCHOOL_PAST", "ILSAN_PAST"}:
-        return {}
-
-    config = _load_tests_config_for_answer_links()
-    category = (config.get("categories") or {}).get(category_key) if isinstance(config, dict) else {}
-    tests = category.get("tests") if isinstance(category, dict) else []
-    if not isinstance(tests, list):
-        return {}
-
-    ids = set(_candidate_test_ids(item))
-    if ids:
-        for test in tests:
-            if not isinstance(test, dict):
-                continue
-            test_ids = {
-                str(test.get("id") or "").strip(),
-                str(test.get("sourceId") or test.get("source_id") or "").strip(),
-            }
-            if ids.intersection(x for x in test_ids if x):
-                return test
-
-    item_name = str(item.get("name") or item.get("testName") or "").strip()
-    item_label = str(item.get("label") or "").strip()
-    item_round = _normalize_test_answer_round(item.get("round"))
-    item_cur = str(item.get("curriculum") or "").strip()
-    item_difficulty = _normalize_test_assignment_difficulty(
-        category_key,
-        item.get("difficulty"),
-    )
-    item_term = str(item.get("term") or "").strip()
-
-    for test in tests:
-        if not isinstance(test, dict):
-            continue
-        test_name = str(test.get("name") or "").strip()
-        name_ok = item_name == test_name if item_name else bool(test_name and test_name in item_label)
-        if not name_ok:
-            continue
-        if item_round and _normalize_test_answer_round(test.get("round")) != item_round:
-            continue
-        if item_cur and str(test.get("curriculum") or "").strip() != item_cur:
-            continue
-        test_difficulty = _normalize_test_assignment_difficulty(
-            category_key,
-            test.get("difficulty"),
-        )
-        if item_difficulty and test_difficulty != item_difficulty:
-            continue
-        if item_term and str(test.get("term") or "").strip() != item_term:
-            continue
-        return test
-    return {}
-
-
 def _test_assignment_answer_url(item: dict) -> str:
-    if not isinstance(item, dict) or not _test_assignment_has_answer_link(item):
-        return ""
-
-    direct_url = _assignment_direct_answer_url(item)
-    if direct_url:
-        return direct_url
-
-    configured_test = _find_test_config_for_assignment(item)
-    config_url = _test_config_answer_url(configured_test)
-    if config_url:
-        return config_url
-
-    link_map = _load_test_answer_link_map()
-    if not link_map:
-        return ""
-
-    round_key = _normalize_test_answer_round(item.get("round"))
-    for candidate in (item, configured_test):
-        for test_id in _candidate_test_ids(candidate):
-            rounds = link_map.get(test_id)
-            if isinstance(rounds, dict):
-                url = _answer_url_from_link_entry(rounds.get(round_key))
-                if url:
-                    return url
-            url = _answer_url_from_link_entry(rounds)
-            if url:
-                return url
-    return ""
-
+    return resolve_test_assignment_answer_url(
+        item,
+        tests_config=_load_tests_config_for_answer_links(),
+        answer_link_map=_load_test_answer_link_map(),
+    )
 
 def _append_unique_assigned_test_label(labels: list[str], label: str) -> None:
     if label not in labels:
@@ -1704,24 +1531,8 @@ def _course_videos_completed(course_videos: list, sid: str, latest_status_by_sid
 
 
 def _build_latest_status_by_sid(progress: dict) -> dict:
-    out = {}
-    if not isinstance(progress, dict):
-        return out
-
-    for d in sorted(progress.keys()):
-        day = progress.get(d) or {}
-        if not isinstance(day, dict):
-            continue
-        for sid, mids in day.items():
-            if not isinstance(mids, dict):
-                continue
-            sm = out.setdefault(str(sid), {})
-            for mid, st in mids.items():
-                mid_s = str(mid)
-                if mid_s.startswith("__") or mid_s == "tests":
-                    continue
-                sm[mid_s] = st
-    return out
+    """Compatibility wrapper for existing route and fixture consumers."""
+    return latest_video_status_by_sid(progress)
 
 
 def _build_auto_assignment_blocked_by_sid(progress: dict, watch: dict) -> dict:
@@ -2371,45 +2182,18 @@ def _progress_sids_from_query() -> list[str]:
 
 
 def _notification_progress_snapshot(progress: dict, sid: str):
-    """Build a best-effort, default-off milestone snapshot without changing progress writes."""
-    repository = runtime_repository()
-    if repository is None:
-        return None
-    try:
-        students, videos = load(STU_PATH), load(VID_PATH)
-        student = next(
-            (row for row in students if isinstance(row, dict) and str(row.get("id") or "") == str(sid)),
-            None,
-        ) if isinstance(students, list) else None
-        if not isinstance(student, dict) or not isinstance(videos, list):
-            return None
-        statuses = _build_latest_status_by_sid(progress).get(str(sid), {})
-        summary = build_curriculum_progress(
-            student, videos, statuses,
-            calculated_at=dt.datetime.now(KST).replace(microsecond=0).isoformat(),
-        )
-        percent = summary.get("percent")
-        if not isinstance(percent, int):
-            return None
-        identity = json.dumps(
-            [summary.get("basis"), summary.get("scope"), summary.get("curriculum"), summary.get("subCurriculum")],
-            ensure_ascii=False, separators=(",", ":"),
-        )
-        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
-        return repository, key, percent
-    except Exception:
-        return None
+    """Compatibility wrapper for progress milestone projection."""
+    return progress_notification_snapshot(
+        progress,
+        sid,
+        students_path=STU_PATH,
+        videos_path=VID_PATH,
+    )
 
 
 def _notification_progress_commit(before, after, sid: str) -> int:
-    if before is None or after is None or before[1] != after[1]:
-        return 0
-    try:
-        return enqueue_progress_milestones(
-            after[0], str(sid), after[1], before[2], after[2], now=time.time(),
-        )
-    except Exception:
-        return 0
+    """Compatibility wrapper for progress milestone delivery."""
+    return commit_progress_notifications(before, after, sid)
 
 
 def _is_public_student_request() -> bool:
@@ -2512,16 +2296,9 @@ def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
 # ─────────────────────────────────────────────
 # 기본 API
 # ─────────────────────────────────────────────
-@bp_api_basic.route("/api/students", methods=["GET", "POST"])
+@bp_api_basic.get("/api/students")
 def api_students():
-    if request.method == "GET":
-        return jsonify(load(STU_PATH))
-    previous = load(STU_PATH)
-    incoming = request.get_json(force=True)
-    save_atomic(STU_PATH, incoming)
-    affected = student_schedule_changed_sids(previous, incoming)
-    enqueue_current_schedule_changes(affected)
-    return "", 204
+    return jsonify(load(STU_PATH))
 
 
 @bp_api_basic.route("/api/videos", methods=["GET", "POST"])
@@ -3012,10 +2789,10 @@ def api_student_bootstrap():
             academy_allowed,
         )
 
-    assigns = load(ASN_PATH) or {}
-    material_assignment = _sid_lookup(assigns if isinstance(assigns, dict) else {}, sid)
+    material_catalog, assigns, _page_folders, _material_state_degraded = _load_material_state_for_read()
+    material_assignment = _sid_lookup(assigns, sid)
     assigned_materials = _assigned_material_list(material_assignment)
-    materials = _filter_materials_for_assignment(load(MAT_PATH) or {}, assigned_materials)
+    materials = _filter_materials_for_assignment(material_catalog, assigned_materials)
 
     json_logs_for_assigned = log_repo.read_json_map()
 
@@ -3066,15 +2843,63 @@ def api_student_bootstrap():
 
 @bp_api_basic.route("/api/mat-assign", methods=["GET", "POST"])
 def api_mat_assign():
-    return crud(ASN_PATH)
-
-
-@bp_api_basic.route("/api/materials", methods=["GET", "POST"])
-def api_materials():
+    materials, assignments, page_folders, degraded = _load_material_state_for_read()
     if request.method == "GET":
-        return jsonify(load(MAT_PATH))
-    save_atomic(MAT_PATH, request.get_json(force=True))
-    return "", 204
+        return _material_state_json_response(
+            assignments,
+            materials,
+            assignments,
+            page_folders,
+            degraded=degraded,
+        )
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "code": "invalid_material_assignments"}), 400
+    expected_revision = _normalize_material_state_revision(request.headers.get("If-Match"))
+    if not expected_revision:
+        return jsonify({"ok": False, "code": "material_state_revision_required"}), 428
+
+    try:
+        new_revision = replace_material_state_component(
+            MAT_PATH,
+            ASN_PATH,
+            PAGE_FOLDERS_PATH,
+            "assignments",
+            body,
+            expected_revision=expected_revision,
+        )
+    except MaterialStateConflictError as exc:
+        response = make_response(
+            jsonify({"ok": False, "code": "material_state_conflict"}),
+            409,
+        )
+        response.headers["X-Material-State-Revision"] = exc.current_revision
+        return response
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        current_app.logger.error("Material assignment write is unavailable: %s", exc)
+        return jsonify({"ok": False, "code": "material_state_unavailable"}), 503
+    except ValueError:
+        return jsonify({"ok": False, "code": "invalid_material_assignments"}), 400
+    except Exception:
+        current_app.logger.exception("Material assignment write failed")
+        return jsonify({"ok": False, "code": "material_state_unavailable"}), 503
+
+    response = make_response("", 204)
+    response.headers["X-Material-State-Revision"] = new_revision
+    return response
+
+
+@bp_api_basic.get("/api/materials")
+def api_materials():
+    materials, assignments, page_folders, degraded = _load_material_state_for_read()
+    return _material_state_json_response(
+        materials,
+        materials,
+        assignments,
+        page_folders,
+        degraded=degraded,
+    )
 
 
 @bp_api_basic.route("/api/school-calendar", methods=["GET", "POST"])
@@ -3089,14 +2914,15 @@ def api_school_calendar():
 
 @bp_api_basic.post("/api/add-student")
 def api_add_student():
-    students: List[dict] = load(STU_PATH)
     data = request.get_json(force=True) or {}
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
-    data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
-    _apply_able_auto_video_assign_default(data)
-    students.append(data)
-    save_atomic(STU_PATH, students)
+    with file_lock(STU_PATH):
+        students: List[dict] = load(STU_PATH)
+        data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
+        _apply_able_auto_video_assign_default(data)
+        students.append(data)
+        save_atomic(STU_PATH, students)
     enqueue_current_schedule_changes([data["id"]])
     return jsonify({"id": data["id"]})
 
@@ -3326,41 +3152,28 @@ def _log_export_targets_from_query() -> dict[str, str] | None:
 # ✅ LOGS (dual-write)
 # GET: SQLite 우선 + JSON 보강
 # POST /api/logs/patch: SQLite 저장 + JSON 저장(둘 다)
-# POST /api/logs: 레거시 전체 업로드도 둘 다 반영
 # ─────────────────────────────────────────────
-@bp_api_basic.route("/api/logs", methods=["GET", "POST"])
+@bp_api_basic.get("/api/logs")
 def api_logs():
-    if request.method == "GET":
-        date_filter = str(request.args.get("date") or "").strip()
-        sid_filter = str(request.args.get("sid") or "").strip()
-        sid_filters = _progress_sids_from_query()
-        if date_filter and not DATE_RE.match(date_filter):
-            return jsonify({"ok": False, "error": "bad date"}), 400
-        try:
-            export_targets = _log_export_targets_from_query()
-        except ValueError:
-            return jsonify({"ok": False, "error": "bad exportTargets"}), 400
-        repository = get_log_repository()
-        if export_targets is not None:
-            return nocache_resp(repository.read_export_history(export_targets))
-        return nocache_resp(
-            repository.read_logs(
-                date_filter,
-                sid_filter,
-                sid_filters=sid_filters,
-            )
+    date_filter = str(request.args.get("date") or "").strip()
+    sid_filter = str(request.args.get("sid") or "").strip()
+    sid_filters = _progress_sids_from_query()
+    if date_filter and not DATE_RE.match(date_filter):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+    try:
+        export_targets = _log_export_targets_from_query()
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad exportTargets"}), 400
+    repository = get_log_repository()
+    if export_targets is not None:
+        return nocache_resp(repository.read_export_history(export_targets))
+    return nocache_resp(
+        repository.read_logs(
+            date_filter,
+            sid_filter,
+            sid_filters=sid_filters,
         )
-
-    incoming = request.get_json(force=True) or {}
-    if not isinstance(incoming, dict):
-        incoming = {}
-
-    result = get_log_repository().legacy_post(incoming)
-
-    if not result.sqlite_ok:
-        return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
-
-    return "", 204
+    )
 
 
 @bp_api_basic.post("/api/logs/patch")
@@ -3489,12 +3302,13 @@ def api_logs_patch_batch():
 # ─────────────────────────────────────────────
 @bp_api_basic.delete("/api/students/<string:sid>")
 def api_delete_student(sid: str):
-    students: List[dict] = load(STU_PATH)
-    for i, s in enumerate(students):
-        if str(s.get("id")) == str(sid):
-            del students[i]
-            save_atomic(STU_PATH, students)
-            return "", 204
+    with file_lock(STU_PATH):
+        students: List[dict] = load(STU_PATH)
+        for i, s in enumerate(students):
+            if str(s.get("id")) == str(sid):
+                del students[i]
+                save_atomic(STU_PATH, students)
+                return "", 204
     abort(404, description="학생을 찾을 수 없습니다.")
 
 
@@ -3508,9 +3322,12 @@ def api_update_student_field():
     if not sid or not field:
         abort(400)
 
-    students: List[dict] = load(STU_PATH)
-    for s in students:
-        if str(s.get("id")) == str(sid):
+    students: List[dict] | None = None
+    with file_lock(STU_PATH):
+        current_students: List[dict] = load(STU_PATH)
+        for s in current_students:
+            if str(s.get("id")) != str(sid):
+                continue
             was_able = _student_uses_able_curriculum(s)
             if field == AUTO_VIDEO_ASSIGN_FIELD:
                 value = _coerce_auto_video_assign_count(value)
@@ -3521,22 +3338,27 @@ def api_update_student_field():
                 and (not was_able or _is_able_curriculum_value(value))
             ):
                 _apply_able_auto_video_assign_default(s)
-            save_atomic(STU_PATH, students)
-            if field in {"curriculum", "subCurriculum", "selfStudyDays"}:
-                _load_updates_with_auto_assign(students=students)
-            elif re.fullmatch(r"day\d+", str(field)):
-                # A schedule edit may start or end a consecutive class block.
-                # Resize an existing automatic snapshot before normal hydration.
-                _reconcile_consecutive_auto_assignment(
-                    _today_kst_iso(),
-                    str(sid),
-                    students=students,
-                )
-                _load_updates_with_auto_assign(students=students)
-            if re.fullmatch(r"(?:day|visitTime)\d+", str(field)):
-                enqueue_current_schedule_changes([str(sid)])
-            return "OK"
-    abort(404)
+            save_atomic(STU_PATH, current_students)
+            students = current_students
+            break
+
+    if students is None:
+        abort(404)
+
+    if field in {"curriculum", "subCurriculum", "selfStudyDays"}:
+        _load_updates_with_auto_assign(students=students)
+    elif re.fullmatch(r"day\d+", str(field)):
+        # Schedule projection runs after releasing the student-store lock so
+        # downstream update locks cannot invert the lock order.
+        _reconcile_consecutive_auto_assignment(
+            _today_kst_iso(),
+            str(sid),
+            students=students,
+        )
+        _load_updates_with_auto_assign(students=students)
+    if re.fullmatch(r"(?:day|visitTime)\d+", str(field)):
+        enqueue_current_schedule_changes([str(sid)])
+    return "OK"
 
 
 @bp_api_basic.get("/api/ping")

@@ -351,13 +351,18 @@ def _schedule_hooks(state: list[int]) -> None:
            "normal all-students schedule editor route lost its notification hook")
     _check(state, makeup.count("enqueue_current_schedule_changes(") == 2
            and "_makeup_student_ids(previous) | _makeup_student_ids(normalized)" in makeup
-           and "_makeup_student_ids(current) | _makeup_student_ids(result.get(\"carryover\"))" in makeup,
+           and 'enqueue_current_schedule_changes(result.get("addedSids") or [])' in makeup,
            "makeup save/sheet-sync hooks lost old/new SID coverage")
     watch = (ROOT / "routes" / "api_watch.py").read_text(encoding="utf-8")
-    _check(state, "enqueue_progress_milestones" in basic
-           and "_notification_progress_commit" in basic
-           and "_notification_progress_snapshot" in watch
-           and "_notification_progress_commit" in watch,
+    progress_writer = (ROOT / "core" / "watch_progress_writer.py").read_text(encoding="utf-8")
+    progress_notifications = (ROOT / "core" / "progress_notifications.py").read_text(encoding="utf-8")
+    _check(state, "progress_notification_snapshot" in basic
+           and "commit_progress_notifications" in basic
+           and "save_progress_status" in watch
+           and "progress_notification_snapshot" in progress_writer
+           and "commit_progress_notifications" in progress_writer
+           and "enqueue_progress_milestones" in progress_notifications
+           and "from routes.api_basic import" not in watch,
            "progress write seams lost milestone hooks")
     authority = (ROOT / "core" / "student_notification_authority.py").read_text(encoding="utf-8")
     _check(state, "anchor.date() + dt.timedelta(days=45)" in authority,

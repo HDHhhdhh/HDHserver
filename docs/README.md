@@ -1,22 +1,25 @@
 # 프로젝트 문서 안내
 
-**기준일:** 2026-08-23
+**기준일:** 2026-08-24
 **기준 저장소:** `C:/server`
 
 이 폴더는 코드와 별도로 유지하는 프로젝트의 장기 기억이다. 기능을 고치거나 점검할 때는 세션 기록을 다시 뒤지기 전에 아래 순서로 읽는다.
 
 1. [PROJECT_FUNCTIONS_AND_LOGIC.md](PROJECT_FUNCTIONS_AND_LOGIC.md) — 현재 기능, 데이터 원본, 상태 전이, 주요 로직, 패치·검증 기준
-2. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md) — 기존 영상 MID 변경·삭제용 오프라인 수정 모드와 적용 절차
-3. [SESSION_AUDIT_2026-07-30_2026-08-13.md](SESSION_AUDIT_2026-07-30_2026-08-13.md) — 최근 2주 세션 감사, 이슈별 해결 여부, 기능 변화
-4. 저장소 루트의 `AGENTS.md`와 수정 대상 폴더의 하위 `AGENTS.md` — 작업 안전 규칙
-5. `CODEX-HANDOFF.md` — 현재 배포 후보와 운영 환경의 짧은 인수인계
-6. `CHATGPT_PROJECT_CONTEXT.md` — 외부 ChatGPT 세션에 첨부할 확장 컨텍스트
+2. [CODE_FLOW_MAP.md](CODE_FLOW_MAP.md) — 화면·API·순수 규칙·저장소를 잇는 실제 구현 흐름과 구조적 hotspot
+3. [LOGIC_DECISION_LEDGER.md](LOGIC_DECISION_LEDGER.md) — 과거 주문·현재 구현 충돌의 판정과 미확정 사용자 결정
+4. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md) — 기존 영상 MID 변경·삭제용 오프라인 수정 모드와 적용 절차
+5. 저장소 루트의 `AGENTS.md`와 수정 대상 폴더의 하위 `AGENTS.md` — 작업 안전 규칙
+6. [SESSION_AUDIT_2026-07-30_2026-08-13.md](SESSION_AUDIT_2026-07-30_2026-08-13.md) — 해당 기간의 역사 감사 기록
+7. `CODEX-HANDOFF.md`, `CHATGPT_PROJECT_CONTEXT.md` — 2026-08-13 시점의 역사 스냅샷; 현재 컨텍스트로 재사용하지 않음
 
 ## 문서의 역할
 
 | 문서 | 답하는 질문 | 갱신 시점 |
 |---|---|---|
 | 기능·로직 기준서 | “현재 시스템은 무엇을 하고, 어떤 원본과 우선순위를 따르는가?” | 동작, 상태, API, 데이터 원본이 바뀔 때 |
+| 코드·데이터 흐름 지도 | “어떤 화면과 API가 어떤 규칙·저장소를 거치는가?” | Blueprint, route, 저장소 경계, feature flag, 주요 module graph가 바뀔 때 |
+| 로직 결정 원장 | “서로 다른 과거 주문 중 무엇이 현행이며 어떤 결정이 남았는가?” | 주문 충돌을 발견하거나 사용자가 선택을 확정할 때 |
 | 영상 수정 모드 | “기존 MID를 어떻게 안전하게 바꾸거나 삭제하는가?” | 수정 모드·적용·롤백 절차가 바뀔 때 |
 | 세션 감사 | “최근 어떤 문제가 있었고 실제로 해결됐는가?” | 감사 기간을 새로 닫을 때 |
 | AGENTS 지침 | “코드를 어떻게 안전하게 수정·검증하는가?” | 개발·운영 규칙이 바뀔 때 |
@@ -27,10 +30,11 @@
 1. 현재 실행 코드와 런타임 환경
 2. 루트 및 하위 `AGENTS.md`
 3. `PROJECT_FUNCTIONS_AND_LOGIC.md`
-4. `VIDEO_CATALOG_CORRECTION_MODE.md`(영상 MID 유지보수 작업)
-5. `CODEX-HANDOFF.md`
-6. 과거 세션 감사와 `CHATGPT_PROJECT_CONTEXT.md`
-7. 오래된 스냅샷·회고
+4. `CODE_FLOW_MAP.md`
+5. `LOGIC_DECISION_LEDGER.md`
+6. `VIDEO_CATALOG_CORRECTION_MODE.md`(영상 MID 유지보수 작업)
+7. 과거 세션 감사, `CODEX-HANDOFF.md`, `CHATGPT_PROJECT_CONTEXT.md`
+8. 그 밖의 오래된 스냅샷·회고
 
 문서와 코드가 다르면 코드를 먼저 검증하고, 같은 패치에서 기준 문서도 함께 고친다. 세션의 “완료” 문구만으로 해결을 판단하지 말고 현재 코드, 테스트, 운영 응답을 다시 확인한다.
 

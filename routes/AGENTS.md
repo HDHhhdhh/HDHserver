@@ -7,12 +7,12 @@ Flask blueprints live here. Routes are the boundary between static frontends, ru
 | Task | Location | Notes |
 |---|---|---|
 | Student/log/progress/bootstrap APIs | `api_basic.py` | Broadest surface; handles logs, progress, updates, automatic/self-study video assignments, review projection, bootstrap, and protected video identity changes. |
-| Attendance/contact/absence/today APIs | `api_attend.py` | Date-scoped row actions and absence carryover. |
+| Attendance/contact/absence/today APIs | `api_attend.py` | Date-scoped row actions; new absence cleanup delegates through `absence_assignment_cleanup.py`. |
 | Watch writes | `api_watch.py` | Browser playback writes monotonic watch state and automatic progress without refilling assignment snapshots. |
 | Test catalog/records | `api_tests.py` | Catalog management, GET-only historical `tests.json` records, stats, and legacy-log fallback. Student submission/OCR routes are retired. |
-| Kollus playback/callbacks | `api_kollus.py` | Academy-only `/api/get-url` plus LMS callback delegation to the same watch/progress writers. |
+| Kollus playback/callbacks | `api_kollus.py` | Academy-only `/api/get-url` plus LMS callback delegation to `core.watch_progress_writer`. |
 | Announcements/surveys | `api_announcements.py` | Announcement images, replies, acknowledgements, surveys, and statuses. |
-| Auth/files/makeup | `api_auth.py`, `api_fs.py`, `api_makeup_carryover.py` | Specialized persistence and mutation boundaries. |
+| Auth/files/makeup | `api_auth.py`, `api_fs.py`, `api_makeup_carryover.py` | Specialized persistence; makeup sheet sync shares the public absence cleanup adapter. |
 | Assistant notes API | `api_assistant_notes.py` | Admin-referer-gated, student-scoped SQLite CRUD; never student/export facing. |
 | Today order metadata | `api_todaymeta.py` | Live `/api/today_order` uses `data/today_order.json`; retired `/api/_legacy/*` routes and whole-map `POST /api/today_order` must not be restored. |
 | Page routes | `pages.py` | Serves static HTML shells directly, not templates. |
@@ -22,7 +22,8 @@ Flask blueprints live here. Routes are the boundary between static frontends, ru
 - Normal JSON mutation is canonical `core.paths` path + target `file_lock()` + load/merge/`save_atomic()`; atomic replace alone is not RMW locking.
 - Class log reads/writes go through `get_log_repository()` / `LogRepository`.
 - Use `core.log_rules.merge_log_entry_safe` and `log_entry_conflicts_with_base` for merge/conflict behavior.
-- Use `core.progress_rules` for watch/progress transitions.
+- Use `core.progress_rules` for watch/progress transitions, `core.watch_progress_writer` for browser/Kollus writes, `core.progress_store` for strict progress caching/locking/saves, and `core.progress_notifications` for milestone hooks. `api_watch` and `api_kollus` must not import each other, and `api_watch` must not import helpers from `api_basic`.
+- Attendance, makeup sheet sync, and the offline sync script must use `routes.absence_assignment_cleanup.absence_write_scope` plus `commit_new_absences_locked`; never import cleanup helpers from another blueprint. Preserve date/SID scope, carryover-before-clear ordering, the 8-second update/progress locks, normal response/revision shapes, startup recovery, and post-commit-only schedule notifications.
 - Arrival-time routes use `/api/arrive-time` and `/api/arrive-time/patch` only. The retired prefixless `/arrive-time*` aliases must stay unavailable.
 - `/api/attendance` and `/api/contact` are GET-only. Writes must use their single-student `/patch` endpoints; retired bulk POST handlers must stay unavailable.
 - Extra attendance uses only `/api/extra-attend` with GET/PATCH. The old `/api/extra`, `/api/extra_attend`, and `/api/extra-attend/all` names never existed on the live server and must not be revived.
@@ -36,18 +37,23 @@ Flask blueprints live here. Routes are the boundary between static frontends, ru
 - `/api/get-url` must validate academy access, session SID, known SID, and known MID. Browser watch writes share those academy/SID/ghost gates. Configure `KOLLUS_CALLBACK_SECRET` for exposed LMS callbacks; callbacks cannot use the browser's academy-only gate because Kollus must reach them.
 - Keep `/api/watch-status` only as a temporary compatibility endpoint for the student app being developed on another computer. The current web student must use `/api/watch`; do not add new `/api/watch-status` consumers, and remove it only after the external app migrates and is merged.
 - Preserve endpoint URLs, payload keys, response shapes, and cache behavior unless a dedicated migration is part of the task.
+- /api/students, /api/materials, and base /api/logs are GET-only. Keep student mutations on the locked add/field-update/delete routes and class-log mutations on /api/logs/patch or /api/logs/patch-batch; do not restore whole-collection POST handlers.
+- /api/fs/page-folders GET/POST is retired. Do not restore the HTTP surface; preserve PAGE_FOLDERS_PATH and existing local data unless a separate internal-store retirement is explicitly approved.
+- File rename/move/delete/upload use the file-tree lock first, then material_state locks. Korean safe names must remain valid; prefix rewrites are path-segment aware across materials, assignment URL/relative/DIR tokens, and pageFolders. Delete stages content before commit, and a pre-journal failure restores the filesystem.
+- `/api/mat-assign` GET carries the whole material-state revision and POST requires `If-Match`; a stale writer returns 409 without mutation. Student bootstrap and `/api/materials` read the same coordinated snapshot. Recovery-required material/file writes return 503 while unrelated routes remain available.
+- External administrator API Basic auth must preserve each student/integration route's existing gate and status contract. In particular, `/api/get-url` remains academy/SID/MID gated and Kollus callbacks remain callback-secret gated.
 - `GET /api/logs`, `GET /api/logs/entry`, `GET /api/updates`, and today's student bootstrap can touch runtime state; treat "read-only" smoke checks carefully.
 - Assistant-note GET/list can enable WAL, create/migrate schema, and backfill `updated_by`; exclude it from filesystem-pure smoke checks.
 - Student bootstrap returns `assignedTests` as a top-level array. `progress[date][sid].tests` is authoritative; log `assignedTests` is metadata/fallback.
 - Student test submission and student OCR review routes are not registered. `/api/tests` is GET-only; keep assignment, answer-link, catalog, stats, and historical-record reads independent of submission.
-- Existing private cross-blueprint seams are deliberate cycle-avoidance: tests/watch/attendance import from `api_basic`, and Kollus imports watch writers. Verify every consumer before renaming or moving those helpers.
+- No known private cross-blueprint import remains. Public `get_log_repository()` consumers remain compatibility wiring; `api_fs` must use `core.announcement_image_access`, and `api_tests` must use `core.storage.file_lock` plus `core.test_answer_links`. Do not reintroduce the former watch/Kollus, makeup/attendance, test lock/answer-link, or file/announcement private seams.
 - `/api/tests-config` POST replaces the whole config and requires the revision returned in the preceding GET's `X-Tests-Config-Revision` header. Reject stale or missing revisions before merging. Never POST a network-stripped GET representation or drop `sourceFiles`, source ids, unknown fields, or answer rounds.
 
 ## Runtime Data
 - Runtime files are real local data: `students.json`, `videos.json`, `updates.json`, `progress.json`, `logs.json`, `watch.json`, `tests.json`, `tests-config.json`, `app.sqlite`, and related sidecars.
 - Before migrations, repair jobs, or bulk rewrites, run `python scripts/backup_runtime_data.py`.
 - Prefer PATCH-style route updates over full-map replacement.
-- Watch, absence, and log flows span multiple independently committed stores; preserve documented partial-success/fallback responses.
+- Watch and ordinary log flows retain their documented independent-store fallback behavior. Newly registered absence cleanup is the exception: updates, progress, dual class logs, absence, and optional makeup carryover use a rollback-first journal transaction. Verify other dates/SIDs survive, `assigned` becomes `interrupted`, carryover is collected before mutation, every injected failure restores all stores, and recovery-required state returns 503/fails startup rather than accepting another related write.
 
 ## Anti-Patterns
 - Do not open-code SQLite plus `logs.json` merge behavior in route handlers.

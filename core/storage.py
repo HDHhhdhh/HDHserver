@@ -148,7 +148,7 @@ def _mirror_copy(path) -> None:
         return
 
 
-def save_atomic(path, obj: Any, *, compact: bool = False) -> None:
+def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool = True) -> None:
     """
     원자적 쓰기(임시파일 → 교체).
     Windows에서 WinError 32(다른 프로세스가 파일 사용 중) 뜨는 케이스가 있어:
@@ -166,7 +166,8 @@ def save_atomic(path, obj: Any, *, compact: bool = False) -> None:
     for _ in range(10):
         try:
             os.replace(tmp, path)
-            _mirror_copy(path)
+            if mirror:
+                _mirror_copy(path)
             return
         except PermissionError as e:
             last_err = e

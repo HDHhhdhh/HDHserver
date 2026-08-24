@@ -6,7 +6,7 @@ import os
 from flask import Blueprint, Response, abort, current_app, g, make_response, request
 from werkzeug.utils import safe_join
 
-from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, admin_network_allowed, verify_admin_authorization
+from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, verify_admin_authorization
 from core.network_access import ip_allowed
 
 bp_pages = Blueprint("pages", __name__)
@@ -83,8 +83,6 @@ def _admin_auth_required() -> Response:
 def _gate_admin_pages() -> Response | None:
     if _admin_route_key(request.path) not in _ADMIN_PAGE_PATHS and not _is_admin_static_alias():
         return None
-    if not admin_network_allowed(request):
-        abort(403)
     verifier = current_app.config.get("ACADEMY_ADMIN_AUTHORIZER")
     if not callable(verifier):
         verifier = verify_admin_authorization

@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from flask import Blueprint, Response, jsonify, make_response, request
 
-from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, admin_network_allowed, verify_admin_authorization
+from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, verify_admin_authorization
 from core.student_account_admin_service import (
     StudentAccountAdminDependencies,
     StudentAccountAdminError,
@@ -131,8 +131,6 @@ def create_blueprint(
             response = make_response("", 404)
             response.headers["Cache-Control"] = "no-store"
             return response
-        if not admin_network_allowed(request):
-            return _error("academy_network_required", 403)
         if not authorize(request.headers.get("Authorization")):
             response, status = _error("admin_auth_required", 401)
             response.headers["WWW-Authenticate"] = ADMIN_AUTH_CHALLENGE

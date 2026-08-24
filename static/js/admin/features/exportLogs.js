@@ -17,6 +17,7 @@ import { fetchJsonChecked } from '../../shared/api.js';
 import { getAdminDate } from '../core/adminDate.js';
 import {
   HW_HEADER_LINE,
+  csvCell,
   defaultExportLogOptions,
   normalizeExportLogOptions,
   recordsToCsv,
@@ -56,7 +57,6 @@ function resetRosterHistoryCache() {
     logsRef: state.logs || null,
     datesByTarget: new Map(),
     testRelevantDatesByTarget: new Map(),
-    videoStatusesByTargetSid: new Map(),
     previousAssignedByKey: new Map(),
     previousActiveByKey: new Map(),
   };
@@ -466,32 +466,6 @@ function normalizeRosterVideoStatus(status) {
   return normStr(status);
 }
 
-function rosterVideoStatusesThroughDate(dateStr, sid) {
-  const cache = ensureRosterHistoryCache();
-  const target = String(dateStr || '');
-  const studentId = String(sid ?? '').trim();
-  const cacheKey = `${target}${ROSTER_HISTORY_CACHE_SEP}${studentId}`;
-  if (cache.videoStatusesByTargetSid.has(cacheKey)) {
-    return cache.videoStatusesByTargetSid.get(cacheKey);
-  }
-
-  const statuses = {};
-  Object.keys(state.progress || {})
-    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) <= target)
-    .sort()
-    .forEach(date => {
-      const entry = lookupSidEntry(state.progress?.[date], studentId);
-      if (!entry || typeof entry !== 'object') return;
-      Object.entries(entry).forEach(([mid, status]) => {
-        if (String(mid).startsWith('__') || mid === 'tests') return;
-        statuses[String(mid)] = normalizeRosterVideoStatus(status);
-      });
-    });
-
-  cache.videoStatusesByTargetSid.set(cacheKey, statuses);
-  return statuses;
-}
-
 function rosterDateKeysBefore(dateStr, source) {
   return Object.keys(source || {})
     .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) < String(dateStr))
@@ -580,9 +554,7 @@ function videoMapForRoster() {
 
 function rosterVideoText(dateStr, sid, videoMap) {
   const seen = new Set();
-  const statuses = rosterVideoStatusesThroughDate(dateStr, sid);
   const videos = rosterAssignedVideoMids(dateStr, sid)
-    .filter(mid => statuses[mid] !== 'done')
     .map(mid => videoMap.get(mid))
     .filter(Boolean)
     .filter(video => {

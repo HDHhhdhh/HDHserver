@@ -1,5 +1,7 @@
 # 학원 운영 허브 — ChatGPT 프로젝트 컨텍스트
 
+> 역사 스냅샷: 본문은 2026-08-13 시점이며 현재 컨텍스트로 재사용하지 않는다. 이후 PWA 재통합, 공개 도메인 분리, 학생 시험 제출/OCR 폐기, bootstrap 단일화, 복습 후보 `done` 전용화가 반영되지 않은 설명이 남아 있다. 현재 정본은 `docs/PROJECT_FUNCTIONS_AND_LOGIC.md`, `docs/CODE_FLOW_MAP.md`, `docs/LOGIC_DECISION_LEDGER.md`다.
+
 > 대상: ChatGPT 5.6 Pro의 `학원 운영 허브` 세션
 > 기준일: 2026-08-13
 > 저장소: `C:\server`

@@ -19,10 +19,11 @@ from core.network_access import (
 )
 
 from core.paths import (
-    LOGS_PATH, TESTS_PATH, STU_PATH,
+    BASE, LOGS_PATH, TESTS_PATH, STU_PATH,
     TESTS_CFG_PATH
 )
-from core.storage import load, save_atomic, nocache_resp, utc_now_isoz
+from core.storage import file_lock, load, save_atomic, nocache_resp, utc_now_isoz
+from core.test_answer_links import resolve_test_assignment_answer_url
 from core.test_config_safety import (
     TestsConfigWriteConflict,
     merge_tests_config_for_write,
@@ -32,6 +33,7 @@ from core.test_config_safety import (
 
 
 bp_api_tests = Blueprint("api_tests", __name__)
+TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
 TEST_TYPE_ORDER = ("REVIEW", "UNIT", "TRAINING_PACK", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
 def _is_public_student_request() -> bool:
     return getattr(g, "student_app_public_request", False) is True
@@ -69,10 +71,7 @@ TEST_LEVEL_RE = re.compile(r"""
 
 
 def _tests_config_lock():
-    from routes.api_basic import _InterProcessFileLock
-
-    tp = str(getattr(TESTS_CFG_PATH, "__fspath__", lambda: str(TESTS_CFG_PATH))())
-    return _InterProcessFileLock(tp + ".lock", timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
+    return file_lock(TESTS_CFG_PATH, timeout_sec=20.0, poll_sec=0.05, stale_sec=30.0)
 
 
 def _strip_prefix_for_display(name: str) -> str:
@@ -234,14 +233,9 @@ def _record_meta(rec: dict, catalog: dict) -> dict:
     return out
 
 
-def _admin_test_answer_url(target_meta: dict | None, test_id: str) -> str:
+def _admin_test_answer_url(target_meta: dict | None, test_id: str, tests_config: dict | None = None) -> str:
     if not academy_network_allowed() or not isinstance(target_meta, dict):
         return ""
-    try:
-        from routes.api_basic import _test_assignment_answer_url
-    except ImportError:
-        return ""
-
     item = {
         "type": target_meta.get("type") or "UNIT",
         "category": target_meta.get("type") or "UNIT",
@@ -254,7 +248,12 @@ def _admin_test_answer_url(target_meta: dict | None, test_id: str) -> str:
         "difficulty": target_meta.get("difficulty") or "",
         "term": target_meta.get("term") or "",
     }
-    return _test_assignment_answer_url(item)
+    config = tests_config if isinstance(tests_config, dict) else _load_tests_cfg()
+    return resolve_test_assignment_answer_url(
+        item,
+        tests_config=config,
+        answer_link_map=load(TEST_ANSWER_LINK_MAP_PATH),
+    )
 
 
 def _meta_matches_target(meta: dict, target: dict | None) -> bool:
@@ -811,7 +810,7 @@ def api_tests_records():
         })
 
     recs.sort(key=lambda r: (-float(r.get("pct") or 0), str(r.get("studentName") or ""), str(r.get("createdAt") or "")))
-    answer_url = _admin_test_answer_url(target_meta, test_id_q)
+    answer_url = _admin_test_answer_url(target_meta, test_id_q, cfg)
 
     return nocache_resp({
         "range": {"start": start.isoformat(), "end": end.isoformat()},

@@ -1,8 +1,8 @@
 # 학원 운영 허브 — 전체 기능 및 주요 로직 기준서
 
-**기준일:** 2026-08-22
+**기준일:** 2026-08-24
 **기준 브랜치:** `codex/apple-clean-redesign`
-**기준 커밋:** `20cfa6e` 이후 현재 작업 트리
+**기준 커밋:** `91b7bb1`
 **목적:** 기능 패치·장애 점검·코드 리뷰 때 세션을 다시 읽거나 로직을 매번 역추적하지 않도록 현재 계약을 한곳에 고정한다.
 
 이 문서는 동작 설명서다. 작업 방법과 데이터 안전 규칙은 루트 및 하위 `AGENTS.md`가 우선한다.
@@ -19,8 +19,10 @@
   ├─ 학생 앱 공개면: app.5a-math.com → /app·PWA·세션 제한 API
   │    └─ Cloudflare Tunnel → localhost:8003
   └─ 학원 LAN: 서버 IP:8003
-       └─ Waitress → Flask app.py → 16개 Blueprint → 정적 HTML/JS 또는 JSON API
+       └─ Waitress → Flask app.py → feature flag별 18~24개 Blueprint → 정적 HTML/JS 또는 JSON API
 ```
+
+현재 예약 작업 인자에서는 public 학생 앱만 켜고 dashboard/homework/reminders/focus는 꺼서 21개 Blueprint와 134개 URL rule을 조립한다. 플래그별 상세 구성과 실제 요청·저장 흐름은 [CODE_FLOW_MAP.md](CODE_FLOW_MAP.md)를 따른다.
 
 - 프런트 빌드 시스템과 Jinja 템플릿 트리는 없다. `static/`의 HTML과 네이티브 JavaScript를 Flask가 직접 제공한다.
 - `5a-math.com`은 기존 로그인·`/student/<sid>`·공유 학생 자산을 유지한다. 학생 앱 전환 승인이 꺼진 동안 HTTP 루트도 200으로 유지하고 `/app`, manifest, service worker, 모바일 인증 API 같은 학생 앱 전용 경로는 404로 닫는다.
@@ -36,7 +38,7 @@
 | 학생 로그인 `/` | 이름/계정 로그인 후 30일 JWT | `AUTH_SECRET`이 재시작 후에도 같아야 자동 로그인이 유지된다. |
 | 학생 앱 `https://app.5a-math.com/app` | 학생 앱 세션 + HTTPS | 루트는 `/app`으로 302 이동한다. 허용 목록 밖 경로·메서드는 404, 세션 없는 보호 API는 401, 다른 SID는 403이다. |
 | 학생 `/student/<sid>` | 학생 JWT 흐름과 sid | bootstrap의 `assignedTests`는 항상 최상위 배열이다. |
-| 관리자 페이지군 | 학원망 + HTTP Basic | 학원망 밖에서는 403으로 닫히며, 내부에서도 `ACADEMY_ADMIN_USERNAME`, `ACADEMY_ADMIN_PASSWORD_HASH`가 없거나 인증이 틀리면 401로 닫힌다. |
+| 관리자 페이지군·활성 학생 계정 관리 API | HTTP Basic | 네트워크 위치와 무관하게 올바른 `ACADEMY_ADMIN_USERNAME`, `ACADEMY_ADMIN_PASSWORD_HASH`가 있어야 한다. 누락·오인증은 401이며 학생 앱 공개 host에서는 관리자 API를 404로 숨긴다. |
 | 영상 재생 URL | 학원 네트워크 | `/api/get-url`에서 실제 클라이언트 IP·공개 세션 SID·카탈로그 MID를 검증한다. Kollus LMS callback은 외부 사업자가 호출하므로 별도 `KOLLUS_CALLBACK_SECRET`으로 보호한다. |
 | 답지 맵 | 학원 네트워크 | `/js/test_answer_link_map.json` 직접 접근도 차단한다. |
 | 쓰기 API | 동일 origin | POST/PUT/PATCH/DELETE의 Origin·Referer가 현재 Host와 다르면 403이다. |
@@ -53,6 +55,7 @@
 | 관리자 학생 툴팁 | 학생 이름·출석·학교 정보 표시; 이름 옆 난이도 배지(상·중상·중·하)는 표시하지 않음 | `static/js/admin/features/hoverTooltip.js` |
 | `/students` | 전체 학생 명단·미니 진도·내보내기 | `static/all.html`, `static/js/all/` |
 | `/student/<sid>` | 학생 영상·시험·숙제/수업 정보 | `static/student.html`, `static/js/student.js` |
+| `/app`, `/app/*` | 학생 앱 설치·세션 shell | `static/student-app.html`, `static/js/student-app.js` |
 | `/video-manage` | 영상 카탈로그 관리 | 영상 관리 HTML/JS |
 | `/tests` | 시험 카탈로그·기록·통계 | `static/tests.html`, `static/js/tests.js` |
 | `/school-cal` | 학교 일정 | 학교 캘린더 HTML/JS |
@@ -88,6 +91,7 @@
 - 오늘표의 완료는 수업 로그의 `done`과 연결되지만 결석·출석·하원 버튼의 의미와 동일하지 않다.
 - “숙검하원”은 오후 6시 전 연강 학생을 제외하고, 오후 6시 이후에는 포함한다. 자습 학생은 포함한다.
 - 연강/보강/주말 slot 배열은 기존 문자열 sid와 다중 slot 호환을 유지한다.
+- 결석 전체 저장에 실제 달력에 없는 `YYYY-MM-DD`가 신규로 들어오면 현재 500을 반환하는 알려진 제한이 있다. 사용자 선택 B에 따라 선행 400 검증은 추가하지 않았으며, 이 실패는 모든 관련 저장소 무변경·무알림이어야 한다.
 
 ## 8. 수업 로그와 숙제
 
@@ -110,7 +114,7 @@
 
 ### 내보내기 계약
 
-- `명단 내보내기`의 영상 텍스트는 선택일 배정과 선택일까지의 최신 누적 진도를 결합하며, `done`(파란색) 영상은 제외한다.
+- `명단 내보내기`의 영상 텍스트는 선택일 배정 snapshot의 모든 차시를 완료 여부와 무관하게 표시하며, 같은 날 배정된 테스트와 함께 출력한다.
 - `로그 내보내기` TXT와 CSV `progress` 열은 같은 비완료 변화 목록을 사용한다. 둘 다 `done`(파란색)을 제외하고 `interrupted` 같은 비완료 변화만 표시하되, CSV의 고정 14열 구조는 유지한다.
 - 두 내보내기의 테스트 텍스트는 현재 커리큘럼에서 상태가 `assigned`(초록색)인 배정 이름만 사용한다. `SCHOOL_PAST`는 `학군지(난이도) 회차 이름`, `ILSAN_PAST`는 `일산(난이도) 회차 이름`으로 표기하며, 채점 정보는 제외하고 테스트 이름마다 실제 줄바꿈을 넣는다.
 - 내보내기 전 로그·진도 전체 이력을 `no-store`로 다시 읽고, 조교 학생 메모는 TXT·CSV 어디에도 포함하지 않는다.
@@ -252,7 +256,8 @@
 - 공지는 목록/작성/수정/삭제, 이미지 업로드/다운로드 소스, 확인, 답글·설문 제출을 지원한다.
 - 학교 일정은 `school_calendar.json`과 캘린더 API가 담당하며 sheet/import 작업은 기존 학교·학기 키를 merge한다.
 - 자료는 `materials`, `mat-assign`, `files/`와 파일 API가 담당한다.
-- 파일 API는 tree, folder, rename, move, delete, upload, page-folders를 제공한다. 경로는 항상 `FILES_ROOT` 아래로 검증한다.
+- 파일 API는 tree, folder, rename, move, delete, upload를 제공한다. 한글 이름을 보존하고 폴더 하위 materials URL, assignment ID·URL·relative·DIR token, page-folder 값을 segment 단위로 함께 갱신한다. 루트 이동은 빈 dst를 사용한다. 삭제는 staging 뒤 세 JSON을 저널 커밋하며 pre-journal 실패는 파일을 복구한다. /api/fs/page-folders HTTP 표면은 폐기됐지만 내부 저장소는 참조 무결성 대상으로 유지한다.
+- `materials.json`, `mat_assign.json`, `page_folders.json`은 결정적 잠금 순서와 하나의 복구 저널로 읽고 저장한다. `/api/mat-assign` GET의 revision을 POST `If-Match`로 돌려주지 않으면 428, 낡았으면 무쓰기 409다. 유효한 미완료 저널은 roll-forward하고, 손상된 저널·저장소에서는 마지막 정상 snapshot으로 조회만 유지하며 파일·교재 mutation은 503이다. 이 장애는 서버의 다른 기능과 시작을 막지 않는다.
 - 보강 이월과 시트 동기화는 전용 API다. 대량 적용 전 런타임 백업이 필요하다.
 - 비학생 OCR review cache는 내부 API이며 실제 시험 제출과 분리한다.
 
@@ -270,11 +275,15 @@
 | 시험 카탈로그 | `tests-config.json` | 암묵 삭제 금지 |
 | 과거 시험 결과 | `tests.json` + legacy 로그 | 기존 점수·오답 조회 전용; 학생 제출 쓰기 없음 |
 | 출결 계열 | `attendance.json`, `absent.json`, `arrive_time.json`, `contact.json` | 날짜/sid 부분 갱신 |
+| 미완료 결석 트랜잭션 | `instance/absence_transactions/pending.json` | 진행 중에만 존재; 민감 before-image는 미러하지 않고 commit/rollback 뒤 제거 |
 | 보강 | `extra_attend.json`, `weekend_slots.json` | carryover 별도 |
 | 오늘 순서 | `data/today_order.json` | 단일 canonical store; 루트 동명 파일은 제거됨 |
 | 학사 일정 | `school_calendar.json` | import merge |
 | 학생 계정 | `auth_accounts.json` | JWT 비밀키와 별개 |
 | 메모·운영 로그 | `app.sqlite` 내 분리 테이블 | 서로 다른 repository/route |
+| 학생 앱 세션·계정 감사 | `app.sqlite` | session, audit, activation, throttle 테이블 |
+| 학생 앱 푸시 | `app.sqlite` | subscription, outbox, bypass 테이블; VAPID/flag와 별도 |
+| 학생 앱 숙제·focus·reminder | `app.sqlite` 명시적 migration | 현재 운영 DB에는 미적용이며 해당 feature flag도 OFF |
 | 업로드 | `files/` | Git 코드와 분리한 운영 자료 |
 
 `app.sqlite-wal`, `app.sqlite-shm`, `data/`, `files/`, `_data_mirror/`, `_runtime_backups/`, root `*.tmp`도 런타임 데이터다.
@@ -284,6 +293,7 @@
 ## 15. API 그룹
 
 - 기본 데이터: `/api/students`, `/api/videos`, `/api/updates`, `/api/progress`, `/api/materials`, `/api/school-calendar`
+- /api/students와 /api/materials는 GET 전용이다. 학생 쓰기는 add/update/delete 경로가 students 파일 잠금 안에서 수행하며 전체 배열 POST는 허용하지 않는다.
 - 부분 갱신: `/api/update`, `/api/updates/patch`, `/api/progress/patch`
 - 자습 영상 배정: `/api/updates/self-study`
 - 학생 통합 읽기: `/api/student/bootstrap`
@@ -294,7 +304,7 @@
 `/api/updates/review`와 `/api/updates/training-pack` 영상 배정 endpoint는 존재하지 않는다. 학생 복습 등록은 localStorage이고, 시험 카테고리 `트레이닝팩`과 영상 배정 API를 혼동하지 않는다.
 
 `/api/updates` 기본 주소는 GET 전용이다. 영상 배정 저장은 학생·날짜 단위의 `/api/updates/patch` 또는 검증된 `/api/updates/self-study`만 사용하며, 여러 날짜·학생을 한꺼번에 합치던 기본 주소 POST는 제거되었다.
-- 로그: `/api/logs`, `/api/logs/patch`, `/api/logs/entry`, 미보관 요약, 숙제 교재
+- 로그: /api/logs(GET 전용), /api/logs/patch, /api/logs/patch-batch, /api/logs/entry, 미보관 요약, 숙제 교재
 - 시험: `/api/tests`(GET 전용), `/api/tests-config`, `/api/tests-records`, `/api/tests-stats`; 학생 제출/OCR 제출 API 없음
 - 출결: attendance, attend, today, absent, arrive-time, contact
 
@@ -303,9 +313,14 @@
 출석·연락의 기본 주소(`/api/attendance`, `/api/contact`)는 조회 전용이다. 저장은 학생 한 명씩 처리하는 각 `/patch` 주소만 사용하며, 여러 학생을 한꺼번에 저장하던 기본 주소 POST는 제거되었다.
 
 보강출석은 `/api/extra-attend` 하나만 사용한다. `/api/extra`, `/api/extra_attend`, `/api/extra-attend/all`은 실서버에 없는 옛 이름이며 사용하거나 복원하지 않는다.
+
+새 결석 `(date, sid)`은 공용 계획 규칙으로 시험 carryover를 먼저 수집한 뒤 `updates` 배정 제거, progress 시험 `assigned → interrupted(배부)`, dual class-log 정리, `absent`, 선택적 makeup carryover 순으로 반영한다. 이 묶음은 `core/absence_transaction.py`가 날짜 단위 JSON before-image와 SQLite 대상 행을 transient no-mirror 저널에 기록해 관리한다. 성공 전 어느 단계에서 실패해도 전부 복구하고 알림을 보내지 않으며, 프로세스 종료로 남은 non-committed 저널은 서버 시작 또는 다음 결석 쓰기 전에 이전 상태로 복구한다. 복구 자체가 실패하면 503/시작 실패로 닫는다. 정상 응답·revision·시험 상태 의미와 결석 취소 시 배정을 자동 복원하지 않는 규칙은 그대로다.
+영상 시청 저장(`/api/watch`, `/api/watch-status`, Kollus LMS callback)도 같은 결석 consistency barrier를 통과하므로, 결석 정리가 progress를 비운 직후 동시 재생 요청이 상태를 되살릴 수 없다.
 - 오늘 순서·보강: today_order patch, extra-attend, weekend-slots, makeup-carryover, sheet-sync
 - 인증: `/api/auth/login`, `me`, `switch`, `change`
 - 메모·이력: assistant-student-notes, admin-operation-notes, student-logs
+- 학생 앱: `/api/mobile/auth/*`, `/api/mobile/push/*`, `/api/mobile/student/board`; homework/focus는 feature flag 조건부
+- 학생 계정 관리: `/api/student-accounts`, `/api/admin/student-focus/summary`; 관리자 homework도 feature flag 조건부
 - 공지: announcements, image, ack, submit
 - 파일: `/api/fs/*`, `/files/<path>`
 - 내부: non-student OCR review cache
@@ -318,9 +333,16 @@
 |---|---|
 | 앱 조립·HTTPS·CSRF·답지 gate | `app.py` |
 | 네트워크/답지 strip | `core/network_access.py` |
+| 시험 답지 링크 우선순위 | `core/test_answer_links.py` |
+| 공지 이미지 학생 공개 멤버십 | `core/announcement_image_access.py` |
 | 로그 병합 규칙 | `core/log_rules.py` |
 | 로그 저장소 | `core/log_repository.py` |
 | 시청/진도 상태 전이 | `core/progress_rules.py` |
+| 공용 watch·자동 진도 writer | `core/watch_progress_writer.py` |
+| 결석 배정 projection | `core/absence_assignment_cleanup.py` |
+| 결석 다중 저장 원자성 | `core/absence_transaction.py`, `routes/absence_assignment_cleanup.py`, `app.py` |
+| 진도 JSON cache·잠금·저장 | `core/progress_store.py` |
+| 진도 milestone 알림 bridge | `core/progress_notifications.py` |
 | 학생 복습 후보 | `core/video_review_rules.py` |
 | 원자 JSON 저장 | `core/storage.py` |
 | 광범위 API/자동 배정 | `routes/api_basic.py` |
@@ -329,6 +351,10 @@
 | 관리자 날짜 | `static/js/admin/core/adminDate.js` |
 | 관리자 하루 hydrate/render | `static/js/admin/features/today.js` |
 | 학생 bootstrap/시청 | `static/js/student.js` |
+| 학생 앱 host/session 정책 | `core/student_public_surface.py`, `core/student_app_config.py` |
+| 학생 앱 인증·계정 | `core/student_app_auth_*`, `routes/api_student_app_auth.py`, `routes/api_student_accounts.py` |
+| 학생 앱 push/notification | `core/student_push_*`, `core/student_notification_*`, `routes/api_student_push.py` |
+| 학생 앱 숙제·focus | `core/student_homework_*`, `core/student_focus_*`, 해당 route 모듈 |
 | 공통 API | `static/js/shared/api.js` |
 | 회귀 허브 | `scripts/verify_refactor_safety.py` |
 
@@ -340,8 +366,10 @@
 | 로그/숙제 | SQLite/JSON 양쪽, 빈 값 보존, manual white reload | 관련 unit + 양쪽 endpoint + 브라우저 |
 | 영상 카탈로그/MID | 숫자 ID, 일반 모드 409, 수정 모드 초안, 참조 삭제 거부, 정지·백업·롤백 적용 | `verify_video_manage_ids.mjs` + `verify_video_mid_change_guard.py` + `verify_video_catalog_correction.py` |
 | 영상 자동 배정 | real-today 최초 생성, 미래 auto 금지, read-only modal, 정확한 과정, 연강 2배, 완료 후 당일 불변 snapshot | assignment boundary/immutability unit + video modal policy |
-| 학생 시청 | 5%/90%, replay done, academy gate, SID bind, millisecond wire value, flush | progress/watch unit + student JS wire test(추가 필요) |
+| 학생 시청 | 5%/90%, replay done, academy gate, SID bind, millisecond wire value, flush | progress/watch unit + `verify_student_watch_timestamp.mjs` + `verify_watch_timestamp_guard.py` |
 | 학생 복습 등록 | bootstrap done-only, current course, local-only registration, stale storage prune, restricted title-only | previous-video DOM + material access + 브라우저 |
+| 공지 이미지 공개 | raw URI 단일 파일, active SID, 현재 가시 공지 멤버십, 숨김 상태, 로컬 호환 | `verify_announcement_image_access.py` + student-data/academy-gates |
+| 시험 공용 경계 | direct/config/map 우선순위, tests-config 잠금 경쟁, 관리자 기록 학원 내·외 gate, private import 부재 | `verify_test_shared_services.py` |
 | 시험 | top-level `assignedTests`, status, 답지 우선순위, config 삭제 안전, 과거 기록 보존, 제출 경로 부재 | assignment/bootstrap/config/history + retired-surface 검증 |
 | 출결/오늘 순서 | 문자열 sid, 선택 날짜, `data/today_order.json` | route unit + 해당 화면 |
 | 인증/프록시 | Basic fail-closed, AUTH_SECRET 지속, 신뢰 프록시, HTTPS loop 없음 | admin/auth/proxy 검증 + 실제 HTTP/HTTPS |

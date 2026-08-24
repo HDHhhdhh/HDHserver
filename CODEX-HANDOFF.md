@@ -1,5 +1,7 @@
 # Codex 인수인계 — 2026-08-13
 
+> 역사 스냅샷: 이 문서는 2026-08-13 당시 상태를 보존한다. 이후 PWA 재통합, 공개 도메인 분리, 시험 제출/OCR 폐기 등 계약이 바뀌었으므로 현재 작업에는 `docs/PROJECT_FUNCTIONS_AND_LOGIC.md`, `docs/CODE_FLOW_MAP.md`, `docs/LOGIC_DECISION_LEDGER.md`를 사용한다.
+
 현재 `d7cb5d4` 이후 작업 트리에는 코드 패치와 기준 문서가 있으며 runtime JSON/SQLite/업로드는 변경하지 않았다.
 
 ## 이번 변경

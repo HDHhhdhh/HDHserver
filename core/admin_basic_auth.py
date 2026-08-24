@@ -17,6 +17,22 @@ from core.network_access import RequestLike, client_ip_from_request, ip_allowed
 ADMIN_USERNAME_ENV: Final = "ACADEMY_ADMIN_USERNAME"
 ADMIN_PASSWORD_HASH_ENV: Final = "ACADEMY_ADMIN_PASSWORD_HASH"
 ADMIN_AUTH_CHALLENGE: Final = 'Basic realm="Academy Admin", charset="UTF-8"'
+EXTERNAL_ADMIN_API_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        "/api/announce-ack",
+        "/api/announce-submit",
+        "/api/feedback",
+        "/api/get-url",
+        "/api/kollus/lms-callback",
+        "/api/ping",
+        "/api/student/bootstrap",
+        "/api/watch-status",
+    }
+)
+EXTERNAL_ADMIN_API_EXEMPT_PREFIXES: Final[tuple[str, ...]] = (
+    "/api/auth/",
+    "/api/mobile/",
+)
 
 
 def _configured_value(values: Mapping[str, str] | None, name: str) -> str:
@@ -73,10 +89,40 @@ def admin_network_allowed(request_like: RequestLike | None = None) -> bool:
         return False
 
 
+def external_admin_api_auth_required(
+    path: str,
+    request_like: RequestLike | None = None,
+    *,
+    method: str = "GET",
+    public_request: bool = False,
+    student_scoped: bool = False,
+) -> bool:
+    """Classify non-public, off-academy API requests that need admin Basic auth."""
+    normalized_path = str(path or "").rstrip("/") or "/"
+    if not normalized_path.startswith("/api/"):
+        return False
+    if public_request or normalized_path in EXTERNAL_ADMIN_API_EXEMPT_PATHS:
+        return False
+    if any(normalized_path.startswith(prefix) for prefix in EXTERNAL_ADMIN_API_EXEMPT_PREFIXES):
+        return False
+    normalized_method = str(method or "").upper()
+    if normalized_path == "/api/watch" and normalized_method == "POST":
+        return False
+    student_query_paths = {"/api/announcements", "/api/announce-status", "/api/watch/latest"}
+    if (
+        student_scoped and normalized_path in student_query_paths and normalized_method in {"GET", "HEAD"}
+    ):
+        return False
+    return not admin_network_allowed(request_like)
+
+
 __all__ = (
     "ADMIN_AUTH_CHALLENGE",
+    "EXTERNAL_ADMIN_API_EXEMPT_PATHS",
+    "EXTERNAL_ADMIN_API_EXEMPT_PREFIXES",
     "ADMIN_PASSWORD_HASH_ENV",
     "ADMIN_USERNAME_ENV",
     "admin_network_allowed",
+    "external_admin_api_auth_required",
     "verify_admin_authorization",
 )

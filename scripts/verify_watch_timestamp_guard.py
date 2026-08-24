@@ -20,22 +20,21 @@ def _to_int32(value: int) -> int:
 
 
 def main() -> int:
-    import routes.api_watch as api_watch
+    import core.watch_progress_writer as watch_writer
 
     fixed_ms = int(dt.datetime(2026, 8, 22, 12, 0, tzinfo=KST).timestamp() * 1000)
     wrapped = _to_int32(fixed_ms)
     if reconstruct_wrapped_epoch_ms(wrapped, "2026-08-22") != fixed_ms:
         raise AssertionError("Int32 watch timestamp must reconstruct uniquely inside its KST date")
 
-    old_watch_path = api_watch.WATCH_PATH
-    old_time = api_watch.time.time
+    old_time = watch_writer.time.time
     with tempfile.TemporaryDirectory(prefix="verify-watch-timestamp-") as tmpdir:
         watch_path = pathlib.Path(tmpdir) / "watch.json"
         watch_path.write_text("{}", "utf-8")
-        api_watch.WATCH_PATH = watch_path
-        api_watch.time.time = lambda: fixed_ms / 1000
+        watch_writer.time.time = lambda: fixed_ms / 1000
         try:
-            repaired = api_watch._save_watch_entry(
+            repaired = watch_writer.save_watch_entry(
+                watch_path,
                 "2026-08-22",
                 "sid",
                 "wrapped-mid",
@@ -45,7 +44,8 @@ def main() -> int:
                 raise AssertionError("server must replace Int32 watch timestamps with server epoch milliseconds")
 
             valid_ms = fixed_ms - 1234
-            preserved = api_watch._save_watch_entry(
+            preserved = watch_writer.save_watch_entry(
+                watch_path,
                 "2026-08-22",
                 "sid",
                 "valid-mid",
@@ -58,8 +58,7 @@ def main() -> int:
             if stored["2026-08-22"]["sid"]["wrapped-mid"]["updatedAt"] != fixed_ms:
                 raise AssertionError("corrected watch timestamp must be persisted")
         finally:
-            api_watch.WATCH_PATH = old_watch_path
-            api_watch.time.time = old_time
+            watch_writer.time.time = old_time
 
     print("watch timestamp guard checks passed")
     return 0

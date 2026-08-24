@@ -67,6 +67,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/student-app-push.js",
     ROOT / "static/js/student-app.js",
     ROOT / "static/js/student.js",
+    ROOT / "static/js/file-manage.js",
     ROOT / "static/js/shared/api.js",
     ROOT / "static/js/shared/testRecordData.js",
     ROOT / "static/js/shared/testRecordDetails.js",
@@ -81,6 +82,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_extra_attendance_merge.mjs",
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
+    ROOT / "scripts/verify_legacy_consumer_cleanup.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
     ROOT / "scripts/verify_record_cleanup_test_status.mjs",
     ROOT / "scripts/verify_admin_assistant_notes_demo.mjs",
@@ -857,6 +859,29 @@ print("updates GET-only base route checks passed")
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, failure_message)
 
+
+def run_legacy_consumer_cleanup_checks() -> None:
+    cmd = ["node", "scripts/verify_legacy_consumer_cleanup.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "legacy consumer cleanup contract failed")
+
+def run_file_reference_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_file_reference_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "material/file reference integrity contract failed")
 
 def run_student_material_access_scope_checks() -> None:
     cmd = ["node", "scripts/verify_student_material_access_scope.js"]
@@ -1748,19 +1773,17 @@ def run_progress_batch_sids_unit_checks() -> None:
 
 
 def run_progress_read_cache_unit_checks() -> None:
+    import core.progress_store as progress_store
     import routes.api_basic as api_basic
 
     original_path = api_basic.PRG_PATH
-    original_signature = api_basic._PROGRESS_CACHE_SIGNATURE
-    original_data = api_basic._PROGRESS_CACHE_DATA
 
     with tempfile.TemporaryDirectory(prefix="verify-progress-cache-") as tmp:
         progress_path = pathlib.Path(tmp) / "progress.json"
         progress_path.write_text('{"2026-06-01":{"s1":{"m1":"done"}}}', encoding="utf-8")
         try:
             api_basic.PRG_PATH = progress_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = None
-            api_basic._PROGRESS_CACHE_DATA = None
+            progress_store.reset_progress_cache()
 
             first = api_basic._load_progress_strict()
             second = api_basic._load_progress_strict()
@@ -1797,8 +1820,7 @@ def run_progress_read_cache_unit_checks() -> None:
 
             slow_path = SlowProgressPath(progress_path)
             api_basic.PRG_PATH = slow_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = None
-            api_basic._PROGRESS_CACHE_DATA = None
+            progress_store.reset_progress_cache()
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 concurrent_reads = list(pool.map(lambda _: api_basic._load_progress_strict(), range(2)))
             _assert_unit(
@@ -1817,8 +1839,7 @@ def run_progress_read_cache_unit_checks() -> None:
             )
         finally:
             api_basic.PRG_PATH = original_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
-            api_basic._PROGRESS_CACHE_DATA = original_data
+            progress_store.reset_progress_cache()
 
 
 def run_video_completion_unit_checks() -> None:
@@ -2641,6 +2662,7 @@ def run_video_assignment_snapshot_unit_checks() -> None:
 def run_video_assignment_route_hook_unit_checks() -> None:
     from flask import Flask
     import routes.api_basic as api_basic
+    import routes.api_fs as api_fs
 
     extra_path = object()
     weekend_path = object()
@@ -2651,6 +2673,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     expand_calls = []
     notification_calls = []
     lock_events = []
+    student_io_events = []
     lock_state = {"depth": 0, "path": None}
     original = {
         "EXTRA_PATH": api_basic.EXTRA_PATH,
@@ -2674,6 +2697,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
             _assert_unit(lock_state["depth"] == 1, "weekend slot read occurs inside the file lock")
             return store["weekend"]
         if path is students_path:
+            student_io_events.append(("load", lock_state["depth"]))
             return store["students"]
         if path is updates_path:
             return store["updates"]
@@ -2687,14 +2711,23 @@ def run_video_assignment_route_hook_unit_checks() -> None:
             _assert_unit(lock_state["depth"] == 1, "weekend slot save occurs inside the file lock")
             store["weekend"] = value
         elif path is students_path:
+            student_io_events.append(("save", lock_state["depth"]))
             store["students"] = value
         elif path is updates_path:
             store["updates"] = value
 
     @contextlib.contextmanager
     def fake_file_lock(path):
-        _assert_unit(path in {extra_path, weekend_path}, "route locks its own storage path")
-        label = "extra" if path is extra_path else "weekend"
+        _assert_unit(
+            path in {extra_path, weekend_path, students_path},
+            "route locks its own storage path",
+        )
+        if path is extra_path:
+            label = "extra"
+        elif path is weekend_path:
+            label = "weekend"
+        else:
+            label = "students"
         lock_events.append(("enter", label))
         lock_state["depth"] += 1
         lock_state["path"] = path
@@ -2728,6 +2761,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
 
         app = Flask(__name__)
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_fs.bp_api_fs)
         client = app.test_client()
         date = "2026-06-06"
 
@@ -2739,6 +2773,42 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         response = client.get("/api/updates")
         _assert_unit(response.status_code == 200 and init_calls, "the normal updates fetch keeps the date-boundary initializer")
         init_calls.clear()
+
+        _assert_unit(client.get("/api/students").status_code == 200, "student collection GET remains available")
+        _assert_unit(client.post("/api/students", json=[]).status_code == 405, "retired whole-student POST stays disabled")
+        _assert_unit(client.post("/api/materials", json={}).status_code == 405, "retired whole-material POST stays disabled")
+        _assert_unit(client.post("/api/logs", json={}).status_code == 405, "retired base log POST stays disabled")
+        _assert_unit(client.get("/api/fs/page-folders").status_code == 404, "retired page-folder GET stays unavailable")
+        _assert_unit(client.post("/api/fs/page-folders", json={}).status_code == 404, "retired page-folder POST stays unavailable")
+
+        lock_events.clear()
+        student_io_events.clear()
+        response = client.post("/api/add-student", json={"name": "잠금학생"})
+        added_sid = str((response.get_json() or {}).get("id") or "")
+        _assert_unit(response.status_code == 200 and added_sid, "student add keeps its response contract")
+        _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student add holds the student-store lock across read and save",
+        )
+        _assert_unit(
+            any(str(row.get("id")) == added_sid for row in store["students"]),
+            "student add persists the new row",
+        )
+
+        lock_events.clear()
+        student_io_events.clear()
+        response = client.delete(f"/api/students/{added_sid}")
+        _assert_unit(response.status_code == 204, "student delete keeps its response contract")
+        _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student delete holds the student-store lock across read and save",
+        )
+        _assert_unit(
+            all(str(row.get("id")) != added_sid for row in store["students"]),
+            "student delete removes only the selected row",
+        )
 
         other_date = "2026-06-07"
         store["extra"] = {other_date: ["other"]}
@@ -2800,11 +2870,18 @@ def run_video_assignment_route_hook_unit_checks() -> None:
 
         expand_calls.clear()
         init_calls.clear()
+        lock_events.clear()
+        student_io_events.clear()
         response = client.post(
             "/api/update",
             json={"id": "s1", "field": "day2", "value": "토2"},
         )
         _assert_unit(response.status_code == 200, "schedule update hook request succeeds")
+        _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student field update holds the student-store lock across read and save",
+        )
         _assert_unit(
             expand_calls and expand_calls[-1][0][:2] == (date, "s1"),
             "regular schedule edits reconcile the current student",
@@ -3262,15 +3339,34 @@ def run_self_study_video_assignment_source_checks() -> None:
 
 def run_watch_route_progress_unit_checks() -> None:
     from core.progress_rules import PROGRESS_MANUAL_META_KEY, WATCH_AUTO_PROGRESS_META_KEY
+    import core.watch_progress_writer as watch_writer
     from flask import Flask
     import routes.api_basic as api_basic
     import routes.api_watch as api_watch
+
+    watch_source = (ROOT / "routes/api_watch.py").read_text("utf-8")
+    kollus_source = (ROOT / "routes/api_kollus.py").read_text("utf-8")
+    _assert_unit(
+        "from routes.api_basic import" not in watch_source,
+        "watch route must not import private helpers from api_basic",
+    )
+    _assert_unit(
+        "from routes.api_watch import" not in kollus_source,
+        "Kollus route must not import private writers from api_watch",
+    )
+    _assert_unit(
+        "from core.watch_progress_writer import" in watch_source
+        and "from core.watch_progress_writer import" in kollus_source,
+        "watch and Kollus routes must share the public watch/progress writer",
+    )
 
     temp_base = ROOT / "tmp"
     temp_base.mkdir(exist_ok=True)
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
     old_watch_path = api_watch.WATCH_PATH
+    old_watch_students = api_watch.STU_PATH
+    old_watch_videos = api_watch.VID_PATH
     old_network_allowed = api_watch.academy_network_allowed
     old_reconcile = api_basic._reconcile_auto_assignment_after_progress
     reconcile_calls = []
@@ -3278,24 +3374,34 @@ def run_watch_route_progress_unit_checks() -> None:
     with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         watch_path = pathlib.Path(tmpdir) / "watch.json"
+        students_path = pathlib.Path(tmpdir) / "students.json"
+        videos_path = pathlib.Path(tmpdir) / "videos.json"
         progress_path.write_text("{}", "utf-8")
         watch_path.write_text("{}", "utf-8")
+        students_path.write_text("[]", "utf-8")
+        videos_path.write_text("[]", "utf-8")
 
         api_basic.PRG_PATH = progress_path
         api_watch.PRG_PATH = progress_path
         api_watch.WATCH_PATH = watch_path
+        api_watch.STU_PATH = students_path
+        api_watch.VID_PATH = videos_path
         api_basic._reconcile_auto_assignment_after_progress = (
             lambda *args, **kwargs: reconcile_calls.append((args, kwargs)) or True
         )
         try:
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "interrupted")
+            merged = watch_writer.save_progress_status(
+                progress_path, students_path, videos_path, "2026-06-06", "007", "m1", "interrupted"
+            )
             _assert_unit(merged.get("m1") == "interrupted", "watch route should save auto interrupted")
             _assert_unit(
                 merged.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m1") == "interrupted",
                 "watch route should persist auto interrupted metadata",
             )
 
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "done")
+            merged = watch_writer.save_progress_status(
+                progress_path, students_path, videos_path, "2026-06-06", "007", "m1", "done"
+            )
             _assert_unit(merged.get("m1") == "done", "watch route should advance auto interrupted to done")
             _assert_unit(
                 not reconcile_calls,
@@ -3307,12 +3413,20 @@ def run_watch_route_progress_unit_checks() -> None:
             current = json.loads(progress_path.read_text("utf-8-sig"))
             current["2026-06-06"]["007"].update({
                 "m2": "none",
-                PROGRESS_MANUAL_META_KEY: {"m2": True},
+                "m5": "skip",
+                "m6": "interrupted",
+                PROGRESS_MANUAL_META_KEY: {"m2": True, "m5": True, "m6": True},
             })
             progress_path.write_text(json.dumps(current, ensure_ascii=False), "utf-8")
 
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
-            _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
+            for mid, expected in (("m2", "none"), ("m5", "skip"), ("m6", "interrupted")):
+                merged = watch_writer.save_progress_status(
+                    progress_path, students_path, videos_path, "2026-06-06", "007", mid, "done"
+                )
+                _assert_unit(
+                    merged.get(mid) == expected,
+                    f"watch writer must not overwrite manual {expected}",
+                )
 
             app = Flask("verify_watch_status")
             app.register_blueprint(api_watch.bp_api_watch)
@@ -3384,8 +3498,39 @@ def run_watch_route_progress_unit_checks() -> None:
             api_basic.PRG_PATH = old_basic_progress
             api_watch.PRG_PATH = old_watch_progress
             api_watch.WATCH_PATH = old_watch_path
+            api_watch.STU_PATH = old_watch_students
+            api_watch.VID_PATH = old_watch_videos
             api_watch.academy_network_allowed = old_network_allowed
             api_basic._reconcile_auto_assignment_after_progress = old_reconcile
+
+
+def run_video_progress_integration_matrix_checks() -> None:
+    from scripts.verify_video_progress_matrix import main as verify_video_progress_matrix
+
+    _assert_unit(
+        verify_video_progress_matrix() == 0,
+        "watch and Kollus temp-route integration matrix must pass",
+    )
+    cmd = ["node", "scripts/verify_student_watch_autosave.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student watch debounce and flush behavior checks failed")
+
+
+def run_absence_makeup_integration_matrix_checks() -> None:
+    from scripts.verify_absence_makeup_matrix import main as verify_absence_makeup_matrix
+
+    _assert_unit(
+        verify_absence_makeup_matrix() == 0,
+        "absence and makeup temp-route integration matrix must pass or report only approved limitations",
+    )
 
 
 def run_log_repository_unit_checks() -> None:
@@ -4168,9 +4313,71 @@ def run_student_assigned_tests_unit_checks() -> None:
 
 
 def run_absence_test_assignment_transition_unit_checks() -> None:
+    import core.absence_assignment_cleanup as cleanup
     import routes.api_attend as api_attend
     from flask import Flask
     from core.progress_rules import TEST_ASSIGN_CHANGE_ORDER_META_KEY
+
+    cleanup_source = (ROOT / "core/absence_assignment_cleanup.py").read_text("utf-8")
+    transaction_source = (ROOT / "core/absence_transaction.py").read_text("utf-8")
+    app_source = (ROOT / "app.py").read_text("utf-8")
+    attendance_source = (ROOT / "routes/api_attend.py").read_text("utf-8")
+    makeup_source = (ROOT / "routes/api_makeup_carryover.py").read_text("utf-8")
+    sync_source = (ROOT / "scripts/sync_makeup_sheet_additive.py").read_text("utf-8")
+    _assert_unit(
+        "from routes.api_attend import" not in makeup_source
+        and "from routes.api_attend import" not in sync_source,
+        "makeup sync consumers must not import attendance private cleanup helpers",
+    )
+    _assert_unit(
+        all(
+            "from routes.absence_assignment_cleanup import" in source
+            for source in (attendance_source, makeup_source, sync_source)
+        ),
+        "absence writers must share the public transaction adapter",
+    )
+    _assert_unit(
+        all(
+            "absence_write_scope" in source
+            and "commit_new_absences_locked" in source
+            and "clear_assignments_for_new_absences(" not in source
+            for source in (attendance_source, makeup_source, sync_source)
+        ),
+        "live absence writers must use one journal transaction instead of legacy partial cleanup",
+    )
+    _assert_unit(
+        "from routes." not in cleanup_source
+        and "from routes." not in transaction_source,
+        "core absence planning and transaction modules must stay independent from Flask routes",
+    )
+    _assert_unit(
+        "recover_pending_absence_transactions()" in app_source
+        and "absence_read_barrier()" in app_source
+        and 'path in {"/api/absent", "/api/makeup-sheet-sync"}' in app_source,
+        "app startup recovery and request barrier must protect absence-related stores without re-locking owners",
+    )
+    _assert_unit(
+        all(
+            f'"{path}"' in app_source
+            for path in (
+                "/api/watch",
+                "/api/watch-status",
+                "/api/kollus/lms-callback",
+            )
+        ),
+        "watch, direct progress, and Kollus callback writes must wait for absence consistency",
+    )
+    _assert_unit(
+        "external_admin_api_auth_required(" in app_source
+        and "student_app_public_request" in app_source
+        and '"WWW-Authenticate": ADMIN_AUTH_CHALLENGE' in app_source,
+        "off-academy administrator APIs must require Basic auth without replacing public student gates",
+    )
+    _assert_unit(
+        "recover_material_state_if_needed(" in app_source
+        and 'app.config["MATERIAL_STATE_WRITES_DEGRADED"]' in app_source,
+        "material recovery failure must degrade file/material writes without preventing app startup",
+    )
 
     sid = "s1"
     date = "2026-06-07"
@@ -4180,22 +4387,22 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     skipped_label = "단원평가 / 대수 / Lv.3 / 2회차 / 제외"
 
     _assert_unit(
-        api_attend._absence_test_status_value("assigned") == "interrupted",
+        cleanup.absence_test_status_value("assigned") == "interrupted",
         "absence must turn assigned tests into 배부/interrupted",
     )
     _assert_unit(
-        api_attend._absence_test_status_value({"status": "assigned", "memo": "keep"}) == {
+        cleanup.absence_test_status_value({"status": "assigned", "memo": "keep"}) == {
             "status": "interrupted",
             "memo": "keep",
         },
         "absence must preserve dict test status metadata while changing assigned to 배부",
     )
     _assert_unit(
-        api_attend._absence_test_status_value("interrupted") == "interrupted",
+        cleanup.absence_test_status_value("interrupted") == "interrupted",
         "absence must keep existing 배부/interrupted tests",
     )
-    _assert_unit(api_attend._absence_test_status_value("done") == "done", "absence must preserve completed tests")
-    _assert_unit(api_attend._absence_test_status_value("skip") == "skip", "absence must preserve excluded tests")
+    _assert_unit(cleanup.absence_test_status_value("done") == "done", "absence must preserve completed tests")
+    _assert_unit(cleanup.absence_test_status_value("skip") == "skip", "absence must preserve excluded tests")
 
     entry = {
         "notes": "상담 메모\n\n[테스트 배정]\n- 기존 블록",
@@ -4211,7 +4418,7 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
             {"label": completed_label, "name": "완료", "status": "done"},
         ],
     }
-    next_entry, changed = api_attend._cleared_assignment_log_entry(entry, sid)
+    next_entry, changed = cleanup.cleared_assignment_log_entry(entry, sid)
     _assert_unit(changed, "absence log transition should report a change")
     next_daily = {item["label"]: item["status"] for item in next_entry["testAssignmentDailyTests"]}
     next_assigned = {item["label"]: item["status"] for item in next_entry["assignedTests"]}
@@ -4223,7 +4430,6 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     _assert_unit(next_assigned[completed_label] == "done", "absence must preserve cumulative completed log tests")
     _assert_unit("[테스트 배정]" not in str(next_entry.get("notes") or ""), "absence must still remove generated note blocks")
 
-    original_progress_path = api_attend.PRG_PATH
     with tempfile.TemporaryDirectory(prefix="verify-absence-test-order-") as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         progress_path.write_text(
@@ -4243,22 +4449,108 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
             }, ensure_ascii=False),
             "utf-8",
         )
-        api_attend.PRG_PATH = progress_path
-        try:
-            api_attend._clear_absence_progress_tests({(date, sid)})
-            progress_after = json.loads(progress_path.read_text("utf-8"))
-            progress_entry = progress_after[date][sid]
-            _assert_unit(
-                progress_entry["tests"][assigned_label] == "interrupted",
-                "absence progress transition must turn assigned into interrupted",
-            )
-            _assert_unit(
-                progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][assigned_label] == 5
-                and progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][distributed_label] == 4,
-                "absence progress transition must make only the changed test newest",
-            )
-        finally:
-            api_attend.PRG_PATH = original_progress_path
+        cleanup.clear_absence_progress_tests({(date, sid)}, progress_path=progress_path)
+        progress_after = json.loads(progress_path.read_text("utf-8"))
+        progress_entry = progress_after[date][sid]
+        _assert_unit(
+            progress_entry["tests"][assigned_label] == "interrupted",
+            "absence progress transition must turn assigned into interrupted",
+        )
+        _assert_unit(
+            progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][assigned_label] == 5
+            and progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][distributed_label] == 4,
+            "absence progress transition must make only the changed test newest",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="verify-absence-cleanup-service-") as tmpdir:
+        base = pathlib.Path(tmpdir)
+        updates_path = base / "updates.json"
+        progress_path = base / "progress.json"
+        updates_path.write_text(
+            json.dumps({
+                date: {
+                    sid: {"videos": ["m1"], "source": "auto"},
+                    "keep-sid": {"videos": ["m2"], "source": "manual"},
+                },
+                "2026-06-08": {sid: {"videos": ["m3"], "source": "auto"}},
+            }),
+            "utf-8",
+        )
+        progress_path.write_text(
+            json.dumps({
+                date: {sid: {"tests": {assigned_label: "assigned"}}},
+                "2026-06-08": {sid: {"tests": {assigned_label: "assigned"}}},
+            }, ensure_ascii=False),
+            "utf-8",
+        )
+
+        class ReadResult:
+            def __init__(self, entry):
+                self.entry = entry
+
+        class FakeLogRepository:
+            def __init__(self):
+                self.entries = {
+                    (date, sid): {
+                        "assignedTests": [
+                            {"label": assigned_label, "status": "assigned", "memo": "keep"},
+                        ],
+                        "notes": "상담 메모",
+                    },
+                    ("2026-06-08", sid): {"notes": "다른 날짜"},
+                }
+
+            def read_entry(self, date_key, student_id):
+                return ReadResult(json.loads(json.dumps(
+                    self.entries.get((date_key, student_id), {}),
+                    ensure_ascii=False,
+                )))
+
+            def transform_entries(self, pairs, transform):
+                for pair in pairs:
+                    current = self.entries.get(pair, {})
+                    next_entry, changed = transform(current, pair[1])
+                    if changed:
+                        self.entries[pair] = next_entry
+
+        repository = FakeLogRepository()
+        factory_calls = []
+
+        def repository_factory():
+            factory_calls.append(True)
+            return repository
+
+        cleanup.clear_assignments_for_new_absences(
+            {(date, sid)},
+            updates_path=updates_path,
+            progress_path=progress_path,
+            log_repository_factory=repository_factory,
+        )
+        updates_after = json.loads(updates_path.read_text("utf-8"))
+        progress_after = json.loads(progress_path.read_text("utf-8"))
+        log_after = repository.entries[(date, sid)]
+        _assert_unit(sid not in updates_after[date], "absence cleanup removes only the new date/SID video assignment")
+        _assert_unit(
+            updates_after[date]["keep-sid"]["videos"] == ["m2"]
+            and updates_after["2026-06-08"][sid]["videos"] == ["m3"],
+            "absence cleanup preserves other students and dates",
+        )
+        _assert_unit(
+            progress_after[date][sid]["tests"][assigned_label] == "interrupted"
+            and progress_after["2026-06-08"][sid]["tests"][assigned_label] == "assigned",
+            "absence cleanup changes only the new date/SID assigned test",
+        )
+        _assert_unit(
+            log_after["assignedTests"][0]["status"] == "interrupted"
+            and log_after["assignedTests"][0]["memo"] == "keep"
+            and log_after["testAssignmentAbsenceCarryover"]["assignedTests"][0]["label"] == assigned_label,
+            "absence cleanup preserves test metadata and records the carryover before clearing",
+        )
+        _assert_unit(
+            repository.entries[("2026-06-08", sid)] == {"notes": "다른 날짜"}
+            and len(factory_calls) == 2,
+            "absence cleanup preserves other log dates and the legacy two-repository-call sequence",
+        )
 
     runtime_absent = {
         "by_date": {
@@ -4335,6 +4627,52 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
             api_attend.save_absent = original_save_absent
             api_attend.enqueue_current_schedule_changes = original_enqueue
 
+    from scripts.verify_absence_transaction import main as verify_absence_transaction
+    from scripts.verify_makeup_sheet_route_safety import main as verify_makeup_sheet_route
+
+    _assert_unit(
+        verify_absence_transaction() == 0,
+        "absence transaction failure injection and crash recovery checks must pass",
+    )
+    _assert_unit(
+        verify_makeup_sheet_route() == 0,
+        "makeup sheet route must delegate one atomic transaction before notifications",
+    )
+
+
+def run_test_shared_service_checks() -> None:
+    from scripts.verify_test_shared_services import main as verify_test_shared_services
+
+    _assert_unit(
+        verify_test_shared_services() == 0,
+        "test lock and answer-link shared-service checks must pass",
+    )
+
+
+def run_announcement_image_access_checks() -> None:
+    from scripts.verify_announcement_image_access import main as verify_image_access
+
+    _assert_unit(
+        verify_image_access() == 0,
+        "announcement image pure/store access matrix must pass",
+    )
+    for check_name in ("student-data", "academy-gates"):
+        cmd = [
+            sys.executable,
+            "scripts/verify_student_mobile_app.py",
+            "--only",
+            check_name,
+        ]
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(
+            proc.returncode == 0,
+            f"announcement image actual-route check failed: {check_name}",
+        )
 
 def run_student_answer_link_precedence_unit_checks() -> None:
     import routes.api_basic as api_basic
@@ -4853,6 +5191,13 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         }
 
     route_state = make_route_state()
+    route_namespace["_load_material_state_for_read"] = lambda: (
+        deepcopy(route_state["materials"]),
+        deepcopy(route_state["assigns"]),
+        {},
+        False,
+    )
+
 
     def fixture_load(path):
         if path == route_namespace["STU_PATH"]:
@@ -9743,6 +10088,8 @@ def run_unit_checks() -> bool:
         run_hover_tooltip_performance_checks,
         run_export_log_format_checks,
         run_today_completion_checks,
+        run_legacy_consumer_cleanup_checks,
+        run_file_reference_route_checks,
         run_today_order_store_migration_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
@@ -9760,8 +10107,11 @@ def run_unit_checks() -> bool:
         run_video_completion_source_checks,
         run_self_study_video_assignment_source_checks,
         run_watch_route_progress_unit_checks,
+        run_video_progress_integration_matrix_checks,
         run_log_repository_unit_checks,
         run_legacy_test_record_cache_unit_checks,
+        run_test_shared_service_checks,
+        run_announcement_image_access_checks,
         run_student_answer_link_precedence_unit_checks,
         run_student_previous_video_review_bootstrap_unit_checks,
         run_student_bootstrap_unit_checks,
@@ -9779,6 +10129,7 @@ def run_unit_checks() -> bool:
         run_academy_proxy_network_access_checks,
         run_test_answer_mode_contract_checks,
         run_absence_test_assignment_transition_unit_checks,
+        run_absence_makeup_integration_matrix_checks,
         run_student_answer_link_render_source_checks,
         run_unit_test_answer_material_contract_checks,
         run_catalog_script_safety_source_checks,

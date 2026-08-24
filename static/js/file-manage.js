@@ -15,6 +15,7 @@ let SELECTED = new Set();    // 파일/폴더 선택 집합
 // 배정 패널 상태
 let STUDENTS = [];           // /api/students
 let ASSIGNS  = {};           // /api/mat-assign  { sid: [token,...] }
+let ASSIGNS_REVISION = "";
 let PICKED   = [];           // 추가(배정) 모드에서 담은 항목 (file/dir)
 let MODE     = "add";        // "add" | "remove"
 
@@ -38,6 +39,40 @@ async function jpost(url, body){
   const t = await r.text();
   if (!r.ok) throw new Error(t);
   return t ? JSON.parse(t) : {};
+}
+async function getAssignSnapshot(){
+  const r = await fetch("/api/mat-assign", { cache:"no-store" });
+  const t = await r.text();
+  if (!r.ok) throw new Error(t || `배정 조회 실패 (HTTP ${r.status})`);
+  const parsed = t ? JSON.parse(t) : {};
+  const assigns = parsed && typeof parsed==="object" && !Array.isArray(parsed) ? parsed : {};
+  return {
+    assigns,
+    revision: r.headers.get("X-Material-State-Revision") || ""
+  };
+}
+async function saveAssignSnapshot(assigns, revision){
+  const headers = { "Content-Type":"application/json" };
+  // The revision header is absent only while an older live backend is still
+  // serving this newly loaded static file. That compatibility path disappears
+  // automatically after the next normal server restart.
+  if (revision) headers["If-Match"] = revision;
+  const r = await fetch("/api/mat-assign", {
+    method:"POST",
+    headers,
+    body: JSON.stringify(assigns || {})
+  });
+  const t = await r.text();
+  if (!r.ok){
+    let message = t || `배정 저장 실패 (HTTP ${r.status})`;
+    if (r.status===409) message = "다른 화면에서 배정 또는 파일 정보가 변경되었습니다. 다시 실행해 주세요.";
+    if (r.status===428) message = "배정 정보가 갱신되었습니다. 화면을 새로고침한 뒤 다시 실행해 주세요.";
+    if (r.status===503) message = "파일·교재 데이터 복구가 필요해 지금은 저장할 수 없습니다.";
+    const error = new Error(message);
+    error.status = r.status;
+    throw error;
+  }
+  return r.headers.get("X-Material-State-Revision") || revision || "";
 }
 function join(a,b){ return a ? `${a.replace(/\/$/,'')}/${b}` : b; }
 function prettySize(n){
@@ -330,7 +365,13 @@ async function refresh(){
   TREE = data.tree;
 
   try { STUDENTS = await jget("/api/students"); } catch { STUDENTS = []; }
-  try { ASSIGNS  = await jget("/api/mat-assign"); } catch { ASSIGNS = {}; }
+  try {
+    const snapshot = await getAssignSnapshot();
+    ASSIGNS = snapshot.assigns;
+    ASSIGNS_REVISION = snapshot.revision;
+  } catch {
+    ASSIGNS = {}; ASSIGNS_REVISION = "";
+  }
 
   updateAll();
   buildAssignFilters();
@@ -683,8 +724,8 @@ async function doAssignAdd(){
   if (btn){ btn.disabled=true; btn.innerHTML="배정 중…"; }
 
   try{
-    const cur = await jget("/api/mat-assign").catch(()=> ({}));
-    const assigns = (cur && typeof cur==="object") ? {...cur} : {};
+    const snapshot = await getAssignSnapshot();
+    const assigns = {...snapshot.assigns};
 
     const items = PICKED.map(f=> f.type==="dir" ? `DIR:${f.path}` : (f.url || f.path)).filter(Boolean);
     let addOps=0, removeOps=0;
@@ -710,7 +751,7 @@ async function doAssignAdd(){
       if (next.length) assigns[sid]=next; else delete assigns[sid];
     }
 
-    await jpost("/api/mat-assign", assigns);
+    ASSIGNS_REVISION = await saveAssignSnapshot(assigns, snapshot.revision);
     ASSIGNS = assigns;
 
     alert(isGlobalCancel
@@ -738,8 +779,8 @@ async function doAssignRemove(){
   if (btn){ btn.disabled=true; btn.innerHTML="해제 중…"; }
 
   try{
-    const cur = await jget("/api/mat-assign").catch(()=> ({}));
-    const assigns = (cur && typeof cur==="object") ? {...cur} : {};
+    const snapshot = await getAssignSnapshot();
+    const assigns = {...snapshot.assigns};
     let removeOps = 0;
 
     const targets = isGlobal ? Object.keys(assigns||{}) : sidList.map(String);
@@ -753,7 +794,7 @@ async function doAssignRemove(){
       if (next.length) assigns[sid]=next; else delete assigns[sid];
     }
 
-    await jpost("/api/mat-assign", assigns);
+    ASSIGNS_REVISION = await saveAssignSnapshot(assigns, snapshot.revision);
     ASSIGNS = assigns;
 
     alert(isGlobal

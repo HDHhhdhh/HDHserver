@@ -889,15 +889,6 @@ function announcementIdFromPath(path) {
   return decodeURIComponent(path.slice(prefix.length));
 }
 
-function materialUploadResponse(root) {
-  return responseJson(root, {
-    ok: false,
-    demo: true,
-    error: 'demo upload disabled',
-    materials: {},
-  }, 200);
-}
-
 async function imageUploadResponse(root, ctx) {
   await readFormDataBody(ctx);
   return responseJson(root, {
@@ -1050,7 +1041,7 @@ async function handleGet(root, ctx, store) {
 async function handleWrite(root, ctx, store) {
   const { path, method } = ctx;
   let body = {};
-  if (path !== '/api/announcements/image' && path !== '/api/material-upload') {
+  if (path !== '/api/announcements/image') {
     try {
       body = await readJsonBody(ctx);
     } catch {
@@ -1139,13 +1130,6 @@ async function handleWrite(root, ctx, store) {
   if (method === 'DELETE' && path.startsWith('/api/students/')) {
     const sid = decodeURIComponent(path.slice('/api/students/'.length));
     const result = deleteStudent(store, sid);
-    if (result.error) return badRequest(root, result.error);
-    saveDemoStore(store);
-    return ok(root, { ok: true, ...result });
-  }
-
-  if (method === 'POST' && path === '/api/delete-student') {
-    const result = deleteStudent(store, body?.id || body?.sid);
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, ...result });
@@ -1328,13 +1312,6 @@ async function handleWrite(root, ctx, store) {
     return ok(root, store.matAssign);
   }
 
-  if (method === 'POST' && path === '/api/materials') {
-    store.materials = body && typeof body === 'object' ? clone(body) : {};
-    saveDemoStore(store);
-    return ok(root, store.materials);
-  }
-
-  if (method === 'POST' && path === '/api/material-upload') return materialUploadResponse(root);
 
   if (method === 'POST' && path === '/api/announcements/image') return imageUploadResponse(root, ctx);
 

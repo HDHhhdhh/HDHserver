@@ -213,8 +213,12 @@ ok(htmlSource.includes('설정은 현재 페이지에서만 유지됩니다.'), 
 ok(htmlSource.includes('CSV 열 구조는 기존 연동을 위해 고정됩니다.'), 'UI does not disclose stable CSV schema');
 ok(cssSource.includes('body.admin #exportLogsModal .export-logs-panel'), 'export modal styles are not narrowly scoped');
 ok(cssSource.includes('@media (max-width: 640px)'), 'export modal has no mobile breakpoint');
-ok(mainSource.includes("exportLogs.js?v=20260823-export-perf1"), 'admin entry lacks homework-checked export cache bust');
-ok(htmlSource.includes("/js/admin/main.js?v=20260823-export-perf1"), 'admin shell lacks the homework-checked export cache bust');
+ok(mainSource.includes("exportLogs.js?v=20260824-roster-all-content1"), 'admin entry lacks full roster-content cache bust');
+ok(htmlSource.includes("/js/admin/main.js?v=20260824-roster-all-content1"), 'admin shell lacks the full roster-content cache bust');
+ok(
+  /import\s*\{[\s\S]*?\bcsvCell\b[\s\S]*?\}\s*from '\.\/exportLogFormat\.js\?[^']+';/u.test(exporterSource),
+  'roster CSV exporter does not import the shared csvCell helper',
+);
 ok(htmlSource.includes('선택일 숙검 완료'), 'selected-date export label does not disclose the homework-check requirement');
 ok(htmlSource.includes('숙검 완료된 기록만 포함합니다.'), 'selected-date export help omits the homework-check filter');
 
@@ -229,7 +233,11 @@ ok(!exporterSource.includes('Array.isArray(logEntry.tests)') && !exporterSource.
 ok(exporterSource.includes("if (testNames.length) lines.push('', '테스트 :', ...testNames);"), 'roster export does not emit one test name per line');
 ok(exporterSource.includes("? '학군지'") && exporterSource.includes("? '일산'"), 'past-test exports do not label school/Ilsan source');
 ok(exporterSource.includes('`${source}${difficulty ? `(${difficulty})`'), 'past-test exports do not include difficulty');
-ok(exporterSource.includes(".filter(mid => statuses[mid] !== 'done')"), 'roster export does not exclude cumulative blue done videos');
+ok(
+  exporterSource.includes('const videos = rosterAssignedVideoMids(dateStr, sid)') &&
+    !exporterSource.includes(".filter(mid => statuses[mid] !== 'done')"),
+  'roster export does not keep every video in the selected-date assignment snapshot',
+);
 ok(exporterSource.includes(".filter(item => item.st !== 'done')"), 'class-log exports do not exclude blue done videos');
 ok(!formatSource.includes('textDiffs'), 'TXT/CSV progress projections diverged again');
 ok(exporterSource.includes('recordsToCsv(records)'), 'CSV projection no longer uses the stable full record schema');

@@ -7,15 +7,19 @@ from typing import Any, Dict
 
 from flask import Blueprint, abort, jsonify, request
 
-from core.absent import load_absent, save_absent
+from core.absent import load_absent
 from core.makeup_sheet_sync import (
     build_additive_sheet_sync_result,
     read_additive_sheet_candidates,
 )
-from core.paths import ABS_PATH, BASE
+from core.paths import ABS_PATH, BASE, PRG_PATH, UPD_PATH
 from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
-from routes.api_attend import _clear_assignments_for_new_absences
+from routes.absence_assignment_cleanup import (
+    AbsenceRecoveryRequiredError,
+    absence_write_scope,
+    commit_new_absences_locked,
+)
 
 bp_api_makeup_carryover = Blueprint("api_makeup_carryover", __name__)
 
@@ -290,9 +294,14 @@ def api_makeup_sheet_sync_post():
     except RuntimeError as exc:
         abort(400, description=str(exc))
 
-    # Network parsing is complete before live JSON locks are acquired.
-    with file_lock(MAKEUP_CARRYOVER_PATH):
-        with file_lock(ABS_PATH):
+    # Network parsing is complete before live transaction locks are acquired.
+    try:
+        with absence_write_scope(
+            absent_path=ABS_PATH,
+            carryover_path=MAKEUP_CARRYOVER_PATH,
+            updates_path=UPD_PATH,
+            progress_path=PRG_PATH,
+        ) as journal_dir:
             current = _normalize_payload(load(MAKEUP_CARRYOVER_PATH))
             current_absent = load_absent()
             result = build_additive_sheet_sync_result(sheet, current, current_absent)
@@ -301,13 +310,23 @@ def api_makeup_sheet_sync_post():
                     (str(item.get("date") or ""), str(item.get("sid") or ""))
                     for item in result.get("addedPairs") or []
                 }
-                _clear_assignments_for_new_absences(new_pairs)
-                save_absent(result["absent"], locked=True)
-                try:
-                    save_atomic(MAKEUP_CARRYOVER_PATH, result["carryover"])
-                except Exception:
-                    save_absent(current_absent, locked=True)
-                    raise
+                commit_new_absences_locked(
+                    new_pairs,
+                    absent_after=result["absent"],
+                    carryover_after=result["carryover"],
+                    absent_path=ABS_PATH,
+                    carryover_path=MAKEUP_CARRYOVER_PATH,
+                    updates_path=UPD_PATH,
+                    progress_path=PRG_PATH,
+                    journal_dir=journal_dir,
+                    kind="makeup-sheet-api",
+                )
+    except AbsenceRecoveryRequiredError as exc:
+        abort(503, description=f"Absence transaction recovery required: {exc}")
+    except TimeoutError as exc:
+        abort(409, description=f"Failed to apply makeup sheet absences: {exc}")
+    except Exception as exc:
+        abort(500, description=f"Failed to apply makeup sheet absences: {exc}")
     if result.get("added"):
         enqueue_current_schedule_changes(result.get("addedSids") or [])
     return _makeup_response(result, revision_payload=result.get("carryover"))

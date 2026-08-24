@@ -388,5 +388,27 @@ def merge_progress_day_sid(
     return out
 
 
+def latest_video_status_by_sid(progress: Any) -> dict[str, dict[str, Any]]:
+    """Project each SID's latest non-metadata video status in date order."""
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(progress, dict):
+        return out
+
+    for date_key in sorted(progress):
+        day = progress.get(date_key)
+        if not isinstance(day, dict):
+            continue
+        for sid, statuses in day.items():
+            if not isinstance(statuses, dict):
+                continue
+            latest = out.setdefault(str(sid), {})
+            for mid, status in statuses.items():
+                mid_s = str(mid)
+                if mid_s.startswith("__") or mid_s == "tests":
+                    continue
+                latest[mid_s] = status
+    return out
+
+
 def merge_auto_watch_progress_status(current: dict, mid: str, status: str) -> dict:
     return merge_progress_day_sid(current, {mid: status}, source="auto")

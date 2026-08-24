@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import os
@@ -726,7 +727,172 @@ class LogRepository:
             json_error=json_err,
         )
 
-    def transform_entries(self, pairs: set[tuple[str, str]], transform_fn: Callable[[dict, str], tuple[dict, bool]]) -> None:
+    def mutation_lock(self):
+        lock = self.lock_factory() if self.lock_factory else None
+        return lock if lock is not None else _NullContext()
+
+    def snapshot_entries_raw(
+        self,
+        pairs: set[tuple[str, str]],
+        *,
+        json_lock_held: bool = False,
+    ) -> tuple[dict, dict[tuple[str, str], dict]]:
+        """Capture exact dual-store rows plus the effective entries seen by readers."""
+        context = _NullContext() if json_lock_held else self.mutation_lock()
+        with context:
+            json_map, json_status = self._read_json_map_with_status()
+            if json_status == "invalid":
+                raise ValueError("logs.json is unreadable or malformed")
+
+            dates = sorted({str(date) for date, _sid in pairs})
+            json_dates = [
+                {
+                    "date": date,
+                    "exists": date in json_map,
+                    "value": copy.deepcopy(json_map.get(date)),
+                }
+                for date in dates
+            ]
+
+            sqlite_rows: list[dict] = []
+            effective: dict[tuple[str, str], dict] = {}
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                for date, sid in sorted(pairs):
+                    row = con.execute(
+                        "SELECT entry_json, updated_at FROM logs WHERE date=? AND sid=?;",
+                        (date, sid),
+                    ).fetchone()
+                    sqlite_rows.append({
+                        "date": date,
+                        "sid": sid,
+                        "exists": row is not None,
+                        "entryJson": str(row["entry_json"]) if row is not None else "",
+                        "updatedAt": str(row["updated_at"]) if row is not None else "",
+                    })
+
+                    sqlite_entry: dict = {}
+                    if row is not None:
+                        try:
+                            decoded = json.loads(row["entry_json"]) if row["entry_json"] else {}
+                        except Exception:
+                            decoded = {}
+                        if isinstance(decoded, dict):
+                            sqlite_entry = self.repair_entry(decoded, sid)
+
+                    day = json_map.get(date)
+                    fallback = self._sid_lookup(day if isinstance(day, dict) else {}, sid)
+                    if not isinstance(fallback, dict):
+                        fallback = {}
+                    fallback = self.repair_entry(fallback, sid)
+
+                    if sqlite_entry:
+                        effective[(date, sid)] = self._merge_json_fallback_fields(
+                            sqlite_entry,
+                            fallback,
+                            sid,
+                        )
+                    else:
+                        effective[(date, sid)] = fallback
+            finally:
+                try:
+                    if con is not None:
+                        con.close()
+                except Exception:
+                    pass
+
+        return {
+            "version": 1,
+            "sqliteRows": sqlite_rows,
+            "jsonStatus": json_status,
+            "jsonDates": json_dates,
+        }, effective
+
+    def restore_entries_raw(self, snapshot: dict, *, json_lock_held: bool = False) -> None:
+        """Restore an exact narrow snapshot for rollback or crash recovery."""
+        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
+            raise ValueError("invalid log entry snapshot")
+
+        sqlite_rows = snapshot.get("sqliteRows")
+        json_dates = snapshot.get("jsonDates")
+        if not isinstance(sqlite_rows, list) or not isinstance(json_dates, list):
+            raise ValueError("invalid log entry snapshot rows")
+
+        context = _NullContext() if json_lock_held else self.mutation_lock()
+        with context:
+            current_json, current_status = self._read_json_map_with_status()
+            if current_status == "invalid":
+                raise ValueError("logs.json is unreadable or malformed")
+            restored_json = copy.deepcopy(current_json)
+
+            for item in json_dates:
+                if not isinstance(item, dict):
+                    raise ValueError("invalid log JSON snapshot row")
+                date = str(item.get("date") or "")
+                if not date:
+                    raise ValueError("invalid log JSON snapshot date")
+                if item.get("exists") is True:
+                    restored_json[date] = copy.deepcopy(item.get("value"))
+                else:
+                    restored_json.pop(date, None)
+
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE;")
+                for item in sqlite_rows:
+                    if not isinstance(item, dict):
+                        raise ValueError("invalid log SQLite snapshot row")
+                    date = str(item.get("date") or "")
+                    sid = str(item.get("sid") or "")
+                    if not date or not sid:
+                        raise ValueError("invalid log SQLite snapshot key")
+                    if item.get("exists") is True:
+                        con.execute(
+                            """
+                            INSERT INTO logs(date, sid, entry_json, updated_at)
+                            VALUES(?,?,?,?)
+                            ON CONFLICT(date, sid) DO UPDATE SET
+                              entry_json=excluded.entry_json,
+                              updated_at=excluded.updated_at;
+                            """,
+                            (
+                                date,
+                                sid,
+                                str(item.get("entryJson") or ""),
+                                str(item.get("updatedAt")) if item.get("updatedAt") is not None else self._now_kst_iso(),
+                            ),
+                        )
+                    else:
+                        con.execute("DELETE FROM logs WHERE date=? AND sid=?;", (date, sid))
+
+                if restored_json != current_json:
+                    save_atomic(self.logs_path, restored_json)
+                con.execute("COMMIT;")
+            except Exception:
+                try:
+                    if con is not None:
+                        con.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    if con is not None:
+                        con.close()
+                except Exception:
+                    pass
+
+    def transform_entries(
+        self,
+        pairs: set[tuple[str, str]],
+        transform_fn: Callable[[dict, str], tuple[dict, bool]],
+        *,
+        json_lock_held: bool = False,
+    ) -> None:
         if not pairs:
             return
 
@@ -756,8 +922,7 @@ class LogRepository:
                 pass
 
         changed_json = False
-        lock = self.lock_factory() if self.lock_factory else None
-        context = lock if lock is not None else _NullContext()
+        context = _NullContext() if json_lock_held else self.mutation_lock()
         with context:
             logs = self.read_json_map()
             if not isinstance(logs, dict):

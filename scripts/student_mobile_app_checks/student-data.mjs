@@ -218,7 +218,11 @@ export async function runChecks() {
     assert.match(source, /window\.__STU_SID__\s*=\s*STUDENT_APP_PUBLIC_MODE\s*\?\s*''/);
     assert.match(source, /!STUDENT_APP_PUBLIC_MODE\s*&&\s*window\.__STU_SID__[\s\S]{0,120}localStorage\.setItem\("studentSid"/);
     assert.match(source, /async function recoverStudentSid[\s\S]{0,100}if \(STUDENT_APP_PUBLIC_MODE\) return ''/);
-    assert.match(source, /async function ensureTodayAssignmentIfMissing\(\)[\s\S]{0,100}if \(STUDENT_APP_PUBLIC_MODE\) return false/);
+    assert.doesNotMatch(
+      source,
+      /ensureTodayAssignmentIfMissing|\/api\/updates\/patch/,
+      'retired student-side automatic assignment writer returned',
+    );
     assert.match(source, /if \(STUDENT_APP_PUBLIC_MODE\)[\s\S]{0,120}TEST_CFG = \{ categories: \{\} \}/);
     assert.match(source, /const res = await studentAppRequest\(url, init\)/);
     assert.match(source, /const requestSid = await announcementSid\(\)/);
