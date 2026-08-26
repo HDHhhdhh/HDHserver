@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +13,7 @@ if str(ROOT) not in sys.path:
 from core.runtime_server_guard import (
     is_network_server_command,
     is_production_server_command,
+    is_verified_isolated_server_root,
     refuse_concurrent_live_server,
 )
 
@@ -67,6 +70,31 @@ def main() -> None:
     except RuntimeError as exc:
         blocked = "already listening" in str(exc)
     check(blocked, "concurrent live-runtime QA server was not rejected")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        isolated_root = Path(tmpdir).resolve()
+        source_root = isolated_root.parent / "live-source"
+        marker = {
+            "format": "academy-isolated-server/v1",
+            "isolatedRoot": str(isolated_root),
+            "sourceRoot": str(source_root),
+        }
+        (isolated_root / ".academy-isolated-server.json").write_text(
+            json.dumps(marker),
+            encoding="utf-8",
+        )
+        isolated_env = {"ACADEMY_ISOLATED_SERVER_ROOT": str(isolated_root)}
+        check(
+            is_verified_isolated_server_root(isolated_env, code_root=isolated_root),
+            "managed isolated root marker was not accepted",
+        )
+        check(
+            not is_verified_isolated_server_root(
+                {"ACADEMY_ISOLATED_SERVER_ROOT": str(source_root)},
+                code_root=isolated_root,
+            ),
+            "mismatched isolated root declaration was accepted",
+        )
 
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     guard_call = app_source.index("    refuse_concurrent_live_server()")

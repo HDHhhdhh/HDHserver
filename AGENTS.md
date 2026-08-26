@@ -142,7 +142,7 @@ node --check <edited-file.js>
 ## Browser/UI Notes
 - After frontend changes, reload the admin page before verifying.
 - Prefer the Browser/in-app browser plugin for local UI verification. If it is unavailable, use the Chrome extension browser or Playwright fallback and report which path was used.
-- Never start any additional `app:app` or Flask development server while production port 8003 is running. A loopback 8003 listener can steal Cloudflare traffic, while an 8004 listener still shares the repository JSON/SQLite runtime and can block production locks. Reuse the live server for read-only checks, use demo/test-client fixtures, or stop production before isolated server work; always stop verification listeners after testing.
+- Never start an additional `app:app` or Flask server directly from the live repository while production port 8003 is running. For browser/design work that needs a server, use `scripts/manage_isolated_design_server.ps1`; it mirrors code into `instance/isolated-design-server/app` and keeps JSON/SQLite/files/data separate. Direct live-root servers remain blocked.
 - Prefer DOM/API checks for exact data, then screenshot checks for visual regressions.
 - Text must remain readable in Korean; verify UTF-8 rendering when touching static HTML/JS.
 - Stop any dev server started only for verification unless the user asks to keep it running.
