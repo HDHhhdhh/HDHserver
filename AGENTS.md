@@ -142,10 +142,20 @@ node --check <edited-file.js>
 ## Browser/UI Notes
 - After frontend changes, reload the admin page before verifying.
 - Prefer the Browser/in-app browser plugin for local UI verification. If it is unavailable, use the Chrome extension browser or Playwright fallback and report which path was used.
-- Never start an additional `app:app` or Flask server directly from the live repository while production port 8003 is running. For browser/design work that needs a server, use `scripts/manage_isolated_design_server.ps1`; it mirrors code into `instance/isolated-design-server/app` and keeps JSON/SQLite/files/data separate. Direct live-root servers remain blocked.
+- Follow the dedicated test-server rules below whenever browser or design verification needs a running server.
 - Prefer DOM/API checks for exact data, then screenshot checks for visual regressions.
 - Text must remain readable in Korean; verify UTF-8 rendering when touching static HTML/JS.
 - Stop any dev server started only for verification unless the user asks to keep it running.
+
+## 테스트 서버 활용 규칙
+- Port 8003 is the canonical production server. Keep it available during test work and never stop, restart, or replace it merely to run a test server; production maintenance requires explicit user direction.
+- The only supported concurrent test server is the loopback-only server on `127.0.0.1:8004` managed by `scripts/manage_isolated_design_server.ps1`. Never run another `app:app`, `app.run(...)`, Flask, or Waitress process directly from the live repository.
+- The test server must run from `instance/isolated-design-server/app`. Its JSON, SQLite, `data/`, `files/`, `instance/`, mirror, backup, and generated runtime state must remain separate from production. Never copy, read as seed data, write, or automatically merge production runtime into the test runtime.
+- Data entered through the test server belongs only to the test runtime and must never be merged into production automatically. Importing a production snapshot or promoting test data requires explicit user approval, a fresh runtime backup, a reviewed one-way migration plan, and separate verification.
+- Use the manager lifecycle only: run `Status` before acting, `Start` for initial launch, `Refresh` for frontend/source snapshot refresh, `Start -Restart` after Python or route changes, and `Stop` only after confirming no user or other active task still needs the test server. A plain `Refresh` does not reload already-imported backend code.
+- Keep port 8004 private to loopback. Public/LAN exposure, real push delivery, public student-app behavior, or Kollus callbacks require a separately approved QA deployment and must not be enabled by weakening the local isolation guard.
+- After every start or restart, require all of these checks: manager status reports `managed: true` and HTTP 200; exactly one loopback listener owns port 8004; production `/api/ping` on port 8003 still succeeds; and the public production `/app` remains reachable. After `Refresh`, verify both servers plus the changed test page.
+- If start or status validation fails, do not bypass the runtime guard, kill an unknown port owner, or fall back to the live repository. Inspect manager status, receipt, and stderr. `Stop` may terminate only the receipt-matched isolated test process and must never target production.
 
 ## Git Workflow
 - Do not revert user changes.
