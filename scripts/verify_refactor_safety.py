@@ -329,6 +329,7 @@ SKIP_DIR_NAMES = {".git", ".pytest_cache", "__pycache__", "venv", "_data_mirror"
 SQLITE_TRANSIENT_SUFFIXES = (".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm")
 SQLITE_MAIN_SUFFIXES = (".sqlite", ".db")
 SQLITE_OBSERVED_SUFFIXES = SQLITE_MAIN_SUFFIXES + SQLITE_TRANSIENT_SUFFIXES
+UNREADABLE_RUNTIME_DIGEST = "<metadata-only>"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -345,6 +346,20 @@ def sha256_file(path: pathlib.Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def runtime_file_fingerprint(path: pathlib.Path) -> str:
+    """Hash readable runtime files and fall back to non-secret metadata."""
+    try:
+        return sha256_file(path)
+    except PermissionError:
+        stat = path.stat()
+        return f"{UNREADABLE_RUNTIME_DIGEST}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def verification_temporary_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    """Create an auto-cleaned fixture directory without relying on legacy ROOT/tmp ACLs."""
+    return tempfile.TemporaryDirectory(prefix=f".{prefix}", dir=ROOT)
 
 
 def iter_runtime_paths() -> Iterable[pathlib.Path]:
@@ -378,7 +393,11 @@ def iter_runtime_paths() -> Iterable[pathlib.Path]:
 def runtime_fingerprints() -> dict[str, str | None]:
     out: dict[str, str | None] = {}
     for path in iter_runtime_paths():
-        out[rel(path)] = sha256_file(path) if path.exists() and path.is_file() else None
+        try:
+            out[rel(path)] = runtime_file_fingerprint(path) if path.exists() and path.is_file() else None
+        except FileNotFoundError:
+            # A live SQLite sidecar can disappear between enumeration and hashing.
+            out[rel(path)] = None
     return out
 
 
@@ -419,6 +438,18 @@ def _sqlite_file_metadata(path: pathlib.Path) -> dict[str, int | str]:
     }
 
 
+def _runtime_file_metadata(path: pathlib.Path) -> dict[str, int | str]:
+    try:
+        return _sqlite_file_metadata(path)
+    except PermissionError:
+        stat = path.stat()
+        return {
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+            "sha256": UNREADABLE_RUNTIME_DIGEST,
+        }
+
+
 def sqlite_runtime_metadata(root: pathlib.Path = ROOT) -> dict[str, dict[str, int | str]]:
     observations: dict[str, dict[str, int | str]] = {}
     for path in iter_sqlite_runtime_paths(root):
@@ -435,7 +466,7 @@ def runtime_metadata_fingerprints() -> dict[str, dict[str, int | str]]:
     observations: dict[str, dict[str, int | str]] = {}
     for path in iter_runtime_paths():
         try:
-            observations[rel(path)] = _sqlite_file_metadata(path)
+            observations[rel(path)] = _runtime_file_metadata(path)
         except FileNotFoundError:
             continue
     return observations
@@ -529,13 +560,19 @@ def _run_captured(
 
 def run_python_compile() -> bool:
     ok = True
-    for path in PYTHON_FILES:
-        try:
-            py_compile.compile(str(path), doraise=True)
-            print(f"py_compile ok: {rel(path)}")
-        except Exception as exc:
-            ok = False
-            print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
+    with verification_temporary_directory("verify-pycompile-") as tmpdir:
+        temp_root = pathlib.Path(tmpdir)
+        for index, path in enumerate(PYTHON_FILES):
+            try:
+                py_compile.compile(
+                    str(path),
+                    cfile=str(temp_root / f"{index:04d}.pyc"),
+                    doraise=True,
+                )
+                print(f"py_compile ok: {rel(path)}")
+            except Exception as exc:
+                ok = False
+                print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
     return ok
 
 
@@ -1078,6 +1115,32 @@ def run_smoke_sqlite_observation_unit_checks() -> None:
         _assert_unit(
             json.loads(rendered[len(prefix):]) == created_changes[0],
             "SQLite change output must contain only the redacted structured observation",
+        )
+
+        protected = tmp / "protected-runtime.pem"
+        protected.write_bytes(b"private fixture")
+        original_open = pathlib.Path.open
+
+        def deny_protected_open(path, *args, **kwargs):
+            if path == protected:
+                raise PermissionError("fixture is metadata-only")
+            return original_open(path, *args, **kwargs)
+
+        pathlib.Path.open = deny_protected_open
+        try:
+            protected_metadata = _runtime_file_metadata(protected)
+            protected_fingerprint = runtime_file_fingerprint(protected)
+        finally:
+            pathlib.Path.open = original_open
+        _assert_unit(
+            protected_metadata["sha256"] == UNREADABLE_RUNTIME_DIGEST
+            and protected_metadata["size"] == len(b"private fixture"),
+            "runtime observers must use metadata for access-restricted files",
+        )
+        _assert_unit(
+            protected_fingerprint.startswith(f"{UNREADABLE_RUNTIME_DIGEST}:")
+            and protected_fingerprint.endswith(f":{len(b'private fixture')}"),
+            "runtime smoke fingerprints must not require access-restricted file contents",
         )
 
     expected_log_paths = [
@@ -3369,8 +3432,6 @@ def run_watch_route_progress_unit_checks() -> None:
         "watch and Kollus routes must share the public watch/progress writer",
     )
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
     old_watch_path = api_watch.WATCH_PATH
@@ -3380,7 +3441,7 @@ def run_watch_route_progress_unit_checks() -> None:
     old_reconcile = api_basic._reconcile_auto_assignment_after_progress
     reconcile_calls = []
 
-    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-watch-progress-") as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         watch_path = pathlib.Path(tmpdir) / "watch.json"
         students_path = pathlib.Path(tmpdir) / "students.json"
@@ -3546,9 +3607,7 @@ def run_log_repository_unit_checks() -> None:
     from core.log_repository import LogRepository
     from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-logrepo-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-logrepo-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         logs_path = tmp / "logs.json"
         db_path = tmp / "app.sqlite"
@@ -3966,8 +4025,6 @@ def run_legacy_test_record_cache_unit_checks() -> None:
 
     from routes import api_basic, api_tests
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
     original_tests_path = api_tests.TESTS_PATH
     original_logs_path = api_tests.LOGS_PATH
     original_get_log_repository = api_basic.get_log_repository
@@ -3987,7 +4044,7 @@ def run_legacy_test_record_cache_unit_checks() -> None:
             "testMeta": {"type": "UNIT", "curriculum": "수학"},
         }
 
-    with tempfile.TemporaryDirectory(prefix="verify-test-record-cache-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-test-record-cache-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         tests_path = tmp / "tests.json"
         logs_path = tmp / "logs.json"
@@ -5994,9 +6051,7 @@ def run_catalog_script_temp_file_behavior_checks() -> None:
         live_map: fingerprint(live_map),
     }
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-catalog-safety-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         config_path = tmp / "tests-config.json"
         config_path.write_text(json.dumps({"categories": {}}, ensure_ascii=False), encoding="utf-8")
@@ -6762,6 +6817,47 @@ def run_student_mobile_python_result_contract_checks() -> None:
         module.run_checks = lambda: {"name": "config", "assertions": 1, "passed": True}
         accepted = dispatcher._load_result("config")
         _assert_unit(accepted["assertions"] == 1, "Python dispatcher rejected a valid bound receipt")
+        sidecar_diff = dispatcher._snapshot_diff(
+            {"app.sqlite-wal": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+            {"app.sqlite-wal": {"mtime_ns": 2, "size": 12, "sha256": "after"}},
+        )
+        _assert_unit(
+            dispatcher._disallowed_snapshot_diff(sidecar_diff) == {},
+            "student mobile dispatcher must allow concurrent SQLite WAL/SHM churn",
+        )
+        main_db_diff = dispatcher._snapshot_diff(
+            {"app.sqlite": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+            {"app.sqlite": {"mtime_ns": 2, "size": 10, "sha256": "before"}},
+        )
+        _assert_unit(
+            set(dispatcher._disallowed_snapshot_diff(main_db_diff)) == {"app.sqlite"},
+            "student mobile dispatcher must still reject main SQLite database changes",
+        )
+        isolated_receipt = [{
+            "name": "academy-gates",
+            "assertions": 1,
+            "passed": True,
+            "runtimeIsolation": dispatcher.EXPECTED_RUNTIME_ISOLATION["academy-gates"],
+        }]
+        _assert_unit(
+            dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), isolated_receipt, service_active=True
+            ),
+            "student mobile dispatcher must tolerate live-service writes for a verified isolated receipt",
+        )
+        _assert_unit(
+            not dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), isolated_receipt, service_active=False
+            ),
+            "student mobile dispatcher must not waive runtime changes while the service is stopped",
+        )
+        tampered_receipt = [dict(isolated_receipt[0], runtimeIsolation="unverified")]
+        _assert_unit(
+            not dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), tampered_receipt, service_active=True
+            ),
+            "student mobile dispatcher must require the exact per-check isolation contract",
+        )
     finally:
         dispatcher.CHECK_MODULES["config"] = original
         sys.modules.pop(module_name, None)
