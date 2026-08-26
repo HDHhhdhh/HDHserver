@@ -39,7 +39,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 
 ## Export Guardrails
 
-- `명단 내보내기` 영상 텍스트는 선택일 배정 snapshot의 모든 차시를 완료 여부와 무관하게 표시한다. 같은 날 테스트도 배정되어 있으면 영상과 테스트를 모두 출력한다.
+- `명단 내보내기` 영상 텍스트는 선택일 배정 snapshot 중 선택일 전에 이미 `done`이었고 선택일에 명시적으로 재개되지 않은 차시는 제외한다. 선택일 당일 처음 `done`이 된 차시와 선택일에 비완료 상태로 다시 연 차시는 오늘 콘텐츠이므로 유지하고, 같은 날 테스트도 배정되어 있으면 영상과 테스트를 모두 출력한다.
 - `로그 내보내기` TXT와 CSV `progress` 열은 같은 비완료 변화 목록을 사용한다. 둘 다 `done`(파란색)을 제외하고 `interrupted` 같은 비완료 표시만 유지하되, CSV의 고정 14열 구조는 보존한다.
 - 두 내보내기의 테스트 텍스트는 현재 커리큘럼의 `assigned`(초록색) 배정 이름만 한 줄에 하나씩 출력한다. `SCHOOL_PAST`는 `학군지(난이도) 회차 이름`, `ILSAN_PAST`는 `일산(난이도) 회차 이름`으로 표기하고, 점수·오답·메모 같은 채점 정보는 포함하지 않는다.
 - 회귀 검증은 `python scripts/verify_refactor_safety.py --only-export-log-format`으로 실행하고, 실제 관리자 선택일에서 명단/로그 TXT를 각각 확인한다.

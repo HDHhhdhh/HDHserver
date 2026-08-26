@@ -182,7 +182,8 @@ def patched_makeup_route(
         (makeup_route, "UPD_PATH", makeup_route.UPD_PATH),
         (makeup_route, "PRG_PATH", makeup_route.PRG_PATH),
         (makeup_route, "MAKEUP_CARRYOVER_PATH", makeup_route.MAKEUP_CARRYOVER_PATH),
-        (makeup_route, "read_additive_sheet_candidates", makeup_route.read_additive_sheet_candidates),
+        (makeup_route, "MAKEUP_SHEET_SYNC_CONFIG_PATH", makeup_route.MAKEUP_SHEET_SYNC_CONFIG_PATH),
+        (makeup_route, "read_additive_sheet_candidate_window", makeup_route.read_additive_sheet_candidate_window),
         (makeup_route, "absence_write_scope", makeup_route.absence_write_scope),
         (makeup_route, "commit_new_absences_locked", makeup_route.commit_new_absences_locked),
         (makeup_route, "enqueue_current_schedule_changes", makeup_route.enqueue_current_schedule_changes),
@@ -194,11 +195,17 @@ def patched_makeup_route(
     makeup_route.UPD_PATH = paths["updates"]
     makeup_route.PRG_PATH = paths["progress"]
     makeup_route.MAKEUP_CARRYOVER_PATH = paths["carryover"]
-    makeup_route.read_additive_sheet_candidates = lambda _url, _date: {
+    makeup_route.MAKEUP_SHEET_SYNC_CONFIG_PATH = paths["absent"].parent / "missing_makeup_sheet_sync.json"
+    makeup_route.read_additive_sheet_candidate_window = lambda _url, _date, months_back=1: {
         "month": "2026-08",
+        "months": [{"month": "2026-07"}, {"month": "2026-08"}],
+        "monthErrors": [],
         "matchedRows": 1 if candidates else 0,
         "sheetStudentCount": 1 if candidates else 0,
         "maxSheetRow": 127,
+        "unmatchedStarredRows": 0,
+        "ambiguousStarredRows": 0,
+        "unmatchedStarredDetails": [],
         "candidates": copy.deepcopy(candidates),
     }
     notifications: list[tuple[str, ...]] = []
@@ -585,12 +592,16 @@ def run_makeup_rule_cases(matrix: Matrix) -> None:
     )
     matrix.check(
         "M03",
-        protected["added"] == 0
-        and protected["skippedExisting"] == 5
+        protected["added"] == 4
+        and protected["skippedExisting"] == 1
         and protected["protectedScheduled"] == 1
         and protected["carryover"] == protected_carryover
-        and protected["absent"] == protected_absent,
-        "scheduled carryover manual and existing absence rows are all protected",
+        and protected["absent"]["by_date"]["2026-08-10"] == ["scheduled"]
+        and protected["absent"]["by_date"]["2026-08-11"] == ["carry"]
+        and protected["absent"]["by_date"]["2026-08-12"] == ["manual-date"]
+        and protected["absent"]["by_date"]["2026-08-13"] == ["manual-slot"]
+        and protected["absent"]["by_date"]["2026-08-14"] == ["absent"],
+        "scheduled carryover and manual rows stay intact while missing source absences are restored",
     )
 
     latest_absent = {
@@ -693,11 +704,9 @@ def run_makeup_route_cases(matrix: Matrix) -> None:
 
 
 def run_offline_cases(matrix: Matrix) -> None:
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
     candidates = [{"date": DATE, "sid": SID, "slot": 1, "cell": "*"}]
 
-    with tempfile.TemporaryDirectory(prefix="verify-offline-dry-run-", dir=temp_base) as raw:
+    with tempfile.TemporaryDirectory(prefix=".verify-offline-dry-run-", dir=ROOT) as raw:
         fixture = build_fixture(Path(raw))
         before = fixture_snapshot(fixture)
         with patched_offline_sync(fixture, candidates) as files:
@@ -714,7 +723,7 @@ def run_offline_cases(matrix: Matrix) -> None:
             "offline dry-run reads and plans without data status or backup writes",
         )
 
-    with tempfile.TemporaryDirectory(prefix="verify-offline-live-", dir=temp_base) as raw:
+    with tempfile.TemporaryDirectory(prefix=".verify-offline-live-", dir=ROOT) as raw:
         fixture = build_fixture(Path(raw))
         with patched_offline_sync(fixture, candidates) as files:
             result = offline_sync.run(dry_run=False, today=dt.date.fromisoformat(DATE))
@@ -731,7 +740,7 @@ def run_offline_cases(matrix: Matrix) -> None:
             "offline live sync backs up then commits through the real transaction and records status",
         )
 
-    with tempfile.TemporaryDirectory(prefix="verify-offline-failure-", dir=temp_base) as raw:
+    with tempfile.TemporaryDirectory(prefix=".verify-offline-failure-", dir=ROOT) as raw:
         fixture = build_fixture(Path(raw))
         before = fixture_snapshot(fixture)
         with patched_offline_sync(fixture, candidates, failure_phase="progress") as files:

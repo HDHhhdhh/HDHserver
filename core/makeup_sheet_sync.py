@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from core.absent import load_absent
-from core.makeup_sheet_reader import read_sheet_makeup_rows, sheet_cell
+from core.makeup_sheet_reader import read_sheet_makeup_snapshot, sheet_cell
 from core.paths import EXTRA_PATH, STU_PATH, WEEKEND_SLOTS_PATH
 from core.storage import load
 
@@ -18,12 +18,15 @@ SHEET_SYNC_MAX_ROW = 127
 def read_additive_sheet_candidates(sheet_url: str, date_key: str) -> dict[str, Any]:
     target_date = dt.date.fromisoformat(str(date_key).split("T")[0])
     students = _student_rows(load(STU_PATH))
-    date_columns, student_matches = read_sheet_makeup_rows(
+    snapshot = read_sheet_makeup_snapshot(
         sheet_url,
         target_date,
         students,
         max_sheet_row=SHEET_SYNC_MAX_ROW,
     )
+    date_columns = snapshot["dateColumns"]
+    student_matches = snapshot["studentMatches"]
+    unmatched = snapshot.get("unmatchedStarredRows") or []
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int]] = set()
 
@@ -53,8 +56,94 @@ def read_additive_sheet_candidates(sheet_url: str, date_key: str) -> dict[str, A
         "matchedRows": len(student_matches),
         "sheetStudentCount": len({str(student.get("id") or "").strip() for _, _, student in student_matches}),
         "maxSheetRow": SHEET_SYNC_MAX_ROW,
+        "unmatchedStarredRows": len(unmatched),
+        "ambiguousStarredRows": sum(1 for row in unmatched if row.get("reason") == "ambiguous"),
+        "unmatchedStarredDetails": copy.deepcopy(unmatched[:20]),
         "candidates": candidates,
     }
+
+
+def read_additive_sheet_candidate_window(
+    sheet_url: str,
+    date_key: str,
+    *,
+    months_back: int = 1,
+) -> dict[str, Any]:
+    target_date = dt.date.fromisoformat(str(date_key).split("T")[0])
+    safe_months_back = max(0, min(int(months_back), 3))
+    snapshots: list[dict[str, Any]] = []
+    month_errors: list[dict[str, str]] = []
+
+    for offset in range(-safe_months_back, 1):
+        absolute_month = target_date.year * 12 + target_date.month - 1 + offset
+        year, zero_month = divmod(absolute_month, 12)
+        anchor = dt.date(year, zero_month + 1, 1)
+        try:
+            snapshots.append(read_additive_sheet_candidates(sheet_url, anchor.isoformat()))
+        except RuntimeError as exc:
+            month_errors.append({"month": anchor.strftime("%Y-%m"), "error": str(exc)})
+
+    if not snapshots:
+        detail = month_errors[-1]["error"] if month_errors else "시트에서 날짜 열을 찾지 못했습니다."
+        raise RuntimeError(detail)
+
+    candidate_map: dict[tuple[str, str, int], dict[str, Any]] = {}
+    unmatched_details: list[dict[str, Any]] = []
+    months: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        months.append({
+            "month": snapshot["month"],
+            "matchedRows": snapshot["matchedRows"],
+            "sheetStudentCount": snapshot["sheetStudentCount"],
+            "candidateCount": len(snapshot["candidates"]),
+            "unmatchedStarredRows": snapshot.get("unmatchedStarredRows", 0),
+        })
+        for candidate in snapshot["candidates"]:
+            key = (
+                str(candidate.get("date") or ""),
+                str(candidate.get("sid") or ""),
+                int(candidate.get("slot") or 0),
+            )
+            candidate_map[key] = candidate
+        for row in snapshot.get("unmatchedStarredDetails") or []:
+            unmatched_details.append({"month": snapshot["month"], **copy.deepcopy(row)})
+
+    return {
+        "month": target_date.strftime("%Y-%m"),
+        "months": months,
+        "monthErrors": month_errors,
+        "matchedRows": max(snapshot["matchedRows"] for snapshot in snapshots),
+        "sheetStudentCount": max(snapshot["sheetStudentCount"] for snapshot in snapshots),
+        "maxSheetRow": SHEET_SYNC_MAX_ROW,
+        "unmatchedStarredRows": sum(int(snapshot.get("unmatchedStarredRows") or 0) for snapshot in snapshots),
+        "ambiguousStarredRows": sum(int(snapshot.get("ambiguousStarredRows") or 0) for snapshot in snapshots),
+        "unmatchedStarredDetails": unmatched_details[:20],
+        "candidates": [candidate_map[key] for key in sorted(candidate_map)],
+    }
+
+
+def partition_excluded_sheet_candidates(
+    candidates: list[dict[str, Any]],
+    exclusions: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    excluded_pairs = {
+        (str(row.get("date") or "").strip(), str(row.get("sid") or "").strip())
+        for row in (exclusions if isinstance(exclusions, list) else [])
+        if isinstance(row, dict)
+        and str(row.get("date") or "").strip()
+        and str(row.get("sid") or "").strip()
+    }
+    included: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for candidate in candidates if isinstance(candidates, list) else []:
+        if not isinstance(candidate, dict):
+            continue
+        key = (
+            str(candidate.get("date") or "").strip(),
+            str(candidate.get("sid") or "").strip(),
+        )
+        (excluded if key in excluded_pairs else included).append(candidate)
+    return included, excluded
 
 
 def merge_additive_sheet_absences(
@@ -99,10 +188,8 @@ def merge_additive_sheet_absences(
             slot,
             scheduled_ids,
         )
-        if reason:
+        if reason == "absence":
             skipped_existing += 1
-            if reason == "scheduled":
-                protected_scheduled += 1
             changes.append({
                 "kind": "skip",
                 "type": reason,
@@ -112,16 +199,28 @@ def merge_additive_sheet_absences(
             })
             continue
 
+        if reason == "scheduled":
+            protected_scheduled += 1
+        if reason in {"scheduled", "carryover"}:
+            changes.append({
+                "kind": "preserve",
+                "type": reason,
+                "date": date_key,
+                "sid": sid,
+                "slot": slot,
+            })
+
         _ensure_absent_slot(next_absent, date_key, sid, slot, changes)
-        _additive_open_carryover(
-            next_carryover,
-            date_key,
-            sid,
-            slot,
-            str(candidate.get("cell") or ""),
-            timestamp,
-            changes,
-        )
+        if not reason:
+            _additive_open_carryover(
+                next_carryover,
+                date_key,
+                sid,
+                slot,
+                str(candidate.get("cell") or ""),
+                timestamp,
+                changes,
+            )
         added += 1
         added_sids.add(sid)
         added_pairs.add((date_key, sid))
@@ -159,9 +258,14 @@ def build_additive_sheet_sync_result(
         "mode": "additive-only",
         "syncedAt": timestamp,
         "month": sheet["month"],
+        "months": copy.deepcopy(sheet.get("months") or []),
+        "monthErrors": copy.deepcopy(sheet.get("monthErrors") or []),
         "matchedRows": sheet["matchedRows"],
         "sheetStudentCount": sheet["sheetStudentCount"],
         "maxSheetRow": SHEET_SYNC_MAX_ROW,
+        "unmatchedStarredRows": int(sheet.get("unmatchedStarredRows") or 0),
+        "ambiguousStarredRows": int(sheet.get("ambiguousStarredRows") or 0),
+        "unmatchedStarredDetails": copy.deepcopy(sheet.get("unmatchedStarredDetails") or []),
         "opened": merged["added"],
         "added": merged["added"],
         "addedSids": merged["addedSids"],
@@ -179,7 +283,7 @@ def build_additive_sheet_sync_result(
 
 
 def sync_makeups_from_sheet(sheet_url: str, date_key: str, carryover: dict[str, Any]) -> dict[str, Any]:
-    sheet = read_additive_sheet_candidates(sheet_url, date_key)
+    sheet = read_additive_sheet_candidate_window(sheet_url, date_key)
     return build_additive_sheet_sync_result(sheet, carryover, load_absent())
 
 
@@ -297,6 +401,10 @@ def _existing_candidate_reason(
     slot: int,
     scheduled_ids: set[str],
 ) -> str:
+    ids = absent.get("by_date", {}).get(date_key, [])
+    if sid in {str(value) for value in ids if str(value).strip()}:
+        return "absence"
+
     original_id = f"absence|{date_key}|{sid}|{slot}"
     if original_id in scheduled_ids:
         return "scheduled"
@@ -317,14 +425,6 @@ def _existing_candidate_reason(
             if row.get("dateOnly") is True or row.get("date_only") is True or not row_slots or slot in row_slots:
                 return "scheduled" if _active_schedule(row) else "carryover"
 
-    ids = absent.get("by_date", {}).get(date_key, [])
-    if sid in {str(value) for value in ids if str(value).strip()}:
-        return "absence"
-    slots = absent.get("by_slot", {}).get(date_key, {}).get(sid, [])
-    if slot in _slot_list(slots):
-        return "absence"
-    if str(absent.get("by_student", {}).get(sid) or "").strip() == date_key:
-        return "absence"
     return ""
 
 

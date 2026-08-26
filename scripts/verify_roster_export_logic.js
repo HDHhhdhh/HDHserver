@@ -473,24 +473,25 @@ assertEqual(
 );
 
 assertEqual(
-  'video export keeps every video in the selected-date assignment snapshot',
+  'video export excludes prior done videos unless the selected date explicitly reopens them',
   videoTextFor({
     logs: {},
     progress: {
-      '2026-06-02': { s1: { v41: 'done' } },
-      '2026-06-03': { s1: { v43: { status: 'done' }, v44: 'interrupted' } },
+      '2026-06-02': { s1: { v41: 'done', v42: 'done' } },
+      '2026-06-03': { s1: { v42: 'none', v43: { status: 'done' }, v44: 'interrupted' } },
     },
     videos: [
       { mid: 'v41', chapter: 41, title: 'video 41' },
+      { mid: 'v42', chapter: 42, title: 'video 42' },
       { mid: 'v43', chapter: 43, title: 'video 43' },
       { mid: 'v44', chapter: 44, title: 'video 44' },
     ],
     updates: {
       '2026-06-02': { s1: { videos: ['v41', 'v43'], source: 'auto' } },
-      '2026-06-03': { s1: { videos: ['v41', 'v43', 'v44'], source: 'auto' } },
+      '2026-06-03': { s1: { videos: ['v41', 'v42', 'v43', 'v44'], source: 'auto' } },
     },
   }, '2026-06-03'),
-  '41차시, 43차시, 44차시',
+  '42차시, 43차시, 44차시',
 );
 
 const combinedVideoAndTestText = taskTextFor({
@@ -504,6 +505,9 @@ const combinedVideoAndTestText = taskTextFor({
     },
   },
   progress: {
+    '2026-06-02': {
+      s1: { v40: 'done' },
+    },
     '2026-06-03': {
       s1: {
         v41: 'done',
@@ -513,15 +517,16 @@ const combinedVideoAndTestText = taskTextFor({
     },
   },
   videos: [
+    { mid: 'v40', chapter: 40, title: 'video 40' },
     { mid: 'v41', chapter: 41, title: 'video 41' },
     { mid: 'v43', chapter: 43, title: 'video 43' },
   ],
   updates: {
-    '2026-06-03': { s1: { videos: ['v41', 'v43'], source: 'manual' } },
+    '2026-06-03': { s1: { videos: ['v40', 'v41', 'v43'], source: 'manual' } },
   },
 }, '2026-06-03');
 assertEqual(
-  'roster task export keeps videos and tests together when assigned videos were already done',
+  'roster task export removes prior done videos while keeping selected-date videos and tests together',
   [
     combinedVideoAndTestText.includes('영상 : 41차시, 43차시'),
     exportedTaskTestNames(combinedVideoAndTestText),

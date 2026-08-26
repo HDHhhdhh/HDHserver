@@ -16,6 +16,7 @@ from core.absent import load_absent, save_absent
 from core.makeup_sheet_sync import (
     SHEET_SYNC_MAX_ROW,
     merge_additive_sheet_absences,
+    partition_excluded_sheet_candidates,
     read_additive_sheet_candidates,
 )
 from core.paths import ABS_PATH, PRG_PATH, UPD_PATH
@@ -61,6 +62,7 @@ def load_config() -> dict:
         "sheetUrl": sheet_url,
         "maxSheetRow": SHEET_SYNC_MAX_ROW,
         "monthsBack": 1,
+        "excludedCandidates": raw.get("excludedCandidates") if isinstance(raw.get("excludedCandidates"), list) else [],
     }
 
 
@@ -117,6 +119,10 @@ def run(*, dry_run: bool = False, today: dt.date | None = None) -> dict:
 
     operating_date = today or dt.datetime.now(KST).date()
     candidates, months = collect_candidates(config["sheetUrl"], operating_date)
+    candidates, excluded_candidates = partition_excluded_sheet_candidates(
+        candidates,
+        config.get("excludedCandidates"),
+    )
 
     # Sheet/network work is complete before live-data locks are acquired.
     # Dry-run keeps the legacy mutation-free two-file read scope.
@@ -177,6 +183,7 @@ def run(*, dry_run: bool = False, today: dt.date | None = None) -> dict:
         "maxSheetRow": SHEET_SYNC_MAX_ROW,
         "months": months,
         "candidateCount": len(candidates),
+        "excludedCount": len(excluded_candidates),
         "added": merged["added"],
         "addedSids": merged["addedSids"],
         "skippedExisting": merged["skippedExisting"],

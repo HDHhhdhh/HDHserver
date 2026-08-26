@@ -5,7 +5,6 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { saveWeekendSlotsPatch } from './today.state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
-import { getAttendanceLedgerUrl } from './attendanceLedgerLink.js';
 import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 import { ensureOk, sendJson } from '../../shared/api.js';
@@ -1337,11 +1336,6 @@ export function initCalendar() {
 
   async function syncMakeupSheet() {
     const btn = $('syncMakeupSheet');
-    const sheetUrl = getAttendanceLedgerUrl();
-    if (!sheetUrl) {
-      alert('먼저 시트 설정에서 7월 차트 링크를 넣어주세요.');
-      return;
-    }
     const previousText = btn?.textContent || '';
     if (btn) {
       btn.disabled = true;
@@ -1351,7 +1345,7 @@ export function initCalendar() {
       const res = await fetch('/api/makeup-sheet-sync', {
         method: 'POST',
         headers: CT,
-        body: JSON.stringify({ sheetUrl, date: getAdminDate() }),
+        body: JSON.stringify({ date: getAdminDate() }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) {
@@ -1368,7 +1362,25 @@ export function initCalendar() {
       renderMakeupPlanner();
       document.dispatchEvent(new CustomEvent('attendance:updated'));
       document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
-      toast(`시트 동기화 완료 · 보강 잡기 ${data.opened || 0}건 반영 · 예정 취소 ${data.cancelled || 0}건`);
+      const opened = Number(data.opened || 0);
+      const existing = Number(data.skippedExisting || 0);
+      const unmatched = Number(data.unmatchedStarredRows || 0);
+      const months = (Array.isArray(data.months) ? data.months : [])
+        .map(item => Number.parseInt(String(item?.month || '').slice(5), 10))
+        .filter(Number.isFinite)
+        .map(month => month + '월')
+        .join('·');
+      const resultText = opened > 0 ? '신규 ' + opened + '건 반영' : '새로 추가할 결석 없음';
+      const unmatchedRows = [...new Set(
+        (Array.isArray(data.unmatchedStarredDetails) ? data.unmatchedStarredDetails : [])
+          .map(item => Number(item?.sheetRow))
+          .filter(Number.isFinite),
+      )].sort((a, b) => a - b).join(', ');
+      const unmatchedText = unmatched > 0
+        ? ' · 미매칭 ' + unmatched + '행' + (unmatchedRows ? ' (' + unmatchedRows + '행)' : '')
+        : '';
+      const monthText = months ? ' (' + months + ')' : '';
+      toast('시트 동기화 완료' + monthText + ' · ' + resultText + ' · 기존 ' + existing + '건 확인' + unmatchedText);
     } catch (err) {
       console.error(err);
       alert(err?.message || '시트 동기화 실패');

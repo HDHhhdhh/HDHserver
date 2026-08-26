@@ -21,6 +21,7 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 - Keep `fetch.js` primary responses and `bootstrap.js` fallback responses compatible for endpoint shape, disabled behavior, and mutations.
 - Mutations stay in `sessionStorage`. Schema mismatch or non-demo student IDs reset the store.
 - Today order supports GET/PATCH/DELETE only; do not emulate the retired whole-map POST.
+- Makeup sheet config GET/POST stays inside demo session storage, and demo sheet sync returns a synthetic no-op receipt; neither may reach the live API.
 - `/api/updates` is GET-only; assignment mutations use `/api/updates/patch` or `/api/updates/self-study`, and the retired base POST must return a synthetic unsupported response.
 - Extra attendance supports only `/api/extra-attend`; obsolete `/api/extra`, `/api/extra_attend`, and `/api/extra-attend/all` requests must return synthetic unsupported responses.
 - `/api/delete-student` and `/api/material-upload` are retired and stay unsupported. Demo deletion uses canonical `DELETE /api/students/:sid`; material state uses `/api/materials`.

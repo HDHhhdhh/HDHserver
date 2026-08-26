@@ -30,6 +30,35 @@ const root = {
 const demoFetch = createDemoFetch({ window: root, originalFetch });
 const initialOrderMap = await (await demoFetch('/api/today_order')).json();
 
+const initialSheetConfig = await demoFetch('/api/makeup-sheet-sync/config');
+assert.equal(initialSheetConfig.status, 200, 'demo sheet config GET failed');
+assert.equal((await initialSheetConfig.json()).sheetUrl, '');
+const demoSheetUrl = 'https://docs.google.com/spreadsheets/d/demo-sheet/edit?gid=7';
+const savedSheetConfig = await demoFetch('/api/makeup-sheet-sync/config', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sheetUrl: demoSheetUrl }),
+});
+assert.equal(savedSheetConfig.status, 200, 'demo sheet config POST failed');
+assert.equal((await savedSheetConfig.json()).sheetUrl, demoSheetUrl);
+assert.equal(
+  (await (await demoFetch('/api/makeup-sheet-sync/config')).json()).sheetUrl,
+  demoSheetUrl,
+  'demo sheet config was not persisted in demo storage',
+);
+assert.equal((await demoFetch('/api/makeup-sheet-sync/config', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sheetUrl: 'https://example.com/not-a-sheet' }),
+})).status, 400, 'demo accepted a non-Google sheet config');
+const demoSheetSync = await demoFetch('/api/makeup-sheet-sync', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date: '2026-06-17' }),
+});
+assert.equal(demoSheetSync.status, 200, 'demo sheet sync was not safely emulated');
+assert.equal((await demoSheetSync.json()).added, 0, 'demo sheet sync created live-like absence data');
+
 for (const [date, order] of Object.entries({ '2026-06-16': ['keep'], '2026-06-17': ['old'] })) {
   const seeded = await demoFetch('/api/today_order', {
     method: 'PATCH',
@@ -321,7 +350,7 @@ for (const row of summary.rows || []) {
 }
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
-assert.match(fallbackSource, /\.\/fetch\.js\?v=20260826-log-batch1/);
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260826-sheet-sync1/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/today_order' && method === 'POST'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/updates' && method === 'POST'/);
@@ -331,13 +360,16 @@ assert.doesNotMatch(fallbackSource, /case '\/arrive-time':/);
 assert.match(fallbackSource, /path === '\/arrive-time'/, 'retired arrive-time requests must remain demo-blocked');
 assert.match(fallbackSource, /path === '\/api\/absent\/recover'/);
 assert.match(fallbackSource, /path === '\/api\/logs\/patch-batch' && method === 'POST'/);
+assert.match(fallbackSource, /case '\/api\/makeup-sheet-sync\/config':/);
+assert.match(fallbackSource, /path === '\/api\/makeup-sheet-sync\/config' && method === 'POST'/);
+assert.match(fallbackSource, /path === '\/api\/makeup-sheet-sync' && method === 'POST'/);
 assert.match(fallbackSource, /function applyFallbackLogPatchBatch\(store, body\)/);
 assert.match(fallbackSource, /status: mutation\?\.ok === false \? 400 : 200/, 'fallback mutations must preserve HTTP error status');
 for (const shell of ['admin.html', 'all.html', 'school-cal.html', 'video-manage.html', 'tests.html']) {
   const shellSource = fs.readFileSync(`static/${shell}`, 'utf8');
   assert.match(
     shellSource,
-    /\/js\/admin\/demo\/bootstrap\.js\?v=20260826-log-batch1/,
+    /\/js\/admin\/demo\/bootstrap\.js\?v=20260826-sheet-sync1/,
     `${shell} did not cache-bust the demo bootstrap contract`,
   );
 }

@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260826-log-batch1';
+import { createDemoFetch } from './fetch.js?v=20260826-sheet-sync1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -425,6 +425,11 @@ function fallbackPayloadForGet(path, params, store) {
       return cloneDemoValue(store.weekendSlots || {});
     case '/api/today_order':
       return cloneDemoValue(store.todayOrder || {});
+    case '/api/makeup-sheet-sync/config':
+      return {
+        ok: true,
+        sheetUrl: String(store.makeupSheetSyncConfig?.sheetUrl || ''),
+      };
     case '/api/makeup-carryover':
       return cloneDemoValue(store.makeupCarryover || {});
     case '/api/absent':
@@ -576,6 +581,35 @@ async function handleFallbackMutation(path, input, init) {
     if (result.error) return { ok: false, demo: true, error: result.error };
     saveDemoStore(store);
     return { ok: true, demo: true, count: result.count };
+  }
+
+  if (path === '/api/makeup-sheet-sync/config' && method === 'POST') {
+    const sheetUrl = String(body?.sheetUrl || '').trim();
+    if (!sheetUrl.includes('docs.google.com/spreadsheets/d/')) {
+      return { ok: false, demo: true, error: 'Google Sheets link required' };
+    }
+    const store = loadDemoStore();
+    store.makeupSheetSyncConfig = {
+      ...(store.makeupSheetSyncConfig && typeof store.makeupSheetSyncConfig === 'object'
+        ? store.makeupSheetSyncConfig
+        : {}),
+      sheetUrl,
+    };
+    saveDemoStore(store);
+    return { ok: true, demo: true, sheetUrl };
+  }
+
+  if (path === '/api/makeup-sheet-sync' && method === 'POST') {
+    return {
+      ok: true,
+      demo: true,
+      mode: 'additive-only',
+      opened: 0,
+      added: 0,
+      skippedExisting: 0,
+      unmatchedStarredRows: 0,
+      months: [],
+    };
   }
 
   if (path === '/api/absent/recover') {

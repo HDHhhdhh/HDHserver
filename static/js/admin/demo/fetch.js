@@ -1044,6 +1044,12 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/attend') return attendResponse(root, store, url);
   if (path === '/api/weekend-slots') return responseJson(root, clone(store.weekendSlots || {}));
   if (path === '/api/today_order') return responseJson(root, clone(store.todayOrder || {}));
+  if (path === '/api/makeup-sheet-sync/config') {
+    return responseJson(root, {
+      ok: true,
+      sheetUrl: String(store.makeupSheetSyncConfig?.sheetUrl || ''),
+    });
+  }
   if (path === '/api/makeup-carryover') {
     const payload = clone(store.makeupCarryover || {});
     return responseJson(root, payload, 200, {
@@ -1285,6 +1291,35 @@ async function handleWrite(root, ctx, store) {
     const next = mergeWeekendSlotsPatch(store, body);
     saveDemoStore(store);
     return ok(root, next);
+  }
+
+  if (method === 'POST' && path === '/api/makeup-sheet-sync/config') {
+    const sheetUrl = String(body?.sheetUrl || '').trim();
+    if (!sheetUrl.includes('docs.google.com/spreadsheets/d/')) {
+      return badRequest(root, 'Google Sheets link required');
+    }
+    const latest = loadDemoStore();
+    latest.makeupSheetSyncConfig = {
+      ...(latest.makeupSheetSyncConfig && typeof latest.makeupSheetSyncConfig === 'object'
+        ? latest.makeupSheetSyncConfig
+        : {}),
+      sheetUrl,
+    };
+    saveDemoStore(latest);
+    return ok(root, { ok: true, sheetUrl });
+  }
+
+  if (method === 'POST' && path === '/api/makeup-sheet-sync') {
+    return ok(root, {
+      ok: true,
+      mode: 'additive-only',
+      opened: 0,
+      added: 0,
+      skippedExisting: 0,
+      unmatchedStarredRows: 0,
+      months: [],
+      demo: true,
+    });
   }
 
   if (method === 'PATCH' && path === '/api/today_order') {
