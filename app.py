@@ -17,6 +17,7 @@ from core.material_state import (
     recover_material_state_if_needed,
 )
 from core.paths import ASN_PATH, MAT_PATH, PAGE_FOLDERS_PATH
+from core.runtime_server_guard import refuse_concurrent_live_server
 
 from core.network_access import (
     academy_network_allowed,
@@ -62,6 +63,8 @@ from routes.absence_assignment_cleanup import (
 
 
 def create_app() -> Flask:
+    refuse_concurrent_live_server()
+
     recovered_absence_transaction = recover_pending_absence_transactions()
     if recovered_absence_transaction:
         print(

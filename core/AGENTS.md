@@ -20,6 +20,7 @@ Shared backend helpers live here. Keep pure merge rules, persistence wrappers, p
 | Log persistence | `log_repository.py` | SQLite plus `logs.json` dual-read/dual-write contract. |
 | Assistant notes | `assistant_student_notes.py` | Student-scoped SQLite repository; separate from class logs despite sharing `app.sqlite`. |
 | Runtime paths | `paths.py` | Canonical JSON/SQLite path constants. |
+| Runtime server guard | `runtime_server_guard.py` | Refuses a second Waitress/Flask network server against the live repository runtime while production port 8003 is listening. Test-client imports remain allowed. |
 | JSON storage/locks | `storage.py` | Atomic replace, mirror/snapshot copies, and interprocess locks. |
 | Network gating | `network_access.py` | Answer-link and academy-network visibility behavior. |
 | Test answer-link resolution | `test_answer_links.py` | Pure assignment -> config -> generated-map precedence shared by bootstrap and test-record routes. |
@@ -41,6 +42,7 @@ Shared backend helpers live here. Keep pure merge rules, persistence wrappers, p
 - Preserve unknown keys in log/progress records unless a route explicitly clears them.
 - Keep Korean text as UTF-8. Do not replace unreadable legacy text with `????`.
 - Importing `paths.py` creates `files/` and every missing canonical JSON store. Avoid import probes when filesystem purity matters.
+- While production port 8003 is listening, `create_app()` must reject non-production Waitress/Flask server commands before recovery or other startup writes. Pure/test-client imports stay permitted so temp-path verifiers remain usable.
 - `TODAY_ORDER_PATH` is exclusively `DATA_DIR/today_order.json` (default `data/today_order.json`). Never recreate the retired root sibling.
 - `save_atomic()` does not lock the read-modify-write cycle; hold the target `file_lock()` across load, merge, and save. Mirror/snapshot failure must not invalidate a successful primary replace.
 - Repository connections enable WAL and ensure schema. Log reads and assistant-note lists can therefore create sidecars or migrate/backfill rows.

@@ -65,7 +65,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - Keep `verify_student_watch_timestamp.mjs` and `verify_watch_timestamp_guard.py` green; they reject 32-bit/10-digit `updatedAt` values and prove browser-to-server millisecond preservation/repair.
 
 ## Anti-Patterns
-- Never launch `waitress-serve --listen=127.0.0.1:8003 app:app` beside the live wildcard listener. It can capture both Cloudflare hostnames even though the production process remains healthy; use port 8004 for isolated browser/API verification.
+- Never launch another `app:app`/Flask server on port 8003, 8004, or any other port while the production listener is running. Extra processes still share live JSON/SQLite runtime state; use demo/test-client fixtures or stop production before isolated server work.
 - Do not commit runtime backup archives, generated CSVs, debug screenshots, or local Drive downloads unless explicitly requested.
 - Do not run import/seed scripts casually; they can change `tests-config.json` and visible student behavior.
 - Do not make smoke checks that mutate runtime data without fingerprinting and reporting it.
