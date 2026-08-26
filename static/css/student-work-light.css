@@ -2033,6 +2033,55 @@ html body.admin.student-popup-open #logModal.student-work-layout
   border-radius: 5px !important;
   font-size: 13px !important;
 }
+/* Textbook ordering: reveal compact row controls only while reordering. */
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-order-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 22px !important;
+  margin-bottom: 4px !important;
+  color: #667085 !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-order-row[hidden] {
+  display: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-order-btn {
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 22px !important;
+  min-height: 22px !important;
+  padding: 0 !important;
+  border: 1px solid #d0d5dd !important;
+  border-radius: 5px !important;
+  background: #fff !important;
+  color: #475467 !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-order-btn:hover,
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  .hw-order-btn:focus-visible {
+  border-color: #84adff !important;
+  background: #eff4ff !important;
+  color: #175cd3 !important;
+}
+
+html body.admin.student-popup-open #adminSchoolTip.student-work-layout
+  #hwBody.is-reordering .hwItem {
+  background: #f8fbff !important;
+  box-shadow: inset 2px 0 #84adff !important;
+}
+
 /* Textbook removal: choose the target row instead of deleting the last row. */
 html body.admin.student-popup-open #adminSchoolTip.student-work-layout
   .hw-book-input-row > .hw-remove-choice {

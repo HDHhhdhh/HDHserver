@@ -138,6 +138,37 @@ function rowDateKey(tr) {
   return String(tr?.dataset?.date || getAdminDate() || '').trim();
 }
 
+function normalizeLeaveIdentityPart(value) {
+  const text = String(value ?? '');
+  try { return text.normalize('NFKC').trim(); }
+  catch { return text.trim(); }
+}
+
+function studentSchoolForLeaveIdentity(student) {
+  return normalizeLeaveIdentityPart(
+    student?.school ?? student?.schoolName ?? student?.highSchool ?? student?.middleSchool ??
+    student?.high ?? student?.middle ?? student?.schoolHigh ?? student?.schoolMiddle ?? '',
+  );
+}
+
+function studentLeaveIdentityKey(student) {
+  const sid = normalizeLeaveIdentityPart(student?.id);
+  const name = normalizeLeaveIdentityPart(student?.name);
+  const school = studentSchoolForLeaveIdentity(student);
+  const grade = normalizeLeaveIdentityPart(student?.grade);
+  if (!name || !school) return `sid:${encodeURIComponent(sid)}`;
+  return `person:${[name, school, grade].map(encodeURIComponent).join('|')}`;
+}
+
+function leaveIdentityForRow(row) {
+  const stored = String(row?.dataset?.studentIdentity || '').trim();
+  if (stored) return stored;
+
+  const sid = rowSid(row);
+  const student = (state.students || []).find(item => String(item?.id || '') === sid);
+  return studentLeaveIdentityKey(student || { id: sid });
+}
+
 async function markMakeupDemandOpen(dateKey, sid, slots) {
   const date = String(dateKey || '').trim();
   const studentId = String(sid || '').trim();
@@ -473,14 +504,54 @@ function homeworkLeaveSlotNumbers(row) {
   )).sort((a, b) => a - b);
 }
 
-function shouldIncludeHomeworkLeaveRow(row, currentSlot = currentOpsSlot()) {
-  const homeworkChecked = row?.dataset?.hw === '1';
-  const selfStudy = row?.dataset?.selfStudy === '1';
-  if (!homeworkChecked && !selfStudy) return false;
+function homeworkLeaveRowsByStudent(rows) {
+  const grouped = new Map();
+  for (const row of Array.from(rows || [])) {
+    const sid = rowSid(row);
+    const dateKey = String(row?.dataset?.date || '').trim();
+    if (!sid || !dateKey) continue;
+    const key = `${dateKey}\u0000${leaveIdentityForRow(row)}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+  return Array.from(grouped.values());
+}
 
-  const slots = homeworkLeaveSlotNumbers(row);
-  const isConsecutive = slots.length >= 2 && slots.includes(1);
+function homeworkLeaveSlotNumbersForRows(rows) {
+  return Array.from(new Set(
+    Array.from(rows || []).flatMap(row => homeworkLeaveSlotNumbers(row)),
+  )).sort((a, b) => a - b);
+}
+
+function shouldIncludeHomeworkLeaveRows(rows, currentSlot = currentOpsSlot()) {
+  const group = Array.from(rows || []);
+  const canLeave = group.some(row => row?.dataset?.hw === '1' || row?.dataset?.selfStudy === '1');
+  if (!canLeave) return false;
+
+  const slots = homeworkLeaveSlotNumbersForRows(group);
+  const isConsecutive = slots.length >= 2;
   return !(currentSlot === 1 && isConsecutive);
+}
+
+function shouldIncludeHomeworkLeaveRow(row, currentSlot = currentOpsSlot()) {
+  return shouldIncludeHomeworkLeaveRows([row], currentSlot);
+}
+
+function homeworkLeaveTargetRows(rows, currentSlot = currentOpsSlot()) {
+  return homeworkLeaveRowsByStudent(rows)
+    .filter(group => shouldIncludeHomeworkLeaveRows(group, currentSlot))
+    .flat();
+}
+
+function linkedLeaveRows(sourceRow, rows, currentSlot = currentOpsSlot()) {
+  const sourceKey = `${String(sourceRow?.dataset?.date || '').trim()}\u0000${leaveIdentityForRow(sourceRow)}`;
+  const linked = Array.from(rows || []).filter(row => (
+    `${String(row?.dataset?.date || '').trim()}\u0000${leaveIdentityForRow(row)}` === sourceKey
+  ));
+  if (!linked.includes(sourceRow)) linked.unshift(sourceRow);
+
+  const isConsecutive = homeworkLeaveSlotNumbersForRows(linked).length >= 2;
+  return isConsecutive && currentSlot !== 1 ? linked : [sourceRow];
 }
 
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
@@ -1207,11 +1278,13 @@ function _moveTodayRowToDoneWrap(tr, dateKey) {
 
   const sid = String(tr.dataset.sid || '');
   const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive, dateKey);
+  const studentIdentity = tr.dataset.studentIdentity || studentLeaveIdentityKey({ id: sid });
   const arriveTitle = (tr.dataset.att === '1' || isAttended(dateKey, sid)) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
 
   const newRow = document.createElement('tr');
   newRow.dataset.sid = sid;
   newRow.dataset.date = dateKey;
+  if (studentIdentity) newRow.dataset.studentIdentity = studentIdentity;
   if (tr.dataset.curriculum) newRow.dataset.curriculum = tr.dataset.curriculum;
   if (tr.dataset.subcurriculum) newRow.dataset.subcurriculum = tr.dataset.subcurriculum;
   if (slotGroup) newRow.dataset.slotGroup = slotGroup;
@@ -1314,7 +1387,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           : '';
 
     return `
-      <tr class="${rowClass}" data-sid="${s.id}" data-date="${dateKey}"
+      <tr class="${rowClass}" data-sid="${s.id}" data-date="${dateKey}" data-student-identity="${escapeAttr(studentLeaveIdentityKey(s))}"
           ${s.curriculum ? `data-curriculum="${escapeAttr(s.curriculum)}"` : ''} ${s.subCurriculum ? `data-subcurriculum="${escapeAttr(s.subCurriculum)}"` : ''}
           ${attended ? 'data-att="1"' : ''} ${contacted ? 'data-contact="1"' : ''}
           ${selfStudy ? 'data-self-study="1"' : ''}
@@ -1464,7 +1537,7 @@ export function renderDone(doneEntries) {
       : `<span class="arriveLabelReadonly" title="${escapeAttr(arriveTitle)}">—</span>`;
 
     return `
-      <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" ${s?.curriculum ? `data-curriculum="${escapeAttr(s.curriculum)}"` : ''} ${s?.subCurriculum ? `data-subcurriculum="${escapeAttr(s.subCurriculum)}"` : ''} ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
+      <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" data-student-identity="${escapeAttr(studentLeaveIdentityKey(s || { id: sidKey }))}" ${s?.curriculum ? `data-curriculum="${escapeAttr(s.curriculum)}"` : ''} ${s?.subCurriculum ? `data-subcurriculum="${escapeAttr(s.subCurriculum)}"` : ''} ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
         <td class="done-date-cell">${escapeAttr(dateKey)}</td>
         <td class="today-slot-cell">${slotMarkup}</td>
         <td class="att-time done-arrive-cell">
@@ -1930,8 +2003,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const seen = new Set();
         const targets = [];
 
-        for (const tr of rows) {
-          if (!shouldIncludeHomeworkLeaveRow(tr, currentSlot)) continue;
+        for (const tr of homeworkLeaveTargetRows(rows, currentSlot)) {
           const sid = rowSid(tr);
           const dateKey = rowDateKey(tr);
           if (!sid || !dateKey) continue;
@@ -2140,14 +2212,32 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const sid = rowSid(tr);
         const dateKey = rowDateKey(tr);
         if (!sid || !dateKey) return;
+        const activeRows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid]'));
+        const targetRows = linkedLeaveRows(tr, activeRows, currentOpsSlot());
+        const seen = new Set();
+        const targets = [];
+        for (const row of targetRows) {
+          const targetSid = rowSid(row);
+          const targetDate = rowDateKey(row);
+          const key = `${targetDate}\u0000${targetSid}`;
+          if (!targetSid || !targetDate || seen.has(key)) continue;
+          seen.add(key);
+          targets.push({ sid: targetSid, dateKey: targetDate });
+        }
         const t = nowHHMM();
 
         try {
-          await patchLog(dateKey, sid, {
+          const leavePatch = {
             done: true,
             leaveTime: t,
             leaveAt: nowISO(),
-          }, ['archived']);
+          };
+          await patchLogsBatch(targets.map(target => ({
+            date: target.dateKey,
+            sid: target.sid,
+            entry: leavePatch,
+            clearKeys: ['archived'],
+          })));
 
           document.dispatchEvent(new CustomEvent('attendance:updated'));
 

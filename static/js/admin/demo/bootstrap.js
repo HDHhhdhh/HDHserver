@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260816-phase5';
+import { createDemoFetch } from './fetch.js?v=20260826-log-batch1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -528,10 +528,55 @@ function homeworkBooksBySid(logs) {
   return out;
 }
 
+function applyFallbackLogPatchBatch(store, body) {
+  const patches = body?.patches;
+  if (!Array.isArray(patches) || patches.length < 1 || patches.length > 100) {
+    return { error: 'patches must contain 1 to 100 items' };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of patches) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'bad patch item' };
+    const date = canonicalDate(raw.date);
+    const sid = String(raw.sid || '').trim();
+    const entry = raw.entry == null ? {} : raw.entry;
+    const clear = raw.__clear;
+    if (!date || !sid || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { error: 'bad patch item' };
+    }
+    if (clear != null && !Array.isArray(clear)) return { error: 'bad clear list' };
+
+    const targetKey = `${date}\u0000${sid}`;
+    if (seen.has(targetKey)) return { error: 'duplicate patch target' };
+    seen.add(targetKey);
+    normalized.push({ date, sid, entry: cloneDemoValue(entry), clear: cloneDemoValue(clear || []) });
+  }
+
+  const logs = cloneDemoValue(store.logs || {});
+  normalized.forEach(({ date, sid, entry, clear }) => {
+    logs[date] = logs[date] && typeof logs[date] === 'object' ? logs[date] : {};
+    const previous = logs[date][sid] && typeof logs[date][sid] === 'object' ? logs[date][sid] : {};
+    const next = { ...previous, ...entry };
+    clear.forEach(key => { if (key != null) delete next[String(key)]; });
+    logs[date][sid] = next;
+  });
+  store.logs = logs;
+  return { count: normalized.length };
+}
+
 async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
   const request = normalizeFetchRequest(input, init);
   const method = request?.method || String(init?.method || 'POST').toUpperCase();
+
+  if (path === '/api/logs/patch-batch' && method === 'POST') {
+    const store = loadDemoStore();
+    const result = applyFallbackLogPatchBatch(store, body);
+    if (result.error) return { ok: false, demo: true, error: result.error };
+    saveDemoStore(store);
+    return { ok: true, demo: true, count: result.count };
+  }
 
   if (path === '/api/absent/recover') {
     const date = canonicalDate(body?.date);

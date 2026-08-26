@@ -125,7 +125,7 @@ const { state } = await import('../static/js/admin/core/state.js');
 const {
   bindTodayTableEvents,
   completeAssignedTestsForRecordCleanup,
-} = await import('../static/js/admin/features/today.render.js?v=20260821-log-batch1');
+} = await import('../static/js/admin/features/today.render.js?v=20260824-linked-leave1');
 
 const requestKey = (date, sid) => `${date}\u0000${sid}`;
 const authoritativeLogs = new Map();
@@ -405,13 +405,21 @@ const homeworkSidB = 'student-homework-leave-b';
 state.logs = {
   [selectedDate]: {
     [homeworkSidA]: { hwChecked: true, archived: true },
-    [homeworkSidB]: { hwChecked: true, archived: true },
+    [homeworkSidB]: { hwChecked: false, archived: true },
   },
 };
 window.logs = state.logs;
+const linkedLeaveIdentity = 'person:linked-student|school|grade';
 todayRows = [
-  cleanupRow(selectedDate, homeworkSidA, { hw: '1', slotGroup: '2' }),
-  cleanupRow(selectedDate, homeworkSidB, { hw: '1', slotGroup: '2' }),
+  cleanupRow(selectedDate, homeworkSidA, {
+    hw: '1',
+    slotGroup: '2',
+    studentIdentity: linkedLeaveIdentity,
+  }),
+  cleanupRow(selectedDate, homeworkSidB, {
+    slotGroup: '2',
+    studentIdentity: linkedLeaveIdentity,
+  }),
 ];
 const homeworkLeaveButton = new StubElement('button');
 homeworkLeaveButton.textContent = '숙검하원';
@@ -420,7 +428,7 @@ const reloadCountBeforeHomeworkLeave = reloadOptions.length;
 await clickListeners[0]({ target: homeworkLeaveButton });
 
 assert.equal(batchLogPatchBodies.length, 1, '숙검하원 must use one batch log request');
-assert.equal(batchLogPatchBodies[0].patches.length, 2, '숙검하원 must include every eligible target');
+assert.equal(batchLogPatchBodies[0].patches.length, 2, '숙검하원 must include every linked SID when one row is eligible');
 assert.ok(batchLogPatchBodies[0].patches.every(patch => patch.entry.done === true));
 assert.ok(batchLogPatchBodies[0].patches.every(patch => patch.__clear.includes('archived')));
 assert.equal(logPatchBodies.length, 0, '숙검하원 must not write the 10MB log once per student');
@@ -434,6 +442,63 @@ assert.equal(reloadOptions.length, reloadCountBeforeHomeworkLeave + 1, '숙검�
 assert.equal(reloadOptions.at(-1), undefined, '숙검하원 success must avoid a force reload');
 
 console.log('homework leave log batching verifier passed');
+
+resetTracking();
+state.logs = {
+  [selectedDate]: {
+    [homeworkSidA]: { archived: true },
+    [homeworkSidB]: { archived: true },
+  },
+};
+window.logs = state.logs;
+todayRows = [
+  cleanupRow(selectedDate, homeworkSidA, {
+    slotGroup: '1',
+    studentIdentity: linkedLeaveIdentity,
+  }),
+  cleanupRow(selectedDate, homeworkSidB, {
+    slotGroup: '2',
+    studentIdentity: linkedLeaveIdentity,
+  }),
+];
+const linkedLeaveButton = new StubElement('button');
+linkedLeaveButton.closest = selector => {
+  if (selector === '.markLeave') return linkedLeaveButton;
+  if (selector === 'tr[data-sid]') return todayRows[1];
+  return null;
+};
+const reloadCountBeforeLinkedLeave = reloadOptions.length;
+const NativeDate = globalThis.Date;
+const fixedLeaveTime = new NativeDate(2026, 7, 3, 20, 15, 0, 0).getTime();
+globalThis.Date = class FixedDate extends NativeDate {
+  constructor(...args) {
+    super(...(args.length ? args : [fixedLeaveTime]));
+  }
+
+  static now() {
+    return fixedLeaveTime;
+  }
+};
+try {
+  await clickListeners[0]({ target: linkedLeaveButton });
+} finally {
+  globalThis.Date = NativeDate;
+}
+
+assert.equal(batchLogPatchBodies.length, 1, 'final-slot individual leave must use one batch request');
+assert.deepEqual(
+  batchLogPatchBodies[0].patches.map(patch => patch.sid).sort(),
+  [homeworkSidA, homeworkSidB].sort(),
+  'final-slot individual leave must include both linked course SIDs',
+);
+assert.ok(batchLogPatchBodies[0].patches.every(patch => patch.entry.done === true));
+assert.ok(batchLogPatchBodies[0].patches.every(patch => patch.__clear.includes('archived')));
+assert.equal(state.logs[selectedDate][homeworkSidA].done, true);
+assert.equal(state.logs[selectedDate][homeworkSidB].done, true);
+assert.equal(reloadOptions.length, reloadCountBeforeLinkedLeave + 1);
+assert.deepEqual(reloadOptions.at(-1), { force: true });
+
+console.log('linked individual leave batching verifier passed');
 
 resetTracking();
 const undoneDate = '2026-06-25';

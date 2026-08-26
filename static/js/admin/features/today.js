@@ -50,7 +50,7 @@ import {
   renderToday,
   renderDone,
   bindTodayTableEvents,
-} from './today.render.js?v=20260821-log-batch1';
+} from './today.render.js?v=20260824-linked-leave1';
 
 function dateQuery(dateKey) {
   return new URLSearchParams({ date: String(dateKey || '') }).toString();

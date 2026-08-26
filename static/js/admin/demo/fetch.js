@@ -274,6 +274,42 @@ function mergeLogPatch(store, body) {
   return { entry: clone(next) };
 }
 
+function mergeLogPatchBatch(store, body) {
+  const patches = body?.patches;
+  if (!Array.isArray(patches) || patches.length < 1 || patches.length > 100) {
+    return { error: 'patches must contain 1 to 100 items' };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of patches) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'bad patch item' };
+    const date = canonicalDate(raw.date);
+    const sid = String(raw.sid || '').trim();
+    const entry = raw.entry == null ? {} : raw.entry;
+    const clear = raw.__clear;
+    if (!date || !sid || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { error: 'bad patch item' };
+    }
+    if (clear != null && !Array.isArray(clear)) return { error: 'bad clear list' };
+
+    const targetKey = `${date}\u0000${sid}`;
+    if (seen.has(targetKey)) return { error: 'duplicate patch target' };
+    seen.add(targetKey);
+    normalized.push({
+      date,
+      sid,
+      entry: clone(entry),
+      ...(Array.isArray(clear) ? { __clear: clone(clear) } : {}),
+    });
+  }
+
+  const draft = { ...store, logs: clone(store.logs || {}) };
+  normalized.forEach(patch => mergeLogPatch(draft, patch));
+  store.logs = draft.logs;
+  return { count: normalized.length };
+}
+
 function mergeProgressPatch(store, body) {
   const date = String(body?.date || '').trim();
   const sid = String(body?.sid || '').trim();
@@ -1179,6 +1215,13 @@ async function handleWrite(root, ctx, store) {
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, entry: result.entry });
+  }
+
+  if (method === 'POST' && path === '/api/logs/patch-batch') {
+    const result = mergeLogPatchBatch(store, body);
+    if (result.error) return badRequest(root, result.error);
+    saveDemoStore(store);
+    return ok(root, { ok: true, count: result.count });
   }
 
   if (PATCH_METHODS.has(method) && path === '/api/progress/patch') {

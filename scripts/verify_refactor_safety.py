@@ -1281,16 +1281,25 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
         and "선택한 운영일 기준" not in admin_hover_js
         and "complete.textContent = '숙검 완료';" in log_modal_js
         and "addRow.textContent = '교재 추가';" in log_modal_js
+        and "reorderRows.textContent = '교재 순서';" in log_modal_js
         and "removeRow.textContent = '교재 제거';" in log_modal_js
         and 'id="hwRemoveRow"' in log_modal_js
+        and 'id="hwReorderRows"' in log_modal_js
         and "actionHost.append(complete);" in log_modal_js
-        and log_modal_js.index("actionHost.append(complete);") < log_modal_js.index("actionHost.append(addRow);") < log_modal_js.index("actionHost.append(removeRow);")
+        and log_modal_js.index("actionHost.append(complete);") < log_modal_js.index("actionHost.append(addRow);") < log_modal_js.index("actionHost.append(reorderRows);") < log_modal_js.index("actionHost.append(removeRow);")
         and "if (save) save.hidden = true;" in log_modal_js
         and not re.search(
             r"#hwRemoveRow\s*,?[^{}]*\{[^{}]*display\s*:\s*none",
             student_work_light_css,
         ),
-        "tooltip homework header must expose compact complete/add/remove actions in order and hide the separate save control",
+        "tooltip homework header must expose compact complete/add/reorder/remove actions in order and hide the separate save control",
+    )
+    _assert_unit(
+        "const itemLabel = `${index + 1}번째 교재${book ? ` ${book}` : ''}`;" in log_modal_js
+        and "canonicalEditor.setAttribute('aria-label', `${index + 1}번째 숙제 상세`);" in log_modal_js
+        and "moveUp.setAttribute('aria-label', `${itemLabel} 위로 이동`);" in log_modal_js
+        and "moveDown.setAttribute('aria-label', `${itemLabel} 아래로 이동`);" in log_modal_js,
+        "homework reorder controls must keep unique position-aware labels and refresh canonical row numbering",
     )
     _assert_unit(
         'class="hw-del-btn"' not in log_modal_js

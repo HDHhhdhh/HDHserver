@@ -252,6 +252,64 @@ assert.deepEqual(concurrentRecovery.by_date['2026-06-18'], [], 'concurrent demo 
 assert.equal(concurrentRecovery.by_student['sid-a'], undefined);
 assert.equal(concurrentRecovery.by_student['sid-b'], undefined);
 
+const batchLogDate = '2026-06-20';
+for (const sid of ['demo-s001', 'demo-s002']) {
+  const seededLog = await demoFetch('/api/logs/patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: batchLogDate,
+      sid,
+      entry: { archived: true, preserved: sid },
+    }),
+  });
+  assert.equal(seededLog.status, 200);
+}
+const batchLogResponse = await demoFetch('/api/logs/patch-batch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    patches: [
+      {
+        date: batchLogDate,
+        sid: 'demo-s001',
+        entry: { done: true, leaveTime: '20:15' },
+        __clear: ['archived'],
+      },
+      {
+        date: batchLogDate,
+        sid: 'demo-s002',
+        entry: { done: true, leaveTime: '20:15' },
+        __clear: ['archived'],
+      },
+    ],
+  }),
+});
+assert.equal(batchLogResponse.status, 200);
+assert.equal((await batchLogResponse.json()).count, 2);
+const batchLogs = await (await demoFetch(`/api/logs?date=${batchLogDate}`)).json();
+assert.equal(batchLogs[batchLogDate]['demo-s001'].done, true);
+assert.equal(batchLogs[batchLogDate]['demo-s001'].archived, undefined);
+assert.equal(batchLogs[batchLogDate]['demo-s001'].preserved, 'demo-s001');
+assert.equal(batchLogs[batchLogDate]['demo-s002'].done, true);
+assert.equal(batchLogs[batchLogDate]['demo-s002'].archived, undefined);
+assert.equal(batchLogs[batchLogDate]['demo-s002'].preserved, 'demo-s002');
+
+const duplicateBatchBefore = structuredClone(batchLogs[batchLogDate]);
+const duplicateBatchResponse = await demoFetch('/api/logs/patch-batch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    patches: [
+      { date: batchLogDate, sid: 'demo-s001', entry: { overwritten: true } },
+      { date: batchLogDate, sid: 'demo-s001', entry: { overwrittenAgain: true } },
+    ],
+  }),
+});
+assert.equal(duplicateBatchResponse.status, 400);
+const logsAfterDuplicate = await (await demoFetch(`/api/logs?date=${batchLogDate}`)).json();
+assert.deepEqual(logsAfterDuplicate[batchLogDate], duplicateBatchBefore, 'invalid batch partially changed demo logs');
+
 const summary = await (await demoFetch('/api/logs/unarchived-summary?exclude_date=2026-06-17')).json();
 assert.equal(summary.rowsAvailable, true);
 for (const row of summary.rows || []) {
@@ -263,6 +321,7 @@ for (const row of summary.rows || []) {
 }
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260826-log-batch1/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/today_order' && method === 'POST'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/updates' && method === 'POST'/);
@@ -271,7 +330,17 @@ assert.match(fallbackSource, /case '\/api\/arrive-time':/);
 assert.doesNotMatch(fallbackSource, /case '\/arrive-time':/);
 assert.match(fallbackSource, /path === '\/arrive-time'/, 'retired arrive-time requests must remain demo-blocked');
 assert.match(fallbackSource, /path === '\/api\/absent\/recover'/);
+assert.match(fallbackSource, /path === '\/api\/logs\/patch-batch' && method === 'POST'/);
+assert.match(fallbackSource, /function applyFallbackLogPatchBatch\(store, body\)/);
 assert.match(fallbackSource, /status: mutation\?\.ok === false \? 400 : 200/, 'fallback mutations must preserve HTTP error status');
+for (const shell of ['admin.html', 'all.html', 'school-cal.html', 'video-manage.html', 'tests.html']) {
+  const shellSource = fs.readFileSync(`static/${shell}`, 'utf8');
+  assert.match(
+    shellSource,
+    /\/js\/admin\/demo\/bootstrap\.js\?v=20260826-log-batch1/,
+    `${shell} did not cache-bust the demo bootstrap contract`,
+  );
+}
 assert.equal(forwarded, 0, 'Phase16 demo API escaped to the live fetch implementation');
 
 console.log('Phase16 demo contracts passed');
