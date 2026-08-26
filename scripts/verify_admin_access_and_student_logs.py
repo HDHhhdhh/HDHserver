@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -73,10 +74,38 @@ def run_admin_basic_auth_checks() -> None:
         "admin page must challenge missing credentials without caching the response",
     )
     check(request_page("/admin", "Basic Zm9vOmJhcg==").status_code == 401, "bad admin credentials must fail")
-    check(request_page("/admin", authorization).status_code == 200, "valid admin credentials must open the page")
+    live_admin = request_page("/admin", authorization)
+    check(live_admin.status_code == 200, "valid admin credentials must open the page")
     for path in ("/admin.html", "/ADMIN.HTML", "/admin.html.", "/students", "/video-manage.html"):
         check(request_page(path).status_code == 401, f"admin page alias must not bypass authentication: {path}")
-    check(request_page("/demo/rh3123").status_code == 200, "admin demo route must remain public")
+    demo_admin = request_page("/demo/rh3123")
+    check(demo_admin.status_code == 200, "admin demo route must remain public")
+    baseline_admin = request_page("/demo/rh3123?design=off")
+    check(baseline_admin.status_code == 200, "admin demo baseline route must remain public")
+    live_source = live_admin.get_data(as_text=True)
+    demo_source = demo_admin.get_data(as_text=True)
+    baseline_source = baseline_admin.get_data(as_text=True)
+    check(
+        'class="admin admin-design-test"' not in live_source
+        and "/css/admin-design-test.css" not in live_source,
+        "production admin must not receive the demo-only design layer",
+    )
+    check(
+        'class="admin admin-design-test"' in demo_source
+        and "/css/admin-design-test.css" in demo_source
+        and demo_admin.headers.get("Cache-Control") == "no-store"
+        and demo_admin.headers.get("X-Robots-Tag") == "noindex, nofollow"
+        and demo_admin.headers.get("X-Admin-Design") == "visual-skin",
+        "admin demo must receive only the isolated no-store/noindex design layer",
+    )
+    check(
+        'class="admin admin-design-test"' not in baseline_source
+        and "/css/admin-design-test.css" not in baseline_source
+        and baseline_admin.headers.get("Cache-Control") == "no-store"
+        and baseline_admin.headers.get("X-Robots-Tag") == "noindex, nofollow"
+        and baseline_admin.headers.get("X-Admin-Design") == "baseline",
+        "admin demo baseline must expose the unchanged layout for coordinate QA",
+    )
     external_missing = request_page("/admin", None, "203.0.113.8")
     check(
         external_missing.status_code == 401
@@ -333,9 +362,48 @@ def run_student_log_ui_contract_checks() -> None:
         "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);" in css_source,
         "memo and student log boxes must keep the equal desktop split",
     )
+
+
+def run_admin_design_layout_lock_checks() -> None:
+    css_source = (ROOT / "static/css/admin-design-test.css").read_text("utf-8")
+    allowed_properties = {
+        "accent-color",
+        "background",
+        "background-color",
+        "border-color",
+        "border-radius",
+        "box-shadow",
+        "caret-color",
+        "color",
+        "cursor",
+        "outline",
+        "outline-color",
+        "outline-offset",
+        "text-decoration",
+        "text-decoration-color",
+        "text-shadow",
+        "transition",
+    }
+    declared_properties = re.findall(r"(?m)^\s*([A-Za-z-]+)\s*:", css_source)
+    layout_affecting = sorted({
+        property_name
+        for property_name in declared_properties
+        if not property_name.startswith("--") and property_name not in allowed_properties
+    })
+    check(
+        not layout_affecting,
+        "demo design CSS must stay visual-only; disallowed properties: " + ", ".join(layout_affecting),
+    )
+    check(
+        "Layout lock" in css_source and "body.admin.admin-design-test" in css_source,
+        "demo design CSS must document and scope the layout lock",
+    )
+
+
 def main() -> int:
     run_admin_basic_auth_checks()
     run_auth_secret_startup_contract_checks()
+    run_admin_design_layout_lock_checks()
     run_student_log_ui_contract_checks()
     run_student_operation_log_checks()
     run_student_log_demo_checks()

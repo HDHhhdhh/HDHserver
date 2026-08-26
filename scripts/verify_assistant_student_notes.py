@@ -243,7 +243,7 @@ def source_boundary_checks() -> None:
     )
     check(
         "data-note-save-close" in notes_source
-        and ">저장</button>" in notes_source
+        and ">저장 후 닫기</button>" in notes_source
         and "data-note-close" in notes_source
         and ">닫기</button>" in notes_source
         and "assistant-note-heading-actions" in admin_css
@@ -255,6 +255,10 @@ def source_boundary_checks() -> None:
         and "admin:assistant-notes-close" in notes_source
         and "logModal.addEventListener('admin:assistant-notes-close', close)" in log_modal_source,
         "save-and-close must reuse comment creation and close only through the popup owner",
+    )
+    check(
+        "window.showStudentPopupSaveResult('저장 완료')" in log_modal_source,
+        "successful thread-popup saves must reuse the video popup's save-complete graphic",
     )
     check("조교 메모방" not in notes_source, "legacy assistant memo title remains")
     check("data-note-remind-input" in notes_source and "assistant-note-compose-reminder" in notes_source, "confirmation-date composer is missing")
@@ -346,6 +350,26 @@ def source_boundary_checks() -> None:
     check("notes = notes.filter((item) => Number(item.id) !== noteId)" in notes_source, "delete must remove only one comment")
     check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
     check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
+    check(
+        "assistant-note-pin-badge" in notes_source
+        and "assistant-note-pin-badge-icon" in notes_source
+        and "<span>고정</span>" in notes_source
+        and ".assistant-note-item.is-pinned .assistant-note-pin-badge" in admin_css,
+        "pinned comments must expose a persistent visual status badge",
+    )
+    check(
+        "pinFeedbackNoteId: noteId" in notes_source
+        and "is-pin-feedback" in notes_source
+        and "assistant-note-pin-feedback 240ms" in admin_css
+        and "@media (prefers-reduced-motion: reduce)" in admin_css,
+        "pin toggles must provide immediate motion feedback with a reduced-motion fallback",
+    )
+    check(
+        "border-left: 3px solid var(--assistant-note-item-color);" in admin_css
+        and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .92)" in admin_css
+        and "background: rgba(var(--assistant-note-item-rgb), .16);" in admin_css,
+        "dark pinned cards must retain author-colored rails and pin emphasis",
+    )
     check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
     check(
         "const newestFirst = notes.slice()" in notes_source
@@ -400,10 +424,19 @@ def source_boundary_checks() -> None:
     check(
         "/* Saved memo body copy stays compact while the composer keeps its larger input size. */" in light_css
         and light_css.count("border-left-color: #d4a72c !important;") == 0
-        and "border-left-color: var(--assistant-note-item-color) !important;" in light_css
+        and "border-left: 4px solid var(--assistant-note-item-color) !important;" in light_css
         and "#assistantStudentNotesHost .assistant-note-edit-input" in light_css
-        and "font-size: 16px !important;" in light_css,
+        and "font-size: 18px !important;" in light_css,
         "pinned memo rails must retain the author color and saved memo copy must use the compact type size",
+    )
+    check(
+        "border: 1px solid rgba(var(--assistant-note-item-rgb), .42) !important;" in light_css
+        and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .72)" in light_css
+        and ".assistant-note-item.is-pinned .assistant-note-pin" in light_css
+        and "background: rgba(var(--assistant-note-item-rgb), .12) !important;" in light_css
+        and ".assistant-note-pin-badge" in light_css
+        and "color: var(--assistant-note-item-color) !important;" in light_css,
+        "light pinned cards must use each author's outline, filled pin, and status badge color",
     )
     check(
         "/* Compact reminder memo metadata without changing the memo body. */" in light_css

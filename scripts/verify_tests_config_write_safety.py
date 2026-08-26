@@ -108,6 +108,9 @@ def _verify_unit_import_guard() -> None:
 def _verify_frontend_delete_contract() -> None:
     source = (ROOT / "static/js/tests.js").read_text(encoding="utf-8")
     assert "async function saveConfig(removedTestIds = [])" in source
+    assert "async function saveTestDefinition(test, categoryKey, categoryLabel)" in source
+    assert "fetch('/api/tests-config/test'" in source
+    assert "method: 'PATCH'" in source
     assert "payload.__removedTestIds = removedTestIds.map(id => String(id));" in source
     assert "const deletedTestId = String(ui.selectedId);" in source
     assert "await saveConfig([deletedTestId]);" in source
@@ -214,6 +217,66 @@ def main() -> None:
             ]
             assert final_ids == ["keep"]
             assert "__removedTestIds" not in final
+
+            _write_config(config_path, current)
+            with app.test_client() as client:
+                response = client.patch(
+                    "/api/tests-config/test",
+                    json={
+                        "categoryKey": "UNIT",
+                        "categoryLabel": "Unit",
+                        "test": {"id": "keep", "name": "Patched"},
+                    },
+                    headers=_headers(current),
+                )
+            assert response.status_code == 200, response.get_data(as_text=True)
+            patched = json.loads(config_path.read_text(encoding="utf-8"))
+            patched_keep = patched["categories"]["UNIT"]["tests"][0]
+            assert patched_keep["name"] == "Patched"
+            assert patched_keep["answerKey"] == ["1"]
+            assert patched_keep["sourceFiles"]["solutionFileId"] == "solution-keep"
+            assert [row["id"] for row in patched["categories"]["UNIT"]["tests"]] == [
+                "keep",
+                "remove",
+            ]
+            assert patched["unknownField"] == {"mustRemain": True}
+
+            patched_revision = tests_config_revision(patched)
+            with app.test_client() as client:
+                response = client.patch(
+                    "/api/tests-config/test",
+                    json={
+                        "categoryKey": "REVIEW",
+                        "categoryLabel": "Review",
+                        "test": {"id": "keep", "name": "Moved"},
+                    },
+                    headers={"X-Tests-Config-Revision": patched_revision},
+                )
+            assert response.status_code == 200, response.get_data(as_text=True)
+            moved = json.loads(config_path.read_text(encoding="utf-8"))
+            assert [row["id"] for row in moved["categories"]["UNIT"]["tests"]] == ["remove"]
+            moved_keep = moved["categories"]["REVIEW"]["tests"][0]
+            assert moved_keep["id"] == "keep"
+            assert moved_keep["name"] == "Moved"
+            assert moved_keep["sourceFiles"]["solutionFileId"] == "solution-keep"
+
+            before_rejected_patch = copy.deepcopy(moved)
+            with app.test_client() as client:
+                response = client.patch(
+                    "/api/tests-config/test",
+                    json={"categoryKey": "REVIEW", "test": {"id": "keep", "name": "Stale"}},
+                    headers={"X-Tests-Config-Revision": patched_revision},
+                )
+            assert response.status_code == 409, response.get_data(as_text=True)
+            assert json.loads(config_path.read_text(encoding="utf-8")) == before_rejected_patch
+
+            with app.test_client() as client:
+                response = client.patch(
+                    "/api/tests-config/test",
+                    json={"categoryKey": "REVIEW", "test": {"id": "keep", "name": "No revision"}},
+                )
+            assert response.status_code == 428, response.get_data(as_text=True)
+            assert json.loads(config_path.read_text(encoding="utf-8")) == before_rejected_patch
     finally:
         api_tests.TESTS_CFG_PATH = original_path
         api_tests._academy_request_allowed = original_academy_allowed

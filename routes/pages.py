@@ -127,7 +127,32 @@ def page_student_app():
 @bp_pages.get("/dh1130")
 @bp_pages.get("/demo/rh3123")
 def page_admin():
-    return current_app.send_static_file("admin.html")
+    response = current_app.send_static_file("admin.html")
+    if _admin_route_key(request.path) != "/demo/rh3123":
+        return response
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    if request.args.get("design") == "off":
+        response.headers["X-Admin-Design"] = "baseline"
+        return response
+
+    response.direct_passthrough = False
+    source = response.get_data(as_text=True)
+    head_marker = "</head>"
+    body_marker = '<body class="admin">'
+    if head_marker not in source or body_marker not in source:
+        abort(500)
+
+    source = source.replace(
+        head_marker,
+        '  <link rel="stylesheet" href="/css/admin-design-test.css?v=20260826-layout-lock1">\n</head>',
+        1,
+    )
+    source = source.replace(body_marker, '<body class="admin admin-design-test">', 1)
+    response.set_data(source)
+    response.headers["X-Admin-Design"] = "visual-skin"
+    return response
 
 @bp_pages.get("/students")
 @bp_pages.get("/demo/rh3123/students")

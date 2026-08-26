@@ -1,0 +1,413 @@
+/*
+ * Academy Operations — Ink & Mineral visual skin.
+ * Experimental surface: /demo/rh3123 only.
+ * Layout lock: this layer may change only paint, shape, focus, and state feedback.
+ * Production CSS remains the sole owner of display, position, dimensions, spacing,
+ * typography metrics, grid/flex placement, overflow, and transforms.
+ */
+
+body.admin.admin-design-test {
+  --ops-canvas: #f6f5f1;
+  --ops-canvas-accent: #e8efed;
+  --ops-surface: #fffefa;
+  --ops-surface-subtle: #f2f5f3;
+  --ops-ink: #18272b;
+  --ops-muted: #5c6d71;
+  --ops-line: #d7dfdc;
+  --ops-line-strong: #b9c7c3;
+  --ops-primary: #155f5a;
+  --ops-primary-hover: #0f4f4b;
+  --ops-primary-soft: #dcece8;
+  --ops-success: #1a7654;
+  --ops-warning: #9a5a13;
+  --ops-danger: #b83a42;
+  --ops-danger-hover: #982d34;
+  --ops-radius-control: 9px;
+  --ops-radius-card: 13px;
+  --ops-radius-shell: 18px;
+  --ops-shadow-soft: 0 5px 16px rgba(22, 41, 45, .075);
+  --ops-shadow-card: 0 13px 30px rgba(22, 41, 45, .095);
+
+  --bg-0: var(--ops-canvas);
+  --bg-1: var(--ops-canvas-accent);
+  --rail-bg: #173238;
+  --rail-border: #35565b;
+  --card: var(--ops-surface);
+  --card-soft: var(--ops-surface-subtle);
+  --line: var(--ops-line);
+  --line-strong: var(--ops-line-strong);
+  --ink: var(--ops-ink);
+  --ink-soft: var(--ops-muted);
+  --brand: var(--ops-primary);
+  --brand-soft: var(--ops-primary-soft);
+  --ok: var(--ops-success);
+  --danger: var(--ops-danger);
+  --radius-md: var(--ops-radius-control);
+  --radius-lg: var(--ops-radius-card);
+  --radius-xl: var(--ops-radius-shell);
+  --shadow: var(--ops-shadow-card);
+  --shadow-soft: var(--ops-shadow-soft);
+
+  color: var(--ops-ink);
+  background:
+    radial-gradient(780px 360px at 96% -6%, rgba(21, 95, 90, .14), transparent 72%),
+    linear-gradient(180deg, var(--ops-canvas) 0%, var(--ops-canvas-accent) 100%);
+}
+
+body.admin.admin-design-test.dark {
+  --ops-canvas: #101719;
+  --ops-canvas-accent: #162326;
+  --ops-surface: #182326;
+  --ops-surface-subtle: #1d2d30;
+  --ops-ink: #edf5f3;
+  --ops-muted: #a9bbb8;
+  --ops-line: #354a4c;
+  --ops-line-strong: #496164;
+  --ops-primary: #78c9c0;
+  --ops-primary-hover: #96dbd3;
+  --ops-primary-soft: rgba(120, 201, 192, .17);
+  --ops-success: #72d3a7;
+  --ops-warning: #efbd78;
+  --ops-danger: #ff9299;
+  --ops-danger-hover: #ffb1b6;
+  --ops-shadow-soft: 0 5px 18px rgba(0, 0, 0, .24);
+  --ops-shadow-card: 0 16px 34px rgba(0, 0, 0, .31);
+  --rail-bg: #0b1517;
+  --rail-border: #365055;
+
+  background:
+    radial-gradient(780px 360px at 96% -6%, rgba(120, 201, 192, .11), transparent 72%),
+    linear-gradient(180deg, var(--ops-canvas) 0%, var(--ops-canvas-accent) 100%);
+}
+
+body.admin.admin-design-test :where(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid var(--ops-primary) !important;
+  outline-offset: 2px !important;
+}
+
+body.admin.admin-design-test :where(button, a, input, textarea, select) {
+  caret-color: var(--ops-primary);
+}
+
+body.admin.admin-design-test .topbar {
+  border-color: color-mix(in srgb, var(--ops-line-strong) 86%, transparent);
+  background: color-mix(in srgb, var(--ops-surface) 91%, transparent);
+  box-shadow: var(--ops-shadow-soft);
+}
+
+body.admin.admin-design-test .status-dot {
+  background: var(--ops-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ops-success) 16%, transparent);
+}
+
+body.admin.admin-design-test .hero-panel {
+  border-color: var(--ops-line-strong);
+  background:
+    linear-gradient(150deg, rgba(21, 95, 90, .055), transparent 42%),
+    linear-gradient(180deg, var(--ops-surface) 0%, var(--ops-surface-subtle) 100%);
+  box-shadow: var(--ops-shadow-card);
+}
+
+body.admin.admin-design-test .hero-kicker {
+  color: var(--ops-primary);
+}
+
+body.admin.admin-design-test #todayCount {
+  color: #123e41;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .72);
+}
+
+body.admin.admin-design-test.dark #todayCount {
+  color: #dff5f0;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .42);
+}
+
+body.admin.admin-design-test .hero-sub {
+  color: var(--ops-warning);
+}
+
+body.admin.admin-design-test .hero-date-mount,
+body.admin.admin-design-test .kpi-card {
+  border-color: var(--ops-line) !important;
+  background: linear-gradient(180deg, var(--ops-surface) 0%, var(--ops-surface-subtle) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78), 0 7px 18px rgba(22, 41, 45, .06) !important;
+}
+
+body.admin.admin-design-test.dark .hero-date-mount,
+body.admin.admin-design-test.dark .kpi-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045), 0 8px 20px rgba(0, 0, 0, .21) !important;
+}
+
+body.admin.admin-design-test .kpi-card--pending {
+  --kpi-accent: #2c67a8;
+}
+
+body.admin.admin-design-test .kpi-card--minutes {
+  --kpi-accent: #7653a6;
+}
+
+body.admin.admin-design-test .kpi-card--progress {
+  --kpi-accent: #187755;
+}
+
+body.admin.admin-design-test .kpi-card-head {
+  border-color: var(--ops-line);
+}
+
+body.admin.admin-design-test .progress-card .kpi-progress-track {
+  background: color-mix(in srgb, var(--ops-line) 78%, var(--ops-surface) 22%);
+}
+
+body.admin.admin-design-test .progress-card .kpi-progress-track i {
+  background: linear-gradient(90deg, var(--ops-success), #54a980);
+}
+
+body.admin.admin-design-test .btn,
+body.admin.admin-design-test button.btn,
+body.admin.admin-design-test a.btn,
+body.admin.admin-design-test .rail-cta {
+  border-color: #124e4a;
+  border-radius: var(--ops-radius-control);
+  background: linear-gradient(135deg, #174f55 0%, var(--ops-primary) 54%, #267c70 100%);
+  color: #f7fffd;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 4px 10px rgba(15, 79, 75, .18);
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+body.admin.admin-design-test .btn:hover,
+body.admin.admin-design-test button.btn:hover,
+body.admin.admin-design-test a.btn:hover,
+body.admin.admin-design-test .rail-cta:hover {
+  border-color: #0d4541;
+  background: linear-gradient(135deg, #123f45 0%, var(--ops-primary-hover) 56%, #1e6b62 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 5px 14px rgba(15, 79, 75, .24);
+}
+
+body.admin.admin-design-test .btn:active,
+body.admin.admin-design-test button.btn:active,
+body.admin.admin-design-test a.btn:active,
+body.admin.admin-design-test .rail-cta:active {
+  background: linear-gradient(135deg, #103b40 0%, #0d4945 100%);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .2);
+}
+
+body.admin.admin-design-test .btn.secondary,
+body.admin.admin-design-test .rail-cta.muted {
+  border-color: var(--ops-line-strong);
+  background: linear-gradient(180deg, var(--ops-surface) 0%, var(--ops-primary-soft) 100%);
+  color: var(--ops-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 3px 8px rgba(22, 41, 45, .08);
+}
+
+body.admin.admin-design-test .btn.secondary:hover,
+body.admin.admin-design-test .rail-cta.muted:hover {
+  border-color: var(--ops-primary);
+  background: var(--ops-primary-soft);
+  color: var(--ops-primary-hover);
+  box-shadow: 0 4px 11px rgba(21, 95, 90, .13);
+}
+
+body.admin.admin-design-test .btn.danger,
+body.admin.admin-design-test #absentRegisterBtn,
+body.admin.admin-design-test .rail-cta.danger {
+  border-color: #982f36;
+  background: linear-gradient(135deg, #a63039 0%, var(--ops-danger) 58%, #d24f55 100%);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .17), 0 4px 10px rgba(184, 58, 66, .18);
+}
+
+body.admin.admin-design-test .btn.danger:hover,
+body.admin.admin-design-test #absentRegisterBtn:hover,
+body.admin.admin-design-test .rail-cta.danger:hover {
+  border-color: #7f252c;
+  background: linear-gradient(135deg, #8f2931 0%, var(--ops-danger-hover) 100%);
+}
+
+body.admin.admin-design-test :where(button, .btn):disabled {
+  cursor: not-allowed;
+  color: color-mix(in srgb, var(--ops-muted) 78%, transparent);
+  background: color-mix(in srgb, var(--ops-surface-subtle) 84%, var(--ops-line) 16%);
+  border-color: var(--ops-line);
+  box-shadow: none;
+}
+
+body.admin.admin-design-test .global-links .btn {
+  border-color: color-mix(in srgb, var(--ops-line-strong) 74%, var(--link-accent, var(--ops-primary)) 26%);
+  background: color-mix(in srgb, var(--ops-surface) 84%, var(--link-accent, var(--ops-primary)) 16%);
+  color: var(--ops-ink);
+  box-shadow: inset 3px 0 0 var(--link-accent, var(--ops-primary)), 0 2px 6px rgba(22, 41, 45, .06);
+}
+
+body.admin.admin-design-test .global-links .btn:hover {
+  border-color: var(--link-accent, var(--ops-primary));
+  background: color-mix(in srgb, var(--ops-surface) 70%, var(--link-accent, var(--ops-primary)) 30%);
+  color: var(--ops-ink);
+  box-shadow: inset 3px 0 0 var(--link-accent, var(--ops-primary)), 0 4px 10px rgba(22, 41, 45, .1);
+}
+
+body.admin.admin-design-test .rail-btn {
+  border-color: rgba(173, 207, 204, .32);
+  background: rgba(137, 190, 184, .11);
+  color: #e5f1ef;
+  box-shadow: inset 3px 0 0 rgba(120, 201, 192, .42);
+}
+
+body.admin.admin-design-test .rail-btn:hover {
+  border-color: rgba(173, 207, 204, .54);
+  background: rgba(137, 190, 184, .2);
+}
+
+body.admin.admin-design-test .switch .slider {
+  border-color: var(--ops-line-strong);
+  background: color-mix(in srgb, var(--ops-surface) 65%, var(--ops-line) 35%);
+  cursor: pointer;
+  box-shadow: inset 0 1px 3px rgba(22, 41, 45, .12);
+}
+
+body.admin.admin-design-test .switch .slider::before {
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(22, 41, 45, .22);
+}
+
+body.admin.admin-design-test .switch input:checked + .slider {
+  border-color: var(--ops-primary);
+  background: linear-gradient(135deg, #174f55 0%, #2b8478 100%);
+}
+
+body.admin.admin-design-test .card,
+body.admin.admin-design-test .admin-operation-notes,
+body.admin.admin-design-test .student-log-panel,
+body.admin.admin-design-test .announcement-section,
+body.admin.admin-design-test .announcement-reply-dock {
+  border-color: var(--ops-line);
+  background: linear-gradient(180deg, var(--ops-surface) 0%, var(--ops-surface-subtle) 100%);
+  box-shadow: var(--ops-shadow-soft);
+}
+
+body.admin.admin-design-test #todayWrap,
+body.admin.admin-design-test #doneWrap,
+body.admin.admin-design-test #calendar,
+body.admin.admin-design-test #timeGraphWrap {
+  border-color: var(--ops-line);
+  background: var(--ops-surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .74);
+}
+
+body.admin.admin-design-test thead th {
+  border-color: var(--ops-line-strong);
+  background: linear-gradient(180deg, #dbe9e6 0%, #edf3f1 100%);
+  color: #24494b;
+}
+
+body.admin.admin-design-test.dark thead th {
+  background: linear-gradient(180deg, #284043 0%, #203538 100%);
+  color: #d9eeea;
+}
+
+body.admin.admin-design-test tbody tr:nth-child(odd) {
+  background: color-mix(in srgb, var(--ops-surface) 91%, #dce9e6 9%);
+}
+
+body.admin.admin-design-test tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--ops-surface) 96%, #edf3f1 4%);
+}
+
+body.admin.admin-design-test tbody tr:hover {
+  background: color-mix(in srgb, var(--ops-surface) 72%, var(--ops-primary-soft) 28%);
+}
+
+body.admin.admin-design-test .stuName {
+  color: var(--ops-primary);
+  text-decoration-color: color-mix(in srgb, var(--ops-primary) 42%, transparent);
+}
+
+body.admin.admin-design-test .btn-doc,
+body.admin.admin-design-test .editVid,
+body.admin.admin-design-test .editLog,
+body.admin.admin-design-test .openStudentPopups,
+body.admin.admin-design-test .openTestProgress,
+body.admin.admin-design-test .markAbsent,
+body.admin.admin-design-test .markLeave,
+body.admin.admin-design-test .undoDone,
+body.admin.admin-design-test .clearDone {
+  border-color: var(--ops-line-strong);
+  border-radius: var(--ops-radius-control);
+  background: linear-gradient(180deg, var(--ops-surface) 0%, var(--ops-primary-soft) 100%);
+  color: var(--ops-ink);
+  box-shadow: 0 2px 6px rgba(22, 41, 45, .08);
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+body.admin.admin-design-test .btn-doc:hover,
+body.admin.admin-design-test .editVid:hover,
+body.admin.admin-design-test .editLog:hover,
+body.admin.admin-design-test .openStudentPopups:hover,
+body.admin.admin-design-test .openTestProgress:hover,
+body.admin.admin-design-test .undoDone:hover,
+body.admin.admin-design-test .clearDone:hover {
+  border-color: var(--ops-primary);
+  background: var(--ops-primary-soft);
+  color: var(--ops-primary-hover);
+  box-shadow: 0 3px 9px rgba(21, 95, 90, .13);
+}
+
+body.admin.admin-design-test .markAbsent {
+  border-color: color-mix(in srgb, var(--ops-danger) 58%, var(--ops-line-strong) 42%);
+  background: color-mix(in srgb, var(--ops-surface) 79%, var(--ops-danger) 21%);
+  color: #8e2930;
+}
+
+body.admin.admin-design-test .markLeave {
+  border-color: color-mix(in srgb, var(--ops-success) 58%, var(--ops-line-strong) 42%);
+  background: color-mix(in srgb, var(--ops-surface) 80%, var(--ops-success) 20%);
+  color: #145f45;
+}
+
+body.admin.admin-design-test input[type="text"],
+body.admin.admin-design-test input[type="number"],
+body.admin.admin-design-test input[type="date"],
+body.admin.admin-design-test input[type="time"],
+body.admin.admin-design-test input[type="search"],
+body.admin.admin-design-test input[type="email"],
+body.admin.admin-design-test input[type="url"],
+body.admin.admin-design-test input[type="password"],
+body.admin.admin-design-test input:not([type]),
+body.admin.admin-design-test textarea,
+body.admin.admin-design-test select {
+  border-color: var(--ops-line-strong);
+  background: var(--ops-surface);
+  color: var(--ops-ink);
+  box-shadow: inset 0 1px 2px rgba(22, 41, 45, .055);
+}
+
+body.admin.admin-design-test :where(input, textarea, select):focus {
+  border-color: var(--ops-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ops-primary) 14%, transparent);
+}
+
+body.admin.admin-design-test :where(input, textarea, select)::placeholder {
+  color: color-mix(in srgb, var(--ops-muted) 76%, transparent);
+}
+
+body.admin.admin-design-test .modal-backdrop,
+body.admin.admin-design-test .ann-survey-modal,
+body.admin.admin-design-test .ann-compose-expand-modal,
+body.admin.admin-design-test .ann-reply-expand-modal {
+  background: rgba(8, 20, 22, .64);
+}
+
+body.admin.admin-design-test .modal-panel,
+body.admin.admin-design-test .ann-survey-dialog,
+body.admin.admin-design-test .ann-compose-expand-dialog,
+body.admin.admin-design-test .ann-reply-expand-dialog {
+  border-color: var(--ops-line-strong);
+  background: var(--ops-surface);
+  color: var(--ops-ink);
+  box-shadow: var(--ops-shadow-card);
+}
+
+body.admin.admin-design-test .badge {
+  border-color: var(--ops-line-strong);
+  background: var(--ops-primary-soft);
+  color: var(--ops-primary-hover);
+}

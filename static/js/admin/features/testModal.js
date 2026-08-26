@@ -1962,11 +1962,19 @@ function applyTestProgressPatchResult(date, sid, progressRes) {
   }
 }
 
+function showTestSaveSuccess() {
+  if (typeof window.showStudentPopupSaveResult === 'function') {
+    window.showStudentPopupSaveResult('저장 완료');
+  } else {
+    toast('저장 완료');
+  }
+}
+
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
   if (!testSelectionTouched) {
     const items = selectedAssignmentObjects();
-    if (options.showPopup !== false) toast('변경된 테스트 배정이 없습니다');
+    if (options.showPopup !== false) showTestSaveSuccess();
     return items;
   }
 
@@ -1987,11 +1995,11 @@ async function saveModal(options = {}) {
 
   applyTestProgressPatchResult(editingDate, editingSid, progressRes);
   invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(editingSid)}`);
+  if (options.showPopup !== false) showTestSaveSuccess();
 
   await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
   invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(editingSid)}`);
 
-  if (options.showPopup !== false) toast('테스트 배정 저장됨');
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
   testChangeOrderByKey = currentTestChangeOrderMap();
@@ -2134,6 +2142,9 @@ function bindEventsOnce() {
         await saveModal();
       } catch (err) {
         console.error(err);
+        if (typeof window.showStudentPopupSaveResult === 'function') {
+          window.showStudentPopupSaveResult('저장 실패', true);
+        }
         alert(err?.message || '테스트 배정 저장 실패');
       }
       return;

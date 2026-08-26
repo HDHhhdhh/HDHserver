@@ -1,8 +1,8 @@
 // static/js/all/main.js
 import { $ } from './core/utils.js';
-import { loadAll, state } from './core/state.js';
+import { loadAll, loadHomeworkBooks, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
-import { renderTable } from './features/table.js?v=20260821-note-body-row2';
+import { renderHomeworkBooks, renderTable } from './features/table.js?v=20260821-note-body-row2';
 import './features/progressModal.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
@@ -97,11 +97,17 @@ document.addEventListener('all:student-deleted', (event) => {
 
 (async function init() {
   try {
-    await loadAll();
+    await loadAll({ waitForHomeworkBooks: false });
     syncAdminTooltipState();
     initAdminHoverTooltip();
     initStudentTestRecordDetails(document);
     renderAll();
+
+    void loadHomeworkBooks().then(() => {
+      syncAdminTooltipState();
+      renderHomeworkBooks();
+      document.dispatchEvent(new CustomEvent('all:homework-books-loaded'));
+    });
 
     document.addEventListener('admin:refresh', () => {
       updateAllCount();

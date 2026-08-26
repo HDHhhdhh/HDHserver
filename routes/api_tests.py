@@ -27,6 +27,7 @@ from core.test_answer_links import resolve_test_assignment_answer_url
 from core.test_config_safety import (
     TestsConfigWriteConflict,
     merge_tests_config_for_write,
+    patch_test_config_record,
     tests_config_revision,
 )
 
@@ -543,6 +544,46 @@ def post_tests_config():
         save_atomic(TESTS_CFG_PATH, merged)
         saved_revision = tests_config_revision(merged)
     response = jsonify({"ok": True})
+    response.headers["X-Tests-Config-Revision"] = saved_revision
+    return response
+
+
+@bp_api_tests.patch("/api/tests-config/test")
+def patch_tests_config_test():
+    expected_revision = str(
+        request.headers.get("X-Tests-Config-Revision", "")
+    ).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_revision):
+        return jsonify({"ok": False, "error": "catalog_revision_required"}), 428
+
+    payload = request.get_json(force=True, silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "invalid payload"}), 400
+    category_key = str(payload.get("categoryKey") or "").strip()
+    category_label = str(payload.get("categoryLabel") or "").strip()
+    incoming_test = payload.get("test")
+    if not category_key or not isinstance(incoming_test, dict):
+        return jsonify({"ok": False, "error": "invalid test patch"}), 400
+
+    with _tests_config_lock():
+        current = load(TESTS_CFG_PATH)
+        if not isinstance(current, dict):
+            return jsonify({"ok": False, "error": "invalid current config"}), 500
+        if tests_config_revision(current) != expected_revision:
+            return jsonify({"ok": False, "error": "catalog_changed"}), 409
+        try:
+            merged, saved_test = patch_test_config_record(
+                current,
+                category_key,
+                incoming_test,
+                category_label=category_label,
+            )
+        except ValueError:
+            return jsonify({"ok": False, "error": "invalid test patch"}), 400
+        save_atomic(TESTS_CFG_PATH, merged)
+        saved_revision = tests_config_revision(merged)
+
+    response = jsonify({"ok": True, "test": saved_test})
     response.headers["X-Tests-Config-Revision"] = saved_revision
     return response
 

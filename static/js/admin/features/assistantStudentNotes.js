@@ -28,7 +28,7 @@ export function assistantStudentNotesTemplate({ studentId = '', nextReminderDate
       <div class="assistant-note-heading">
         <h3>조교 메모</h3>
         <div class="assistant-note-heading-actions" aria-label="조교 메모 창 작업">
-          <button type="button" class="assistant-note-heading-button assistant-note-save-close" data-note-save-close>저장</button>
+          <button type="button" class="assistant-note-heading-button assistant-note-save-close" data-note-save-close>저장 후 닫기</button>
           <button type="button" class="assistant-note-heading-button assistant-note-close" data-note-close>닫기</button>
         </div>
       </div>
@@ -229,6 +229,7 @@ function renderNotes(
     onDelete = null,
     onTogglePin = null,
     onEdit = null,
+    pinFeedbackNoteId = null,
   } = {},
 ) {
   const list = root.querySelector('[data-note-list]');
@@ -275,6 +276,11 @@ function renderNotes(
     article.dataset.notePinned = pinned ? 'true' : 'false';
     article.classList.toggle('is-pinned', pinned);
     article.classList.toggle('has-reminder', Boolean(reminderInfo));
+    article.classList.toggle(
+      'is-pin-feedback',
+      String(pinFeedbackNoteId ?? '') !== ''
+        && String(pinFeedbackNoteId) === String(note.id || ''),
+    );
     if (AUTHORS.includes(author)) article.dataset.noteAuthor = author;
 
     const header = document.createElement('div');
@@ -302,6 +308,16 @@ function renderNotes(
       event.stopPropagation();
       onTogglePin?.(note, pinButton);
     });
+
+    const pinBadge = document.createElement('span');
+    pinBadge.className = 'assistant-note-pin-badge';
+    pinBadge.setAttribute('aria-hidden', 'true');
+    pinBadge.innerHTML = `
+      <svg class="assistant-note-pin-badge-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9 3h6v2l-1 1v3.5l4 3.5v1H6v-1l4-3.5V6L9 5V3Z"></path>
+        <path d="M12 14v7"></path>
+      </svg>
+      <span>고정</span>`;
 
     const time = document.createElement('time');
     time.className = 'assistant-note-item-time';
@@ -343,7 +359,7 @@ function renderNotes(
 
     const authorGroup = document.createElement('div');
     authorGroup.className = 'assistant-note-item-author-group';
-    authorGroup.append(authorName, pinButton);
+    authorGroup.append(authorName, pinButton, pinBadge);
 
     if (reminderInfo) {
       const reminderInfoRow = document.createElement('div');
@@ -472,6 +488,7 @@ async function mountMemo(root, studentId) {
         onDelete: deleteNote,
         onTogglePin: togglePin,
         onEdit: editNote,
+        pinFeedbackNoteId: noteId,
       });
       setStatus(root, nextPinned ? '메모를 고정했습니다.' : '메모 고정을 해제했습니다.', 'success');
     } catch (error) {

@@ -69,6 +69,18 @@ function dedupKeyForStudent(s) {
   return `${name}::${school}`;
 }
 
+function linkedHomeworkBooksMarkup(books = []) {
+  if (state.homeworkBooksStatus === 'loading' || state.homeworkBooksStatus === 'idle') {
+    return '<span class="linkedHomeworkBook is-empty">불러오는 중…</span>';
+  }
+  if (state.homeworkBooksStatus === 'error') {
+    return '<span class="linkedHomeworkBook is-empty">불러오기 실패</span>';
+  }
+  return books.length
+    ? books.map(book => `<span class="linkedHomeworkBook">${escapeHtml(book)}</span>`).join('')
+    : '<span class="linkedHomeworkBook is-empty">미등록</span>';
+}
+
 /** 요일 문자열 -> 기본 등원시간
  *  - (신규 규칙) 월1~일1 → 13:00, 월2~일2 → 18:00
  *  - 숫자 없으면(구형 데이터) 기존처럼 18:00
@@ -267,10 +279,8 @@ export function renderTable() {
 
       <!-- 부교재 -->
       <td>
-        <div class="sbBox linkedHomeworkBooks" title="관리자운영판 숙제 교재 등록과 연동">
-          ${homeworkBooks.length
-            ? homeworkBooks.map(book => `<span class="linkedHomeworkBook">${escapeHtml(book)}</span>`).join('')
-            : '<span class="linkedHomeworkBook is-empty">미등록</span>'}
+        <div class="sbBox linkedHomeworkBooks" data-id="${escapeHtml(s.id)}" title="관리자운영판 숙제 교재 등록과 연동">
+          ${linkedHomeworkBooksMarkup(homeworkBooks)}
         </div>
       </td>
 
@@ -621,6 +631,22 @@ export function renderTable() {
   bindAllStudentSearch();
   applyAllStudentSearch();
 
+}
+
+export function renderHomeworkBooks() {
+  const studentsBySid = new Map(state.students.map(student => [String(student?.id || ''), student]));
+  document.querySelectorAll('#allWrap tr[data-sid]').forEach(row => {
+    const sid = String(row.dataset.sid || '');
+    const student = studentsBySid.get(sid);
+    if (!student) return;
+    const books = Array.isArray(state.homeworkBooksBySid?.[sid])
+      ? state.homeworkBooksBySid[sid]
+      : [];
+    const target = row.querySelector('.linkedHomeworkBooks');
+    if (target) target.innerHTML = linkedHomeworkBooksMarkup(books);
+    row.dataset.searchKey = tableSearchKeyForStudent(student);
+  });
+  applyAllStudentSearch();
 }
 
 function bindAllStudentSearch() {

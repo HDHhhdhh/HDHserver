@@ -4,18 +4,19 @@
 import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { initTestModal } from './testModal.js';
+import { initTestModal } from './testModal.js?v=20260826-save-feedback2';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
 let editingLogSid = null;
 let editingLogDate = null;
-let logModalSnapshot = { notes: '', homeworkTable: [] };
-let logModalServerSnapshot = { notes: '', homeworkTable: [] };
+let logModalSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
+let logModalServerSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
 const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
+const HOMEWORK_SLEEPING_BOOKS_KEY = 'sleepingHomeworkBooks';
 const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
 let logOpenSeq = 0;
 let logModalReady = true;
@@ -596,6 +597,34 @@ function injectStyles() {
     }
 
     .hwItem{ display:flex; flex-direction:column; gap:8px; }
+    .hwItem.is-sleeping{ background:#f3f4f6; color:#64748b; }
+    .hwItem.is-sleeping input:disabled,
+    .hwItem.is-sleeping select:disabled{ background:#e9edf2; color:#7c8796; opacity:1; }
+    .hw-book-input-row{ display:flex; align-items:center; gap:6px; min-width:0; }
+    .hw-book-input-row > .hwBook{ flex:1 1 auto; min-width:0; }
+    .hw-book-sleep-toggle{
+      flex:0 0 auto;
+      min-width:36px;
+      height:24px;
+      padding:0 7px;
+      border:1px solid #cbd5e1;
+      border-radius:999px;
+      background:#fff;
+      color:#64748b;
+      font-size:10px;
+      font-weight:800;
+      line-height:1;
+      cursor:pointer;
+    }
+    .hw-book-sleep-toggle[aria-pressed="true"]{ border-color:#9ca3af; background:#e5e7eb; color:#374151; }
+    .hw-book-sleep-toggle:hover:not(:disabled),
+    .hw-book-sleep-toggle:focus-visible{ border-color:#64748b; color:#334155; }
+    .hw-book-sleep-toggle:disabled{ opacity:.45; cursor:default; }
+    body.dark .hwItem.is-sleeping{ background:#1f2937; color:#94a3b8; }
+    body.dark .hwItem.is-sleeping input:disabled,
+    body.dark .hwItem.is-sleeping select:disabled{ background:#273244; color:#a7b1c2; }
+    body.dark .hw-book-sleep-toggle{ border-color:#475569; background:#111827; color:#cbd5e1; }
+    body.dark .hw-book-sleep-toggle[aria-pressed="true"]{ border-color:#64748b; background:#334155; color:#f1f5f9; }
     .hw-order-row{
       display:flex;
       align-items:center;
@@ -1176,6 +1205,48 @@ function cleanHwText(s) {
   return (isQuestionPlaceholder(text) || looksCorruptedPlaceholderText(text)) ? '' : text;
 }
 
+function homeworkBookKey(book) {
+  return cleanHwText(book).replace(/\s+/g, '').toLocaleLowerCase('ko-KR');
+}
+
+function normalizeSleepingHomeworkBooks(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const books = [];
+  value.forEach(raw => {
+    const book = cleanHwText(raw);
+    const key = homeworkBookKey(book);
+    if (!book || !key || seen.has(key)) return;
+    seen.add(key);
+    books.push(book);
+  });
+  return books;
+}
+
+function sameSleepingHomeworkBooks(a, b) {
+  return JSON.stringify(normalizeSleepingHomeworkBooks(a))
+    === JSON.stringify(normalizeSleepingHomeworkBooks(b));
+}
+
+function entryHasSleepingHomeworkBooks(entry) {
+  return Boolean(entry && typeof entry === 'object'
+    && Object.prototype.hasOwnProperty.call(entry, HOMEWORK_SLEEPING_BOOKS_KEY));
+}
+
+function resolveSleepingHomeworkBooks({ logEntry, dates, today, sid }) {
+  if (entryHasSleepingHomeworkBooks(logEntry)) {
+    return normalizeSleepingHomeworkBooks(logEntry[HOMEWORK_SLEEPING_BOOKS_KEY]);
+  }
+  for (let i = dates.length - 1; i >= 0; i--) {
+    const date = dates[i];
+    if (date >= today) continue;
+    const previous = (state.logs?.[date] || {})[sid];
+    if (!entryHasSleepingHomeworkBooks(previous)) continue;
+    return normalizeSleepingHomeworkBooks(previous[HOMEWORK_SLEEPING_BOOKS_KEY]);
+  }
+  return [];
+}
+
 function normHwRows(x) {
   if (!Array.isArray(x)) return [];
   return x.map(r => ({
@@ -1402,11 +1473,58 @@ function appendCanonicalHomeworkEditor(item, row, assignment, rowIndex) {
   item.append(editor);
 }
 
-function renderHwTable(mergedRows) {
+function setHomeworkItemSleeping(item, sleeping) {
+  if (!item) return;
+  const next = Boolean(sleeping);
+  item.dataset.sleeping = next ? '1' : '0';
+  item.classList.toggle('is-sleeping', next);
+}
+
+function collectSleepingHomeworkBooks() {
+  const seen = new Set();
+  const books = [];
+  visibleHomeworkRows().forEach(item => {
+    if (item.dataset.sleeping !== '1') return;
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    const key = homeworkBookKey(book);
+    if (!book || !key || seen.has(key)) return;
+    seen.add(key);
+    books.push(book);
+  });
+  return books;
+}
+
+function syncHomeworkSleepingControls() {
+  const readOnly = isContextMenuOnlyAccess();
+  const retryLocked = Boolean(canonicalHomework.pendingPayload);
+  const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+  const interactionLocked = homeworkRemoveSelectionActive || homeworkReorderActive;
+  document.querySelectorAll('#hwBody .hwItem').forEach(item => {
+    const sleeping = item.dataset.sleeping === '1';
+    const book = cleanHwText(item.querySelector('.hwBook')?.value);
+    item.classList.toggle('is-sleeping', sleeping);
+    item.querySelectorAll('input, select, textarea').forEach(control => {
+      control.disabled = readOnly || retryLocked || homeworkBlocked || sleeping;
+    });
+    const toggle = item.querySelector('.hw-book-sleep-toggle');
+    if (!toggle) return;
+    toggle.textContent = sleeping ? '재움' : '재우기';
+    toggle.hidden = interactionLocked;
+    toggle.disabled = readOnly || retryLocked || homeworkBlocked || interactionLocked || !book;
+    toggle.setAttribute('aria-pressed', sleeping ? 'true' : 'false');
+    toggle.setAttribute('aria-label', book
+      ? `${book} 교재 ${sleeping ? '다시 사용' : '재우기'}`
+      : '교재명을 입력한 뒤 재울 수 있습니다');
+    toggle.title = sleeping ? '클릭하여 다시 사용' : '클릭하여 잠시 재우기';
+  });
+}
+
+function renderHwTable(mergedRows, sleepingBooks = []) {
   const host = $('hwBody');
   if (!host) return;
 
   const rows = Array.isArray(mergedRows) ? mergedRows : [];
+  const sleepingBookKeys = new Set(normalizeSleepingHomeworkBooks(sleepingBooks).map(homeworkBookKey));
   const n = Math.max(rows.length, 1);
 
   const hasPrevAny = rows.some(r => {
@@ -1441,11 +1559,12 @@ function renderHwTable(mergedRows) {
     const emptyFlag = (pctToday === '') ? '1' : '0';
 
     const deleted = !!r._deleted;
+    const sleeping = Boolean(bookVal && sleepingBookKeys.has(homeworkBookKey(bookVal)));
     const delAttr = deleted ? '1' : '0';
     const hideStyle = deleted ? 'style="display:none"' : '';
 
     return `
-      <div class="hwItem" data-idx="${i}" data-deleted="${delAttr}" ${hideStyle}>
+      <div class="hwItem${sleeping ? ' is-sleeping' : ''}" data-idx="${i}" data-deleted="${delAttr}" data-sleeping="${sleeping ? '1' : '0'}" ${hideStyle}>
         ${homeworkOrderControlsHtml(i)}
         <div class="hwTop">
           <div class="hw-book">
@@ -1453,6 +1572,7 @@ function renderHwTable(mergedRows) {
               <input class="hwBook" type="text" value="${escapeAttr(bookVal)}" placeholder="">
               ${removeChoiceHtml}
             </div>
+            <button type="button" class="hw-book-sleep-toggle" aria-pressed="${sleeping ? 'true' : 'false'}">재우기</button>
           </div>
 
           <div class="hw-this">
@@ -1520,6 +1640,7 @@ function renderHwTable(mergedRows) {
     const isPh = (wrap.dataset.empty === '1');
     updatePctBubble(wrap, range.value, { isPlaceholder: isPh });
   });
+  syncHomeworkSleepingControls();
 }
 
 function addHwRow(bookCarry = '') {
@@ -1530,7 +1651,7 @@ function addHwRow(bookCarry = '') {
   const removeChoiceHtml = `<button type="button" class="hw-remove-choice" aria-label="${rowIndex + 1}번째 교재 선택 제거" hidden>선택</button>`;
 
   host.insertAdjacentHTML('beforeend', `
-    <div class="hwItem" data-idx="" data-deleted="0">
+    <div class="hwItem" data-idx="" data-deleted="0" data-sleeping="0">
       ${homeworkOrderControlsHtml(rowIndex)}
       <div class="hwTop">
         <div class="hw-book">
@@ -1538,6 +1659,7 @@ function addHwRow(bookCarry = '') {
             <input class="hwBook" type="text" value="${escapeAttr(bookCarry)}" placeholder="">
             ${removeChoiceHtml}
           </div>
+          <button type="button" class="hw-book-sleep-toggle" aria-pressed="false">재우기</button>
         </div>
 
         <div class="hw-this">
@@ -1584,6 +1706,7 @@ function addHwRow(bookCarry = '') {
     }
   }
   syncHomeworkRemovalControls();
+  syncHomeworkSleepingControls();
 }
 
 function visibleHomeworkRows(host = $('hwBody')) {
@@ -1658,6 +1781,7 @@ function syncHomeworkRemovalControls() {
     reorderRows.setAttribute('aria-pressed', reordering ? 'true' : 'false');
     reorderRows.disabled = readOnly || retryLocked || homeworkBlocked || removing || visibleRows.length < 2;
   }
+  syncHomeworkSleepingControls();
 }
 
 function setHomeworkRemoveSelection(active) {
@@ -2165,7 +2289,7 @@ function summarizeProgressPatch(changedProg, oldTotal) {
     .join(', ');
 }
 
-function buildLogSavePatch({ notesNow, hwRows, prevLog, doneFlag, summary }) {
+function buildLogSavePatch({ notesNow, hwRows, sleepingHomeworkBooks, prevLog, doneFlag, summary }) {
   const clearKeys = [];
   const entry = {};
   const base = {};
@@ -2187,6 +2311,15 @@ function buildLogSavePatch({ notesNow, hwRows, prevLog, doneFlag, summary }) {
     } else {
       clearKeys.push('homework', 'homeworkTable');
     }
+  }
+
+  const sleepingBooksNow = normalizeSleepingHomeworkBooks(sleepingHomeworkBooks);
+  if (!sameSleepingHomeworkBooks(sleepingBooksNow, logModalSnapshot.sleepingHomeworkBooks)) {
+    base[HOMEWORK_SLEEPING_BOOKS_KEY] = normalizeSleepingHomeworkBooks(
+      logModalServerSnapshot.sleepingHomeworkBooks,
+    );
+    entry[HOMEWORK_SLEEPING_BOOKS_KEY] = sleepingBooksNow;
+    contentChanged = true;
   }
 
   if (logModalCarriedTestAssignment?.items?.length) {
@@ -2232,14 +2365,16 @@ function applyLogSaveResult({ date, sid, entry, clearKeys, returned, doneFlag, p
   state.logs[date][sid] = next;
 }
 
-function setLogModalSnapshots(notes, homeworkTable) {
+function setLogModalSnapshots(notes, homeworkTable, sleepingHomeworkBooks) {
   logModalSnapshot = {
     notes,
     homeworkTable,
+    sleepingHomeworkBooks: normalizeSleepingHomeworkBooks(sleepingHomeworkBooks),
   };
   logModalServerSnapshot = {
     notes,
     homeworkTable: normalizeHwRowsForCompare(homeworkTable),
+    sleepingHomeworkBooks: normalizeSleepingHomeworkBooks(sleepingHomeworkBooks),
   };
 }
 
@@ -2295,7 +2430,7 @@ export function initLogModal() {
   if (!window.__hwDelDelegatedBound) {
     window.__hwDelDelegatedBound = true;
     document.addEventListener('click', (e) => {
-      const btn = e.target.closest('button.hw-del-btn, button.hw-remove-choice, button.hw-order-btn');
+      const btn = e.target.closest('button.hw-del-btn, button.hw-remove-choice, button.hw-order-btn, button.hw-book-sleep-toggle');
       if (!btn) return;
       if (!btn.closest('#hwWrap')) return;
       if (isContextMenuOnlyAccess()) return;
@@ -2305,6 +2440,13 @@ export function initLogModal() {
 
       const item = btn.closest('.hwItem');
       if (!item) return;
+
+      if (btn.classList.contains('hw-book-sleep-toggle')) {
+        setHomeworkItemSleeping(item, item.dataset.sleeping !== '1');
+        if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+        syncHomeworkSleepingControls();
+        return;
+      }
 
       if (btn.classList.contains('hw-order-btn')) {
         moveHomeworkRow(item, btn.dataset.direction);
@@ -2323,6 +2465,7 @@ export function initLogModal() {
       canonicalHomework.operationId = null;
     }
     const t = e.target;
+    if (t.classList.contains('hwBook')) syncHomeworkSleepingControls();
     if (!t.classList.contains('hwPctRange')) return;
     const wrap = t.closest('.pctWrap');
     if (!wrap) return;
@@ -2474,8 +2617,8 @@ export function initLogModal() {
     const sid = String(editingLogSid);
 
     logModalReady = false;
-    logModalSnapshot = { notes: '', homeworkTable: [] };
-    logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
+    logModalServerSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
     logModalCarriedTestAssignment = null;
     $('hwWrap')?.querySelector('.hwCanonicalError')?.remove();
     logModal.classList.toggle('student-work-layout', opts.layout === 'student-work');
@@ -2610,8 +2753,9 @@ export function initLogModal() {
       }
     }
 
+    const sleepingHomeworkBooks = resolveSleepingHomeworkBooks({ logEntry, dates, today, sid });
     const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
-    renderHwTable(merged);
+    renderHwTable(merged, sleepingHomeworkBooks);
     if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
       const warning = document.createElement('p');
       warning.className = 'hwCanonicalError';
@@ -2627,10 +2771,14 @@ export function initLogModal() {
       // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
       notes: (todayNotes || '').trim(),
       homeworkTable: collectHwTable(),
+      sleepingHomeworkBooks: collectSleepingHomeworkBooks(),
     };
     logModalServerSnapshot = {
       notes: (logEntry.notes || '').trim(),
       homeworkTable: normalizeHwRowsForCompare(todayRows),
+      sleepingHomeworkBooks: entryHasSleepingHomeworkBooks(logEntry)
+        ? normalizeSleepingHomeworkBooks(logEntry[HOMEWORK_SLEEPING_BOOKS_KEY])
+        : [],
     };
 
     progEl.innerHTML = '';
@@ -2771,8 +2919,8 @@ export function initLogModal() {
     editingLogSid = null;
     editingLogDate = null;
     logModalReady = false;
-    logModalSnapshot = { notes: '', homeworkTable: [] };
-    logModalServerSnapshot = { notes: '', homeworkTable: [] };
+    logModalSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
+    logModalServerSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
     logModalCarriedTestAssignment = null;
     logModalAccessMode = 'full';
     resetCanonicalHomeworkState();
@@ -2828,10 +2976,12 @@ export function initLogModal() {
     const summary = summarizeProgressPatch(changedProg, oldTotal);
 
     const hwRows = collectHwTable();
+    const sleepingHomeworkBooks = collectSleepingHomeworkBooks();
     const notesNow = cleanHwText(logNotes.value);
     const { entry, clearKeys, base, contentChanged } = buildLogSavePatch({
       notesNow,
       hwRows,
+      sleepingHomeworkBooks,
       prevLog,
       doneFlag,
       summary,
@@ -2883,7 +3033,7 @@ export function initLogModal() {
       await clearVideoAssignmentForDateSid(today, sid);
     }
 
-    setLogModalSnapshots(notesNow, hwRows);
+    setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);
 
     return { allProgressDone };
   }
@@ -2999,7 +3149,11 @@ export function initLogModal() {
           await reapplyCarriedTestAssignmentForCurrent();
         }
         close();
-        toast('영상·테스트·쓰레드·숙제를 모두 저장하고 닫았습니다.');
+        if (typeof window.showStudentPopupSaveResult === 'function') {
+          window.showStudentPopupSaveResult('저장 완료');
+        } else {
+          toast('저장 완료');
+        }
         document.dispatchEvent(new CustomEvent('admin:refresh'));
       } catch (error) {
         console.error('[logModal] save all student popup changes failed:', error);

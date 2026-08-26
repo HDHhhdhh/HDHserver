@@ -148,3 +148,97 @@ def merge_tests_config_for_write(
         if current_test is not None:
             _merge_preserved_fields(current_test, incoming_test)
     return merged
+
+
+def patch_test_config_record(
+    current: JsonObject,
+    target_category_key: str,
+    incoming_test: JsonObject,
+    *,
+    category_label: str = "",
+) -> tuple[JsonObject, JsonObject]:
+    """Merge one test definition without transferring the whole catalog.
+
+    The caller still owns optimistic revision checking and persistence.  The
+    existing record supplies unknown fields, while explicitly provided test
+    fields replace their current values.  Moving a test between categories
+    preserves its identity and appends it to the destination category.
+    """
+
+    _validate_config_shape(current, "current")
+    category_key = str(target_category_key or "").strip()
+    if not category_key or not isinstance(incoming_test, dict):
+        raise ValueError("invalid test patch")
+
+    test_id = _test_id(incoming_test)
+    if not test_id:
+        raise ValueError("test patch requires an id")
+
+    matches: list[tuple[str, int, JsonObject]] = []
+    categories = current.get("categories")
+    assert isinstance(categories, dict)
+    for source_key, raw_category in categories.items():
+        if not isinstance(source_key, str) or not isinstance(raw_category, dict):
+            continue
+        tests = raw_category.get("tests")
+        if not isinstance(tests, list):
+            continue
+        for index, raw_test in enumerate(tests):
+            if isinstance(raw_test, dict) and _test_id(raw_test) == test_id:
+                matches.append((source_key, index, raw_test))
+
+    if len(matches) > 1:
+        raise ValueError("test patch id is ambiguous")
+
+    merged_test: JsonObject
+    if matches:
+        _source_key, _source_index, current_test = matches[0]
+        merged_test = deepcopy(current_test)
+        incoming_copy = deepcopy(incoming_test)
+        for source_field in SOURCE_FILE_FIELDS:
+            current_source = current_test.get(source_field)
+            incoming_source = incoming_copy.get(source_field)
+            if isinstance(current_source, dict) and isinstance(incoming_source, dict):
+                merged_source = deepcopy(current_source)
+                merged_source.update(incoming_source)
+                incoming_copy[source_field] = merged_source
+        merged_test.update(incoming_copy)
+    else:
+        merged_test = deepcopy(incoming_test)
+
+    merged = deepcopy(current)
+    merged_categories = merged.get("categories")
+    assert isinstance(merged_categories, dict)
+
+    if matches:
+        source_key, source_index, _current_test = matches[0]
+        source_category = merged_categories.get(source_key)
+        if not isinstance(source_category, dict):
+            raise ValueError("invalid source category")
+        source_tests = source_category.get("tests")
+        if not isinstance(source_tests, list):
+            raise ValueError("invalid source test list")
+        if source_key == category_key:
+            source_tests[source_index] = merged_test
+            return merged, deepcopy(merged_test)
+        source_tests.pop(source_index)
+
+    target_category = merged_categories.get(category_key)
+    if target_category is None:
+        target_category = {
+            "label": str(category_label or category_key).strip() or category_key,
+            "tests": [],
+        }
+        merged_categories[category_key] = target_category
+    if not isinstance(target_category, dict):
+        raise ValueError("invalid target category")
+    target_tests = target_category.get("tests")
+    if target_tests is None:
+        target_tests = []
+        target_category["tests"] = target_tests
+    if not isinstance(target_tests, list):
+        raise ValueError("invalid target test list")
+    if category_label and not str(target_category.get("label") or "").strip():
+        target_category["label"] = str(category_label).strip()
+    target_tests.append(merged_test)
+    return merged, deepcopy(merged_test)

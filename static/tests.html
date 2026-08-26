@@ -671,10 +671,50 @@
 
     body.admin.tests-page .btn-row {
       display: flex;
+      align-items: center;
       gap: 10px;
       justify-content: flex-end;
       flex-wrap: wrap;
     }
+
+    body.admin.tests-page .test-save-status {
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      margin-right: auto;
+      padding: 0 10px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: color-mix(in oklab, var(--card) 94%, var(--fg) 6%);
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    body.admin.tests-page .test-save-status[data-kind="dirty"] {
+      color: #9a6700;
+      background: color-mix(in oklab, var(--card) 84%, #f59e0b 16%);
+    }
+
+    body.admin.tests-page .test-save-status[data-kind="saving"] {
+      color: #1d4ed8;
+      background: color-mix(in oklab, var(--card) 84%, #3b82f6 16%);
+    }
+
+    body.admin.tests-page .test-save-status[data-kind="success"] {
+      color: #047857;
+      background: color-mix(in oklab, var(--card) 84%, #10b981 16%);
+    }
+
+    body.admin.tests-page .test-save-status[data-kind="error"] {
+      color: #b91c1c;
+      background: color-mix(in oklab, var(--card) 84%, #ef4444 16%);
+    }
+
+    body.dark.admin.tests-page .test-save-status[data-kind="dirty"] { color: #fcd34d; }
+    body.dark.admin.tests-page .test-save-status[data-kind="saving"] { color: #93c5fd; }
+    body.dark.admin.tests-page .test-save-status[data-kind="success"] { color: #6ee7b7; }
+    body.dark.admin.tests-page .test-save-status[data-kind="error"] { color: #fca5a5; }
 
     body.admin.tests-page .stats-summary {
       display: grid;
@@ -1704,7 +1744,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="topbar-title">
-        테스트 관리 <span id="testsTotalPill" class="pill">0개</span>
+        테스트 관리 <span id="testsTotalPill" class="pill">불러오는 중…</span>
       </h1>
       <div class="topbar-sub">복습 테스트, 단원평가, 기출 테스트와 분류별 배정 기준을 한 화면에서 관리합니다.</div>
     </div>
@@ -1730,7 +1770,7 @@
         <div class="hero-metric">
           <span class="hero-metric-label">현재 작업 범위</span>
           <strong id="testsScopeLabel" class="hero-metric-value">단원평가 · 공수1</strong>
-          <span id="visibleTestsMeta" class="hero-metric-help">현재 목록 0개</span>
+          <span id="visibleTestsMeta" class="hero-metric-help">카탈로그 불러오는 중…</span>
         </div>
         <div class="hero-metric">
           <span class="hero-metric-label">분류별 배정 기준</span>
@@ -1802,7 +1842,9 @@
 
           <div class="scope-note">현재 선택한 범위 안에서만 생성/수정이 반영됩니다.</div>
           <div id="catalogOrderHint" class="catalog-order-hint" role="status" aria-live="polite"></div>
-          <div id="testList" class="test-list" aria-label="시험 목록"></div>
+          <div id="testList" class="test-list" aria-label="시험 목록" aria-busy="true">
+            <div style="font-size:12px; opacity:.7; padding:4px;">카탈로그를 불러오는 중입니다.</div>
+          </div>
         </div>
       </section>
 
@@ -1888,6 +1930,7 @@
           </div>
 
           <div class="btn-row">
+            <span id="testSaveStatus" class="test-save-status" data-kind="ready" role="status" aria-live="polite">변경 없음</span>
             <button id="btnDeleteTest" class="btn secondary" type="button">삭제</button>
             <button id="btnSaveTest" class="btn" type="button">저장</button>
           </div>
@@ -1991,7 +2034,7 @@
     })();
   </script>
   <script type="module" src="/js/admin/demo/bootstrap.js?v=20260826-sheet-sync1"></script>
-  <script src="/js/tests.js?v=20260823" type="module"></script>
+  <script src="/js/tests.js?v=20260826-save-status1" type="module"></script>
 </body>
 
 </html>

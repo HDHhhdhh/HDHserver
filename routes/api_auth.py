@@ -13,6 +13,8 @@ import jwt
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from core.person_identity import is_valid_person_id, normalized_text, same_person
+
 bp_api_auth = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
 BASE = pathlib.Path(__file__).resolve().parents[1]  # project root (routes/..)
@@ -114,6 +116,9 @@ def _school_key_for_student(s: dict) -> str:
 
 
 def _dedup_key_for_student(s: dict) -> str:
+    person_id = normalized_text(s.get("personId"))
+    if is_valid_person_id(person_id):
+        return f"personId||{person_id}"
     # ✅ 같은 사람 묶기 기준: name + school + grade(있으면)
     name = str(s.get("name") or "").strip()
     school = _school_key_for_student(s)
@@ -126,6 +131,11 @@ def _group_students_for_same_person(base: dict) -> tuple[List[dict], str]:
         return [], "none"
 
     students = _students_list()
+    identity_mode = same_person(base, base)
+    if identity_mode is not None:
+        linked = [student for student in students if same_person(base, student) is True]
+        return linked, "person_id" if linked else "none"
+
     strict_key = _dedup_key_for_student(base)
     strict = [s for s in students if _dedup_key_for_student(s) == strict_key]
     if len(strict) > 1:

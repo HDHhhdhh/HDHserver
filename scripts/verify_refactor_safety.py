@@ -910,6 +910,22 @@ def run_legacy_consumer_cleanup_checks() -> None:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "legacy consumer cleanup contract failed")
 
+
+def run_person_identity_checks() -> None:
+    commands = (
+        ([sys.executable, "scripts/verify_person_identity.py"], "person identity rule/store contract failed"),
+        ([sys.executable, "scripts/verify_person_identity_routes.py"], "person identity route contract failed"),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
 def run_file_reference_route_checks() -> None:
     cmd = [sys.executable, "scripts/verify_file_reference_routes.py"]
     print("$ " + " ".join(cmd))
@@ -1200,6 +1216,7 @@ def run_log_rules_unit_checks() -> None:
         latest_homework_books_by_student,
         log_entry_conflicts_with_base,
         merge_log_entry_safe,
+        normalize_sleeping_homework_books,
     )
 
     current = {
@@ -1218,6 +1235,25 @@ def run_log_rules_unit_checks() -> None:
     _assert_unit(
         log_entry_conflicts_with_base({"notes": "newer"}, {"notes": "base"}),
         "notes mismatch must be a log conflict",
+    )
+    _assert_unit(
+        normalize_sleeping_homework_books([" 라이트쎈 ", "라이트 쎈", "", None, "APEX"])
+        == ["라이트쎈", "APEX"],
+        "sleeping homework books must be trimmed and deduplicated",
+    )
+    _assert_unit(
+        not log_entry_conflicts_with_base(
+            {"sleepingHomeworkBooks": ["라이트쎈"]},
+            {"sleepingHomeworkBooks": [" 라이트쎈 "]},
+        ),
+        "equivalent sleeping homework books must not conflict",
+    )
+    _assert_unit(
+        log_entry_conflicts_with_base(
+            {"sleepingHomeworkBooks": ["라이트쎈"]},
+            {"sleepingHomeworkBooks": []},
+        ),
+        "concurrent sleeping homework book changes must conflict",
     )
 
     linked_books = latest_homework_books_by_student({
@@ -1255,8 +1291,13 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     esc_close_js = (ROOT / "static/js/all/features/escClose.js").read_text("utf-8")
 
     _assert_unit(
-        "getJSONOr('/api/homework-books', {})" in state_js,
-        "all-students bootstrap must load linked homework books",
+        "export function loadHomeworkBooks" in state_js
+        and "getJSON('/api/homework-books')" in state_js
+        and "homeworkBooksRequest" in state_js
+        and "loadAll({ waitForHomeworkBooks: false })" in main_js
+        and "void loadHomeworkBooks().then" in main_js
+        and "renderHomeworkBooks();" in main_js,
+        "all-students bootstrap must start one non-blocking linked-homework-books load and render its result",
     )
     _assert_unit(
         "state.homeworkBooksBySid" in table_js and "subBookInput" not in table_js,
@@ -2759,6 +2800,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "reconcile": api_basic._reconcile_consecutive_auto_assignment,
         "today": api_basic._today_kst_iso,
         "enqueue": api_basic.enqueue_current_schedule_changes,
+        "_person_identity_configured": api_basic._person_identity_configured,
     }
 
     def fake_load(path):
@@ -2830,6 +2872,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         api_basic._load_updates_with_auto_assign = lambda **kwargs: init_calls.append(kwargs) or {}
         api_basic._reconcile_consecutive_auto_assignment = lambda *args, **kwargs: expand_calls.append((args, kwargs)) or False
         api_basic.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
+        api_basic._person_identity_configured = lambda: False
 
         app = Flask(__name__)
         app.register_blueprint(api_basic.bp_api_basic)
@@ -6201,8 +6244,12 @@ def _iter_css_selectors(source: str) -> Iterable[tuple[int, str]]:
             continue
         line_no = css.count("\n", 0, match.start(1)) + 1
         for selector in _split_css_selector_list(selector_group):
-            if selector and not selector.startswith("@"):
-                yield line_no, " ".join(selector.split())
+            normalized = " ".join(selector.split())
+            is_keyframe_step = normalized in {"from", "to"} or bool(
+                re.fullmatch(r"\d+(?:\.\d+)?%", normalized)
+            )
+            if normalized and not normalized.startswith("@") and not is_keyframe_step:
+                yield line_no, normalized
 
 
 def _admin_css_selector_is_scoped(selector: str) -> bool:
@@ -7127,7 +7174,7 @@ def run_all_page_progress_lazy_source_checks() -> None:
     table_js = (ROOT / "static/js/all/features/table.js").read_text("utf-8")
     hover_js = (ROOT / "static/js/all/features/hoverTooltip.js").read_text("utf-8")
 
-    load_all_start = state_js.index("export async function loadAll()")
+    load_all_start = state_js.index("export async function loadAll(")
     load_all_end = state_js.index("export async function ensureProgressForSid", load_all_start)
     load_all_block = state_js[load_all_start:load_all_end]
     _assert_unit(
@@ -7469,6 +7516,21 @@ def run_admin_test_modal_assignment_source_checks() -> None:
     for snippet, message in required_ui_contracts:
         _assert_unit(snippet in test_modal_js, message)
 
+    _assert_unit(
+        "function showTestSaveSuccess()" in test_modal_js
+        and "window.showStudentPopupSaveResult('저장 완료')" in test_modal_js
+        and save_block.count("showTestSaveSuccess();") == 2
+        and "변경된 테스트 배정이 없습니다" not in save_block
+        and "toast('테스트 배정 저장됨')" not in save_block,
+        "test saves with or without assignment changes must reuse the video popup's save-complete graphic",
+    )
+    _assert_unit(
+        save_block.index("applyTestProgressPatchResult(editingDate, editingSid, progressRes)")
+        < save_block.rindex("showTestSaveSuccess();")
+        < save_block.index("await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry)"),
+        "changed test saves must show completion after authoritative progress persistence without waiting for compatibility-log I/O",
+    )
+
     restore_start = test_modal_js.index("function restorePreferredInitialTestView")
     restore_end = test_modal_js.index("function restorePreferredCategoryTestView", restore_start)
     restore_block = test_modal_js[restore_start:restore_end]
@@ -7590,6 +7652,8 @@ const moduleUrl = `data:text/javascript;base64,${Buffer.from(moduleSource).toStr
 
 globalThis.window = globalThis;
 globalThis.__toasts = [];
+globalThis.__saveResults = [];
+globalThis.showStudentPopupSaveResult = (message) => globalThis.__saveResults.push(String(message));
 globalThis.__elements = { testAppendNotes: { checked: true } };
 globalThis.__state = {
   progress: {},
@@ -7619,6 +7683,17 @@ globalThis.CustomEvent = class CustomEvent {
 };
 
 	const mod = await import(moduleUrl);
+	mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [],
+  initialTestMap: {},
+  selectedStatuses: [],
+  testSelectionTouched: false,
+});
+await mod.__saveModal({ refresh: false });
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'unchanged test save still shows the shared save-complete graphic');
+	globalThis.__saveResults = [];
 	ok(mod.__nextStatusOf('') === 'assigned', 'left-click none becomes 배정/assigned');
 	ok(mod.__nextStatusOf('assigned') === 'interrupted', 'left-click 배정/assigned becomes 배부/interrupted');
 	ok(mod.__nextStatusOf('interrupted') === 'done', 'left-click 배부/interrupted becomes 완료/done');
@@ -7957,6 +8032,37 @@ ok(!clear.includes('testAssignmentDailyTests'), 'daily metadata is not cleared o
 ok(!clear.includes('testAssignmentNote'), 'assignment note is not cleared on success');
 ok(!globalThis.__studentWorkFetchCache.has('/api/progress?sid=s1'), 'successful progress save invalidates the shared progress cache');
 ok(!globalThis.__studentWorkFetchCache.has('/api/logs?sid=s1'), 'successful log save invalidates the shared log cache');
+
+const feedbackOrder = [];
+globalThis.__saveResults = [];
+globalThis.showStudentPopupSaveResult = (message) => {
+  globalThis.__saveResults.push(String(message));
+  feedbackOrder.push('feedback');
+};
+globalThis.fetch = async (url, init = {}) => {
+  const value = String(url);
+  feedbackOrder.push(value);
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: latestEntry });
+  if (value === '/api/progress/patch') return response({ progress: { tests: { [newLabel]: 'assigned' } } });
+  if (value === '/api/logs/patch') return response({ entry: { saved: true } });
+  return response({});
+};
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [newTest],
+  initialTestMap: {},
+  selectedStatuses: [[newLabel, 'assigned']],
+  touchedTestKeys: [newLabel],
+});
+await mod.__saveModal({ refresh: false });
+const feedbackIndex = feedbackOrder.indexOf('feedback');
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'changed test save shows the shared save-complete graphic');
+ok(
+  feedbackOrder.indexOf('/api/progress/patch') < feedbackIndex
+  && feedbackIndex < feedbackOrder.indexOf('/api/logs/patch'),
+  'save-complete graphic appears after authoritative progress persistence and before compatibility-log I/O',
+);
 """
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-test-modal-assignment-driver>")
@@ -7982,6 +8088,12 @@ def run_admin_video_modal_preflight_source_checks() -> None:
     save_start = video_modal_js.index("async function saveVideoAssignmentForCurrent")
     save_end = video_modal_js.index("window.saveVideoAssignmentPopup", save_start)
     save_block = video_modal_js[save_start:save_end]
+
+    _assert_unit(
+        "window.showStudentPopupSaveResult = showSavePopup;" in video_modal_js
+        and "window.hideStudentPopupSaveResult = hideSavePopup;" in video_modal_js,
+        "video modal must expose its save-result graphic for the other student popups",
+    )
 
     _assert_unit(
         "async function fetchLatestExtraVideoLogEntry" in video_modal_js,
@@ -9264,7 +9376,7 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js';", "const initTestModal = () => {};");
+  .replace("import { initTestModal } from './testModal.js?v=20260826-save-feedback2';", "const initTestModal = () => {};");
 source = source.replace(
   "  logSave.addEventListener('click', async () => {",
   "  window.__logModalHarnessReapply = reapplyCarriedTestAssignmentForCurrent;\n\n  logSave.addEventListener('click', async () => {",
@@ -9450,7 +9562,8 @@ def run_admin_log_modal_save_policy_source_checks() -> None:
         "contentChanged ? { base } : {}",
         "await patchLogEntry(today, sid, entry, clearKeys",
         "applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });",
-        "setLogModalSnapshots(notesNow, hwRows);",
+        "const sleepingHomeworkBooks = collectSleepingHomeworkBooks();",
+        "setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);",
     ]
     for snippet in save_snippets:
         _assert_unit(snippet in save_block, f"logModal save policy must keep merge-safe step: {snippet}")
@@ -9464,6 +9577,8 @@ def run_admin_log_modal_save_policy_source_checks() -> None:
         "function applyLogSaveResult",
         "if (!doneFlag && prevDone) next.done = true",
         "function setLogModalSnapshots",
+        "const HOMEWORK_SLEEPING_BOOKS_KEY = 'sleepingHomeworkBooks';",
+        "function syncHomeworkSleepingControls()",
     ]:
         _assert_unit(snippet in log_modal_js, f"logModal helper policy must keep merge-safe step: {snippet}")
 
@@ -9593,7 +9708,7 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js';", "const initTestModal = () => {};");
+  .replace("import { initTestModal } from './testModal.js?v=20260826-save-feedback2';", "const initTestModal = () => {};");
 const harness = `
 export function __initHarness() {
   globalThis.__installModalElements();
@@ -10194,6 +10309,7 @@ def run_unit_checks() -> bool:
         run_export_log_format_checks,
         run_today_completion_checks,
         run_legacy_consumer_cleanup_checks,
+        run_person_identity_checks,
         run_file_reference_route_checks,
         run_today_order_store_migration_checks,
         run_app_import_smoke_checks,

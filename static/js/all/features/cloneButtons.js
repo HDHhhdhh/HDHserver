@@ -183,7 +183,8 @@ export function hookCloneButtons({ onCloned } = {}) {
     try {
       btn.disabled = true;
       btn.textContent = '중...';
-      const res = await fetch('/api/add-student', {
+      const cloneUrl = `/api/add-student?cloneFromSid=${encodeURIComponent(sid)}`;
+      const res = await fetch(cloneUrl, {
         method: 'POST',
         headers: CT,
         credentials: 'same-origin',

@@ -48,6 +48,7 @@ let TEST_CFG = { categories: {} };
 let TEST_CFG_REVISION = '';
 let TEST_STATS = null;
 let TEST_STATS_DETAIL = null;
+let statsLoadVersion = 0;
 let ruleSaveTimer = null;
 let ruleSaveInFlight = false;
 let ruleSavePending = false;
@@ -1082,6 +1083,7 @@ function fillEditor() {
     $('#cfgAnswers') && ($('#cfgAnswers').value = '');
     renderAnswerModeEditor(null);
     updateChrome(null);
+    setTestSaveStatus('ready', '변경 없음');
     return;
   }
 
@@ -1097,6 +1099,7 @@ function fillEditor() {
   if ($('#cfgAnswers')) $('#cfgAnswers').value = answerKeysToText(test);
   renderAnswerModeEditor(raw);
   updateChrome(test);
+  setTestSaveStatus('ready', '저장된 상태');
 }
 
 function renderRules() {
@@ -1199,6 +1202,27 @@ function showRuleSavePopup(message = '저장됐음', kind = 'success') {
   }, 1800);
 }
 
+function setTestSaveStatus(kind = 'ready', message = '') {
+  const status = $('#testSaveStatus');
+  if (status) {
+    status.dataset.kind = kind;
+    status.textContent = message || '변경 없음';
+  }
+  const button = $('#btnSaveTest');
+  if (button) button.textContent = kind === 'saving' ? '저장 중…' : '저장';
+}
+
+function markTestEditorDirty() {
+  if (catalogMutationSaveInFlight) return;
+  setTestSaveStatus('dirty', '저장 안 됨');
+}
+
+function testSaveClock(date = new Date()) {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map(value => String(value).padStart(2, '0'))
+    .join(':');
+}
+
 async function saveRulesFromGrid() {
   if (catalogOrderSaveInFlight || catalogMutationSaveInFlight) {
     ruleSavePending = true;
@@ -1259,6 +1283,30 @@ async function saveConfig(removedTestIds = []) {
   }
   const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
   if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
+}
+
+async function saveTestDefinition(test, categoryKey, categoryLabel) {
+  const headers = { ...CT };
+  if (TEST_CFG_REVISION) headers['X-Tests-Config-Revision'] = TEST_CFG_REVISION;
+  const res = await fetch('/api/tests-config/test', {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      categoryKey,
+      categoryLabel,
+      test,
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status === 409 || res.status === 428) await loadConfigAndStats();
+    const error = new Error(`tests-config test save failed: ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
+  return data?.test && typeof data.test === 'object' ? data.test : test;
 }
 
 function csvCell(value) {
@@ -1567,8 +1615,12 @@ async function importTestsFromCsv(file) {
 }
 
 async function loadConfigAndStats() {
+  const statsVersion = ++statsLoadVersion;
   TEST_STATS_DETAIL = null;
   ui.statsTestId = '';
+  TEST_STATS = null;
+  const testList = $('#testList');
+  testList?.setAttribute('aria-busy', 'true');
   try {
     TEST_CFG = ensureConfig(await fetchTestsConfig());
   } catch {
@@ -1580,13 +1632,6 @@ async function loadConfigAndStats() {
   const curSel = $('#cfgCur');
   if (typeSel) typeSel.value = ui.category;
   if (curSel) curSel.value = ui.subject;
-
-  try {
-    const recent = Number($('#statRecent')?.value || '30') || 30;
-    TEST_STATS = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
-  } catch {
-    TEST_STATS = null;
-  }
 
   updateSubjectOptions();
   updateListDifficultyOptions();
@@ -1600,17 +1645,37 @@ async function loadConfigAndStats() {
   renderStatsSummary();
   renderStatsTable();
   renderStatsDetail();
+  testList?.setAttribute('aria-busy', 'false');
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+  let nextStats = null;
+  try {
+    const recent = Number($('#statRecent')?.value || '30') || 30;
+    nextStats = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
+  } catch {
+    nextStats = null;
+  }
+  if (statsVersion !== statsLoadVersion) return;
+  TEST_STATS = nextStats;
+  renderTestList();
+  renderStatsSummary();
+  renderStatsTable();
+  renderStatsDetail();
 }
 
 async function loadStatsOnly() {
+  const statsVersion = ++statsLoadVersion;
   TEST_STATS_DETAIL = null;
   ui.statsTestId = '';
+  let nextStats = null;
   try {
     const recent = Number($('#statRecent')?.value || '30') || 30;
-    TEST_STATS = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
+    nextStats = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
   } catch {
-    TEST_STATS = null;
+    nextStats = null;
   }
+  if (statsVersion !== statsLoadVersion) return;
+  TEST_STATS = nextStats;
   renderStatsSummary();
   renderStatsTable();
   renderStatsDetail();
@@ -1965,6 +2030,17 @@ function renderStatsDetail(test = null, fetchDetail = false) {
 }
 
 function bindUI() {
+  const editorPanel = document.querySelector('.editor-panel');
+  const editorFieldSelector = [
+    '#cfgEditType', '#cfgSubject', '#cfgDifficulty', '#cfgTerm', '#cfgRound',
+    '#cfgName', '#cfgProblems', '#cfgAnswers', '#cfgAnswerModes select',
+  ].join(',');
+  const handleEditorChange = (event) => {
+    if (event.target?.matches?.(editorFieldSelector)) markTestEditorDirty();
+  };
+  editorPanel?.addEventListener('input', handleEditorChange);
+  editorPanel?.addEventListener('change', handleEditorChange);
+
   $('#cfgType')?.addEventListener('change', e => {
     clearCatalogOrderFeedback();
     ui.category = e.target.value || 'UNIT';
@@ -2118,6 +2194,7 @@ function bindUI() {
     if ($('#cfgProblems')) $('#cfgProblems').value = '20';
     if ($('#cfgAnswers')) $('#cfgAnswers').value = '';
     renderAnswerModeEditor(null, new Array(20).fill(''));
+    markTestEditorDirty();
   });
 
   $('#btnSaveTest')?.addEventListener('click', async () => {
@@ -2137,11 +2214,16 @@ function bindUI() {
     const answerModes = currentAnswerModes(problems);
 
     if (!name) {
-      alert('테스트명을 입력해주세요.');
+      setTestSaveStatus('error', '테스트명을 입력해주세요');
+      $('#cfgName')?.focus?.();
       return;
     }
 
-    if (!beginCatalogMutationSave()) return;
+    if (!beginCatalogMutationSave()) {
+      setTestSaveStatus('error', '다른 저장 완료 후 다시 눌러주세요');
+      return;
+    }
+    setTestSaveStatus('saving', '저장 중…');
 
     try {
       const ref = selectedTestRef();
@@ -2179,8 +2261,8 @@ function bindUI() {
         : {};
       test.answerModes = { ...existingAnswerModes, [round]: answerModes };
 
-      await saveConfig();
-      alert('저장 완료');
+      const savedTest = await saveTestDefinition(test, targetCategory, cat.label || targetDef.label);
+      if (savedTest !== test) Object.assign(test, savedTest);
       ui.category = targetCategory;
       ui.subject = subject;
       ui.difficulty = difficulty;
@@ -2188,10 +2270,18 @@ function bindUI() {
       ui.round = isUnitCategory(targetCategory) ? round : '';
       $('#cfgType') && ($('#cfgType').value = targetCategory);
       $('#cfgCur') && ($('#cfgCur').value = subject);
-      await loadConfigAndStats();
+      updateListDifficultyOptions();
+      updateTermOptions();
+      updateRoundOptions();
+      updateEditCategoryOptions(targetCategory);
+      renderTestList();
+      fillEditor();
+      renderRules();
+      renderStatsSummary();
+      setTestSaveStatus('success', `저장 완료 · ${testSaveClock()}`);
     } catch (e) {
       console.error(e);
-      alert('저장에 실패했습니다.');
+      setTestSaveStatus('error', '저장 실패 · 다시 눌러주세요');
     } finally {
       endCatalogMutationSave();
     }

@@ -1865,6 +1865,10 @@ export function initVideoModal() {
     vidSavePopup.textContent = '';
   }
 
+  // The three student-work popups share this exact feedback graphic.
+  window.showStudentPopupSaveResult = showSavePopup;
+  window.hideStudentPopupSaveResult = hideSavePopup;
+
   async function openVideoModalForRow(rowOrButton, opts = {}) {
     const openSeq = ++videoOpenSeq;
     hideSavePopup();

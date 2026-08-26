@@ -7,10 +7,10 @@ import re
 import time
 import json
 from copy import deepcopy
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
-from flask import Blueprint, abort, current_app, g, jsonify, make_response, request
+from flask import Blueprint, abort, current_app, g, has_request_context, jsonify, make_response, request
 
 from core.paths import (
     BASE,
@@ -18,6 +18,11 @@ from core.paths import (
     EXTRA_PATH, LOGS_PATH, CLINIC_PATH, WEEKEND_SLOTS_PATH,
     WATCH_PATH, TESTS_CFG_PATH,
 )
+try:
+    from core.paths import PERSONS_PATH, PERSON_IDENTITY_JOURNAL_PATH
+except ImportError:  # Compatibility for isolated route fixtures with a minimal paths stub.
+    PERSONS_PATH = BASE / "persons.json"
+    PERSON_IDENTITY_JOURNAL_PATH = BASE / "instance" / "person_identity_transactions" / "pending.json"
 from core.ghost_student import (
     GHOST_STUDENT_ID,
     GHOST_STUDENT_WRITE_ERROR,
@@ -53,6 +58,24 @@ from core.progress_rules import (
 )
 from core.progress_notifications import commit_progress_notifications, progress_notification_snapshot
 from core.progress_store import load_progress_strict, progress_file_lock, save_progress_strict
+from core.person_identity import (
+    PERSON_PROFILE_FIELDS,
+    PersonIdentityConflictError,
+    PersonIdentityNotFoundError,
+    PersonIdentityValidationError,
+    allocate_unique_sid,
+    same_person,
+    validate_identity_state,
+)
+from core.person_identity_store import (
+    PersonIdentityRecoveryRequiredError,
+    PersonIdentityUnavailableError,
+    create_student_with_identity,
+    identity_is_configured,
+    mutate_identity_state,
+    retire_student_identity,
+    update_person_profile_field,
+)
 from core.video_review_rules import resolve_video_review_states_before_date
 from core.student_curriculum_progress import build_curriculum_progress
 from core.student_schedule_projection import project_student_schedule, select_next_schedule
@@ -71,6 +94,28 @@ STUDENT_COURSE_BLOCK_MESSAGE = "수업일이 아닌 것 같습니다. 선생님�
 GHOST_STUDENT_HOMEWORK_BOOK = "고스트 숙제 교재"
 GHOST_STUDENT_VIDEO_MID = "ghost-outside-video"
 GHOST_STUDENT_TEST_ID = "ghost-outside-answer-test"
+_PERSON_PROFILE_FIELD_ALIASES = {
+    "highSchool": "school",
+    "middleSchool": "school",
+}
+
+
+def _person_identity_configured() -> bool:
+    return identity_is_configured(
+        PERSONS_PATH,
+        PERSON_IDENTITY_JOURNAL_PATH,
+        STU_PATH,
+    )
+
+
+def _person_identity_writes_degraded() -> bool:
+    return bool(current_app.config.get("PERSON_IDENTITY_WRITES_DEGRADED"))
+
+
+def _person_identity_error(message: str, status: int):
+    return jsonify({"ok": False, "error": message, "code": "person_identity_unavailable"}), status
+
+
 # ─────────────────────────────────────────────
 # 공통 CRUD
 # ─────────────────────────────────────────────
@@ -871,30 +916,46 @@ def _clean_placeholder_text(value) -> str:
     return "" if _is_question_placeholder(text) or _looks_corrupted_placeholder_text(text) else text
 
 
-def _student_homework_books(sid: str) -> List[str]:
+def _load_student_homework_books_by_sid() -> Dict[str, List[str]]:
     try:
         students = load(STU_PATH) or []
     except Exception:
         students = []
     if not isinstance(students, list):
-        return []
+        return {}
 
-    sid_s = str(sid or "").strip()
-    stu = next(
-        (s for s in students if isinstance(s, dict) and str(s.get("id") or "").strip() == sid_s),
-        None,
-    )
-    if not stu:
-        return []
-
-    books: List[str] = []
-    for key in sorted(stu.keys(), key=lambda k: int(k[7:]) if re.match(r"^subBook\d+$", str(k)) else 999):
-        if not re.match(r"^subBook\d+$", str(key)):
+    out: Dict[str, List[str]] = {}
+    for stu in students:
+        if not isinstance(stu, dict):
             continue
-        val = str(stu.get(key) or "").strip()
-        if val and val not in books:
-            books.append(val)
-    return books
+        sid = str(stu.get("id") or "").strip()
+        if not sid:
+            continue
+        books: List[str] = []
+        for key in sorted(stu.keys(), key=lambda k: int(k[7:]) if re.match(r"^subBook\d+$", str(k)) else 999):
+            if not re.match(r"^subBook\d+$", str(key)):
+                continue
+            val = str(stu.get(key) or "").strip()
+            if val and val not in books:
+                books.append(val)
+        if books:
+            out[sid] = books
+    return out
+
+
+def _student_homework_books(sid: str) -> List[str]:
+    sid_s = str(sid or "").strip()
+    if not sid_s:
+        return []
+
+    if has_request_context():
+        cache = getattr(g, "_student_homework_books_by_sid", None)
+        if cache is None:
+            cache = _load_student_homework_books_by_sid()
+            g._student_homework_books_by_sid = cache
+    else:
+        cache = _load_student_homework_books_by_sid()
+    return list(cache.get(sid_s, []))
 
 
 def _book_key(value: str) -> str:
@@ -1720,6 +1781,9 @@ def _student_is_today_auto_target(stu: dict, sid: str, date_key: str, extra=None
 def _same_student_course_alias(left: dict, right: dict) -> bool:
     if not isinstance(left, dict) or not isinstance(right, dict):
         return False
+    identity_match = same_person(left, right)
+    if identity_match is not None:
+        return identity_match
     if str(left.get("name") or "").strip() != str(right.get("name") or "").strip():
         return False
 
@@ -2914,13 +2978,59 @@ def api_school_calendar():
 
 @bp_api_basic.post("/api/add-student")
 def api_add_student():
-    data = request.get_json(force=True) or {}
+    data = dict(request.get_json(force=True) or {})
+    data.pop("id", None)
+    data.pop("personId", None)
+    data.pop("cloneFromSid", None)
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
+    _apply_able_auto_video_assign_default(data)
+
+    if _person_identity_configured():
+        if _person_identity_writes_degraded():
+            return _person_identity_error("person identity recovery is required", 503)
+        query_clone_sid = str(request.args.get("cloneFromSid") or "").strip()
+        header_clone_sid = unquote(str(request.headers.get("X-Clone-From-Sid") or "").strip())
+        if query_clone_sid and header_clone_sid and query_clone_sid != header_clone_sid:
+            return jsonify({"ok": False, "error": "conflicting clone source SID"}), 400
+        clone_from_sid = query_clone_sid or header_clone_sid
+        if len(clone_from_sid) > 256:
+            return jsonify({"ok": False, "error": "clone source SID is too long"}), 400
+        try:
+            created = create_student_with_identity(
+                PERSONS_PATH,
+                STU_PATH,
+                PERSON_IDENTITY_JOURNAL_PATH,
+                data,
+                sid_prefix=name_slug,
+                clone_from_sid=clone_from_sid,
+                suffix_factory=lambda: random.randint(0, 999),
+            )
+        except PersonIdentityNotFoundError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+        except PersonIdentityConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        except (
+            PersonIdentityRecoveryRequiredError,
+            PersonIdentityUnavailableError,
+            PersonIdentityValidationError,
+        ) as exc:
+            return _person_identity_error(str(exc), 503)
+        except TimeoutError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        enqueue_current_schedule_changes([created["id"]])
+        return jsonify({"id": created["id"], "personId": created["personId"]})
+
     with file_lock(STU_PATH):
         students: List[dict] = load(STU_PATH)
-        data["id"] = f"{name_slug}{random.randint(0, 999):03d}"
-        _apply_able_auto_video_assign_default(data)
+        try:
+            data["id"] = allocate_unique_sid(
+                name_slug,
+                [str(row.get("id") or "") for row in students if isinstance(row, dict)],
+                suffix_factory=lambda: random.randint(0, 999),
+            )
+        except PersonIdentityConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
         students.append(data)
         save_atomic(STU_PATH, students)
     enqueue_current_schedule_changes([data["id"]])
@@ -3302,6 +3412,30 @@ def api_logs_patch_batch():
 # ─────────────────────────────────────────────
 @bp_api_basic.delete("/api/students/<string:sid>")
 def api_delete_student(sid: str):
+    if _person_identity_configured():
+        if _person_identity_writes_degraded():
+            return _person_identity_error("person identity recovery is required", 503)
+        try:
+            retire_student_identity(
+                PERSONS_PATH,
+                STU_PATH,
+                PERSON_IDENTITY_JOURNAL_PATH,
+                sid,
+            )
+        except PersonIdentityNotFoundError:
+            abort(404, description="학생을 찾을 수 없습니다.")
+        except PersonIdentityConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        except (
+            PersonIdentityRecoveryRequiredError,
+            PersonIdentityUnavailableError,
+            PersonIdentityValidationError,
+        ) as exc:
+            return _person_identity_error(str(exc), 503)
+        except TimeoutError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return "", 204
+
     with file_lock(STU_PATH):
         students: List[dict] = load(STU_PATH)
         for i, s in enumerate(students):
@@ -3322,25 +3456,92 @@ def api_update_student_field():
     if not sid or not field:
         abort(400)
 
-    students: List[dict] | None = None
-    with file_lock(STU_PATH):
-        current_students: List[dict] = load(STU_PATH)
-        for s in current_students:
+    field = str(field)
+    if field in {"id", "personId"}:
+        return jsonify({"ok": False, "error": f"field is immutable: {field}"}), 400
+
+    identity_configured = _person_identity_configured()
+    if identity_configured and _person_identity_writes_degraded():
+        return _person_identity_error("person identity recovery is required", 503)
+
+    canonical_profile_field = _PERSON_PROFILE_FIELD_ALIASES.get(field, field)
+    if identity_configured and canonical_profile_field in PERSON_PROFILE_FIELDS:
+        try:
+            update_person_profile_field(
+                PERSONS_PATH,
+                STU_PATH,
+                PERSON_IDENTITY_JOURNAL_PATH,
+                str(sid),
+                canonical_profile_field,
+                value,
+            )
+        except PersonIdentityNotFoundError:
+            abort(404)
+        except PersonIdentityConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        except (
+            PersonIdentityRecoveryRequiredError,
+            PersonIdentityUnavailableError,
+            PersonIdentityValidationError,
+        ) as exc:
+            return _person_identity_error(str(exc), 503)
+        except TimeoutError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return "OK"
+
+    def updated_student_rows(current_students: List[dict]) -> List[dict] | None:
+        next_students = deepcopy(current_students)
+        next_value = value
+        for s in next_students:
             if str(s.get("id")) != str(sid):
                 continue
             was_able = _student_uses_able_curriculum(s)
             if field == AUTO_VIDEO_ASSIGN_FIELD:
-                value = _coerce_auto_video_assign_count(value)
-            s[field] = value
+                next_value = _coerce_auto_video_assign_count(next_value)
+            s[field] = next_value
             if (
                 field in {"curriculum", "subCurriculum"}
                 and _student_uses_able_curriculum(s)
-                and (not was_able or _is_able_curriculum_value(value))
+                and (not was_able or _is_able_curriculum_value(next_value))
             ):
                 _apply_able_auto_video_assign_default(s)
-            save_atomic(STU_PATH, current_students)
-            students = current_students
-            break
+            return next_students
+        return None
+
+    students: List[dict] | None = None
+    if identity_configured:
+        def mutation(directory: dict, current_students: list):
+            next_students = updated_student_rows(current_students)
+            if next_students is None:
+                raise PersonIdentityNotFoundError("student SID was not found")
+            validate_identity_state(directory, next_students)
+            return directory, next_students, next_students
+
+        try:
+            students = mutate_identity_state(
+                PERSONS_PATH,
+                STU_PATH,
+                PERSON_IDENTITY_JOURNAL_PATH,
+                mutation,
+            )
+        except PersonIdentityNotFoundError:
+            abort(404)
+        except PersonIdentityConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        except (
+            PersonIdentityRecoveryRequiredError,
+            PersonIdentityUnavailableError,
+            PersonIdentityValidationError,
+        ) as exc:
+            return _person_identity_error(str(exc), 503)
+        except TimeoutError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+    else:
+        with file_lock(STU_PATH):
+            current_students: List[dict] = load(STU_PATH)
+            students = updated_student_rows(current_students)
+            if students is not None:
+                save_atomic(STU_PATH, students)
 
     if students is None:
         abort(404)

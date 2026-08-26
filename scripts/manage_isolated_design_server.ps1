@@ -72,11 +72,30 @@ function Get-ProcessStartUtc {
 }
 
 function Test-SameStartTime {
-    param([int]$ProcessId, [string]$ExpectedUtc)
-    if ([string]::IsNullOrWhiteSpace($ExpectedUtc)) { return $false }
+    param([int]$ProcessId, [object]$ExpectedUtc)
+    if ($null -eq $ExpectedUtc) { return $false }
     $actual = Get-ProcessStartUtc -ProcessId $ProcessId
     if (-not $actual) { return $false }
-    [DateTime]::Parse($actual).ToUniversalTime().Ticks -eq [DateTime]::Parse($ExpectedUtc).ToUniversalTime().Ticks
+    try {
+        $expectedDate = if ($ExpectedUtc -is [DateTime]) {
+            ([DateTime]$ExpectedUtc).ToUniversalTime()
+        } else {
+            $expectedText = [string]$ExpectedUtc
+            if ([string]::IsNullOrWhiteSpace($expectedText)) { return $false }
+            [DateTime]::Parse(
+                $expectedText,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            ).ToUniversalTime()
+        }
+        [DateTime]::Parse(
+            $actual,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime().Ticks -eq $expectedDate.Ticks
+    } catch {
+        $false
+    }
 }
 
 function Get-ManagedStatus {
@@ -89,7 +108,7 @@ function Get-ManagedStatus {
             [int]$receipt.port -eq $Port -and
             [string]$receipt.codeRoot -eq $codeRoot -and
             [int]$receipt.listenerProcessId -eq [int]$loopback[0].OwningProcess -and
-            (Test-SameStartTime -ProcessId ([int]$receipt.listenerProcessId) -ExpectedUtc ([string]$receipt.listenerStartTimeUtc))
+            (Test-SameStartTime -ProcessId ([int]$receipt.listenerProcessId) -ExpectedUtc $receipt.listenerStartTimeUtc)
         )
     }
     [ordered]@{
@@ -158,7 +177,7 @@ function Stop-ManagedServer {
     }
     $listenerPid = [int]$listeners[0].OwningProcess
     if ($listenerPid -ne [int]$receipt.listenerProcessId -or
-        -not (Test-SameStartTime -ProcessId $listenerPid -ExpectedUtc ([string]$receipt.listenerStartTimeUtc))) {
+        -not (Test-SameStartTime -ProcessId $listenerPid -ExpectedUtc $receipt.listenerStartTimeUtc)) {
         throw "Port $Port is no longer owned by the recorded isolated server."
     }
     $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$listenerPid" -ErrorAction SilentlyContinue
@@ -171,7 +190,7 @@ function Stop-ManagedServer {
     Stop-Process -Id $listenerPid -Force
     $wrapperPid = [int]$receipt.wrapperProcessId
     if ($wrapperPid -gt 0 -and
-        (Test-SameStartTime -ProcessId $wrapperPid -ExpectedUtc ([string]$receipt.wrapperStartTimeUtc))) {
+        (Test-SameStartTime -ProcessId $wrapperPid -ExpectedUtc $receipt.wrapperStartTimeUtc)) {
         Stop-Process -Id $wrapperPid -Force -ErrorAction SilentlyContinue
     }
 

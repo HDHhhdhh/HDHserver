@@ -16,7 +16,25 @@ from core.material_state import (
     MaterialStateRecoveryRequiredError,
     recover_material_state_if_needed,
 )
-from core.paths import ASN_PATH, MAT_PATH, PAGE_FOLDERS_PATH
+from core.paths import (
+    BASE,
+    ASN_PATH,
+    MAT_PATH,
+    PAGE_FOLDERS_PATH,
+    STU_PATH,
+)
+try:
+    from core.paths import PERSONS_PATH, PERSON_IDENTITY_JOURNAL_PATH
+except ImportError:  # Compatibility for isolated app fixtures with a minimal paths stub.
+    PERSONS_PATH = BASE / "persons.json"
+    PERSON_IDENTITY_JOURNAL_PATH = BASE / "instance" / "person_identity_transactions" / "pending.json"
+from core.person_identity_store import (
+    PersonIdentityRecoveryRequiredError,
+    PersonIdentityUnavailableError,
+    identity_is_configured,
+    load_identity_state_strict,
+    recover_identity_state_if_needed,
+)
 from core.runtime_server_guard import refuse_concurrent_live_server
 
 from core.network_access import (
@@ -72,6 +90,35 @@ def create_app() -> Flask:
             flush=True,
         )
 
+    person_identity_recovery_error = ""
+    try:
+        recovered_person_identity = recover_identity_state_if_needed(
+            PERSONS_PATH,
+            STU_PATH,
+            PERSON_IDENTITY_JOURNAL_PATH,
+        )
+        if identity_is_configured(
+            PERSONS_PATH,
+            PERSON_IDENTITY_JOURNAL_PATH,
+            STU_PATH,
+        ):
+            load_identity_state_strict(PERSONS_PATH, STU_PATH)
+    except (PersonIdentityRecoveryRequiredError, PersonIdentityUnavailableError) as exc:
+        person_identity_recovery_error = str(exc)
+        print(
+            f"[person-identity] writes degraded; recovery required: {exc}",
+            flush=True,
+        )
+    except Exception as exc:
+        person_identity_recovery_error = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[person-identity] writes degraded; startup check failed: {exc}",
+            flush=True,
+        )
+    else:
+        if recovered_person_identity:
+            print("[person-identity] recovered pending transaction", flush=True)
+
     material_state_recovery_error = ""
     try:
         recovered_material_state = recover_material_state_if_needed(
@@ -98,6 +145,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="")
     app.json.ensure_ascii = False
     app.config["MATERIAL_STATE_WRITES_DEGRADED"] = bool(material_state_recovery_error)
+    app.config["PERSON_IDENTITY_WRITES_DEGRADED"] = bool(person_identity_recovery_error)
     student_app_config = load_student_app_config()
     install_student_public_surface(
         app,

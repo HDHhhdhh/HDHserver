@@ -8,6 +8,7 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const files = Object.freeze({
   logModal: path.join(root, 'static', 'js', 'admin', 'features', 'logModal.js'),
   css: path.join(root, 'static', 'css', 'admin.css'),
+  lightCss: path.join(root, 'static', 'css', 'student-work-light.css'),
   contract: path.join(root, 'static', 'js', 'admin', 'demo', 'homeworkContract.js'),
   demoData: path.join(root, 'static', 'js', 'admin', 'demo', 'data.js'),
   demoStore: path.join(root, 'static', 'js', 'admin', 'demo', 'store.js'),
@@ -200,9 +201,25 @@ export async function runChecks() {
     assert.match(sources.logModal, /const requestPayload = canonicalHomework\.pendingPayload/);
     assert.match(sources.logModal, /canonicalHomework\.mode\s*=\s*['"]conflict['"]/);
     const saveHandler = sources.logModal.slice(sources.logModal.indexOf("logSave.addEventListener"));
-    assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < saveHandler.indexOf('window.saveVideoAssignmentPopup'));
+    assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') >= 0);
     assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < saveHandler.indexOf('toast('));
     assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < saveHandler.indexOf('close()'));
+  });
+
+  check('save-and-close persists every unified student popup before closing', () => {
+    const start = sources.logModal.indexOf('async function saveAllStudentPopupChangesAndClose()');
+    const end = sources.logModal.indexOf("logSave.addEventListener", start);
+    const saveAllHandler = sources.logModal.slice(start, end);
+    assert.ok(start >= 0 && end > start);
+    const videoSave = saveAllHandler.indexOf('await window.saveVideoAssignmentPopup');
+    const testSave = saveAllHandler.indexOf('await window.saveTestAssignmentPopup');
+    const recordSave = saveAllHandler.indexOf('await saveRecordPopupForCurrent()');
+    const close = saveAllHandler.indexOf('close()');
+    assert.ok(videoSave >= 0 && testSave >= 0 && recordSave >= 0 && close >= 0);
+    assert.ok(videoSave < close);
+    assert.ok(testSave < close);
+    assert.ok(recordSave < close);
+    assert.match(saveAllHandler, /모든 팝업 변경사항 저장에 실패했습니다\. 팝업을 닫지 않았습니다\./);
   });
 
   check('all-students read-only mode disables canonical editing', () => {
@@ -216,6 +233,17 @@ export async function runChecks() {
     assert.match(sources.css, /@media \(max-width: 520px\)[\s\S]*?#logModal \.hwCanonicalGrid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(sources.css, /#logModal #hwBody input:not\(\[type="range"\]\)[\s\S]*?min-height:\s*44px/);
     assert.match(sources.css, /#logModal #hwBody \.hw-del-btn\s*\{[\s\S]*?min-width:\s*44px\s*!important[\s\S]*?height:\s*44px\s*!important/);
+  });
+
+  check('light homework labels align and the sleep control leaves section spacing', () => {
+    assert.match(sources.lightCss, /\.hw-book::before\s*\{[\s\S]*?margin-left:\s*6px\s*!important/);
+    assert.match(sources.lightCss, /\.hw-book\s*>\s*\.hw-book-sleep-toggle\s*\{[\s\S]*?margin:\s*4px 0 0\s*!important/);
+  });
+
+  check('light progress range has no outer shell and sleeping rows use one full-width surface', () => {
+    assert.match(sources.lightCss, /\.hwPctRange\s*\{[\s\S]*?margin:\s*0\s*!important[\s\S]*?padding:\s*0\s*!important[\s\S]*?border:\s*0\s*!important[\s\S]*?background:\s*transparent\s*!important/);
+    assert.match(sources.lightCss, /#hwBody \.hwItem\.is-sleeping\s*\{[\s\S]*?width:\s*100%\s*!important[\s\S]*?margin-inline:\s*0\s*!important[\s\S]*?background:\s*#f2f4f7\s*!important/);
+    assert.match(sources.lightCss, /input:not\(\[type="range"\]\):disabled[\s\S]*?background-color:\s*transparent\s*!important[\s\S]*?background-image:\s*none\s*!important/);
   });
 
   check('demo primary and bootstrap fallback share one session-only contract', () => {
