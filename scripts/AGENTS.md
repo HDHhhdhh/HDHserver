@@ -19,6 +19,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 | Safety suite | `verify_refactor_safety.py` | Compile, JS checks, unit checks, optional safe smoke checks. |
 | Student mobile verification | `verify_student_mobile_app.py`, `verify_student_mobile_app.mjs`, `student_mobile_app_checks/` | Temp/pure contracts; the default refactor suite runs the PWA install-guide boot/interaction flow with a temp receipt. |
 | Student deployment verification | `student_mobile_app_checks/deployment.py`, `verify_student_app_deployment.ps1` | Windows CI runs the full isolated-mutex temp fixture; non-Windows CI runs portable source/backup contracts. Neither is rollout evidence. |
+| Production origin shadow guard | `guard_waitress_shadow_listener.ps1`, `run_waitress_server.ps1` | The production runner supervises port 8003 and stops only a recognized repo Waitress verification listener that shadows the healthy wildcard listener. Unknown listeners are logged without automatic termination. |
 | Class-log export verifier | `verify_export_log_format.mjs` | Pure options/TXT/CSV/privacy/source contract, including green-only line-separated tests, school/Ilsan source+difficulty labels, and TXT/CSV blue-video exclusion; no app import or runtime reads. |
 | Assistant-note verifier | `verify_assistant_student_notes.py` | Temp SQLite/API/source checks; standalone behavior check, not part of the default suite. |
 | Student video-review verifier | `verify_student_previous_video_review.js` | HTML/CSS/DOM contract for done-only bootstrap choices, local registration, academy restriction, and reopened assignments. |
@@ -64,6 +65,7 @@ Scripts cover verification, runtime backups, generated test catalog files, answe
 - Keep `verify_student_watch_timestamp.mjs` and `verify_watch_timestamp_guard.py` green; they reject 32-bit/10-digit `updatedAt` values and prove browser-to-server millisecond preservation/repair.
 
 ## Anti-Patterns
+- Never launch `waitress-serve --listen=127.0.0.1:8003 app:app` beside the live wildcard listener. It can capture both Cloudflare hostnames even though the production process remains healthy; use port 8004 for isolated browser/API verification.
 - Do not commit runtime backup archives, generated CSVs, debug screenshots, or local Drive downloads unless explicitly requested.
 - Do not run import/seed scripts casually; they can change `tests-config.json` and visible student behavior.
 - Do not make smoke checks that mutate runtime data without fingerprinting and reporting it.

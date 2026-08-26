@@ -142,6 +142,7 @@ node --check <edited-file.js>
 ## Browser/UI Notes
 - After frontend changes, reload the admin page before verifying.
 - Prefer the Browser/in-app browser plugin for local UI verification. If it is unavailable, use the Chrome extension browser or Playwright fallback and report which path was used.
+- Never start a verification server on `127.0.0.1:8003` while the production `0.0.0.0:8003` Waitress listener is running. Windows can allow both binds, and Cloudflare Tunnel will then select the loopback-specific verification listener instead of production. Reuse the live server for read-only checks or use isolated port 8004, and always stop verification listeners after testing.
 - Prefer DOM/API checks for exact data, then screenshot checks for visual regressions.
 - Text must remain readable in Korean; verify UTF-8 rendering when touching static HTML/JS.
 - Stop any dev server started only for verification unless the user asks to keep it running.

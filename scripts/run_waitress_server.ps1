@@ -202,16 +202,54 @@ $env:DATA_MIRROR_MAX_SNAPS_PER_FILE = "24"
 $env:DATA_MIRROR_SNAPSHOT_MIN_SEC = "3600"
 
 Set-Location -LiteralPath $serverRoot
-& $waitressPath `
-    "--listen=$Listen" `
-    "--threads=$Threads" `
-    "--connection-limit=$ConnectionLimit" `
-    "--channel-timeout=$ChannelTimeout" `
-    "--cleanup-interval=15" `
-    "--channel-request-lookahead=1" `
-    "--trusted-proxy=127.0.0.1" `
-    "--trusted-proxy-count=1" `
-    "--trusted-proxy-headers=x-forwarded-proto" `
-    "--clear-untrusted-proxy-headers" `
-    "app:app"
-exit $LASTEXITCODE
+$shadowGuard = $null
+if ($Listen -eq "0.0.0.0:8003") {
+    # Windows may allow a later 127.0.0.1 bind beside this wildcard socket;
+    # Cloudflare would then route production traffic to that shadow listener.
+    $guardPath = Join-Path $PSScriptRoot "guard_waitress_shadow_listener.ps1"
+    if (Test-Path -LiteralPath $guardPath -PathType Leaf) {
+        try {
+            $parentStartTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+            $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+            $guardArguments = @(
+                "-NoProfile"
+                "-WindowStyle Hidden"
+                "-ExecutionPolicy Bypass"
+                "-File `"$guardPath`""
+                "-Port $listenPort"
+                "-ParentProcessId $PID"
+                "-ParentStartTimeUtcTicks $parentStartTicks"
+                "-ServerRoot `"$serverRoot`""
+            ) -join " "
+            $shadowGuard = Start-Process `
+                -FilePath $windowsPowerShell `
+                -ArgumentList $guardArguments `
+                -WindowStyle Hidden `
+                -PassThru
+        } catch {
+            Write-Warning "Waitress shadow-listener guard could not start: $($_.Exception.Message)"
+        }
+    }
+}
+
+$waitressExitCode = 1
+try {
+    & $waitressPath `
+        "--listen=$Listen" `
+        "--threads=$Threads" `
+        "--connection-limit=$ConnectionLimit" `
+        "--channel-timeout=$ChannelTimeout" `
+        "--cleanup-interval=15" `
+        "--channel-request-lookahead=1" `
+        "--trusted-proxy=127.0.0.1" `
+        "--trusted-proxy-count=1" `
+        "--trusted-proxy-headers=x-forwarded-proto" `
+        "--clear-untrusted-proxy-headers" `
+        "app:app"
+    $waitressExitCode = $LASTEXITCODE
+} finally {
+    if ($shadowGuard -and -not $shadowGuard.HasExited) {
+        Stop-Process -Id $shadowGuard.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+exit $waitressExitCode
