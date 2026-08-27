@@ -1285,7 +1285,24 @@ async function saveConfig(removedTestIds = []) {
   if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
 }
 
-async function saveTestDefinition(test, categoryKey, categoryLabel) {
+function captureTestCatalogMutationSnapshot() {
+  return {
+    config: JSON.parse(JSON.stringify(TEST_CFG)),
+    revision: TEST_CFG_REVISION,
+    selectedId: ui.selectedId,
+  };
+}
+
+function restoreTestCatalogMutationSnapshot(snapshot) {
+  TEST_CFG = ensureConfig(snapshot?.config || { categories: {} });
+  TEST_CFG_REVISION = String(snapshot?.revision || '');
+  ui.selectedId = String(snapshot?.selectedId || '');
+  renderTestList();
+  renderRules();
+  renderStatsSummary();
+}
+
+async function saveTestDefinition(test, categoryKey, categoryLabel, clearFields = []) {
   const headers = { ...CT };
   if (TEST_CFG_REVISION) headers['X-Tests-Config-Revision'] = TEST_CFG_REVISION;
   const res = await fetch('/api/tests-config/test', {
@@ -1295,11 +1312,11 @@ async function saveTestDefinition(test, categoryKey, categoryLabel) {
       categoryKey,
       categoryLabel,
       test,
+      clearFields,
     }),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    if (res.status === 409 || res.status === 428) await loadConfigAndStats();
     const error = new Error(`tests-config test save failed: ${res.status}`);
     error.status = res.status;
     throw error;
@@ -2200,10 +2217,6 @@ function bindUI() {
   $('#btnSaveTest')?.addEventListener('click', async () => {
     const targetCategory = editCategoryValue();
     const targetDef = CATEGORY_BY_KEY[targetCategory] || CATEGORY_BY_KEY.UNIT;
-    const cat = TEST_CFG.categories[targetCategory] = TEST_CFG.categories[targetCategory] || { label: targetDef.label, tests: [] };
-    if (!cat) return;
-    cat.label = cat.label || targetDef.label;
-    if (!Array.isArray(cat.tests)) cat.tests = [];
     const name = canonText($('#cfgName')?.value || '');
     const problems = Math.max(1, Number($('#cfgProblems')?.value || 0));
     const subject = normalizeSubject($('#cfgSubject')?.value || ui.subject);
@@ -2224,8 +2237,13 @@ function bindUI() {
       return;
     }
     setTestSaveStatus('saving', '저장 중…');
+    const catalogSnapshot = captureTestCatalogMutationSnapshot();
 
     try {
+      const cat = TEST_CFG.categories[targetCategory] = TEST_CFG.categories[targetCategory]
+        || { label: targetDef.label, tests: [] };
+      cat.label = cat.label || targetDef.label;
+      if (!Array.isArray(cat.tests)) cat.tests = [];
       const ref = selectedTestRef();
       let test = ref?.test || null;
       if (!test) {
@@ -2261,7 +2279,13 @@ function bindUI() {
         : {};
       test.answerModes = { ...existingAnswerModes, [round]: answerModes };
 
-      const savedTest = await saveTestDefinition(test, targetCategory, cat.label || targetDef.label);
+      const clearFields = term ? [] : ['term', 'examTerm'];
+      const savedTest = await saveTestDefinition(
+        test,
+        targetCategory,
+        cat.label || targetDef.label,
+        clearFields,
+      );
       if (savedTest !== test) Object.assign(test, savedTest);
       ui.category = targetCategory;
       ui.subject = subject;
@@ -2281,7 +2305,14 @@ function bindUI() {
       setTestSaveStatus('success', `저장 완료 · ${testSaveClock()}`);
     } catch (e) {
       console.error(e);
-      setTestSaveStatus('error', '저장 실패 · 다시 눌러주세요');
+      if (e?.status === 409 || e?.status === 428) {
+        ui.selectedId = catalogSnapshot.selectedId;
+        await loadConfigAndStats();
+        setTestSaveStatus('error', '목록 변경 감지 · 최신 상태를 다시 불러왔습니다');
+      } else {
+        restoreTestCatalogMutationSnapshot(catalogSnapshot);
+        setTestSaveStatus('error', '저장 실패 · 입력은 유지됐습니다');
+      }
     } finally {
       endCatalogMutationSave();
     }

@@ -38,6 +38,9 @@ PRESERVED_TEST_FIELDS: Final[frozenset[str]] = frozenset(
     }
 )
 SOURCE_FILE_FIELDS: Final[tuple[str, ...]] = ("sourceFiles", "source_files")
+TEST_RECORD_CLEARABLE_FIELDS: Final[frozenset[str]] = frozenset(
+    {"term", "examTerm"}
+)
 
 
 class TestsConfigWriteConflict(ValueError):
@@ -156,6 +159,7 @@ def patch_test_config_record(
     incoming_test: JsonObject,
     *,
     category_label: str = "",
+    clear_fields: Iterable[str] = (),
 ) -> tuple[JsonObject, JsonObject]:
     """Merge one test definition without transferring the whole catalog.
 
@@ -173,6 +177,16 @@ def patch_test_config_record(
     test_id = _test_id(incoming_test)
     if not test_id:
         raise ValueError("test patch requires an id")
+
+    normalized_clear_fields: list[str] = []
+    for raw_field in clear_fields:
+        if not isinstance(raw_field, str):
+            raise ValueError("test patch clear fields must be strings")
+        field = raw_field.strip()
+        if field not in TEST_RECORD_CLEARABLE_FIELDS:
+            raise ValueError("test patch contains an unsupported clear field")
+        if field not in normalized_clear_fields:
+            normalized_clear_fields.append(field)
 
     matches: list[tuple[str, int, JsonObject]] = []
     categories = current.get("categories")
@@ -205,6 +219,9 @@ def patch_test_config_record(
         merged_test.update(incoming_copy)
     else:
         merged_test = deepcopy(incoming_test)
+
+    for field in normalized_clear_fields:
+        merged_test.pop(field, None)
 
     merged = deepcopy(current)
     merged_categories = merged.get("categories")

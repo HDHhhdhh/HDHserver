@@ -3,6 +3,7 @@ import { applyAssistantStudentNotesRequest } from './assistantStudentNotesContra
 import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
 import { applyStudentLogsRequest } from './studentLogsContract.js';
+import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -1193,6 +1194,14 @@ async function handleWrite(root, ctx, store) {
     const config = setTestsConfig(store, body);
     saveDemoStore(store);
     return ok(root, config);
+  }
+
+  if (method === 'PATCH' && path === '/api/tests-config/test') {
+    const result = patchDemoTestConfig(store.testsConfig || { categories: {} }, body);
+    if (!result.ok) return responseJson(root, { ok: false, error: result.error }, result.status);
+    store.testsConfig = result.config;
+    saveDemoStore(store);
+    return ok(root, { ok: true, test: result.test });
   }
 
   if (method === 'POST' && path === '/api/watch') {

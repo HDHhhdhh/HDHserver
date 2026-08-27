@@ -118,6 +118,7 @@ const context = {
         status: 200,
         headers: { get: name => String(name).toLowerCase() === 'x-tests-config-revision' ? 'b'.repeat(64) : '' },
         text: async () => '{}',
+        json: async () => ({ test: { id: 'patch-check', saved: true } }),
       }
       : { ok: false, status: 500, headers: { get: () => '' }, text: async () => 'failure' };
   },
@@ -350,6 +351,45 @@ window.__catalogSortScenario = (async () => {
   check(catalogMutationSaveInFlight === false, 'catalog mutation in-flight state was not cleared');
   check(document.querySelector('#btnNewTest').disabled === false, 'catalog controls were not restored after mutation save');
 
+  TEST_CFG = {
+    categories: {
+      UNIT: {
+        label: '단원평가',
+        tests: [{ id: 'rollback-test', name: '서버 값', unknownMetadata: { preserve: true } }],
+      },
+    },
+  };
+  TEST_CFG_REVISION = 'd'.repeat(64);
+  ui.category = 'UNIT';
+  ui.subject = '공수1';
+  ui.difficulty = 'Lv.3';
+  ui.selectedId = 'rollback-test';
+  const mutationSnapshot = captureTestCatalogMutationSnapshot();
+  TEST_CFG.categories.UNIT.tests[0].name = '저장 실패 초안';
+  TEST_CFG.categories.UNIT.tests.push({ id: 'unsaved-new', name: '미저장 신규' });
+  TEST_CFG_REVISION = 'e'.repeat(64);
+  ui.selectedId = 'unsaved-new';
+  restoreTestCatalogMutationSnapshot(mutationSnapshot);
+  check(TEST_CFG.categories.UNIT.tests.length === 1, 'single-test failure snapshot kept an unsaved record');
+  check(TEST_CFG.categories.UNIT.tests[0].name === '서버 값', 'single-test failure snapshot kept an unsaved edit');
+  check(TEST_CFG.categories.UNIT.tests[0].unknownMetadata.preserve === true, 'single-test rollback dropped unknown metadata');
+  check(TEST_CFG_REVISION === 'd'.repeat(64), 'single-test rollback did not restore the base revision');
+  check(ui.selectedId === 'rollback-test', 'single-test rollback did not restore the prior selection');
+
+  setFetchMode('success');
+  await saveTestDefinition(
+    { id: 'patch-check', name: '분류 이동' },
+    'UNIT',
+    '단원평가',
+    ['term', 'examTerm'],
+  );
+  const definitionPatch = fetchCalls.at(-1);
+  check(definitionPatch.method === 'PATCH', 'single-test save did not use PATCH');
+  check(
+    definitionPatch.body?.clearFields?.join('|') === 'term|examTerm',
+    'single-test save omitted explicit term clears',
+  );
+
   return {
     successfulPosts: fetchCalls.filter(call => call.method === 'POST').length - 1,
     rollbackVerified: true,
@@ -366,13 +406,16 @@ assert.match(testsHtml, /id="cfgCatalogSearch"[^>]*type="search"/);
 assert.match(testsHtml, /id="catalogOrderHint"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="testSaveStatus"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="statSearch"[^>]*type="search"/);
-assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260826-save-status1" type="module"><\/script>/);
+assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260827-save-rollback1" type="module"><\/script>/);
 assert.doesNotMatch(testsHtml, /sortable(?:\.min)?\.js|jquery-ui/i);
 assert.match(source, /\.test-drag-handle\[draggable="true"\]/);
 assert.match(source, /data-move="up"/);
 assert.match(source, /data-move="down"/);
 assert.match(source, /await saveConfig\(\);/);
-assert.match(source, /await saveTestDefinition\(test, targetCategory, cat\.label \|\| targetDef\.label\)/);
+assert.match(source, /const clearFields = term \? \[\] : \['term', 'examTerm'\];/);
+assert.match(source, /await saveTestDefinition\([\s\S]*clearFields,[\s\S]*\);/);
+assert.match(source, /restoreTestCatalogMutationSnapshot\(catalogSnapshot\);/);
+assert.match(source, /await loadConfigAndStats\(\);[\s\S]*목록 변경 감지/);
 assert.match(source, /setTestSaveStatus\('success', `저장 완료 · \$\{testSaveClock\(\)\}`\)/);
 assert.match(source, /headers\['X-Tests-Config-Revision'\] = TEST_CFG_REVISION/);
 assert.match(source, /if \(res\.status === 409 \|\| res\.status === 428\) await loadConfigAndStats\(\);/);

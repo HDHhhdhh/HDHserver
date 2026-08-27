@@ -50,6 +50,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/demo/bootstrap.js",
     ROOT / "static/js/admin/demo/fetch.js",
     ROOT / "static/js/admin/demo/assistantStudentNotesContract.js",
+    ROOT / "static/js/admin/demo/testConfigContract.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
     ROOT / "static/js/admin/features/absentRecovery.js",
     ROOT / "static/js/admin/features/absentRegister.js",

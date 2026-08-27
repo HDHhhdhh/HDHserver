@@ -562,7 +562,12 @@ def patch_tests_config_test():
     category_key = str(payload.get("categoryKey") or "").strip()
     category_label = str(payload.get("categoryLabel") or "").strip()
     incoming_test = payload.get("test")
-    if not category_key or not isinstance(incoming_test, dict):
+    clear_fields = payload.get("clearFields", [])
+    if (
+        not category_key
+        or not isinstance(incoming_test, dict)
+        or not isinstance(clear_fields, list)
+    ):
         return jsonify({"ok": False, "error": "invalid test patch"}), 400
 
     with _tests_config_lock():
@@ -577,6 +582,7 @@ def patch_tests_config_test():
                 category_key,
                 incoming_test,
                 category_label=category_label,
+                clear_fields=clear_fields,
             )
         except ValueError:
             return jsonify({"ok": False, "error": "invalid test patch"}), 400

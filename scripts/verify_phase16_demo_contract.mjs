@@ -30,6 +30,70 @@ const root = {
 const demoFetch = createDemoFetch({ window: root, originalFetch });
 const initialOrderMap = await (await demoFetch('/api/today_order')).json();
 
+const demoTestsConfig = {
+  categories: {
+    SCHOOL_PAST: {
+      label: '학군지 기출',
+      unknownCategory: { preserve: true },
+      tests: [{
+        id: 'demo-partial-patch',
+        name: '이동 전',
+        term: '기말고사',
+        examTerm: '기말고사',
+        sourceFiles: { solutionFileId: 'keep-solution', name: 'before.pdf' },
+        unknownTest: { preserve: true },
+      }],
+    },
+    UNIT: { label: '단원평가', tests: [] },
+  },
+  unknownConfig: { preserve: true },
+};
+assert.equal((await demoFetch('/api/tests-config', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(demoTestsConfig),
+})).status, 200, 'demo tests-config seed failed');
+const demoTestPatch = await demoFetch('/api/tests-config/test', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    categoryKey: 'UNIT',
+    categoryLabel: '단원평가',
+    test: {
+      id: 'demo-partial-patch',
+      name: '이동 후',
+      sourceFiles: { name: 'after.pdf' },
+    },
+    clearFields: ['term', 'examTerm'],
+  }),
+});
+assert.equal(demoTestPatch.status, 200, 'demo single-test PATCH failed');
+const demoPatchedConfig = await (await demoFetch('/api/tests-config')).json();
+assert.equal(demoPatchedConfig.categories.SCHOOL_PAST.tests.length, 0, 'demo PATCH kept the old category record');
+const demoPatchedTest = demoPatchedConfig.categories.UNIT.tests[0];
+assert.equal(demoPatchedTest.name, '이동 후');
+assert.equal(demoPatchedTest.term, undefined, 'demo PATCH retained cleared term');
+assert.equal(demoPatchedTest.examTerm, undefined, 'demo PATCH retained cleared examTerm');
+assert.equal(demoPatchedTest.sourceFiles.solutionFileId, 'keep-solution', 'demo PATCH dropped solution metadata');
+assert.equal(demoPatchedTest.sourceFiles.name, 'after.pdf', 'demo PATCH did not merge source metadata');
+assert.equal(demoPatchedTest.unknownTest.preserve, true, 'demo PATCH dropped unknown test metadata');
+assert.equal(demoPatchedConfig.unknownConfig.preserve, true, 'demo PATCH dropped unknown config metadata');
+const demoConfigBeforeRejectedClear = JSON.stringify(demoPatchedConfig);
+assert.equal((await demoFetch('/api/tests-config/test', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    categoryKey: 'UNIT',
+    test: { id: 'demo-partial-patch', name: '거부 대상' },
+    clearFields: ['sourceFiles'],
+  }),
+})).status, 400, 'demo PATCH accepted an unsafe clear field');
+assert.equal(
+  JSON.stringify(await (await demoFetch('/api/tests-config')).json()),
+  demoConfigBeforeRejectedClear,
+  'rejected demo PATCH changed the catalog',
+);
+
 const initialSheetConfig = await demoFetch('/api/makeup-sheet-sync/config');
 assert.equal(initialSheetConfig.status, 200, 'demo sheet config GET failed');
 assert.equal((await initialSheetConfig.json()).sheetUrl, '');
@@ -350,7 +414,9 @@ for (const row of summary.rows || []) {
 }
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
-assert.match(fallbackSource, /\.\/fetch\.js\?v=20260826-sheet-sync1/);
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260827-test-patch1/);
+assert.match(fallbackSource, /path === '\/api\/tests-config\/test' && method === 'PATCH'/);
+assert.match(fallbackSource, /patchDemoTestConfig\(store\.testsConfig/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/today_order' && method === 'POST'/);
 assert.doesNotMatch(fallbackSource, /path === '\/api\/updates' && method === 'POST'/);
@@ -369,7 +435,7 @@ for (const shell of ['admin.html', 'all.html', 'school-cal.html', 'video-manage.
   const shellSource = fs.readFileSync(`static/${shell}`, 'utf8');
   assert.match(
     shellSource,
-    /\/js\/admin\/demo\/bootstrap\.js\?v=20260826-sheet-sync1/,
+    /\/js\/admin\/demo\/bootstrap\.js\?v=20260827-test-patch1/,
     `${shell} did not cache-bust the demo bootstrap contract`,
   );
 }

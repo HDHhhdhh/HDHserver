@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260826-sheet-sync1';
+import { createDemoFetch } from './fetch.js?v=20260827-test-patch1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -13,6 +13,7 @@ import {
 import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
 import { applyStudentLogsRequest } from './studentLogsContract.js';
+import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -574,6 +575,15 @@ async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
   const request = normalizeFetchRequest(input, init);
   const method = request?.method || String(init?.method || 'POST').toUpperCase();
+
+  if (path === '/api/tests-config/test' && method === 'PATCH') {
+    const store = loadDemoStore();
+    const result = patchDemoTestConfig(store.testsConfig || { categories: {} }, body);
+    if (!result.ok) return { ok: false, demo: true, error: result.error };
+    store.testsConfig = result.config;
+    saveDemoStore(store);
+    return { ok: true, demo: true, test: result.test };
+  }
 
   if (path === '/api/logs/patch-batch' && method === 'POST') {
     const store = loadDemoStore();
