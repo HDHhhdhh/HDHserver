@@ -63,26 +63,43 @@ def verify_short_answers() -> None:
 
 def verify_test_management_ui() -> None:
     tests_js = (ROOT / "static/js/tests.js").read_text(encoding="utf-8")
+    editor_state_js = (ROOT / "static/js/tests/catalogEditorState.js").read_text(
+        encoding="utf-8"
+    )
     tests_html = (ROOT / "static/tests.html").read_text(encoding="utf-8")
+    tests_css = (ROOT / "static/css/tests.css").read_text(encoding="utf-8")
     for snippet in (
-        "const ANSWER_MODE_OPTIONS = [",
         "function renderAnswerModeEditor(",
         "#cfgAnswerModes select[data-question-no]",
-        "test.answerModes = { ...existingAnswerModes, [round]: answerModes }",
+        "projectAnswerRound(selectedTestRef()?.test || null, {",
+        "test.answerModes = answerProjection.answerModes",
+        "answerModes: { [round]: answerModes }",
     ):
         assert snippet in tests_js, snippet
     for snippet in (
+        "export const ANSWER_MODE_OPTIONS = [",
+        "export function answerModeConsistencyIssue(answers, modes)",
+        "export function answerModesFromCsvRow(row, round, problems, onWarning)",
+        "export function buildTestCatalogCsvTemplate(",
+        "'1회차유형': 'modes1'",
+    ):
+        assert snippet in editor_state_js, snippet
+    for forbidden in ("document", "window", "fetch(", "localStorage", "sessionStorage"):
+        assert forbidden not in editor_state_js, forbidden
+    for snippet in (
         'id="cfgAnswerModeSummary"',
         'id="cfgAnswerModes"',
-        "body.admin.tests-page .answer-mode-grid",
+        "시험을 새로 추가할 때 모든 문항을 회차별로 명시해야 합니다",
     ):
         assert snippet in tests_html, snippet
+    assert "body.admin.tests-page .answer-mode-grid" in tests_css
 
 def verify_migration_preview() -> None:
     with tempfile.TemporaryDirectory(prefix="test_answer_modes_") as tmp_dir:
         tmp = Path(tmp_dir)
         config_path = tmp / "tests-config.json"
         evidence_path = tmp / "evidence.json"
+        link_map_path = tmp / "test_answer_link_map.json"
         output_path = tmp / "preview.json"
         config = {
             "categories": {
@@ -93,6 +110,8 @@ def verify_migration_preview() -> None:
                             "sourceId": "source",
                             "round": round_no,
                             "problems": 20,
+                            "answerKeys": {round_no: ["3", "12"] * 10},
+                            "answerKey": ["3", "12"] * 10,
                             "unknownField": {"keep": True},
                         }
                         for round_no in ("1", "2", "3")
@@ -101,11 +120,26 @@ def verify_migration_preview() -> None:
             },
         }
         evidence = [
-            {"sourceId": "source", "round": round_no, "modes": [CHOICE_NUMBER, ANSWER_VALUE] * 10}
+            {
+                "sourceId": "source",
+                "round": round_no,
+                "fileId": f"file-{round_no}",
+                "modes": [CHOICE_NUMBER, ANSWER_VALUE] * 10,
+            }
             for round_no in ("1", "2", "3")
         ]
+        link_map = {
+            "source": {
+                round_no: {
+                    "fileId": f"file-{round_no}",
+                    "answerUrl": f"https://drive.google.com/file/d/file-{round_no}/view",
+                }
+                for round_no in ("1", "2", "3")
+            }
+        }
         config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
         evidence_path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+        link_map_path.write_text(json.dumps(link_map, ensure_ascii=False), encoding="utf-8")
         subprocess.run(
             [
                 sys.executable,
@@ -114,6 +148,8 @@ def verify_migration_preview() -> None:
                 str(config_path),
                 "--evidence",
                 str(evidence_path),
+                "--link-map",
+                str(link_map_path),
                 "--output",
                 str(output_path),
             ],

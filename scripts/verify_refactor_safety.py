@@ -67,16 +67,38 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student-app-push.js",
     ROOT / "static/js/student-app.js",
+    ROOT / "static/js/student/bootstrapState.js",
+    ROOT / "static/js/student/watchState.js",
+    ROOT / "static/js/student/playback.js",
+    ROOT / "static/js/student/reviewPlaylist.js",
+    ROOT / "static/js/student/announcementState.js",
+    ROOT / "static/js/student/testPresentation.js",
     ROOT / "static/js/student.js",
+    ROOT / "static/js/tests.js",
+    ROOT / "static/js/tests/catalogState.js",
+    ROOT / "static/js/tests/catalogEditorState.js",
+    ROOT / "static/js/tests/catalogStatisticsState.js",
     ROOT / "static/js/file-manage.js",
     ROOT / "static/js/shared/api.js",
     ROOT / "static/js/shared/testRecordData.js",
     ROOT / "static/js/shared/testRecordDetails.js",
     ROOT / "scripts/verify_student_material_access_scope.js",
+    ROOT / "scripts/verify_student_announcement_state.mjs",
+    ROOT / "scripts/verify_student_bootstrap_state.mjs",
+    ROOT / "scripts/verify_student_playback.mjs",
+    ROOT / "scripts/verify_student_review_playlist.mjs",
+    ROOT / "scripts/verify_student_test_presentation.mjs",
+    ROOT / "scripts/verify_student_watch_autosave.mjs",
+    ROOT / "scripts/verify_student_watch_timestamp.mjs",
     ROOT / "scripts/verify_student_submission_retirement_and_assignment.js",
     ROOT / "scripts/verify_admin_tests_record_details_ui.js",
     ROOT / "scripts/verify_admin_tests_record_detail_answer_link_ui.js",
     ROOT / "scripts/verify_admin_date_session_storage.mjs",
+    ROOT / "scripts/verify_test_catalog_state.mjs",
+    ROOT / "scripts/verify_test_catalog_editor_state.mjs",
+    ROOT / "scripts/verify_test_catalog_statistics_state.mjs",
+    ROOT / "scripts/verify_tests_stylesheet_extraction.mjs",
+    ROOT / "scripts/verify_admin_css_inventory.mjs",
     ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
     ROOT / "scripts/verify_hover_tooltip_performance.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
@@ -632,7 +654,60 @@ def run_admin_date_session_storage_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin selected-date sessionStorage contract failed")
 
 
+def run_admin_css_inventory_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_css_inventory.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin CSS ownership inventory contract failed")
+
+
 def run_test_catalog_search_sort_checks() -> None:
+    state_cmd = ["node", "scripts/verify_test_catalog_state.mjs"]
+    print("$ " + " ".join(state_cmd))
+    try:
+        proc = _run_captured(state_cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog state oracle failed")
+
+    editor_state_cmd = ["node", "scripts/verify_test_catalog_editor_state.mjs"]
+    print("$ " + " ".join(editor_state_cmd))
+    proc = _run_captured(editor_state_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog editor state oracle failed")
+
+    statistics_state_cmd = ["node", "scripts/verify_test_catalog_statistics_state.mjs"]
+    print("$ " + " ".join(statistics_state_cmd))
+    proc = _run_captured(statistics_state_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog statistics state oracle failed")
+
+    stylesheet_cmd = ["node", "scripts/verify_tests_stylesheet_extraction.mjs"]
+    print("$ " + " ".join(stylesheet_cmd))
+    proc = _run_captured(stylesheet_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test page stylesheet extraction oracle failed")
+
     node_cmd = ["node", "scripts/verify_test_catalog_search_and_sort.mjs"]
     print("$ " + " ".join(node_cmd))
     try:
@@ -848,14 +923,14 @@ import pathlib
 import tempfile
 
 from flask import Flask
-import routes.api_basic as basic
+import routes.api_updates as updates
 
 with tempfile.TemporaryDirectory(prefix="verify-updates-base-route-") as tmpdir:
     path = pathlib.Path(tmpdir) / "updates.json"
-    basic.UPD_PATH = path
+    updates.UPD_PATH = path
 
     app = Flask("verify-updates-base-route")
-    app.register_blueprint(basic.bp_api_basic)
+    app.register_blueprint(updates.bp_api_updates)
     client = app.test_client()
 
     read_only = client.get("/api/updates?readOnly=1")
@@ -916,6 +991,7 @@ def run_person_identity_checks() -> None:
     commands = (
         ([sys.executable, "scripts/verify_person_identity.py"], "person identity rule/store contract failed"),
         ([sys.executable, "scripts/verify_person_identity_routes.py"], "person identity route contract failed"),
+        (["node", "scripts/verify_admin_white_review_pending.mjs"], "admin white-review pending contract failed"),
     )
     for cmd, failure_message in commands:
         print("$ " + " ".join(cmd))
@@ -937,6 +1013,31 @@ def run_file_reference_route_checks() -> None:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "material/file reference integrity contract failed")
 
+
+def run_school_calendar_revision_checks() -> None:
+    commands = (
+        (
+            [sys.executable, "scripts/verify_school_calendar_revision.py"],
+            "school calendar revision route contract failed",
+        ),
+        (
+            ["node", "scripts/verify_school_calendar_state.mjs"],
+            "school calendar editable-state projection contract failed",
+        ),
+        (
+            ["node", "scripts/verify_school_calendar_save_queue.mjs"],
+            "school calendar serialized browser queue contract failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
 def run_student_material_access_scope_checks() -> None:
     cmd = ["node", "scripts/verify_student_material_access_scope.js"]
     print("$ " + " ".join(cmd))
@@ -951,6 +1052,68 @@ def run_student_material_access_scope_checks() -> None:
     _assert_unit(proc.returncode == 0, "student material access scope contract failed")
 
 
+def run_student_bootstrap_state_checks() -> None:
+    cmd = ["node", "scripts/verify_student_bootstrap_state.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student bootstrap browser-state contract failed")
+
+
+def run_student_announcement_state_checks() -> None:
+    commands = (
+        (
+            ["node", "scripts/verify_student_announcement_state.mjs"],
+            "student announcement state contract failed",
+        ),
+        (
+            ["node", "scripts/verify_student_mobile_app.mjs", "--only", "board,notifications"],
+            "student announcement board and notification integration contracts failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_student_test_presentation_checks() -> None:
+    commands = (
+        (
+            ["node", "scripts/verify_student_test_presentation.mjs"],
+            "student test presentation contract failed",
+        ),
+        (
+            ["node", "scripts/verify_student_answer_mobile.js"],
+            "student answer mobile presentation contract failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
 def run_video_manage_id_checks() -> None:
     cmd = ["node", "scripts/verify_video_manage_ids.mjs"]
     print("$ " + " ".join(cmd))
@@ -963,6 +1126,109 @@ def run_video_manage_id_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "video manager ID allocation contract failed")
+
+
+def run_progress_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_progress_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "progress route boundary contract failed")
+
+
+def run_updates_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_updates_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "updates route boundary contract failed")
+
+
+def run_student_bootstrap_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_student_bootstrap_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student bootstrap route boundary contract failed",
+    )
+
+
+def run_student_video_assignment_rule_checks() -> None:
+    cmd = [
+        sys.executable,
+        "scripts/verify_student_video_assignment_rules.py",
+    ]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student video assignment pure-rule contract failed",
+    )
+
+
+def run_student_auto_assignment_service_checks() -> None:
+    cmd = [
+        sys.executable,
+        "scripts/verify_student_auto_assignment_service.py",
+    ]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student auto-assignment runtime service contract failed",
+    )
+
+
+def run_log_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_log_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "log route boundary contract failed")
+
+
+def run_material_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_material_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "material route boundary contract failed")
+
+
+def run_schedule_override_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_schedule_override_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "schedule override route boundary contract failed")
 
 
 def run_video_mid_change_guard_checks() -> None:
@@ -1035,6 +1301,39 @@ def run_test_answer_mode_contract_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "test answer mode contract failed")
+
+
+def run_student_test_ocr_contract_checks() -> None:
+    commands = (
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_foundation"], "OCR foundation"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_repository"], "OCR repository"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_eligibility"], "OCR eligibility"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_assets"], "OCR assets"),
+        ([sys.executable, "-m", "scripts.verify_student_test_sheet_cropper"], "OCR sheet cropper"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_config"], "OCR config"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_engine"], "OCR engine"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_worker_contracts"], "OCR workers"),
+        ([sys.executable, "-m", "scripts.verify_student_test_choice_training"], "OCR choice training"),
+        ([sys.executable, "-m", "scripts.verify_student_test_aihub_validation"], "OCR AI Hub validation audit"),
+        ([sys.executable, "-m", "scripts.verify_student_test_local_ocr_accuracy"], "OCR local accuracy benchmark"),
+        ([sys.executable, "-m", "scripts.verify_student_test_formula_training_config"], "OCR formula training config"),
+        ([sys.executable, "-m", "scripts.verify_aihub_split_archive_unpack"], "OCR AI Hub archive unpack"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_job_runner"], "OCR job runner"),
+        ([sys.executable, "-m", "scripts.verify_student_test_solution_crop"], "OCR solution crop"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_service"], "OCR service"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_routes"], "OCR routes"),
+        (["node", "scripts/verify_student_test_ocr_frontend.mjs"], "OCR student frontend"),
+        (["node", "scripts/verify_student_test_ocr_admin.mjs"], "OCR admin frontend"),
+    )
+    for cmd, label in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, f"{label} contract failed")
+
 
 def _assert_unit(condition: bool, message: str) -> None:
     if not condition:
@@ -1793,6 +2092,7 @@ def run_student_previous_video_review_rule_unit_checks() -> None:
 def run_progress_batch_sids_unit_checks() -> None:
     from flask import Flask
     import routes.api_basic as api_basic
+    import routes.api_progress as api_progress
 
     progress_fixture = {
         "2026-06-01": {
@@ -1806,12 +2106,20 @@ def run_progress_batch_sids_unit_checks() -> None:
         },
     }
 
-    original_loader = api_basic._load_progress_strict
-    api_basic._load_progress_strict = lambda: progress_fixture
+    original_loader = api_progress._load_progress_strict
+    api_progress._load_progress_strict = lambda: progress_fixture
     try:
         app = Flask("verify-progress-batch-sids")
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_progress.bp_api_progress)
         client = app.test_client()
+
+        progress_rules = [rule for rule in app.url_map.iter_rules() if rule.rule == "/api/progress"]
+        _assert_unit(len(progress_rules) == 1, "progress GET must have one registered owner")
+        _assert_unit(
+            progress_rules[0].endpoint == "api_progress.api_progress",
+            "progress GET must be owned by the dedicated progress blueprint",
+        )
 
         response = client.get("/api/progress?sids=s1,s2")
         payload = response.get_json() or {}
@@ -1883,7 +2191,7 @@ def run_progress_batch_sids_unit_checks() -> None:
         _assert_unit(invalid.status_code == 400, "batch progress must preserve invalid date rejection")
         _assert_unit(invalid_payload.get("error") == "bad date", "invalid date error message must stay stable")
     finally:
-        api_basic._load_progress_strict = original_loader
+        api_progress._load_progress_strict = original_loader
 
 
 def run_progress_read_cache_unit_checks() -> None:
@@ -1944,7 +2252,7 @@ def run_progress_read_cache_unit_checks() -> None:
 
             api_basic.PRG_PATH = progress_path
             saved = {"2026-06-03": {"s4": {"tests": {"unit-1": "assigned"}}}}
-            api_basic._save_progress_strict(saved)
+            progress_store.save_progress_strict(progress_path, saved)
             saved_text = progress_path.read_text(encoding="utf-8")
             _assert_unit("\n" not in saved_text, "progress writes must use compact JSON on the hot path")
             _assert_unit(
@@ -2128,33 +2436,30 @@ def run_video_completion_source_checks() -> None:
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
     log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
 
-    for path, source in [
-        ("static/js/admin/features/videoModal.js", video_modal_js),
-        ("static/js/admin/features/logModal.js", log_modal_js),
-    ]:
-        _assert_unit(
-            "VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip'])" in source,
-            f"{path} must define green/red finished video progress statuses",
-        )
-        _assert_unit(
-            "function isFinishedVideoProgressStatus" in source,
-            f"{path} must use a named finished progress predicate",
-        )
+    _assert_unit(
+        "VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip'])" in video_modal_js,
+        "video modal must define green/red finished video progress statuses",
+    )
+    _assert_unit(
+        "function isFinishedVideoProgressStatus" in video_modal_js,
+        "video modal must use a named finished progress predicate",
+    )
 
     _assert_unit(
         "mids.every(mid => isFinishedVideoProgressStatus(latest[mid]))" in video_modal_js,
         "video modal course completion must count green done plus red skip",
     )
     _assert_unit(
-        "cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state))" in log_modal_js,
-        "log modal cleanup must count green done plus red skip",
+        "clearVideoAssignmentForDateSid" not in log_modal_js
+        and "allProgressDone" not in log_modal_js,
+        "log save must not delete a dated video snapshot when every row is finished",
     )
 
 
 def run_video_assignment_snapshot_unit_checks() -> None:
     from core.progress_rules import PROGRESS_MANUAL_META_KEY
     import routes.api_basic as api_basic
-    from scripts.remove_future_auto_assignments import remove_future_auto_assignments
+    from core.update_assignment_rules import remove_future_auto_assignments
 
     date = "2026-06-06"  # Saturday
     videos = [
@@ -2331,6 +2636,24 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         "completed watch history blocks candidates during initial assignment",
     )
 
+    future_history_updates = {}
+    api_basic._ensure_today_auto_assign(
+        future_history_updates,
+        [scheduled],
+        videos,
+        {"2026-06-07": {"scheduled": {"m1": "done"}}},
+        date_key=date,
+        watch={"2026-06-08": {"scheduled": {"m2": {"completed": True}}}},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(future_history_updates[date], "scheduled")["videos"] == ["m1", "m2"],
+        "future progress and watch records never block today's initial candidates",
+    )
+
     manual_clear_updates = {}
     api_basic._ensure_today_auto_assign(
         manual_clear_updates,
@@ -2389,6 +2712,7 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         {"mid": "able-2", "curriculum": "CALC1", "subCurriculum": "A:Ble", "chapter": "2"},
         {"mid": "apex-1", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "1"},
         {"mid": "apex-2", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "2"},
+        {"mid": "apex-3", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "3"},
         {"mid": "outside-1", "curriculum": "OTHER", "subCurriculum": "APEX", "chapter": "1"},
     ]
     apex_student = {
@@ -2425,6 +2749,36 @@ def run_video_assignment_snapshot_unit_checks() -> None:
             "note": "keep auto metadata",
         },
         "curriculum changes rebase automatic snapshots onto the exact current curriculum only",
+    )
+
+    mixed_curriculum_snapshot = {
+        date: {
+            "apex-current": {
+                "videos": ["apex-1", "able-1", "apex-2"],
+                "source": "auto",
+                "note": "preserve valid slots",
+            }
+        }
+    }
+    api_basic._ensure_today_auto_assign(
+        mixed_curriculum_snapshot,
+        [apex_student],
+        curriculum_change_videos,
+        {date: {"apex-current": {"apex-1": "done"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        mixed_curriculum_snapshot[date]["apex-current"] == {
+            "videos": ["apex-1", "apex-2", "apex-3"],
+            "source": "auto",
+            "note": "preserve valid slots",
+        },
+        "curriculum rebase keeps valid completed slots and replaces only stale slots without resizing",
     )
 
     manual_cross_curriculum = {
@@ -2777,6 +3131,11 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     from flask import Flask
     import routes.api_basic as api_basic
     import routes.api_fs as api_fs
+    import routes.api_logs as api_logs
+    import routes.api_materials as api_materials
+    import routes.api_schedule_overrides as api_schedule_overrides
+    import routes.api_students as api_students
+    import routes.api_updates as api_updates
 
     extra_path = object()
     weekend_path = object()
@@ -2796,12 +3155,36 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "UPD_PATH": api_basic.UPD_PATH,
         "load": api_basic.load,
         "save_atomic": api_basic.save_atomic,
-        "file_lock": api_basic.file_lock,
-        "load_updates": api_basic._load_updates_with_auto_assign,
-        "reconcile": api_basic._reconcile_consecutive_auto_assignment,
-        "today": api_basic._today_kst_iso,
-        "enqueue": api_basic.enqueue_current_schedule_changes,
-        "_person_identity_configured": api_basic._person_identity_configured,
+        "load_updates_strict": api_basic.load_updates_strict,
+        "save_updates_strict": api_basic.save_updates_strict,
+        "absence_barrier": api_basic._auto_assignment_absence_barrier,
+        "_load_updates_with_auto_assign": api_basic._load_updates_with_auto_assign,
+        "_reconcile_consecutive_auto_assignment": api_basic._reconcile_consecutive_auto_assignment,
+        "_today_kst_iso": api_basic._today_kst_iso,
+    }
+    student_original = {
+        "STU_PATH": api_students.STU_PATH,
+        "load": api_students.load,
+        "save_atomic": api_students.save_atomic,
+        "file_lock": api_students.file_lock,
+        "_today_kst_iso": api_students._today_kst_iso,
+        "enqueue_current_schedule_changes": api_students.enqueue_current_schedule_changes,
+        "_person_identity_configured": api_students._person_identity_configured,
+    }
+    schedule_original = {
+        "EXTRA_PATH": api_schedule_overrides.EXTRA_PATH,
+        "WEEKEND_SLOTS_PATH": api_schedule_overrides.WEEKEND_SLOTS_PATH,
+        "STU_PATH": api_schedule_overrides.STU_PATH,
+        "load": api_schedule_overrides.load,
+        "save_atomic": api_schedule_overrides.save_atomic,
+        "file_lock": api_schedule_overrides.file_lock,
+        "_today_kst_iso": api_schedule_overrides._today_kst_iso,
+        "enqueue_current_schedule_changes": api_schedule_overrides.enqueue_current_schedule_changes,
+    }
+    updates_original = {
+        "UPD_PATH": api_updates.UPD_PATH,
+        "load_updates_strict": api_updates.load_updates_strict,
+        "save_updates_strict": api_updates.save_updates_strict,
     }
 
     def fake_load(path):
@@ -2856,28 +3239,71 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     try:
         api_basic.EXTRA_PATH = extra_path
         api_basic.WEEKEND_SLOTS_PATH = weekend_path
+        api_schedule_overrides.EXTRA_PATH = extra_path
+        api_schedule_overrides.WEEKEND_SLOTS_PATH = weekend_path
+        api_schedule_overrides.STU_PATH = students_path
         api_basic.STU_PATH = students_path
+        api_students.STU_PATH = students_path
         api_basic.UPD_PATH = updates_path
-        store["students"] = [{"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"}]
+        api_updates.UPD_PATH = updates_path
+        store["students"] = [
+            {"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"},
+            {"id": "s2", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"},
+        ]
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
-        api_basic.file_lock = fake_file_lock
+        api_basic.load_updates_strict = fake_load
+        api_basic.save_updates_strict = fake_save
+        api_basic._auto_assignment_absence_barrier = (
+            lambda: contextlib.nullcontext()
+        )
+        api_updates.load_updates_strict = fake_load
+        api_updates.save_updates_strict = fake_save
+        api_students.load = fake_load
+        api_students.save_atomic = fake_save
+        api_students.file_lock = fake_file_lock
+        api_schedule_overrides.load = fake_load
+        api_schedule_overrides.save_atomic = fake_save
+        api_schedule_overrides.file_lock = fake_file_lock
         api_basic._today_kst_iso = lambda: "2026-06-06"
+        api_students._today_kst_iso = lambda: "2026-06-06"
+        api_schedule_overrides._today_kst_iso = lambda: "2026-06-06"
         store["updates"] = {
             "2026-06-07": {"s1": {"videos": ["m1"], "source": "manual"}},
         }
         _assert_unit(
-            original["load_updates"](date_key="2026-06-07") == store["updates"],
+            original["_load_updates_with_auto_assign"](date_key="2026-06-07") == store["updates"],
             "a non-today automatic-assignment load is storage-only",
         )
         api_basic._load_updates_with_auto_assign = lambda **kwargs: init_calls.append(kwargs) or {}
         api_basic._reconcile_consecutive_auto_assignment = lambda *args, **kwargs: expand_calls.append((args, kwargs)) or False
-        api_basic.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
-        api_basic._person_identity_configured = lambda: False
+        api_students.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
+        api_schedule_overrides.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
+        api_students._person_identity_configured = lambda: False
 
         app = Flask(__name__)
+        api_schedule_overrides.configure_schedule_override_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_schedule_change,
+            reconcile=api_basic.reconcile_auto_assignment_for_schedule_change,
+        )
+        api_students.configure_student_identity_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_student_identity_change,
+            reconcile_today=api_basic.reconcile_auto_assignment_for_student_identity_change,
+        )
+        api_updates.configure_updates_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_updates_read,
+            reconcile_self_study=api_basic.reconcile_self_study_assignment_for_updates,
+        )
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_updates.bp_api_updates)
+        app.register_blueprint(api_students.bp_api_students)
         app.register_blueprint(api_fs.bp_api_fs)
+        app.register_blueprint(api_logs.bp_api_logs)
+        app.register_blueprint(api_materials.bp_api_materials)
+        app.register_blueprint(api_schedule_overrides.bp_api_schedule_overrides)
         client = app.test_client()
         date = "2026-06-06"
 
@@ -2945,7 +3371,11 @@ def run_video_assignment_route_hook_unit_checks() -> None:
 
         init_calls.clear()
         response = client.patch("/api/extra-attend", json={"date": date, "sids": ["s1", "s1"]})
-        _assert_unit(response.status_code == 200 and not init_calls, "unchanged makeup registration is idempotent")
+        _assert_unit(
+            response.status_code == 200
+            and [call.get("date_key") for call in init_calls] == [date],
+            "unchanged makeup retry replays the idempotent today initializer",
+        )
 
         init_calls.clear()
         response = client.patch("/api/extra-attend", json={"date": date, "sids": []})
@@ -3021,10 +3451,10 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         expand_calls.clear()
         response = client.post(
             "/api/update",
-            json={"id": "s1", "field": "autoVideoAssignCount", "value": 3},
+            json={"id": "s1", "field": "autoVideoAssignCount", "value": 10},
         )
         _assert_unit(response.status_code == 200, "auto assignment count update hook request succeeds")
-        _assert_unit(store["students"][0]["autoVideoAssignCount"] == 3, "count update persists the normalized student setting")
+        _assert_unit(store["students"][0]["autoVideoAssignCount"] == 6, "count update clamps the student setting to the approved cap")
         _assert_unit(
             not init_calls and not expand_calls,
             "count updates persist only the setting and never initialize or reconcile assignments",
@@ -3032,12 +3462,19 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     finally:
         for name, value in original.items():
             setattr(api_basic, name, value)
+        for name, value in student_original.items():
+            setattr(api_students, name, value)
+        for name, value in schedule_original.items():
+            setattr(api_schedule_overrides, name, value)
+        for name, value in updates_original.items():
+            setattr(api_updates, name, value)
 
 def run_auto_assignment_progress_reconcile_unit_checks() -> None:
     from copy import deepcopy
     from flask import Flask
 
     import routes.api_basic as api_basic
+    import routes.api_progress as api_progress
 
     date = "2026-06-06"
     sid = "progress-hook"
@@ -3091,11 +3528,14 @@ def run_auto_assignment_progress_reconcile_unit_checks() -> None:
         "save_atomic": api_basic.save_atomic,
         "updates_lock": api_basic._updates_lock,
         "load_progress": api_basic._load_progress_strict,
-        "save_progress": api_basic._save_progress_strict,
-        "progress_lock": api_basic._progress_lock,
-        "notification_snapshot": api_basic._notification_progress_snapshot,
-        "notification_commit": api_basic._notification_progress_commit,
         "reconcile": api_basic._reconcile_auto_assignment_after_progress,
+    }
+    progress_original = {
+        "load_progress": api_progress._load_progress_strict,
+        "save_progress": api_progress._save_progress_strict,
+        "progress_lock": api_progress._progress_lock,
+        "notification_snapshot": api_progress._notification_progress_snapshot,
+        "notification_commit": api_progress._notification_progress_commit,
     }
 
     def fake_load(path):
@@ -3143,17 +3583,18 @@ def run_auto_assignment_progress_reconcile_unit_checks() -> None:
         def stable_save_progress(value, *_args, **_kwargs):
             progress_store["value"] = deepcopy(value)
 
-        api_basic._load_progress_strict = lambda *_args, **_kwargs: deepcopy(progress_store["value"])
-        api_basic._save_progress_strict = stable_save_progress
-        api_basic._progress_lock = lambda: contextlib.nullcontext()
-        api_basic._notification_progress_snapshot = lambda *_args, **_kwargs: None
-        api_basic._notification_progress_commit = lambda *_args, **_kwargs: 0
+        api_progress._load_progress_strict = lambda *_args, **_kwargs: deepcopy(progress_store["value"])
+        api_progress._save_progress_strict = stable_save_progress
+        api_progress._progress_lock = lambda: contextlib.nullcontext()
+        api_progress._notification_progress_snapshot = lambda *_args, **_kwargs: None
+        api_progress._notification_progress_commit = lambda *_args, **_kwargs: 0
         api_basic._reconcile_auto_assignment_after_progress = (
             lambda *args, **kwargs: reconcile_calls.append((args, kwargs)) or True
         )
 
         app = Flask("verify-auto-assignment-snapshot-immutability")
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_progress.bp_api_progress)
         client = app.test_client()
         for mid, status in (("m1", "done"), ("m2", "skip"), ("m3", "interrupted")):
             response = client.post(
@@ -3176,11 +3617,12 @@ def run_auto_assignment_progress_reconcile_unit_checks() -> None:
         api_basic.save_atomic = original["save_atomic"]
         api_basic._updates_lock = original["updates_lock"]
         api_basic._load_progress_strict = original["load_progress"]
-        api_basic._save_progress_strict = original["save_progress"]
-        api_basic._progress_lock = original["progress_lock"]
-        api_basic._notification_progress_snapshot = original["notification_snapshot"]
-        api_basic._notification_progress_commit = original["notification_commit"]
         api_basic._reconcile_auto_assignment_after_progress = original["reconcile"]
+        api_progress._load_progress_strict = progress_original["load_progress"]
+        api_progress._save_progress_strict = progress_original["save_progress"]
+        api_progress._progress_lock = progress_original["progress_lock"]
+        api_progress._notification_progress_snapshot = progress_original["notification_snapshot"]
+        api_progress._notification_progress_commit = progress_original["notification_commit"]
 
 
 
@@ -3189,6 +3631,7 @@ def run_self_study_assignment_route_unit_checks() -> None:
     from flask import Flask
 
     import routes.api_basic as api_basic
+    import routes.api_updates as api_updates
 
     date = "2026-06-06"
     sid = "self-study-route"
@@ -3221,6 +3664,9 @@ def run_self_study_assignment_route_unit_checks() -> None:
         "UPD_PATH": api_basic.UPD_PATH,
         "load": api_basic.load,
         "save_atomic": api_basic.save_atomic,
+        "load_updates_strict": api_basic.load_updates_strict,
+        "save_updates_strict": api_basic.save_updates_strict,
+        "absence_barrier": api_basic._auto_assignment_absence_barrier,
         "load_absent": api_basic.load_absent,
         "_load_progress_strict": api_basic._load_progress_strict,
         "get_log_repository": api_basic.get_log_repository,
@@ -3253,13 +3699,23 @@ def run_self_study_assignment_route_unit_checks() -> None:
         api_basic.UPD_PATH = updates_path
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
+        api_basic.load_updates_strict = fake_load
+        api_basic.save_updates_strict = fake_save
+        api_basic._auto_assignment_absence_barrier = (
+            lambda: contextlib.nullcontext()
+        )
         api_basic.load_absent = lambda: deepcopy(state["absent"])
         api_basic._load_progress_strict = lambda *_args, **_kwargs: deepcopy(state["progress"])
         api_basic.get_log_repository = lambda: FakeLogRepository()
         api_basic._updates_lock = lambda: contextlib.nullcontext()
 
         app = Flask("verify-self-study-assignment-route")
-        app.register_blueprint(api_basic.bp_api_basic)
+        api_updates.configure_updates_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_updates_read,
+            reconcile_self_study=api_basic.reconcile_self_study_assignment_for_updates,
+        )
+        app.register_blueprint(api_updates.bp_api_updates)
         client = app.test_client()
 
         response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
@@ -3385,34 +3841,57 @@ def run_video_assignment_boundary_source_checks() -> None:
 
 def run_self_study_video_assignment_source_checks() -> None:
     api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+    bootstrap_projection_py = (
+        ROOT / "routes/student_bootstrap_projection.py"
+    ).read_text("utf-8")
+    student_video_projection_py = (
+        ROOT / "core/student_video_projection.py"
+    ).read_text("utf-8")
+    auto_assignment_service_py = (
+        ROOT / "routes/student_auto_assignment_service.py"
+    ).read_text("utf-8")
+    api_updates_py = (ROOT / "routes/api_updates.py").read_text("utf-8")
+    update_rules_py = (ROOT / "core/update_assignment_rules.py").read_text("utf-8")
     today_state_js = (ROOT / "static/js/admin/features/today.state.js").read_text("utf-8")
     export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    bootstrap_state_js = (
+        ROOT / "static/js/student/bootstrapState.js"
+    ).read_text("utf-8")
+    review_playlist_js = (
+        ROOT / "static/js/student/reviewPlaylist.js"
+    ).read_text("utf-8")
 
     _assert_unit(
-        "@bp_api_basic.post(\"/api/updates/self-study\")" in api_basic_py,
+        "@bp_api_updates.post(\"/api/updates/self-study\")" in api_updates_py
+        and "@bp_api_basic.post(\"/api/updates/self-study\")" not in api_basic_py,
         "self-study review assignment must have a dedicated updates endpoint",
     )
     _assert_unit(
-        "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in api_basic_py,
+        "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in update_rules_py,
         "self-study review assignment must remain distinguishable from new automatic progress",
     )
     _assert_unit(
-        "def _student_eligible_review_video_mids" in api_basic_py
-        and "video is not eligible for self-study review" in api_basic_py,
+        "def student_eligible_review_video_mids" in student_video_projection_py
+        and "video is not eligible for self-study review"
+        in auto_assignment_service_py,
         "self-study review registration must be server-authorized by prior progress",
     )
     _assert_unit(
-        "_student_has_scheduled_self_study_on_date" in api_basic_py,
+        "student_is_self_study_on_date" in auto_assignment_service_py
+        and "_service_reconcile_self_study_assignment" in api_basic_py,
         "scheduled self-study must use the same backend automatic assignment path",
     )
     _assert_unit(
-        "if _student_absent_on_date(absent, date_key, sid):" in api_basic_py
-        and "if _student_is_self_study_on_date(logs, date_key, sid, stu):" in api_basic_py,
+        "if student_absent_on_date(absent, date_key, sid):"
+        in auto_assignment_service_py
+        and "if student_is_self_study_on_date(logs, date_key, sid, student):"
+        in auto_assignment_service_py,
         "self-study auto reconciliation must allow explicit self-study while keeping absence first",
     )
     _assert_unit(
-        "if (not registered_today and not self_study_day) or absent_today:" in api_basic_py,
+        "if (not registered_today and not self_study_day) or absent_today:"
+        in bootstrap_projection_py,
         "student bootstrap must allow self-study on a non-scheduled date but keep absence blocked",
     )
     student_js = (ROOT / "static/js/student.js").read_text("utf-8")
@@ -3421,10 +3900,15 @@ def run_self_study_video_assignment_source_checks() -> None:
         "student review surface must keep the absence/archive guard",
     )
     _assert_unit(
-        "selfStudy: b.selfStudy === true" in student_js
+        "selfStudy: bootstrap.selfStudy === true" in bootstrap_state_js
         and "function registerReviewVideos" in student_js
-        and "registeredReviewMids = normalizeStoredReviewMids" in student_js
-        and "saveRegisteredReviewMids();" in student_js
+        and "reviewPlaylistController.hydrate(reviewVideosCache.map(item => item.mid))"
+        in student_js
+        and "reviewPlaylistController.registerSelected()" in student_js
+        and "if (!authorized.has(mid) || registered.includes(mid)) return false;"
+        in review_playlist_js
+        and "storage.setItem(currentStorageKey(), JSON.stringify(registered));"
+        in review_playlist_js
         and "previousVideosRegister" in student_js,
         "student self-study review rows must register in the server-authorized local playlist",
     )
@@ -3625,17 +4109,35 @@ def run_video_progress_integration_matrix_checks() -> None:
         verify_video_progress_matrix() == 0,
         "watch and Kollus temp-route integration matrix must pass",
     )
-    cmd = ["node", "scripts/verify_student_watch_autosave.mjs"]
-    print("$ " + " ".join(cmd))
-    try:
-        proc = _run_captured(cmd)
-    except FileNotFoundError:
-        raise AssertionError("node not found") from None
-    if proc.stdout:
-        print(proc.stdout, end="")
-    if proc.stderr:
-        print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "student watch debounce and flush behavior checks failed")
+    for script, failure_message in (
+        (
+            "scripts/verify_student_watch_timestamp.mjs",
+            "student watch millisecond timestamp checks failed",
+        ),
+        (
+            "scripts/verify_student_watch_autosave.mjs",
+            "student watch state, debounce, and flush behavior checks failed",
+        ),
+        (
+            "scripts/verify_student_playback.mjs",
+            "student playback URL, active-MID bridge, and failure behavior checks failed",
+        ),
+        (
+            "scripts/verify_student_review_playlist.mjs",
+            "student review playlist storage, selection, and bootstrap-prune checks failed",
+        ),
+    ):
+        cmd = ["node", script]
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
 
 
 def run_absence_makeup_integration_matrix_checks() -> None:
@@ -3879,7 +4381,7 @@ def run_log_repository_unit_checks() -> None:
         )
 
         from flask import Flask
-        from routes import api_basic
+        from routes import api_logs
         from types import SimpleNamespace
 
         class FakeReadLogRepository:
@@ -3887,15 +4389,15 @@ def run_log_repository_unit_checks() -> None:
                 return SimpleNamespace(source="json", entry={})
 
         route_app = Flask("verify-log-entry-route")
-        route_app.register_blueprint(api_basic.bp_api_basic)
+        route_app.register_blueprint(api_logs.bp_api_logs)
         route_client = route_app.test_client()
 
-        original_get_log_repository = api_basic.get_log_repository
-        api_basic.get_log_repository = lambda: FakeReadLogRepository()
+        original_get_log_repository = api_logs.get_log_repository
+        api_logs.get_log_repository = lambda: FakeReadLogRepository()
         try:
             response = route_client.get("/api/logs/entry?date=2026-06-06&sid=__missing__")
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         payload = response.get_json()
         response_text = response.get_data(as_text=True)
@@ -3926,7 +4428,7 @@ def run_log_repository_unit_checks() -> None:
                 )
 
         fake_batch_repo = FakeBatchLogRepository()
-        api_basic.get_log_repository = lambda: fake_batch_repo
+        api_logs.get_log_repository = lambda: fake_batch_repo
         try:
             batch_response = route_client.post(
                 "/api/logs/patch-batch",
@@ -3952,7 +4454,7 @@ def run_log_repository_unit_checks() -> None:
                 ]},
             )
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         batch_payload = batch_response.get_json()
         _assert_unit(batch_response.status_code == 200, "batch log patch must return HTTP 200")
@@ -3972,7 +4474,7 @@ def run_log_repository_unit_checks() -> None:
         _assert_unit(len(fake_batch_repo.calls) == 1, "duplicate batch target must not invoke the repository")
 
         failing_batch_repo = FakeBatchLogRepository(sqlite_ok=False)
-        api_basic.get_log_repository = lambda: failing_batch_repo
+        api_logs.get_log_repository = lambda: failing_batch_repo
         try:
             batch_failure = route_client.post(
                 "/api/logs/patch-batch",
@@ -3983,7 +4485,7 @@ def run_log_repository_unit_checks() -> None:
                 }]},
             )
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         batch_failure_text = batch_failure.get_data(as_text=True)
         _assert_unit(batch_failure.status_code == 409, "batch sqlite failure must return HTTP 409")
@@ -4004,7 +4506,7 @@ def run_log_repository_unit_checks() -> None:
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
                 )
 
-        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_logs.get_log_repository = lambda: FakeLogRepository()
         try:
             app = Flask("verify-logrepo-json-warning")
             with app.test_request_context(
@@ -4012,9 +4514,9 @@ def run_log_repository_unit_checks() -> None:
                 method="POST",
                 json={"date": fail_date, "sid": sid, "entry": {"notes": "saved"}},
             ):
-                response = api_basic.api_logs_patch()
+                response = api_logs.api_logs_patch()
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         status_code = response[1] if isinstance(response, tuple) else response.status_code
         response_obj = response[0] if isinstance(response, tuple) else response
@@ -4040,7 +4542,7 @@ def run_log_repository_unit_checks() -> None:
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
                 )
 
-        api_basic.get_log_repository = lambda: FakeConflictJsonFailureRepository()
+        api_logs.get_log_repository = lambda: FakeConflictJsonFailureRepository()
         try:
             app = Flask("verify-logrepo-conflict-json-failure")
             with app.test_request_context(
@@ -4048,9 +4550,9 @@ def run_log_repository_unit_checks() -> None:
                 method="POST",
                 json={"date": fail_date, "sid": sid, "entry": {"notes": "unsaved"}},
             ):
-                response = api_basic.api_logs_patch()
+                response = api_logs.api_logs_patch()
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         status_code = response[1] if isinstance(response, tuple) else response.status_code
         response_obj = response[0] if isinstance(response, tuple) else response
@@ -4890,47 +5392,37 @@ def run_student_answer_link_precedence_unit_checks() -> None:
 
 
 def run_student_previous_video_review_bootstrap_unit_checks() -> None:
-    """Exercise the extracted bootstrap projection with isolated in-memory fixtures."""
-    import ast
-    import datetime as dt
+    """Exercise the shared core projection with isolated in-memory fixtures."""
     from copy import deepcopy
 
-    from core.video_review_rules import resolve_video_review_states_before_date
+    from core import student_schedule_rules as schedule_rules
+    from core import student_video_assignment_rules as assignment_rules
+    from core import student_video_projection as video_projection
+    from routes.student_bootstrap_projection import (
+        StudentBootstrapProjectionDependencies,
+        build_student_bootstrap_payload,
+    )
 
-    api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+    projection_py = (
+        ROOT / "routes/student_bootstrap_projection.py"
+    ).read_text("utf-8")
 
-    tree = ast.parse(api_basic_py)
-    names = {
-        "_sid_keys",
-        "_sid_lookup",
-        "_normalize_video_assign_list",
-        "_is_manual_video_assignment",
-        "_blocked_mids_for_sid",
-        "_chap_num",
-        "_academy_restricted_student_videos",
-        "_student_completion_videos",
-        "_student_primary_video_mids",
-        "_student_review_states_before_date",
-        "_student_review_states_through_date",
-        "_student_current_curriculum_videos",
-        "_student_eligible_review_video_mids",
-        "_filter_self_study_assignment_for_response",
-        "_filter_auto_assignment_for_current_curriculum",
-        "_student_review_video_projection",
-        "_self_study_review_video_mids",
-        "_student_absent_on_date",
-    }
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    extracted = {node.name for node in nodes}
-    _assert_unit(extracted == names, "bootstrap fixture must extract every route review helper")
     namespace = {
-        "__name__": "student_previous_video_review_fixture",
-        "dt": dt,
-        "deepcopy": deepcopy,
-        "resolve_video_review_states_before_date": resolve_video_review_states_before_date,
-        "DEFAULT_AUTO_VIDEO_ASSIGN_COUNT": 3,
+        "_blocked_mids_for_sid": video_projection.blocked_mids_for_sid,
+        "_chap_num": video_projection.chapter_number,
+        "_academy_restricted_student_videos": video_projection.academy_restricted_student_videos,
+        "_student_completion_videos": video_projection.student_completion_videos,
+        "_student_primary_video_mids": video_projection.student_primary_video_mids,
+        "_student_review_states_before_date": video_projection.student_review_states_before_date,
+        "_student_review_states_through_date": video_projection.student_review_states_through_date,
+        "_student_current_curriculum_videos": video_projection.student_current_curriculum_videos,
+        "_student_eligible_review_video_mids": video_projection.student_eligible_review_video_mids,
+        "_filter_self_study_assignment_for_response": video_projection.filter_self_study_assignment_for_response,
+        "_filter_auto_assignment_for_current_curriculum": video_projection.filter_auto_assignment_for_current_curriculum,
+        "_student_review_video_projection": video_projection.student_review_video_projection,
+        "_self_study_review_video_mids": assignment_rules.self_study_review_video_mids,
+        "_student_absent_on_date": schedule_rules.student_absent_on_date,
     }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "routes/api_basic.py", "exec"), namespace)
 
     student = {
         "id": "007",
@@ -5192,22 +5684,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     )
     _assert_unit(progress == progress_before and watch == watch_before, "bootstrap fixtures must remain immutable")
 
-    _assert_unit(api_basic_py.count('"reviewVideos": []') >= 2, "ghost and course-blocked bootstrap shapes must return empty review arrays")
+    _assert_unit(projection_py.count('"reviewVideos": []') >= 2, "ghost and course-blocked bootstrap shapes must return empty review arrays")
     _assert_unit(
-        "if not absent_today and not archived:" in api_basic_py,
+        "if not absent_today and not archived:" in projection_py,
         "absent and archived bootstrap shapes must return empty review arrays",
     )
-
-    route_node = next(
-        (
-            node for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "api_student_bootstrap"
-        ),
-        None,
-    )
-    _assert_unit(route_node is not None, "bootstrap fixture must extract the actual api_student_bootstrap route body")
-    route_node = deepcopy(route_node)
-    route_node.decorator_list = []
 
     from types import SimpleNamespace
 
@@ -5226,24 +5707,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "WATCH_PATH": "fixture-watch",
     })
 
-    class FixtureRequest:
-        args: dict[str, str]
-
-        def __init__(self) -> None:
-            self.args = {}
-
-    route_namespace["request"] = FixtureRequest()
-    route_namespace["jsonify"] = lambda payload: payload
-    route_namespace["nocache_resp"] = lambda payload: payload
     route_namespace["_today_kst_iso"] = lambda: "2026-06-01"
-    route_namespace["_is_ghost_student_sid"] = lambda sid: str(sid) == "ghost"
-    route_namespace["_ghost_student_bootstrap"] = lambda date: {
-        "ok": True,
-        "date": date,
-        "reviewVideos": [],
-        "ghostStudent": True,
-    }
-    route_namespace["_log_rules"] = SimpleNamespace(truthy=lambda value: bool(value))
     route_namespace["_build_latest_status_by_sid"] = lambda _progress: {}
     route_namespace["_student_dashboard_enabled"] = lambda: False
     route_namespace["_course_videos_completed"] = lambda *_args: False
@@ -5340,22 +5804,99 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     route_namespace["_student_is_registered_on_date"] = lambda *_args, **_kwargs: bool(route_state["registered"])
     route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
     route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
-    route_namespace["_is_public_student_request"] = lambda: False
-    route_namespace["_public_session_sid"] = lambda: None
-    route_namespace["_student_request_academy_allowed"] = lambda: bool(route_state["academy_allowed"])
-    route_namespace["_finalize_public_bootstrap"] = lambda payload, *_args: payload
     route_namespace["_active_student_alias_sid"] = lambda *_args: None
 
-    exec(compile(ast.Module(body=[route_node], type_ignores=[]), "routes/api_basic.py", "exec"), route_namespace)
-    route_fn = route_namespace["api_student_bootstrap"]
+    dependencies = StudentBootstrapProjectionDependencies(
+        students_path=route_namespace["STU_PATH"],
+        videos_path=route_namespace["VID_PATH"],
+        updates_path=route_namespace["UPD_PATH"],
+        watch_path=route_namespace["WATCH_PATH"],
+        load=fixture_load,
+        load_absent=lambda: deepcopy(route_state["absent"]),
+        load_progress=lambda: deepcopy(route_state["progress"]),
+        load_material_state=lambda: route_namespace[
+            "_load_material_state_for_read"
+        ](),
+        get_log_repository=lambda: FixtureRepository(),
+        homework_books_from_log=lambda entry: route_namespace[
+            "_student_homework_book_names_from_log"
+        ](entry),
+        student_is_registered=lambda *args, **kwargs: route_namespace[
+            "_student_is_registered_on_date"
+        ](*args, **kwargs),
+        student_is_self_study=lambda *args, **kwargs: route_namespace[
+            "_student_is_self_study_on_date"
+        ](*args, **kwargs),
+        student_absent=lambda *args, **kwargs: route_namespace[
+            "_student_absent_on_date"
+        ](*args, **kwargs),
+        active_alias_sid=lambda *args, **kwargs: route_namespace[
+            "_active_student_alias_sid"
+        ](*args, **kwargs),
+        dashboard_enabled=lambda: route_namespace[
+            "_student_dashboard_enabled"
+        ](),
+        dashboard_projection=lambda **_kwargs: {},
+        build_latest_status=lambda progress_value: route_namespace[
+            "_build_latest_status_by_sid"
+        ](progress_value),
+        student_completion_videos=lambda student_value, videos_value: route_namespace[
+            "_student_completion_videos"
+        ](student_value, videos_value),
+        course_videos_completed=lambda *args, **kwargs: route_namespace[
+            "_course_videos_completed"
+        ](*args, **kwargs),
+        load_updates_with_auto_assign=lambda **kwargs: route_namespace[
+            "_load_updates_with_auto_assign"
+        ](**kwargs),
+        build_auto_blocked=lambda progress_value, watch_value: route_namespace[
+            "_build_auto_assignment_blocked_by_sid"
+        ](progress_value, watch_value),
+        blocked_mids=route_namespace["_blocked_mids_for_sid"],
+        eligible_review_mids=route_namespace[
+            "_student_eligible_review_video_mids"
+        ],
+        filter_self_study_assignment=route_namespace[
+            "_filter_self_study_assignment_for_response"
+        ],
+        filter_auto_assignment=route_namespace[
+            "_filter_auto_assignment_for_current_curriculum"
+        ],
+        review_states_through_date=route_namespace[
+            "_student_review_states_through_date"
+        ],
+        student_primary_video_mids=route_namespace[
+            "_student_primary_video_mids"
+        ],
+        academy_restricted_videos=route_namespace[
+            "_academy_restricted_student_videos"
+        ],
+        review_video_projection=route_namespace[
+            "_student_review_video_projection"
+        ],
+        assigned_material_list=route_namespace["_assigned_material_list"],
+        filter_materials=route_namespace["_filter_materials_for_assignment"],
+        assigned_tests=route_namespace["_student_assigned_tests_for_date"],
+        filter_tests_for_curriculum=route_namespace[
+            "_filter_assigned_tests_for_student_curriculum"
+        ],
+        academy_restricted_tests=route_namespace[
+            "_academy_restricted_assigned_tests"
+        ],
+        today_iso=lambda: route_namespace["_today_kst_iso"](),
+        dashboard_course_block_message="course-blocked",
+    )
 
     def invoke_route(sid: str = base_sid) -> tuple[dict, int]:
-        route_namespace["request"].args = {"sid": sid, "date": route_state["date"]}
-        result = route_fn()
-        if isinstance(result, tuple):
-            body, status = result
-            return body, int(status)
-        return result, 200
+        return build_student_bootstrap_payload(
+            dependencies,
+            sid=sid,
+            date=route_state["date"],
+            public_request=False,
+            academy_allowed_resolver=lambda: bool(
+                route_state["academy_allowed"]
+            ),
+        )
 
     def assert_success_shape(label: str, payload: dict, status: int = 200) -> None:
         _assert_unit(status == 200 and payload.get("ok") is True, f"{label} route response must be successful")
@@ -5585,7 +6126,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(blocked_payload.get("courseBlocked") is True and blocked_payload["reviewVideos"] == [], "course-blocked bootstrap must return empty reviewVideos")
 
     route_state = make_route_state()
-    ghost_payload, ghost_status = invoke_route("ghost")
+    ghost_payload, ghost_status = invoke_route("ghost-outside-test")
     assert_success_shape("ghost", ghost_payload, ghost_status)
     _assert_unit(ghost_payload.get("ghostStudent") is True and ghost_payload["reviewVideos"] == [], "ghost bootstrap must return empty reviewVideos")
 
@@ -5606,6 +6147,7 @@ def run_student_bootstrap_unit_checks() -> None:
     from flask import Flask
     from types import SimpleNamespace
     import routes.api_basic as api_basic
+    import routes.api_student_bootstrap as api_student_bootstrap
 
     run_student_assigned_tests_unit_checks()
 
@@ -5721,25 +6263,36 @@ def run_student_bootstrap_unit_checks() -> None:
     original_load = api_basic.load
     original_load_absent = api_basic.load_absent
     original_get_log_repository = api_basic.get_log_repository
-    original_academy_network_allowed = api_basic.academy_network_allowed
+    original_academy_network_allowed = (
+        api_student_bootstrap.academy_network_allowed
+    )
     original_student_is_registered_on_date = api_basic._student_is_registered_on_date
     original_progress_loader = api_basic._load_progress_strict
+    original_material_state_loader = api_basic._load_material_state_for_read
     original_config_loader = api_basic._load_tests_config_for_answer_links
     original_map_loader = api_basic._load_test_answer_link_map
 
     api_basic.load = fake_load
     api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
     api_basic.get_log_repository = lambda: FakeLogRepository()
-    api_basic.academy_network_allowed = lambda: True
+    api_student_bootstrap.academy_network_allowed = lambda: True
     api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
     api_basic._load_progress_strict = lambda *_args, **_kwargs: progress
+    api_basic._load_material_state_for_read = lambda: ({}, {}, {}, False)
     api_basic._load_tests_config_for_answer_links = lambda: tests_config
     api_basic._load_test_answer_link_map = lambda: {
         "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}}
     }
     try:
         app = Flask("verify-student-bootstrap-assigned-tests")
+        api_student_bootstrap.configure_student_bootstrap_projection(
+            app,
+            api_basic.create_student_bootstrap_projection_dependencies(),
+        )
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(
+            api_student_bootstrap.bp_api_student_bootstrap
+        )
         client = app.test_client()
 
         response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
@@ -5769,7 +6322,7 @@ def run_student_bootstrap_unit_checks() -> None:
         )
         _assert_unit("C:" not in response_text and str(ROOT) not in response_text, "student bootstrap must not expose raw local paths")
 
-        api_basic.academy_network_allowed = lambda: False
+        api_student_bootstrap.academy_network_allowed = lambda: False
         restricted_response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
         restricted_payload = restricted_response.get_json() or {}
         restricted_items = restricted_payload.get("assignedTests") or []
@@ -5792,9 +6345,12 @@ def run_student_bootstrap_unit_checks() -> None:
         api_basic.load = original_load
         api_basic.load_absent = original_load_absent
         api_basic.get_log_repository = original_get_log_repository
-        api_basic.academy_network_allowed = original_academy_network_allowed
+        api_student_bootstrap.academy_network_allowed = (
+            original_academy_network_allowed
+        )
         api_basic._student_is_registered_on_date = original_student_is_registered_on_date
         api_basic._load_progress_strict = original_progress_loader
+        api_basic._load_material_state_for_read = original_material_state_loader
         api_basic._load_tests_config_for_answer_links = original_config_loader
         api_basic._load_test_answer_link_map = original_map_loader
 
@@ -5932,25 +6488,24 @@ def run_retired_test_submission_assignment_boundary_checks() -> None:
 
 def run_student_answer_link_render_source_checks() -> None:
     student_js = (ROOT / "static/js/student.js").read_text("utf-8")
+    presentation_js = (ROOT / "static/js/student/testPresentation.js").read_text("utf-8")
     render_start = student_js.index("function renderAssignedTests()")
     render_end = student_js.index("async function recoverStudentSid", render_start)
     render_block = student_js[render_start:render_end]
 
     for snippet in [
-        "function assignedTestAnswerUrl(test)",
-        "function isAssignedTestAnswerRestricted(test, answerUrl)",
-        "function canOpenAssignedTestAnswer(answerUrl)",
-        "function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl)",
+        "function answerUrl(test)",
+        "function isAnswerRestricted(test, resolvedAnswerUrl, academyAccessAllowed)",
+        "function canOpenAnswer(resolvedAnswerUrl, academyAccessAllowed)",
+        "function viewModel(test, { academyAccessAllowed = false } = {})",
     ]:
-        _assert_unit(snippet in student_js, f"student assigned-test answer rendering must keep helper seam: {snippet}")
+        _assert_unit(snippet in presentation_js, f"student test presentation must keep answer helper seam: {snippet}")
 
     for snippet in [
-        "const answerUrl = assignedTestAnswerUrl(test);",
-        "const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);",
-        "const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);",
-        "const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);",
-        "if (answerUrl) btn.dataset.answerUrl = answerUrl;",
-        "if (answerRestricted) btn.dataset.answerRestricted = '1';",
+        "const view = assignedTestViewModel(test, { academyAccessAllowed });",
+        "const btn = createAssignedTestActionElement(view.canOpenAnswerUrl, view.answerUrl);",
+        "if (view.answerUrl) btn.dataset.answerUrl = view.answerUrl;",
+        "if (view.answerRestricted) btn.dataset.answerRestricted = '1';",
         "btn.addEventListener('click', showAcademyOnlyNotice);",
     ]:
         _assert_unit(snippet in render_block, f"student assigned-test render block must preserve answer-link behavior: {snippet}")
@@ -6680,11 +7235,17 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
     original_environment = os.environ.copy()
     original_backup_root = backup_runtime_data.ROOT
     original_cwd = pathlib.Path.cwd()
+
+    def stable_runtime_observer() -> dict:
+        """Keep receipt/state unit cases independent from live server writes."""
+        return {}
+
     _assert_unit(
         _execute_student_mobile_deployment_checker(
             lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
             expected_name="deployment-fixture",
             minimum_assertions=3,
+            runtime_observer=stable_runtime_observer,
         ) == 3,
         "student deployment guard rejected a valid receipt",
     )
@@ -6700,6 +7261,7 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
                 lambda receipt=receipt: receipt,
                 expected_name="deployment-fixture",
                 minimum_assertions=3,
+                runtime_observer=stable_runtime_observer,
             )
         except AssertionError:
             continue
@@ -6715,6 +7277,7 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
             dirty_failure,
             expected_name="deployment-fixture",
             minimum_assertions=3,
+            runtime_observer=stable_runtime_observer,
         )
     except AssertionError as exc:
         _assert_unit("shared verifier state; restored" in str(exc), "deployment guard hid state restoration failure")
@@ -6912,11 +7475,25 @@ def run_student_mobile_python_result_contract_checks() -> None:
 
 
 def run_refactor_notes_contract_source_checks() -> None:
-    refactor_notes_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
+    refactor_pointer_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
+    functions_md = (ROOT / "docs/PROJECT_FUNCTIONS_AND_LOGIC.md").read_text("utf-8")
+    root_agents_md = (ROOT / "AGENTS.md").read_text("utf-8")
+    scripts_agents_md = (ROOT / "scripts/AGENTS.md").read_text("utf-8")
 
-    required_note_groups = [
+    for snippet in [
+        "../docs/history/REFACTOR_NOTES_LOGS_PROGRESS_LEGACY.md",
+        "SERVER_RULES_INDEX.md#rule-log-001",
+        "SERVER_RULES_INDEX.md#rule-progress-001",
+    ]:
+        _assert_unit(
+            snippet in refactor_pointer_md,
+            f"legacy refactor-note pointer must resolve through canonical documentation: {snippet}",
+        )
+
+    required_canonical_groups = [
         (
             "assigned test answer-link notes",
+            functions_md,
             [
                 "progress[date][sid].tests",
                 "assignedTests[].answerUrl",
@@ -6926,21 +7503,26 @@ def run_refactor_notes_contract_source_checks() -> None:
         ),
         (
             "catalog writer safety notes",
+            scripts_agents_md,
             ["--backup-confirmed", "--config", "--csv", "--output", "--issues"],
         ),
         (
             "opt-in log GET smoke safety notes",
+            root_agents_md,
             [
                 "--smoke --smoke-log-gets",
-                "python scripts\\backup_runtime_data.py",
+                "python scripts/backup_runtime_data.py",
                 "`mtime_ns`, size, and SHA-256",
-                "including an mtime-only change, fails",
+                "including an mtime-only change",
             ],
         ),
     ]
-    for label, snippets in required_note_groups:
-        missing = [snippet for snippet in snippets if snippet not in refactor_notes_md]
-        _assert_unit(not missing, f"refactor notes must describe {label}; missing: {', '.join(missing)}")
+    for label, canonical_text, snippets in required_canonical_groups:
+        missing = [snippet for snippet in snippets if snippet not in canonical_text]
+        _assert_unit(
+            not missing,
+            f"canonical documentation must describe {label}; missing: {', '.join(missing)}",
+        )
 
 
 def run_admin_calendar_test_completion_source_checks() -> None:
@@ -8158,7 +8740,6 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "function latestAutoAssignStatusForSid",
         "function applyWatchStatusForAutoAssign",
         "function blockedMidsForAutoAssign",
-        "function shouldClearCompletedAutoAssignment",
         "function resolveVideoAssignmentSaveSource",
         "options.forceEmpty === true",
         "function applyVideoAssignmentState",
@@ -10312,6 +10893,7 @@ def run_unit_checks() -> bool:
         run_legacy_consumer_cleanup_checks,
         run_person_identity_checks,
         run_file_reference_route_checks,
+        run_school_calendar_revision_checks,
         run_today_order_store_migration_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
@@ -10320,6 +10902,10 @@ def run_unit_checks() -> bool:
         run_student_previous_video_review_rule_unit_checks,
         run_progress_batch_sids_unit_checks,
         run_progress_read_cache_unit_checks,
+        run_progress_route_checks,
+        run_updates_route_checks,
+        run_student_auto_assignment_service_checks,
+        run_student_video_assignment_rule_checks,
         run_video_completion_unit_checks,
         run_video_assignment_snapshot_unit_checks,
         run_video_assignment_route_hook_unit_checks,
@@ -10330,11 +10916,18 @@ def run_unit_checks() -> bool:
         run_self_study_video_assignment_source_checks,
         run_watch_route_progress_unit_checks,
         run_video_progress_integration_matrix_checks,
+        run_log_route_checks,
         run_log_repository_unit_checks,
+        run_material_route_checks,
+        run_schedule_override_route_checks,
         run_legacy_test_record_cache_unit_checks,
         run_test_shared_service_checks,
         run_announcement_image_access_checks,
         run_student_answer_link_precedence_unit_checks,
+        run_student_bootstrap_route_checks,
+        run_student_bootstrap_state_checks,
+        run_student_announcement_state_checks,
+        run_student_test_presentation_checks,
         run_student_previous_video_review_bootstrap_unit_checks,
         run_student_bootstrap_unit_checks,
         run_retired_test_submission_surface_checks,
@@ -10350,12 +10943,14 @@ def run_unit_checks() -> bool:
         run_student_submission_retirement_and_assignment_checks,
         run_academy_proxy_network_access_checks,
         run_test_answer_mode_contract_checks,
+        run_student_test_ocr_contract_checks,
         run_absence_test_assignment_transition_unit_checks,
         run_absence_makeup_integration_matrix_checks,
         run_student_answer_link_render_source_checks,
         run_unit_test_answer_material_contract_checks,
         run_catalog_script_safety_source_checks,
         run_catalog_script_temp_file_behavior_checks,
+        run_admin_css_inventory_checks,
         run_admin_css_scope_source_checks,
         run_student_css_scope_source_checks,
         run_shared_css_scope_source_checks,

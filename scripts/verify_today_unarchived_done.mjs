@@ -41,7 +41,7 @@ assert.deepEqual(
 
 const renderSource = fs.readFileSync('static/js/admin/features/today.render.js', 'utf8');
 const todaySource = fs.readFileSync('static/js/admin/features/today.js', 'utf8');
-const apiSource = fs.readFileSync('routes/api_basic.py', 'utf8');
+const apiSource = fs.readFileSync('routes/api_logs.py', 'utf8');
 assert.match(renderSource, /dateKey === String\(getAdminDate\(\) \|\| ''\)/, 'historical rows need a selected-date edit gate');
 assert.match(renderSource, /renderReadonlySlotLabel\('—'\)/, 'historical slot labels must not show an unhydrated value');
 assert.match(renderSource, /class="arriveLabelReadonly"/, 'historical arrive values must render read-only');
@@ -51,6 +51,6 @@ assert.match(renderSource, /<span class="stuName">\$\{escapeAttr\(name\)\}<\/spa
 assert.match(todaySource, /function renderDoneSummaryWhenIdle\(/, 'async done summaries need an edit-safe renderer');
 assert.match(todaySource, /wrap\.contains\(active\)/, 'async done summary replacement must defer while editing');
 assert.match(todaySource, /renderDone\(sortDoneEntries\(entries\)\);\s*applyTodaySearchFilter\(\);/, 'async done summaries must preserve the active search filter');
-assert.match(apiSource, /return nocache_resp\(_summarize_unarchived_done_logs\(exclude_date\)\)/, 'all-date per-student summaries must be no-store');
+assert.match(apiSource, /return nocache_resp\(get_log_repository\(\)\.summarize_unarchived_done\(exclude_date\)\)/, 'all-date per-student summaries must be no-store');
 
 console.log('today unarchived done projection checks passed');

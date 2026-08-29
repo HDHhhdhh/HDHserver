@@ -222,10 +222,14 @@ def run_material_state_recovery_checks() -> None:
         )
 
 def run_material_assignment_route_checks() -> None:
-    import routes.api_basic as api_basic
+    import routes.api_materials as api_materials
     from core.material_state import material_state_journal_path
 
-    original_paths = (api_basic.MAT_PATH, api_basic.ASN_PATH, api_basic.PAGE_FOLDERS_PATH)
+    original_paths = (
+        api_materials.MAT_PATH,
+        api_materials.ASN_PATH,
+        api_materials.PAGE_FOLDERS_PATH,
+    )
 
     def write_json(path: pathlib.Path, value: object) -> None:
         path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
@@ -239,12 +243,12 @@ def run_material_assignment_route_checks() -> None:
             write_json(material_path, {"m1": {"url": "/files/m1.pdf", "unknown": True}})
             write_json(assignment_path, {"s1": ["m1"]})
             write_json(page_path, {"materials": "교재", "unknown": {"keep": True}})
-            api_basic.MAT_PATH = material_path
-            api_basic.ASN_PATH = assignment_path
-            api_basic.PAGE_FOLDERS_PATH = page_path
+            api_materials.MAT_PATH = material_path
+            api_materials.ASN_PATH = assignment_path
+            api_materials.PAGE_FOLDERS_PATH = page_path
 
             app = Flask("verify-material-assignment-route")
-            app.register_blueprint(api_basic.bp_api_basic)
+            app.register_blueprint(api_materials.bp_api_materials)
             client = app.test_client()
 
             initial = client.get("/api/mat-assign")
@@ -326,7 +330,11 @@ def run_material_assignment_route_checks() -> None:
                 "a damaged pending journal must disable only material writes without mutating primaries",
             )
     finally:
-        api_basic.MAT_PATH, api_basic.ASN_PATH, api_basic.PAGE_FOLDERS_PATH = original_paths
+        (
+            api_materials.MAT_PATH,
+            api_materials.ASN_PATH,
+            api_materials.PAGE_FOLDERS_PATH,
+        ) = original_paths
 
 def run_file_reference_route_checks() -> None:
     import routes.api_fs as api_fs

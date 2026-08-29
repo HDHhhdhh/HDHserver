@@ -22,6 +22,7 @@ progress.json.*.tmp
 /.codex_drive_download/
 /generated/
 /tmp/
+/.re0/
 /.omo/evidence/
 /.omo/plans/
 /.omo/ulw-loop/

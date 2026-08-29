@@ -6,6 +6,18 @@ const { spawnSync } = require('child_process');
 const root = path.resolve(__dirname, '..');
 const sourcePath = path.join(root, 'static', 'js', 'student.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
+const bootstrapStatePath = path.join(root, 'static', 'js', 'student', 'bootstrapState.js');
+const bootstrapStateSource = fs.readFileSync(bootstrapStatePath, 'utf8');
+const watchStatePath = path.join(root, 'static', 'js', 'student', 'watchState.js');
+const watchStateSource = fs.readFileSync(watchStatePath, 'utf8');
+const playbackPath = path.join(root, 'static', 'js', 'student', 'playback.js');
+const playbackSource = fs.readFileSync(playbackPath, 'utf8');
+const reviewPlaylistPath = path.join(root, 'static', 'js', 'student', 'reviewPlaylist.js');
+const reviewPlaylistSource = fs.readFileSync(reviewPlaylistPath, 'utf8');
+const announcementStatePath = path.join(root, 'static', 'js', 'student', 'announcementState.js');
+const announcementStateSource = fs.readFileSync(announcementStatePath, 'utf8');
+const testPresentationPath = path.join(root, 'static', 'js', 'student', 'testPresentation.js');
+const testPresentationSource = fs.readFileSync(testPresentationPath, 'utf8');
 
 const BLOCK_MESSAGE = '영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.';
 const SID = 'browser-qa-student';
@@ -520,6 +532,12 @@ async function main(options = {}) {
   context.window.open = () => null;
 
   vm.createContext(context);
+  vm.runInContext(bootstrapStateSource, context, { filename: 'static/js/student/bootstrapState.js' });
+  vm.runInContext(watchStateSource, context, { filename: 'static/js/student/watchState.js' });
+  vm.runInContext(playbackSource, context, { filename: 'static/js/student/playback.js' });
+  vm.runInContext(reviewPlaylistSource, context, { filename: 'static/js/student/reviewPlaylist.js' });
+  vm.runInContext(announcementStateSource, context, { filename: 'static/js/student/announcementState.js' });
+  vm.runInContext(testPresentationSource, context, { filename: 'static/js/student/testPresentation.js' });
   vm.runInContext(source, context, { filename: 'static/js/student.js' });
   await new Promise(resolve => setTimeout(resolve, 50));
 

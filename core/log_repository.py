@@ -5,16 +5,15 @@ import datetime as dt
 import json
 import os
 import pathlib
-import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
+from core.date_rules import is_iso_date_key
 from core.log_rules import is_empty_value, truthy as default_truthy
 from core.paths import LOGS_PATH
 from core.storage import load, save_atomic
 
-DATE_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -565,7 +564,7 @@ class LogRepository:
             self._ensure_schema(con)
             con.execute("BEGIN IMMEDIATE;")
             for date, by_sid in incoming.items():
-                if not isinstance(by_sid, dict) or not DATE_KEY_RE.match(str(date)):
+                if not isinstance(by_sid, dict) or not is_iso_date_key(str(date)):
                     continue
                 for sid, entry in by_sid.items():
                     if not isinstance(entry, dict):
@@ -953,11 +952,7 @@ class LogRepository:
 
         def valid_date(value: Any) -> str:
             date_s = str(value or "").strip()
-            if not DATE_KEY_RE.fullmatch(date_s):
-                return ""
-            try:
-                dt.date.fromisoformat(date_s)
-            except ValueError:
+            if not is_iso_date_key(date_s):
                 return ""
             return date_s
 

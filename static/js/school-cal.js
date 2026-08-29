@@ -1,30 +1,27 @@
-import {
-  getActiveSchoolCalendarYear,
-  isSchoolCalendarV2,
-} from './shared/schoolCalendar.js';
+import { getActiveSchoolCalendarYear } from './shared/schoolCalendar.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
   searchKeyForText,
 } from './shared/search.js';
+import { createSchoolCalendarPersistence } from './school-calendar/persistence.js';
+import {
+  buildSchoolCalendarDocument,
+  cloneSchoolCalendarRow,
+  coerceSchoolCalendarExam as coerceExam,
+  coerceSchoolCalendarSemester as coerceSemester,
+  getSchoolCalendarYearBundle as getYearBundle,
+  hasSchoolCalendarScheduleValue as hasScheduleValue,
+  isSchoolCalendarRecord as isObject,
+  loadSchoolCalendarRows,
+  normalizeSchoolCalendarCommon as normalizeCommonFields,
+  normalizeSchoolCalendarGrade as normalizeGradeFields,
+  withActiveSchoolCalendarPage,
+} from './school-calendar/state.js';
 
 (() => {
-  const CT = { 'Content-Type': 'application/json' };
   const PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
   const DEFAULT_EXAM = 'final';
-  const SCHEDULE_KEYS = [
-    'textbook',
-    'semesterStart',
-    'midterm',
-    'midtermMath',
-    'midtermRange',
-    'midtermNote',
-    'final',
-    'finalMath',
-    'finalRange',
-    'finalNote',
-  ];
-  const GRADE_PHASE_DELIM = '::';
   const EXAMS = {
     mid: {
       label: '중간고사',
@@ -69,9 +66,61 @@ import {
   let searchQuery = '';
   let autoSaveTimer = null;
   let lastSavedSnapshot = '';
+  let saveStatusTimer = null;
+  let conflictAlertShown = false;
+  let pageSwitchInFlight = false;
   let schoolSeq = 1;
   let gradeSeq = 1;
   const expandedSchoolIds = new Set();
+
+  function setSaveStatus(message, clearAfter = 0) {
+    if (saveStatusTimer) {
+      clearTimeout(saveStatusTimer);
+      saveStatusTimer = null;
+    }
+    statusEl.textContent = message;
+    if (clearAfter > 0) {
+      const expected = message;
+      saveStatusTimer = setTimeout(() => {
+        saveStatusTimer = null;
+        if (statusEl.textContent === expected) statusEl.textContent = '';
+      }, clearAfter);
+    }
+  }
+
+  function reportSaveConflict(mode) {
+    setSaveStatus('다른 화면의 변경이 감지되었습니다. 페이지를 새로고침해 주세요.');
+    if ((mode === 'manual' || mode === 'switch') && !conflictAlertShown) {
+      conflictAlertShown = true;
+      alert('다른 화면에서 학교 일정이 변경되었습니다. 현재 입력을 확인한 뒤 페이지를 새로고침해 주세요.');
+    }
+  }
+
+  const calendarPersistence = createSchoolCalendarPersistence({
+    onStart(job) {
+      if (job.mode === 'auto') setSaveStatus('자동 저장 중...');
+      else if (job.mode === 'switch') setSaveStatus('페이지 저장 중...');
+      else if (job.mode === 'manual') setSaveStatus('저장 중...');
+    },
+    onSuccess(job) {
+      calendarDoc = job.payload;
+      lastSavedSnapshot = job.snapshot;
+      if (job.mode === 'auto') setSaveStatus('자동 저장됨', 1500);
+      else if (job.mode === 'switch' || job.mode === 'manual') setSaveStatus('저장됨', 1500);
+    },
+    onConflict(job) {
+      reportSaveConflict(job.mode);
+    },
+    onFailure(job, result) {
+      console.error('saveCalendar failed', result.error || result.status);
+      if (job.mode === 'auto') setSaveStatus('자동 저장 실패');
+      else if (job.mode === 'metadata') setSaveStatus('페이지 정보 저장 실패');
+      else if (job.mode !== 'flush') setSaveStatus('저장 실패');
+      if (job.mode === 'manual' || job.mode === 'switch') {
+        alert(`저장 실패: ${result.status || result.error?.message || 'network error'}`);
+      }
+    },
+  });
 
   (function injectStyle() {
     const css = `
@@ -255,10 +304,6 @@ import {
     document.head.appendChild(s);
   })();
 
-  function isObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value);
-  }
-
   function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, (m) => ({
       '&': '&amp;',
@@ -289,147 +334,19 @@ import {
     return id;
   }
 
-  function normalizeScheduleFields(entry = {}) {
-    const out = {};
-    for (const key of SCHEDULE_KEYS) {
-      out[key] = String(entry?.[key] ?? '').trim();
-    }
-    return out;
-  }
-
-  function normalizeCommonFields(entry = {}) {
-    const out = normalizeScheduleFields(entry);
-    out.textbook = '';
-    out.midtermMath = '';
-    out.midtermRange = '';
-    out.midtermNote = '';
-    out.finalMath = '';
-    out.finalRange = '';
-    out.finalNote = '';
-    return out;
-  }
-
-  function normalizeGradeFields(entry = {}) {
-    const out = normalizeScheduleFields(entry);
-    out.semesterStart = '';
-    out.midterm = '';
-    out.final = '';
-    return out;
-  }
-
-  function hasScheduleValue(entry = {}) {
-    return SCHEDULE_KEYS.some((key) => String(entry?.[key] ?? '').trim());
-  }
-
-  function parseGradeToken(rawKey, gradeEntry = {}) {
-    const key = String(rawKey ?? '').trim();
-    const explicitGrade = String(gradeEntry?.__grade ?? '').trim();
-    const explicitPhase = String(gradeEntry?.__phase ?? '').trim();
-
-    if (explicitGrade || explicitPhase) {
-      return {
-        grade: explicitGrade || key,
-        phase: explicitPhase,
-      };
-    }
-
-    const idx = key.indexOf(GRADE_PHASE_DELIM);
-    if (idx < 0) {
-      return { grade: key, phase: '' };
-    }
-
-    return {
-      grade: key.slice(0, idx).trim(),
-      phase: key.slice(idx + GRADE_PHASE_DELIM.length).trim(),
-    };
-  }
-
   function cloneSchoolEntry(school) {
-    return {
-      id: school.id,
-      school: String(school.school || '').trim(),
-      common: normalizeCommonFields(school.common || {}),
-      grades: (school.grades || []).map((gradeRow) => ({
-        id: gradeRow.id || nextGradeId(),
-        grade: String(gradeRow.grade || '').trim(),
-        phase: String(gradeRow.phase || '').trim(),
-        fields: normalizeGradeFields(gradeRow.fields || {}),
-      })),
-    };
-  }
-
-  function sortLoadedSchools(rows) {
-    return [...rows].sort((a, b) => String(a.school || '').localeCompare(String(b.school || ''), 'ko'));
-  }
-
-  function getYearBundle(payload, year) {
-    if (!isSchoolCalendarV2(payload)) return {};
-    return isObject(payload.years?.[String(year)]) ? payload.years[String(year)] : {};
-  }
-
-  function getSchoolMapForSelection(payload, year, semester) {
-    const yearBundle = getYearBundle(payload, year);
-    const semesters = isObject(yearBundle.semesters) ? yearBundle.semesters : {};
-    const semesterBundle = semesters[String(semester)];
-    if (isObject(semesterBundle?.schools)) return semesterBundle.schools;
-    if (String(semester) === '1' && isObject(yearBundle.schools)) return yearBundle.schools;
-    return {};
+    return cloneSchoolCalendarRow(school, { nextGradeId });
   }
 
   function loadSchoolsFromDoc(payload, year, semester) {
-    const schoolMap = getSchoolMapForSelection(payload, year, semester);
-    const rows = [];
-
-    for (const [schoolName, entry] of Object.entries(schoolMap)) {
-      if (!isObject(entry)) continue;
-
-      if (!isObject(entry.common) && !isObject(entry.grades)) {
-        rows.push({
-          id: nextSchoolId(),
-          school: schoolName,
-          common: normalizeCommonFields(entry),
-          grades: [],
-        });
-        continue;
-      }
-
-      const common = normalizeCommonFields(isObject(entry.common) ? entry.common : {});
-      const grades = [];
-
-      const rawGrades = isObject(entry.grades) ? entry.grades : {};
-      Object.entries(rawGrades).forEach(([gradeKey, gradeEntry]) => {
-        if (!isObject(gradeEntry)) return;
-        const token = parseGradeToken(gradeKey, gradeEntry);
-        const fields = normalizeGradeFields(gradeEntry);
-        const hasMeta = token.grade || token.phase;
-        if (!hasMeta && !hasScheduleValue(fields)) return;
-        grades.push({
-          id: nextGradeId(),
-          grade: token.grade,
-          phase: token.phase,
-          fields,
-        });
-      });
-
-      grades.sort((a, b) => {
-        const gCmp = String(a.grade || '').localeCompare(String(b.grade || ''), 'ko');
-        if (gCmp !== 0) return gCmp;
-        return String(a.phase || '').localeCompare(String(b.phase || ''), 'ko');
-      });
-
-      const schoolId = nextSchoolId();
-      rows.push({
-        id: schoolId,
-        school: schoolName,
-        common,
-        grades,
-      });
-      if (grades.length > 0) {
-        expandedSchoolIds.add(schoolId);
-      }
-    }
-
-    return sortLoadedSchools(rows);
+    const loaded = loadSchoolCalendarRows(payload, {
+      year,
+      semester,
+      nextSchoolId,
+      nextGradeId,
+    });
+    loaded.expandedSchoolIds.forEach((schoolId) => expandedSchoolIds.add(schoolId));
+    return loaded.rows;
   }
 
   function shortYear(year) {
@@ -693,77 +610,14 @@ import {
   }
 
   function buildPayloadFromState() {
-    const activeYear = String(editingYear || getActiveSchoolCalendarYear(calendarDoc) || new Date().getFullYear());
-    const semesterKey = String(editingSemester || '1');
-    const existingSchools = getSchoolMapForSelection(calendarDoc, activeYear, semesterKey);
-    const schools = {};
-
-    schoolsData.forEach((schoolEntry) => {
-      const schoolName = String(schoolEntry.school || '').trim();
-      if (!schoolName) return;
-
-      const existing = isObject(existingSchools[schoolName]) ? { ...existingSchools[schoolName] } : {};
-      delete existing.common;
-      delete existing.grades;
-
-      const grades = {};
-      (schoolEntry.grades || []).forEach((gradeRow) => {
-        const grade = String(gradeRow.grade || '').trim();
-        const phase = String(gradeRow.phase || '').trim();
-        const fields = normalizeGradeFields(gradeRow.fields || {});
-
-        if (!grade && !phase && !hasScheduleValue(fields)) return;
-        if (!grade) return;
-
-        const key = phase ? `${grade}${GRADE_PHASE_DELIM}${phase}` : grade;
-        if (!key) return;
-
-        grades[key] = {
-          ...fields,
-          __grade: grade,
-          __phase: phase,
-        };
-      });
-
-      schools[schoolName] = {
-        ...existing,
-        common: normalizeCommonFields(schoolEntry.common || {}),
-        grades,
-      };
+    return buildSchoolCalendarDocument({
+      calendarDoc,
+      schools: schoolsData,
+      activeYear: editingYear,
+      activeSemester: editingSemester,
+      activeExam: viewMode,
+      fallbackYear: String(new Date().getFullYear()),
     });
-
-    const base = isSchoolCalendarV2(calendarDoc) ? calendarDoc : {};
-    const years = { ...(base.years || {}) };
-    const yearBundle = isObject(years[activeYear]) ? { ...years[activeYear] } : {};
-    const semesters = isObject(yearBundle.semesters) ? { ...yearBundle.semesters } : {};
-    const semesterBundle = isObject(semesters[semesterKey]) ? { ...semesters[semesterKey] } : {};
-
-    semesters[semesterKey] = {
-      ...semesterBundle,
-      schools,
-    };
-
-    const nextYearBundle = {
-      ...yearBundle,
-      activeSemester: semesterKey,
-      activeExam: viewMode,
-      semesters,
-    };
-
-    if (semesterKey === '1') {
-      nextYearBundle.schools = schools;
-    }
-
-    years[activeYear] = nextYearBundle;
-
-    return {
-      ...base,
-      version: 2,
-      activeYear,
-      activeSemester: semesterKey,
-      activeExam: viewMode,
-      years,
-    };
   }
 
   async function saveCalendar(mode = 'manual') {
@@ -772,52 +626,23 @@ import {
       autoSaveTimer = null;
     }
 
+    if (calendarPersistence.isBlocked()) {
+      reportSaveConflict(mode);
+      return false;
+    }
+
     syncFromView();
-    const payload = buildPayloadFromState();
-    const snapshot = JSON.stringify(payload);
-
-    if (statusEl) {
-      if (mode === 'auto') statusEl.textContent = '자동 저장 중...';
-      else if (mode === 'switch') statusEl.textContent = '페이지 저장 중...';
-      else if (mode === 'manual') statusEl.textContent = '저장 중...';
-    }
-
-    try {
-      const res = await fetch('/api/school-calendar', {
-        method: 'POST',
-        headers: CT,
-        body: snapshot,
-        keepalive: mode === 'flush',
-      });
-      if (!res.ok) throw new Error(String(res.status));
-
-      calendarDoc = payload;
-      lastSavedSnapshot = snapshot;
-
-      if (statusEl) {
-        statusEl.textContent = mode === 'auto' ? '자동 저장됨' : '저장됨';
-        if (mode !== 'flush') {
-          setTimeout(() => {
-            if (statusEl.textContent.includes('저장')) statusEl.textContent = '';
-          }, 1500);
-        }
-      }
-    } catch (err) {
-      console.error('saveCalendar failed', err);
-      if (statusEl) {
-        statusEl.textContent = mode === 'auto' ? '자동 저장 실패' : '저장 실패';
-      }
-      if (mode === 'manual') {
-        alert(`저장 실패: ${err.message}`);
-      }
-    }
+    const snapshot = JSON.stringify(buildPayloadFromState());
+    const payload = JSON.parse(snapshot);
+    const result = await calendarPersistence.enqueue({ mode, payload, snapshot });
+    return result.ok;
   }
 
   function flushCalendarSave() {
     syncFromView();
     const snapshot = JSON.stringify(buildPayloadFromState());
     if (snapshot === lastSavedSnapshot) return;
-    saveCalendar('flush');
+    void saveCalendar('flush');
   }
 
   function addSchoolRow() {
@@ -881,14 +706,6 @@ import {
     render();
   }
 
-  function coerceSemester(value) {
-    return String(value) === '2' ? '2' : '1';
-  }
-
-  function coerceExam(value) {
-    return value === 'final' ? 'final' : 'mid';
-  }
-
   function readStoredPage() {
     try {
       const stored = JSON.parse(localStorage.getItem(PAGE_STORAGE_KEY) || '{}');
@@ -907,35 +724,18 @@ import {
   }
 
   function updateCalendarDocActivePage() {
-    const base = isObject(calendarDoc) ? calendarDoc : {};
-    const years = isObject(base.years) ? { ...base.years } : {};
-    const yearBundle = isObject(years[editingYear]) ? { ...years[editingYear] } : {};
-
-    years[editingYear] = {
-      ...yearBundle,
-      activeSemester: editingSemester,
-      activeExam: viewMode,
-    };
-
-    calendarDoc = {
-      ...base,
-      version: 2,
-      activeYear: editingYear,
-      activeSemester: editingSemester,
-      activeExam: viewMode,
-      years,
-    };
+    calendarDoc = withActiveSchoolCalendarPage(calendarDoc, {
+      year: editingYear,
+      semester: editingSemester,
+      exam: viewMode,
+    });
   }
 
   async function persistActivePageMetadata() {
     updateCalendarDocActivePage();
-    try {
-      await fetch('/api/school-calendar', {
-        method: 'POST',
-        headers: CT,
-        body: JSON.stringify(calendarDoc),
-      });
-    } catch {}
+    const snapshot = JSON.stringify(calendarDoc);
+    const payload = JSON.parse(snapshot);
+    return calendarPersistence.enqueue({ mode: 'metadata', payload, snapshot });
   }
 
   function getAvailableYears() {
@@ -958,23 +758,39 @@ import {
   }
 
   async function switchPageFromSelectors() {
+    if (pageSwitchInFlight) return;
     const nextYear = String(yearSelect.value || editingYear || new Date().getFullYear());
     const nextSemester = coerceSemester(semesterSelect.value);
     const nextExam = coerceExam(examSelect.value);
     if (nextYear === editingYear && nextSemester === editingSemester && nextExam === viewMode) return;
 
-    await saveCalendar('switch');
+    pageSwitchInFlight = true;
+    [yearSelect, semesterSelect, examSelect].forEach((element) => {
+      element.disabled = true;
+    });
+    try {
+      const saved = await saveCalendar('switch');
+      if (!saved) {
+        syncPageSelectors();
+        return;
+      }
 
-    editingYear = nextYear;
-    editingSemester = nextSemester;
-    viewMode = nextExam;
-    persistPageSelection();
-    void persistActivePageMetadata();
-    expandedSchoolIds.clear();
-    schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear, editingSemester);
-    ensureAtLeastOneSchool();
-    lastSavedSnapshot = JSON.stringify(buildPayloadFromState());
-    render();
+      editingYear = nextYear;
+      editingSemester = nextSemester;
+      viewMode = nextExam;
+      persistPageSelection();
+      void persistActivePageMetadata();
+      expandedSchoolIds.clear();
+      schoolsData = loadSchoolsFromDoc(calendarDoc, editingYear, editingSemester);
+      ensureAtLeastOneSchool();
+      lastSavedSnapshot = JSON.stringify(buildPayloadFromState());
+      render();
+    } finally {
+      [yearSelect, semesterSelect, examSelect].forEach((element) => {
+        element.disabled = false;
+      });
+      pageSwitchInFlight = false;
+    }
   }
 
   [yearSelect, semesterSelect, examSelect].forEach((el) => {
@@ -1061,8 +877,7 @@ import {
 
   (async function init() {
     try {
-      const data = await fetch('/api/school-calendar', { cache: 'no-store' }).then((r) => r.json());
-      calendarDoc = (data && typeof data === 'object') ? data : {};
+      calendarDoc = await calendarPersistence.load();
     } catch {
       calendarDoc = {};
     }

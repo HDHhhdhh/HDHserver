@@ -19,8 +19,18 @@ from core.network_access import (
 )
 
 from core.paths import (
-    BASE, LOGS_PATH, TESTS_PATH, STU_PATH,
+    BASE, LOGS_PATH, PRG_PATH, TESTS_PATH, STU_PATH,
     TESTS_CFG_PATH
+)
+from core.progress_store import load_progress_strict
+from core.quick_printer_export import (
+    NoQuickPrinterAssignments,
+    QuickPrinterExportFailure,
+    QuickPrinterResourceFailure,
+    build_quick_printer_export,
+    file_sha256,
+    read_mapping_bundle,
+    read_registered_catalog,
 )
 from core.storage import file_lock, load, save_atomic, nocache_resp, utc_now_isoz
 from core.test_answer_links import resolve_test_assignment_answer_url
@@ -35,6 +45,8 @@ from core.test_config_safety import (
 
 bp_api_tests = Blueprint("api_tests", __name__)
 TEST_ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
+QUICK_PRINTER_CATALOG_PATH = BASE / "core" / "resources" / "quick_printer_registered_tests.csv"
+QUICK_PRINTER_MAPPING_PATH = BASE / "core" / "resources" / "quick_printer_test_mapping.json"
 TEST_TYPE_ORDER = ("REVIEW", "UNIT", "TRAINING_PACK", "SCHOOL_PAST", "ILSAN_PAST", "FINAL", "HELL")
 def _is_public_student_request() -> bool:
     return getattr(g, "student_app_public_request", False) is True
@@ -495,6 +507,83 @@ def get_tests_config():
     if revision:
         response.headers["X-Tests-Config-Revision"] = revision
     return response
+
+
+def _quick_printer_json(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp_api_tests.post("/api/tests/quick-printer-export")
+def export_quick_printer_tests():
+    if _is_public_student_request():
+        return _quick_printer_json(
+            {"ok": False, "code": "administrator_only", "message": "관리자 전용 기능입니다."},
+            403,
+        )
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _quick_printer_json(
+            {"ok": False, "code": "invalid_payload", "message": "JSON 요청 본문이 필요합니다."},
+            400,
+        )
+    date_str = str(payload.get("date") or "").strip()
+    student_ids = payload.get("studentIds")
+    if not isinstance(student_ids, list) or len(student_ids) > 500:
+        return _quick_printer_json(
+            {
+                "ok": False,
+                "code": "invalid_student_ids",
+                "message": "운영판 학생 ID 목록이 필요합니다.",
+            },
+            400,
+        )
+
+    try:
+        catalog_rows = read_registered_catalog(QUICK_PRINTER_CATALOG_PATH)
+        mapping_bundle = read_mapping_bundle(QUICK_PRINTER_MAPPING_PATH)
+        result = build_quick_printer_export(
+            date_str=date_str,
+            ordered_student_ids=student_ids,
+            students=load(STU_PATH),
+            progress=load_progress_strict(PRG_PATH),
+            tests_config=_load_tests_cfg(),
+            mapping_bundle=mapping_bundle,
+            catalog_rows=catalog_rows,
+            catalog_sha256=file_sha256(QUICK_PRINTER_CATALOG_PATH),
+        )
+    except NoQuickPrinterAssignments as exc:
+        return _quick_printer_json(
+            {"ok": False, "code": exc.code, "message": exc.message, "issues": exc.issues},
+            422,
+        )
+    except QuickPrinterResourceFailure as exc:
+        current_app.logger.error("quick-printer resource validation failed: %s", exc)
+        return _quick_printer_json(
+            {"ok": False, "code": exc.code, "message": exc.message, "issues": exc.issues},
+            503,
+        )
+    except QuickPrinterExportFailure as exc:
+        status = 400 if exc.code == "invalid_date" else 409
+        return _quick_printer_json(
+            {"ok": False, "code": exc.code, "message": exc.message, "issues": exc.issues},
+            status,
+        )
+    except RuntimeError as exc:
+        current_app.logger.error("quick-printer export read failed: %s", exc)
+        return _quick_printer_json(
+            {
+                "ok": False,
+                "code": "quick_printer_data_unavailable",
+                "message": "테스트 인쇄 데이터를 읽을 수 없습니다.",
+            },
+            503,
+        )
+
+    return _quick_printer_json({"ok": True, **result})
 
 @bp_api_tests.post("/api/tests-config")
 def post_tests_config():

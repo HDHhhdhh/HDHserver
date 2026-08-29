@@ -47,6 +47,10 @@ function demoRevision(value) {
   return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
+function schoolCalendarDemoRevision(value) {
+  return demoRevision(value).replace(/^demo-/, '').repeat(8);
+}
+
 function requestHeader(headers, name) {
   if (headers?.get) return String(headers.get(name) || '');
   const target = String(name || '').toLowerCase();
@@ -1057,7 +1061,14 @@ async function handleGet(root, ctx, store) {
       'X-Makeup-Carryover-Revision': demoRevision(payload),
     });
   }
-  if (path === '/api/school-calendar') return responseJson(root, clone(store.schoolCalendar || {}));
+  if (path === '/api/school-calendar') {
+    const payload = clone(store.schoolCalendar || {});
+    const revision = schoolCalendarDemoRevision(payload);
+    return responseJson(root, payload, 200, {
+      'X-School-Calendar-Revision': revision,
+      ETag: `"${revision}"`,
+    });
+  }
   if (path === '/api/tests-config') return responseJson(root, testsFlatConfig(store));
   if (path === '/api/tests') return responseJson(root, clone(store.tests || {}));
   if (path === '/api/tests-stats') return testsStatsResponse(root, store, url);
@@ -1185,9 +1196,33 @@ async function handleWrite(root, ctx, store) {
   }
 
   if (method === 'POST' && path === '/api/school-calendar') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return badRequest(root, 'invalid school calendar');
+    }
+    const current = clone(store.schoolCalendar || {});
+    const currentRevision = schoolCalendarDemoRevision(current);
+    const expectedRevision = requestHeader(ctx.headers, 'If-Match')
+      .trim()
+      .replace(/^W\//, '')
+      .replace(/^"|"$/g, '')
+      .toLowerCase();
+    if (!expectedRevision) {
+      return responseJson(root, { ok: false, code: 'school_calendar_revision_required' }, 428, {
+        'X-School-Calendar-Revision': currentRevision,
+      });
+    }
+    if (expectedRevision !== currentRevision) {
+      return responseJson(root, { ok: false, code: 'school_calendar_conflict' }, 409, {
+        'X-School-Calendar-Revision': currentRevision,
+      });
+    }
     const calendar = setSchoolCalendar(store, body);
     saveDemoStore(store);
-    return ok(root, calendar);
+    const revision = schoolCalendarDemoRevision(calendar);
+    return responseJson(root, calendar, 200, {
+      'X-School-Calendar-Revision': revision,
+      ETag: `"${revision}"`,
+    });
   }
 
   if (method === 'POST' && path === '/api/tests-config') {

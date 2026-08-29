@@ -334,24 +334,28 @@ def load_json(path: pathlib.Path):
 
 
 def verify_source_contracts() -> None:
+    api_students = (ROOT / "routes" / "api_students.py").read_text(encoding="utf-8")
     api_basic = (ROOT / "routes" / "api_basic.py").read_text(encoding="utf-8")
+    app_py = (ROOT / "app.py").read_text(encoding="utf-8")
     api_auth = (ROOT / "routes" / "api_auth.py").read_text(encoding="utf-8")
     clone_js = (ROOT / "static" / "js" / "all" / "features" / "cloneButtons.js").read_text(
         encoding="utf-8"
     )
-    check('field in {"id", "personId"}' in api_basic, "immutable route fields")
-    check("create_student_with_identity(" in api_basic, "identity-backed add route")
-    check("retire_student_identity(" in api_basic, "identity-backed delete route")
+    check('field in {"id", "personId"}' in api_students, "immutable route fields")
+    check("create_student_with_identity(" in api_students, "identity-backed add route")
+    check("retire_student_identity(" in api_students, "identity-backed delete route")
     check("identity_mode = same_person(base, base)" in api_auth, "legacy auth prefers personId")
-    check("X-Clone-From-Sid" in api_basic, "legacy clone header compatibility")
+    check("X-Clone-From-Sid" in api_students, "legacy clone header compatibility")
     check(
         "cloneFromSid=${encodeURIComponent(sid)}" in clone_js,
         "clone query carries the explicit source SID",
     )
     check(
-        "PERSON_IDENTITY_JOURNAL_PATH,\n        STU_PATH," in api_basic,
+        "PERSON_IDENTITY_JOURNAL_PATH,\n        STU_PATH," in api_students,
         "student writes detect a partially lost identity registry",
     )
+    check("/api/add-student" not in api_basic, "student mutation route leaves api_basic")
+    check("bp_api_students" in app_py, "dedicated student blueprint is registered")
 
 
 def main() -> int:

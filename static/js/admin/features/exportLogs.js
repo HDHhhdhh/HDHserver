@@ -14,6 +14,7 @@
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { fetchJsonChecked } from '../../shared/api.js';
+import { downloadTextFile } from '../../shared/download.js?v=20260828-1';
 import { getAdminDate } from '../core/adminDate.js';
 import {
   HW_HEADER_LINE,
@@ -332,18 +333,6 @@ function allStudentsProgressMids(entry) {
 
 function exportDateStamp() {
   return String(getAdminDate() || '').trim() || new Date().toISOString().slice(0, 10);
-}
-
-function downloadTextFile(filename, contents, type) {
-  const blob = new Blob([contents], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function rosterToCsv(rows) {

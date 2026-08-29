@@ -550,6 +550,48 @@ function readStudentBootstrapSource() {
   return source.slice(0, end + '\n})();'.length);
 }
 
+function readStudentBootstrapStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'bootstrapState.js'),
+    'utf8',
+  );
+}
+
+function readStudentWatchStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'watchState.js'),
+    'utf8',
+  );
+}
+
+function readStudentPlaybackSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'playback.js'),
+    'utf8',
+  );
+}
+
+function readStudentReviewPlaylistSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'reviewPlaylist.js'),
+    'utf8',
+  );
+}
+
+function readStudentAnnouncementStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'announcementState.js'),
+    'utf8',
+  );
+}
+
+function readStudentTestPresentationSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'testPresentation.js'),
+    'utf8',
+  );
+}
+
 async function runStudentFixture(options = {}) {
   const date = '2026-08-03';
   const fixtureDate = options.fixtureDate || date;
@@ -643,6 +685,25 @@ async function runStudentFixture(options = {}) {
     setInterval() { return 1; },
     clearInterval() {},
   };
+  window.fetch = fetch;
+  vm.runInNewContext(readStudentBootstrapStateSource(), context, {
+    filename: 'static/js/student/bootstrapState.js',
+  });
+  vm.runInNewContext(readStudentWatchStateSource(), context, {
+    filename: 'static/js/student/watchState.js',
+  });
+  vm.runInNewContext(readStudentPlaybackSource(), context, {
+    filename: 'static/js/student/playback.js',
+  });
+  vm.runInNewContext(readStudentReviewPlaylistSource(), context, {
+    filename: 'static/js/student/reviewPlaylist.js',
+  });
+  vm.runInNewContext(readStudentAnnouncementStateSource(), context, {
+    filename: 'static/js/student/announcementState.js',
+  });
+  vm.runInNewContext(readStudentTestPresentationSource(), context, {
+    filename: 'static/js/student/testPresentation.js',
+  });
   vm.runInNewContext(readStudentBootstrapSource(), context, { filename: 'static/js/student.js' });
   await new Promise(resolve => setImmediate(resolve));
   await Promise.resolve();
@@ -958,6 +1019,20 @@ async function runDomContractCurrent() {
   assert(standalonePlaylist.length === 1 && standalonePlaylist[0].dataset.mid === 'standalone-mid'
     && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0,
     'local registration must append a standalone review MID without server or playback requests', checks);
+  const standalonePlayer = noToday.document.getElementById('player');
+  const standalonePlayerCard = standalonePlayer.closest('.player-card');
+  const standalonePlayerBox = noToday.document.getElementById('playerBox');
+  assert(standalonePlayer.hidden === true && standalonePlayerCard.hidden === true
+    && standalonePlayerBox.classList.contains('is-player-empty'),
+  'standalone review registration must preserve the empty player until its playlist row is activated', checks);
+  standalonePlaylist[0].querySelector('.video-row-action').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(requestCount(noToday.requestLog, '/api/get-url') === 1
+    && standalonePlayer.hidden === false && standalonePlayerCard.hidden === false
+    && !standalonePlayerBox.classList.contains('is-player-empty')
+    && standalonePlaylist[0].classList.contains('active')
+    && String(standalonePlayer.src || '').startsWith('https://video.example.test/embed'),
+  'activating the first standalone review row must restore the shared player and load its playable iframe', checks);
 
   const missing = await runStudentFixture({ videos: [{ mid: 'catalog-only', title: 'Catalog only' }], reviewVideos: [] });
   assert(missing.document.getElementById('previousVideos').hidden === false

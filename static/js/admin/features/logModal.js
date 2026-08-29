@@ -17,7 +17,6 @@ const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = 'testAssignmentAbsenceCarryover';
 const TEST_ASSIGN_ABSENCE_SOURCE_KEY = 'testAssignmentAbsenceSourceDate';
 const HOMEWORK_SLEEPING_BOOKS_KEY = 'sleepingHomeworkBooks';
-const VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip']);
 let logOpenSeq = 0;
 let logModalReady = true;
 let logModalCarriedTestAssignment = null;
@@ -128,10 +127,6 @@ function nowHHMM() {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 function nowISO() { return new Date().toISOString(); }
-
-function isFinishedVideoProgressStatus(status) {
-  return VIDEO_PROGRESS_FINISHED_STATUSES.has(String(status || '').trim());
-}
 
 /**
  * ✅ PATCH (SQLite/JSON 둘 다 허용)
@@ -247,25 +242,6 @@ async function patchProgressEntry(date, sid, progressMap) {
  * - 1) /api/logs/entry?date&sid
  * - 2) 없으면 /api/logs fallback
  */
-async function clearVideoAssignmentForDateSid(date, sid) {
-  const t = String(date || '').trim();
-  const s = String(sid || '').trim();
-  if (!t || !s) return;
-
-  state.updates = state.updates || {};
-  state.updates[t] = state.updates[t] || {};
-  delete state.updates[t][s];
-  if (/^\d+$/.test(s)) delete state.updates[t][String(Number(s))];
-  if (!Object.keys(state.updates[t]).length) delete state.updates[t];
-
-  const res = await fetch('/api/updates/patch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ date: t, sid: s, remove: true }),
-  });
-  if (!res.ok) throw new Error('video assignment clear failed');
-}
-
 async function fetchLogEntryFromServer(date, sid) {
   const t = String(date);
   const s = String(sid);
@@ -2934,22 +2910,6 @@ export function initLogModal() {
   window.closeStudentWorkPopups = close;
   logModal.addEventListener('admin:assistant-notes-close', close);
 
-  function isCurrentLogProgressAllDone() {
-    const cells = Array.from(document.querySelectorAll('#logProgress .progress-cell[data-mid]'));
-    return cells.length > 0 && cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state));
-  }
-
-  function clearVideoAssignmentIfAllDone(saveResult) {
-    if (!saveResult?.allProgressDone) return false;
-    if (typeof window.hasManualVideoAssignmentSelection === 'function' && window.hasManualVideoAssignmentSelection()) {
-      return false;
-    }
-    if (typeof window.clearVideoAssignmentPopupForCurrent === 'function') {
-      window.clearVideoAssignmentPopupForCurrent();
-    }
-    return true;
-  }
-
   async function saveBase(doneFlag) {
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
@@ -2969,7 +2929,7 @@ export function initLogModal() {
     await saveChangedProgressPatch(today, sid, changedProg);
 
     if (isContextMenuOnlyAccess()) {
-      return { allProgressDone: false };
+      return {};
     }
 
     const oldTotal = collectPriorProgressByMid(today, sid);
@@ -3028,14 +2988,9 @@ export function initLogModal() {
 
     applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });
 
-    const allProgressDone = isCurrentLogProgressAllDone();
-    if (allProgressDone) {
-      await clearVideoAssignmentForDateSid(today, sid);
-    }
-
     setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);
 
-    return { allProgressDone };
+    return {};
   }
 
   async function saveRecordPopupForCurrent() {
@@ -3140,13 +3095,15 @@ export function initLogModal() {
           if (typeof window.saveVideoAssignmentPopup === 'function') {
             await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
           }
-          if (typeof window.saveTestAssignmentPopup === 'function') {
-            await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
-          }
         }
         await saveRecordPopupForCurrent();
         if (!isContextMenuOnlyAccess()) {
           await reapplyCarriedTestAssignmentForCurrent();
+        }
+        // The log save can merge an absence carryover captured when the popup opened.
+        // Persist the current test UI last so an explicit removal remains authoritative.
+        if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+          await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
         }
         close();
         if (typeof window.showStudentPopupSaveResult === 'function') {

@@ -15,6 +15,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 | Calendar/absence/makeup | `calendar.js`, `makeupPending.js`, `absentRecovery.js` | Absence, makeup, carryover, manual absence selection. |
 | Toolbar date modals | `extraModal.js`, `absentRegister.js` | Must freeze their opening date before any later save. |
 | Assistant notes | `hoverTooltip.js`, `assistantStudentNotes.js` | Student-scoped mount/load/save flow; not date-scoped or exportable. |
+| Student test OCR review | `studentTestOcrReview.js` | Selected-date pending list, paired protected crops, pending resolution, and incorrect-to-correct correction. |
 | Exports/tooltips | `exportLogs.js`, `hoverTooltip.js` | Reporting and auxiliary UI. |
 | Event helpers | `timeGraph.js`, `uiEnhance.js`, `attendanceLedgerLink.js` | Consume render/refresh events; some initialize transitively. |
 
@@ -33,9 +34,11 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - Use only `/api/extra-attend` for extra-attendance reads and PATCH writes. Do not retry the nonexistent `/api/extra`, `/api/extra_attend`, or `/api/extra-attend/all` aliases.
 - `today.js` owns rendering and stale-request suppression; it emits `today:rendered`. Mutations coordinate through `admin:refresh` and `attendance:updated`.
 - `today.state.js` is the merge-safe client patch boundary. Preserve `__clear`, server-entry preference, unknown fields, and `done` behavior.
+- The today-table `백지` checkbox is the SID-level `students.json.whiteReviewPending` flag, not a selected-date log field. Render it between `진도` and `작업`, save only an exact boolean through `/api/update`, roll back on failure, and never clear it from leave, homework-leave, record cleanup, attendance, progress, or date changes. Keep `진도`/`백지` at 36px each, reduce only `작업` to 232px, and preserve the `보강`/`문서` widths and total table width.
 - Assistant-note mounts use a per-mount token to suppress stale responses. Keep authors/content student-scoped and out of CSV/print, class-log notes, and browser storage.
 - `testModal.js` initializes through `logModal.js`; `attendanceLedgerLink.js` initializes through `uiEnhance.js`. The comment-only `materials.js` module was retired after consumer audit; do not restore it or `/api/material-upload`.
 - After changes here, reload `/admin` and verify the affected modal/table.
+- OCR review freezes the selected date at load, uses only administrator endpoints, never displays answer keys on a student surface, and permits only pending correct/incorrect resolution plus incorrect-to-correct correction. Prefer the official solution crop; show the expected value and Drive source only when that crop is unavailable.
 
 ## Export Guardrails
 
@@ -47,7 +50,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 ## Video Assignment Guardrails
 
 - `videoModal.js` freezes the row's `data-date` and SID at open. Hydrate assignments with `/api/updates?readOnly=1`, the student's full progress history with `/api/progress?sid=...`, and `/api/watch/latest?sid=...`; a date-only progress read is insufficient for automatic exclusions.
-- Opening or refreshing the popup is read-only. The server may create an automatic snapshot only for the real current KST date; selecting or operating on a future date must never persist `source: "auto"`. Adjacent active slots double today's displayed/effective count after weekend overrides and slot absences. A count save persists only the student setting used at the next date-boundary creation; it must not read, create, resize, or render a future automatic snapshot. Schedule, absence, consecutive-slot, and progress/watch changes must not re-pick or resize an existing automatic snapshot.
+- Opening or refreshing the popup is read-only. The server may create an automatic snapshot only for the real current KST date; selecting or operating on a future date must never persist `source: "auto"`. Adjacent active slots double today's displayed/effective count after weekend overrides and slot absences. A count save persists only the student setting used at the next date-boundary creation; it must not read, create, resize, or render a future automatic snapshot. Ordinary schedule, consecutive-slot, and progress/watch changes must not re-pick or resize an existing automatic snapshot. The newly registered absence transaction is the explicit removal exception.
 - Primary automatic rows are the student's exact current curriculum/sub-curriculum, chapter-sorted. Cross-curriculum rows belong only to the explicit manual-add section. Do not restore subject-only fallback for a nonblank unmatched sub-curriculum.
 - Keep `source` semantics stable: untouched automatic snapshots stay `auto`; any changed/forced-empty selection becomes an explicit `manual` snapshot; `selfStudy` is server-owned. An empty automatic result removes the snapshot, while an explicit empty manual save remains a meaningful clear.
 - Progress colors and assignment checkboxes are related but separate. Persist changed `done`/`interrupted`/`skip`/`none` states through `/api/progress/patch` and preserve manual ownership so watch automation cannot overwrite them.
@@ -66,6 +69,8 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - 최근 보기 저장은 UI 편의 상태일 뿐 배정 원본이 아니다. 최근 배정 판정은 `progress[date][sid].__testAssignmentChangeOrder`의 시험별 순번을 사용한다. 팝업의 전체-map PATCH는 실제 조작한 키만 `__testAssignmentTouchedKeys`로 보내며 이 힌트는 서버에 저장하지 않는다. 상태 변경과 기존 시험 재배정은 모두 다음 순번을 받고, 한 PATCH에서 여러 분류가 같은 순번을 받으면 `UNIT`를 우선한다.
 - 최근 배정 시험이 있는 목록은 그 정확한 행을 스크롤 뷰포트 중앙에 둔다. 목록이 스크롤되지 않으면 위치를 바꾸지 않는다.
 - Ctrl/Cmd+클릭의 `선택` 상태와 방향키 순환(`none → interrupted → assigned → done → skip → none`)을 테스트 상태 클릭/드래그와 분리해 유지한다.
+- 학생별 통합 팝업의 `저장 후 닫기`는 영상 저장 → 숙제/로그 저장 → 결석 테스트 이월 재적용 → 테스트 배정 저장 순서다. 테스트 배정 저장이 마지막 권위여야 사용자가 지운 초록 배정을 앞 단계의 오래된 이월 snapshot이 되살리지 않는다. 테스트 변경이 없으면 기존 이월은 그대로 유지한다.
+- 숙제/로그 저장은 영상 진도 셀이 모두 `done`/`skip`이어도 날짜별 영상 배정을 삭제하지 않는다. 통합 `저장 후 닫기` 뒤에도 같은 snapshot을 유지하며 당일 다음 영상을 자동 보충하지 않는다.
 - 버튼 DOM, 단일 필드 저장, 전체 난이도 노출, 최근 보기/배정 폴백, 다중 선택 단축키를 바꿀 때는 `run_admin_test_modal_assignment_source_checks`와 `run_admin_test_modal_assignment_behavior_checks`를 함께 확장하고 실행한다.
 
 

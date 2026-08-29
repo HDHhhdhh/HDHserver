@@ -18,6 +18,7 @@ CONFIG_PATH = ROOT / "tests-config.json"
 LINK_MAP_PATH = ROOT / "static/js/test_answer_link_map.json"
 TESTS_JS_PATH = ROOT / "static/js/tests.js"
 TESTS_HTML_PATH = ROOT / "static/tests.html"
+TESTS_CSS_PATH = ROOT / "static/css/tests.css"
 EXPECTED_ROUNDS = frozenset({"1", "2", "3"})
 EXPECTED_PROBLEMS = 20
 MISSING_ANSWER_LINK_STATUS = "missing"
@@ -76,6 +77,15 @@ def answer_file(name: str, source_order: int | None, file_id: str) -> dict:
 def verify_matching_rules() -> None:
     config = synthetic_config()
     aliases = {"generic": ["unit1", "unit2"]}
+
+    duplicate_key_config = synthetic_config()
+    duplicate_key_config["categories"]["UNIT"]["tests"][1]["name"] = "unit1"
+    try:
+        builder.build_config_index(duplicate_key_config)
+    except ValueError:
+        pass
+    else:
+        raise VerificationError("duplicate normalized config keys were silently overwritten")
 
     require(builder.source_order_from_title("16. generic.pdf") == 16, "dot source order parsing failed")
     require(builder.source_order_from_title("17) generic.pdf") == 17, "paren source order parsing failed")
@@ -197,6 +207,7 @@ def verify_live_catalog() -> dict:
 def verify_test_management_ui_contract() -> None:
     tests_js = TESTS_JS_PATH.read_text(encoding="utf-8")
     tests_html = TESTS_HTML_PATH.read_text(encoding="utf-8")
+    tests_css = TESTS_CSS_PATH.read_text(encoding="utf-8")
     for snippet in (
         "MISSING_ANSWER_LINK_STATUS = 'missing'",
         "function answerLinkStatus(test)",
@@ -206,7 +217,7 @@ def verify_test_management_ui_contract() -> None:
     ):
         require(snippet in tests_js, f"test management missing-link badge contract is absent: {snippet}")
     require(
-        "body.admin.tests-page .test-link-status" in tests_html,
+        "body.admin.tests-page .test-link-status" in tests_css,
         "test management missing-link badge styles are absent",
     )
 

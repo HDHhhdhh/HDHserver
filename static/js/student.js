@@ -816,8 +816,15 @@ window.todayLocalKey = function () {
   const CT = { "Content-Type": "application/json" };
   const LS_TOKEN_ACTIVE = "studentToken";
   const LS_TOKEN_MASTER = "studentTokenMaster";
+  const {
+    normalizeAssignedTests,
+    normalizeStatus: normalizeAssignedTestStatus,
+    pendingCount: pendingAssignedTestCount,
+    shouldOpenAnswerInSameTab,
+    viewModel: assignedTestViewModel,
+  } = window.StudentTestPresentation;
   let sid = STUDENT_APP_PUBLIC_MODE ? '' : (window.__STU_SID__ || decodeURIComponent(location.pathname.split("/").pop()));
-  let currentMid = null;
+  let playbackController = null;
 
   function todayLocalKey() {
     const now = new Date();
@@ -841,9 +848,11 @@ window.todayLocalKey = function () {
   // 전역 캐시
   let vidsCache = [];        // /api/videos
   let reviewVideosCache = []; // server-authorized previous-video membership for this page session
-  const reviewSelection = new Set(); // chooser-only checked MIDs waiting for local registration
-  let registeredReviewMids = []; // ordered, SID/date-scoped local playlist selections
-  const REVIEW_PLAYLIST_STORAGE_PREFIX = 'student:review-playlist';
+  const reviewPlaylistController = window.StudentReviewPlaylist.createController({
+    storage: localStorage,
+    getSid: () => sid,
+    getDate: studentDataDateKey,
+  });
   let updatesCache = {};     // /api/updates
   let stuCache = null;       // 내 학생 객체 (stu)
   let absentByDateCache = {}; // { "YYYY-MM-DD": [sid,...] }
@@ -915,106 +924,64 @@ window.todayLocalKey = function () {
     if (box) box.classList.remove('is-player-empty');
   }
 
-  /* ───────────── 진행도 저장/복구(로컬) ───────────── */
-  const LSKeys = {
-    lastMid: (sid) => `stu:${sid}:last_video_mid`,
-    prog: (sid, mid) => `stu:${sid}:watch:${mid}`, // {last, dur, completed, updatedAt}
-  };
-  const WATCH_DONE_RATIO = 0.90;
-  const WATCH_UPDATED_AT_MIN_MS = 1_000_000_000_000;
-
-  function normalizeWatchUpdatedAt(value, fallback = 0) {
-    const parsed = Number(value);
-    const updatedAt = Number.isFinite(parsed) ? Math.floor(parsed) : 0;
-    return updatedAt >= WATCH_UPDATED_AT_MIN_MS ? updatedAt : fallback;
-  }
-
-  function getProgress(mid) {
-    try {
-      const raw = localStorage.getItem(LSKeys.prog(sid, mid));
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  }
-
-  function normalizeProgressRecord(entry) {
-    if (!entry || typeof entry !== 'object') entry = {};
-
-    const last = Math.max(0, Number(entry.last) || 0);
-    const dur = Math.max(0, Number(entry.dur) || 0);
-    const updatedAt = normalizeWatchUpdatedAt(entry.updatedAt);
-    const completed = !!entry.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * WATCH_DONE_RATIO)));
-
-    return {
-      last: Math.floor(last),
-      dur: Math.floor(dur),
-      completed,
-      updatedAt,
-    };
-  }
-
-  function mergeProgressRecord(base, patch) {
-    const a = normalizeProgressRecord(base);
-    const b = normalizeProgressRecord(patch);
-
-    const last = Math.max(a.last, b.last);
-    const dur = Math.max(a.dur, b.dur);
-    const completed = a.completed || b.completed || (dur > 0 && last >= Math.max(dur - 1, Math.floor(dur * WATCH_DONE_RATIO)));
-
-    return {
-      last,
-      dur,
-      completed,
-      updatedAt: Math.max(a.updatedAt, b.updatedAt, Date.now()),
-    };
-  }
-
-  function storeProgress(mid, next) {
-    try { localStorage.setItem(LSKeys.prog(sid, mid), JSON.stringify(next)); } catch { }
-  }
-
-  function setProgress(mid, patch, options = {}) {
-    const cur = getProgress(mid) || {};
-    const next = mergeProgressRecord(cur, patch);
-    storeProgress(mid, next);
-    try { updateListCompletionBadges(); } catch { }
-
-    if (options.sync !== false) enqueueSync(mid);
-    return next;
-  }
-  function setLastMid(mid) {
-    try { localStorage.setItem(LSKeys.lastMid(sid), mid); } catch { }
-  }
-  function getLastMid() {
-    try { return localStorage.getItem(LSKeys.lastMid(sid)) || null; } catch { return null; }
-  }
+  /* ───────────── 진행도 저장/복구 + 서버 동기화 (/api/watch) ───────────── */
+  const studentWatchState = window.StudentWatchState;
+  if (!studentWatchState) throw new Error('StudentWatchState must load before student.js');
+  const WATCH_DONE_RATIO = studentWatchState.WATCH_DONE_RATIO;
+  const watchState = studentWatchState.createController({
+    storage: localStorage,
+    getSid: () => sid,
+    getCanonicalSid: () => String(stuCache?.id || sid || '').trim(),
+    getDate: todayLocalKey,
+    getCurrentMid: () => playbackController?.currentMid() || null,
+    canSync: () => academyAccessAllowed,
+    request: studentAppRequest,
+    headers: CT,
+    setTimer: setTimeout,
+    clearTimer: clearTimeout,
+    now: Date.now,
+    onProgressChange: () => updateListCompletionBadges(),
+    onSyncError: error => console.warn('[watch sync] failed', error),
+  });
+  const {
+    flushSyncQueue,
+    getLastMid,
+    getProgress,
+    mergeServerWatchIntoLocal,
+    setLastMid,
+    setProgress,
+  } = watchState;
+  const studentPlayback = window.StudentPlayback;
+  if (!studentPlayback) throw new Error('StudentPlayback must load before student.js');
+  playbackController = studentPlayback.createController({
+    globalRef: window,
+    locationRef: location,
+    getFrame: () => $('player'),
+    getSid: () => sid,
+    canPlay: () => academyAccessAllowed,
+    showRestrictedNotice: () => showAcademyOnlyNotice(),
+    showLoadFailure: () => alert('영상을 불러오지 못했습니다.'),
+    flushWatch: flushSyncQueue,
+    setLastMid,
+    getProgress,
+    setProgress,
+    request: studentAppRequest,
+    doneRatio: WATCH_DONE_RATIO,
+    setIntervalImpl: setInterval,
+    clearIntervalImpl: clearInterval,
+    setTimeoutImpl: setTimeout,
+    encodeURIComponentImpl: encodeURIComponent,
+    URLImpl: URL,
+    log: (...args) => console.log(...args),
+    warn: (...args) => console.warn(...args),
+    reportError: error => console.error(error),
+  });
+  const getCurrentMid = playbackController.currentMid;
+  const play = playbackController.play;
 
   function fmtPct(n) {
     if (!Number.isFinite(n)) return '';
     return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
-  }
-
-  /* ───────────── 서버 동기화 (/api/watch) ───────────── */
-  const SYNC_DEBOUNCE_MS = 1500;      // 너무 자주 쏘지 않도록 디바운스
-  const _syncTimers = new Map();      // mid -> timeout id
-  const _lastSent = new Map();        // mid -> { last, dur, completed, updatedAt } (보낸 스냅샷)
-
-  function mergeServerWatchIntoLocal(watchMap) {
-    if (!watchMap || typeof watchMap !== 'object') return;
-
-    Object.entries(watchMap).forEach(([mid, rec]) => {
-      const key = String(mid || '').trim();
-      if (!key) return;
-      const next = mergeProgressRecord(getProgress(key), rec);
-      storeProgress(key, next);
-      _lastSent.set(key, {
-        last: next.last | 0,
-        dur: next.dur | 0,
-        completed: !!next.completed,
-        updatedAt: normalizeWatchUpdatedAt(next.updatedAt),
-      });
-    });
-
-    try { updateListCompletionBadges(); } catch { }
   }
 
   function clearStaleCompletedWatchForServerPlaylist(videos, updates, authoritative) {
@@ -1022,67 +989,10 @@ window.todayLocalKey = function () {
     const assigned = new Set(getAssignedVideos(updates, studentDataDateKey(), sid).map(String));
     (videos || []).forEach(video => {
       const mid = String(video?.mid ?? video?.id ?? '').trim();
-      if (!mid || !assigned.has(mid) || !normalizeProgressRecord(getProgress(mid)).completed) return;
+      if (!mid || !assigned.has(mid) || !studentWatchState.normalizeRecord(getProgress(mid)).completed) return;
       if (video?.todayAutoAssignmentStatus === 'done') return;
-      try { localStorage.removeItem(LSKeys.prog(sid, mid)); } catch { }
-      _lastSent.delete(mid);
+      watchState.clearProgress(mid);
     });
-  }
-
-  function enqueueSync(mid) {
-    if (_syncTimers.has(mid)) clearTimeout(_syncTimers.get(mid));
-    const t = setTimeout(() => doSync(mid), SYNC_DEBOUNCE_MS);
-    _syncTimers.set(mid, t);
-  }
-
-  async function doSync(mid, options = {}) {
-    if (!academyAccessAllowed) return;
-    _syncTimers.delete(mid);
-    const prog = getProgress(mid);
-    if (!prog) return;
-    const now = Date.now();
-    const snap = {
-      last: prog.last | 0,
-      dur: prog.dur | 0,
-      completed: !!prog.completed,
-      updatedAt: normalizeWatchUpdatedAt(prog.updatedAt, now)
-    };
-
-    const prev = _lastSent.get(mid);
-    if (prev && prev.last === snap.last && prev.dur === snap.dur && prev.completed === snap.completed) return;
-
-    const canonicalSid = String(stuCache?.id || sid || '').trim();
-    const payload = {
-      date: todayLocalKey(),
-      sid: canonicalSid,
-      mid,
-      last: snap.last,
-      dur: snap.dur,
-      completed: snap.completed,
-      updatedAt: snap.updatedAt
-    };
-
-    try {
-      const res1 = await studentAppRequest('/api/watch', {
-        method: 'POST', headers: CT, body: JSON.stringify(payload), keepalive: !!options.keepalive
-      });
-      if (res1.ok) _lastSent.set(mid, snap);
-    } catch (e) {
-      console.warn('[watch sync] failed', e);
-    }
-  }
-
-  async function flushSyncQueue(options = {}) {
-    const mids = new Set(_syncTimers.keys());
-    if (currentMid) mids.add(currentMid);
-    if (!mids.size) return;
-
-    mids.forEach(mid => {
-      try { clearTimeout(_syncTimers.get(mid)); } catch { }
-      _syncTimers.delete(mid);
-    });
-
-    await Promise.allSettled([...mids].map(mid => doSync(mid, options)));
   }
 
   function flushCurrentWatch() {
@@ -1386,59 +1296,23 @@ window.todayLocalKey = function () {
   }
 
   /* ───────────── 데이터 로드 ───────────── */
-  function bootstrapInitialData(b, watchRaw) {
-    const academyAllowed = studentAppAcademyAccessFromBootstrap(STUDENT_APP_PUBLIC_MODE, b);
-    return [
-      Array.isArray(b.students) ? b.students : (b.student ? [b.student] : []),
-      Array.isArray(b.videos) ? b.videos : [],
-      b.updates || {},
-      b.materials || {},
-      b.assigns || {},
-      b.absent || {},
-      b.logs || {},
-      watchRaw,
-      {
-        courseBlocked: b.courseBlocked === true,
-        selfStudy: b.selfStudy === true,
-        blockMessage: b.blockMessage || '',
-        courseVideosCompleted: b.courseVideosCompleted === true,
-        academyAccessAllowed: academyAllowed,
-        academyOnlyMessage: b.academyOnlyMessage || b.academyOnlyNotice || b.restrictedMessage || '',
-        assignedTests: Array.isArray(b.assignedTests) ? b.assignedTests : [],
-        homeworkBooks: Array.isArray(b.homeworkBooks) ? b.homeworkBooks : [],
-        reviewVideos: b.reviewVideos,
-        reviewVideosMalformed: !Array.isArray(b.reviewVideos),
-        ghostStudent: b.ghostStudent === true,
-        redirectSid: b.redirectSid || b.recoveredSid || '',
-        recoveryReason: b.recoveryReason || '',
-
-        dashboard: b.dashboard && typeof b.dashboard === 'object' ? b.dashboard : null,
-        videoProjectionAuthoritative: true,
-      },
-    ];
-  }
-
   async function loadInitialData() {
     const today = studentDataDateKey();
+    const loaded = await window.StudentBootstrapState.loadInitialData({
+      publicMode: STUDENT_APP_PUBLIC_MODE,
+      date: today,
+      sid,
+      pageSid: STUDENT_APP_PAGE_SID,
+      publicSession: STUDENT_APP_PUBLIC_SESSION,
+      loadPublicBootstrap: loadPublicStudentBootstrap,
+      fetchImpl: fetch,
+      resolveAcademyAccess: studentAppAcademyAccessFromBootstrap,
+    });
     if (STUDENT_APP_PUBLIC_MODE) {
-      const loaded = await loadPublicStudentBootstrap({
-        adapter: STUDENT_APP_PUBLIC_SESSION,
-        pageSid: STUDENT_APP_PAGE_SID,
-        date: today,
-      });
       sid = loaded.activeSid;
       window.__STU_SID__ = loaded.activeSid;
-      return bootstrapInitialData(loaded.bootstrap, loaded.watch);
     }
-
-    const watchReq = fetch(`/api/watch/latest?sid=${encodeURIComponent(sid)}`)
-      .then(r => r.json()).catch(() => ({}));
-
-    const q = new URLSearchParams({ sid: String(sid), date: today }).toString();
-    const res = await fetch(`/api/student/bootstrap?${q}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`bootstrap ${res.status}`);
-    const b = await res.json();
-    return bootstrapInitialData(b, await watchReq);
+    return loaded.initialData;
   }
 
   loadInitialData().then(init).catch(err => {
@@ -1527,53 +1401,14 @@ window.todayLocalKey = function () {
     return normalized;
   }
 
-  function reviewPlaylistStorageKey() {
-    return `${REVIEW_PLAYLIST_STORAGE_PREFIX}:${String(sid)}:${studentDataDateKey()}`;
-  }
-
-  function normalizeStoredReviewMids(value) {
-    const seen = new Set();
-    const normalized = [];
-    if (!Array.isArray(value)) return normalized;
-    value.forEach(raw => {
-      const mid = String(raw ?? '').trim();
-      if (mid && !seen.has(mid)) {
-        seen.add(mid);
-        normalized.push(mid);
-      }
-    });
-    return normalized;
-  }
-
-  function saveRegisteredReviewMids() {
-    try {
-      localStorage.setItem(reviewPlaylistStorageKey(), JSON.stringify(registeredReviewMids));
-    } catch (_) {
-      // Browser storage is a convenience only; the server-authorized chooser remains usable.
-    }
-  }
-
   function loadRegisteredReviewMids() {
-    let parsed = [];
-    try {
-      const raw = localStorage.getItem(reviewPlaylistStorageKey());
-      if (raw) parsed = JSON.parse(raw);
-    } catch (_) {
-      parsed = [];
-    }
-    const allowed = new Set(reviewVideosCache.map(item => item.mid));
-    const normalized = normalizeStoredReviewMids(parsed);
-    const next = normalized.filter(mid => allowed.has(mid));
-    const changed = JSON.stringify(next) !== JSON.stringify(normalized);
-    registeredReviewMids = next;
-    reviewSelection.clear();
-    if (changed) saveRegisteredReviewMids();
+    reviewPlaylistController.hydrate(reviewVideosCache.map(item => item.mid));
   }
 
   function registeredReviewVideos() {
     if (!academyAccessAllowed || reviewSurfaceBlocked()) return [];
     const byMid = new Map(reviewVideosCache.map(item => [item.mid, item]));
-    return registeredReviewMids
+    return reviewPlaylistController.registeredMids()
       .map(mid => byMid.get(mid))
       .filter(item => item && item.playbackRestricted !== true);
   }
@@ -1624,22 +1459,16 @@ window.todayLocalKey = function () {
 
   function syncReviewRegisterControl(register) {
     if (!register) return;
-    const eligible = new Set(reviewVideosCache.map(item => item.mid));
-    const registered = new Set(registeredReviewMids);
-    const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
-    register.disabled = reviewSurfaceBlocked() || !academyAccessAllowed || selected.length === 0;
+    register.disabled = reviewSurfaceBlocked()
+      || !academyAccessAllowed
+      || reviewPlaylistController.selectedMids().length === 0;
   }
 
   function registerReviewVideos() {
     if (reviewSurfaceBlocked() || !academyAccessAllowed) return false;
-    const eligible = new Set(reviewVideosCache.map(item => item.mid));
-    const registered = new Set(registeredReviewMids);
-    const selected = [...reviewSelection].filter(mid => eligible.has(mid) && !registered.has(mid));
+    const selected = reviewPlaylistController.registerSelected();
     if (!selected.length) return false;
 
-    registeredReviewMids = normalizeStoredReviewMids([...registeredReviewMids, ...selected]);
-    reviewSelection.clear();
-    saveRegisteredReviewMids();
     void renderAssignedList({ autoPlay: false });
     renderPreviousVideos();
     return true;
@@ -1647,13 +1476,11 @@ window.todayLocalKey = function () {
 
   function cancelRegisteredReviewVideo(rawMid) {
     const mid = String(rawMid ?? '').trim();
-    if (!mid || reviewSurfaceBlocked() || !academyAccessAllowed || !registeredReviewMids.includes(mid)) {
+    if (!mid || reviewSurfaceBlocked() || !academyAccessAllowed || !reviewPlaylistController.isRegistered(mid)) {
       return false;
     }
 
-    registeredReviewMids = registeredReviewMids.filter(registeredMid => registeredMid !== mid);
-    reviewSelection.delete(mid);
-    saveRegisteredReviewMids();
+    reviewPlaylistController.unregister(mid);
     void renderAssignedList({ autoPlay: false });
     renderPreviousVideos();
     return true;
@@ -1711,11 +1538,7 @@ window.todayLocalKey = function () {
       return;
     }
 
-    for (const mid of reviewSelection) {
-      if (!reviewVideosCache.some(item => item.mid === mid) || registeredReviewMids.includes(mid)) {
-        reviewSelection.delete(mid);
-      }
-    }
+    reviewPlaylistController.pruneSelection();
     toggle.disabled = false;
     toggle.textContent = `영상 복습 (${reviewVideosCache.length})`;
     summary.textContent = '등록할 영상은 체크하고, 등록 취소는 체크를 해제하세요';
@@ -1726,7 +1549,7 @@ window.todayLocalKey = function () {
     reviewVideosCache.forEach(item => {
       const title = document.createElement('span');
       const restricted = item.playbackRestricted === true || !academyAccessAllowed;
-      const registered = registeredReviewMids.includes(item.mid);
+      const registered = reviewPlaylistController.isRegistered(item.mid);
 
       // Outside the academy, keep the existing title-only restriction row. It
       // cannot register or play; clicking it only explains the access rule.
@@ -1753,7 +1576,7 @@ window.todayLocalKey = function () {
 
       const row = document.createElement('label');
       row.className = 'previous-video-row';
-      const active = currentMid === item.mid;
+      const active = getCurrentMid() === item.mid;
       title.className = 'previous-video-title';
       title.textContent = reviewVideoTitle(item);
       row.dataset.mid = item.mid;
@@ -1764,7 +1587,7 @@ window.todayLocalKey = function () {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.dataset.mid = item.mid;
-      checkbox.checked = registered || reviewSelection.has(item.mid);
+      checkbox.checked = registered || reviewPlaylistController.isSelected(item.mid);
       checkbox.disabled = restricted && !registered;
       checkbox.setAttribute('aria-label', registered ? `${title.textContent} 등록 취소` : title.textContent);
       if (registered) checkbox.setAttribute('data-registered', 'true');
@@ -1774,38 +1597,13 @@ window.todayLocalKey = function () {
           cancelRegisteredReviewVideo(item.mid);
           return;
         }
-        if (checkbox.checked) reviewSelection.add(item.mid);
-        else reviewSelection.delete(item.mid);
+        reviewPlaylistController.setSelected(item.mid, checkbox.checked);
         syncReviewRegisterControl(register);
       });
       row.append(checkbox, title);
       list.appendChild(row);
     });
     syncReviewRegisterControl(register);
-  }
-
-  function normalizeAssignedTestStatus(status) {
-    const s = String(status || '').trim();
-    if (s === 'interrupted' || s === 'skip' || s === 'done' || s === 'assigned') return s;
-    return s ? 'assigned' : '';
-  }
-
-  function assignedTestStatusLabel(status) {
-    const s = normalizeAssignedTestStatus(status);
-    if (s === 'done') return '완료';
-    if (s === 'interrupted') return '배부';
-    if (s === 'skip') return '제외';
-    return s ? '배정' : '';
-  }
-
-  function assignedTestDifficultyLabel(item) {
-    const category = `${item?.categoryKey || ''} ${item?.categoryLabel || ''} ${item?.category || ''} ${item?.label || ''}`;
-    const difficulty = String(item?.difficulty || '').trim();
-    if (category.includes('ILSAN') || category.includes('일산')) {
-      if (difficulty.includes('그래프')) return '그래프 포함';
-      if (difficulty === '상') return '중상';
-    }
-    return difficulty;
   }
 
   function normalizedTestDifficultyForCategory(categoryKey, difficulty) {
@@ -1816,33 +1614,6 @@ window.todayLocalKey = function () {
       if (text.includes('중')) return '중';
     }
     return text;
-  }
-
-  function normalizeAssignedTests(items) {
-    const seen = new Set();
-    return (Array.isArray(items) ? items : []).map(item => {
-      if (!item || typeof item !== 'object') return null;
-      const id = String(item.id || item.testId || '').trim();
-      const label = String(item.label || '').trim();
-      const name = String(item.name || item.testName || label || '').trim();
-      if (!id && !label && !name) return null;
-      const status = normalizeAssignedTestStatus(item.status) || 'assigned';
-      const key = id || label || name;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return {
-        ...item,
-        id,
-        label,
-        name,
-        categoryLabel: String(item.categoryLabel || item.category || '').trim(),
-        curriculum: String(item.curriculum || '').trim(),
-        difficulty: assignedTestDifficultyLabel(item),
-        round: String(item.round || '').trim(),
-        status,
-        statusLabel: item.statusLabel || assignedTestStatusLabel(status),
-      };
-    }).filter(Boolean);
   }
 
   function cleanHomeworkBookName(value) {
@@ -2035,21 +1806,8 @@ window.todayLocalKey = function () {
     }
   }
 
-  function assignedTestAnswerUrl(test) {
-    return String(test?.answerUrl || test?.answer_url || test?.solutionUrl || test?.solution_url || '').trim();
-  }
-
-  function isAssignedTestAnswerRestricted(test, answerUrl) {
-    return test?.answerRestricted === true || (!academyAccessAllowed && !!answerUrl);
-  }
-
-  function canOpenAssignedTestAnswer(answerUrl) {
-    return academyAccessAllowed && !!answerUrl;
-  }
-
   function shouldOpenAssignedTestAnswerInSameTab() {
     const width = Number(window.innerWidth || 0);
-    const viewportLooksMobileOrTablet = width > 0 && width <= 1024;
     const nav = window.navigator || {};
     const touchPoints = Number(nav.maxTouchPoints || nav.msMaxTouchPoints || 0);
     let coarsePointer = false;
@@ -2060,7 +1818,11 @@ window.todayLocalKey = function () {
         coarsePointer = false;
       }
     }
-    return viewportLooksMobileOrTablet || coarsePointer || touchPoints > 0;
+    return shouldOpenAnswerInSameTab({
+      width,
+      coarsePointer,
+      touchPoints,
+    });
   }
 
   function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl) {
@@ -2088,40 +1850,33 @@ window.todayLocalKey = function () {
     list.textContent = '';
     assignedTestsCache.forEach(test => {
       const li = document.createElement('li');
-      const answerUrl = assignedTestAnswerUrl(test);
-      const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);
-      const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);
-      const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);
+      const view = assignedTestViewModel(test, { academyAccessAllowed });
+      const btn = createAssignedTestActionElement(view.canOpenAnswerUrl, view.answerUrl);
       btn.className = 'assigned-test-btn';
-      btn.dataset.testId = test.id || '';
-      btn.dataset.status = normalizeAssignedTestStatus(test.status) || 'assigned';
-      if (answerUrl) btn.dataset.answerUrl = answerUrl;
-      if (answerRestricted) btn.dataset.answerRestricted = '1';
+      btn.dataset.testId = view.id;
+      btn.dataset.status = view.status;
+      if (view.answerUrl) btn.dataset.answerUrl = view.answerUrl;
+      if (view.answerRestricted) btn.dataset.answerRestricted = '1';
 
       const main = document.createElement('span');
       main.className = 'assigned-test-main';
 
       const name = document.createElement('span');
       name.className = 'assigned-test-name';
-      name.textContent = test.name || test.label || '배정 테스트';
+      name.textContent = view.name;
 
       const meta = document.createElement('span');
       meta.className = 'assigned-test-meta';
-      meta.textContent = [
-        test.categoryLabel,
-        test.curriculum,
-        test.difficulty,
-        test.round ? (String(test.round).includes('회') ? test.round : `${test.round}회차`) : '',
-      ].filter(Boolean).join(' · ');
+      meta.textContent = view.metaText;
 
       const status = document.createElement('span');
       status.className = 'assigned-test-status';
-      status.textContent = test.statusLabel || assignedTestStatusLabel(test.status);
+      status.textContent = view.statusLabel;
 
       main.append(name, meta);
       btn.append(main, status);
-      if (!canOpenAnswerUrl) {
-        if (answerRestricted) {
+      if (!view.canOpenAnswerUrl) {
+        if (view.answerRestricted) {
           btn.addEventListener('click', showAcademyOnlyNotice);
         } else {
           btn.disabled = true;
@@ -2248,7 +2003,7 @@ window.todayLocalKey = function () {
     const videoRows = Array.from($('vidList')?.querySelectorAll('li[data-mid]') || [])
       .filter(row => row.dataset.reviewRegistered !== 'true');
     const completedVideos = videoRows.filter(row => getProgress(row.dataset.mid)?.completed).length;
-    const pendingTests = assignedTestsCache.filter(test => !['done', 'skip'].includes(normalizeAssignedTestStatus(test?.status))).length;
+    const pendingTests = pendingAssignedTestCount(assignedTestsCache);
     const unreadCount = dashboardView?.unreadBoardCount ?? announcementPendingCount;
 
     const homeworkCount = $('studentTodayHomeworkCount');
@@ -2398,8 +2153,12 @@ window.todayLocalKey = function () {
           showAcademyOnlyNotice();
           return;
         }
+        // The initial empty-playlist render hides both the iframe and its card.
+        // A locally registered review video does not autoplay, so restore the
+        // shared player surface when the student explicitly starts that row.
+        setPlayerReadyState();
         setActiveVideo(li.dataset.mid);
-        play(li.dataset.mid);
+        void play(li.dataset.mid);
       };
     }
 
@@ -2820,7 +2579,8 @@ window.todayLocalKey = function () {
         li.appendChild(action);
         listBox.appendChild(li);
       });
-      if (currentMid) setActiveVideo(currentMid);
+      const activeMid = getCurrentMid();
+      if (activeMid) setActiveVideo(activeMid);
     }
 
     const preferMid = getLastMid();
@@ -2837,7 +2597,7 @@ window.todayLocalKey = function () {
 
     if (firstMid) setPlayerReadyState();
 
-    if (options.autoPlay !== false && firstMid && firstMid !== currentMid) {
+    if (options.autoPlay !== false && firstMid && firstMid !== getCurrentMid()) {
       setActiveVideo(firstMid);
       play(firstMid);
     }
@@ -2887,177 +2647,6 @@ window.todayLocalKey = function () {
     });
     if (shouldRefreshPlaylist) void renderAssignedList({ autoPlay: false });
     renderStudentTodayOverview();
-  }
-
-  /* ───────────── Kollus 플레이어 교체 + 진행도(옵션) ───────────── */
-  function withStartParam(url, seconds) {
-    if (!seconds || seconds < 5) return url;
-    try {
-      const u = new URL(url, location.origin);
-      if (!u.searchParams.has('start')) u.searchParams.set('start', Math.floor(seconds));
-      if (!u.searchParams.has('t')) u.searchParams.set('t', Math.floor(seconds));
-      return u.toString();
-    } catch {
-      if (!/#t=\d+/.test(url)) return url + `#t=${Math.floor(seconds)}`;
-      return url;
-    }
-  }
-
-  function attachKollusBridgeToIframe(frameEl, mid, resumeAtSec) {
-    if (!frameEl) return;
-    if (frameEl.__vgAttached && frameEl.__vgAttached === mid) return;
-
-    function repost(type, payload) {
-      window.postMessage({ type, mid, ...payload }, '*');
-    }
-
-    let tries = 0;
-    const MAX_TRIES = 200;
-    const iv = setInterval(() => {
-      tries++;
-      const ok = !!(window.VgControllerClient && frameEl.contentWindow);
-      if (!ok && tries < MAX_TRIES) return;
-      clearInterval(iv);
-      if (!ok) {
-        console.warn('[KollusBridge] VgControllerClient not available (timeout)');
-        return;
-      }
-
-      try {
-        const controller = new VgControllerClient({ target_window: frameEl.contentWindow });
-        let lastSent = 0;
-
-        controller.on('ready', function () {
-          repost('kollus.ready', {});
-          if (typeof controller.seek === 'function' && Number(resumeAtSec) > 5) {
-            try { controller.seek(Math.floor(resumeAtSec)); } catch { }
-          }
-
-          const poll = async () => {
-            try {
-              const pos = await controller.getPosition?.();
-              const dur = await controller.getDuration?.();
-              if (Number.isFinite(pos) && Number.isFinite(dur) && dur > 0) {
-                const pct = (pos / dur) * 100;
-                const ended = pct >= 90 || pos >= dur - 1;
-                if (Math.abs(pos - lastSent) >= 1) {
-                  repost('kollus.progress', { currentTime: pos, duration: dur, ended });
-                  lastSent = pos;
-                }
-              }
-            } catch { }
-            setTimeout(poll, 3000);
-          };
-          poll();
-        });
-
-        controller.on('progress', function (percent, position, duration) {
-          const cur = Number(position) || 0;
-          const dur = Number(duration) || 0;
-          repost('kollus.progress', { currentTime: cur, duration: dur, ended: false });
-        });
-
-        controller.on('done', function () {
-          repost('kollus.progress', { ended: true });
-        });
-
-        controller.on('play', async function () {
-          try {
-            const pos = await controller.getPosition?.();
-            const dur = await controller.getDuration?.();
-            if (Number.isFinite(pos) && Number.isFinite(dur)) {
-              repost('kollus.progress', { currentTime: pos, duration: dur, ended: false });
-            }
-          } catch { }
-        });
-
-        controller.on('pause', async function () {
-          try {
-            const pos = await controller.getPosition?.();
-            const dur = await controller.getDuration?.();
-            if (Number.isFinite(pos) && Number.isFinite(dur)) {
-              repost('kollus.progress', { currentTime: pos, duration: dur, ended: false });
-            }
-          } catch { }
-        });
-
-        frameEl.__vgAttached = mid;
-        console.log('[KollusBridge] attached for', mid);
-      } catch (e) {
-        console.warn('[KollusBridge] init failed:', e);
-      }
-    }, 100);
-  }
-
-  window.addEventListener('message', (e) => {
-    if (e?.source !== window) return;
-    const data = e?.data;
-    if (!data || typeof data !== 'object') return;
-    const mid = String(data.mid ?? '').trim();
-    const activeMid = String(currentMid ?? '').trim();
-    if (!mid || !activeMid || mid !== activeMid) return;
-    if (data.type === 'kollus.ready') {
-      if (Number.isFinite(Number(data.duration))) {
-        setProgress(mid, { dur: Number(data.duration) || undefined });
-      }
-    }
-    if (data.type === 'kollus.progress') {
-      const cur = Math.max(0, Number(data.currentTime) || 0);
-      const dur = Math.max(0, Number(data.duration) || 0);
-      const ended = !!data.ended || (dur > 0 && cur >= dur - 1);
-      const pct = dur > 0 ? (cur / dur) : 0;
-      const doneByPct = pct >= WATCH_DONE_RATIO;
-      setProgress(mid, {
-        last: cur,
-        dur,
-        completed: (ended || doneByPct) || undefined
-      });
-    }
-  });
-
-  async function play(mid) {
-    if (!academyAccessAllowed) {
-      showAcademyOnlyNotice();
-      return;
-    }
-    if (currentMid && currentMid !== mid) {
-      flushSyncQueue();
-    }
-    currentMid = mid;
-    setLastMid(mid);
-    const frame = $('player');
-    if (frame) frame.src = "";
-
-    const prog = getProgress(mid);
-    const resumeAt = prog?.last || 0;
-
-    try {
-      const res = await studentAppRequest(`/api/get-url?mid=${encodeURIComponent(mid)}&sid=${encodeURIComponent(sid)}`);
-      if (!res.ok) {
-        if (res.status === 403) showAcademyOnlyNotice();
-        throw new Error(res.status === 403 ? 'academy-network-required' : `get-url ${res.status}`);
-      }
-      let baseUrl = await res.text();
-      console.log('[play] baseUrl from server =', baseUrl);
-
-      if (location.protocol === 'https:' && /^http:\/\//i.test(baseUrl)) {
-        baseUrl = baseUrl.replace(/^http:\/\//i, 'https://');
-        console.log('[play] forced https url =', baseUrl);
-      }
-
-      let urlWithStart = withStartParam(baseUrl, resumeAt);
-
-      if (frame) {
-        frame.onload = () => {
-          attachKollusBridgeToIframe(frame, mid, resumeAt);
-        };
-        frame.src = urlWithStart;
-      }
-    } catch (err) {
-      console.error(err);
-      if (err?.message === 'academy-network-required') return;
-      alert("영상을 불러오지 못했습니다.");
-    }
   }
 
   document.addEventListener('student-app:play-board-video', (event) => {
@@ -3123,6 +2712,15 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   const CT = { 'Content-Type': 'application/json' };
   const $ = s => document.querySelector(s);
   const SID = STUDENT_APP_PUBLIC_MODE ? '' : (window.__STU_SID__ || decodeURIComponent(location.pathname.split('/').pop()));
+  const announcementApi = window.StudentAnnouncementState;
+  const announcementState = announcementApi.createController();
+  const {
+    normalizeAnnouncementImages,
+    normalizeBoardPage,
+    replyLimitMessage,
+    surveyOptionText,
+    surveyTypeText,
+  } = announcementApi;
 
   const modal = $('#announceModal');
   const historyModal = $('#announceHistoryModal');
@@ -3153,7 +2751,6 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   const boardFilters = $('#studentBoardFilters');
   const boardStatus = $('#studentBoardStatus');
   const boardMore = $('#studentBoardMore');
-  const ANN_REPLY_LIMIT = 3;
   const requestedBoardId = STUDENT_APP_PUBLIC_MODE ? studentAppBoardDeepLink(location.search) : '';
   const requestedAnnouncementId = STUDENT_APP_PUBLIC_MODE && !requestedBoardId
     ? studentAppAnnouncementDeepLink(location.search)
@@ -3164,15 +2761,9 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     return;
   }
 
-  let announcements = [];
-  let statusMap = {};
-  let pending = [];
   let active = null;
   let activeFromHistory = false;
   let loading = false;
-  let boardType = 'all';
-  let boardItems = [];
-  let boardNextCursor = null;
   let boardLoading = false;
   let boardRequestId = 0;
   let imageCarouselIndex = 0;
@@ -3312,94 +2903,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     return `${h}시간 ${m}분 남음`;
   }
 
-  function normalizeAnnouncementImage(image) {
-    if (!image || typeof image !== 'object') return null;
-    const url = String(image.originalUrl || image.sourceUrl || image.fullUrl || image.url || '').trim();
-    if (!url) return null;
-    return {
-      url,
-      alt: '',
-    };
-  }
-
-  function normalizeAnnouncementImages(ann) {
-    const rawImages = Array.isArray(ann?.images) ? ann.images : [];
-    const images = rawImages.map(normalizeAnnouncementImage).filter(Boolean);
-    if (!images.length) {
-      const image = normalizeAnnouncementImage(ann?.image);
-      if (image) images.push(image);
-    }
-    const seen = new Set();
-    return images.filter((image) => {
-      if (!image.url || seen.has(image.url)) return false;
-      seen.add(image.url);
-      return true;
-    });
-  }
-
   /* STUDENT_APP_BOARD_START */
-  const BOARD_NOTICE_KEYS = new Set([
-    'id', 'type', 'kind', 'title', 'content', 'createdAt', 'expiresAt', 'read',
-    'notificationEventId', 'images', 'requireCompletion',
-  ]);
-  const BOARD_VIDEO_KEYS = new Set([
-    'id', 'type', 'kind', 'title', 'content', 'createdAt', 'expiresAt', 'read',
-    'notificationEventId', 'thumbnail', 'videoMid', 'locked',
-  ]);
-
-  function exactObjectKeys(value, expected) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const keys = Object.keys(value);
-    return keys.length === expected.size && keys.every(key => expected.has(key));
-  }
-
-  function boardImageUrl(value) {
-    const url = typeof value === 'string' ? value.trim() : '';
-    return /^\/files\/announcements\/[A-Za-z0-9._-]+\.(?:jpe?g|png|gif|webp|bmp)$/i.test(url) ? url : '';
-  }
-
-  function normalizeBoardItem(source) {
-    const type = source?.type;
-    const expected = type === 'notice' ? BOARD_NOTICE_KEYS : type === 'video' ? BOARD_VIDEO_KEYS : null;
-    if (!expected || !exactObjectKeys(source, expected)) return null;
-    const id = typeof source.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(source.id) ? source.id : '';
-    const eventId = typeof source.notificationEventId === 'string' && /^evt_[A-Za-z0-9_-]{32}$/.test(source.notificationEventId)
-      ? source.notificationEventId
-      : '';
-    const createdAt = typeof source.createdAt === 'string' && Number.isFinite(Date.parse(source.createdAt)) ? source.createdAt : '';
-    const expiresAt = typeof source.expiresAt === 'string' && Number.isFinite(Date.parse(source.expiresAt)) ? source.expiresAt : '';
-    const title = typeof source.title === 'string' ? source.title.trim().slice(0, 400) : '';
-    const content = typeof source.content === 'string' ? source.content.trim().slice(0, 10000) : '';
-    if (!id || !eventId || !createdAt || !expiresAt || Date.parse(createdAt) >= Date.parse(expiresAt) || !title || typeof source.read !== 'boolean') return null;
-    if (type === 'video') {
-      const mid = typeof source.videoMid === 'string' ? source.videoMid.trim() : '';
-      const thumbnail = source.thumbnail == null ? null : boardImageUrl(source.thumbnail);
-      if (source.kind !== 'video' || !/^[A-Za-z0-9_-]{4,128}$/.test(mid) || typeof source.locked !== 'boolean' || (source.thumbnail != null && !thumbnail)) return null;
-      return Object.freeze({ id, type, kind: 'video', title, content, createdAt, expiresAt, read: source.read, notificationEventId: eventId, thumbnail, videoMid: mid, locked: source.locked });
-    }
-    const kind = source.kind === 'survey' ? 'survey' : source.kind === 'announcement' ? 'announcement' : '';
-    if (!kind || typeof source.requireCompletion !== 'boolean' || !Array.isArray(source.images) || source.images.length > 10) return null;
-    const images = source.images.map(image => {
-      if (!exactObjectKeys(image, new Set(['url', 'mime']))) return null;
-      const url = boardImageUrl(image.url);
-      const mime = typeof image.mime === 'string' ? image.mime.trim().slice(0, 100) : '';
-      return url && /^image\//.test(mime) ? Object.freeze({ url, mime }) : null;
-    });
-    if (images.some(image => image === null)) return null;
-    return Object.freeze({ id, type, kind, title, content, createdAt, expiresAt, read: source.read, notificationEventId: eventId, images: Object.freeze(images), requireCompletion: source.requireCompletion });
-  }
-
-  function normalizeBoardPage(source, requestedType) {
-    const expected = new Set(['ok', 'type', 'items', 'nextCursor']);
-    if (!exactObjectKeys(source, expected) || source.ok !== true || source.type !== requestedType || !Array.isArray(source.items) || source.items.length > 50) return null;
-    const items = source.items.map(normalizeBoardItem);
-    const cursor = source.nextCursor == null ? null : (typeof source.nextCursor === 'string' && /^[A-Za-z0-9_-]{1,1024}$/.test(source.nextCursor) ? source.nextCursor : '');
-    if (items.some(item => item === null) || cursor === '') return null;
-    const ids = new Set();
-    if (items.some(item => ids.has(item.id) || (ids.add(item.id), false))) return null;
-    return Object.freeze({ items: Object.freeze(items), nextCursor: cursor });
-  }
-
   function setBoardStatus(message, state = '') {
     if (!boardStatus) return;
     boardStatus.hidden = false;
@@ -3409,9 +2913,11 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   function renderStudentBoard() {
     if (!STUDENT_APP_PUBLIC_MODE || !historyList) return false;
+    const currentBoardType = announcementState.currentBoardType();
+    const boardItems = announcementState.boardItemList();
     if (boardFilters) boardFilters.hidden = false;
     boardFilters?.querySelectorAll('[data-student-board-type]').forEach(button => {
-      button.setAttribute('aria-pressed', button.dataset.studentBoardType === boardType ? 'true' : 'false');
+      button.setAttribute('aria-pressed', button.dataset.studentBoardType === currentBoardType ? 'true' : 'false');
     });
     historyList.replaceChildren();
     if (!boardItems.length) {
@@ -3462,18 +2968,14 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       historyList.append(fragment);
     }
     if (boardMore) {
-      boardMore.hidden = !boardNextCursor;
+      boardMore.hidden = !announcementState.boardCursor();
       boardMore.disabled = boardLoading;
     }
     return true;
   }
 
-  function boardItemByIdentifier(identifier) {
-    return boardItems.find(item => item.id === identifier || item.notificationEventId === identifier) || null;
-  }
-
   function focusBoardItem(identifier) {
-    const item = boardItemByIdentifier(identifier);
+    const item = announcementState.boardItemByIdentifier(identifier);
     if (!item) return false;
     const card = historyList?.querySelector(`[data-student-board-id="${CSS.escape(item.id)}"]`);
     if (!card) return false;
@@ -3488,18 +2990,16 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     if (!STUDENT_APP_PUBLIC_MODE) return false;
     const requestId = ++boardRequestId;
     boardLoading = true;
-    if (reset) {
-      boardItems = [];
-      boardNextCursor = null;
-    }
+    if (reset) announcementState.resetBoard();
     renderStudentBoard();
     setBoardStatus('게시판을 불러오는 중입니다.', 'loading');
-    let cursor = boardNextCursor;
+    let cursor = announcementState.boardCursor();
     let pages = 0;
     try {
       do {
+        const requestedType = announcementState.currentBoardType();
         const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-        const response = await studentAppRequest(`/api/mobile/student/board?type=${encodeURIComponent(boardType)}${suffix}`, { cache: 'no-store' });
+        const response = await studentAppRequest(`/api/mobile/student/board?type=${encodeURIComponent(requestedType)}${suffix}`, { cache: 'no-store' });
         if (response.status === 401 || response.status === 403) {
           throw new StudentAppSessionError(
             response.status === 401 ? 'unauthenticated' : 'session_not_ready',
@@ -3508,18 +3008,16 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
           );
         }
         if (!response.ok) throw new Error(`board_${response.status}`);
-        const page = normalizeBoardPage(await response.json(), boardType);
+        const page = normalizeBoardPage(await response.json(), requestedType);
         if (!page) throw new Error('board_malformed');
         if (requestId !== boardRequestId) return false;
-        const known = new Set(boardItems.map(item => item.id));
-        boardItems = boardItems.concat(page.items.filter(item => !known.has(item.id)));
-        boardNextCursor = page.nextCursor;
-        cursor = boardNextCursor;
+        announcementState.appendBoardPage(page);
+        cursor = announcementState.boardCursor();
         pages += 1;
-      } while (seekId && !boardItemByIdentifier(seekId) && cursor && pages < 10);
+      } while (seekId && !announcementState.boardItemByIdentifier(seekId) && cursor && pages < 10);
       renderStudentBoard();
       const found = seekId ? focusBoardItem(seekId) : true;
-      setBoardStatus(found ? `${boardItems.length}개의 게시물을 표시했습니다.` : '만료되었거나 볼 수 없는 게시물입니다.', found ? 'ready' : 'empty');
+      setBoardStatus(found ? `${announcementState.boardItemList().length}개의 게시물을 표시했습니다.` : '만료되었거나 볼 수 없는 게시물입니다.', found ? 'ready' : 'empty');
       return found;
     } catch (error) {
       if (handleStudentAppSessionFailure(error)) return false;
@@ -3537,72 +3035,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
   /* STUDENT_APP_BOARD_END */
 
-  function getSurvey(ann) {
-    const survey = ann?.survey;
-    if (!survey || typeof survey !== 'object' || !Array.isArray(survey.questions)) return null;
-    if (survey.status && survey.status !== 'public') return null;
-    return survey;
-  }
-
-  function isSurveyAnnouncement(ann) {
-    return !!getSurvey(ann);
-  }
-
-  function hasSurveySubmission(ann) {
-    const status = statusMap?.[ann?.id] || {};
-    if (status.surveySubmittedAt && status.surveyAnswers && typeof status.surveyAnswers === 'object') return true;
-    return Array.isArray(status.surveyResponses) && status.surveyResponses.some(row => row && typeof row.answers === 'object');
-  }
-
-  function replyRowsForStatus(status) {
-    const rows = Array.isArray(status?.replies)
-      ? status.replies.filter(row => row && String(row.reply || '').trim())
-      : [];
-    const legacyReply = String(status?.reply || '').trim();
-    const legacyAt = String(status?.repliedAt || '');
-    if (legacyReply && !rows.some(row => String(row.reply || '').trim() === legacyReply && String(row.repliedAt || '') === legacyAt)) {
-      rows.push({ reply: legacyReply, anonymous: !!status?.anonymous, repliedAt: legacyAt });
-    }
-    return rows;
-  }
-
-  function replyCountFor(ann) {
-    return replyRowsForStatus(statusMap?.[ann?.id] || {}).length;
-  }
-
-  function replyLimitMessage(count) {
-    if (count <= 1) return '2번 더 답장 가능!';
-    if (count === 2) return '마지막 답장 남음!';
-    return '이제 쉿!';
-  }
-
   function syncReplyLimitUi() {
     if (!active || !annReply || !annSendReply) return;
-    const isMaxed = replyCountFor(active) >= ANN_REPLY_LIMIT;
+    const isMaxed = announcementState.replyLimitReached(active);
     annReply.disabled = isMaxed;
     annSendReply.disabled = isMaxed;
     annReply.placeholder = isMaxed ? '답장은 최대 3회까지 가능합니다.' : '답장을 입력하세요.';
-  }
-
-  function isComplete(ann) {
-    const survey = getSurvey(ann);
-    if (survey && ann?.requireCompletion !== false) return hasSurveySubmission(ann);
-    return isAcked(ann);
-  }
-
-  function surveyTypeText(type) {
-    return {
-      single: '하나만 선택',
-      multiple: '복수 선택 가능',
-      short: '짧은 답변',
-      long: '긴 답변',
-    }[type] || '질문';
-  }
-
-  function surveyOptionText(question, value) {
-    const options = Array.isArray(question?.options) ? question.options : [];
-    const found = options.find(option => String(option?.id) === String(value));
-    return found?.text || value || '';
   }
 
   function setBadge(count) {
@@ -3616,23 +3054,19 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     badge.textContent = String(count);
   }
 
-  function isAcked(ann) {
-    return !!statusMap?.[ann?.id]?.acked;
-  }
-
   function updatePending() {
-    pending = announcements.filter(ann => !isComplete(ann));
-    setBadge(pending.length);
+    const summary = announcementState.summary();
+    setBadge(summary.pending);
     document.dispatchEvent(new CustomEvent('student-app:announcement-summary', {
-      detail: { pending: pending.length, total: announcements.length },
+      detail: summary,
     }));
   }
 
   function renderSurvey(ann) {
     if (!annSurvey || !annSurveyQuestions) return;
-    const survey = getSurvey(ann);
-    const status = statusMap?.[ann?.id] || {};
-    const submitted = hasSurveySubmission(ann);
+    const survey = announcementState.getSurvey(ann);
+    const status = announcementState.statusFor(ann);
+    const submitted = announcementState.hasSurveySubmission(ann);
     modal.classList.toggle('has-survey', !!survey);
 
     if (!survey) {
@@ -3847,17 +3281,19 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     modal.classList.toggle('has-image', !!images.length);
     renderImageCarousel(images, active.title);
     if (annCreatedAt) annCreatedAt.textContent = formatPopupCreatedAt(active.createdAt);
-    if (annReply) annReply.value = statusMap?.[active.id]?.reply || '';
-    if (annAnonymous) annAnonymous.checked = !!statusMap?.[active.id]?.anonymous;
+    const activeStatus = announcementState.statusFor(active);
+    if (annReply) annReply.value = activeStatus.reply || '';
+    if (annAnonymous) annAnonymous.checked = !!activeStatus.anonymous;
     if (annReplyStatus) annReplyStatus.textContent = '';
     renderSurvey(active);
     syncReplyLimitUi();
-    if (annRead) annRead.textContent = isSurveyAnnouncement(active) && !hasSurveySubmission(active) ? '설문 제출 필요' : '읽었습니다.';
+    if (annRead) annRead.textContent = announcementState.getSurvey(active) && !announcementState.hasSurveySubmission(active) ? '설문 제출 필요' : '읽었습니다.';
     openAnnouncementDialog(options.opener);
   }
 
   function showNextPending() {
     updatePending();
+    const pending = announcementState.pendingItems();
     if (!pending.length) {
       closeAnnouncementDialog();
       active = null;
@@ -3895,8 +3331,8 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         headers: CT,
         body: JSON.stringify({ sid: requestSid, id: item.id }),
       });
-      statusMap[item.id] = { ...(statusMap[item.id] || {}), acked: true };
-      boardItems = boardItems.map(row => row.id === item.id ? Object.freeze({ ...row, read: true }) : row);
+      announcementState.markAcked(item.id);
+      announcementState.markBoardItemRead(item.id);
     } catch (error) {
       handleAnnouncementSessionFailure(error);
       console.warn('[board] read receipt failed:', error);
@@ -3904,7 +3340,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   async function openStudentBoardItem(identifier, opener) {
-    const item = boardItemByIdentifier(identifier);
+    const item = announcementState.boardItemByIdentifier(identifier);
     if (!item) return false;
     if (item.type === 'video') {
       if (item.locked) {
@@ -3918,10 +3354,10 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       document.dispatchEvent(new CustomEvent('student-app:play-board-video', { detail: { mid: item.videoMid } }));
       return true;
     }
-    let announcement = announcements.find(row => String(row?.id || '') === item.id);
+    let announcement = announcementState.findAnnouncement(item.id);
     if (!announcement) {
       await loadAnnouncements({ showPopup: false });
-      announcement = announcements.find(row => String(row?.id || '') === item.id);
+      announcement = announcementState.findAnnouncement(item.id);
     }
     if (!announcement) {
       setBoardStatus('만료되었거나 더 이상 볼 수 없는 공지입니다.', 'empty');
@@ -3943,12 +3379,11 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         fetchJSON(`/api/announcements?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
         fetchJSON(`/api/announce-status?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
       ]);
-      announcements = Array.isArray(anns) ? anns : [];
-      statusMap = stat && typeof stat === 'object' ? stat : {};
+      announcementState.replaceAnnouncements(anns, stat);
       updatePending();
       renderHistory();
       if (showPopup && !announcementDeepLinkHandled) {
-        announcementDeepLinkHandled = studentAppOpenAnnouncementDeepLink(requestedAnnouncementId, announcements, ann => renderActive(ann, { fromHistory: true }));
+        announcementDeepLinkHandled = studentAppOpenAnnouncementDeepLink(requestedAnnouncementId, announcementState.announcementItems(), ann => renderActive(ann, { fromHistory: true }));
         if (announcementDeepLinkHandled || requestedAnnouncementId) return;
       }
       if (showPopup) showNextPending();
@@ -3963,7 +3398,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   async function ackActive() {
     if (!active) return;
-    if (isSurveyAnnouncement(active) && active.requireCompletion !== false && !hasSurveySubmission(active)) {
+    if (announcementState.getSurvey(active) && active.requireCompletion !== false && !announcementState.hasSurveySubmission(active)) {
       if (annReplyStatus) annReplyStatus.textContent = '설문을 먼저 제출해 주세요.';
       if (annSurveyError) annSurveyError.textContent = '필수 설문은 제출 전까지 닫을 수 없습니다.';
       annSurvey?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -3979,11 +3414,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         headers: CT,
         body: JSON.stringify({ sid: requestSid, id }),
       });
-      statusMap[id] = { ...(statusMap[id] || {}), acked: true };
+      announcementState.markAcked(id);
       active = null;
       activeFromHistory = false;
       updatePending();
       renderHistory();
+      const pending = announcementState.pendingItems();
       if (shouldContinuePending && pending.length) renderActive(pending[0]);
       else closeAnnouncementDialog();
     } catch (err) {
@@ -3995,7 +3431,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   function collectSurveyAnswers({ focusInvalid = false } = {}) {
     if (!active || !annSurveyQuestions) return null;
-    const survey = getSurvey(active);
+    const survey = announcementState.getSurvey(active);
     if (!survey) return null;
 
     const answers = {};
@@ -4032,9 +3468,9 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   async function submitSurvey() {
     if (!active || !annSurveySubmit) return;
-    const survey = getSurvey(active);
+    const survey = announcementState.getSurvey(active);
     if (!survey) return;
-    if (hasSurveySubmission(active) && !survey.allowMultiple) {
+    if (announcementState.hasSurveySubmission(active) && !survey.allowMultiple) {
       if (annSurveyError) annSurveyError.textContent = '이미 제출한 설문입니다.';
       return;
     }
@@ -4053,22 +3489,16 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
           surveyAnswers,
         }),
       });
-      const currentStatus = statusMap[active.id] || {};
       const surveyEntry = saved?.survey || {
         answers: surveyAnswers,
         anonymous: !!survey.anonymous,
         submittedAt: new Date().toISOString(),
       };
-      const surveyResponses = Array.isArray(currentStatus.surveyResponses) ? currentStatus.surveyResponses.slice() : [];
-      surveyResponses.push(surveyEntry);
-      statusMap[active.id] = {
-        ...currentStatus,
-        acked: true,
+      announcementState.recordSurvey(active, {
         surveyAnswers,
-        surveyAnonymous: !!survey.anonymous,
-        surveySubmittedAt: surveyEntry.submittedAt,
-        surveyResponses,
-      };
+        surveyEntry,
+        survey,
+      });
       renderSurvey(active);
       updatePending();
       renderHistory();
@@ -4093,8 +3523,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   async function submitReply() {
     if (!active || !annReply) return;
-    const currentCount = replyCountFor(active);
-    if (currentCount >= ANN_REPLY_LIMIT) {
+    if (announcementState.replyLimitReached(active)) {
       alert('이제 쉿!');
       syncReplyLimitUi();
       return;
@@ -4118,24 +3547,19 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
           anonymous: !!annAnonymous?.checked,
         }),
       });
-      const currentStatus = statusMap[active.id] || {};
       const replyEntry = saved?.reply || {
         reply,
         anonymous: !!annAnonymous?.checked,
         repliedAt: new Date().toISOString(),
       };
-      const replies = replyRowsForStatus(currentStatus).slice();
-      replies.push(replyEntry);
-      statusMap[active.id] = {
-        ...currentStatus,
+      announcementState.recordReply(active, {
         reply,
         anonymous: !!annAnonymous?.checked,
-        repliedAt: replyEntry.repliedAt,
-        replies,
-      };
+        replyEntry,
+      });
       annReply.value = '';
       if (annReplyStatus) annReplyStatus.textContent = '답장을 보냈습니다.';
-      const nextCount = replyCountFor(active);
+      const nextCount = announcementState.replyCount(active);
       alert(replyLimitMessage(nextCount));
       syncReplyLimitUi();
       renderHistory();
@@ -4155,14 +3579,15 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   function renderHistory() {
     if (!historyList) return;
     if (renderStudentBoard()) return;
+    const announcements = announcementState.announcementItems();
     if (!announcements.length) {
       historyList.innerHTML = '<div class="announce-history-empty">최근 4시간 안에 도착한 공지가 없습니다.</div>';
       return;
     }
     historyList.innerHTML = announcements.map(ann => {
-      const status = statusMap[ann.id] || {};
-      const survey = getSurvey(ann);
-      const surveyDone = survey && hasSurveySubmission(ann);
+      const status = announcementState.statusFor(ann);
+      const survey = announcementState.getSurvey(ann);
+      const surveyDone = survey && announcementState.hasSurveySubmission(ann);
       const surveyLabel = survey
         ? `<span class="announce-history-survey-badge">${surveyDone ? '설문 완료' : '설문 대기'}</span>`
         : '';
@@ -4204,7 +3629,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   function openHistoryAnnouncement(id) {
-    const ann = announcements.find(item => String(item?.id) === String(id));
+    const ann = announcementState.findAnnouncement(id);
     if (!ann) return;
     const returnFocus = historyReturnFocus || noticeBtn;
     closeHistoryDialog({ restoreFocus: false });
@@ -4248,13 +3673,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   boardFilters?.addEventListener('click', (ev) => {
     const button = ev.target.closest('[data-student-board-type]');
     const selected = button?.dataset.studentBoardType;
-    if (!['all', 'notice', 'video'].includes(selected) || selected === boardType) return;
-    boardType = selected;
+    if (!announcementState.setBoardType(selected)) return;
     void loadStudentBoard({ reset: true });
   });
 
   boardMore?.addEventListener('click', () => {
-    if (!boardNextCursor || boardLoading) return;
+    if (!announcementState.boardCursor() || boardLoading) return;
     void loadStudentBoard();
   });
 
@@ -4333,7 +3757,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   modal.addEventListener('keydown', (ev) => {
     trapDialogFocus(modal, ev);
-    if (ev.key !== 'Escape' || (!activeFromHistory && !isComplete(active))) return;
+    if (ev.key !== 'Escape' || (!activeFromHistory && !announcementState.isComplete(active))) return;
     ev.preventDefault();
     closeAnnouncementDialog();
     active = null;
@@ -4373,7 +3797,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     if (!requestedBoardId) return;
     openHistoryDialog(noticeBtn);
     const found = await loadStudentBoard({ reset: true, seekId: requestedBoardId });
-    const item = found ? boardItemByIdentifier(requestedBoardId) : null;
+    const item = found ? announcementState.boardItemByIdentifier(requestedBoardId) : null;
     if (item?.type === 'notice') await openStudentBoardItem(item.id, noticeBtn);
   });
   window.setInterval(() => {

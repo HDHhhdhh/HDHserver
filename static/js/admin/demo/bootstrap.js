@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260827-test-patch1';
+import { createDemoFetch } from './fetch.js?v=20260828-calendar-revision1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -136,6 +136,10 @@ function demoRevision(value) {
     hash = Math.imul(hash, 16777619);
   }
   return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function schoolCalendarDemoRevision(value) {
+  return demoRevision(value).replace(/^demo-/, '').repeat(8);
 }
 
 function requestHeader(headers, name) {
@@ -339,6 +343,45 @@ async function handleDemoApiRequest(request, input, init, demo) {
     });
   }
 
+  if (method === 'POST' && path === '/api/school-calendar') {
+    const store = loadDemoStore();
+    const current = cloneDemoValue(store.schoolCalendar || {});
+    const currentRevision = schoolCalendarDemoRevision(current);
+    const expectedRevision = requestHeader(request.headers, 'If-Match')
+      .trim()
+      .replace(/^W\//, '')
+      .replace(/^"|"$/g, '')
+      .toLowerCase();
+    if (!expectedRevision || expectedRevision !== currentRevision) {
+      return demoJson({
+        ok: false,
+        code: expectedRevision
+          ? 'school_calendar_conflict'
+          : 'school_calendar_revision_required',
+      }, {
+        status: expectedRevision ? 409 : 428,
+        handler: 'bootstrap-fallback',
+        headers: { 'X-School-Calendar-Revision': currentRevision },
+      });
+    }
+    if (!homeworkBody || typeof homeworkBody !== 'object' || Array.isArray(homeworkBody)) {
+      return demoJson({ ok: false, code: 'invalid_school_calendar' }, {
+        status: 400,
+        handler: 'bootstrap-fallback',
+      });
+    }
+    store.schoolCalendar = cloneDemoValue(homeworkBody);
+    saveDemoStore(store);
+    const revision = schoolCalendarDemoRevision(store.schoolCalendar);
+    return demoJson(cloneDemoValue(store.schoolCalendar), {
+      handler: 'bootstrap-fallback',
+      headers: {
+        'X-School-Calendar-Revision': revision,
+        ETag: `"${revision}"`,
+      },
+    });
+  }
+
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
     return demoJson(mutation, {
@@ -349,11 +392,15 @@ async function handleDemoApiRequest(request, input, init, demo) {
 
   const store = loadDemoStore();
   const payload = fallbackPayloadForGet(path, url.searchParams, store);
+  const responseHeaders = {};
+  if (path === '/api/makeup-carryover') {
+    responseHeaders['X-Makeup-Carryover-Revision'] = demoRevision(payload);
+  } else if (path === '/api/school-calendar') {
+    responseHeaders['X-School-Calendar-Revision'] = schoolCalendarDemoRevision(payload);
+  }
   return demoJson(payload, {
     handler: 'bootstrap-fallback',
-    headers: path === '/api/makeup-carryover'
-      ? { 'X-Makeup-Carryover-Revision': demoRevision(payload) }
-      : {},
+    headers: responseHeaders,
   });
 }
 

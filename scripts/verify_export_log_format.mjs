@@ -8,9 +8,9 @@ const formatPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportL
 const targetPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportLogTargets.js');
 const exporterPath = path.join(ROOT, 'static', 'js', 'admin', 'features', 'exportLogs.js');
 const htmlPath = path.join(ROOT, 'static', 'admin.html');
-const cssPath = path.join(ROOT, 'static', 'css', 'admin.css');
+const cssPath = path.join(ROOT, 'static', 'css', 'admin-export-logs.css');
 const mainPath = path.join(ROOT, 'static', 'js', 'admin', 'main.js');
-const apiBasicPath = path.join(ROOT, 'routes', 'api_basic.py');
+const apiLogsPath = path.join(ROOT, 'routes', 'api_logs.py');
 const logRepositoryPath = path.join(ROOT, 'core', 'log_repository.py');
 
 const format = await import(`${pathToFileURL(formatPath).href}?verify=${Date.now()}`);
@@ -20,7 +20,7 @@ const formatSource = fs.readFileSync(formatPath, 'utf8');
 const htmlSource = fs.readFileSync(htmlPath, 'utf8');
 const cssSource = fs.readFileSync(cssPath, 'utf8');
 const mainSource = fs.readFileSync(mainPath, 'utf8');
-const apiBasicSource = fs.readFileSync(apiBasicPath, 'utf8');
+const apiLogsSource = fs.readFileSync(apiLogsPath, 'utf8');
 const logRepositorySource = fs.readFileSync(logRepositoryPath, 'utf8');
 
 let checks = 0;
@@ -254,12 +254,12 @@ ok(exporterSource.includes("'/api/logs/unarchived-summary'"), 'default export st
 ok(exporterSource.includes("historyUrl('/api/logs', sids, targetRefs)"), 'export does not request projected log history by target students');
 ok(exporterSource.includes("historyUrl('/api/progress', sids)"), 'export does not batch progress history by target students');
 ok(exporterSource.includes('replaceSidHistories(state.logs, exportData.logs, exportData.sids)'), 'scoped history does not preserve unrelated in-memory students');
-ok(apiBasicSource.includes('sid_filters = _progress_sids_from_query()'), 'logs route does not accept batch sids');
-ok(apiBasicSource.includes('sid_filters=sid_filters'), 'logs route does not pass batch sids to the repository');
+ok(apiLogsSource.includes('sid_filters = _sids_from_query()'), 'logs route does not accept batch sids');
+ok(apiLogsSource.includes('sid_filters=sid_filters'), 'logs route does not pass batch sids to the repository');
 ok(logRepositorySource.includes('def _sqlite_dump_sids('), 'log repository lacks a batched SQLite reader');
 ok(logRepositorySource.includes('WHERE sid IN ({placeholders})'), 'batched log reads do not use one SQLite IN query');
 ok(exporterSource.includes("params.set('exportTargets'"), 'export history request omits per-student target dates');
-ok(apiBasicSource.includes('repository.read_export_history(export_targets)'), 'logs route does not select the projected export history');
+ok(apiLogsSource.includes('repository.read_export_history(export_targets)'), 'logs route does not select the projected export history');
 ok(logRepositorySource.includes('def read_export_history('), 'log repository lacks the projected export-history reader');
 ok(logRepositorySource.includes('"__exportHistoryActivity": True'), 'historical log projection no longer preserves activity boundaries');
 

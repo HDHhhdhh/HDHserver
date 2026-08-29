@@ -4,11 +4,12 @@ import { initAdminViewMode } from './core/viewMode.js';
 import { initEscClose } from './features/escClose.js';
 import { initHoverTooltip } from './features/hoverTooltip.js?v=20260819-subject-days1';
 import { initVideoModal } from './features/videoModal.js?v=20260826-save-feedback1';
-import { initLogModal } from './features/logModal.js?v=20260826-homework-order1-save-feedback2-book-sleep3';
+import { initLogModal } from './features/logModal.js?v=20260829-video-snapshot1';
 import { initExtraModal } from './features/extraModal.js?v=20260821-safe-merge1';
 import { initAbsentRegister } from './features/absentRegister.js';
 import { initCalendar } from './features/calendar.js?v=20260824-sheet-sync3';
-import { initExport } from './features/exportLogs.js?v=20260826-roster-current-content2';
+import { initExport } from './features/exportLogs.js?v=20260826-roster-current-content2&quickPrinter=1';
+import { initQuickPrinterExport } from './features/quickPrinterExport.js?v=20260829-time-filter1';
 import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js?v=20260821-log-batch1';
 import { loadTodayAndRender } from './features/today.js?v=20260824-linked-leave1';
@@ -22,6 +23,7 @@ import { initAdminOperationNotes } from './features/adminOperationNotes.js';
 import { initStudentLogs } from './features/studentLogs.js?v=20260816-student-log-restore2';
 import { initStudentAccounts } from './features/studentAccounts.js';
 import { initStudentFocus } from './features/studentFocus.js';
+import { initStudentTestOcrReview } from './features/studentTestOcrReview.js?v=20260828-1';
 
 
 // 1) 공통 초기화
@@ -45,12 +47,14 @@ initAdminOperationNotes();
 initStudentLogs();
 initStudentAccounts();
 initStudentFocus();
+initStudentTestOcrReview();
 initVideoModal();
 initLogModal();
 initExtraModal();
 initAbsentRegister();
 initCalendar();
 initExport();
+initQuickPrinterExport();
 initAnnouncements();
 initClearAll();
 initAbsentRecovery();

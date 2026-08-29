@@ -1,166 +1,168 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync('static/js/student.js', 'utf8');
-const syncStart = source.indexOf('  const LSKeys = {');
-const syncEnd = source.indexOf('  /* ───────────── 설정 패널 & 다크모드 ───────────── */', syncStart);
-if (syncStart < 0 || syncEnd < 0) throw new Error('student watch autosave block was not found');
+const watchSource = fs.readFileSync('static/js/student/watchState.js', 'utf8');
+const studentSource = fs.readFileSync('static/js/student.js', 'utf8');
+const htmlSource = fs.readFileSync('static/student.html', 'utf8');
+const browserWindow = {};
+vm.runInNewContext(watchSource, { Date, Math, Number, Object, Promise, String, window: browserWindow });
+
+const api = browserWindow.StudentWatchState;
+assert.ok(api && typeof api.createController === 'function', 'watch controller contract was not published');
+const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 
 const requests = [];
-const listeners = { window: new Map(), document: new Map() };
 const timers = new Map();
 const storage = new Map();
 let timerId = 0;
+let currentMid = '';
+let academyAccessAllowed = true;
 let nextResponseOk = true;
+let progressChangeCount = 0;
+const nowMs = 1_787_390_000_123;
 
-const context = {
-  console,
-  Map,
-  Set,
-  Promise,
-  Date,
-  JSON,
-  Number,
-  Math,
-  String,
-  Object,
-  encodeURIComponent,
-  localStorage: {
+const controller = api.createController({
+  storage: {
     getItem(key) { return storage.has(key) ? storage.get(key) : null; },
     setItem(key, value) { storage.set(key, String(value)); },
     removeItem(key) { storage.delete(key); },
   },
-  setTimeout(callback) {
+  getSid: () => 'sid-a',
+  getCanonicalSid: () => 'sid-a',
+  getDate: () => '2026-08-24',
+  getCurrentMid: () => currentMid,
+  canSync: () => academyAccessAllowed,
+  request: async (url, options) => {
+    requests.push({ url, options, payload: JSON.parse(options.body) });
+    return { ok: nextResponseOk };
+  },
+  headers: { 'Content-Type': 'application/json' },
+  setTimer(callback) {
     const id = ++timerId;
     timers.set(id, callback);
     return id;
   },
-  clearTimeout(id) { timers.delete(id); },
-  window: {
-    addEventListener(type, callback) { listeners.window.set(type, callback); },
-  },
-  document: {
-    visibilityState: 'visible',
-    addEventListener(type, callback) { listeners.document.set(type, callback); },
-  },
-};
-context.globalThis = context;
-context.requests = requests;
-Object.defineProperty(context, 'nextResponseOk', {
-  get: () => nextResponseOk,
-  set: value => { nextResponseOk = !!value; },
+  clearTimer(id) { timers.delete(id); },
+  now: () => nowMs,
+  onProgressChange: () => { progressChangeCount += 1; },
 });
 
-const prefix = [
-  "let sid = 'sid-a';",
-  "let currentMid = '';",
-  "let academyAccessAllowed = true;",
-  "let stuCache = { id: 'sid-a' };",
-  "const CT = { 'Content-Type': 'application/json' };",
-  "function todayLocalKey() { return '2026-08-24'; }",
-  "function updateListCompletionBadges() {}",
-  "function getAssignedVideos() { return []; }",
-  "function studentDataDateKey() { return '2026-08-24'; }",
-  "function $(id) { return null; }",
-  "async function studentAppRequest(url, options) {",
-  "  requests.push({ url, options, payload: JSON.parse(options.body) });",
-  "  return { ok: nextResponseOk };",
-  "}",
-].join('\n');
-const suffix = [
-  'globalThis.__watchHarness = {',
-  '  setProgress,',
-  '  getProgress,',
-  '  doSync,',
-  '  flushSyncQueue,',
-  '  setCurrentMid(value) { currentMid = value; },',
-  '  setAcademyAllowed(value) { academyAccessAllowed = value; },',
-  '};',
-].join('\n');
-vm.runInNewContext(prefix + '\n' + source.slice(syncStart, syncEnd) + '\n' + suffix, context);
-
-const harness = context.__watchHarness;
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
-};
 const runPendingTimers = async () => {
   const callbacks = [...timers.values()];
   timers.clear();
   await Promise.all(callbacks.map(callback => callback()));
 };
 
-harness.setProgress('mid-a', { last: 5, dur: 100, completed: false });
-assert(timers.size === 1, 'watch progress must schedule one debounced sync');
-harness.setProgress('mid-a', { last: 10, dur: 100, completed: false });
-assert(timers.size === 1, 'new progress must replace the existing debounce timer');
+const originalServerMap = {
+  'mid-server': { last: 40, dur: 100, completed: false, updatedAt: nowMs - 100 },
+};
+const originalServerJson = JSON.stringify(originalServerMap);
+const originalServerHash = sha256(originalServerJson);
+controller.mergeServerWatchIntoLocal(originalServerMap);
+assert.equal(JSON.stringify(originalServerMap), originalServerJson, 'server watch merge mutated its input');
+assert.equal(sha256(JSON.stringify(originalServerMap)), originalServerHash, 'server watch input hash changed');
+assert.equal(
+  JSON.stringify(controller.getProgress('mid-server')),
+  JSON.stringify({ last: 40, dur: 100, completed: false, updatedAt: nowMs }),
+  'server watch merge changed the literal local projection',
+);
+await controller.syncNow('mid-server');
+assert.equal(requests.length, 0, 'fresh server state must seed duplicate-send suppression');
+
+controller.setProgress('mid-a', { last: 5, dur: 100, completed: false });
+assert.equal(timers.size, 1, 'watch progress must schedule one debounced sync');
+controller.setProgress('mid-a', { last: 10, dur: 100, completed: false });
+assert.equal(timers.size, 1, 'new progress must replace the existing debounce timer');
 await runPendingTimers();
-assert(requests.length === 1, 'debounced progress must emit one request');
-assert(requests[0].url === '/api/watch', 'autosave must use the canonical watch endpoint');
-assert(requests[0].payload.date === '2026-08-24', 'autosave must use the current local date');
-assert(requests[0].payload.sid === 'sid-a' && requests[0].payload.mid === 'mid-a', 'autosave identity changed');
-assert(requests[0].payload.last === 10 && requests[0].payload.dur === 100, 'autosave did not send the merged furthest position');
-assert(requests[0].payload.updatedAt >= 1_000_000_000_000, 'autosave timestamp is not epoch milliseconds');
+assert.equal(requests.length, 1, 'debounced progress must emit one request');
+assert.equal(requests[0].url, '/api/watch', 'autosave must use the canonical watch endpoint');
+assert.deepEqual(requests[0].payload, {
+  date: '2026-08-24',
+  sid: 'sid-a',
+  mid: 'mid-a',
+  last: 10,
+  dur: 100,
+  completed: false,
+  updatedAt: nowMs,
+}, 'autosave payload changed');
 
-await harness.doSync('mid-a');
-assert(requests.length === 1, 'unchanged watch state must not be sent twice');
+await controller.syncNow('mid-a');
+assert.equal(requests.length, 1, 'unchanged watch state must not be sent twice');
 
-context.nextResponseOk = false;
-harness.setProgress('mid-a', { last: 20, dur: 100 });
+nextResponseOk = false;
+controller.setProgress('mid-a', { last: 20, dur: 100 });
 await runPendingTimers();
-assert(requests.length === 2, 'a changed watch state must be sent');
-context.nextResponseOk = true;
-await harness.doSync('mid-a');
-assert(requests.length === 3, 'a failed watch save must remain retryable');
+assert.equal(requests.length, 2, 'a changed watch state must be sent');
+nextResponseOk = true;
+await controller.syncNow('mid-a');
+assert.equal(requests.length, 3, 'a failed watch save must remain retryable');
 
-harness.setProgress('mid-a', { last: 90, dur: 100, completed: true });
+controller.setProgress('mid-a', { last: 90, dur: 100, completed: true });
 await runPendingTimers();
-assert(requests.at(-1).payload.completed === true, '90 percent must be sent as completed');
+assert.equal(requests.at(-1).payload.completed, true, '90 percent must be sent as completed');
 
-harness.setCurrentMid('mid-a');
-harness.setProgress('mid-a', { last: 95, dur: 100 });
-listeners.window.get('pagehide')();
-await new Promise(resolve => setTimeout(resolve, 0));
-assert(requests.at(-1).options.keepalive === true, 'pagehide flush must use keepalive');
-
-harness.setProgress('mid-a', { last: 96, dur: 100 });
-context.document.visibilityState = 'hidden';
-listeners.document.get('visibilitychange')();
-await new Promise(resolve => setTimeout(resolve, 0));
-assert(requests.at(-1).options.keepalive === true, 'hidden-page flush must use keepalive');
+currentMid = 'mid-a';
+controller.setProgress('mid-a', { last: 95, dur: 100 });
+await controller.flushSyncQueue({ keepalive: true });
+assert.equal(requests.at(-1).options.keepalive, true, 'explicit flush must use keepalive');
 
 const beforeBlocked = requests.length;
-harness.setAcademyAllowed(false);
-harness.setProgress('mid-blocked', { last: 30, dur: 100 });
+academyAccessAllowed = false;
+controller.setProgress('mid-blocked', { last: 30, dur: 100 });
 await runPendingTimers();
-assert(requests.length === beforeBlocked, 'outside-academy progress must not reach the watch endpoint');
+assert.equal(requests.length, beforeBlocked, 'outside-academy progress must not reach the watch endpoint');
 
-const messageStart = source.indexOf("  window.addEventListener('message', (e) => {");
-const messageEnd = source.indexOf('\n  async function play(mid)', messageStart);
-if (messageStart < 0 || messageEnd < 0) throw new Error('Kollus message bridge block was not found');
-const bridgeCalls = [];
-const bridgeListeners = new Map();
-const bridgeWindow = {
-  addEventListener(type, callback) { bridgeListeners.set(type, callback); },
-};
-const bridgeContext = {
-  window: bridgeWindow,
-  currentMid: 'mid-a',
-  WATCH_DONE_RATIO: 0.90,
-  Number,
-  Math,
-  String,
-  setProgress(mid, patch) { bridgeCalls.push({ mid, patch }); },
-};
-vm.runInNewContext(source.slice(messageStart, messageEnd), bridgeContext);
-const onMessage = bridgeListeners.get('message');
-onMessage({ source: bridgeWindow, data: { type: 'kollus.ready', mid: 'mid-a', duration: 100 } });
-onMessage({ source: bridgeWindow, data: { type: 'kollus.progress', mid: 'mid-a', currentTime: 5, duration: 100 } });
-onMessage({ source: bridgeWindow, data: { type: 'kollus.progress', mid: 'mid-a', currentTime: 90, duration: 100 } });
-onMessage({ source: {}, data: { type: 'kollus.progress', mid: 'mid-a', currentTime: 99, duration: 100 } });
-onMessage({ source: bridgeWindow, data: { type: 'kollus.progress', mid: 'other', currentTime: 99, duration: 100 } });
-assert(bridgeCalls.length === 3, 'Kollus bridge must accept only same-window active-MID events');
-assert(bridgeCalls[0].patch.dur === 100, 'ready event must capture duration');
-assert(!bridgeCalls[1].patch.completed, '5 percent progress must remain incomplete in the browser');
-assert(bridgeCalls[2].patch.completed === true, '90 percent progress must become complete in the browser');
+controller.setLastMid('mid-a');
+assert.equal(controller.getLastMid(), 'mid-a', 'last-video resume key changed');
+controller.clearProgress('mid-a');
+assert.equal(controller.getProgress('mid-a'), null, 'explicit stale-watch clearing must remove only the target MID');
+assert.ok(controller.getProgress('mid-server'), 'targeted clearing removed an unrelated MID');
+assert.ok(progressChangeCount >= 5, 'progress change callback did not observe local updates');
 
-console.log('student watch autosave behavior checks passed (18 cases)');
+const lifecycleStart = studentSource.indexOf('  function flushCurrentWatch()');
+const lifecycleEnd = studentSource.indexOf('  /* ───────────── 설정 패널 & 다크모드 ───────────── */', lifecycleStart);
+if (lifecycleStart < 0 || lifecycleEnd < 0) throw new Error('watch lifecycle wiring was not found');
+const lifecycleListeners = { window: new Map(), document: new Map() };
+const flushCalls = [];
+const lifecycleContext = {
+  flushSyncQueue(options) { flushCalls.push(options); return Promise.resolve(); },
+  window: {
+    addEventListener(type, callback) { lifecycleListeners.window.set(type, callback); },
+  },
+  document: {
+    visibilityState: 'visible',
+    addEventListener(type, callback) { lifecycleListeners.document.set(type, callback); },
+  },
+};
+vm.runInNewContext(studentSource.slice(lifecycleStart, lifecycleEnd), lifecycleContext);
+lifecycleListeners.window.get('pagehide')();
+lifecycleContext.document.visibilityState = 'hidden';
+lifecycleListeners.document.get('visibilitychange')();
+assert.equal(
+  JSON.stringify(flushCalls),
+  JSON.stringify([{ keepalive: true }, { keepalive: true }]),
+  'page lifecycle flush contract changed',
+);
+
+for (const forbidden of ['document.', 'localStorage', 'addEventListener']) {
+  assert.equal(watchSource.includes(forbidden), false, `watch module must stay DOM/ambient-storage free: ${forbidden}`);
+}
+assert.equal(studentSource.includes("studentAppRequest('/api/watch'"), false, 'student entrypoint duplicated watch transport');
+assert.ok(watchSource.includes("request('/api/watch'"), 'watch module must own the canonical watch transport');
+const bootstrapScript = '/js/student/bootstrapState.js?v=20260828-bootstrap-state-r1';
+const watchScript = '/js/student/watchState.js?v=20260828-watch-state-r1';
+const playbackScript = '/js/student/playback.js?v=20260828-playback-r1';
+const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
+const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
+const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+assert.ok(htmlSource.indexOf(bootstrapScript) < htmlSource.indexOf(watchScript), 'watch module must follow bootstrap state');
+assert.ok(htmlSource.indexOf(watchScript) < htmlSource.indexOf(playbackScript), 'watch module must precede playback');
+assert.ok(htmlSource.indexOf(playbackScript) < htmlSource.indexOf(reviewPlaylistScript), 'playback must precede review playlist');
+assert.ok(htmlSource.indexOf(reviewPlaylistScript) < htmlSource.indexOf(announcementStateScript), 'review playlist must precede announcement state');
+assert.ok(htmlSource.indexOf(announcementStateScript) < htmlSource.indexOf(testPresentationScript), 'announcement state must precede test presentation');
+assert.ok(htmlSource.indexOf(testPresentationScript) < htmlSource.indexOf(studentScript), 'test presentation must precede the student entrypoint');
+
+console.log('student watch state/autosave checks passed: literal merge, retry, flush, access gate, and shell order');

@@ -8,6 +8,7 @@ const studentPath = process.env.STUDENT_JS_SOURCE
   ? path.resolve(root, process.env.STUDENT_JS_SOURCE)
   : path.join(root, 'static', 'js', 'student.js');
 const studentSource = fs.readFileSync(studentPath, 'utf8');
+const presentationSource = fs.readFileSync(path.join(root, 'static', 'js', 'student', 'testPresentation.js'), 'utf8');
 const adminSource = fs.readFileSync(path.join(root, 'static', 'js', 'admin', 'features', 'testModal.js'), 'utf8');
 
 function assertContract(condition, message) {
@@ -25,13 +26,13 @@ for (const retiredMarker of [
   'testSubmitModal',
   'testAnswerPreviewModal',
 ]) {
-  assertContract(!studentSource.includes(retiredMarker), `retired student submission marker remains: ${retiredMarker}`);
+  assertContract(!(studentSource + presentationSource).includes(retiredMarker), `retired student submission marker remains: ${retiredMarker}`);
 }
 
 for (const readOnlyMarker of [
   'function renderAssignedTests()',
-  'const answerUrl = assignedTestAnswerUrl(test);',
-  'const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);',
+  'const view = assignedTestViewModel(test, { academyAccessAllowed });',
+  'const btn = createAssignedTestActionElement(view.canOpenAnswerUrl, view.answerUrl);',
   "btn.disabled = true;",
   "btn.setAttribute('aria-disabled', 'true');",
 ]) {

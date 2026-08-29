@@ -52,7 +52,37 @@ from core.student_public_surface import (
     register_student_app_domain,
 )
 from routes.pages import bp_pages
-from routes.api_basic import bp_api_basic
+from routes.api_basic import (
+    bp_api_basic,
+    create_student_bootstrap_projection_dependencies,
+    initialize_auto_assignment_for_schedule_change,
+    initialize_auto_assignment_for_student_identity_change,
+    initialize_auto_assignment_for_updates_read,
+    reconcile_auto_assignment_for_schedule_change,
+    reconcile_auto_assignment_for_student_identity_change,
+    reconcile_self_study_assignment_for_updates,
+)
+from routes.api_student_bootstrap import (
+    bp_api_student_bootstrap,
+    configure_student_bootstrap_projection,
+)
+from routes.api_updates import (
+    bp_api_updates,
+    configure_updates_assignment_hooks,
+)
+from routes.api_students import (
+    bp_api_students,
+    configure_student_identity_assignment_hooks,
+)
+from routes.api_school_calendar import bp_api_school_calendar
+from routes.api_videos import bp_api_videos
+from routes.api_progress import bp_api_progress
+from routes.api_logs import bp_api_logs
+from routes.api_materials import bp_api_materials
+from routes.api_schedule_overrides import (
+    bp_api_schedule_overrides,
+    configure_schedule_override_assignment_hooks,
+)
 from routes.api_attend import bp_api_attend
 from routes.api_announcements import bp_api_announcements
 from routes.api_arrive_time import bp_api_arrive_time
@@ -73,6 +103,7 @@ from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_student_logs import bp_api_student_logs
 from routes.api_non_student_ocr import bp_api_non_student_ocr
+from routes.api_student_test_ocr import bp_api_student_test_ocr
 from routes.absence_assignment_cleanup import (
     AbsenceRecoveryRequiredError,
     absence_read_barrier,
@@ -143,6 +174,25 @@ def create_app() -> Flask:
             print("[material-state] recovered pending transaction", flush=True)
 
     app = Flask(__name__, static_folder="static", static_url_path="")
+    configure_schedule_override_assignment_hooks(
+        app,
+        initialize_today=initialize_auto_assignment_for_schedule_change,
+        reconcile=reconcile_auto_assignment_for_schedule_change,
+    )
+    configure_student_identity_assignment_hooks(
+        app,
+        initialize_today=initialize_auto_assignment_for_student_identity_change,
+        reconcile_today=reconcile_auto_assignment_for_student_identity_change,
+    )
+    configure_updates_assignment_hooks(
+        app,
+        initialize_today=initialize_auto_assignment_for_updates_read,
+        reconcile_self_study=reconcile_self_study_assignment_for_updates,
+    )
+    configure_student_bootstrap_projection(
+        app,
+        create_student_bootstrap_projection_dependencies(),
+    )
     app.json.ensure_ascii = False
     app.config["MATERIAL_STATE_WRITES_DEGRADED"] = bool(material_state_recovery_error)
     app.config["PERSON_IDENTITY_WRITES_DEGRADED"] = bool(person_identity_recovery_error)
@@ -213,6 +263,7 @@ def create_app() -> Flask:
             "/api/mobile/student/homework",
             "/api/progress",
             "/api/updates",
+            "/api/student-test-ocr",
         )
         return path in exact_paths or path.startswith(prefixes)
 
@@ -311,6 +362,15 @@ def create_app() -> Flask:
     # Blueprints
     app.register_blueprint(bp_pages)
     app.register_blueprint(bp_api_basic)
+    app.register_blueprint(bp_api_student_bootstrap)
+    app.register_blueprint(bp_api_updates)
+    app.register_blueprint(bp_api_students)
+    app.register_blueprint(bp_api_school_calendar)
+    app.register_blueprint(bp_api_videos)
+    app.register_blueprint(bp_api_progress)
+    app.register_blueprint(bp_api_logs)
+    app.register_blueprint(bp_api_materials)
+    app.register_blueprint(bp_api_schedule_overrides)
     app.register_blueprint(bp_api_attend)
     app.register_blueprint(bp_api_arrive_time)
     app.register_blueprint(bp_api_announcements)
@@ -325,6 +385,7 @@ def create_app() -> Flask:
     app.register_blueprint(bp_api_admin_operation_notes)
     app.register_blueprint(bp_api_student_logs)
     app.register_blueprint(bp_api_non_student_ocr)
+    app.register_blueprint(bp_api_student_test_ocr)
     app.register_blueprint(bp_api_student_accounts)
     if student_app_config.homework_enabled:
         app.register_blueprint(bp_api_student_homework_admin)

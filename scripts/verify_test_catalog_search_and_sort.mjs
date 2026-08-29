@@ -6,9 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TESTS_JS_PATH = path.join(ROOT, 'static', 'js', 'tests.js');
+const CATALOG_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogState.js');
+const CATALOG_EDITOR_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogEditorState.js');
+const CATALOG_STATISTICS_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogStatisticsState.js');
 const TESTS_HTML_PATH = path.join(ROOT, 'static', 'tests.html');
 
 const testsHtml = fs.readFileSync(TESTS_HTML_PATH, 'utf8');
+const catalogStateSource = fs.readFileSync(CATALOG_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogEditorStateSource = fs.readFileSync(CATALOG_EDITOR_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogStatisticsStateSource = fs.readFileSync(CATALOG_STATISTICS_STATE_PATH, 'utf8')
+  .replace(/import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/catalogState\.js(?:\?[^'"]*)?['"];\s*/, '')
+  .replace(/^export\s+/gm, '');
 const source = fs
   .readFileSync(TESTS_JS_PATH, 'utf8')
   .replace(/import\s+\{[^}]+\}\s+from\s+['"]\.\/shared\/search\.js['"];\s*/, `
@@ -26,6 +34,18 @@ function matchesSearchKey(key, query) {
   .replace(
     /import\s+\{\s*createUnitTestDisplayNameResolver\s*\}\s+from\s+['"]\.\/shared\/testCatalogDisplay\.js['"];\s*/,
     "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');\n",
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogEditorState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogEditorStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogStatisticsState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStatisticsStateSource}\n`,
   );
 
 class ElementStub {
@@ -406,7 +426,7 @@ assert.match(testsHtml, /id="cfgCatalogSearch"[^>]*type="search"/);
 assert.match(testsHtml, /id="catalogOrderHint"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="testSaveStatus"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="statSearch"[^>]*type="search"/);
-assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260827-save-rollback1" type="module"><\/script>/);
+assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260829-catalog-statistics-state-r1" type="module"><\/script>/);
 assert.doesNotMatch(testsHtml, /sortable(?:\.min)?\.js|jquery-ui/i);
 assert.match(source, /\.test-drag-handle\[draggable="true"\]/);
 assert.match(source, /data-move="up"/);
@@ -417,7 +437,8 @@ assert.match(source, /await saveTestDefinition\([\s\S]*clearFields,[\s\S]*\);/);
 assert.match(source, /restoreTestCatalogMutationSnapshot\(catalogSnapshot\);/);
 assert.match(source, /await loadConfigAndStats\(\);[\s\S]*목록 변경 감지/);
 assert.match(source, /setTestSaveStatus\('success', `저장 완료 · \$\{testSaveClock\(\)\}`\)/);
-assert.match(source, /headers\['X-Tests-Config-Revision'\] = TEST_CFG_REVISION/);
+assert.match(source, /wholeConfigWriteRequest\(TEST_CFG, TEST_CFG_REVISION, removedTestIds\)/);
+assert.match(source, /testDefinitionWriteRequest\([\s\S]*TEST_CFG_REVISION,[\s\S]*\)/);
 assert.match(source, /if \(res\.status === 409 \|\| res\.status === 428\) await loadConfigAndStats\(\);/);
 assert.match(source, /if \(catalogOrderSaveInFlight \|\| catalogMutationSaveInFlight\) \{\s*ruleSavePending = true;/);
 assert.match(source, /const locked = catalogOrderSaveInFlight \|\| catalogMutationSaveInFlight;/);

@@ -30,6 +30,53 @@ const root = {
 const demoFetch = createDemoFetch({ window: root, originalFetch });
 const initialOrderMap = await (await demoFetch('/api/today_order')).json();
 
+const initialCalendarResponse = await demoFetch('/api/school-calendar');
+const initialCalendar = await initialCalendarResponse.json();
+const initialCalendarRevision = initialCalendarResponse.headers.get('X-School-Calendar-Revision') || '';
+assert.match(initialCalendarRevision, /^[0-9a-f]{64}$/, 'demo calendar GET lacks a revision');
+const missingCalendarRevision = await demoFetch('/api/school-calendar', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ version: 2, activeYear: 'missing-revision' }),
+});
+assert.equal(missingCalendarRevision.status, 428, 'demo calendar accepted a missing revision');
+assert.deepEqual(
+  await (await demoFetch('/api/school-calendar')).json(),
+  initialCalendar,
+  'missing demo calendar revision changed the store',
+);
+const demoCalendarDocument = {
+  version: 2,
+  activeYear: '2026',
+  years: { 2026: { activeSemester: '2', schools: { '데모고': {} } } },
+};
+const savedCalendar = await demoFetch('/api/school-calendar', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'If-Match': initialCalendarRevision,
+  },
+  body: JSON.stringify(demoCalendarDocument),
+});
+assert.equal(savedCalendar.status, 200, 'demo revisioned calendar save failed');
+const savedCalendarRevision = savedCalendar.headers.get('X-School-Calendar-Revision') || '';
+assert.match(savedCalendarRevision, /^[0-9a-f]{64}$/);
+const staleCalendar = await demoFetch('/api/school-calendar', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'If-Match': initialCalendarRevision,
+  },
+  body: JSON.stringify({ version: 2, activeYear: 'stale-writer' }),
+});
+assert.equal(staleCalendar.status, 409, 'demo calendar accepted a stale revision');
+assert.equal(staleCalendar.headers.get('X-School-Calendar-Revision'), savedCalendarRevision);
+assert.deepEqual(
+  await (await demoFetch('/api/school-calendar')).json(),
+  demoCalendarDocument,
+  'stale demo calendar writer overwrote the winner',
+);
+
 const demoTestsConfig = {
   categories: {
     SCHOOL_PAST: {
@@ -414,7 +461,7 @@ for (const row of summary.rows || []) {
 }
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
-assert.match(fallbackSource, /\.\/fetch\.js\?v=20260827-test-patch1/);
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260828-calendar-revision1/);
 assert.match(fallbackSource, /path === '\/api\/tests-config\/test' && method === 'PATCH'/);
 assert.match(fallbackSource, /patchDemoTestConfig\(store\.testsConfig/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
@@ -429,13 +476,16 @@ assert.match(fallbackSource, /path === '\/api\/logs\/patch-batch' && method === 
 assert.match(fallbackSource, /case '\/api\/makeup-sheet-sync\/config':/);
 assert.match(fallbackSource, /path === '\/api\/makeup-sheet-sync\/config' && method === 'POST'/);
 assert.match(fallbackSource, /path === '\/api\/makeup-sheet-sync' && method === 'POST'/);
+assert.match(fallbackSource, /method === 'POST' && path === '\/api\/school-calendar'/);
+assert.match(fallbackSource, /X-School-Calendar-Revision/);
+assert.match(fallbackSource, /school_calendar_conflict/);
 assert.match(fallbackSource, /function applyFallbackLogPatchBatch\(store, body\)/);
 assert.match(fallbackSource, /status: mutation\?\.ok === false \? 400 : 200/, 'fallback mutations must preserve HTTP error status');
 for (const shell of ['admin.html', 'all.html', 'school-cal.html', 'video-manage.html', 'tests.html']) {
   const shellSource = fs.readFileSync(`static/${shell}`, 'utf8');
   assert.match(
     shellSource,
-    /\/js\/admin\/demo\/bootstrap\.js\?v=20260827-test-patch1/,
+    /\/js\/admin\/demo\/bootstrap\.js\?v=20260828-calendar-revision1/,
     `${shell} did not cache-bust the demo bootstrap contract`,
   );
 }

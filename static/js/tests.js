@@ -4,45 +4,62 @@
 
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
 import { createUnitTestDisplayNameResolver } from './shared/testCatalogDisplay.js';
+import {
+  CATEGORY_BY_KEY,
+  CATEGORY_DEFS,
+  ILSAN_GRAPH_DIFFICULTY,
+  STUDENT_LEVELS,
+  SUBJECTS,
+  TERM_OPTIONS,
+  canonText,
+  captureCatalogMutationSnapshot,
+  catalogGroupKey,
+  categoryKeyFrom,
+  categoryLabel,
+  ensureConfig,
+  isPastCategory,
+  isUnitCategory,
+  normalizeCatalogTest,
+  normalizeDifficulty,
+  normalizeRevision,
+  normalizeRound,
+  normalizeSubject,
+  normalizeTerm,
+  projectCatalogOrderBlock,
+  roundLabel,
+  roundSortValue,
+  termSortValue,
+  testDefinitionWriteRequest,
+  visibleCatalogTests,
+  wholeConfigWriteRequest,
+} from './tests/catalogState.js?v=20260829-catalog-state-r1';
+import {
+  ANSWER_MODE_OPTIONS,
+  answerKeyFromCsvRow,
+  answerKeysToText,
+  answerModeConsistencyIssue,
+  answerModeSummary,
+  answerModesForTest,
+  answerModesFromCsvRow,
+  buildTestCatalogCsvTemplate,
+  csvAnswerRounds,
+  hasRoundAnswerColumns,
+  headerKey,
+  normalizeAnswerMode,
+  parseCsv,
+  projectAnswerRound,
+  rowObject,
+} from './tests/catalogEditorState.js?v=20260829-catalog-editor-state-r1';
+import {
+  formatPercent,
+  projectStatsDetail,
+  projectStatsRows,
+  projectStatsSummary,
+  statForTest,
+} from './tests/catalogStatisticsState.js?v=20260829-catalog-statistics-state-r1';
 
 const $ = (sel) => document.querySelector(sel);
-const CT = { 'Content-Type': 'application/json' };
-const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
-const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
-
-const CATEGORY_DEFS = [
-  { key: 'REVIEW', label: '복습 테스트', difficulties: ['상', '중상'] },
-  { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
-  { key: 'TRAINING_PACK', label: '트레이닝팩', difficulties: ['트팩'] },
-  { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
-];
-const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
-const STATS_TYPE_LABELS = {
-  REVIEW: '복테',
-  TRAINING_PACK: '트팩',
-  SCHOOL_PAST: '학군지',
-  ILSAN_PAST: '일산',
-};
-const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
-const STUDENT_LEVELS = ['하', '중', '중상', '상'];
-const TERM_OPTIONS = ['중간고사', '기말고사'];
 const MISSING_ANSWER_LINK_STATUS = 'missing';
-const ANSWER_MODE_OPTIONS = [
-  { value: '', label: '미확인' },
-  { value: 'choice_number', label: '객관식 번호' },
-  { value: 'answer_value', label: '단답형 값' },
-  { value: 'manual_review', label: '수동 검토' },
-];
-const VALID_ANSWER_MODES = new Set(ANSWER_MODE_OPTIONS.map(option => option.value).filter(Boolean));
-
-const DEFAULT_RULES = {
-  REVIEW: defaultTwoBandRules(),
-  SCHOOL_PAST: defaultTwoBandRules(),
-  ILSAN_PAST: defaultIlsanRules(),
-  UNIT: defaultUnitRules(),
-  TRAINING_PACK: defaultTrainingPackRules(),
-};
 
 let TEST_CFG = { categories: {} };
 let TEST_CFG_REVISION = '';
@@ -71,73 +88,6 @@ const ui = {
   statsSort: 'default',
 };
 
-function isUnitCategory(categoryKey) {
-  return ['UNIT', 'TRAINING_PACK'].includes(String(categoryKey || ''));
-}
-
-function isPastCategory(categoryKey) {
-  return ['SCHOOL_PAST', 'ILSAN_PAST'].includes(String(categoryKey || ''));
-}
-
-function statsTypeLabel(def) {
-  return STATS_TYPE_LABELS[String(def?.key || '')] || def?.label || '';
-}
-
-function normalizeTerm(value, name = '') {
-  const raw = String(value || '').trim();
-  const source = `${raw} ${name}`.replace(/\s+/g, '');
-  if (/기말|final/i.test(source)) return '기말고사';
-  if (/중간|mid/i.test(source)) return '중간고사';
-  return raw;
-}
-
-function defaultTwoBandRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    out[subject] = {
-      '상': ['상', '중상'],
-      '중상': ['중', '하'],
-    };
-  });
-  return out;
-}
-
-function defaultIlsanRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    const allLevels = STUDENT_LEVELS.slice();
-    out[subject] = {
-      '중': allLevels.slice(),
-      '중상': allLevels.slice(),
-      [ILSAN_GRAPH_DIFFICULTY]: allLevels.slice(),
-    };
-  });
-  return out;
-}
-
-function defaultUnitRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    out[subject] = {
-      'Lv.3': ['하'],
-      'Lv.4': ['중'],
-      'Lv.5': ['중상'],
-      'Lv.6': ['상'],
-    };
-  });
-  return out;
-}
-
-function defaultTrainingPackRules() {
-  const out = {};
-  SUBJECTS.forEach(subject => {
-    out[subject] = {
-      '트팩': STUDENT_LEVELS.slice(),
-    };
-  });
-  return out;
-}
-
 async function fetchJSONSafe(url, init = {}) {
   const res = await fetch(url, { cache: 'no-store', ...init });
   const body = await res.text();
@@ -160,78 +110,6 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/"/g, '&quot;');
 }
 
-function canonText(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ');
-}
-
-function normalizeSubject(value) {
-  const compact = String(value || '').trim().replace(/\s+/g, '');
-  const aliases = {
-    '공통수학1': '공수1',
-    '공통수학2': '공수2',
-    '미적1': '미적분1',
-    '미적분Ⅰ': '미적분1',
-    '미적분I': '미적분1',
-    '미적2': '미적분2',
-    '미적분Ⅱ': '미적분2',
-    '미적분II': '미적분2',
-    '확률과통계': '확통',
-  };
-  return aliases[compact] || compact || '공수1';
-}
-
-function categoryLabel(key) {
-  return CATEGORY_BY_KEY[key]?.label || key || '';
-}
-
-function categoryKeyFrom(rawKey, label = '') {
-  const raw = `${rawKey || ''} ${label || ''}`.toUpperCase();
-  const ko = `${rawKey || ''} ${label || ''}`.replace(/\s+/g, '');
-  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
-  if (raw.includes('TRAINING') || ko.includes('트레이닝팩') || ko.includes('트팩')) return 'TRAINING_PACK';
-  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
-  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
-  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
-  return String(rawKey || '').trim();
-}
-
-function isIlsanGraphDifficultyText(source) {
-  const text = String(source || '');
-  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes('그래프');
-}
-
-function normalizeDifficulty(categoryKey, raw, name = '') {
-  const text = String(raw || '').trim();
-  const source = `${text} ${name}`;
-  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
-  const def = CATEGORY_BY_KEY[categoryKey];
-  if (def?.difficulties.includes(text)) return text;
-
-  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
-  if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return '중상';
-  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
-  return def?.difficulties?.[0] || '';
-}
-
-function normalizeRound(value, name = '') {
-  const raw = String(value || '').trim();
-  const source = `${raw} ${name}`;
-  const m = source.match(/(\d{1,2})\s*(?:회차|회)/);
-  if (m) return m[1];
-  if (/^\d{1,2}$/.test(raw)) return raw;
-  return raw || '1';
-}
-
-function roundLabel(value) {
-  const r = String(value || '').trim();
-  if (!r) return '';
-  if (r === '-') return '-';
-  return /회/.test(r) ? r : `${r}회차`;
-}
 
 function editCategoryValue() {
   return categoryKeyFrom($('#cfgEditType')?.value || ui.category || 'UNIT');
@@ -246,71 +124,11 @@ function roundHelpText(categoryKey) {
     : '복습테스트와 기출은 학생이 순서대로 보게 되는 시험 목록 순번입니다.';
 }
 
-function ensureConfig(raw) {
-  const cfg = (raw && typeof raw === 'object') ? raw : {};
-  if (!cfg.categories || typeof cfg.categories !== 'object') cfg.categories = {};
-
-  CATEGORY_DEFS.forEach(def => {
-    if (!cfg.categories[def.key] || typeof cfg.categories[def.key] !== 'object') {
-      cfg.categories[def.key] = { label: def.label, tests: [] };
-    }
-    if (!Array.isArray(cfg.categories[def.key].tests)) cfg.categories[def.key].tests = [];
-    cfg.categories[def.key].label = cfg.categories[def.key].label || def.label;
-  });
-
-  if (!cfg.autoAssignRules || typeof cfg.autoAssignRules !== 'object') cfg.autoAssignRules = {};
-  CATEGORY_DEFS.forEach(def => {
-    if (!cfg.autoAssignRules[def.key] || typeof cfg.autoAssignRules[def.key] !== 'object') {
-      cfg.autoAssignRules[def.key] = {};
-    }
-    SUBJECTS.forEach(subject => {
-      if (!cfg.autoAssignRules[def.key][subject] || typeof cfg.autoAssignRules[def.key][subject] !== 'object') {
-        cfg.autoAssignRules[def.key][subject] = {};
-      }
-      if (def.key === 'ILSAN_PAST') {
-        const subjectRules = cfg.autoAssignRules[def.key][subject];
-        const mergeLevels = (target, ...sources) => {
-          const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
-          const next = [...current];
-          sources.forEach(sourceKey => {
-            if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
-            if (sourceKey !== target) delete subjectRules[sourceKey];
-          });
-          subjectRules[target] = Array.from(new Set(next.map(String)));
-        };
-        mergeLevels('중상', '상');
-        mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
-      }
-      const defaults = DEFAULT_RULES[def.key]?.[subject] || {};
-      Object.entries(defaults).forEach(([difficulty, levels]) => {
-        if (def.key === 'ILSAN_PAST') {
-          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
-        } else if (!Array.isArray(cfg.autoAssignRules[def.key][subject][difficulty])) {
-          cfg.autoAssignRules[def.key][subject][difficulty] = levels.slice();
-        }
-      });
-    });
-  });
-
-  return cfg;
-}
-
 function normalizeTest(rawTest, rawCategoryKey, idx = 0) {
-  const categoryKey = categoryKeyFrom(rawCategoryKey);
-  const name = canonText(rawTest?.name || rawTest?.title || `테스트 ${idx + 1}`);
-  const curriculum = normalizeSubject(rawTest?.curriculum || rawTest?.subject || ui.subject);
-  return {
-    ...(rawTest || {}),
-    id: canonText(rawTest?.id) || `t_${categoryKey}_${Date.now()}_${idx}`,
-    name,
-    categoryKey,
-    curriculum,
-    difficulty: normalizeDifficulty(categoryKey, rawTest?.difficulty || rawTest?.level, name),
-    term: isPastCategory(categoryKey) ? normalizeTerm(rawTest?.term || rawTest?.examTerm || rawTest?.examPeriod || rawTest?.exam_period, name) : '',
-    round: normalizeRound(rawTest?.round || rawTest?.session || rawTest?.no, name),
-    problems: Number.isFinite(+rawTest?.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
-    _catalogIndex: idx,
-  };
+  return normalizeCatalogTest(rawTest, rawCategoryKey, idx, {
+    fallbackSubject: ui.subject,
+    now: Date.now(),
+  });
 }
 
 function getCategoryTests(categoryKey = ui.category) {
@@ -325,39 +143,20 @@ function displayTestName(test) {
 
 function getVisibleTests() {
   const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
-  return getCategoryTests(ui.category)
-    .filter(test => normalizeSubject(test.curriculum) === ui.subject)
-    .filter(test => !ui.difficulty || String(test.difficulty || '') === String(ui.difficulty))
-    .filter(test => !isPastCategory(ui.category) || !ui.term || String(test.term || '') === String(ui.term))
-    .filter(test => !isUnitCategory(ui.category) || !ui.round || String(test.round || '') === String(ui.round))
-    .filter(test => matchesSearchKey(catalogSearchText(test, displayNameFor), ui.catalogSearch))
-    .sort(compareTestsForList);
+  return visibleCatalogTests(getCategoryTests(ui.category), ui, {
+    displayNameFor,
+    matchesSearchKey,
+    searchKeyForText,
+  });
 }
 
 async function fetchTestsConfig() {
   const res = await fetch('/api/tests-config', { cache: 'no-store' });
   const body = await res.text();
   if (!res.ok) throw new Error(`[tests] GET /api/tests-config -> ${res.status}\n${body.slice(0, 500)}`);
-  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
-  TEST_CFG_REVISION = /^[0-9a-f]{64}$/.test(revision) ? revision : '';
+  TEST_CFG_REVISION = normalizeRevision(res.headers?.get?.('X-Tests-Config-Revision'));
   try { return body.trim() ? JSON.parse(body) : {}; }
   catch (e) { throw new Error(`[tests] Bad JSON from /api/tests-config: ${e?.message}\n${body.slice(0, 500)}`); }
-}
-
-function catalogSearchText(test, displayNameFor = displayTestName) {
-  return searchKeyForText([
-    test?.id,
-    test?.sourceId,
-    test?.name,
-    displayNameFor(test),
-    categoryLabel(test?.categoryKey),
-    test?.curriculum,
-    test?.difficulty,
-    test?.term,
-    test?.examTerm,
-    roundLabel(test?.round || ''),
-    test?.problems ? `${test.problems}문항` : '',
-  ].map(canonText).join(' '));
 }
 
 function selectedTestRef() {
@@ -372,66 +171,6 @@ function selectedTestRef() {
   return null;
 }
 
-function parseAnswerSpec(text, problems) {
-  if (Array.isArray(text)) return text.slice(0, problems);
-  const s = String(text ?? '').trim();
-  if (!s) return new Array(problems).fill('');
-  let arr;
-  if (/[\s,]/.test(s)) arr = s.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
-  else arr = s.split('').map(v => v.trim()).filter(Boolean);
-  if (arr.length > problems) arr = arr.slice(0, problems);
-  if (arr.length < problems) arr = arr.concat(new Array(problems - arr.length).fill(''));
-  return arr;
-}
-
-function parseAnswerSpec3(text, problems) {
-  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n').slice(0, 3);
-  if (lines.length <= 1) {
-    const base = parseAnswerSpec(lines[0] || '', problems);
-    return { '1': base, '2': base.slice(), '3': base.slice() };
-  }
-  const one = parseAnswerSpec(lines[0] || '', problems);
-  return {
-    '1': one,
-    '2': parseAnswerSpec(lines[1] || '', problems),
-    '3': parseAnswerSpec(lines[2] || '', problems),
-  };
-}
-
-function answerKeysToText(test) {
-  return answerKeyForTest(test).join(' ');
-}
-
-function answerKeyForTest(test) {
-  const p = Number(test?.problems || 0) || 0;
-  const round = String(test?.round || '1').trim() || '1';
-  if (test?.answerKeys && typeof test.answerKeys === 'object') {
-    const exact = Array.isArray(test.answerKeys[round]) ? test.answerKeys[round] : null;
-    if (exact) return parseAnswerSpec(exact, p);
-    const firstKey = Object.keys(test.answerKeys).find(key => Array.isArray(test.answerKeys[key]));
-    if (firstKey) return parseAnswerSpec(test.answerKeys[firstKey], p);
-  }
-  if (test?.answerKey != null) {
-    return Array.isArray(test.answerKey) ? parseAnswerSpec(test.answerKey, p) : parseAnswerSpec(test.answerKey, p);
-  }
-  return new Array(p).fill('');
-}
-
-function normalizeAnswerMode(value) {
-  const mode = String(value || '').trim();
-  return VALID_ANSWER_MODES.has(mode) ? mode : '';
-}
-
-function answerModesForTest(test, problems, roundValue) {
-  const total = Math.max(0, Number(problems ?? test?.problems ?? 0) || 0);
-  const round = String(roundValue ?? test?.round ?? '1').trim() || '1';
-  let raw = test?.answerModes ?? test?.answer_modes;
-  if (raw && !Array.isArray(raw) && typeof raw === 'object') raw = raw[round];
-  const modes = Array.isArray(raw) ? raw.slice(0, total).map(normalizeAnswerMode) : [];
-  while (modes.length < total) modes.push('');
-  return modes;
-}
-
 function currentAnswerModes(problems) {
   const total = Math.max(0, Number(problems ?? $('#cfgProblems')?.value ?? 0) || 0);
   const values = Array.from(document.querySelectorAll('#cfgAnswerModes select[data-question-no]'))
@@ -444,16 +183,7 @@ function currentAnswerModes(problems) {
 function updateAnswerModeSummary(modes = currentAnswerModes()) {
   const summary = $('#cfgAnswerModeSummary');
   if (!summary) return;
-  const counts = modes.reduce((out, mode) => {
-    out[mode || 'unverified'] = (out[mode || 'unverified'] || 0) + 1;
-    return out;
-  }, {});
-  summary.textContent = [
-    `객관식 ${counts.choice_number || 0}`,
-    `단답형 ${counts.answer_value || 0}`,
-    `수동 ${counts.manual_review || 0}`,
-    `미확인 ${counts.unverified || 0}`,
-  ].join(' · ');
+  summary.textContent = answerModeSummary(modes).text;
 }
 
 function renderAnswerModeEditor(test = selectedTestRef()?.test || null, seedModes = null) {
@@ -501,72 +231,18 @@ function updateListDifficultyOptions() {
   sel.value = ui.difficulty;
 }
 
-function roundSortValue(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 9999;
-}
-
-function termSortValue(value) {
-  const term = normalizeTerm(value);
-  const idx = TERM_OPTIONS.indexOf(term);
-  return idx >= 0 ? idx : 9999;
-}
-
-function testOrderValue(test) {
-  const raw = test?.sortOrder ?? test?.sourceOrder ?? test?.order ?? test?.sourceIndex ?? test?._catalogIndex;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : 999999;
-}
-
-function compareTestsForList(a, b) {
-  const difficulty = String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
-  if (difficulty) return difficulty;
-  if (isPastCategory(ui.category)) {
-    return termSortValue(a.term || '') - termSortValue(b.term || '') ||
-      testOrderValue(a) - testOrderValue(b) ||
-      roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
-      String(a.name).localeCompare(String(b.name), 'ko');
-  }
-  if (isUnitCategory(ui.category)) {
-    return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
-      testOrderValue(a) - testOrderValue(b) ||
-      String(a.name).localeCompare(String(b.name), 'ko');
-  }
-  return testOrderValue(a) - testOrderValue(b) ||
-    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
-    String(a.name).localeCompare(String(b.name), 'ko');
-}
-
-function catalogGroupKey(test, categoryKey = ui.category) {
-  if (isPastCategory(categoryKey)) {
-    return `${test?.term || '-'}|||${test?.difficulty || '-'}|||`;
-  }
-  if (isUnitCategory(categoryKey)) {
-    return `${test?.difficulty || '-'}|||${test?.round || '-'}`;
-  }
-  return `${test?.difficulty || '-'}|||`;
-}
-
 function catalogOrderBlock() {
-  if (catalogOrderSaveInFlight) {
-    return { kind: 'saving', message: '변경한 시험 순서를 저장하는 중입니다.' };
-  }
-  if (catalogMutationSaveInFlight) {
-    return { kind: 'saving', message: '시험 설정 변경을 저장하는 동안에는 순서를 바꿀 수 없습니다.' };
-  }
-  if (ruleSaveTimer || ruleSaveInFlight || ruleSavePending) {
-    return { kind: 'saving', message: '배정 기준 저장이 끝난 뒤 시험 순서를 바꿔주세요.' };
-  }
-  if (String(ui.catalogSearch || '').trim()) {
-    return { kind: 'blocked', message: '목록 검색 중에는 순서를 바꿀 수 없습니다. 검색어를 지우면 드래그와 위·아래 이동을 사용할 수 있습니다.' };
-  }
-  if (isPastCategory(ui.category) && ui.term) {
-    return { kind: 'blocked', message: '고사를 좁혀 본 상태에서는 순서를 바꿀 수 없습니다. 고사에서 전체 고사를 선택하세요.' };
-  }
-  if (isUnitCategory(ui.category) && ui.round) {
-    return { kind: 'blocked', message: '회차를 좁혀 본 상태에서는 순서를 바꿀 수 없습니다. 회차에서 전체 회차를 선택하세요.' };
-  }
-  return null;
+  return projectCatalogOrderBlock({
+    catalogOrderSaveInFlight,
+    catalogMutationSaveInFlight,
+    ruleSaveTimer,
+    ruleSaveInFlight,
+    ruleSavePending,
+    catalogSearch: ui.catalogSearch,
+    category: ui.category,
+    term: ui.term,
+    round: ui.round,
+  });
 }
 
 function canReorderCatalog() {
@@ -816,7 +492,7 @@ function renderTestList() {
 function renderGroupedTestList(tests, displayNameFor = displayTestName) {
   const groups = new Map();
   tests.forEach(test => {
-    const key = catalogGroupKey(test);
+    const key = catalogGroupKey(test, ui.category);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(test);
   });
@@ -849,7 +525,7 @@ function answerLinkStatus(test) {
 }
 
 function renderTestButton(test, displayNameFor = displayTestName, order = {}) {
-  const stat = statForTest(test);
+  const stat = statForTest(test, TEST_STATS, ui.category);
   const statBadge = stat?.count ? `<span class="small"> · ${escapeHtml(stat.avg_pct)}% / ${escapeHtml(stat.count)}명</span>` : '';
   const answerLinkBadge = answerLinkStatus(test) === MISSING_ANSWER_LINK_STATUS
     ? '<span class="test-link-status is-missing" title="Drive 해설 PDF가 연결되지 않았습니다.">해설 미연결</span>'
@@ -861,7 +537,7 @@ function renderTestButton(test, displayNameFor = displayTestName, order = {}) {
   const displayName = displayNameFor(test);
   return `
     <div class="test-list-item" data-catalog-index="${escapeAttr(test._catalogIndex)}"
-      data-group-key="${escapeAttr(order.groupKey || catalogGroupKey(test))}">
+      data-group-key="${escapeAttr(order.groupKey || catalogGroupKey(test, ui.category))}">
       <span class="test-drag-handle" draggable="${reorderEnabled ? 'true' : 'false'}"
         aria-hidden="true" aria-disabled="${reorderEnabled ? 'false' : 'true'}"
         title="같은 그룹 안에서 드래그해 순서 변경">⋮⋮</span>
@@ -1006,9 +682,9 @@ async function persistCatalogReorder(sourceCatalogIndex, targetCatalogIndex, pla
   const target = visibleTests.find(test => test._catalogIndex === targetCatalogIndex);
   if (!source || !target || source === target) return false;
 
-  const groupKey = catalogGroupKey(source);
-  if (catalogGroupKey(target) !== groupKey) return false;
-  const groupTests = visibleTests.filter(test => catalogGroupKey(test) === groupKey);
+  const groupKey = catalogGroupKey(source, ui.category);
+  if (catalogGroupKey(target, ui.category) !== groupKey) return false;
+  const groupTests = visibleTests.filter(test => catalogGroupKey(test, ui.category) === groupKey);
   const orderedRawTests = groupTests.map(test => cat.tests[test._catalogIndex]);
   if (orderedRawTests.some(test => !test || typeof test !== 'object')) return false;
 
@@ -1053,7 +729,7 @@ async function moveCatalogTestByKeyboard(catalogIndex, direction) {
   const visibleTests = getVisibleTests();
   const source = visibleTests.find(test => test._catalogIndex === catalogIndex);
   if (!source) return false;
-  const groupTests = visibleTests.filter(test => catalogGroupKey(test) === catalogGroupKey(source));
+  const groupTests = visibleTests.filter(test => catalogGroupKey(test, ui.category) === catalogGroupKey(source, ui.category));
   const sourceIndex = groupTests.findIndex(test => test._catalogIndex === catalogIndex);
   const target = groupTests[sourceIndex + direction];
   if (!target) return false;
@@ -1264,33 +940,20 @@ function scheduleRulesAutosave() {
 }
 
 async function saveConfig(removedTestIds = []) {
-  const payload = { ...TEST_CFG };
-  if (Array.isArray(removedTestIds) && removedTestIds.length) {
-    payload.__removedTestIds = removedTestIds.map(id => String(id));
-  }
-  const headers = { ...CT };
-  if (TEST_CFG_REVISION) headers['X-Tests-Config-Revision'] = TEST_CFG_REVISION;
-  const res = await fetch('/api/tests-config', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  });
+  const request = wholeConfigWriteRequest(TEST_CFG, TEST_CFG_REVISION, removedTestIds);
+  const res = await fetch('/api/tests-config', request);
   if (!res.ok) {
     if (res.status === 409 || res.status === 428) await loadConfigAndStats();
     const error = new Error(`tests-config save failed: ${res.status}`);
     error.status = res.status;
     throw error;
   }
-  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
-  if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
+  const revision = normalizeRevision(res.headers?.get?.('X-Tests-Config-Revision'));
+  if (revision) TEST_CFG_REVISION = revision;
 }
 
 function captureTestCatalogMutationSnapshot() {
-  return {
-    config: JSON.parse(JSON.stringify(TEST_CFG)),
-    revision: TEST_CFG_REVISION,
-    selectedId: ui.selectedId,
-  };
+  return captureCatalogMutationSnapshot(TEST_CFG, TEST_CFG_REVISION, ui.selectedId);
 }
 
 function restoreTestCatalogMutationSnapshot(snapshot) {
@@ -1303,45 +966,27 @@ function restoreTestCatalogMutationSnapshot(snapshot) {
 }
 
 async function saveTestDefinition(test, categoryKey, categoryLabel, clearFields = []) {
-  const headers = { ...CT };
-  if (TEST_CFG_REVISION) headers['X-Tests-Config-Revision'] = TEST_CFG_REVISION;
-  const res = await fetch('/api/tests-config/test', {
-    method: 'PATCH',
-    headers,
-    body: JSON.stringify({
-      categoryKey,
-      categoryLabel,
-      test,
-      clearFields,
-    }),
-  });
+  const request = testDefinitionWriteRequest(
+    test,
+    categoryKey,
+    categoryLabel,
+    clearFields,
+    TEST_CFG_REVISION,
+  );
+  const res = await fetch('/api/tests-config/test', request);
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const error = new Error(`tests-config test save failed: ${res.status}`);
     error.status = res.status;
     throw error;
   }
-  const revision = String(res.headers?.get?.('X-Tests-Config-Revision') || '').trim().toLowerCase();
-  if (/^[0-9a-f]{64}$/.test(revision)) TEST_CFG_REVISION = revision;
+  const revision = normalizeRevision(res.headers?.get?.('X-Tests-Config-Revision'));
+  if (revision) TEST_CFG_REVISION = revision;
   return data?.test && typeof data.test === 'object' ? data.test : test;
 }
 
-function csvCell(value) {
-  const text = String(value ?? '');
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 function downloadCsvTemplate() {
-  const rows = [
-    ['분류', '과목', '난이도', '고사', '회차', '시험명', '문항수', '정답', '1회차정답', '2회차정답', '3회차정답'],
-    ['복습 테스트', '대수', '상', '', '1', '대수 복습 상 1회차', '20', '1 2 3 4', '', '', ''],
-    ['단원평가', '공수1', 'Lv.4', '', '1', '원의 방정식 Lv.4', '20', '', '1,3,4,2', '1,3,4,2', '1,3,4,2'],
-    ['트레이닝팩', '미적분1', '트팩', '', '1', '함수의 극한1', '20', '', '1,2,3,4', '1,2,3,4', ''],
-    ['학군지 기출', '공수1', '상', '중간고사', '1', '학군지 기출 공수1 중간고사 상 1회차', '20', '1 2 3 4', '', '', ''],
-    ['일산 기출', '대수', '중', '기말고사', '1', '일산 기출 대수 기말고사 중 1회차', '20', '1 2 3 4', '', '', ''],
-    ['일산 기출', '대수', ILSAN_GRAPH_DIFFICULTY, '기말고사', '2', '그래프 포함 일산 기출 대수 기말고사 2회차', '20', '1 2 3 4', '', '', ''],
-  ];
-  const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+  const csv = buildTestCatalogCsvTemplate(ILSAN_GRAPH_DIFFICULTY);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1351,147 +996,6 @@ function downloadCsvTemplate() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-}
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let quoted = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (quoted) {
-      if (ch === '"' && next === '"') {
-        cell += '"';
-        i += 1;
-      } else if (ch === '"') {
-        quoted = false;
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-
-    if (ch === '"') {
-      quoted = true;
-    } else if (ch === ',') {
-      row.push(cell);
-      cell = '';
-    } else if (ch === '\n') {
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
-    } else if (ch !== '\r') {
-      cell += ch;
-    }
-  }
-
-  row.push(cell);
-  rows.push(row);
-  return rows.filter(items => items.some(item => String(item || '').trim()));
-}
-
-function headerKey(value) {
-  const s = String(value || '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\s+/g, '');
-  const aliases = {
-    id: 'id',
-    testid: 'id',
-    테스트id: 'id',
-    분류: 'category',
-    구분: 'category',
-    category: 'category',
-    type: 'category',
-    과목: 'subject',
-    subject: 'subject',
-    curriculum: 'subject',
-    course: 'subject',
-    난이도: 'difficulty',
-    레벨: 'difficulty',
-    difficulty: 'difficulty',
-    level: 'difficulty',
-    고사: 'term',
-    시험기간: 'term',
-    학기고사: 'term',
-    term: 'term',
-    examterm: 'term',
-    examperiod: 'term',
-    exam_period: 'term',
-    period: 'term',
-    회차: 'round',
-    round: 'round',
-    session: 'round',
-    no: 'round',
-    시험명: 'name',
-    테스트명: 'name',
-    name: 'name',
-    title: 'name',
-    순번: 'sourceOrder',
-    정렬순서: 'sourceOrder',
-    sourceorder: 'sourceOrder',
-    source_order: 'sourceOrder',
-    sortorder: 'sourceOrder',
-    sort_order: 'sourceOrder',
-    sourceid: 'sourceId',
-    source_id: 'sourceId',
-    문항수: 'problems',
-    문제수: 'problems',
-    problems: 'problems',
-    '1회차정답': 'answers1',
-    '1회정답': 'answers1',
-    answer1: 'answers1',
-    answers1: 'answers1',
-    '2회차정답': 'answers2',
-    '2회정답': 'answers2',
-    answer2: 'answers2',
-    answers2: 'answers2',
-    '3회차정답': 'answers3',
-    '3회정답': 'answers3',
-    answer3: 'answers3',
-    answers3: 'answers3',
-    정답: 'answers',
-    answers: 'answers',
-    answer: 'answers',
-    answersjson: 'answersJson',
-    answers_json: 'answersJson',
-    answerkeyjson: 'answersJson',
-    answer_key_json: 'answersJson',
-  };
-  return aliases[s] || s;
-}
-
-function rowObject(headers, cells) {
-  const out = {};
-  headers.forEach((header, idx) => {
-    if (!header) return;
-    out[header] = String(cells[idx] ?? '').trim();
-  });
-  return out;
-}
-
-function csvAnswerRounds(row) {
-  return ['1', '2', '3'].filter(round => String(row[`answers${round}`] || '').trim());
-}
-
-function hasRoundAnswerColumns(row) {
-  return csvAnswerRounds(row).length > 0;
-}
-
-function answerKeyFromCsvRow(row, round, problems) {
-  const direct = String(row[`answers${round}`] || '').trim();
-  if (direct) return parseAnswerSpec(direct, problems);
-  const jsonText = String(row.answersJson || '').trim();
-  if (jsonText) {
-    try {
-      const parsed = JSON.parse(jsonText);
-      if (Array.isArray(parsed)) return parseAnswerSpec(parsed, problems);
-    } catch (err) {
-      console.warn('[tests] answers_json parse failed', err);
-    }
-  }
-  return parseAnswerSpec(row.answers || '', problems);
 }
 
 function findExistingTest(cat, patch) {
@@ -1507,6 +1011,10 @@ function findExistingTest(cat, patch) {
     String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim() === patch.round &&
     (!isPastCategory(patch.categoryKey) || normalizeTerm(test?.term || test?.examTerm || test?.examPeriod || test?.exam_period, test?.name) === patch.term)
   ) || null;
+}
+
+function reportCsvParseWarning(message, error) {
+  console.warn(message, error);
 }
 
 async function importTestsFromCsv(file) {
@@ -1574,7 +1082,14 @@ async function importTestsFromCsv(file) {
     cat.label = cat.label || def.label;
 
     rounds.forEach(round => {
-      const answerKey = answerKeyFromCsvRow(row, round, problems);
+      const answerKey = answerKeyFromCsvRow(row, round, problems, reportCsvParseWarning);
+      const answerModes = answerModesFromCsvRow(row, round, problems, reportCsvParseWarning);
+      const answerModeIssue = answerModeConsistencyIssue(answerKey, answerModes);
+      if (answerModeIssue) {
+        skipped += 1;
+        errors.push(`${idx + 2}행 ${round}회차: ${answerModeIssue}`);
+        return;
+      }
       const patch = {
         id: rounds.length > 1 ? `${baseId}_r${round}` : baseId,
         sourceId: rounds.length > 1 ? baseId : canonText(row.sourceId || row.source_id || ''),
@@ -1587,6 +1102,7 @@ async function importTestsFromCsv(file) {
         sourceOrder: rowOrder,
         round,
         answerKeys: { [round]: answerKey },
+        answerModes: { [round]: answerModes },
         answerKey,
       };
       if (term) {
@@ -1701,18 +1217,21 @@ async function loadStatsOnly() {
 function renderStatsSummary() {
   const box = $('#statsSummary');
   if (!box) return;
-  const summary = TEST_STATS?.summary || {};
-  const cards = CATEGORY_DEFS.map(def => {
-    const row = summary[def.key];
-    const count = getCategoryTests(def.key).length;
-    const metric = row?.count ? `${Number(row.avg_pct || 0).toFixed(1)}%` : `${count}개`;
-    const meta = row?.count ? `응시 ${row.count}건` : '등록 테스트';
-    const active = ui.statsCategory === def.key ? ' is-active' : '';
+  const categoryCounts = Object.fromEntries(
+    CATEGORY_DEFS.map(definition => [definition.key, getCategoryTests(definition.key).length]),
+  );
+  const cards = projectStatsSummary({
+    categoryDefinitions: CATEGORY_DEFS,
+    summary: TEST_STATS?.summary || {},
+    categoryCounts,
+    activeCategory: ui.statsCategory,
+  }).map(card => {
+    const active = card.active ? ' is-active' : '';
     return `
-      <button type="button" class="summary-card${active}" data-type="${escapeAttr(def.key)}" data-stats-category="${escapeAttr(def.key)}">
-        <div class="summary-label">${escapeHtml(def.label)}</div>
-        <div class="summary-value">${escapeHtml(metric)}</div>
-        <div class="summary-meta">${escapeHtml(meta)}</div>
+      <button type="button" class="summary-card${active}" data-type="${escapeAttr(card.key)}" data-stats-category="${escapeAttr(card.key)}">
+        <div class="summary-label">${escapeHtml(card.label)}</div>
+        <div class="summary-value">${escapeHtml(card.metric)}</div>
+        <div class="summary-meta">${escapeHtml(card.meta)}</div>
       </button>
     `;
   });
@@ -1729,33 +1248,6 @@ function renderStatsSummary() {
   });
 }
 
-function fmtPct(value) {
-  return (typeof value === 'number' && Number.isFinite(value)) ? `${value.toFixed(1)}%` : '-';
-}
-
-function fmtNumber(value) {
-  return (typeof value === 'number' && Number.isFinite(value)) ? value.toFixed(1) : '-';
-}
-
-function statsSignature(test) {
-  return [
-    test?.categoryKey || ui.statsCategory || '',
-    test?.curriculum || '',
-    canonText(test?.name),
-    isPastCategory(test?.categoryKey || ui.statsCategory) ? normalizeTerm(test?.term || test?.examTerm || '', test?.name) : '',
-    String(test?.round || '').trim(),
-  ].join('\u241f');
-}
-
-function statForTest(test) {
-  const byId = TEST_STATS?.by_test_id || {};
-  if (test?.id && byId[test.id]) return byId[test.id];
-  const bySignature = TEST_STATS?.by_test_signature || {};
-  const sig = statsSignature(test);
-  if (sig && bySignature[sig]) return bySignature[sig];
-  return TEST_STATS?.by_test?.[canonText(test?.name)] || null;
-}
-
 function syncStatsControls() {
   const search = $('#statSearch');
   if (search) {
@@ -1766,57 +1258,6 @@ function syncStatsControls() {
   if (sort) sort.value = ui.statsSort;
 }
 
-function defaultStatsCompare(a, b) {
-  return String(a.curriculum || '').localeCompare(String(b.curriculum || ''), 'ko') ||
-    String(a.difficulty || '').localeCompare(String(b.difficulty || ''), 'ko') ||
-    termSortValue(a.term || a.examTerm || '') - termSortValue(b.term || b.examTerm || '') ||
-    roundSortValue(a.round || 0) - roundSortValue(b.round || 0) ||
-    String(a.name || '').localeCompare(String(b.name || ''), 'ko');
-}
-
-function statsCount(row) {
-  const count = Number(row?.stat?.count || 0);
-  return Number.isFinite(count) ? count : 0;
-}
-
-function statsAvg(row, emptyValue) {
-  const avg = Number(row?.stat?.avg_pct);
-  return Number.isFinite(avg) ? avg : emptyValue;
-}
-
-function statsSearchText(row) {
-  return searchKeyForText([
-    row.typeLabel,
-    row.typeSearchLabel,
-    row.curriculum,
-    row.name,
-    row.displayName,
-    row.difficulty,
-    row.term,
-    row.examTerm,
-    roundLabel(row.round || ''),
-    row.problems ? `${row.problems}문항` : '',
-  ].map(canonText).join(' '));
-}
-
-function compareStatsRows(a, b) {
-  switch (ui.statsSort) {
-    case 'name':
-      return String(a.name || '').localeCompare(String(b.name || ''), 'ko') || defaultStatsCompare(a, b);
-    case 'taken_desc':
-      return statsCount(b) - statsCount(a) || defaultStatsCompare(a, b);
-    case 'taken_asc':
-      return statsCount(a) - statsCount(b) || defaultStatsCompare(a, b);
-    case 'avg_desc':
-      return statsAvg(b, -1) - statsAvg(a, -1) || defaultStatsCompare(a, b);
-    case 'avg_asc':
-      return statsAvg(a, 101) - statsAvg(b, 101) || defaultStatsCompare(a, b);
-    case 'round':
-      return roundSortValue(a.round || 0) - roundSortValue(b.round || 0) || defaultStatsCompare(a, b);
-    default:
-      return defaultStatsCompare(a, b);
-  }
-}
 
 function renderStatsTable() {
   const tbody = $('#statsTable tbody');
@@ -1825,15 +1266,16 @@ function renderStatsTable() {
   const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
   const queryText = ui.statsSearch || '';
   const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
-  const rows = getCategoryTests(def.key).map(test => ({
-    ...test,
-    displayName: displayNameFor(test),
-    typeLabel: statsTypeLabel(def),
-    typeSearchLabel: def.label,
-    stat: statForTest(test),
-  }))
-    .filter(row => matchesSearchKey(statsSearchText(row), queryText))
-    .sort(compareStatsRows);
+  const rows = projectStatsRows({
+    tests: getCategoryTests(def.key),
+    definition: def,
+    stats: TEST_STATS,
+    queryText,
+    sort: ui.statsSort,
+    displayNameFor,
+    searchKeyForText,
+    matchesSearchKey,
+  });
 
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${queryText.trim() ? '검색 결과가 없습니다.' : '등록된 테스트가 없습니다.'}</td></tr>`;
@@ -1853,7 +1295,7 @@ function renderStatsTable() {
       <td><span class="level-pill">${escapeHtml(row.difficulty || '-')}</span></td>
       <td>${escapeHtml(roundLabel(row.round || '-'))}</td>
       <td>${escapeHtml(row.stat?.count || 0)}</td>
-      <td>${escapeHtml(fmtPct(row.stat?.avg_pct))}</td>
+      <td>${escapeHtml(formatPercent(row.stat?.avg_pct))}</td>
     </tr>
   `).join('');
 
@@ -1886,33 +1328,23 @@ function detailMetric(label, value) {
   `;
 }
 
-function wrongListText(wrong) {
-  if (!Array.isArray(wrong) || !wrong.length) return '틀린 문항 없음';
-  const numbers = wrong.map(value => String(value).trim()).filter(Boolean).join(', ');
-  return numbers ? `틀린 문항 ${numbers}` : '틀린 문항 없음';
-}
-
-function wrongDetailListHtml(details, wrong = []) {
-  const rows = Array.isArray(details) ? details.filter(row => row && typeof row === 'object') : [];
-  const wrongNumbers = Array.isArray(wrong) ? wrong.map(value => String(value).trim()).filter(Boolean) : [];
-  if (!rows.length && wrongNumbers.length) {
-    return '<p class="wrong-detail-empty">이전 제출 기록이라 내 답 비교가 없습니다.</p>';
+function wrongDetailListHtml(projection) {
+  const rows = projection?.rows || [];
+  if (projection?.emptyMessage) {
+    return `<p class="wrong-detail-empty">${escapeHtml(projection.emptyMessage)}</p>`;
   }
   if (!rows.length) return '';
   const items = rows.map(row => {
-    const no = String(row.questionNo ?? row.question_no ?? '').trim();
-    const mine = String(row.myAnswer ?? row.my_answer ?? '').trim() || '-';
-    const correct = String(row.correctAnswer ?? row.correct_answer ?? '').trim() || '-';
     return `
       <li>
-        <span class="wrong-detail-no">${escapeHtml(no ? `${no}번` : '-')}</span>
+        <span class="wrong-detail-no">${escapeHtml(row.questionLabel)}</span>
         <b class="wrong-detail-answer wrong-detail-mine">
           <span class="wrong-detail-label">내 답</span>
-          <strong>${escapeHtml(mine)}</strong>
+          <strong>${escapeHtml(row.myAnswer)}</strong>
         </b>
         <em class="wrong-detail-answer wrong-detail-correct">
           <span class="wrong-detail-label">정답</span>
-          <strong>${escapeHtml(correct)}</strong>
+          <strong>${escapeHtml(row.correctAnswer)}</strong>
         </em>
       </li>
     `;
@@ -1971,7 +1403,7 @@ function renderStatsDetail(test = null, fetchDetail = false) {
     return;
   }
 
-  const stat = statForTest(selected) || {};
+  const stat = statForTest(selected, TEST_STATS, ui.statsCategory) || {};
   if (fetchDetail) {
     TEST_STATS_DETAIL = { records: [] };
     renderStatsDetail(selected, false);
@@ -1984,22 +1416,25 @@ function renderStatsDetail(test = null, fetchDetail = false) {
     return;
   }
 
-  const records = Array.isArray(TEST_STATS_DETAIL?.records) ? TEST_STATS_DETAIL.records : [];
-  const detailAnswerUrl = String(TEST_STATS_DETAIL?.answerUrl || '').trim();
-  const answerLink = detailAnswerUrl ? { url: detailAnswerUrl, label: '전체 답지 보기' } : null;
-  const studentRows = records.map(rec => `
+  const presentation = projectStatsDetail({
+    selected,
+    stat,
+    detail: TEST_STATS_DETAIL,
+    displayNameFor: displayTestName,
+  });
+  const studentRows = presentation.records.map(record => `
     <tr>
-      <td style="text-align:left;">${escapeHtml(rec.studentName || rec.sid || '-')}</td>
-      <td>${escapeHtml(rec.level || '-')}</td>
-      <td>${escapeHtml(fmtPct(rec.pct))}</td>
+      <td style="text-align:left;">${escapeHtml(record.studentName)}</td>
+      <td>${escapeHtml(record.level)}</td>
+      <td>${escapeHtml(record.percent)}</td>
       <td>
         <div class="score-with-wrong">
-          <strong>${escapeHtml(`${rec.correct ?? '-'} / ${rec.total ?? '-'}`)}</strong>
-          <span>${escapeHtml(wrongListText(rec.wrong))}</span>
-          ${wrongDetailListHtml(rec.wrongDetails, rec.wrong)}
+          <strong>${escapeHtml(record.score)}</strong>
+          <span>${escapeHtml(record.wrongText)}</span>
+          ${wrongDetailListHtml(record.wrongDetails)}
         </div>
       </td>
-      <td style="text-align:left;">${escapeHtml((rec.createdAt || '').slice(0, 10) || '-')}</td>
+      <td style="text-align:left;">${escapeHtml(record.createdDate)}</td>
     </tr>
   `).join('');
 
@@ -2007,22 +1442,17 @@ function renderStatsDetail(test = null, fetchDetail = false) {
     <section class="stats-detail-panel">
       <div class="panel-head">
         <div>
-          <div class="panel-title">${escapeHtml(selected.displayName || displayTestName(selected))}</div>
-          <div class="panel-subtitle">${escapeHtml([selected.curriculum || '-', isPastCategory(selected.categoryKey) ? (selected.term || selected.examTerm || '') : '', selected.difficulty || '-', roundLabel(selected.round || '-')].filter(Boolean).join(' · '))}</div>
+          <div class="panel-title">${escapeHtml(presentation.title)}</div>
+          <div class="panel-subtitle">${escapeHtml(presentation.subtitle)}</div>
         </div>
       </div>
       <div class="detail-metrics">
-        ${detailMetric('응시', stat.count || 0)}
-        ${detailMetric('평균', fmtPct(stat.avg_pct))}
-        ${detailMetric('표준편차', fmtNumber(stat.stddev_pct))}
-        ${detailMetric('중앙값', fmtPct(stat.median_pct))}
-        ${detailMetric('최대', fmtPct(stat.max_pct))}
-        ${detailMetric('최소', fmtPct(stat.min_pct))}
+        ${presentation.metrics.map(metric => detailMetric(metric.label, metric.value)).join('')}
       </div>
-      ${answerLink ? `
+      ${presentation.answerLink ? `
         <div class="detail-answer-link-row">
-          <a class="detail-answer-link" href="${escapeAttr(answerLink.url)}" target="_blank" rel="noopener noreferrer">
-            ${escapeHtml(answerLink.label || '답지 보기')}
+          <a class="detail-answer-link" href="${escapeAttr(presentation.answerLink.url)}" target="_blank" rel="noopener noreferrer">
+            ${escapeHtml(presentation.answerLink.label || '답지 보기')}
           </a>
         </div>
       ` : ''}
@@ -2225,10 +1655,24 @@ function bindUI() {
     const round = normalizeRound($('#cfgRound')?.value || '1');
     const answers = $('#cfgAnswers')?.value || '';
     const answerModes = currentAnswerModes(problems);
+    const answerProjection = projectAnswerRound(selectedTestRef()?.test || null, {
+      answers,
+      problems,
+      round,
+      modes: answerModes,
+    });
+    const answerKey = answerProjection.answerKey;
 
     if (!name) {
       setTestSaveStatus('error', '테스트명을 입력해주세요');
       $('#cfgName')?.focus?.();
+      return;
+    }
+
+    const answerModeIssue = answerProjection.issue;
+    if (answerModeIssue) {
+      setTestSaveStatus('error', answerModeIssue);
+      $('#cfgAnswers')?.focus?.();
       return;
     }
 
@@ -2269,15 +1713,9 @@ function bindUI() {
       }
       test.round = round;
       test.problems = problems;
-      test.answerKey = parseAnswerSpec(answers, problems);
-      const existingAnswerKeys = test.answerKeys && !Array.isArray(test.answerKeys) && typeof test.answerKeys === 'object'
-        ? test.answerKeys
-        : {};
-      test.answerKeys = { ...existingAnswerKeys, [round]: test.answerKey.slice() };
-      const existingAnswerModes = test.answerModes && !Array.isArray(test.answerModes) && typeof test.answerModes === 'object'
-        ? test.answerModes
-        : {};
-      test.answerModes = { ...existingAnswerModes, [round]: answerModes };
+      test.answerKey = answerKey;
+      test.answerKeys = answerProjection.answerKeys;
+      test.answerModes = answerProjection.answerModes;
 
       const clearFields = term ? [] : ['term', 'examTerm'];
       const savedTest = await saveTestDefinition(

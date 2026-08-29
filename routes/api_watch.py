@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from flask import Blueprint, g, jsonify, request
 
+from core.date_rules import is_iso_date_key
 from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
 from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, ip_allowed
 from core.paths import PRG_PATH, STU_PATH, VID_PATH, WATCH_PATH
@@ -43,6 +44,8 @@ def api_watch_latest():
     date = str(request.args.get("date") or "").strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
+    if date and not is_iso_date_key(date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
 
     data = load(WATCH_PATH)
     if not isinstance(data, dict):
@@ -97,6 +100,8 @@ def api_watch():
         return jsonify({"ok": False, "code": "sid_mismatch", "error": "sid_mismatch"}), 403
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
+    if not is_iso_date_key(date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
     if is_ghost_student_sid(sid):
         return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
 
@@ -145,6 +150,8 @@ def api_watch_status():
 
     if not date or not sid or not mid:
         return jsonify({"ok": False, "error": "missing date/sid/mid"}), 400
+    if not is_iso_date_key(date):
+        return jsonify({"ok": False, "error": "bad date"}), 400
     if is_ghost_student_sid(sid):
         return jsonify({"ok": False, "error": GHOST_STUDENT_WRITE_ERROR}), 403
     if status not in VALID_VIDEO_PROGRESS_STATUSES:

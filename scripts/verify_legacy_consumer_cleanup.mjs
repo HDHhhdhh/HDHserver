@@ -54,10 +54,12 @@ const routeFiles = (await fs.readdir(routeDir, { withFileTypes: true }))
 const routeSource = (await Promise.all(routeFiles.map(file => fs.readFile(file, 'utf8')))).join('\n');
 assert.doesNotMatch(routeSource, /["']\/api\/(?:delete-student|material-upload)["']/);
 assert.doesNotMatch(routeSource, /["']\/api\/fs\/page-folders["']/);
-assert.match(routeSource, /@bp_api_basic\.get\("\/api\/students"\)/);
-assert.match(routeSource, /@bp_api_basic\.get\("\/api\/materials"\)/);
-assert.match(routeSource, /@bp_api_basic\.get\("\/api\/logs"\)/);
-assert.match(routeSource, /@bp_api_basic\.delete\("\/api\/students\/<string:sid>"\)/);
+assert.match(routeSource, /@bp_api_students\.get\("\/api\/students"\)/);
+assert.match(routeSource, /@bp_api_materials\.get\("\/api\/materials"\)/);
+assert.match(routeSource, /@bp_api_logs\.get\("\/api\/logs"\)/);
+assert.match(routeSource, /@bp_api_schedule_overrides\.route\("\/api\/extra-attend", methods=\["GET", "PATCH"\]\)/);
+assert.match(routeSource, /@bp_api_schedule_overrides\.route\("\/api\/weekend-slots", methods=\["GET", "POST"\]\)/);
+assert.match(routeSource, /@bp_api_students\.delete\("\/api\/students\/<string:sid>"\)/);
 assert.match(routeSource, /PAGE_FOLDERS_PATH/, 'internal page-folder store contract remains available');
 
 let clickHandler = null;

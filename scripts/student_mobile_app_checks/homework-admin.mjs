@@ -214,12 +214,24 @@ export async function runChecks() {
     const videoSave = saveAllHandler.indexOf('await window.saveVideoAssignmentPopup');
     const testSave = saveAllHandler.indexOf('await window.saveTestAssignmentPopup');
     const recordSave = saveAllHandler.indexOf('await saveRecordPopupForCurrent()');
+    const carriedTestReapply = saveAllHandler.indexOf('await reapplyCarriedTestAssignmentForCurrent()');
     const close = saveAllHandler.indexOf('close()');
-    assert.ok(videoSave >= 0 && testSave >= 0 && recordSave >= 0 && close >= 0);
+    assert.ok(videoSave >= 0 && testSave >= 0 && recordSave >= 0 && carriedTestReapply >= 0 && close >= 0);
     assert.ok(videoSave < close);
     assert.ok(testSave < close);
     assert.ok(recordSave < close);
+    assert.ok(recordSave < carriedTestReapply);
+    assert.ok(carriedTestReapply < testSave);
     assert.match(saveAllHandler, /모든 팝업 변경사항 저장에 실패했습니다\. 팝업을 닫지 않았습니다\./);
+  });
+
+  check('record save preserves the dated video assignment snapshot', () => {
+    const start = sources.logModal.indexOf('async function saveBase(doneFlag)');
+    const end = sources.logModal.indexOf('async function saveRecordPopupForCurrent()', start);
+    const saveBase = sources.logModal.slice(start, end);
+    assert.ok(start >= 0 && end > start);
+    assert.doesNotMatch(saveBase, /\/api\/updates\/patch/);
+    assert.doesNotMatch(saveBase, /allProgressDone|clearVideoAssignmentForDateSid/);
   });
 
   check('all-students read-only mode disables canonical editing', () => {

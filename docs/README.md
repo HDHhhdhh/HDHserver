@@ -1,51 +1,46 @@
 # 프로젝트 문서 안내
 
-**기준일:** 2026-08-24
-**기준 저장소:** `C:/server`
+이 폴더는 `C:/server`의 장기 규칙과 역사 기록을 분리해 보관한다.
+기능을 고치거나 점검할 때는 다음 순서로 읽는다.
 
-이 폴더는 코드와 별도로 유지하는 프로젝트의 장기 기억이다. 기능을 고치거나 점검할 때는 세션 기록을 다시 뒤지기 전에 아래 순서로 읽는다.
-
-1. [PROJECT_FUNCTIONS_AND_LOGIC.md](PROJECT_FUNCTIONS_AND_LOGIC.md) — 현재 기능, 데이터 원본, 상태 전이, 주요 로직, 패치·검증 기준
-2. [CODE_FLOW_MAP.md](CODE_FLOW_MAP.md) — 화면·API·순수 규칙·저장소를 잇는 실제 구현 흐름과 구조적 hotspot
-3. [LOGIC_DECISION_LEDGER.md](LOGIC_DECISION_LEDGER.md) — 과거 주문·현재 구현 충돌의 판정과 미확정 사용자 결정
-4. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md) — 기존 영상 MID 변경·삭제용 오프라인 수정 모드와 적용 절차
-5. 저장소 루트의 `AGENTS.md`와 수정 대상 폴더의 하위 `AGENTS.md` — 작업 안전 규칙
-6. [SESSION_AUDIT_2026-07-30_2026-08-13.md](SESSION_AUDIT_2026-07-30_2026-08-13.md) — 해당 기간의 역사 감사 기록
-7. `CODEX-HANDOFF.md`, `CHATGPT_PROJECT_CONTEXT.md` — 2026-08-13 시점의 역사 스냅샷; 현재 컨텍스트로 재사용하지 않음
+1. [SERVER_RULES_INDEX.md](SERVER_RULES_INDEX.md) — 규칙 ID, 정본, 코드, 결정, 검증의 연결
+2. [PROJECT_FUNCTIONS_AND_LOGIC.md](PROJECT_FUNCTIONS_AND_LOGIC.md) — 현재 기능, 데이터 원본, 상태 전이
+3. [CODE_FLOW_MAP.md](CODE_FLOW_MAP.md) — 화면·API·순수 규칙·저장소의 구현 연결
+4. [LOGIC_DECISION_LEDGER.md](LOGIC_DECISION_LEDGER.md) — 사용자 결정, 충돌 판정, 미완료 상태
+5. 저장소 루트와 대상 폴더의 `AGENTS.md` — 작업 안전과 검증 규칙
+6. [ADMIN_CSS_INVENTORY.md](ADMIN_CSS_INVENTORY.md) — 관리자 CSS 소비 표면, 도메인 소유권, 분리·결정 queue
+7. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md), [isolated-design-server.md](isolated-design-server.md) — 전문 runbook
+8. [history/](history/README.md)와 세션 감사 — 역사 기록; 현재 규칙으로 재사용하지 않음
 
 ## 문서의 역할
 
 | 문서 | 답하는 질문 | 갱신 시점 |
 |---|---|---|
+| 규칙 색인 | “이 규칙의 의미·코드·결정·검증 정본은 어디인가?” | 규칙군이나 정본 소유권이 바뀔 때 |
 | 기능·로직 기준서 | “현재 시스템은 무엇을 하고, 어떤 원본과 우선순위를 따르는가?” | 동작, 상태, API, 데이터 원본이 바뀔 때 |
-| 코드·데이터 흐름 지도 | “어떤 화면과 API가 어떤 규칙·저장소를 거치는가?” | Blueprint, route, 저장소 경계, feature flag, 주요 module graph가 바뀔 때 |
-| 로직 결정 원장 | “서로 다른 과거 주문 중 무엇이 현행이며 어떤 결정이 남았는가?” | 주문 충돌을 발견하거나 사용자가 선택을 확정할 때 |
-| 영상 수정 모드 | “기존 MID를 어떻게 안전하게 바꾸거나 삭제하는가?” | 수정 모드·적용·롤백 절차가 바뀔 때 |
-| 세션 감사 | “최근 어떤 문제가 있었고 실제로 해결됐는가?” | 감사 기간을 새로 닫을 때 |
-| AGENTS 지침 | “코드를 어떻게 안전하게 수정·검증하는가?” | 개발·운영 규칙이 바뀔 때 |
-| HANDOFF | “지금 배포/운영에서 주의할 것은 무엇인가?” | 배포 방식이나 열린 운영 위험이 바뀔 때 |
+| 코드·데이터 흐름 지도 | “어떤 화면과 API가 어떤 규칙·저장소를 거치는가?” | route, 저장소 경계, 주요 module graph가 바뀔 때 |
+| 로직 결정 원장 | “어떤 사용자 결정이 현행이고 무엇이 미완료인가?” | 충돌 발견 또는 사용자 결정 때 |
+| 관리자 CSS 인벤토리 | “어느 화면이 broad cascade를 소비하고, 다음에 무엇을 분리하며, 무엇은 결정 대기인가?” | 소비자·소유권·분리 경계가 바뀔 때 |
+| 전문 runbook | “위험한 운영 작업을 어떤 순서로 수행하는가?” | 적용·복구 절차가 바뀔 때 |
+| AGENTS 지침 | “코드를 어떻게 안전하게 수정·검증하는가?” | 개발·운영 안전 규칙이 바뀔 때 |
+| 역사 자료 | “당시 무엇을 알고 판단했는가?” | 원문은 동결; 현재 정본으로 승격하지 않음 |
 
-## 충돌 시 우선순위
+## 충돌 판정
 
-1. 현재 실행 코드와 런타임 환경
-2. 루트 및 하위 `AGENTS.md`
-3. `PROJECT_FUNCTIONS_AND_LOGIC.md`
-4. `CODE_FLOW_MAP.md`
-5. `LOGIC_DECISION_LEDGER.md`
-6. `VIDEO_CATALOG_CORRECTION_MODE.md`(영상 MID 유지보수 작업)
-7. 과거 세션 감사, `CODEX-HANDOFF.md`, `CHATGPT_PROJECT_CONTEXT.md`
-8. 그 밖의 오래된 스냅샷·회고
-
-문서와 코드가 다르면 코드를 먼저 검증하고, 같은 패치에서 기준 문서도 함께 고친다. 세션의 “완료” 문구만으로 해결을 판단하지 말고 현재 코드, 테스트, 운영 응답을 다시 확인한다.
+- **실제 동작:** 현재 코드와 런타임을 읽기 전용으로 검증해 판정한다.
+- **의도된 규칙:** 최신 명시적 사용자 결정 → 로직 결정 원장 → 기능·로직 기준서 순으로 판정한다.
+- 둘이 다르면 `SERVER_RULES_INDEX.md`의 원칙에 따라 구현 드리프트로 기록한다.
+- `AGENTS.md`는 변경 안전 규칙이며 업무 의미를 새로 결정하지 않는다.
+- 역사 자료의 완료 문구만으로 현재 상태를 판정하지 않는다.
 
 ## 문서 갱신 체크리스트
 
 - 사용자에게 보이는 기능이나 상태 전이가 바뀌었는가?
 - JSON/SQLite 원본, 키, 병합 우선순위가 바뀌었는가?
-- 날짜 기준이 “선택 날짜”와 “실제 오늘” 중 어느 것인지 바뀌었는가?
-- 학원 네트워크 제한, 관리자 인증, 공개 도메인 정책이 바뀌었는가?
-- 학생 bootstrap의 응답 형태, 시험 답지 우선순위, 영상 자동 상태가 바뀌었는가?
-- 새 회귀 검사가 생겼는가?
-- 운영 데이터 마이그레이션 또는 수동 복구가 필요한가?
+- 날짜 기준이 선택 날짜와 실제 오늘 중 어느 것인지 바뀌었는가?
+- 인증·네트워크·공개 범위가 바뀌었는가?
+- 새 회귀 검사가 생겼고 규칙 색인의 검증 링크가 바뀌었는가?
+- 운영 데이터 migration 또는 수동 복구가 필요한가?
 
-하나라도 해당하면 기능·로직 기준서의 관련 절과 검증 표를 갱신한다.
+하나라도 해당하면 규칙 색인과 그 규칙의 실제 정본만 갱신한다. 요약,
+코드 흐름 지도, AGENTS에 규칙 본문을 다시 복사하지 않는다.

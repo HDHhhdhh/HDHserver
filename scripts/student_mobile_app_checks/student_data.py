@@ -29,6 +29,7 @@ from core.student_sessions import StudentSessionRepository
 DATE = "2026-08-03"
 MODULE_NAMES = (
     "routes.api_basic",
+    "routes.api_student_bootstrap",
     "routes.api_announcements",
     "routes.api_watch",
     "routes.api_fs",
@@ -74,8 +75,10 @@ def _isolated_routes(root: Path):
     sys.modules["core.paths"] = paths
     setattr(core_package, "paths", paths)
     try:
+        api_basic = importlib.import_module("routes.api_basic")
+        importlib.import_module("routes.api_student_bootstrap")
         yield (
-            importlib.import_module("routes.api_basic"),
+            api_basic,
             importlib.import_module("routes.api_announcements"),
             importlib.import_module("routes.api_watch"),
             importlib.import_module("routes.api_fs"),
@@ -91,6 +94,7 @@ def _isolated_routes(root: Path):
             (core_package, "paths", "core.paths"), (core_package, "absent", "core.absent"),
             (core_package, "log_repository", "core.log_repository"),
             (routes_package, "api_basic", "routes.api_basic"),
+            (routes_package, "api_student_bootstrap", "routes.api_student_bootstrap"),
             (routes_package, "api_announcements", "routes.api_announcements"),
             (routes_package, "api_watch", "routes.api_watch"),
             (routes_package, "api_fs", "routes.api_fs"),
@@ -212,8 +216,16 @@ def _build_app(api_basic, announcements, watch, fs, logs):
             return {DATE: logs}
 
     api_basic.get_log_repository = lambda: Logs()
+    api_student_bootstrap = importlib.import_module(
+        "routes.api_student_bootstrap"
+    )
+    api_student_bootstrap.configure_student_bootstrap_projection(
+        app,
+        api_basic.create_student_bootstrap_projection_dependencies(),
+    )
     app.register_blueprint(probe)
     app.register_blueprint(api_basic.bp_api_basic)
+    app.register_blueprint(api_student_bootstrap.bp_api_student_bootstrap)
     app.register_blueprint(announcements.bp_api_announcements)
     app.register_blueprint(watch.bp_api_watch)
     app.register_blueprint(fs.bp_api_fs)

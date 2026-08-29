@@ -284,13 +284,41 @@ def run_browser_and_writer_cases(matrix: Matrix, env: dict) -> None:
         "date SID and MID records remain isolated",
     )
 
-    before_bad = paths["watch"].read_bytes()
+    before_bad_watch = paths["watch"].read_bytes()
+    before_bad_progress = paths["progress"].read_bytes()
     bad = client.post("/api/watch", json=watch_payload("bad-number", last="bad"), headers=academy)
     missing = client.post("/api/watch", json=watch_payload("", last=1), headers=academy)
+    impossible_watch = client.post(
+        "/api/watch",
+        json=watch_payload("bad-date", date="2026-02-30", last=20),
+        headers=academy,
+    )
+    impossible_status = client.post(
+        "/api/watch-status",
+        json={
+            "date": "2026-02-30",
+            "sid": "sid-a",
+            "mid": "bad-date-status",
+            "status": "done",
+        },
+        headers=academy,
+    )
+    impossible_latest = client.get(
+        "/api/watch/latest?sid=sid-a&date=2026-02-30"
+    )
     matrix.check(
         "W09",
-        bad.status_code == 400 and missing.status_code == 400 and paths["watch"].read_bytes() == before_bad,
-        "invalid numeric and missing identity inputs fail before persistence",
+        bad.status_code == 400
+        and missing.status_code == 400
+        and impossible_watch.status_code == 400
+        and impossible_status.status_code == 400
+        and impossible_latest.status_code == 400
+        and impossible_watch.get_json() == {"ok": False, "error": "bad date"}
+        and impossible_status.get_json() == {"ok": False, "error": "bad date"}
+        and impossible_latest.get_json() == {"ok": False, "error": "bad date"}
+        and paths["watch"].read_bytes() == before_bad_watch
+        and paths["progress"].read_bytes() == before_bad_progress,
+        "invalid numeric, identity, and impossible-date inputs fail before persistence",
     )
 
     blocked = client.post("/api/watch", json=watch_payload("blocked", last=20))

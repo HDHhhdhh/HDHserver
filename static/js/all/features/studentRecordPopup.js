@@ -1,5 +1,5 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js?v=20260821-homework-remove-select1';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260829-video-snapshot1';
 import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260819-subject-days1';
 import { initVideoModal } from '../../admin/features/videoModal.js';
 import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260821-note-body-row2';

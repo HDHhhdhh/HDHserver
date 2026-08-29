@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import contextvars
 import datetime as dt
 import json
 import pathlib
@@ -20,6 +21,14 @@ from core.storage import file_lock, save_atomic
 
 JOURNAL_VERSION = 1
 PENDING_JOURNAL_NAME = "pending.json"
+
+
+_ACTIVE_CONSISTENCY_BARRIERS: contextvars.ContextVar[tuple[str, ...]] = (
+    contextvars.ContextVar(
+        "absence_active_consistency_barriers",
+        default=(),
+    )
+)
 
 
 class AbsenceTransactionError(RuntimeError):
@@ -515,14 +524,25 @@ def absence_consistency_barrier(
 ) -> Iterator[None]:
     directory = pathlib.Path(journal_dir) if journal_dir is not None else journal_directory_for(absent_path)
     directory.mkdir(parents=True, exist_ok=True)
-    with file_lock(_coordinator_target(directory), timeout_sec=lock_timeout_sec):
-        pending_path = directory / PENDING_JOURNAL_NAME
-        if pending_path.exists():
-            journal = _read_journal(pending_path)
-            if str(journal.get("state") or "") not in {"COMMITTED", "ROLLED_BACK"}:
-                raise AbsenceRecoveryRequiredError("absence transaction recovery is required")
-            _remove_journal(pending_path)
+    coordinator = _coordinator_target(directory).resolve()
+    coordinator_key = str(coordinator)
+    active = _ACTIVE_CONSISTENCY_BARRIERS.get()
+    if coordinator_key in active:
         yield
+        return
+
+    with file_lock(coordinator, timeout_sec=lock_timeout_sec):
+        token = _ACTIVE_CONSISTENCY_BARRIERS.set((*active, coordinator_key))
+        try:
+            pending_path = directory / PENDING_JOURNAL_NAME
+            if pending_path.exists():
+                journal = _read_journal(pending_path)
+                if str(journal.get("state") or "") not in {"COMMITTED", "ROLLED_BACK"}:
+                    raise AbsenceRecoveryRequiredError("absence transaction recovery is required")
+                _remove_journal(pending_path)
+            yield
+        finally:
+            _ACTIVE_CONSISTENCY_BARRIERS.reset(token)
 
 
 __all__ = (

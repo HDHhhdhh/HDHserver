@@ -19,8 +19,9 @@ def ensure_json(path: pathlib.Path, default: Any) -> pathlib.Path:
 
 # 데이터 파일 경로
 STU_PATH   = ensure_json(BASE / "students.json", [])
-# personId is an opt-in compatibility layer. Missing or malformed identity
-# state must never be silently initialized as an empty directory.
+# personId is the canonical production identity contract. Unlike compatibility
+# JSON stores, missing or malformed configured identity state must never be
+# silently initialized as an empty directory.
 PERSONS_PATH = BASE / "persons.json"
 PERSON_IDENTITY_JOURNAL_PATH = BASE / "instance" / "person_identity_transactions" / "pending.json"
 VID_PATH   = ensure_json(BASE / "videos.json", [])

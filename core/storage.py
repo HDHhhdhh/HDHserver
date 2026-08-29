@@ -333,14 +333,31 @@ class InterProcessFileLock:
                     pass
             self._fd = None
             self._token = ""
-            if token:
-                txt = self._read_lock_text()
-                if f"token={token}" not in txt:
+            deadline = time.time() + max(0.2, self.poll_sec * 5)
+            last_error: OSError | None = None
+            while True:
+                try:
+                    with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as handle:
+                        txt = handle.read()
+                except FileNotFoundError:
                     return
-            try:
-                os.remove(self.lock_path)
-            except FileNotFoundError:
-                pass
+                except OSError as exc:
+                    last_error = exc
+                else:
+                    if token and f"token={token}" not in txt:
+                        return
+                    try:
+                        os.remove(self.lock_path)
+                        return
+                    except FileNotFoundError:
+                        return
+                    except OSError as exc:
+                        last_error = exc
+
+                if time.time() >= deadline:
+                    log.warning("Failed to release owned lock file %s: %s", self.lock_path, last_error)
+                    return
+                time.sleep(self.poll_sec)
         except Exception:
             pass
 

@@ -163,6 +163,11 @@ def page_all():
 def page_student(sid: str):
     return current_app.send_static_file("student.html")
 
+
+@bp_pages.get("/student-test-capture")
+def page_student_test_capture():
+    return current_app.send_static_file("student-test-capture.html")
+
 @bp_pages.get("/video-manage")
 @bp_pages.get("/demo/rh3123/video-manage")
 def page_video_manage():

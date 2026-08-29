@@ -2016,7 +2016,7 @@ html body.admin.student-popup-open #logModal.student-work-layout
   border-left: 4px solid var(--assistant-note-item-color) !important;
   border-radius: 8px !important;
   background:
-    linear-gradient(90deg, rgba(var(--assistant-note-item-rgb), .08), rgba(var(--assistant-note-item-rgb), 0) 34%),
+    linear-gradient(180deg, rgba(var(--assistant-note-item-rgb), .08), rgba(var(--assistant-note-item-rgb), 0) 36%),
     #fff !important;
   box-shadow:
     inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .72),
@@ -2035,17 +2035,6 @@ html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item.is-pinned .assistant-note-pin-icon {
   fill: currentColor !important;
   stroke: currentColor !important;
-}
-
-html body.admin.student-popup-open #logModal.student-work-layout
-  .assistant-note-pin-badge {
-  min-height: 24px !important;
-  padding: 0 8px !important;
-  border-color: rgba(var(--assistant-note-item-rgb), .42) !important;
-  background: rgba(var(--assistant-note-item-rgb), .12) !important;
-  color: var(--assistant-note-item-color) !important;
-  font-size: 13px !important;
-  font-weight: 850 !important;
 }
 
 /* Saved memo body copy stays compact while the composer keeps its larger input size. */

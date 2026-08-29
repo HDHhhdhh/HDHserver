@@ -41,6 +41,9 @@ SOURCE_FILE_FIELDS: Final[tuple[str, ...]] = ("sourceFiles", "source_files")
 TEST_RECORD_CLEARABLE_FIELDS: Final[frozenset[str]] = frozenset(
     {"term", "examTerm"}
 )
+VALID_ANSWER_MODES: Final[frozenset[str]] = frozenset(
+    {"choice_number", "answer_value", "manual_review"}
+)
 
 
 class TestsConfigWriteConflict(ValueError):
@@ -122,6 +125,80 @@ def _merge_preserved_fields(current: JsonObject, incoming: JsonObject) -> None:
             incoming[source_key] = merged_source
 
 
+def _round_values(value: JsonValue | None, round_key: str) -> list[JsonValue] | None:
+    if isinstance(value, dict):
+        value = value.get(round_key)
+    if isinstance(value, list):
+        return value
+    return None
+
+
+def validate_test_answer_mode_consistency(test: JsonObject) -> None:
+    """Reject explicit answer-mode data that contradicts its answer key.
+
+    This is a consistency gate, not a classifier: it never derives a mode from
+    an answer value. Tests without explicit modes remain valid for legacy and
+    non-UNIT catalog entries.
+    """
+
+    raw_modes = test.get("answerModes")
+    if raw_modes is None:
+        raw_modes = test.get("answer_modes")
+    if raw_modes is None:
+        return
+
+    try:
+        problems = int(test.get("problems") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("test problems must be an integer") from None
+    if problems <= 0:
+        raise ValueError("test problems must be positive when answer modes are present")
+
+    default_round = str(test.get("round") or "1").strip() or "1"
+    mode_rows = raw_modes if isinstance(raw_modes, dict) else {default_round: raw_modes}
+    for raw_round, raw_mode_values in mode_rows.items():
+        round_key = str(raw_round or "").strip()
+        if not round_key or not isinstance(raw_mode_values, list) or len(raw_mode_values) != problems:
+            raise ValueError("answerModes must contain one mode per problem")
+        modes = [str(value or "").strip() for value in raw_mode_values]
+        if any(mode not in VALID_ANSWER_MODES for mode in modes):
+            raise ValueError("answerModes contains an unsupported or unverified mode")
+
+        answers = _round_values(test.get("answerKeys"), round_key)
+        if answers is None:
+            answers = _round_values(test.get("answer_keys"), round_key)
+        if answers is None and round_key == default_round:
+            for field in ("answerKey", "answer_key", "answers"):
+                answers = _round_values(test.get(field), round_key)
+                if answers is not None:
+                    break
+        if answers is None or len(answers) != problems:
+            raise ValueError("answerModes requires a same-length answer key for its round")
+
+        for question_no, (raw_answer, mode) in enumerate(zip(answers, modes), start=1):
+            answer = str(raw_answer or "").strip()
+            if mode == "choice_number" and answer not in {"1", "2", "3", "4", "5"}:
+                raise ValueError(
+                    f"choice_number answer must be 1..5 at question {question_no}"
+                )
+            if mode == "answer_value" and not answer:
+                raise ValueError(f"answer_value requires an answer at question {question_no}")
+
+
+def validate_tests_config_answer_modes(config: JsonObject) -> None:
+    for test in _test_records(config).values():
+        validate_test_answer_mode_consistency(test)
+
+
+def validate_new_test_answer_modes(test: JsonObject) -> None:
+    raw_modes = test.get("answerModes")
+    if raw_modes is None:
+        raw_modes = test.get("answer_modes")
+    if raw_modes is None:
+        raise ValueError("new test requires explicit answerModes")
+    validate_test_answer_mode_consistency(test)
+
+
 def merge_tests_config_for_write(
     current: JsonObject,
     incoming: JsonObject,
@@ -147,9 +224,13 @@ def merge_tests_config_for_write(
 
     merged = deepcopy(incoming)
     for test_id, incoming_test in _test_records(merged).items():
+        if test_id not in current_records:
+            validate_new_test_answer_modes(incoming_test)
+    for test_id, incoming_test in _test_records(merged).items():
         current_test = current_records.get(test_id)
         if current_test is not None:
             _merge_preserved_fields(current_test, incoming_test)
+    validate_tests_config_answer_modes(merged)
     return merged
 
 
@@ -219,9 +300,11 @@ def patch_test_config_record(
         merged_test.update(incoming_copy)
     else:
         merged_test = deepcopy(incoming_test)
+        validate_new_test_answer_modes(merged_test)
 
     for field in normalized_clear_fields:
         merged_test.pop(field, None)
+    validate_test_answer_mode_consistency(merged_test)
 
     merged = deepcopy(current)
     merged_categories = merged.get("categories")

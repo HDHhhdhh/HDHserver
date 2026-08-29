@@ -144,6 +144,12 @@ def build_config_index(config: dict) -> dict[tuple[str, str, str], dict]:
     index = {}
     for item in by_source.values():
         key = (item["subject"], item["level"], compact_key(item["name"]))
+        previous = index.get(key)
+        if previous is not None and previous["sourceId"] != item["sourceId"]:
+            raise ValueError(
+                "ambiguous config key "
+                f"{key!r}: {previous['sourceId']} and {item['sourceId']}"
+            )
         index[key] = item
     return index
 

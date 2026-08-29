@@ -2093,6 +2093,192 @@ body.admin .modal-footer {
   text-align: right;
 }
 
+body.admin.quick-printer-export-open {
+  overflow: hidden;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-panel {
+  position: relative;
+  width: min(650px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-heading {
+  display: grid;
+  gap: 5px;
+  padding-right: 38px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-heading h3,
+body.admin #quickPrinterExportModal .quick-printer-export-heading p {
+  margin: 0;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-kicker {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+body.admin #quickPrinterExportModal #quickPrinterExportDescription,
+body.admin #quickPrinterExportModal .quick-printer-export-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.admin #quickPrinterExportModal #quickPrinterExportDate {
+  color: var(--brand);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-form {
+  display: grid;
+  gap: 14px;
+}
+
+body.admin #quickPrinterExportModal fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin #quickPrinterExportModal legend {
+  padding: 0 5px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option {
+  min-height: 68px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 11px;
+  padding: 11px 9px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option:hover {
+  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option.is-empty {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 14px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option small {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--brand-soft) 64%, var(--card));
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-note {
+  margin: 0;
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #0ea5e9 9%, var(--card));
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status.is-error {
+  color: var(--danger);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status.is-success {
+  color: var(--ok);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-action-spacer {
+  flex: 1 1 auto;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-actions .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  body.admin #quickPrinterExportModal {
+    padding: 6px;
+    align-items: stretch;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-panel {
+    width: 100%;
+    max-height: 96vh;
+    max-height: 96dvh;
+    align-self: center;
+    border-radius: 16px;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-time-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-time-option {
+    min-height: 54px;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-action-spacer {
+    display: none;
+  }
+
+  body.admin #quickPrinterExportModal #quickPrinterExportSubmit {
+    grid-column: 1 / -1;
+  }
+}
+
 body.admin input[type="text"],
 body.admin input[type="number"],
 body.admin input[type="date"],
@@ -6573,6 +6759,10 @@ body.admin.admin-simple .hero-actions #exportRoster {
   display: none !important;
 }
 
+body.admin.admin-simple .hero-actions #exportQuickPrinterTests {
+  display: none !important;
+}
+
 body.admin.admin-simple .hero-actions .btn {
   height: 42px !important;
   min-height: 42px !important;
@@ -6995,6 +7185,21 @@ body.admin .hero-actions {
   margin-top: clamp(188px, 10.7vw, 214px);
 }
 
+@media (min-width: 1501px) {
+  body.admin .hero-actions {
+    column-gap: 8px;
+    row-gap: 0;
+    /* Keep all three 54px action rows inside the fixed desktop command board. */
+    margin-top: clamp(166px, 9vw, 172px);
+  }
+
+  body.admin #staleDoneWarning {
+    margin-top: 2px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
 body.admin .hero-metrics-grid {
   --hero-metric-size: auto;
   grid-column: 2;
@@ -7098,208 +7303,6 @@ body.admin .kpi-value-note {
 
 body.admin .progress-card .kpi-progress-track {
   height: 5px;
-}
-
-body.admin.export-logs-open {
-  overflow: hidden;
-}
-
-body.admin #exportLogsModal .export-logs-panel {
-  position: relative;
-  width: min(680px, calc(100vw - 24px));
-  display: grid;
-  gap: 16px;
-}
-
-body.admin #exportLogsModal .export-logs-heading {
-  display: grid;
-  gap: 5px;
-  padding-right: 38px;
-}
-
-body.admin #exportLogsModal .export-logs-heading h3,
-body.admin #exportLogsModal .export-logs-heading p {
-  margin: 0;
-}
-
-body.admin #exportLogsModal .export-logs-kicker {
-  color: var(--brand);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: .14em;
-}
-
-body.admin #exportLogsModal #exportLogsDescription,
-body.admin #exportLogsModal .export-logs-privacy {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-body.admin #exportLogsModal .export-logs-form {
-  display: grid;
-  gap: 14px;
-}
-
-body.admin #exportLogsModal .export-logs-option-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-body.admin #exportLogsModal .export-logs-target-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-body.admin #exportLogsModal #exportLogsTargetDateLabel {
-  color: var(--brand);
-  font-weight: 900;
-}
-
-body.admin #exportLogsModal fieldset {
-  min-width: 0;
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px;
-  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
-}
-
-body.admin #exportLogsModal fieldset.is-disabled {
-  opacity: .56;
-}
-
-body.admin #exportLogsModal fieldset.is-disabled .export-logs-option {
-  cursor: not-allowed;
-}
-
-body.admin #exportLogsModal fieldset.is-disabled .export-logs-option:hover {
-  background: transparent;
-}
-
-body.admin #exportLogsModal legend {
-  padding: 0 5px;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 900;
-}
-
-body.admin #exportLogsModal .export-logs-option {
-  min-height: 52px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border-radius: 11px;
-  padding: 9px;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-body.admin #exportLogsModal .export-logs-option:hover {
-  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
-}
-
-body.admin #exportLogsModal .export-logs-option.compact {
-  min-height: 42px;
-  align-items: center;
-  padding-block: 5px;
-}
-
-body.admin #exportLogsModal .export-logs-option input {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  margin: 1px 0 0;
-  accent-color: var(--brand);
-}
-
-body.admin #exportLogsModal .export-logs-option span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-  font-size: 14px;
-}
-
-body.admin #exportLogsModal .export-logs-option small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-body.admin #exportLogsModal .export-logs-privacy {
-  margin: 0;
-  border-radius: 11px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, #f59e0b 11%, var(--card));
-}
-
-body.admin #exportLogsModal .export-logs-status {
-  min-height: 20px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-body.admin #exportLogsModal .export-logs-status.is-error {
-  color: var(--danger);
-}
-
-body.admin #exportLogsModal .export-logs-status.is-success {
-  color: var(--ok);
-}
-
-body.admin #exportLogsModal .export-logs-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-body.admin #exportLogsModal .export-logs-action-spacer {
-  flex: 1 1 auto;
-}
-
-body.admin #exportLogsModal .export-logs-actions .btn {
-  min-height: 44px;
-}
-
-@media (max-width: 640px) {
-  body.admin #exportLogsModal {
-    padding: 6px;
-    align-items: stretch;
-  }
-
-  body.admin #exportLogsModal .export-logs-panel {
-    width: 100%;
-    max-height: 96vh;
-    max-height: 96dvh;
-    align-self: center;
-    border-radius: 16px;
-  }
-
-  body.admin #exportLogsModal .export-logs-option-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  body.admin #exportLogsModal .export-logs-target-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  body.admin #exportLogsModal .export-logs-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  body.admin #exportLogsModal .export-logs-action-spacer {
-    display: none;
-  }
-
-  body.admin #exportLogsModal #exportLogsSubmit {
-    grid-column: 1 / -1;
-  }
 }
 
 body.admin .admin-operation-notes {
@@ -9238,7 +9241,7 @@ body.admin #logModal .assistant-note-item.is-pinned {
   border-left: 3px solid var(--assistant-note-item-color);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(var(--assistant-note-item-rgb), .11), rgba(var(--assistant-note-item-rgb), 0) 36%),
+    linear-gradient(180deg, rgba(var(--assistant-note-item-rgb), .11), rgba(var(--assistant-note-item-rgb), 0) 36%),
     rgba(var(--assistant-note-item-rgb), .07);
   box-shadow:
     inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .92),
@@ -9310,36 +9313,6 @@ body.admin #logModal .assistant-note-item.is-pinned .assistant-note-pin {
   background: rgba(var(--assistant-note-item-rgb), .16);
   color: var(--assistant-note-item-color);
   box-shadow: 0 2px 8px rgba(0, 0, 0, .16);
-}
-
-body.admin #logModal .assistant-note-pin-badge {
-  display: none;
-  align-items: center;
-  gap: 4px;
-  min-height: 22px;
-  padding: 0 7px;
-  border: 1px solid rgba(var(--assistant-note-item-rgb), .55);
-  border-radius: 999px;
-  background: rgba(var(--assistant-note-item-rgb), .14);
-  color: var(--assistant-note-item-color);
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-body.admin #logModal .assistant-note-item.is-pinned .assistant-note-pin-badge {
-  display: inline-flex;
-}
-
-body.admin #logModal .assistant-note-pin-badge-icon {
-  width: 13px;
-  height: 13px;
-  fill: currentColor;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 body.admin #logModal .assistant-note-item.is-pin-feedback {

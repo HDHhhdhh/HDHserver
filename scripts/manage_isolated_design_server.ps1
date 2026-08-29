@@ -150,12 +150,29 @@ function Sync-CodeSnapshot {
         }
     }
 
+    $workerDestination = Join-Path $codeRoot "scripts"
+    [IO.Directory]::CreateDirectory($workerDestination) | Out-Null
+    foreach ($fileName in @(
+        "student_test_choice_worker.py",
+        "student_test_formula_worker.py",
+        "student_test_paddle_worker.py",
+        "student_test_unimernet_worker.py",
+        "student_test_sheet_crop_worker.py"
+    )) {
+        $source = Join-Path (Join-Path $sourceRoot "scripts") $fileName
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Required isolated OCR worker is missing: $source"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $workerDestination $fileName) -Force
+    }
+
     $marker = [ordered]@{
         format = "academy-isolated-server/v1"
         isolatedRoot = $codeRoot
         sourceRoot = $sourceRoot
         refreshedAtUtc = [DateTime]::UtcNow.ToString("o")
         liveRuntimeCopied = $false
+        copiedWorkerScripts = 5
     }
     Write-JsonFile -Path $markerPath -Value $marker
 }
@@ -223,6 +240,14 @@ function Start-ManagedServer {
     [IO.Directory]::CreateDirectory((Join-Path $codeRoot "instance")) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $codeRoot "data")) | Out-Null
 
+    $ocrEnabled = if ([string]$env:STUDENT_TEST_OCR_ENABLED -match '^(?i:1|true|yes|on)$') { "1" } else { "0" }
+    $ocrAllowUnready = if ([string]$env:STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS -match '^(?i:1|true|yes|on)$') { "1" } else { "0" }
+    $ocrRuntimeRoot = if ([string]::IsNullOrWhiteSpace([string]$env:STUDENT_TEST_OCR_RUNTIME_ROOT)) {
+        "C:\server-ocr"
+    } else {
+        [IO.Path]::GetFullPath([string]$env:STUDENT_TEST_OCR_RUNTIME_ROOT)
+    }
+
     $environment = [ordered]@{
         ACADEMY_ISOLATED_SERVER_ROOT = $codeRoot
         DATA_DIR = (Join-Path $codeRoot "data")
@@ -246,6 +271,11 @@ function Start-ManagedServer {
         STUDENT_APP_HOMEWORK_ENABLED = "0"
         STUDENT_APP_REMINDERS_ENABLED = "0"
         STUDENT_APP_FOCUS_ENABLED = "0"
+        STUDENT_TEST_OCR_ENABLED = $ocrEnabled
+        STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS = $ocrAllowUnready
+        STUDENT_TEST_OCR_RUNTIME_ROOT = $ocrRuntimeRoot
+        STUDENT_TEST_OCR_ASSET_ROOT = (Join-Path $codeRoot "instance\student-test-ocr")
+        STUDENT_TEST_OCR_SOLUTION_PDF_ROOT = (Join-Path $codeRoot ".codex_drive_download\unit_answer_pdfs")
         TRUST_PROXY_HEADERS = "0"
     }
     $clearEnvironment = @(
@@ -323,6 +353,8 @@ function Start-ManagedServer {
         listenerProcessId = $listenerPid
         listenerStartTimeUtc = Get-ProcessStartUtc -ProcessId $listenerPid
         liveRuntimeCopied = $false
+        studentTestOcrEnabled = ($ocrEnabled -eq "1")
+        studentTestOcrAllowUnreadyModels = ($ocrAllowUnready -eq "1")
     }
     Write-JsonFile -Path $receiptPath -Value $receipt
 

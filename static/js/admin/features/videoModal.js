@@ -1725,10 +1725,6 @@ function isCourseProgressComplete(curVids, sid, maxDate) {
   return mids.every(mid => isFinishedVideoProgressStatus(latest[mid]));
 }
 
-function shouldClearCompletedAutoAssignment(courseProgressComplete, assignmentManual) {
-  return courseProgressComplete && !assignmentManual;
-}
-
 function resolveVideoAssignmentSaveSource(options = {}) {
   return (activeVideoSelectionDirty || activeAssignmentManual || options.manual === true || options.forceEmpty === true)
     ? 'manual'

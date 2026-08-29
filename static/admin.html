@@ -6,8 +6,10 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260826-pinned-author1">
-  <link rel="stylesheet" href="/css/student-work-light.css?v=20260826-pinned-author1">
+  <link rel="stylesheet" href="/css/admin.css?v=20260829-quick-print-filter1">
+  <link rel="stylesheet" href="/css/admin-export-logs.css?v=20260829-export-split1">
+  <link rel="stylesheet" href="/css/student-work-light.css?v=20260828-pinned-vertical1">
+  <link rel="stylesheet" href="/css/student-test-ocr-admin.css?v=20260828-1">
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
@@ -67,6 +69,7 @@
         <a href="/video-manage" class="btn secondary link-video" target="_blank" rel="noopener noreferrer">영상관리</a>
         <a href="/tests" class="btn secondary link-tests" target="_blank" rel="noopener noreferrer">테스트관리</a>
         <a href="/file-manage" class="btn secondary link-files" target="_blank" rel="noopener noreferrer">파일관리</a>
+        <button id="studentTestOcrReviewOpen" class="btn secondary student-test-ocr-review-open" type="button" hidden>OCR 보류</button>
         <button id="studentAccountsOpen" class="btn secondary link-student-accounts" type="button">학생앱 계정</button>
         <button id="studentFocusOpen" class="btn secondary link-student-focus" type="button">집중 기록</button>
         <button id="attendanceLedgerSettings" class="btn secondary link-ledger link-ledger-settings" type="button" title="학원출석부 시트 링크 수정">시트 설정</button>
@@ -144,6 +147,7 @@
           <button id="absentRegisterBtn" class="btn danger" type="button">결석등록</button>
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
           <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
+          <button id="exportQuickPrinterTests" class="btn secondary" type="button">테스트 인쇄</button>
         </div>
 
         <div class="hero-note-rail">
@@ -469,6 +473,45 @@
     </div>
   </div>
 
+  <div id="quickPrinterExportModal" class="modal-backdrop quick-printer-export-modal" hidden>
+    <section class="modal-panel quick-printer-export-panel" role="dialog" aria-modal="true"
+      aria-labelledby="quickPrinterExportTitle" aria-describedby="quickPrinterExportDescription">
+      <button id="quickPrinterExportClose" class="modal-close" type="button" aria-label="테스트 인쇄 내보내기 닫기">×</button>
+      <header class="quick-printer-export-heading">
+        <p class="quick-printer-export-kicker">QUICK PRINTER EXPORT</p>
+        <h3 id="quickPrinterExportTitle">테스트 인쇄 대상 선택</h3>
+        <p id="quickPrinterExportDescription"><strong id="quickPrinterExportDate">선택 날짜</strong> 운영판에서 내보낼 학생 타임을 선택합니다.</p>
+      </header>
+      <form id="quickPrinterExportForm" class="quick-printer-export-form">
+        <fieldset>
+          <legend>인쇄할 타임</legend>
+          <div class="quick-printer-time-grid">
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeSlot1" type="checkbox" value="slot1" checked>
+              <span><strong>1타임</strong><small id="quickPrinterTimeSlot1Count">0명</small></span>
+            </label>
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeConsecutive" type="checkbox" value="consecutive" checked>
+              <span><strong>1·2타임 (연강)</strong><small id="quickPrinterTimeConsecutiveCount">0명</small></span>
+            </label>
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeSlot2" type="checkbox" value="slot2" checked>
+              <span><strong>2타임</strong><small id="quickPrinterTimeSlot2Count">0명</small></span>
+            </label>
+          </div>
+        </fieldset>
+        <p class="quick-printer-export-note">선택한 타임 학생의 현재 과목 초록색 테스트만 운영판 순서대로 CSV에 포함됩니다.</p>
+        <p id="quickPrinterExportStatus" class="quick-printer-export-status" role="status" aria-live="polite"></p>
+        <div class="quick-printer-export-actions">
+          <button id="quickPrinterExportSelectAll" class="btn secondary" type="button">전체 선택</button>
+          <span class="quick-printer-export-action-spacer"></span>
+          <button id="quickPrinterExportCancel" class="btn secondary" type="button">취소</button>
+          <button id="quickPrinterExportSubmit" class="btn" type="submit">선택 타임 CSV 내보내기</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <div id="exportLogsModal" class="modal-backdrop export-logs-modal" hidden>
     <section class="modal-panel export-logs-panel" role="dialog" aria-modal="true"
       aria-labelledby="exportLogsTitle" aria-describedby="exportLogsDescription">
@@ -610,7 +653,33 @@
     </section>
   </div>
 
-  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260827-test-patch1"></script>
-  <script type="module" src="/js/admin/main.js?v=20260826-roster-current-content2&amp;linkedLeave=1&amp;homeworkOrder=1&amp;sheetSync=3&amp;saveFeedback=2&amp;bookSleep=3"></script>
+  <div id="studentTestOcrReviewModal" class="modal-backdrop student-test-ocr-admin-modal" hidden>
+    <section class="modal-panel wide student-test-ocr-admin-panel" role="dialog" aria-modal="true" aria-labelledby="studentTestOcrReviewTitle">
+      <header class="student-test-ocr-admin-heading">
+        <div>
+          <p>STUDENT TEST OCR</p>
+          <h3 id="studentTestOcrReviewTitle">OCR 보류 문항 확인</h3>
+          <span id="studentTestOcrReviewDate"></span>
+        </div>
+        <button id="studentTestOcrReviewClose" class="modal-close" type="button" aria-label="OCR 보류 문항 확인 닫기">×</button>
+      </header>
+      <div class="student-test-ocr-admin-layout">
+        <aside class="student-test-ocr-admin-list-panel" aria-label="보류 제출 목록">
+          <div class="student-test-ocr-admin-list-head">
+            <strong>확인 대기</strong>
+            <button id="studentTestOcrReviewRefresh" class="btn secondary" type="button">새로고침</button>
+          </div>
+          <p id="studentTestOcrReviewStatus" role="status" aria-live="polite"></p>
+          <div id="studentTestOcrReviewList" class="student-test-ocr-admin-list"></div>
+        </aside>
+        <section id="studentTestOcrReviewDetail" class="student-test-ocr-admin-detail" aria-live="polite">
+          <p class="student-test-ocr-admin-empty">왼쪽에서 학생 제출을 선택해 주세요.</p>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1"></script>
+  <script type="module" src="/js/admin/main.js?v=20260826-roster-current-content2&amp;linkedLeave=1&amp;homeworkOrder=1&amp;sheetSync=3&amp;saveFeedback=2&amp;bookSleep=3&amp;notePin=3&amp;quickPrint=2&amp;testClearOrder=1&amp;videoSnapshot=1"></script>
 </body>
 </html>

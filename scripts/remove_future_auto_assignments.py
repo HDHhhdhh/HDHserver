@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.storage import file_lock, save_atomic
+from core.update_assignment_rules import remove_future_auto_assignments
 
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -25,66 +26,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest().upper()
-
-
-def _canonical_date(value: str) -> str:
-    parsed = dt.date.fromisoformat(str(value or "").strip())
-    return parsed.isoformat()
-
-
-def remove_future_auto_assignments(updates: dict, *, today: str) -> dict:
-    """Remove only identifiable future source:auto snapshots in place."""
-    today = _canonical_date(today)
-    affected_dates: list[str] = []
-    removed = 0
-    preserved = {"manual": 0, "selfStudy": 0, "legacyArray": 0, "other": 0}
-
-    for raw_date in list(updates):
-        try:
-            date_key = _canonical_date(str(raw_date))
-        except ValueError:
-            continue
-        if date_key <= today:
-            continue
-
-        day = updates.get(raw_date)
-        if not isinstance(day, dict):
-            preserved["other"] += 1
-            continue
-
-        date_removed = 0
-        for sid in list(day):
-            entry = day.get(sid)
-            if isinstance(entry, list):
-                preserved["legacyArray"] += 1
-                continue
-            if not isinstance(entry, dict):
-                preserved["other"] += 1
-                continue
-
-            source = str(entry.get("source") or "").strip().casefold()
-            if source == "auto":
-                day.pop(sid, None)
-                removed += 1
-                date_removed += 1
-            elif source == "manual":
-                preserved["manual"] += 1
-            elif source == "selfstudy":
-                preserved["selfStudy"] += 1
-            else:
-                preserved["other"] += 1
-
-        if date_removed:
-            affected_dates.append(date_key)
-        if not day:
-            updates.pop(raw_date, None)
-
-    return {
-        "today": today,
-        "removedAuto": removed,
-        "affectedDates": sorted(set(affected_dates)),
-        "preservedFuture": preserved,
-    }
 
 
 def main() -> int:

@@ -309,16 +309,6 @@ function renderNotes(
       onTogglePin?.(note, pinButton);
     });
 
-    const pinBadge = document.createElement('span');
-    pinBadge.className = 'assistant-note-pin-badge';
-    pinBadge.setAttribute('aria-hidden', 'true');
-    pinBadge.innerHTML = `
-      <svg class="assistant-note-pin-badge-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M9 3h6v2l-1 1v3.5l4 3.5v1H6v-1l4-3.5V6L9 5V3Z"></path>
-        <path d="M12 14v7"></path>
-      </svg>
-      <span>고정</span>`;
-
     const time = document.createElement('time');
     time.className = 'assistant-note-item-time';
     const savedAt = String(note.updated_at || note.created_at || '');
@@ -359,7 +349,7 @@ function renderNotes(
 
     const authorGroup = document.createElement('div');
     authorGroup.className = 'assistant-note-item-author-group';
-    authorGroup.append(authorName, pinButton, pinBadge);
+    authorGroup.append(authorName, pinButton);
 
     if (reminderInfo) {
       const reminderInfoRow = document.createElement('div');

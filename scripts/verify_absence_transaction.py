@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,13 +16,14 @@ if str(ROOT) not in sys.path:
 
 from core.absence_transaction import (
     AbsenceRecoveryRequiredError,
+    absence_consistency_barrier,
     absence_transaction_scope,
     apply_absence_transaction_locked,
     journal_path_for,
     recover_pending_absence_transaction,
 )
 from core.log_repository import LogRepository
-from core.storage import file_lock
+from core.storage import InterProcessFileLock, file_lock
 
 
 DATE = "2026-08-24"
@@ -369,11 +372,60 @@ def test_failed_rollback_stays_recoverable_and_fails_closed() -> None:
         assert_restored(fixture)
 
 
+def test_lock_release_retries_a_transient_windows_remove_failure() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-lock-release-retry-") as tmpdir:
+        lock_path = Path(tmpdir) / "coordinator.lock"
+        lock = InterProcessFileLock(str(lock_path), poll_sec=0.001)
+        lock.acquire()
+        original_remove = os.remove
+        remove_attempts = 0
+
+        def flaky_remove(path) -> None:
+            nonlocal remove_attempts
+            remove_attempts += 1
+            if remove_attempts == 1:
+                raise PermissionError("synthetic transient sharing violation")
+            original_remove(path)
+
+        with mock.patch("core.storage.os.remove", side_effect=flaky_remove):
+            lock.release()
+
+        assert remove_attempts == 2
+        assert not lock_path.exists()
+
+
+def test_consistency_barrier_is_reentrant_in_one_context() -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="verify-absence-barrier-reentrant-"
+    ) as tmpdir:
+        root = Path(tmpdir)
+        absent_path = root / "absent.json"
+        journal_dir = root / "journal"
+        write_json(absent_path, {})
+
+        with absence_consistency_barrier(
+            absent_path=absent_path,
+            journal_dir=journal_dir,
+            lock_timeout_sec=0.2,
+        ):
+            with absence_consistency_barrier(
+                absent_path=absent_path,
+                journal_dir=journal_dir,
+                lock_timeout_sec=0.2,
+            ):
+                assert not journal_path_for(
+                    absent_path,
+                    journal_dir,
+                ).exists()
+
+
 def main() -> int:
     test_success_keeps_existing_semantics()
     test_each_synchronous_failure_rolls_every_store_back()
     test_crash_journal_recovers_to_before_state()
     test_failed_rollback_stays_recoverable_and_fails_closed()
+    test_lock_release_retries_a_transient_windows_remove_failure()
+    test_consistency_barrier_is_reentrant_in_one_context()
     print("absence transaction rollback and recovery checks: OK")
     return 0
 

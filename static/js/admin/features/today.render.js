@@ -13,6 +13,8 @@ import { state } from '../core/state.js';
 import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';
 import { ensureOk, sendJson } from '../../shared/api.js';
 
+const WHITE_REVIEW_PENDING_FIELD = 'whiteReviewPending';
+
 import {
   yoilOf,
   labelFor,
@@ -138,6 +140,19 @@ function rowDateKey(tr) {
   return String(tr?.dataset?.date || getAdminDate() || '').trim();
 }
 
+function whiteReviewPendingForSid(sid) {
+  const student = (state.students || []).find(item => String(item?.id || '') === String(sid || ''));
+  return student?.[WHITE_REVIEW_PENDING_FIELD] === true;
+}
+
+function setWhiteReviewPendingLocal(sid, pending) {
+  const student = (state.students || []).find(item => String(item?.id || '') === String(sid || ''));
+  if (!student) return false;
+  student[WHITE_REVIEW_PENDING_FIELD] = pending === true;
+  window.students = state.students;
+  return true;
+}
+
 function normalizeLeaveIdentityPart(value) {
   const text = String(value ?? '');
   try { return text.normalize('NFKC').trim(); }
@@ -240,6 +255,15 @@ async function patchFlagRemote(kind, date, sid, checked) {
 
 async function patchArriveTimeRemote(date, sid, hhmm) {
   await _postJSON('/api/arrive-time/patch', { date, sid: String(sid), value: String(hhmm || '') });
+}
+
+async function patchWhiteReviewPendingRemote(sid, pending) {
+  const res = await sendJson('/api/update', {
+    id: String(sid),
+    field: WHITE_REVIEW_PENDING_FIELD,
+    value: pending === true,
+  });
+  await ensureOk(res, '백지리뷰 검사 대기 저장');
 }
 
 function syncTodayRowVisual(tr) {
@@ -396,7 +420,7 @@ function attachSortable(dateKey, alphaSortOnly) {
     .today-table th{font-size:14px}
     .today-table td{font-size:15px}
     .today-table .stuName,.done-table .stuName{font-size:15.5px}
-    .today-check-cell,.today-self-study-cell,.today-homework-request-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell,.today-progress-cell{text-align:center}
+    .today-check-cell,.today-self-study-cell,.today-homework-request-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell,.today-progress-cell,.today-white-review-cell{text-align:center}
     .today-action-cell,.done-action-cell{white-space:nowrap;overflow:visible!important;text-overflow:clip!important}
     .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
     .today-actions button{flex:0 0 auto}
@@ -1361,6 +1385,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
     const hwChecked = isHwChecked(dateKey, s.id);
     const hwRequested = isHwCheckRequested(dateKey, s.id);
     const hwRequestAt = hwCheckRequestedAt(dateKey, s.id);
+    const whiteReviewPending = s?.[WHITE_REVIEW_PENDING_FIELD] === true;
 
     const arriveTime = plannedTimeFor(dateKey, s.id);
     const school =
@@ -1392,6 +1417,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           ${attended ? 'data-att="1"' : ''} ${contacted ? 'data-contact="1"' : ''}
           ${selfStudy ? 'data-self-study="1"' : ''}
           ${hwChecked ? 'data-hw="1"' : ''} ${hwRequested ? 'data-hw-request="1"' : ''}
+          ${whiteReviewPending ? 'data-white-review-pending="1"' : ''}
           ${slotGroup ? `data-slot-group="${slotGroup}"` : ''}
           ${hwRequestAt ? `data-hw-request-at="${hwRequestAt}"` : ''}>
         <td class="drag-handle today-drag-cell" style="cursor:${alphaSortOnly ? 'default' : 'grab'};text-align:center">::</td>
@@ -1443,6 +1469,15 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
         <td class="today-curriculum-cell">${curLabel}</td>
         <td class="today-progress-cell">${progressMarker}</td>
 
+        <td class="today-white-review-cell">
+          <div class="chk4" aria-label="백지리뷰 검사 대기">
+            <label class="c" data-kind="check" data-on="${whiteReviewPending ? '1' : '0'}" title="백지리뷰 검사 대기">
+              <input type="checkbox" class="whiteReviewPendingChk" data-id="${escapeAttr(s.id)}"
+                     aria-label="${escapeAttr(`${s.name || s.id} 백지리뷰 검사 대기`)}" ${whiteReviewPending ? 'checked' : ''}>
+            </label>
+          </div>
+        </td>
+
         <td class="today-action-cell">
           <div class="today-actions">
           <button class="openStudentPopups" title="학생 운영 팝업">🧾</button>
@@ -1465,7 +1500,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
       <colgroup>
         <col style="width:32px"><col style="width:72px"><col style="width:120px"><col style="width:84px">
         <col style="width:168px"><col style="width:44px"><col style="width:84px"><col style="width:84px"><col style="width:112px">
-        <col style="width:36px"><col style="width:268px"><col style="width:64px"><col style="width:56px">
+        <col style="width:36px"><col style="width:36px"><col style="width:232px"><col style="width:64px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
@@ -1478,6 +1513,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           <th>학교</th>
           <th>커리큘럼</th>
           <th>진도</th>
+          <th>백지</th>
           <th>작업</th>
           <th>보강</th>
           <th>문서</th>
@@ -1750,6 +1786,37 @@ export function bindTodayTableEvents(loadTodayAndRender) {
   });
 
   host.addEventListener('change', async (ev) => {
+    // This SID-scoped flag intentionally survives date changes, leave, and record cleanup.
+    const whiteReview = ev.target.closest?.('.whiteReviewPendingChk');
+    if (whiteReview) {
+      const tr = closestTodayRow(whiteReview); if (!tr) return;
+      const sid = rowSid(tr);
+      if (!sid) return;
+      const previous = whiteReviewPendingForSid(sid);
+      const checked = whiteReview.checked === true;
+      const pill = whiteReview.closest('.c');
+
+      whiteReview.disabled = true;
+      tr.dataset.whiteReviewPending = checked ? '1' : '';
+      if (pill) pill.dataset.on = checked ? '1' : '0';
+      setWhiteReviewPendingLocal(sid, checked);
+
+      try {
+        await patchWhiteReviewPendingRemote(sid, checked);
+      } catch (error) {
+        console.error(error);
+        whiteReview.checked = previous;
+        tr.dataset.whiteReviewPending = previous ? '1' : '';
+        if (pill) pill.dataset.on = previous ? '1' : '0';
+        setWhiteReviewPendingLocal(sid, previous);
+        alert('백지리뷰 검사 대기 저장 실패');
+        await loadTodayAndRender({ force: true });
+      } finally {
+        if (whiteReview.isConnected !== false) whiteReview.disabled = false;
+      }
+      return;
+    }
+
     // Attendance
     const att = ev.target.closest?.('.attendChk');
     if (att) {

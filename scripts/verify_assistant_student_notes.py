@@ -351,11 +351,11 @@ def source_boundary_checks() -> None:
     check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
     check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
     check(
-        "assistant-note-pin-badge" in notes_source
-        and "assistant-note-pin-badge-icon" in notes_source
-        and "<span>고정</span>" in notes_source
-        and ".assistant-note-item.is-pinned .assistant-note-pin-badge" in admin_css,
-        "pinned comments must expose a persistent visual status badge",
+        "assistant-note-pin-badge" not in notes_source
+        and "assistant-note-pin-badge-icon" not in notes_source
+        and "assistant-note-pin-badge" not in admin_css
+        and "assistant-note-pin-badge" not in light_css,
+        "pinned comments must not duplicate the interactive pin with a status badge",
     )
     check(
         "pinFeedbackNoteId: noteId" in notes_source
@@ -366,6 +366,7 @@ def source_boundary_checks() -> None:
     )
     check(
         "border-left: 3px solid var(--assistant-note-item-color);" in admin_css
+        and "linear-gradient(180deg" in admin_css
         and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .92)" in admin_css
         and "background: rgba(var(--assistant-note-item-rgb), .16);" in admin_css,
         "dark pinned cards must retain author-colored rails and pin emphasis",
@@ -431,12 +432,12 @@ def source_boundary_checks() -> None:
     )
     check(
         "border: 1px solid rgba(var(--assistant-note-item-rgb), .42) !important;" in light_css
+        and "linear-gradient(180deg" in light_css
         and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .72)" in light_css
         and ".assistant-note-item.is-pinned .assistant-note-pin" in light_css
         and "background: rgba(var(--assistant-note-item-rgb), .12) !important;" in light_css
-        and ".assistant-note-pin-badge" in light_css
         and "color: var(--assistant-note-item-color) !important;" in light_css,
-        "light pinned cards must use each author's outline, filled pin, and status badge color",
+        "light pinned cards must use each author's outline and filled interactive pin",
     )
     check(
         "/* Compact reminder memo metadata without changing the memo body. */" in light_css
