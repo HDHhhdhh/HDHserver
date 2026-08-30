@@ -370,6 +370,36 @@ def labeled_crop_samples(
     return selected
 
 
+def aihub_public_data(aihub_sources: Sequence[tuple[Path, Sequence[tuple[Path, str]]]]) -> dict:
+    counts = {
+        label: sum(
+            sample_label == label
+            for _root, samples in aihub_sources
+            for _path, sample_label in samples
+        )
+        for label in LABELS
+    }
+    return {
+        "source": "approved local conversion of AI Hub OCR data (education)",
+        "roots": [
+            {
+                "root": str(root),
+                "manifestSha256": sha256_file(root / "manifest.json"),
+                "effectiveCounts": {
+                    label: sum(sample_label == label for _path, sample_label in root_samples)
+                    for label in LABELS
+                },
+                "uniqueCounts": {
+                    label: len({path for path, sample_label in root_samples if sample_label == label})
+                    for label in LABELS
+                },
+            }
+            for root, root_samples in aihub_sources
+        ],
+        "counts": counts,
+    }
+
+
 def evaluate(model, samples, *, torch, np) -> list[dict]:
     rows = []
     model.eval()
@@ -683,33 +713,7 @@ def main() -> int:
         },
     }
     if aihub_sources:
-        aihub_counts = {
-            label: sum(
-                sample_label == label
-                for _root, samples in aihub_sources
-                for _path, sample_label in samples
-            )
-            for label in LABELS
-        }
-        public_data["aihubEducation"] = {
-            "source": "approved local conversion of AI Hub OCR data (education)",
-            "roots": [
-                {
-                    "root": str(root),
-                    "manifestSha256": sha256_file(root / "manifest.json"),
-                    "effectiveCounts": {
-                        label: sum(sample_label == label for _path, sample_label in samples)
-                        for label in LABELS
-                    },
-                    "uniqueCounts": {
-                        label: len({path for path, sample_label in samples if sample_label == label})
-                        for label in LABELS
-                    },
-                }
-                for root, _samples in aihub_sources
-            ],
-            "counts": aihub_counts,
-        }
+        public_data["aihubEducation"] = aihub_public_data(aihub_sources)
     checkpoint = {
         "model_version": MODEL_VERSION,
         "labels": LABELS,

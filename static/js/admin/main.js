@@ -3,27 +3,20 @@ import { initDarkmode } from './core/darkmode.js';
 import { initAdminViewMode } from './core/viewMode.js';
 import { initEscClose } from './features/escClose.js';
 import { initHoverTooltip } from './features/hoverTooltip.js?v=20260819-subject-days1';
-import { initVideoModal } from './features/videoModal.js?v=20260826-save-feedback1';
-import { initLogModal } from './features/logModal.js?v=20260829-video-snapshot1';
+import { initVideoModal } from './features/videoModal.js?v=20260830-popup-load3';
+import { initLogModal } from './features/logModal.js?v=20260830-popup-load3';
 import { initExtraModal } from './features/extraModal.js?v=20260821-safe-merge1';
 import { initAbsentRegister } from './features/absentRegister.js';
-import { initCalendar } from './features/calendar.js?v=20260824-sheet-sync3';
-import { initExport } from './features/exportLogs.js?v=20260826-roster-current-content2&quickPrinter=1';
+import { initExport } from './features/exportLogs.js?v=20260826-roster-current-content2&quickPrinter=1&latency=1';
 import { initQuickPrinterExport } from './features/quickPrinterExport.js?v=20260829-time-filter1';
-import { initAnnouncements } from './features/announcements.js';
 import { initClearAll } from './features/done.js?v=20260821-log-batch1';
-import { loadTodayAndRender } from './features/today.js?v=20260824-linked-leave1';
+import { loadTodayAndRender } from './features/today.js?v=20260829-makeup-roster-latency1';
 import { initAbsentRecovery } from './features/absentRecovery.js';
 import { initTimeGraph } from './features/timeGraph.js';
 import { initAdminDateBar } from './core/adminDate.js';
 import { initAdminUiEnhance } from './features/uiEnhance.js?v=20260824-sheet-sync2';
 import { initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 import { initAssistantStudentNotes } from './features/assistantStudentNotes.js?v=20260821-note-body-row2';
-import { initAdminOperationNotes } from './features/adminOperationNotes.js';
-import { initStudentLogs } from './features/studentLogs.js?v=20260816-student-log-restore2';
-import { initStudentAccounts } from './features/studentAccounts.js';
-import { initStudentFocus } from './features/studentFocus.js';
-import { initStudentTestOcrReview } from './features/studentTestOcrReview.js?v=20260828-1';
 
 
 // 1) 공통 초기화
@@ -40,22 +33,15 @@ try {
   throw err;
 }
 
-// 3) 기능 초기화(순서 중요하지 않은 것들)
+// 3) 첫 운영 명단에 필요한 상호작용부터 연결
 initHoverTooltip();
 initAssistantStudentNotes();
-initAdminOperationNotes();
-initStudentLogs();
-initStudentAccounts();
-initStudentFocus();
-initStudentTestOcrReview();
 initVideoModal();
 initLogModal();
 initExtraModal();
 initAbsentRegister();
-initCalendar();
 initExport();
 initQuickPrinterExport();
-initAnnouncements();
 initClearAll();
 initAbsentRecovery();
 initTimeGraph();
@@ -63,9 +49,31 @@ initAdminDateBar({ mountId: 'adminDateMount' });
 initAdminUiEnhance();
 initStudentTestRecordDetails(document);
 
-
-// 4) 최초 렌더 + 이벤트로 재렌더
-loadTodayAndRender();
-
-// 기존 전역 의존 로직을 위해 최소 노출(필요 시)
+// 기존 전역 의존 로직을 위해 최소 노출
 window.state = state;
+
+// 4) 최초 명단을 먼저 그린 뒤, 독립 패널/캘린더의 네트워크 요청을 시작한다.
+// 기능은 모두 그대로 초기화하되 F5 직후의 연결 대기열에서 오늘 명단을 우선한다.
+async function initDeferredAdminFeatures() {
+  const jobs = [
+    ['calendar', () => import('./features/calendar.js?v=20260830-latency2').then(module => module.initCalendar())],
+    ['admin operation notes', () => import('./features/adminOperationNotes.js').then(module => module.initAdminOperationNotes())],
+    ['student logs', () => import('./features/studentLogs.js?v=20260816-student-log-restore2').then(module => module.initStudentLogs())],
+    ['student accounts', () => import('./features/studentAccounts.js').then(module => module.initStudentAccounts())],
+    ['student focus', () => import('./features/studentFocus.js').then(module => module.initStudentFocus())],
+    ['student test OCR', () => import('./features/studentTestOcrReview.js?v=20260828-1').then(module => module.initStudentTestOcrReview())],
+    ['announcements', () => import('./features/announcements.js').then(module => module.initAnnouncements())],
+  ];
+  const results = await Promise.allSettled(jobs.map(([_label, start]) => start()));
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.error(`[admin] deferred ${jobs[index][0]} initialization failed:`, result.reason);
+    }
+  });
+}
+
+void loadTodayAndRender()
+  .catch((error) => {
+    console.error('[admin] initial today render failed:', error);
+  })
+  .then(initDeferredAdminFeatures);

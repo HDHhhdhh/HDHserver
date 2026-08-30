@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 from unittest import mock
 
 
@@ -394,6 +395,64 @@ def test_lock_release_retries_a_transient_windows_remove_failure() -> None:
         assert not lock_path.exists()
 
 
+def test_active_same_process_lock_is_never_broken_as_stale() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-active-local-lock-") as tmpdir:
+        lock_path = Path(tmpdir) / "coordinator.lock"
+        owner = InterProcessFileLock(
+            str(lock_path),
+            timeout_sec=0.2,
+            poll_sec=0.005,
+            stale_sec=0.01,
+        )
+        owner.acquire()
+        old = time.time() - 60
+        os.utime(lock_path, (old, old))
+        contender = InterProcessFileLock(
+            str(lock_path),
+            timeout_sec=0.05,
+            poll_sec=0.005,
+            stale_sec=0.01,
+        )
+        try:
+            try:
+                contender.acquire()
+            except TimeoutError:
+                pass
+            else:
+                contender.release()
+                raise AssertionError("an active same-process lock must not be broken")
+        finally:
+            owner.release()
+        assert not lock_path.exists()
+
+
+def test_failed_release_same_process_orphan_is_recovered() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-local-lock-orphan-") as tmpdir:
+        lock_path = Path(tmpdir) / "coordinator.lock"
+        owner = InterProcessFileLock(str(lock_path), poll_sec=0.001)
+        owner.acquire()
+
+        with mock.patch(
+            "core.storage.os.remove",
+            side_effect=PermissionError("synthetic persistent sharing violation"),
+        ):
+            owner.release()
+
+        assert lock_path.exists()
+        old = time.time() - 5
+        os.utime(lock_path, (old, old))
+
+        contender = InterProcessFileLock(
+            str(lock_path),
+            timeout_sec=0.2,
+            poll_sec=0.005,
+            stale_sec=30.0,
+        )
+        contender.acquire()
+        contender.release()
+        assert not lock_path.exists()
+
+
 def test_consistency_barrier_is_reentrant_in_one_context() -> None:
     with tempfile.TemporaryDirectory(
         prefix="verify-absence-barrier-reentrant-"
@@ -425,6 +484,8 @@ def main() -> int:
     test_crash_journal_recovers_to_before_state()
     test_failed_rollback_stays_recoverable_and_fails_closed()
     test_lock_release_retries_a_transient_windows_remove_failure()
+    test_active_same_process_lock_is_never_broken_as_stale()
+    test_failed_release_same_process_orphan_is_recovered()
     test_consistency_barrier_is_reentrant_in_one_context()
     print("absence transaction rollback and recovery checks: OK")
     return 0

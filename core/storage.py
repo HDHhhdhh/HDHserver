@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import shutil
+import threading
 import time
 import uuid
 from typing import Any
@@ -16,6 +17,33 @@ from typing import Any
 from flask import jsonify, make_response
 
 log = logging.getLogger(__name__)
+
+
+_LOCAL_LOCK_TOKENS_GUARD = threading.Lock()
+_LOCAL_LOCK_TOKENS: dict[str, str] = {}
+
+
+def _local_lock_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _register_local_lock_token(path: str, token: str) -> None:
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        _LOCAL_LOCK_TOKENS[_local_lock_key(path)] = token
+
+
+def _unregister_local_lock_token(path: str, token: str) -> None:
+    key = _local_lock_key(path)
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        if _LOCAL_LOCK_TOKENS.get(key) == token:
+            _LOCAL_LOCK_TOKENS.pop(key, None)
+
+
+def _is_active_local_lock_token(path: str, token: str) -> bool:
+    if not token:
+        return False
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        return _LOCAL_LOCK_TOKENS.get(_local_lock_key(path)) == token
 
 
 def utc_now_isoz() -> str:
@@ -284,20 +312,38 @@ class InterProcessFileLock:
         except Exception:
             return
 
-        if time.time() - float(st.st_mtime) < self.stale_sec:
-            return
+        age_sec = max(0.0, time.time() - float(st.st_mtime))
 
         txt = self._read_lock_text()
         pid = None
+        token = ""
         try:
             m = re.search(r"\bpid=(\d+)\b", txt)
             if m:
                 pid = int(m.group(1))
+            token_match = re.search(r"\btoken=([A-Za-z0-9_-]+)\b", txt)
+            if token_match:
+                token = token_match.group(1)
         except Exception:
             pid = None
+            token = ""
 
-        if pid is not None and self._pid_alive(pid):
-            return
+        if pid == os.getpid():
+            if _is_active_local_lock_token(self.lock_path, token):
+                return
+            # A same-process lock can survive a transient Windows sharing
+            # violation during release.  Give a just-created lock enough time
+            # to register its token, then recover only when no live local
+            # owner exists.  Genuine long-running local locks remain protected
+            # by the active-token registry above.
+            local_orphan_grace_sec = max(1.0, self.poll_sec * 10)
+            if age_sec < local_orphan_grace_sec:
+                return
+        else:
+            if age_sec < self.stale_sec:
+                return
+            if pid is not None and self._pid_alive(pid):
+                return
 
         try:
             os.remove(self.lock_path)
@@ -316,6 +362,7 @@ class InterProcessFileLock:
                 self._fd = fd
                 self._token = token
                 os.write(fd, f"pid={os.getpid()} time={time.time()} token={token}".encode("utf-8"))
+                _register_local_lock_token(self.lock_path, token)
                 return
             except FileExistsError:
                 self._try_break_stale_lock()
@@ -360,6 +407,8 @@ class InterProcessFileLock:
                 time.sleep(self.poll_sec)
         except Exception:
             pass
+        finally:
+            _unregister_local_lock_token(self.lock_path, token)
 
     def __enter__(self):
         self.acquire()

@@ -35,7 +35,7 @@ assert.deepEqual(
 assert.equal(helper.legacyStudentName('student123'), 'student');
 
 assert.ok(modalSource.includes("fetch('/api/extra-attend', { cache: 'no-store' })"));
-assert.ok(videoModalSource.includes("getJSON('/api/extra-attend')"));
+assert.ok(videoModalSource.includes("fetchJSONForVideoOpen('/api/extra-attend')"));
 for (const retiredPath of ['/api/extra', '/api/extra_attend', '/api/extra-attend/all']) {
   assert.ok(!videoModalSource.includes(`'${retiredPath}'`), `video modal still retries ${retiredPath}`);
 }

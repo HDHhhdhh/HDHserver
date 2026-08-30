@@ -15,27 +15,20 @@ async function getCriticalJson(url, label) {
 export async function bootstrap() {
   const today = todayLocalKey();
   const [
-    students, videos, materials, updates, assigns, extra, logs, abs, progress, schoolCal, testsConfig
+    students, videos, updates, logs, abs, progress, schoolCal
   ] = await Promise.all([
     api.get('/api/students'),
     api.get('/api/videos'),
-    api.getOr('/api/materials', {}),
     getCriticalJson('/api/updates', 'admin bootstrap /api/updates'),
-    api.getOr('/api/mat-assign', {}),
-    api.getOr('/api/extra-attend', {}),
     getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
     api.getOr('/api/absent', {}),
     getCriticalJson(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
     api.getOr('/api/school-calendar', {}),
-    api.getOr('/api/tests-config', { categories: {} }),
   ]);
 
   state.students = students;
   state.videos = videos;
-  state.materials = materials;
   state.updates = updates;
-  state.assigns = assigns;
-  state.extra = extra;
   state.logs = logs;
   state.progress = progress;
 
@@ -45,8 +38,6 @@ export async function bootstrap() {
   state.absentSlotsByDate = isUnified ? (abs.by_slot || {}) : {};
 
   state.schoolCal = schoolCal || {};
-  state.testsConfig = testsConfig || { categories: {} };
-
   // 전역 노출(기존 코드 호환)
   window.students = state.students;
   window.extra = state.extra;

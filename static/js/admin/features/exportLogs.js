@@ -968,9 +968,8 @@ async function ensureAbsentForRosterDate() {
   } catch { /* keep current absence state */ }
 }
 
-async function loadRosterStudents(dateStr) {
+function loadRosterStudents(dateStr, extraMap = {}) {
   const students = Array.isArray(state.students) ? state.students : [];
-  const extraMap = await loadExtraAttendMap();
   const wchr = yoilOf(dateStr);
 
   const regular = students.filter(stu => hasWeekday(stu, wchr));
@@ -990,7 +989,6 @@ async function loadRosterStudents(dateStr) {
   const absentSet = new Set((state.absentByDate?.[dateStr] || []).map(String));
   list = list.filter(stu => !absentSet.has(String(stu?.id)));
 
-  await ensureLogsForRosterDate(dateStr);
   const logsDay = state.logs?.[dateStr] || {};
   list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).done));
   list = list.filter(stu => !truthy((logsDay[String(stu?.id)] || {}).selfStudy));
@@ -1068,8 +1066,7 @@ async function ensureRosterProgressHistory(students) {
   window.progressData = state.progress;
 }
 
-async function exportRosterCsv() {
-  const dateStr = exportDateStamp();
+async function refreshRosterExportCoreData(dateStr) {
   try {
     const [students, videos, updates, progress] = await Promise.all([
       fetch('/api/students', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
@@ -1098,11 +1095,24 @@ async function exportRosterCsv() {
   } catch (err) {
     console.warn('[exportRoster] roster task data load failed:', err);
   }
+}
 
-  await loadWeekendSlots();
-  await ensureAbsentForRosterDate();
+async function loadRosterExportInputs(dateStr) {
+  const [, , , , extraMap] = await Promise.all([
+    refreshRosterExportCoreData(dateStr),
+    loadWeekendSlots(),
+    ensureAbsentForRosterDate(),
+    ensureLogsForRosterDate(dateStr),
+    loadExtraAttendMap(),
+  ]);
+  return extraMap;
+}
 
-  const students = await loadRosterStudents(dateStr);
+async function exportRosterCsv() {
+  const dateStr = exportDateStamp();
+  const extraMap = await loadRosterExportInputs(dateStr);
+
+  const students = loadRosterStudents(dateStr, extraMap);
   if (!students.length) {
     toast('내보낼 명단이 없습니다.');
     return;

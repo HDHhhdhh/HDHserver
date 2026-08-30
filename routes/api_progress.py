@@ -172,7 +172,12 @@ def api_progress_patch():
 
         _notification_progress_commit(notification_before, notification_after, sid)
         return jsonify({"ok": True, "progress": merged})
-    except TimeoutError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 409
+    except TimeoutError:
+        return jsonify({
+            "ok": False,
+            "code": "progress_lock_timeout",
+            "retryable": True,
+            "error": "진도 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
+        }), 409
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500

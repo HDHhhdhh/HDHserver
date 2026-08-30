@@ -3,7 +3,7 @@ import { patchLogsBatch } from './today.state.js';
 import {
   completeAssignedTestsForRecordCleanup,
   preloadRecordCleanupEntries,
-} from './today.render.js?v=20260821-log-batch1';
+} from './today.render.js?v=20260824-linked-leave1';
 
 function collectRenderedCleanupTargets() {
   const rows = $('doneWrap')?.querySelectorAll('tr[data-sid][data-date]') || [];

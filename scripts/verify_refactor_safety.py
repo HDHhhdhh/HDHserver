@@ -47,6 +47,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
     ROOT / "static/js/all/main.js",
     ROOT / "static/js/admin/core/adminDate.js",
+    ROOT / "static/js/admin/core/saveConflict.js",
     ROOT / "static/js/admin/demo/bootstrap.js",
     ROOT / "static/js/admin/demo/fetch.js",
     ROOT / "static/js/admin/demo/assistantStudentNotesContract.js",
@@ -101,6 +102,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_admin_css_inventory.mjs",
     ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
     ROOT / "scripts/verify_hover_tooltip_performance.mjs",
+    ROOT / "scripts/verify_admin_latency_contracts.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
     ROOT / "scripts/verify_extra_attendance_merge.mjs",
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
@@ -744,6 +746,20 @@ def run_hover_tooltip_performance_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin hover tooltip performance/accessibility contract failed")
 
 
+def run_admin_latency_contract_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_latency_contracts.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin latency/save-conflict contract failed")
+
+
 def run_export_log_format_checks() -> None:
     commands = [
         (["node", "scripts/verify_export_log_format.mjs"], "export log format contract failed"),
@@ -870,6 +886,7 @@ with tempfile.TemporaryDirectory(prefix="verify-arrive-time-route-") as tmpdir:
 print("canonical arrive-time route checks passed")
 """
     attendance_contact_driver = r"""
+import json
 import pathlib
 import tempfile
 
@@ -880,11 +897,56 @@ with tempfile.TemporaryDirectory(prefix="verify-attendance-contact-routes-") as 
     root = pathlib.Path(tmpdir)
     attend.ATTENDANCE_PATH = root / "attendance.json"
     attend.CONTACT_PATH = root / "contact.json"
+    attend.STU_PATH = root / "students.json"
+    attend.EXTRA_PATH = root / "extra_attend.json"
+    attend.MAKEUP_CARRYOVER_PATH = root / "makeup_carryover.json"
+
+    date_key = "2026-08-23"
+    attend.STU_PATH.write_text(json.dumps([
+        {"id": "regular", "name": "Regular", "day1": "일1"},
+        {"id": "extra-only", "name": "Extra", "day1": "월1"},
+        {"id": "makeup-only", "name": "Makeup", "day1": "월1"},
+        {"id": "absent-makeup", "name": "Absent makeup", "day1": "월1"},
+        {"id": "idle", "name": "Idle", "day1": "월1"},
+    ]), encoding="utf-8")
+    attend.EXTRA_PATH.write_text(json.dumps({date_key: ["extra-only"]}), encoding="utf-8")
+    attend.MAKEUP_CARRYOVER_PATH.write_text(json.dumps({
+        "by_absence": {
+            "2026-08-01": {
+                "makeup-only|1": {
+                    "scheduledMakeup": {
+                        "originalAbsenceId": "absence|2026-08-01|makeup-only|1",
+                        "studentId": "makeup-only",
+                        "makeupDate": date_key,
+                        "makeupTimes": [1],
+                        "status": "scheduled",
+                    },
+                },
+                "absent-makeup|2": {
+                    "scheduledMakeup": {
+                        "originalAbsenceId": "absence|2026-08-01|absent-makeup|2",
+                        "studentId": "absent-makeup",
+                        "makeupDate": date_key,
+                        "makeupTimes": [2],
+                        "status": "scheduled",
+                    },
+                },
+            },
+        },
+    }), encoding="utf-8")
+    attend.load_absent = lambda: {
+        "by_date": {date_key: ["absent-makeup"]},
+        "by_student": {},
+        "by_slot": {},
+    }
 
     app = Flask("verify-attendance-contact-routes")
     app.register_blueprint(attend.bp_api_attend)
     client = app.test_client()
-    date_key = "2026-08-23"
+
+    roster = client.get(f"/api/attend?date={date_key}")
+    assert roster.status_code == 200
+    assert [row["id"] for row in roster.get_json()] == ["regular", "extra-only", "makeup-only"]
 
     for base_path, patch_path, store_path in (
         ("/api/attendance", "/api/attendance/patch", attend.ATTENDANCE_PATH),
@@ -955,6 +1017,7 @@ print("updates GET-only base route checks passed")
     ]
     commands = [
         (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
+        (["node", "scripts/verify_makeup_schedule_links.mjs"], "makeup schedule roster-link contract failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
         (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
         (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
@@ -1315,8 +1378,10 @@ def run_student_test_ocr_contract_checks() -> None:
         ([sys.executable, "-m", "scripts.verify_student_test_ocr_worker_contracts"], "OCR workers"),
         ([sys.executable, "-m", "scripts.verify_student_test_choice_training"], "OCR choice training"),
         ([sys.executable, "-m", "scripts.verify_student_test_aihub_validation"], "OCR AI Hub validation audit"),
+        ([sys.executable, "-m", "scripts.verify_student_test_aihub_choice_validation"], "OCR AI Hub choice validation"),
         ([sys.executable, "-m", "scripts.verify_student_test_local_ocr_accuracy"], "OCR local accuracy benchmark"),
         ([sys.executable, "-m", "scripts.verify_student_test_formula_training_config"], "OCR formula training config"),
+        ([sys.executable, "-m", "scripts.verify_student_test_formula_profile_training"], "OCR formula profile training"),
         ([sys.executable, "-m", "scripts.verify_aihub_split_archive_unpack"], "OCR AI Hub archive unpack"),
         ([sys.executable, "-m", "scripts.verify_student_test_ocr_job_runner"], "OCR job runner"),
         ([sys.executable, "-m", "scripts.verify_student_test_solution_crop"], "OCR solution crop"),
@@ -7610,14 +7675,32 @@ def run_admin_wave_b_source_checks() -> None:
         "critical /api/progress bootstrap GET must not use silent fallback",
     )
     for optional_call in [
-        "api.getOr('/api/materials', {})",
-        "api.getOr('/api/mat-assign', {})",
-        "api.getOr('/api/extra-attend', {})",
         "api.getOr('/api/absent', {})",
         "api.getOr('/api/school-calendar', {})",
-        "api.getOr('/api/tests-config', { categories: {} })",
     ]:
         _assert_unit(optional_call in state_js, f"optional bootstrap fallback must remain: {optional_call}")
+    bootstrap_start = state_js.index("export async function bootstrap()")
+    bootstrap_block = state_js[bootstrap_start:]
+    for deferred_url in [
+        "/api/materials",
+        "/api/mat-assign",
+        "/api/extra-attend",
+        "/api/tests-config",
+    ]:
+        _assert_unit(
+            deferred_url not in bootstrap_block,
+            f"noncritical endpoint must not block the first admin render: {deferred_url}",
+        )
+    for compatibility_default in [
+        "materials: {}",
+        "assigns: {}",
+        "extra: {}",
+        "testsConfig: { categories: {} }",
+    ]:
+        _assert_unit(
+            compatibility_default in state_js,
+            f"deferred bootstrap state must retain its compatibility default: {compatibility_default}",
+        )
     for critical_call in [
         "getCriticalJson('/api/updates'",
         "getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`",
@@ -8671,6 +8754,9 @@ def run_admin_video_modal_preflight_source_checks() -> None:
     save_start = video_modal_js.index("async function saveVideoAssignmentForCurrent")
     save_end = video_modal_js.index("window.saveVideoAssignmentPopup", save_start)
     save_block = video_modal_js[save_start:save_end]
+    updates_patch_start = video_modal_js.index("async function patchVideoAssignmentEntry")
+    updates_patch_end = video_modal_js.index("function updateVideoRowPresentation", updates_patch_start)
+    updates_patch_block = video_modal_js[updates_patch_start:updates_patch_end]
 
     _assert_unit(
         "window.showStudentPopupSaveResult = showSavePopup;" in video_modal_js
@@ -8722,7 +8808,7 @@ def run_admin_video_modal_preflight_source_checks() -> None:
     )
     _assert_unit(
         save_block.index("fetchLatestExtraVideoLogEntry(today, sid)") <
-        save_block.index("fetch('/api/updates/patch'"),
+        save_block.index("patchVideoAssignmentEntry("),
         "latest log preflight must happen before /api/updates/patch",
     )
     _assert_unit(
@@ -8730,12 +8816,18 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "extra video log patch must receive the same latest entry used for preflight",
     )
     for snippet in [
-        "fetch('/api/updates/patch'",
-        "body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))",
+        "patchVideoAssignmentEntry(",
+        "buildVideoAssignmentPatchBody(today, sid, selected, source)",
         "fetch('/api/updates?readOnly=1', { cache: 'no-store' })",
         "body.base = { notes: prevNotes.trim() };",
     ]:
         _assert_unit(snippet in save_block or snippet in patch_block, f"video assignment source shape must remain: {snippet}")
+    _assert_unit(
+        "fetch('/api/updates/patch'" in updates_patch_block
+        and "classifySaveConflict(data, '영상 배정')" in updates_patch_block
+        and "conflict.retryable && attempt < delays.length" in updates_patch_block,
+        "video assignment transport must retry only classified transient lock conflicts",
+    )
     for snippet in [
         "function latestAutoAssignStatusForSid",
         "function applyWatchStatusForAutoAssign",
@@ -8873,6 +8965,7 @@ const source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-05';")
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
   .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
 const harness = `
@@ -9263,6 +9356,7 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-07';")
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
   .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
 const harness = `
@@ -9958,7 +10052,8 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js?v=20260826-save-feedback2';", "const initTestModal = () => {};");
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 source = source.replace(
   "  logSave.addEventListener('click', async () => {",
   "  window.__logModalHarnessReapply = reapplyCarriedTestAssignmentForCurrent;\n\n  logSave.addEventListener('click', async () => {",
@@ -10290,7 +10385,8 @@ let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js?v=20260826-save-feedback2';", "const initTestModal = () => {};");
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 const harness = `
 export function __initHarness() {
   globalThis.__installModalElements();
@@ -10888,6 +10984,7 @@ def run_unit_checks() -> bool:
         run_admin_date_session_storage_checks,
         run_test_catalog_search_sort_checks,
         run_hover_tooltip_performance_checks,
+        run_admin_latency_contract_checks,
         run_export_log_format_checks,
         run_today_completion_checks,
         run_legacy_consumer_cleanup_checks,

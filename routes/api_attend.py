@@ -9,6 +9,7 @@ from typing import Dict, List, Any
 from flask import Blueprint, abort, jsonify, request
 
 from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, ABS_PATH
+from core.student_schedule_projection import scheduled_makeup_student_ids
 from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 from core.absent import load_absent, normalize_absent, save_absent, DATE_RE
@@ -149,65 +150,60 @@ def _absence_pairs(payload: Any) -> set[tuple[str, str]]:
     return pairs
 
 
+def _load_scheduled_makeup_ids(date_key: str) -> set[str]:
+    try:
+        carryover = load(MAKEUP_CARRYOVER_PATH)
+    except Exception:
+        return set()
+    return scheduled_makeup_student_ids(carryover, date_key=date_key)
+
+
+def _attendance_roster_for_date(target: dt.date) -> List[dict]:
+    date_key = target.isoformat()
+    weekday = "월화수목금토일"[target.weekday()]
+    students_arr: List[dict] = load(STU_PATH)
+
+    regular = [
+        student for student in students_arr
+        if any(
+            ((student.get(day_key, "") or "").startswith(weekday))
+            for day_key in ("day1", "day2", "day3")
+        )
+    ]
+
+    extra_ids = {
+        str(sid).strip()
+        for sid in (load(EXTRA_PATH).get(date_key, []) or [])
+        if str(sid).strip()
+    }
+    supplemental_ids = extra_ids | _load_scheduled_makeup_ids(date_key)
+    supplemental = [
+        student for student in students_arr
+        if str(student.get("id")).strip() in supplemental_ids
+    ]
+    roster = {str(student["id"]): student for student in (regular + supplemental)}
+
+    absent_payload = load_absent()
+    absent_ids = set(map(str, absent_payload.get("by_date", {}).get(date_key, [])))
+    for sid in list(roster):
+        if sid in absent_ids:
+            del roster[sid]
+    return list(roster.values())
+
+
 # ------------------------------------------------------------------
 # Today students / date-scoped students
 # ------------------------------------------------------------------
 @bp_api_attend.get("/api/today")
 def api_today():
-    today = dt.date.today()
-    wchr = "월화수목금토일"[today.weekday()]
-    students_arr: List[dict] = load(STU_PATH)
-
-    regular = [
-        s for s in students_arr
-        if any(((s.get(d, "") or "").startswith(wchr) for d in ("day1", "day2", "day3")))
-    ]
-
-    extra_ids = load(EXTRA_PATH).get(today.isoformat(), [])
-    extra_students = [
-        s for s in students_arr
-        if str(s.get("id")) in map(str, extra_ids)
-    ]
-
-    all_today = {str(s["id"]): s for s in (regular + extra_students)}
-
-    abs_all = load_absent()
-    absent_ids = set(map(str, abs_all.get("by_date", {}).get(today.isoformat(), [])))
-    for sid in list(all_today.keys()):
-        if sid in absent_ids:
-            del all_today[sid]
-
-    return jsonify(list(all_today.values()))
+    return jsonify(_attendance_roster_for_date(dt.date.today()))
 
 
 @bp_api_attend.get("/api/attend")
 def api_attend():
     date_str = _date_key_from_query()
     target = dt.date.fromisoformat(date_str)
-    wchr = "월화수목금토일"[target.weekday()]
-
-    students_arr: List[dict] = load(STU_PATH)
-
-    regular = [
-        s for s in students_arr
-        if any(((s.get(d, "") or "").startswith(wchr) for d in ("day1", "day2", "day3")))
-    ]
-
-    extra_ids = load(EXTRA_PATH).get(target.isoformat(), [])
-    extra_students = [
-        s for s in students_arr
-        if str(s.get("id")) in map(str, extra_ids)
-    ]
-
-    all_today = {str(s["id"]): s for s in (regular + extra_students)}
-
-    abs_all = load_absent()
-    absent_ids = set(map(str, abs_all.get("by_date", {}).get(target.isoformat(), [])))
-    for sid in list(all_today.keys()):
-        if sid in absent_ids:
-            del all_today[sid]
-
-    return jsonify(list(all_today.values()))
+    return jsonify(_attendance_roster_for_date(target))
 
 
 # ------------------------------------------------------------------
@@ -382,4 +378,3 @@ def api_contact_patch():
     checked = bool(payload.get("value", True))
     _patch_flag(CONTACT_PATH, date_key, sid, checked)
     return jsonify({"ok": True, "date": date_key, "sid": sid, "value": 1 if checked else 0})
-

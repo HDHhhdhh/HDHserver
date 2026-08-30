@@ -21,7 +21,10 @@ import {
   searchKeyForText as sharedSearchKeyForText,
   studentSearchKey as sharedStudentSearchKey,
 } from '../../shared/search.js';
-import { countPendingMakeupsBySid } from './makeupPending.js';
+import {
+  countPendingMakeupsBySid,
+  scheduledMakeupStudentIdsForDate,
+} from './makeupPending.js';
 import { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
 
 export { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
@@ -771,22 +774,26 @@ async function loadExtraAttendMap() {
   }
 }
 
-async function computeTodayList(dateKey) {
+function computeTodayList(dateKey, extraMap = state.extra || {}) {
   const dateStr = dateKey || getAdminDate();
   const wchr = yoilOf(dateStr);
   const studs = state.students || [];
   const absentByDate = state.absentByDate || {};
 
-  const extraMap = await loadExtraAttendMap();
-
   const regular = studs.filter(s => hasWeekday(s, wchr));
   const extraIds = (extraMap[dateStr] || []).map(x => String(x).trim());
-  const extraStudents = extraIds
+  const scheduledMakeupIds = scheduledMakeupStudentIdsForDate({
+    students: studs,
+    carryover: _makeupCarryover || {},
+    date: dateStr,
+  });
+  const supplementalIds = Array.from(new Set([...extraIds, ...scheduledMakeupIds]));
+  const supplementalStudents = supplementalIds
     .map(id => studs.find(s => String(s.id) === id))
     .filter(Boolean);
 
   const seen = new Set();
-  let list = [...regular, ...extraStudents].filter(s => {
+  let list = [...regular, ...supplementalStudents].filter(s => {
     const id = String(s.id);
     if (seen.has(id)) return false;
     seen.add(id);
@@ -866,6 +873,7 @@ export async function loadTodayAndRender(options = {}) {
   const dateKey = getAdminDate();
   const forceDatePayloads = !!(force && (options.reason === 'date' || options.forceDatePayloads));
 
+  const extraAttendPromise = loadExtraAttendMap();
   await Promise.all([
     refreshStudentsIfNeeded({ force }),
     refreshAbsencesIfNeeded({ force }),
@@ -876,14 +884,16 @@ export async function loadTodayAndRender(options = {}) {
     ensureContactLoaded(dateKey, { force }),
     ensureArriveLoaded(dateKey, { force }),
     loadMakeupCarryoverMap({ force }),
+    extraAttendPromise,
   ]);
 
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
   const localDoneEntries = sortDoneEntries(collectUnarchivedLogsByDate(dateKey));
+  const extraMap = await extraAttendPromise;
 
   const [{ list: raw }] = await Promise.all([
-    computeTodayList(dateKey),
+    computeTodayList(dateKey, extraMap),
     loadOrderMap({ force }),
   ]);
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;

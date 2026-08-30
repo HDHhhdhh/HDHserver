@@ -381,7 +381,9 @@ def main() -> int:
             assert response.status_code == 409
             assert response.get_json() == {
                 "ok": False,
-                "error": "updates lock busy",
+                "code": "updates_lock_timeout",
+                "retryable": True,
+                "error": "영상 배정 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
             }
             _assert_unchanged(updates_path, failure_before, "PATCH lock timeout")
             api_updates._updates_lock = previous_lock
@@ -477,7 +479,9 @@ def main() -> int:
             assert response.status_code == 409
             assert response.get_json() == {
                 "ok": False,
-                "error": "self-study lock busy",
+                "code": "updates_lock_timeout",
+                "retryable": True,
+                "error": "영상 배정 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
             }
             _assert_unchanged(updates_path, failure_before, "self-study lock timeout")
 

@@ -230,7 +230,12 @@ def main() -> int:
             finally:
                 api_progress._progress_lock = previous_lock
             assert response.status_code == 409
-            assert response.get_json() == {"ok": False, "error": "lock busy"}
+            assert response.get_json() == {
+                "ok": False,
+                "code": "progress_lock_timeout",
+                "retryable": True,
+                "error": "진도 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
+            }
             _assert_unchanged(progress_path, before_failure_bytes, before_failure_hash, "lock timeout")
 
             basic_source = (ROOT / "routes" / "api_basic.py").read_text(encoding="utf-8")

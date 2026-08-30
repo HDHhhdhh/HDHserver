@@ -146,8 +146,13 @@ def api_updates_patch():
 
             save_updates_strict(UPD_PATH, current)
         return jsonify({"ok": True, "assignment": assignment})
-    except TimeoutError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 409
+    except TimeoutError:
+        return jsonify({
+            "ok": False,
+            "code": "updates_lock_timeout",
+            "retryable": True,
+            "error": "영상 배정 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
+        }), 409
     except UpdateAssignmentStoreError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 503
 
@@ -183,8 +188,13 @@ def api_updates_self_study():
         )
     except StudentAssignmentNotFoundError:
         abort(404, description="학생을 찾을 수 없습니다.")
-    except TimeoutError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 409
+    except TimeoutError:
+        return jsonify({
+            "ok": False,
+            "code": "updates_lock_timeout",
+            "retryable": True,
+            "error": "영상 배정 저장 요청이 잠시 겹쳤습니다. 자동으로 다시 시도합니다.",
+        }), 409
     except UpdateAssignmentStoreError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 503
     return jsonify(payload), status

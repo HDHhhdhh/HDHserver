@@ -11,6 +11,7 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { classifySaveConflict } from '../core/saveConflict.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';
 
@@ -823,6 +824,66 @@ async function getJSON(url) {
   return { res, data };
 }
 
+async function getJSONStrict(url) {
+  const { res, data } = await getJSON(url);
+  if (!res.ok) throw new Error(`[videoModal] GET ${url} -> ${res.status}`);
+  return data && typeof data === 'object' ? data : {};
+}
+
+async function fetchJSONCached(url, ttlMs = 2500) {
+  const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const now = Date.now();
+  const hit = cache.get(url);
+  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+
+  const promise = getJSONStrict(url);
+  cache.set(url, { ts: now, promise });
+  promise.catch(() => {
+    if (cache.get(url)?.promise === promise) cache.delete(url);
+  });
+  return promise;
+}
+
+function fetchJSONForVideoOpen(url) {
+  const promise = fetchJSONCached(url);
+  const cache = window.__studentWorkFetchCache;
+  Promise.resolve().then(() => {
+    cache?.delete?.(url);
+  });
+  return promise;
+}
+
+function videoPopupReadUrls(date, sid) {
+  const dateKey = String(date || '').trim();
+  const sidKey = String(sid || '').trim();
+  const sidQuery = new URLSearchParams({ sid: sidKey }).toString();
+  const entryQuery = new URLSearchParams({ date: dateKey, sid: sidKey }).toString();
+  return [
+    '/api/updates?readOnly=1',
+    `/api/logs/entry?${entryQuery}`,
+    '/api/extra-attend',
+    `/api/progress?${sidQuery}`,
+    `/api/watch/latest?${sidQuery}`,
+  ];
+}
+
+function prefetchVideoModalDataForRow(row) {
+  const sid = String(row?.dataset?.sid || '').trim();
+  const date = String(row?.dataset?.date || getAdminDate()).trim();
+  if (!sid || !date) return Promise.resolve([]);
+  return Promise.allSettled(videoPopupReadUrls(date, sid).map(url => fetchJSONCached(url)));
+}
+
+function invalidateVideoModalHydrationCaches(date, sid) {
+  const sidKey = String(sid || '').trim();
+  const dateKey = String(date || '').trim();
+  if (!sidKey) return;
+  const cache = window.__studentWorkFetchCache;
+  if (!cache || typeof cache.delete !== 'function') return;
+  videoPopupReadUrls(dateKey, sidKey).forEach(url => cache.delete(url));
+  cache.delete(`/api/logs?${new URLSearchParams({ sid: sidKey }).toString()}`);
+}
+
 function unwrapOkPayload(data, keyHint) {
   if (!data || typeof data !== 'object') return null;
 
@@ -840,8 +901,7 @@ function unwrapOkPayload(data, keyHint) {
 async function hydrateUpdates({ readOnly = false } = {}) {
   try {
     const url = readOnly ? '/api/updates?readOnly=1' : '/api/updates';
-    const { res, data } = await getJSON(url);
-    if (!res.ok) return false;
+    const data = await fetchJSONForVideoOpen(url);
 
     const obj = unwrapOkPayload(data, 'updates');
     if (obj && typeof obj === 'object') {
@@ -858,8 +918,7 @@ async function hydrateLogsEntry(today, sid) {
   // 있으면 사용, 없으면 무시
   try {
     const q = new URLSearchParams({ date: String(today), sid: String(sid) }).toString();
-    const { res, data } = await getJSON(`/api/logs/entry?${q}`);
-    if (!res.ok) return false;
+    const data = await fetchJSONForVideoOpen(`/api/logs/entry?${q}`);
 
     const entry = (data?.ok === true)
       ? (data.entry && typeof data.entry === 'object' ? data.entry : {})
@@ -877,8 +936,7 @@ async function hydrateLogsEntry(today, sid) {
 async function hydrateExtraAttend(today) {
   // 있으면 사용, 없으면 무시
   try {
-    const { res, data } = await getJSON('/api/extra-attend');
-    if (!res.ok) return false;
+    const data = await fetchJSONForVideoOpen('/api/extra-attend');
 
     const obj = unwrapOkPayload(data, 'extra') || unwrapOkPayload(data, 'data') || data;
     if (obj && typeof obj === 'object') {
@@ -901,8 +959,7 @@ async function hydrateProgressMaybe(date = '', sid = '') {
     // A date-scoped read makes completed/skipped videos look unseen again when
     // the popup is reopened, so keep the request student-scoped instead.
     const params = studentScoped ? new URLSearchParams({ sid: sidKey }) : null;
-    const { res, data } = await getJSON(`/api/progress${params ? `?${params.toString()}` : ''}`);
-    if (!res.ok) return false;
+    const data = await fetchJSONForVideoOpen(`/api/progress${params ? `?${params.toString()}` : ''}`);
 
     const obj = unwrapOkPayload(data, 'progress') || unwrapOkPayload(data, 'data') || data;
     if (obj && typeof obj === 'object') {
@@ -942,12 +999,14 @@ async function hydrateProgressMaybe(date = '', sid = '') {
 }
 
 async function hydrateForVideoModal(today, sid) {
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     hydrateUpdates({ readOnly: true }),
     hydrateLogsEntry(today, sid),
     hydrateExtraAttend(today),
     hydrateProgressMaybe(today, sid),
+    fetchLatestWatchForSid(sid),
   ]);
+  return results[4]?.status === 'fulfilled' ? results[4].value : {};
 }
 
 /* ───────────── 챕터 정렬 ───────────── */
@@ -1409,9 +1468,7 @@ async function fetchLatestWatchForSid(sid) {
   if (!key) return {};
   try {
     const params = new URLSearchParams({ sid: key });
-    const res = await fetch(`/api/watch/latest?${params.toString()}`, { cache: 'no-store' });
-    if (!res.ok) return {};
-    const payload = await res.json();
+    const payload = await fetchJSONForVideoOpen(`/api/watch/latest?${params.toString()}`);
     return (payload && typeof payload.watch === 'object') ? payload.watch : {};
   } catch {
     return {};
@@ -1432,10 +1489,14 @@ async function patchVideoProgressEntry(date, sid, progressMap) {
     let data = null;
     try { data = await res.json(); } catch {}
 
-    if (res.status === 409 && attempt < delays.length) {
-      try { toast(data?.error || '다른 사용자가 진도 저장 중입니다. 잠시 후 다시 저장합니다.'); } catch {}
-      await new Promise(resolve => window.setTimeout(resolve, delays[attempt]));
-      continue;
+    if (res.status === 409) {
+      const conflict = classifySaveConflict(data, '영상 진도');
+      if (conflict.retryable && attempt < delays.length) {
+        try { toast(conflict.message); } catch {}
+        await new Promise(resolve => window.setTimeout(resolve, delays[attempt]));
+        continue;
+      }
+      throw new Error(conflict.message);
     }
     if (!res.ok || data?.ok === false) {
       throw new Error(data?.error || `영상 진도 저장 실패 (${res.status})`);
@@ -1443,6 +1504,34 @@ async function patchVideoProgressEntry(date, sid, progressMap) {
     return (data && typeof data.progress === 'object') ? data.progress : changes;
   }
   throw new Error('영상 진도 저장 재시도 횟수를 초과했습니다.');
+}
+
+async function patchVideoAssignmentEntry(payload) {
+  const delays = [900, 1400, 2200];
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    const res = await fetch('/api/updates/patch', {
+      method: 'POST',
+      headers: CT,
+      body: JSON.stringify(payload),
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+
+    if (res.status === 409) {
+      const conflict = classifySaveConflict(data, '영상 배정');
+      if (conflict.retryable && attempt < delays.length) {
+        try { toast(conflict.message); } catch {}
+        await new Promise(resolve => window.setTimeout(resolve, delays[attempt]));
+        continue;
+      }
+      throw new Error(conflict.message);
+    }
+    if (!res.ok || data?.ok === false) {
+      throw new Error(data?.error || `영상 배정 저장 실패 (${res.status})`);
+    }
+    return data;
+  }
+  throw new Error('영상 배정 저장 재시도 횟수를 초과했습니다.');
 }
 
 function updateVideoRowPresentation(row, stateValue, checked) {
@@ -1888,7 +1977,7 @@ export function initVideoModal() {
     vidModal.style.display = 'flex';
 
     // ✅ 결석 관련 fetch 없음. 필요한 것만 hydrate.
-    await hydrateForVideoModal(today, editingSid);
+    const watchByMid = await hydrateForVideoModal(today, editingSid);
     if (openSeq !== videoOpenSeq || String(editingSid) !== String(tr?.dataset?.sid || '')) return;
 
     mTitle.textContent = `${stu.name} – ${stu.curriculum} (${stu.subCurriculum || '전체'})`;
@@ -1931,8 +2020,6 @@ export function initVideoModal() {
     activeBlockedMids = {};
     activeAutoGenerated = existingAssignmentAuto;
     const progressStatus = latestAutoAssignStatusForSid(editingSid, today);
-    const watchByMid = await fetchLatestWatchForSid(editingSid);
-    if (openSeq !== videoOpenSeq || String(editingSid) !== String(tr?.dataset?.sid || '')) return;
     activeVideoProgress = applyWatchStatusForAutoAssign(progressStatus, watchByMid);
     activeVideoProgressInitial = { ...activeVideoProgress };
     activeVideoProgressPatch = {};
@@ -1961,6 +2048,8 @@ export function initVideoModal() {
   }
 
   window.openVideoAssignmentPopupForRow = openVideoModalForRow;
+  window.prefetchVideoAssignmentPopupForRow = prefetchVideoModalDataForRow;
+  window.invalidateVideoAssignmentPopupCache = invalidateVideoModalHydrationCaches;
   window.clearVideoAssignmentPopupForCurrent = () => {
     setCheckedMids([]);
     clearVideoMultiSelection();
@@ -2230,6 +2319,7 @@ export function initVideoModal() {
       activeVideoProgressInitial = { ...activeVideoProgress };
       activeVideoProgressPatch = {};
       activeVideoSelectionDirty = false;
+      invalidateVideoModalHydrationCaches(today, sid);
       if (showPopup) showSavePopup('영상 제외 상태 저장 완료');
       if (refresh) document.dispatchEvent(new CustomEvent('admin:refresh'));
       return selected;
@@ -2240,12 +2330,10 @@ export function initVideoModal() {
     state.updates = state.updates || {};
     applyVideoAssignmentState(state.updates, today, sid, selected, source);
 
-    const res = await fetch('/api/updates/patch', {
-      method: 'POST',
-      headers: CT,
-      body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))
-    });
-    if (!res.ok) throw new Error('video assignment save failed');
+    await patchVideoAssignmentEntry(
+      buildVideoAssignmentPatchBody(today, sid, selected, source),
+    );
+    invalidateVideoModalHydrationCaches(today, sid);
 
     const mergedProgress = await patchVideoProgressEntry(today, sid, progressPatch);
     if (mergedProgress) {
@@ -2258,6 +2346,7 @@ export function initVideoModal() {
     const obj = unwrapOkPayload(u, 'updates') || u;
     if (obj && typeof obj === 'object') state.updates = obj;
     await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);
+    invalidateVideoModalHydrationCaches(today, sid);
     activeAssignmentManual = source === 'manual';
     activeVideoSelectionDirty = false;
     activeVideoProgressInitial = { ...activeVideoProgress };

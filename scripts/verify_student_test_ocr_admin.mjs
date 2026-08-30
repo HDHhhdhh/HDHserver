@@ -28,8 +28,8 @@ for (const id of [
 assert.match(html, /id="studentTestOcrReviewOpen"[^>]*hidden/);
 assertions += 1;
 
-assert.ok(main.includes("import { initStudentTestOcrReview }"));
-assert.ok(main.includes('initStudentTestOcrReview();'));
+assert.ok(main.includes("import('./features/studentTestOcrReview.js"));
+assert.ok(main.includes('module.initStudentTestOcrReview()'));
 assertions += 2;
 
 assert.ok(feature.includes("import { getAdminDate }"));

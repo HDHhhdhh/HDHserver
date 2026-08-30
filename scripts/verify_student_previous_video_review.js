@@ -600,6 +600,7 @@ async function runStudentFixture(options = {}) {
   const document = buildStudentFixtureDom();
   const requestLog = [];
   const alerts = [];
+  let reloadCount = 0;
   const storage = new Map(Object.entries(options.initialStorage || {}));
   const listeners = new Map();
   const student = { id: sid, name: '테스트 학생', curriculum: 'ALG', subCurriculum: 'A', day1: '월1' };
@@ -626,7 +627,13 @@ async function runStudentFixture(options = {}) {
     Date: FixtureDate,
     innerWidth: 1280,
     navigator: {},
-    location: { pathname: `/student/${sid}`, search: '', hash: '', origin: 'http://localhost' },
+    location: {
+      pathname: `/student/${sid}`,
+      search: '',
+      hash: '',
+      origin: 'http://localhost',
+      reload() { reloadCount += 1; },
+    },
     document,
     addEventListener(type, handler) {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -708,7 +715,16 @@ async function runStudentFixture(options = {}) {
   await new Promise(resolve => setImmediate(resolve));
   await Promise.resolve();
   await new Promise(resolve => setImmediate(resolve));
-  return { document, window, requestLog, alerts, storage, context, fixtureSelfStudy: bootstrap?.selfStudy };
+  return {
+    document,
+    window,
+    requestLog,
+    alerts,
+    storage,
+    context,
+    fixtureSelfStudy: bootstrap?.selfStudy,
+    getReloadCount: () => reloadCount,
+  };
 }
 
 function reviewRows(document) {
@@ -836,6 +852,8 @@ async function runDomContractCurrent() {
   await new Promise(resolve => setImmediate(resolve));
   assert(fixture.requestLog.length === requestCountBeforeRegistration,
     'local registration must not write or fetch a server assignment', checks);
+  assert(fixture.getReloadCount() === 1,
+    'successful local registration must force exactly one page reload', checks);
   assert(register.disabled === true, 'register must disable after the checked MID is registered', checks);
   const registeredRows = reviewRows(fixture.document);
   assert(registeredRows.length === rows.length
@@ -860,6 +878,7 @@ async function runDomContractCurrent() {
     && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'second-done-mid',
   'registered review selection must persist under the SID/date-scoped localStorage key', checks);
   const cancellationRequestCount = fixture.requestLog.length;
+  const cancellationReloadCount = fixture.getReloadCount();
   registeredSecondDoneCheckbox.click();
   await new Promise(resolve => setImmediate(resolve));
   const cancelledSecondDoneRow = reviewRows(fixture.document)
@@ -873,6 +892,8 @@ async function runDomContractCurrent() {
   'unchecking a registered review row must cancel the local registration and restore its chooser state', checks);
   assert(fixture.requestLog.length === cancellationRequestCount,
     'review cancellation must not fetch or write any server state', checks);
+  assert(fixture.getReloadCount() === cancellationReloadCount,
+    'review cancellation must not force a page reload', checks);
   cancelledSecondDoneCheckbox.click();
   assert(register.disabled === false,
     'a cancelled review row must be immediately selectable for registration again', checks);
@@ -880,12 +901,14 @@ async function runDomContractCurrent() {
   await new Promise(resolve => setImmediate(resolve));
   assert(fixture.document.getElementById('vidList').querySelectorAll('li[data-mid="second-done-mid"]').length === 1
     && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'second-done-mid'
-    && fixture.requestLog.length === cancellationRequestCount,
+    && fixture.requestLog.length === cancellationRequestCount
+    && fixture.getReloadCount() === cancellationReloadCount + 1,
   'a cancelled review video must support clean local re-registration without server requests', checks);
   const registrationRequestCount = fixture.requestLog.length;
   register.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert(fixture.requestLog.length === registrationRequestCount,
+  assert(fixture.requestLog.length === registrationRequestCount
+    && fixture.getReloadCount() === cancellationReloadCount + 1,
     'repeated registration must be idempotent with no additional requests', checks);
   assert(fixture.document.getElementById('vidList').querySelectorAll('li[data-mid]').length === registeredMids.length,
     'repeated registration must not duplicate playlist rows', checks);
@@ -1002,8 +1025,9 @@ async function runDomContractCurrent() {
   assert(orderedPlaylistMids.join('|') === 'today-mid|second-mid|first-mid',
     'registration must append in checkbox selection order after today rows', checks);
   assert(ordered.requestLog.length === orderedRequestLogBefore
-    && requestCount(ordered.requestLog, '/api/get-url') === orderedGetUrlBefore,
-    'registration must preserve current autoplay state without a new playback request', checks);
+    && requestCount(ordered.requestLog, '/api/get-url') === orderedGetUrlBefore
+    && ordered.getReloadCount() === 1,
+    'registration must preserve current autoplay state, avoid playback requests, and force one reload', checks);
 
   const noToday = await runStudentFixture({
     assignment: [],
@@ -1017,8 +1041,9 @@ async function runDomContractCurrent() {
   await new Promise(resolve => setImmediate(resolve));
   const standalonePlaylist = noToday.document.getElementById('vidList').querySelectorAll('li[data-mid]');
   assert(standalonePlaylist.length === 1 && standalonePlaylist[0].dataset.mid === 'standalone-mid'
-    && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0,
-    'local registration must append a standalone review MID without server or playback requests', checks);
+    && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0
+    && noToday.getReloadCount() === 1,
+    'local registration must append a standalone review MID, force one reload, and avoid server or playback requests', checks);
   const standalonePlayer = noToday.document.getElementById('player');
   const standalonePlayerCard = standalonePlayer.closest('.player-card');
   const standalonePlayerBox = noToday.document.getElementById('playerBox');
@@ -1073,7 +1098,8 @@ async function runDomContractCurrent() {
   assert(outsideRow.dataset.playbackRestricted === 'true'
     && outsideRegister.hidden === true && outsideRegister.disabled === true
     && outside.requestLog.length === outsideBefore
-    && requestCount(outside.requestLog, '/api/get-url') === 0,
+    && requestCount(outside.requestLog, '/api/get-url') === 0
+    && outside.getReloadCount() === 0,
   'outside-academy review choices must remain title-only and non-actionable without playback or watch mutation', checks);
 
   for (const [label, options] of Object.entries({

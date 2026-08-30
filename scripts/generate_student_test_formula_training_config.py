@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -28,6 +29,14 @@ def parse_args() -> argparse.Namespace:
 
 def _quoted(path: Path) -> str:
     return json.dumps(path.resolve().as_posix(), ensure_ascii=False)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _profile_manifest(root: Path, profile: str) -> dict:
@@ -184,12 +193,18 @@ def generate(
         "grades": list(formula_profile_datasets(profile)),
         "trainCount": int(train_manifest.get("count") or 0),
         "validationCount": int(validation_manifest.get("count") or 0),
+        "trainDataset": str(train_root),
+        "validationDataset": str(validation_root),
         "baseModelDir": str(base_model_dir),
         "baseWeight": str(base_weight),
         "outputConfig": str(output_config),
         "outputDir": str(output_dir),
         "device": "cuda",
         "maxIters": max_iters,
+        "batchSize": batch_size,
+        "accumGradIters": accum_grad_iters,
+        "numWorkers": num_workers,
+        "configSha256": _sha256_file(output_config),
         "answerKeyFieldsUsed": 0,
     }
     output_config.with_suffix(output_config.suffix + ".manifest.json").write_text(

@@ -5,7 +5,7 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { saveWeekendSlotsPatch } from './today.state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
-import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js';
+import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js?v=20260814-active-semester1';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
 import { ensureOk, sendJson } from '../../shared/api.js';
 import {
@@ -477,6 +477,7 @@ export function initCalendar() {
   let EXTRA = {};     // {"YYYY-MM-DD":[sid,...]}
   let WEEKEND = {};   // {"YYYY-MM-DD": {sid: 1|2|3 | [1,2,3]}}
   let CARRYOVER = {}; // {"by_absence":{"YYYY-MM-DD":{"sid":{state:"carried"}}}}
+  let preloadExtraWeekendPromise = null;
 
   // 슬롯 버튼 클릭 핸들러 중복 방지 플래그
   let slotClickBound = false;
@@ -744,16 +745,31 @@ export function initCalendar() {
   }
 
   async function preloadExtraWeekend() {
-    try { EXTRA = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()); } catch { EXTRA = {}; }
-    try { WEEKEND = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()); } catch { WEEKEND = {}; }
+    if (preloadExtraWeekendPromise) return preloadExtraWeekendPromise;
+
+    const request = (async () => {
+      const [extraResult, weekendResult, carryoverResult, absentResult] = await Promise.allSettled([
+        fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
+        fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()),
+        fetchMakeupCarryoverSnapshot(),
+        fetchAbsentSnapshot(),
+      ]);
+
+      EXTRA = extraResult.status === 'fulfilled' ? extraResult.value : {};
+      WEEKEND = weekendResult.status === 'fulfilled' ? weekendResult.value : {};
+      CARRYOVER = carryoverResult.status === 'fulfilled' ? carryoverResult.value.payload : {};
+      if (absentResult.status === 'fulfilled') applyAbsentPayload(absentResult.value);
+      state.extra = EXTRA || {};
+      window.extra = state.extra;
+      CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
+    })();
+
+    preloadExtraWeekendPromise = request;
     try {
-      const { payload } = await fetchMakeupCarryoverSnapshot();
-      CARRYOVER = payload;
-    } catch { CARRYOVER = {}; }
-    try { applyAbsentPayload(await fetchAbsentSnapshot()); } catch {}
-    state.extra = EXTRA || {};
-    window.extra = state.extra;
-    CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
+      return await request;
+    } finally {
+      if (preloadExtraWeekendPromise === request) preloadExtraWeekendPromise = null;
+    }
   }
 
   function syncCalendarCellRatio() {

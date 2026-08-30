@@ -1471,6 +1471,7 @@ window.todayLocalKey = function () {
 
     void renderAssignedList({ autoPlay: false });
     renderPreviousVideos();
+    location.reload();
     return true;
   }
 

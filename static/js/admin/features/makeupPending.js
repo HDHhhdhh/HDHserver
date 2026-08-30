@@ -419,6 +419,17 @@ export function buildScheduledMakeupRows({ students = [], carryover = {} } = {})
   );
 }
 
+export function scheduledMakeupStudentIdsForDate({ students = [], carryover = {}, date = '' } = {}) {
+  const dateKey = normDate(date);
+  if (!dateKey) return [];
+  return Array.from(new Set(
+    buildScheduledMakeupRows({ students, carryover })
+      .filter(row => normDate(row.scheduledMakeup?.makeupDate) === dateKey)
+      .map(row => String(row.sid || '').trim())
+      .filter(Boolean)
+  ));
+}
+
 export function buildActiveScheduledMakeupRows({ operatingDate = '', ...input } = {}) {
   const referenceDate = normDate(operatingDate);
   const scheduledRows = buildScheduledMakeupRows(input);

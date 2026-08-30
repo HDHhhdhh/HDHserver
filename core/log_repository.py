@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
@@ -22,6 +23,69 @@ MergeFn = Callable[[dict, dict], dict]
 ConflictFn = Callable[[dict, dict], bool]
 TruthyFn = Callable[[Any], bool]
 LockFactory = Callable[[], Any]
+
+
+_LOG_JSON_READ_CACHE_LOCK = threading.Lock()
+_LOG_JSON_READ_CACHE: dict[
+    str,
+    tuple[tuple[int, int, int, int] | None, dict, str],
+] = {}
+_LOG_JSON_READ_CACHE_MAX_PATHS = 16
+
+
+def _log_json_signature(path: pathlib.Path) -> tuple[int, int, int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    return (
+        int(stat.st_mtime_ns),
+        int(getattr(stat, "st_ctime_ns", 0)),
+        int(stat.st_size),
+        int(getattr(stat, "st_ino", 0)),
+    )
+
+
+def _read_log_json_for_cache(path: pathlib.Path) -> tuple[dict, str]:
+    try:
+        raw = json.loads(path.read_text("utf-8-sig"))
+    except FileNotFoundError:
+        return {}, "missing"
+    except Exception:
+        return {}, "invalid"
+    return (raw, "available") if isinstance(raw, dict) else ({}, "invalid")
+
+
+def _cached_log_json_for_read(path_value: Any) -> tuple[dict, str]:
+    path = pathlib.Path(path_value)
+    key = os.path.normcase(os.path.abspath(str(path)))
+    with _LOG_JSON_READ_CACHE_LOCK:
+        signature = _log_json_signature(path)
+        cached = _LOG_JSON_READ_CACHE.get(key)
+        if cached is not None and cached[0] == signature:
+            return cached[1], cached[2]
+        if cached is not None:
+            _LOG_JSON_READ_CACHE.pop(key, None)
+
+        data: dict = {}
+        status = "invalid"
+        stable = False
+        for _attempt in range(2):
+            data, status = _read_log_json_for_cache(path)
+            final_signature = _log_json_signature(path)
+            if final_signature == signature:
+                stable = True
+                signature = final_signature
+                break
+            signature = final_signature
+
+        if stable:
+            if key not in _LOG_JSON_READ_CACHE and len(_LOG_JSON_READ_CACHE) >= _LOG_JSON_READ_CACHE_MAX_PATHS:
+                _LOG_JSON_READ_CACHE.pop(next(iter(_LOG_JSON_READ_CACHE)), None)
+            _LOG_JSON_READ_CACHE[key] = (signature, data, status)
+        return data, status
 
 
 @dataclass
@@ -268,13 +332,16 @@ class LogRepository:
             if sid_filter:
                 entry = self._sid_lookup(by_sid, sid_filter)
                 if isinstance(entry, dict) and entry:
-                    out.setdefault(str(date), {})[str(sid_filter)] = self.repair_entry(entry, sid_filter)
+                    out.setdefault(str(date), {})[str(sid_filter)] = self.repair_entry(
+                        copy.deepcopy(entry),
+                        sid_filter,
+                    )
                 elif date_filter:
                     out.setdefault(str(date), {})
                 continue
 
             out[str(date)] = {
-                str(sid): self.repair_entry(entry, str(sid))
+                str(sid): self.repair_entry(copy.deepcopy(entry), str(sid))
                 for sid, entry in by_sid.items()
                 if isinstance(entry, dict)
             }
@@ -315,7 +382,10 @@ class LogRepository:
                     aliases.add(str(int(sid_s)))
                 if not (aliases & wanted) or not isinstance(entry, dict):
                     continue
-                out.setdefault(str(date), {})[sid_s] = self.repair_entry(entry, sid_s)
+                out.setdefault(str(date), {})[sid_s] = self.repair_entry(
+                    copy.deepcopy(entry),
+                    sid_s,
+                )
         return out
 
     @staticmethod
@@ -346,12 +416,12 @@ class LogRepository:
             mapping[key] = value
 
     def _json_entry(self, date: str, sid: str) -> dict:
-        logs = self.read_json_map()
+        logs, _status = _cached_log_json_for_read(self.logs_path)
         day = logs.get(date) if isinstance(logs, dict) else None
         entry = self._sid_lookup(day if isinstance(day, dict) else {}, sid)
         if not isinstance(entry, dict):
             entry = {}
-        return self.repair_entry(entry, sid)
+        return self.repair_entry(copy.deepcopy(entry), sid)
 
     def _merge_json_fallback_fields(self, primary: dict, fallback: dict, sid: str) -> dict:
         if not isinstance(primary, dict):
@@ -362,7 +432,7 @@ class LogRepository:
         out = dict(primary)
         for key, value in fallback.items():
             if key not in out or (is_empty_value(out.get(key)) and not is_empty_value(value)):
-                out[key] = value
+                out[key] = copy.deepcopy(value)
         return self.repair_entry(out, sid)
 
     def _merge_json_fallback_day(self, day: dict, by_sid: dict) -> None:
@@ -374,7 +444,7 @@ class LogRepository:
             if isinstance(existing, dict):
                 day[sid_s] = self._merge_json_fallback_fields(existing, entry, sid_s)
             elif sid_s not in day:
-                day[sid_s] = self.repair_entry(entry, sid_s)
+                day[sid_s] = self.repair_entry(copy.deepcopy(entry), sid_s)
 
     def _merge_json_fallback_map(self, sqlite_map: dict, json_map: dict) -> dict:
         out = dict(sqlite_map)
@@ -441,14 +511,14 @@ class LogRepository:
             except Exception:
                 pass
 
-        json_map = self.read_json_map()
+        json_map, _json_status = _cached_log_json_for_read(self.logs_path)
         if requested_sids:
             json_map = self._filter_json_map_sids(json_map, requested_sids, date_filter)
         elif date_filter or sid_filter:
             json_map = self._filter_json_map(json_map, date_filter, sid_filter)
 
         if not sqlite_ok:
-            return json_map
+            return copy.deepcopy(json_map)
 
         return self._merge_json_fallback_map(sqlite_map, json_map)
 
@@ -456,7 +526,7 @@ class LogRepository:
         if not isinstance(entry, dict) or not entry:
             return {}
         if full:
-            return self.repair_entry(entry, sid)
+            return self.repair_entry(copy.deepcopy(entry), sid)
 
         # Previous rows are used only to reconstruct assigned-test carry-over
         # and to detect that the student had activity on that date.
@@ -464,7 +534,7 @@ class LogRepository:
         for key in ("testAssignmentDailyTests", "assignedTests"):
             value = entry.get(key)
             if isinstance(value, list):
-                out[key] = value
+                out[key] = copy.deepcopy(value)
         return out
 
     def read_export_history(self, target_dates: dict[str, str]) -> dict:
@@ -516,7 +586,7 @@ class LogRepository:
                 pass
 
         json_projected: Dict[str, Dict[str, dict]] = {}
-        json_map = self.read_json_map()
+        json_map, _json_status = _cached_log_json_for_read(self.logs_path)
         for date, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
             if not isinstance(by_sid, dict):
                 continue
@@ -1014,7 +1084,7 @@ class LogRepository:
             except Exception:
                 pass
 
-        json_map, json_status = self._read_json_map_with_status()
+        json_map, json_status = _cached_log_json_for_read(self.logs_path)
         for date, by_sid in json_map.items():
             if not isinstance(by_sid, dict):
                 continue

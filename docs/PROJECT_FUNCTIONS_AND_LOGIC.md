@@ -91,6 +91,13 @@
 7. 시험 배정·답지 링크·과거 기록 조회는 유지하지만 학생 시험 제출은 제공하지 않는다.
 8. 완료·하원·숙검하원은 서로 다른 정책이다. 상태 변경이 없는 버튼을 상태 완료와 혼동하지 않는다.
 
+<a id="admin-latency-contract"></a>
+### 관리자 응답성·저장 충돌 경계
+
+- 첫 관리자 운영표의 blocking bootstrap은 그 표를 그리는 데 필요한 학생·영상·배정·로그·결석·진도·학교일정만 기다린다. 자료·교재 배정·테스트 카탈로그와 독립 패널은 팝업이 요구할 때 또는 첫 운영표 렌더 뒤에 초기화한다. 같은 동작의 독립 I/O는 병렬로 시작하고, 동시에 시작된 동일 초기화는 한 진행 중 promise만 공유한다.
+- 학생 통합 팝업의 짧은 읽기 cache는 날짜·SID·URL 범위가 명확하고, 실패 promise를 즉시 제거하며, 저장 성공 뒤 관련 범위를 무효화하고, 최신 권위 응답 전 편집을 잠그는 경우에만 허용한다. 네 조건 중 하나라도 없으면 cache를 추가하지 않는다.
+- 브라우저의 자동 재시도는 구조화된 `*_lock_timeout` 또는 동등한 legacy lock-timeout 응답에만 허용한다. `retryable: true`만으로 revision conflict를 재시도하지 않으며, 실제 revision/base conflict는 최신값 재조회나 사용자 확인 없이 덮어쓰지 않는다. 응답과 안내에는 raw lock 경로나 근거 없는 “다른 사용자/컴퓨터” 표현을 노출하지 않는다.
+
 ### 백지리뷰 검사 대기
 
 - 오늘 학생 표의 `백지` 체크는 해당 SID 학생이 백지리뷰 검사를 받지 못하고 귀가해 다음 등원 때 우선 검사해야 함을 뜻한다.
@@ -101,7 +108,7 @@
 ## 7. 출결·오늘 순서·보강
 
 - 출석, 결석, 도착 시각, 연락 상태는 각각 `attendance.json`, `absent.json`, `arrive_time.json`, `contact.json` 계열 API가 담당한다.
-- 보강은 `extra_attend.json`, 주말 시간은 `weekend_slots.json`, 보강 이월은 전용 carryover API가 담당한다. 앞의 두 HTTP 경계는 `routes/api_schedule_overrides.py`가 소유하고, 오늘 자동 배정 후처리는 `app.py`가 주입한 public callback으로 연결한다. 후처리 재시도 의미는 §9의 자동 배정 불변식을 따른다.
+- 보강은 `extra_attend.json`, 주말 시간은 `weekend_slots.json`, 보강 이월은 전용 carryover API가 담당한다. 앞의 두 HTTP 경계는 `routes/api_schedule_overrides.py`가 소유하고, 오늘 자동 배정 후처리는 `app.py`가 주입한 public callback으로 연결한다. 보강 예약이 먼저 저장되고 `extra_attend.json` 반영이 일시 실패한 경우에도 오늘 명단과 날짜별 출결 명단은 활성 `scheduledMakeup`을 보조 권위로 합쳐 누락을 막되, 같은 날짜의 명시적 결석은 계속 최우선으로 제외한다. 후처리 재시도 의미는 §9의 자동 배정 불변식을 따른다.
 - 오늘 순서의 유일한 원본은 `data/today_order.json`이다. 루트 `today_order.json`은 2026-08-24 백업·통합 후 제거됐으며 다시 만들지 않는다.
 - 오늘표의 완료는 수업 로그의 `done`과 연결되지만 결석·출석·하원 버튼의 의미와 동일하지 않다.
 - “숙검하원”은 오후 6시 전 연강 학생을 제외하고, 오후 6시 이후에는 포함한다. 자습 학생은 포함한다.
@@ -115,6 +122,7 @@
 - 논리 원본은 `LogRepository`다. SQLite가 우선이며 `logs.json`은 호환 fallback·mirror 역할을 한다.
 - 같은 날짜/sid가 두 저장소에 있으면 SQLite의 의미 있는 필드를 보존하고 JSON은 빠진 필드만 좁게 채운다.
 - 저장은 `routes/log_repository_provider.py`의 `get_log_repository()`를 통하고, 순수 병합·충돌 규칙은 `core/log_rules.py`에 둔다. 기존 `routes.api_basic` import 경로는 호환 재노출이다.
+- 큰 `logs.json` 호환 병합은 파일 identity·mtime·size signature가 읽기 전후 안정된 경우에만 process-local cache를 재사용한다. 교체 중 signature가 계속 바뀌면 그 snapshot을 cache하지 않고 다음 호출에서 다시 읽으며, 경로 수는 16개로 제한한다. 호출자에게 반환하는 로그 entry/map은 방어 복사해 cache 원본을 오염시킬 수 없게 한다.
 - 빈 값은 명시적 clear/delete 계약이 없으면 기존 교재, 숙제표, 메모를 지우지 않는다.
 - 알 수 없는 필드와 legacy 숙제 행 메타데이터도 보존한다.
 - 일부 GET은 SQLite 스키마/WAL을 보장할 수 있으므로 운영 데이터 관점에서 완전한 무변경 읽기로 간주하지 않는다.
@@ -203,7 +211,7 @@
 - `/api/student/bootstrap.reviewVideos`가 학생 복습 후보의 유일한 권위다. 요청 날짜까지의 현재 curriculum/subCurriculum `done` 영상만 포함하므로 같은 날 방금 완료한 영상도 후보가 될 수 있다. `interrupted`, `skip`, `none`, 미시청, 다른 과정은 제외한다.
 - 학생 웹은 `/api/student/bootstrap` 실패 시 오류를 표시하고 초기화를 중단한다. 학생·영상·배정·자료·결석·로그 API를 따로 호출해 일부 데이터만 조립하던 구형 7개 요청 fallback은 제거되었으며 다시 사용하지 않는다.
 - bootstrap은 후보를 chapter/MID 순으로 정렬하고 raw progress/watch와 event date를 제거한다. 학원 외 응답에서는 URL·재생 권한도 제거하고 `playbackRestricted`만 남긴다. 현재 미완료 재생목록에 남아 있는 MID는 중복 후보에서 제외하지만, 오늘 완료되어 재생목록에서 빠진 MID는 복습 후보로 다시 보일 수 있다.
-- 학생의 체크와 “영상 등록”은 서버 요청 없이 localStorage에 선택 순서대로 저장하고 현재 재생목록 뒤에 붙인다. 새 bootstrap 후보에 없는 저장 MID와 중복은 매 로드 때 제거한다. 등록 행을 실제 재생할 때만 기존 `/api/get-url`·Kollus bridge·`/api/watch` 흐름을 사용한다.
+- 학생의 체크와 “영상 등록”은 서버 배정 쓰기 없이 localStorage에 선택 순서대로 저장하고 현재 재생목록 뒤에 붙인 뒤, 새 등록이 성공하면 페이지를 한 번 강제 새로고침해 bootstrap부터 플레이어 표면을 재구성한다. 새 bootstrap 후보에 없는 저장 MID와 중복은 매 로드 때 제거한다. 등록 행을 실제 재생할 때만 기존 `/api/get-url`·Kollus bridge·`/api/watch` 흐름을 사용한다.
 - 일반일과 자습일의 chooser UI는 같다. 결석, 보관, ghost, course-blocked, malformed bootstrap에서는 숨기고, 학원 외 네트워크에서는 제목만 보여 주며 등록·재생·watch 쓰기를 금지한다.
 - 서버 자습 배정은 별도다. `/api/updates/self-study`는 target date보다 엄격히 이전에 완료한 현재 과정 MID만 받고, 기존 비-selfStudy 수동 배정을 보호한다. 학생의 로컬 “영상 등록” 버튼은 이 endpoint를 호출하지 않는다.
 
@@ -426,6 +434,7 @@
 | 변경 영역 | 반드시 확인할 것 | 최소 검증 |
 |---|---|---|
 | 관리자 UI | 선택 날짜, 행 `data-date`, Korean UTF-8, modal scroll | `node --check` + DOM/API + screenshot |
+| 관리자 초기 로드·팝업 저장 | 첫 운영표 critical path, 독립 I/O 병렬·동시 초기화 single-flight, 날짜/SID cache의 실패 제거·저장 무효화·편집 잠금, lock-timeout 전용 재시도, 로그 fallback 방어 복사 | `verify_admin_latency_contracts.mjs` + `verify_log_routes.py` + `verify_progress_routes.py` + `verify_updates_routes.py` + `homework-admin.mjs` |
 | 사람·학생 명단 | person/SID 연결, 공유 프로필 전파, subject 필드 격리, 배정 hook, 실패 store byte/hash 불변, 저널 rollback/recovery | `verify_person_identity.py` + `verify_person_identity_routes.py` |
 | 백지리뷰 검사 대기 | exact boolean, SID 격리, 날짜·하원·기록정리 독립, 실패 rollback, 열 순서·폭·체크 영속 | `verify_person_identity_routes.py` + `verify_admin_white_review_pending.mjs` + Chrome 8004 |
 | 로그/숙제 | SQLite/JSON 양쪽, 빈 값 보존, manual white reload | 관련 unit + 양쪽 endpoint + 브라우저 |
@@ -468,6 +477,7 @@ node scripts/verify_test_catalog_editor_state.mjs
 node scripts/verify_test_catalog_statistics_state.mjs
 node scripts/verify_tests_stylesheet_extraction.mjs
 node scripts/verify_test_catalog_search_and_sort.mjs
+node scripts/verify_admin_latency_contracts.mjs
 node scripts/verify_student_previous_video_review.js
 node scripts/verify_student_review_playlist.mjs
 node scripts/verify_student_material_access_scope.js
@@ -544,7 +554,7 @@ python scripts/verify_refactor_safety.py --smoke
 - 학생 촬영은 학원망, 실시간 `getUserMedia` 카메라, SID·testId·round·date에 묶인 일회용 토큰만 허용한다. 앨범 업로드와 수락 후 재제출은 제공하지 않으며 최초 제출 재시도는 idempotency key로 같은 결과를 반환한다.
 - 비학생 OCR은 `/api/internal/non-student-ocr/review-cache`의 비활성 기본·내부 토큰 경계만 사용하며 `tests.json`, 로그, 진도, 학생 화면에 쓰지 않는다.
 - `choice_number`는 1~5만, `answer_value`는 제한된 숫자·분수·루트 동치만 자동 채점한다. 변수식은 정규화된 완전 일치만 허용한다.
-- 현재 CPU 목표는 p90 30초 이내, 파일럿 상한 60초, 한 번 촬영 성공 90% 이상, 전체 재촬영 5% 이하, 보류 2% 이하, 실제 정답을 오답으로 확정하는 오류 0건이다. 2026-08-28 숫자 분류기 v3는 사람이 전사한 crop 61개뿐이라 `NO_GO`이고, 분리 holdout 18개에서 운영 임계값(신뢰도 0.995·margin 0.90)은 11개만 자동 수락했으며 오수락은 0개였다. 2026-08-29 MNIST·EMNIST choice/reject 학습을 더한 v4는 같은 독립 필체 holdout에서 12/18을 수락했으나 고신뢰 오수락 1건이 발생했다. 기존 실제 전사 한 필체를 적응시킨 보수판은 오수락 0건이지만 10/18 수락, 여러 실제 전사를 섞은 판은 다시 12/18·오수락 1건이라 운영 개선으로 채택하지 않았다. 같은 날 key-free 재추론이 이 네 결과를 그대로 재현했고, 미세조정 전 수식 3엔진은 숫자·분수·루트 28문항에서 raw 2/28·자동수락 2/28·오수락 1건(분수 0/1, 루트 0/3)이었다. AI Hub 교육 OCR 공식 annotation 자동 변환·학습 경로와 데이터/평가 계약은 [`STUDENT_TEST_OCR_PUBLIC_DATA.md`](STUDENT_TEST_OCR_PUBLIC_DATA.md)에 둔다. 앞서 실제 손글씨 `1/2` 한 crop이 CPU 17.9초에 맞은 결과는 단일 표본일 뿐이며 전체 품질 증거로 쓰지 않는다. 모델 `metrics.json`이 `GO`가 아니면 단순 기능 플래그만으로 runtime을 열 수 없고, 미준비 모델 우회는 marker-verified 격리 서버에서만 허용한다. gate 실패 시 정확도 기준을 낮추지 않고 기능을 OFF/파일럿에 둔다.
+- 현재 CPU 목표는 p90 30초 이내, 파일럿 상한 60초, 한 번 촬영 성공 90% 이상, 전체 재촬영 5% 이하, 보류 2% 이하, 실제 정답을 오답으로 확정하는 오류 0건이다. 2026-08-28 숫자 분류기 v3는 사람이 전사한 crop 61개뿐이라 `NO_GO`이고, 분리 holdout 18개에서 운영 임계값(신뢰도 0.995·margin 0.90)은 11개만 자동 수락했으며 오수락은 0개였다. 2026-08-29 MNIST·EMNIST 판과 실제 필체 적응판도 모두 `NO_GO`였다. 이후 AI Hub 고1·고2·고3 Training을 합친 공용 모델은 같은 독립 holdout에서 14/18 수락·고신뢰 오답 0으로 개선됐지만 reject recall 1/2였고, 공식 Validation 단일-crop 진단에서 고1·고2·고3 고신뢰 오답이 각각 288·252·380건이라 채택하지 않는다. 수식 Training/Validation은 `m3_h1` 17,977/11,595개와 `m3_h1_h2_h3` 29,247/13,661개로 구성했고 CUDA config와 순차 실행기를 검증했지만, 현재 `torch 2.12.1+cpu` 호스트에는 CUDA 장치가 없어 실제 UniMERNet weight update와 학년별 수식 정확도 평가는 대기한다. 미세조정 전 수식 3엔진의 28문항 raw 2/28·자동수락 2/28·오수락 1건 상태는 그대로 `NO_GO`다. AI Hub 자동 변환·학습 경로와 수치·평가 한계는 [`STUDENT_TEST_OCR_PUBLIC_DATA.md`](STUDENT_TEST_OCR_PUBLIC_DATA.md)가 소유한다. 모델 `metrics.json`이 `GO`가 아니면 단순 기능 플래그만으로 runtime을 열 수 없고, 미준비 모델 우회는 marker-verified 격리 서버에서만 허용한다. gate 실패 시 정확도 기준을 낮추지 않고 기능을 OFF/파일럿에 둔다.
 - UNIT 전체 유형 마이그레이션은 Drive 해설 PDF별 근거 JSON이 카탈로그 전체를 덮을 때만 허용한다. live `tests-config.json` 쓰기 전 `scripts/backup_runtime_data.py` 백업과 `--backup-confirmed`가 필요하다.
 
 최소 검증:

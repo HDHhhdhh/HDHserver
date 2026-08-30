@@ -7,6 +7,7 @@ from scripts.train_student_test_choice_classifier import (
     CHOICE_LABELS,
     REJECT_LABEL,
     RealCase,
+    aihub_public_data,
     balanced_indices,
     case_manifest,
     labeled_crop_samples,
@@ -181,7 +182,18 @@ def run() -> dict:
         assert pooled_counts[REJECT_LABEL] == 20
         assert len({path for path, label in by_root[grade_a] if label != REJECT_LABEL}) == 9
         assert len({path for path, label in by_root[grade_b] if label != REJECT_LABEL}) == 17
-        assertions += 4
+        provenance = aihub_public_data([(grade_a, by_root[grade_a]), (grade_b, by_root[grade_b])])
+        assert provenance["counts"] == pooled_counts
+        assert all(
+            sum(root_item["effectiveCounts"][label] for root_item in provenance["roots"])
+            == pooled_counts[label]
+            for label in (*CHOICE_LABELS, REJECT_LABEL)
+        )
+        assert provenance["roots"][0]["effectiveCounts"]["5"] == sum(
+            label == "5" for _path, label in by_root[grade_a]
+        )
+        assert provenance["roots"][0]["uniqueCounts"][REJECT_LABEL] == 8
+        assertions += 8
 
     with tempfile.TemporaryDirectory(prefix="choice-training-manifest-") as temp_dir:
         root = Path(temp_dir)

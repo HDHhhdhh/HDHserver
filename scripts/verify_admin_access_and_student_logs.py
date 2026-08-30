@@ -348,9 +348,9 @@ def run_student_log_ui_contract_checks() -> None:
     ):
         check(html_source.count(token) == 1, f"admin student log DOM contract missing or duplicated: {token}")
     check(
-        "import { initStudentLogs } from './features/studentLogs.js" in main_source
-        and main_source.count("initStudentLogs();") == 1,
-        "admin main entrypoint must import and initialize student logs exactly once",
+        "import('./features/studentLogs.js" in main_source
+        and main_source.count("module.initStudentLogs()") == 1,
+        "admin main entrypoint must dynamically initialize student logs exactly once",
     )
     for selector in (
         "body.admin .hero-note-rail",

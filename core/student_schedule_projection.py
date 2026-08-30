@@ -136,6 +136,24 @@ def _iter_makeup_rows(makeup: object):
                 yield schedule, fallback
 
 
+def scheduled_makeup_student_ids(makeup: object, *, date_key: str) -> set[str]:
+    """Return students with an active makeup reservation on one real date."""
+    target = _date(date_key)
+    if target is None:
+        return set()
+
+    student_ids: set[str] = set()
+    for raw, fallback_sid in _iter_makeup_rows(makeup):
+        row_sid = _text(raw.get("studentId") or raw.get("student_id")) or fallback_sid
+        raw_date = _text(raw.get("makeupDate") or raw.get("makeup_date")).split("T", 1)[0]
+        status = _text(raw.get("status") or "scheduled").lower()
+        if status not in STATUSES:
+            status = "scheduled"
+        if row_sid and _date(raw_date) == target and status == "scheduled":
+            student_ids.add(row_sid)
+    return student_ids
+
+
 def _makeup(makeup: object, target: date, sid: str) -> tuple[str, list[int]] | None:
     chosen_status = ""
     chosen_slots: set[int] = set()
@@ -243,4 +261,10 @@ def select_next_schedule(schedule: object, *, as_of: str) -> dict[str, object] |
 
 build_student_schedule_projection = project_student_schedule
 
-__all__ = ["MAX_RANGE_DAYS", "build_student_schedule_projection", "project_student_schedule", "select_next_schedule"]
+__all__ = [
+    "MAX_RANGE_DAYS",
+    "build_student_schedule_projection",
+    "project_student_schedule",
+    "scheduled_makeup_student_ids",
+    "select_next_schedule",
+]

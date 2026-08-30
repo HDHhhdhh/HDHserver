@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from flask import Flask
 
@@ -15,6 +16,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from routes import api_logs, log_repository_provider  # noqa: E402
+from core.log_repository import LogRepository  # noqa: E402
+import core.log_repository as log_repository_module  # noqa: E402
 
 
 DATE = "2026-08-01"
@@ -39,7 +42,91 @@ def _assert_failure_is_no_write(root: Path, before: dict[str, tuple[int, str]], 
     assert after == before, f"{label} changed the temporary log stores"
 
 
+def _verify_signature_cached_legacy_reads() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-log-read-cache-") as tmp:
+        with log_repository_module._LOG_JSON_READ_CACHE_LOCK:
+            log_repository_module._LOG_JSON_READ_CACHE.clear()
+        root = Path(tmp)
+        logs_path = root / "logs.json"
+        database_path = root / "app.sqlite"
+        logs_path.write_text(
+            json.dumps({DATE: {SID_ONE: {"notes": "첫 값", "nested": {"keep": 1}}}}, ensure_ascii=False),
+            "utf-8",
+        )
+        repository = LogRepository(logs_path=logs_path, db_path=str(database_path))
+        raw_reader = log_repository_module._read_log_json_for_cache
+        with mock.patch(
+            "core.log_repository._read_log_json_for_cache",
+            wraps=raw_reader,
+        ) as reader:
+            first = repository.read_logs(DATE)
+            second = repository.read_logs(DATE)
+            assert reader.call_count == 1, "unchanged logs.json must be parsed once"
+            assert first == second
+
+            first[DATE][SID_ONE]["nested"]["keep"] = 99
+            third = repository.read_logs(DATE)
+            assert third[DATE][SID_ONE]["nested"]["keep"] == 1
+            assert reader.call_count == 1, "callers must not mutate the cached snapshot"
+
+            logs_path.write_text(
+                json.dumps({DATE: {SID_ONE: {"notes": "바뀐 값과 길이"}}}, ensure_ascii=False),
+                "utf-8",
+            )
+            refreshed = repository.read_logs(DATE)
+            assert refreshed[DATE][SID_ONE]["notes"] == "바뀐 값과 길이"
+            assert reader.call_count == 2, "a changed file signature must invalidate the cache"
+
+            with mock.patch.object(
+                repository,
+                "_connect",
+                side_effect=RuntimeError("synthetic sqlite outage"),
+            ):
+                fallback_first = repository.read_logs()
+                fallback_first[DATE][SID_ONE]["notes"] = "caller mutation"
+                fallback_second = repository.read_logs()
+            assert fallback_second[DATE][SID_ONE]["notes"] == "바뀐 값과 길이"
+            assert reader.call_count == 2, "fallback defensive copies must reuse the stable parse"
+
+        unstable_path = root / "unstable-logs.json"
+        signatures = [
+            (1, 1, 1, 1),
+            (2, 2, 2, 2),
+            (3, 3, 3, 3),
+            (3, 3, 3, 3),
+            (3, 3, 3, 3),
+        ]
+        snapshots = [
+            ({"version": 1}, "available"),
+            ({"version": 2}, "available"),
+            ({"version": 3}, "available"),
+        ]
+        with mock.patch(
+            "core.log_repository._log_json_signature",
+            side_effect=signatures,
+        ), mock.patch(
+            "core.log_repository._read_log_json_for_cache",
+            side_effect=snapshots,
+        ) as unstable_reader:
+            first_unstable, _ = log_repository_module._cached_log_json_for_read(unstable_path)
+            second_stable, _ = log_repository_module._cached_log_json_for_read(unstable_path)
+        assert first_unstable == {"version": 2}
+        assert second_stable == {"version": 3}
+        assert unstable_reader.call_count == 3, "an unstable replacement must not be cached"
+
+        with log_repository_module._LOG_JSON_READ_CACHE_LOCK:
+            log_repository_module._LOG_JSON_READ_CACHE.clear()
+        for index in range(17):
+            cache_path = root / f"logs-{index}.json"
+            cache_path.write_text("{}", encoding="utf-8")
+            log_repository_module._cached_log_json_for_read(cache_path)
+        with log_repository_module._LOG_JSON_READ_CACHE_LOCK:
+            assert len(log_repository_module._LOG_JSON_READ_CACHE) == 16
+            log_repository_module._LOG_JSON_READ_CACHE.clear()
+
+
 def main() -> int:
+    _verify_signature_cached_legacy_reads()
     route_source = (ROOT / "routes" / "api_logs.py").read_text("utf-8")
     basic_source = (ROOT / "routes" / "api_basic.py").read_text("utf-8")
     provider_source = (ROOT / "routes" / "log_repository_provider.py").read_text("utf-8")

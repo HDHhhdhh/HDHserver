@@ -74,7 +74,11 @@ function isTermCategory(categoryKey) {
 
 function isLockConflictResponse(status, text) {
   const body = String(text || '').toLowerCase();
-  return status === 409 && (body.includes('lock timeout') || body.includes('.lock'));
+  return status === 409 && (
+    body.includes('lock timeout')
+    || body.includes('lock_timeout')
+    || body.includes('.lock')
+  );
 }
 
 function sleep(ms) {
@@ -109,8 +113,11 @@ async function fetchJSONCached(url, ttlMs = 2500) {
   const hit = cache.get(url);
   if (hit && (now - hit.ts) < ttlMs) return hit.promise;
 
-  const promise = fetchJSONSafe(url).catch(() => ({}));
+  const promise = fetchJSONSafe(url);
   cache.set(url, { ts: now, promise });
+  promise.catch(() => {
+    if (cache.get(url)?.promise === promise) cache.delete(url);
+  });
   return promise;
 }
 
@@ -685,12 +692,28 @@ function collectSubmittedFromState(sid) {
   });
 }
 
+function testPopupReadUrls(sid) {
+  const sidKey = String(sid || '').trim();
+  return [
+    '/api/tests-config',
+    `/api/logs?sid=${encodeURIComponent(sidKey)}`,
+    `/api/progress?sid=${encodeURIComponent(sidKey)}`,
+    '/api/tests',
+  ];
+}
+
+function prefetchTestModalDataForRow(row) {
+  const sid = String(row?.dataset?.sid || '').trim();
+  if (!sid) return Promise.resolve([]);
+  return Promise.allSettled(testPopupReadUrls(sid).map(url => fetchJSONCached(url)));
+}
+
 async function hydrateForTestPopup(date, sid) {
   const [cfg, logs, progress, testsJson] = await Promise.all([
-    fetchJSONSafe('/api/tests-config').catch(() => ({ categories: {} })),
-    fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`),
-    fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`),
-    fetchJSONSafe('/api/tests').catch(() => ({})),
+    fetchJSONCached('/api/tests-config').catch(() => ({ categories: {} })),
+    fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
+    fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
+    fetchJSONCached('/api/tests').catch(() => ({})),
   ]);
 
   state.testsConfig = normalizeConfig(cfg);
@@ -1995,10 +2018,12 @@ async function saveModal(options = {}) {
 
   applyTestProgressPatchResult(editingDate, editingSid, progressRes);
   invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(editingSid)}`);
+  window.invalidateVideoAssignmentPopupCache?.(editingDate, editingSid);
   if (options.showPopup !== false) showTestSaveSuccess();
 
   await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
   invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(editingSid)}`);
+  window.invalidateVideoAssignmentPopupCache?.(editingDate, editingSid);
 
   if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
   initialTestMap = { ...getCurrentProgressTests() };
@@ -2274,6 +2299,7 @@ export function initTestModal() {
   bindEventsOnce();
 
   window.openTestAssignmentPopupForRow = openModalForRow;
+  window.prefetchTestAssignmentPopupForRow = prefetchTestModalDataForRow;
   window.closeTestAssignmentPopup = closeModal;
   window.saveTestAssignmentPopup = saveModal;
   window._openTest = (sid) => {

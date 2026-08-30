@@ -1,6 +1,6 @@
 # 학생 시험 OCR 공개 데이터·학습 운영 메모
 
-**상태:** 연구·파일럿 전용. 운영 모델 교체나 기능 플래그 활성화를 승인하지 않는다.
+**상태:** AI Hub Training/Validation 변환과 객관식 재학습 완료, 수식 CUDA 미세조정 대기. 연구·파일럿 전용이며 운영 모델 교체나 기능 플래그 활성화를 승인하지 않는다.
 
 ## 결론
 
@@ -36,16 +36,16 @@ AI Hub 교육 OCR 변환기는 작성자·라벨별 crop 상한을 먼저 적용
 
 프로필은 학생 학년이 아니라 시험 카탈로그 `curriculum`으로 선택한다. 공식 Validation 지표도 grade root별로 따로 기록한다. 주관식 수식이 있는 미등록 과목은 가까운 프로필을 추정하지 않는다.
 
-2026-08-29 고2 Training 적용 결과는 작성자 184명, 수식 crop 5,213개다. 이 중 분수 214개, 루트 23개, 단순 수 187개이며 작성자당 200개 상한으로 13,220개 쏠림 후보를 제외했다. 같은 원천에서 객관식은 `1/2/3/4/5 = 186/175/139/114/83`, reject 19,416개를 만들었다. 이는 학습 입력 확보 상태일 뿐 운영 성능 판정이 아니다.
+2026-08-29 공식 원천 ZIP을 모두 받은 뒤 실제 이미지 crop 변환을 완료했다. Training 수식에는 작성자당 200개 상한을 적용했고 Validation은 원분포를 유지했다. 객관식 Training은 고1·고2·고3만 공용 pool에 사용하며 중3 객관식은 보조 Validation 진단만 남긴다.
 
-원천 이미지를 받기 전 공식 라벨만 검사한 수식 분포는 다음과 같다. `상한 후 후보`는 작성자당 200개를 적용한 값이며 실제 crop 수는 작은/잘못된 box 제외로 조금 줄 수 있다.
+| grade root | Training 수식 crop | 작성자 | Validation 수식 crop | Training 객관식 `1~5` / reject | Validation 객관식 `1~5` / reject |
+|---|---:|---:|---:|---:|---:|
+| `M_G3` | 9,499 | 207 | 9,187 | 미사용 | 510 / 42,832 |
+| `H_G1` | 8,478 | 228 | 2,408 | 1,479 / 20,422 | 154 / 37,540 |
+| `H_G2` | 5,213 | 184 | 1,223 | 697 / 19,416 | 133 / 36,716 |
+| `H_G3` | 6,057 | 163 | 843 | 900 / 21,973 | 102 / 35,490 |
 
-| grade root | Training 수식 box | 작성자 | 상한 후 후보 | 공식 Validation 수식 box |
-|---|---:|---:|---:|---:|
-| `M_G3` | 17,804 | 207 | 9,810 | 9,187 |
-| `H_G1` | 22,453 | 228 | 8,629 | 2,408 |
-| `H_G2` | 18,448 | 184 | 5,228 | 1,280 |
-| `H_G3` | 12,009 | 163 | 6,078 | 866 |
+수식 프로필 입력은 `m3_h1` Training 17,977·Validation 11,595개, `m3_h1_h2_h3` Training 29,247·Validation 13,661개다. 프로필 이미지는 원 grade crop을 hardlink해 중복 저장하지 않았고 manifest·annotation·실제 PNG 수를 모두 대조했다. 공식 Validation의 작은 box 제외 때문에 라벨 감사의 box 수와 실제 crop 수가 고2 57개, 고3 23개만큼 다르다.
 
 2026-08-29 라벨 split 감사에서 Training과 Validation의 `Images.identifier` 중복은 네 학년 모두 0건이었지만 작성자 ID는 일부 겹쳤다. 따라서 공식 Validation 전체 점수와 별도로, 객관식은 네 학년 Training 전체에 한 번도 등장하지 않은 작성자만, 수식은 해당 프로필의 Training 전체에 한 번도 등장하지 않은 작성자만 추린 `strict` 지표를 함께 기록한다. `scripts.audit_student_test_aihub_validation`이 이 경계를 검사한다. 이 검사는 라벨·split 무결성 증거이며 모델 정확도 증거가 아니다.
 
@@ -54,6 +54,10 @@ AI Hub 교육 OCR 변환기는 작성자·라벨별 crop 상한을 먼저 적용
 첫 공개 데이터 파일럿 `choice_digit_v4`는 분리 holdout 20문항에서 raw 75%, 객관식 자동 수락 12/18, reject 2/2였으나 고신뢰 `3 → 2` 오수락 1건이 발생했다. 따라서 `NO_GO`이며 운영 기본값은 안전했던 v3에서 바꾸지 않았다. PaddleOCR 교차합의도 같은 crop에서 신뢰 판정 0건이라 운영하면 자동 수락을 전부 없애므로 사용하지 않는다.
 
 기존 실제 필체 한 장을 추가 적응한 보수판은 raw 80%, 자동 수락 10/18, 오수락 0건, reject 1/2였다. 기존 사람 전사 3장을 섞은 판은 12/18 수락으로 회복했지만 같은 고신뢰 오수락 1건이 다시 나타났다. 공개 범용 숫자 데이터만 늘리는 방식으로는 운영 개선이 확인되지 않았다.
+
+고1·고2·고3 AI Hub Training crop을 전체 pool에서 클래스당 885개와 reject 4,425개로 균형화한 새 공용 모델은 독립 `teacher_02`에서 raw 17/20, 객관식 자동 수락 14/18, 고신뢰 오답 0건이었지만 reject recall이 1/2라 `NO_GO`다. 공식 AI Hub Validation 단일-crop 진단에서도 고1·고2·고3의 `1~5 raw / reject recall / coverage / 고신뢰 오답`은 각각 `85.71% / 88.84% / 29.87% / 288`, `69.92% / 87.77% / 20.30% / 252`, `62.75% / 86.37% / 31.37% / 380`이었다. 중3 보조 진단도 `86.47% / 79.08% / 23.53% / 409`로 안전하지 않았다. 이 평가는 실제 runtime의 두 variant 합의가 빠진 단일 변환 crop 진단이므로 GO 근거가 될 수 없지만, 높은 임계값에서도 오수락이 많다는 NO-GO 반증으로는 충분하다. 결과는 ignored `generated/ocr_aihub_choice_validation_20260829.json`에 있으며 SHA-256은 `EBABB4DDE9C98664BD3EFC5AAE296767A9B2C55795CFB0C23F143134CD7B31F1`이다.
+
+같은 새 checkpoint를 실제 runtime 전처리와 두 variant 합의로 `teacher_01+teacher_02` 사람 전사 40문항에 다시 적용하면 객관식 raw 27/38(71.05%), 자동 수락 18/38(47.37%), 고신뢰 오답 0, reject 1/2다. v3의 22/38(57.89%), 14/38(36.84%), 0, reject 0/2보다는 나아졌지만 표본·coverage·reject gate를 통과하지 못한다. 같은 실행의 미세조정 전 수식은 다시 2/28, 자동 수락 2/28, 고신뢰 오답 1건이었다. 보고서는 ignored `generated/ocr_accuracy_after_aihub_20260829.{json,md}`이며 SHA-256은 각각 `F9D37B0E7D81684CC0699D69E6F67308279DB1B5ABE06150D50CEEC51B009ECF`, `48C982C5BA1CA8A7218DB32A9D59235351D2AC97E369A5ADD841DFC82E6FE790`이다.
 
 2026-08-29 사람 전사만 사용한 전체 로컬 재추론에서도 독립 `teacher_02` 결과가 그대로 재현됐다. v3는 11/18 자동 수락·오수락 0, v4 pilot은 12/18·오수락 1, teacher_01 적응판은 10/18·오수락 0, 다중 적응판은 12/18·오수락 1이다. 따라서 v3 유지·전 후보 `NO_GO` 판정은 변하지 않는다. 같은 실행에서 미세조정 전 UniMERNet tiny + Paddle + PP-FormulaNet-S를 실제 숫자·분수·루트 범위의 사람 전사 28문항에 적용한 결과 raw 2/28, 자동 수락 2/28, 오수락 1건이었다. 분수는 0/1, 루트는 0/3이었다. 이는 과목 프로필 체크포인트가 없는 기본 모델 진단이며, 앞서 성공한 단일 `1/2` crop은 전체 품질 증거로 사용할 수 없다. 재현 보고서는 ignored `generated/ocr_accuracy_rerun_20260829.{json,md}`에 둔다.
 
@@ -101,7 +105,13 @@ python -B -m scripts.build_student_test_formula_profile_dataset `
   --output <FORMULA_PROFILE_M3_H1>
 ```
 
-공식 UniMERNet의 `images/0000000.png + equations.txt` 학습 형식으로 생성하며, 프로필 병합은 grade별 수를 같게 만들지 않는다. `scripts.generate_student_test_formula_training_config`가 기존 `unimernet_tiny.pth`에서 시작하는 CUDA 미세조정 설정을 만든다. 현재 내장 GPU 호스트에서는 데이터만 준비하고 학습을 실행하지 않는다. NVIDIA CUDA 호스트로 이동한 뒤 공식 `train.py --cfg-path <CONFIG>` 경로를 사용한다.
+공식 UniMERNet의 `images/0000000.png + equations.txt` 학습 형식으로 생성하며, 프로필 병합은 grade별 수를 같게 만들지 않는다. `scripts.generate_student_test_formula_training_config`가 기존 `unimernet_tiny.pth`에서 시작하는 CUDA 미세조정 설정을 만들고, `scripts.train_student_test_formula_profiles`가 config SHA-256·입력 개수·CUDA를 검증한 뒤 두 프로필을 단일 GPU `torchrun` 작업으로 순차 실행한다. 현재 호스트는 `torch 2.12.1+cpu`, CUDA build와 장치가 모두 없어 preflight `ready:false`이며 weight update를 실행하지 않는다. NVIDIA CUDA 호스트에서는 다음 한 명령으로 하위 프로필 뒤 상위 프로필을 이어서 학습한다.
+
+```powershell
+C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.train_student_test_formula_profiles `
+  --config C:\server-ocr\training_configs\unimernet_m3_h1.yaml `
+  --config C:\server-ocr\training_configs\unimernet_m3_h1_h2_h3.yaml
+```
 
 ## 사용자 라벨 작업을 최소화하는 순서
 
@@ -136,8 +146,10 @@ python -B -m scripts.build_student_test_formula_profile_dataset `
 - AI Hub 변환 검증: `C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.verify_student_test_aihub_import`
 - AI Hub 수식 변환·프로필 검증: `C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.verify_student_test_aihub_formula_import`
 - AI Hub 학년별 split 검증: `python -B -m scripts.verify_student_test_aihub_validation`
+- AI Hub 객관식 학년별 모델 검증: `python -B -m scripts.verify_student_test_aihub_choice_validation`
 - AI Hub 분할 archive 검증: `python -B -m scripts.verify_aihub_split_archive_unpack`
 - UniMERNet 학습 설정 검증: `python -B -m scripts.verify_student_test_formula_training_config`
+- UniMERNet 순차 학습 실행기 검증: `python -B -m scripts.verify_student_test_formula_profile_training`
 - worker 계약 검증: `python -B -m scripts.verify_student_test_ocr_worker_contracts`
 - Paddle 보조 신호 비교: `scripts/benchmark_student_test_choice_supporters.py`
 - 전체 로컬 정확도 재추론: `scripts/benchmark_student_test_local_ocr_accuracy.py`

@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url';
 const root = path.resolve(import.meta.dirname, '..', '..');
 const files = Object.freeze({
   logModal: path.join(root, 'static', 'js', 'admin', 'features', 'logModal.js'),
+  videoModal: path.join(root, 'static', 'js', 'admin', 'features', 'videoModal.js'),
+  testModal: path.join(root, 'static', 'js', 'admin', 'features', 'testModal.js'),
   css: path.join(root, 'static', 'css', 'admin.css'),
   lightCss: path.join(root, 'static', 'css', 'student-work-light.css'),
   contract: path.join(root, 'static', 'js', 'admin', 'demo', 'homeworkContract.js'),
@@ -226,12 +228,117 @@ export async function runChecks() {
   });
 
   check('record save preserves the dated video assignment snapshot', () => {
-    const start = sources.logModal.indexOf('async function saveBase(doneFlag)');
-    const end = sources.logModal.indexOf('async function saveRecordPopupForCurrent()', start);
+    const start = sources.logModal.indexOf('async function saveBase(doneFlag, options = {})');
+    const end = sources.logModal.indexOf('async function saveRecordPopupForCurrent(options = {})', start);
     const saveBase = sources.logModal.slice(start, end);
     assert.ok(start >= 0 && end > start);
     assert.doesNotMatch(saveBase, /\/api\/updates\/patch/);
     assert.doesNotMatch(saveBase, /allProgressDone|clearVideoAssignmentForDateSid/);
+  });
+
+  check('homework completion is one composite log write with full-action click locking', () => {
+    const buildStart = sources.logModal.indexOf('function buildLogSavePatch({');
+    const buildEnd = sources.logModal.indexOf('function applyLogSaveResult', buildStart);
+    const buildPatch = sources.logModal.slice(buildStart, buildEnd);
+    assert.ok(buildStart >= 0 && buildEnd > buildStart);
+    for (const field of ['hwAssigned', 'hwAssignedAt', 'hwChecked', 'hwCheckedAt']) {
+      assert.match(buildPatch, new RegExp(`entry\\.${field}`));
+    }
+
+    const completeStart = sources.logModal.indexOf("logComplete.addEventListener('click'");
+    const completeEnd = sources.logModal.indexOf('\n  });\n}', completeStart);
+    const completeHandler = sources.logModal.slice(completeStart, completeEnd);
+    assert.ok(completeStart >= 0 && completeEnd > completeStart);
+    assert.match(completeHandler, /saveRecordPopupForCurrent\(\{ homeworkChecked: true \}\)/);
+    assert.equal((completeHandler.match(/saveRecordPopupForCurrent/g) || []).length, 1);
+    assert.match(completeHandler, /showStudentPopupSaveResult\('저장 완료'\)/);
+    assert.match(completeHandler, /toast\('저장 완료'\)/);
+    assert.doesNotMatch(completeHandler, /숙제 검사 완료 \(/);
+    assert.doesNotMatch(completeHandler, /patchLogEntry|markHwFlagsRemote|reapplyCarriedTestAssignmentForCurrent/);
+    assert.doesNotMatch(sources.logModal, /async function markHwFlagsRemote/);
+
+    const actionStart = sources.logModal.indexOf('function runLogRecordAction');
+    const actionEnd = sources.logModal.indexOf('async function saveAllStudentPopupChangesAndClose', actionStart);
+    const action = sources.logModal.slice(actionStart, actionEnd);
+    assert.match(action, /logRecordActionPromise/);
+    assert.match(action, /#logSave/);
+    assert.match(action, /#logCompleteBtn/);
+    assert.match(action, /aria-busy/);
+
+    const commitStart = sources.logModal.indexOf('async function commitCanonicalHomework');
+    const commitEnd = sources.logModal.indexOf('function normalizeHwRowsForCompare', commitStart);
+    const commit = sources.logModal.slice(commitStart, commitEnd);
+    assert.match(commit, /saveWasDisabled/);
+    assert.match(commit, /completeWasDisabled/);
+    assert.match(commit, /restoreButtonDisabledState/);
+  });
+
+  check('homework opens from cached rows before noncritical progress history finishes', () => {
+    const openStart = sources.logModal.indexOf('async function openLogModalForRow');
+    const openEnd = sources.logModal.indexOf('window.openRecordPopupForRow', openStart);
+    const openFlow = sources.logModal.slice(openStart, openEnd);
+    assert.ok(openStart >= 0 && openEnd > openStart);
+
+    const configuredFallback = openFlow.indexOf('configuredHomeworkBookRows(stu)');
+    const cachedRender = openFlow.indexOf('renderHwTable(cachedRows.length');
+    const earlyMount = openFlow.indexOf('mountHomeworkInTooltip();');
+    const criticalWait = openFlow.indexOf('const hydrationResults = await Promise.allSettled');
+    const authoritativeRender = openFlow.indexOf('renderHwTable(homework.mergedRows');
+    const progressWait = openFlow.indexOf('await progressHydrationPromise;');
+    assert.ok(configuredFallback >= 0 && cachedRender >= 0 && earlyMount >= 0 && criticalWait >= 0);
+    assert.ok(configuredFallback < cachedRender);
+    assert.ok(cachedRender < criticalWait);
+    assert.ok(earlyMount < criticalWait);
+    assert.ok(authoritativeRender > criticalWait);
+    assert.ok(progressWait > authoritativeRender);
+
+    assert.match(openFlow, /const historyLoaded = await hydrateLogHistoryForSid\(sid\)/);
+    assert.match(openFlow, /if \(historyLoaded\) return true;[\s\S]*hydrateTodayLogFromServer\(today, sid\)/);
+    assert.match(openFlow, /fetchCanonicalHomeworkForLogCached\(today, sid\)/);
+    assert.doesNotMatch(openFlow, /Promise\.allSettled\(\[[\s\S]*hydrateTodayLogFromServer\(today, sid\),[\s\S]*hydrateLogHistoryForSid\(sid\),[\s\S]*hydrateProgressHistoryForSid\(sid\)/);
+    assert.equal((sources.logModal.match(/\['loading', 'error', 'conflict'\]\.includes\(canonicalHomework\.mode\)/g) || []).length, 3);
+
+    assert.match(sources.logModal, /function prefetchLogModalDataForRow\(row\)/);
+    assert.match(sources.logModal, /addEventListener\('pointerover'[\s\S]*prefetchForButton/);
+    assert.match(sources.logModal, /addEventListener\('pointerdown'[\s\S]*prefetchForButton/);
+    assert.match(sources.logModal, /addEventListener\('focusin'[\s\S]*prefetchForButton/);
+    assert.match(sources.logModal, /function invalidateLogModalHydrationCaches\(date, sid\)/);
+    assert.match(sources.logModal, /setLogModalSnapshots\([\s\S]*invalidateLogModalHydrationCaches\(today, sid\)/);
+  });
+
+  check('video and test popups prefetch reads and video watch hydration is parallel', () => {
+    const videoHydrateStart = sources.videoModal.indexOf('async function hydrateForVideoModal');
+    const videoHydrateEnd = sources.videoModal.indexOf('/* ───────────── 챕터 정렬', videoHydrateStart);
+    const videoHydrate = sources.videoModal.slice(videoHydrateStart, videoHydrateEnd);
+    assert.ok(videoHydrateStart >= 0 && videoHydrateEnd > videoHydrateStart);
+    assert.match(videoHydrate, /Promise\.allSettled\(\[/);
+    assert.match(videoHydrate, /hydrateProgressMaybe\(today, sid\)/);
+    assert.match(videoHydrate, /fetchLatestWatchForSid\(sid\)/);
+    assert.match(videoHydrate, /return results\[4\]/);
+
+    const videoOpenStart = sources.videoModal.indexOf('async function openVideoModalForRow');
+    const videoOpenEnd = sources.videoModal.indexOf('window.openVideoAssignmentPopupForRow', videoOpenStart);
+    const videoOpen = sources.videoModal.slice(videoOpenStart, videoOpenEnd);
+    assert.match(videoOpen, /const watchByMid = await hydrateForVideoModal\(today, editingSid\)/);
+    assert.doesNotMatch(videoOpen, /await fetchLatestWatchForSid/);
+    assert.match(sources.videoModal, /function prefetchVideoModalDataForRow\(row\)/);
+    assert.match(sources.videoModal, /window\.prefetchVideoAssignmentPopupForRow = prefetchVideoModalDataForRow/);
+    assert.match(sources.videoModal, /window\.invalidateVideoAssignmentPopupCache = invalidateVideoModalHydrationCaches/);
+
+    const testHydrateStart = sources.testModal.indexOf('async function hydrateForTestPopup');
+    const testHydrateEnd = sources.testModal.indexOf('function getCurrentProgressTests', testHydrateStart);
+    const testHydrate = sources.testModal.slice(testHydrateStart, testHydrateEnd);
+    assert.match(testHydrate, /fetchJSONCached\('\/api\/tests-config'\)/);
+    assert.match(testHydrate, /fetchJSONCached\('\/api\/tests'\)/);
+    assert.match(sources.testModal, /function prefetchTestModalDataForRow\(row\)/);
+    assert.match(sources.testModal, /window\.prefetchTestAssignmentPopupForRow = prefetchTestModalDataForRow/);
+
+    const prefetchStart = sources.logModal.indexOf('const prefetchForButton = button =>');
+    const prefetchEnd = sources.logModal.indexOf("document.body.addEventListener('pointerover'", prefetchStart);
+    const prefetch = sources.logModal.slice(prefetchStart, prefetchEnd);
+    assert.match(prefetch, /prefetchLogModalDataForRow\(row\)/);
+    assert.match(prefetch, /prefetchVideoAssignmentPopupForRow/);
+    assert.match(prefetch, /prefetchTestAssignmentPopupForRow/);
   });
 
   check('all-students read-only mode disables canonical editing', () => {

@@ -29,11 +29,11 @@ this file owns core-module edit and verification constraints.
 | School calendar persistence | `school_calendar_store.py` | Strict object reads, canonical SHA-256 revision, file-locked compare-and-replace, and unreadable-store failure. |
 | Video review projection | `video_review_rules.py` | Pure strict-before-date resolver; progress presence and manual overrides outrank watch fallback. |
 | Video catalog correction | `video_catalog_correction.py` | Pure draft validation, impact counts, and simultaneous MID remap across updates/progress/watch values. |
-| Log persistence | `log_repository.py` | SQLite plus `logs.json` dual-read/dual-write contract. |
+| Log persistence | `log_repository.py` | SQLite plus signature-stable, defensively copied `logs.json` dual-read/dual-write contract. |
 | Assistant notes | `assistant_student_notes.py` | Student-scoped SQLite repository; separate from class logs despite sharing `app.sqlite`. |
 | Runtime paths | `paths.py` | Canonical JSON/SQLite path constants. |
 | Runtime server guard | `runtime_server_guard.py` | Refuses a second Waitress/Flask network server against the live repository runtime while production port 8003 is listening. A marker-verified copied code root is allowed; test-client imports remain allowed. |
-| JSON storage/locks | `storage.py` | Atomic replace, mirror/snapshot copies, and interprocess locks. |
+| JSON storage/locks | `storage.py` | Atomic replace, mirror/snapshot copies, active-token-protected interprocess locks, and ownerless local-orphan recovery. |
 | Network gating | `network_access.py` | Answer-link and academy-network visibility behavior. |
 | Test answer-link resolution | `test_answer_links.py` | Pure assignment -> config -> generated-map precedence shared by bootstrap and test-record routes. |
 | Student test OCR | `student_test_ocr_rules.py`, `student_test_ocr_repository.py`, `student_test_ocr_service.py`, engine/job/assets/config helpers | Default-off, migration-explicit UNIT capture, OCR, grading, retention, and review boundary. |
@@ -67,6 +67,7 @@ this file owns core-module edit and verification constraints.
 - While production port 8003 is listening, `create_app()` must reject non-production Waitress/Flask server commands before recovery or other startup writes. Only a code-root-matching `ACADEMY_ISOLATED_SERVER_ROOT` plus `.academy-isolated-server.json` marker may allow the managed copied server; pure/test-client imports stay permitted.
 - `TODAY_ORDER_PATH` is exclusively `DATA_DIR/today_order.json` (default `data/today_order.json`). Never recreate the retired root sibling.
 - `save_atomic()` does not lock the read-modify-write cycle; hold the target `file_lock()` across load, merge, and save. Mirror/snapshot failure must not invalidate a successful primary replace.
+- The admin latency/cache contract is canonical in [PROJECT_FUNCTIONS_AND_LOGIC §6·§8](../docs/PROJECT_FUNCTIONS_AND_LOGIC.md#admin-latency-contract). `logs.json` cache entries require a stable before/after file signature, a 16-path cap, and defensive copies at every public read boundary. Never break a live same-process token or another live process's lock; only a same-process lock file with no registered owner may use the short orphan grace.
 - Repository connections enable WAL and ensure schema. Log reads and assistant-note lists can therefore create sidecars or migrate/backfill rows.
 - Keep assistant notes out of class-log notes, counseling data, CSV/print exports, and browser storage. Tests inject a temporary `db_path`.
 

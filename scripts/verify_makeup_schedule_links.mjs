@@ -4,10 +4,12 @@ import vm from 'node:vm';
 
 const filename = 'static/js/admin/features/makeupPending.js';
 const calendarFilename = 'static/js/admin/features/calendar.js';
+const todayFilename = 'static/js/admin/features/today.js';
 const adminCssFilename = 'static/css/admin.css';
 const source = fs.readFileSync(filename, 'utf8')
   .replace(/\bexport function /g, 'function ');
 const calendarSource = fs.readFileSync(calendarFilename, 'utf8');
+const todaySource = fs.readFileSync(todayFilename, 'utf8');
 const adminCssSource = fs.readFileSync(adminCssFilename, 'utf8');
 const sandbox = { console };
 vm.runInNewContext(`${source}
@@ -16,6 +18,7 @@ globalThis.__exports = {
   buildActiveScheduledMakeupRows,
   buildScheduledMakeupRows,
   buildScheduledMakeupCalendarSummary,
+  scheduledMakeupStudentIdsForDate,
   formatMakeupDate,
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
@@ -26,6 +29,7 @@ const {
   buildActiveScheduledMakeupRows,
   buildScheduledMakeupRows,
   buildScheduledMakeupCalendarSummary,
+  scheduledMakeupStudentIdsForDate,
   formatMakeupDate,
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
@@ -66,6 +70,8 @@ assert.match(calendarSource, /className: 'makeup-existing-schedule'/);
 assert.match(adminCssSource, /\.makeup-conflict-list \.makeup-existing-schedule/);
 assert.match(calendarSource, /const label = `\$\{course\} - \$\{slot\}타임\$\{note\}`/);
 assert.doesNotMatch(calendarSource, /kind === 'makeup' \? '보강' : '정규'/);
+assert.match(todaySource, /scheduledMakeupStudentIdsForDate\(\{/);
+assert.match(todaySource, /new Set\(\[\.\.\.extraIds, \.\.\.scheduledMakeupIds\]\)/);
 
 const carryover = {
   by_absence: {
@@ -91,6 +97,14 @@ const scheduledRows = buildScheduledMakeupRows({ students, carryover });
 assert.equal(scheduledRows.length, 1);
 assert.equal(scheduledRows[0].originalAbsenceId, 'absence|2026-07-03|stu-1|2');
 assert.equal(scheduledRows[0].scheduledMakeup.makeupDate, '2026-07-24');
+assert.deepEqual(
+  Array.from(scheduledMakeupStudentIdsForDate({ students, carryover, date: '2026-07-24' })),
+  ['stu-1'],
+);
+assert.deepEqual(
+  Array.from(scheduledMakeupStudentIdsForDate({ students, carryover, date: '2026-07-25' })),
+  [],
+);
 
 const activeScheduledRows = buildActiveScheduledMakeupRows({
   students,
@@ -139,6 +153,10 @@ const cancelledPending = buildPendingMakeups({
 });
 assert.equal(cancelledPending.length, 1);
 assert.equal(buildScheduledMakeupRows({ students, carryover: cancelledCarryover }).length, 0);
+assert.deepEqual(
+  Array.from(scheduledMakeupStudentIdsForDate({ students, carryover: cancelledCarryover, date: '2026-07-24' })),
+  [],
+);
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));

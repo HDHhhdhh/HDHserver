@@ -6,7 +6,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from scripts.unpack_aihub_split_archive import reassemble_and_extract
+from scripts.unpack_aihub_split_archive import extract_direct_zip, reassemble_and_extract
 
 
 def _tar_parts(zip_bytes: bytes, target: Path, *, chunk_size: int = 31) -> None:
@@ -53,6 +53,18 @@ def run() -> dict:
         assert reused["reusedZip"] is True and reused["reusedExtractedFiles"] == 2
         assertions += 5
 
+        direct_root = root / "direct-extracted"
+        direct_zip = root / "direct.zip"
+        direct_zip.write_bytes(memory.getvalue())
+        direct = extract_direct_zip(zip_path=direct_zip, extract_root=direct_root)
+        assert direct["schema"] == "aihub_direct_zip_unpack_v1"
+        assert direct["partCount"] == 1 and direct["reusedZip"] is True
+        assert direct["extractedFiles"] == 2 and direct["writtenFiles"] == 2
+        assert (direct_root / "labels" / "b.json").read_text(encoding="utf-8") == '{"ok":false}\n'
+        direct_reused = extract_direct_zip(zip_path=direct_zip, extract_root=direct_root)
+        assert direct_reused["reusedExtractedFiles"] == 2 and direct_reused["writtenFiles"] == 0
+        assertions += 5
+
         broken_tar = root / "broken.tar"
         with tarfile.open(broken_tar, "w") as archive:
             info = tarfile.TarInfo("dataset.zip.part4")
@@ -79,6 +91,13 @@ def run() -> dict:
                 extract_root=root / "unsafe-extracted",
             )
         )
+        assert not (root / "escape.txt").exists()
+        assertions += 2
+
+
+        unsafe_direct = root / "unsafe-direct.zip"
+        unsafe_direct.write_bytes(unsafe_memory.getvalue())
+        _raises(lambda: extract_direct_zip(zip_path=unsafe_direct, extract_root=root / "unsafe-direct-extracted"))
         assert not (root / "escape.txt").exists()
         assertions += 2
     return {"name": "aihub-split-archive-unpack", "assertions": assertions, "passed": True}

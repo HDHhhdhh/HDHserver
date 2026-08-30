@@ -4,7 +4,8 @@
 import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { initTestModal } from './testModal.js?v=20260826-save-feedback2';
+import { classifySaveConflict } from '../core/saveConflict.js';
+import { initTestModal } from './testModal.js?v=20260830-popup-load2';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
@@ -23,6 +24,8 @@ let logModalCarriedTestAssignment = null;
 let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 let logModalAccessMode = 'full';
 let saveAllStudentPopupPromise = null;
+let logRecordActionPromise = null;
+const canonicalHomeworkFetchCache = new Map();
 let canonicalHomework = createCanonicalHomeworkState();
 let homeworkRemoveSelectionActive = false;
 let homeworkReorderActive = false;
@@ -156,10 +159,11 @@ async function patchLogEntry(date, sid, entry, clearKeys, options = {}) {
     try { data = await res.json(); } catch {}
 
     if (res.status === 409) {
-      const msg = data?.error || '다른 사용자가 저장 중입니다. 잠시 후 자동으로 다시 저장합니다.';
+      const conflict = classifySaveConflict(data, '숙제');
+      const msg = conflict.message;
       lastErrMsg = msg;
 
-      if (data?.retryable === false) {
+      if (!conflict.retryable) {
         const latestEntry = (data && data.entry && typeof data.entry === 'object') ? data.entry : null;
         if (latestEntry) {
           state.logs = state.logs || {};
@@ -214,8 +218,11 @@ async function patchProgressEntry(date, sid, progressMap) {
     try { data = await res.json(); } catch {}
 
     if (res.status === 409) {
-      const msg = data?.error || '다른 사용자가 진도 저장 중입니다. 잠시 후 자동으로 다시 저장합니다.';
+      const conflict = classifySaveConflict(data, '진도');
+      const msg = conflict.message;
       lastErrMsg = msg;
+
+      if (!conflict.retryable) throw new Error(msg);
 
       try { toast(msg); } catch {}
 
@@ -301,6 +308,38 @@ async function fetchCanonicalHomeworkForLog(date, sid) {
   };
 }
 
+function canonicalHomeworkFetchKey(date, sid) {
+  return `${String(date)}::${String(sid)}`;
+}
+
+function fetchCanonicalHomeworkForLogCached(date, sid, ttlMs = 2500) {
+  const key = canonicalHomeworkFetchKey(date, sid);
+  const now = Date.now();
+  const hit = canonicalHomeworkFetchCache.get(key);
+  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+
+  const promise = fetchCanonicalHomeworkForLog(date, sid);
+  canonicalHomeworkFetchCache.set(key, { ts: now, promise });
+  promise.catch(() => {
+    if (canonicalHomeworkFetchCache.get(key)?.promise === promise) {
+      canonicalHomeworkFetchCache.delete(key);
+    }
+  });
+  return promise;
+}
+
+function invalidateLogModalHydrationCaches(date, sid) {
+  const sidText = String(sid);
+  const query = new URLSearchParams({ sid: sidText }).toString();
+  const sharedCache = window.__studentWorkFetchCache;
+  if (sharedCache && typeof sharedCache.delete === 'function') {
+    sharedCache.delete(`/api/logs?${query}`);
+    sharedCache.delete(`/api/progress?${query}`);
+  }
+  canonicalHomeworkFetchCache.delete(canonicalHomeworkFetchKey(date, sidText));
+  window.invalidateVideoAssignmentPopupCache?.(date, sidText);
+}
+
 async function fetchLatestCarriedTestLogEntry(date, sid) {
   const q = new URLSearchParams({ date: String(date), sid: String(sid) }).toString();
   let res = null;
@@ -333,10 +372,17 @@ async function fetchJSONCached(url, ttlMs = 2500) {
   if (hit && (now - hit.ts) < ttlMs) return hit.promise;
 
   const promise = fetch(url, { cache: 'no-store' }).then(async (res) => {
-    if (!res.ok) return {};
-    return await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`[logModal] GET ${url} -> ${res.status}`);
+    try {
+      return await res.json();
+    } catch (error) {
+      throw new Error(`[logModal] GET ${url} returned invalid JSON: ${error?.message || error}`);
+    }
   });
   cache.set(url, { ts: now, promise });
+  promise.catch(() => {
+    if (cache.get(url)?.promise === promise) cache.delete(url);
+  });
   return promise;
 }
 
@@ -387,6 +433,17 @@ async function hydrateProgressHistoryForSid(sid) {
     console.warn('[logModal] hydrateProgressHistoryForSid failed:', e);
     return false;
   }
+}
+
+function prefetchLogModalDataForRow(row) {
+  const sid = String(row?.dataset?.sid || '').trim();
+  const date = String(row?.dataset?.date || getAdminDate()).trim();
+  if (!sid || !date) return;
+  void Promise.allSettled([
+    hydrateLogHistoryForSid(sid),
+    hydrateProgressHistoryForSid(sid),
+    fetchCanonicalHomeworkForLogCached(date, sid),
+  ]);
 }
 
 async function hydrateTodayLogFromServer(today, sid) {
@@ -1306,6 +1363,91 @@ function mergeHwRows({ todayRows, latestRows, bookCarryRows }) {
   return out;
 }
 
+function projectHomeworkRowsFromLogState(today, sid) {
+  const dates = Object.keys(state.logs || {})
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today)
+    .sort();
+  const logEntry = (state.logs?.[today] || {})[sid] || {};
+  const todayRows = entryHwRows(logEntry);
+  let latestRows = [];
+  let bookCarryRows = [];
+
+  for (let i = dates.length - 1; i >= 0; i -= 1) {
+    const date = dates[i];
+    if (date >= today) continue;
+    const previous = (state.logs?.[date] || {})[sid];
+    if (!previous) continue;
+
+    if (Array.isArray(previous.homeworkTable) && previous.homeworkTable.length) {
+      const first = previous.homeworkTable[0] || {};
+      const rows = Object.prototype.hasOwnProperty.call(first, 'book')
+        || Object.prototype.hasOwnProperty.call(first, 'this')
+        ? activeHwRows(previous.homeworkTable)
+        : normOldHwRows4(previous.homeworkTable);
+
+      if (!latestRows.length && hasMeaningfulHwRows(rows)) latestRows = rows;
+      if (!bookCarryRows.length && rows.some(row => cleanHwText(row.book))) {
+        bookCarryRows = rows.map(row => ({
+          book: row.book,
+          this: '',
+          pct: '',
+          comment: '',
+          next: '',
+          _deleted: false,
+        }));
+      }
+      if (latestRows.length && bookCarryRows.length) break;
+    }
+
+    if (typeof previous.homework === 'string' && previous.homework.trim()) {
+      if (!latestRows.length) {
+        latestRows = [{
+          book: '',
+          this: '',
+          pct: '',
+          comment: previous.homework.trim(),
+          next: '',
+          _deleted: false,
+        }];
+      }
+      if (latestRows.length) break;
+    }
+  }
+
+  const sleepingHomeworkBooks = resolveSleepingHomeworkBooks({ logEntry, dates, today, sid });
+  return {
+    dates,
+    logEntry,
+    todayRows,
+    sleepingHomeworkBooks,
+    mergedRows: mergeHwRows({ todayRows, latestRows, bookCarryRows }),
+  };
+}
+
+function configuredHomeworkBookRows(student) {
+  const seen = new Set();
+  const numberedBooks = Object.keys(student || {})
+    .filter(key => /^subBook\d+$/.test(key))
+    .sort((a, b) => Number(a.slice(7)) - Number(b.slice(7)))
+    .map(key => student[key]);
+  return [
+    ...numberedBooks,
+    student?.currentBook,
+    student?.textbook,
+    student?.mathTextbook,
+    student?.book,
+    student?.mathBook,
+  ]
+    .map(cleanHwText)
+    .filter(book => {
+      const key = homeworkBookKey(book);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(book => ({ book, this: '', pct: '', comment: '', next: '', _deleted: false }));
+}
+
 function updatePctBubble(wrapEl, value, { isPlaceholder = false } = {}) {
   if (!wrapEl) return;
   const bubble = wrapEl.querySelector('.pctBubble');
@@ -1473,7 +1615,7 @@ function collectSleepingHomeworkBooks() {
 function syncHomeworkSleepingControls() {
   const readOnly = isContextMenuOnlyAccess();
   const retryLocked = Boolean(canonicalHomework.pendingPayload);
-  const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+  const homeworkBlocked = ['loading', 'error', 'conflict'].includes(canonicalHomework.mode);
   const interactionLocked = homeworkRemoveSelectionActive || homeworkReorderActive;
   document.querySelectorAll('#hwBody .hwItem').forEach(item => {
     const sleeping = item.dataset.sleeping === '1';
@@ -1698,7 +1840,7 @@ function syncHomeworkRemovalControls() {
   const reorderRows = $('hwReorderRows');
   const readOnly = isContextMenuOnlyAccess();
   const retryLocked = Boolean(canonicalHomework.pendingPayload);
-  const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+  const homeworkBlocked = ['loading', 'error', 'conflict'].includes(canonicalHomework.mode);
   const removing = homeworkRemoveSelectionActive && !readOnly && !retryLocked && !homeworkBlocked;
   const reordering = homeworkReorderActive && !readOnly && !retryLocked && !homeworkBlocked && !removing;
   homeworkRemoveSelectionActive = removing;
@@ -1921,6 +2063,12 @@ async function commitCanonicalHomework(payload) {
   setCanonicalRetryLock(true);
   const saveButton = $('logSave');
   const completeButton = $('logCompleteBtn');
+  const saveWasDisabled = Boolean(saveButton?.disabled);
+  const completeWasDisabled = Boolean(completeButton?.disabled);
+  const restoreButtonDisabledState = () => {
+    if (saveButton) saveButton.disabled = saveWasDisabled;
+    if (completeButton) completeButton.disabled = completeWasDisabled;
+  };
   if (saveButton) {
     saveButton.disabled = true;
     saveButton.textContent = '저장 중…';
@@ -1934,16 +2082,14 @@ async function commitCanonicalHomework(payload) {
       body: JSON.stringify(requestPayload),
     });
   } catch {
-    if (saveButton) saveButton.disabled = false;
-    if (completeButton) completeButton.disabled = false;
+    restoreButtonDisabledState();
     setCanonicalRetryLock(true);
     const error = new Error('저장 응답을 확인하지 못했습니다. 같은 작업을 다시 시도해 주세요.');
     error.code = 'homework_commit_network_error';
     error.retryable = true;
     throw error;
   }
-  if (saveButton) saveButton.disabled = false;
-  if (completeButton) completeButton.disabled = false;
+  restoreButtonDisabledState();
   let data = null;
   try { data = await res.json(); } catch {}
 
@@ -2050,33 +2196,6 @@ function buildHwSummary(rows) {
     .map(s => s.trim())
     .filter(Boolean);
   return lines.join(' / ');
-}
-
-/* hw flags PATCH */
-async function markHwFlagsRemote(dateKey, sid, { assigned, checked }) {
-  const date = dateKey || getAdminDate();
-  const ksid = String(sid);
-  const t = nowHHMM();
-
-  const entry = {};
-  if (assigned) {
-    entry.hwAssigned = true;
-    entry.hwAssignedAt = t;
-  }
-  if (checked) {
-    entry.hwChecked = true;
-    entry.hwCheckedAt = t;
-    entry.hwAssigned = true;
-    entry.hwAssignedAt = t;
-  }
-
-  const returned = await patchLogEntry(date, ksid, entry);
-
-  state.logs = state.logs || {};
-  state.logs[date] = state.logs[date] || {};
-  state.logs[date][ksid] = returned
-    ? returned
-    : { ...(state.logs[date][ksid] || {}), ...entry };
 }
 
 function stripGeneratedTestAssignmentBlocks(notes) {
@@ -2265,7 +2384,15 @@ function summarizeProgressPatch(changedProg, oldTotal) {
     .join(', ');
 }
 
-function buildLogSavePatch({ notesNow, hwRows, sleepingHomeworkBooks, prevLog, doneFlag, summary }) {
+function buildLogSavePatch({
+  notesNow,
+  hwRows,
+  sleepingHomeworkBooks,
+  prevLog,
+  doneFlag,
+  summary,
+  homeworkCheckedAt = '',
+}) {
   const clearKeys = [];
   const entry = {};
   const base = {};
@@ -2316,6 +2443,12 @@ function buildLogSavePatch({ notesNow, hwRows, sleepingHomeworkBooks, prevLog, d
   }
 
   if (summary) entry.topic = summary;
+  if (homeworkCheckedAt) {
+    entry.hwAssigned = true;
+    entry.hwAssignedAt = homeworkCheckedAt;
+    entry.hwChecked = true;
+    entry.hwCheckedAt = homeworkCheckedAt;
+  }
   if (doneFlag) {
     entry.done = true;
     entry.leaveTime = nowHHMM();
@@ -2368,7 +2501,7 @@ export function initLogModal() {
   const applyReadOnlyRecordAccess = () => {
     const readOnly = isContextMenuOnlyAccess();
     const retryLocked = Boolean(canonicalHomework.pendingPayload);
-    const homeworkBlocked = canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict';
+    const homeworkBlocked = ['loading', 'error', 'conflict'].includes(canonicalHomework.mode);
     logModal.dataset.accessMode = logModalAccessMode;
     logNotes.readOnly = readOnly || retryLocked || homeworkBlocked;
     logNotes.setAttribute('aria-readonly', readOnly || retryLocked || homeworkBlocked ? 'true' : 'false');
@@ -2603,18 +2736,41 @@ export function initLogModal() {
     if (logSave) logSave.disabled = true;
     if (logComplete) logComplete.disabled = true;
     progEl.innerHTML = '<div class="log-loading">진도 불러오는 중...</div>';
-    renderHwTable([]);
+    const cachedHomework = projectHomeworkRowsFromLogState(today, sid);
+    const cachedRows = cachedHomework.mergedRows.some(row => cleanHwText(row.book))
+      ? cachedHomework.mergedRows
+      : configuredHomeworkBookRows(stu);
+    renderHwTable(cachedRows.length ? cachedRows : cachedHomework.mergedRows, cachedHomework.sleepingHomeworkBooks);
     logModal.style.display = 'flex';
     resetLogModalScroll();
 
+    try {
+      if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
+        window.showStudentTooltipForSid(editingLogSid, {
+          variant: 'log',
+          fixed: true,
+          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
+        });
+      }
+      mountHomeworkInTooltip();
+      applyReadOnlyRecordAccess();
+    } catch (err) {
+      console.warn('[logModal] show loading tooltip failed:', err);
+    }
+
+    const progressHydrationPromise = hydrateProgressHistoryForSid(sid);
+    const logHydrationPromise = (async () => {
+      const historyLoaded = await hydrateLogHistoryForSid(sid);
+      if (historyLoaded) return true;
+      const fallback = await hydrateTodayLogFromServer(today, sid);
+      return fallback.ok;
+    })();
     const hydrationResults = await Promise.allSettled([
-      hydrateTodayLogFromServer(today, sid),
-      hydrateLogHistoryForSid(sid),
-      hydrateProgressHistoryForSid(sid),
-      fetchCanonicalHomeworkForLog(today, sid),
+      logHydrationPromise,
+      fetchCanonicalHomeworkForLogCached(today, sid),
     ]);
     if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
-    const canonicalResult = hydrationResults[3];
+    const canonicalResult = hydrationResults[1];
     if (canonicalResult?.status === 'fulfilled') {
       const payload = canonicalResult.value || {};
       canonicalHomework.mode = payload.mode === 'canonical' ? 'canonical' : 'legacy';
@@ -2632,6 +2788,47 @@ export function initLogModal() {
     if (logSave) logSave.disabled = false;
     if (logComplete) logComplete.disabled = false;
     logModalReady = true;
+
+    const homework = projectHomeworkRowsFromLogState(today, sid);
+    const { logEntry, todayRows, sleepingHomeworkBooks } = homework;
+    canonicalHomework.exactLogRows = Array.isArray(logEntry.homeworkTable)
+      ? JSON.parse(JSON.stringify(logEntry.homeworkTable))
+      : [];
+    const todayNotes = cleanHwText(logEntry.notes);
+    logModalCarriedTestAssignment = findAbsentTestCarryoverForLog(today, sid);
+
+    // 상담 입력 UI는 제거되었으므로 과거 상담 문구를 숙제 저장에 재사용하지 않는다.
+    logNotes.value = cleanHwText(todayNotes);
+    logNotes.placeholder = '';
+
+    renderHwTable(homework.mergedRows, sleepingHomeworkBooks);
+    if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
+      const warning = document.createElement('p');
+      warning.className = 'hwCanonicalError';
+      warning.setAttribute('role', 'alert');
+      warning.textContent = canonicalHomework.error
+        || '숙제 상세를 불러오지 못해 저장을 잠시 사용할 수 없습니다. 닫은 뒤 다시 시도해 주세요.';
+      $('hwWrap')?.prepend(warning);
+    }
+    applyReadOnlyRecordAccess();
+
+    logModalSnapshot = {
+      // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
+      // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
+      notes: (todayNotes || '').trim(),
+      homeworkTable: collectHwTable(),
+      sleepingHomeworkBooks: collectSleepingHomeworkBooks(),
+    };
+    logModalServerSnapshot = {
+      notes: (logEntry.notes || '').trim(),
+      homeworkTable: normalizeHwRowsForCompare(todayRows),
+      sleepingHomeworkBooks: entryHasSleepingHomeworkBooks(logEntry)
+        ? normalizeSleepingHomeworkBooks(logEntry[HOMEWORK_SLEEPING_BOOKS_KEY])
+        : [],
+    };
+
+    await progressHydrationPromise;
+    if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
 
     const dates = Array.from(new Set([
       ...Object.keys(state.progress || {}),
@@ -2662,100 +2859,6 @@ export function initLogModal() {
         explicitNoneMids.delete(key);
       });
     });
-
-    const logEntry = (state.logs[today] || {})[sid] || {};
-    canonicalHomework.exactLogRows = Array.isArray(logEntry.homeworkTable)
-      ? JSON.parse(JSON.stringify(logEntry.homeworkTable))
-      : [];
-    const todayNotes = cleanHwText(logEntry.notes);
-    let seededNotes = todayNotes;
-    logModalCarriedTestAssignment = findAbsentTestCarryoverForLog(today, sid);
-
-    // 오늘 특이사항이 비어 있으면, 가장 최근 특이사항을 실제 텍스트로 미리 채운다.
-    if (!todayNotes.trim()) {
-      for (let i = dates.length - 1; i >= 0; i--) {
-        const d = dates[i];
-        if (d >= today) continue;
-        const prev = (state.logs[d] || {})[sid];
-        const prevNotes = stripGeneratedTestAssignmentBlocks(cleanHwText(prev?.notes));
-        if (prevNotes.trim()) {
-          seededNotes = prevNotes;
-          break;
-        }
-      }
-    }
-
-    const carriedNoteBlock = buildCarriedAssignmentNote(logModalCarriedTestAssignment?.items || []);
-    if (carriedNoteBlock) {
-      seededNotes = appendCarriedAssignmentNote(seededNotes, carriedNoteBlock);
-    }
-
-    // 상담 입력 UI는 제거되었으므로 과거 상담 문구를 숙제 저장에 재사용하지 않는다.
-    logNotes.value = cleanHwText(todayNotes);
-    logNotes.placeholder = '';
-
-    const todayRows = entryHwRows(logEntry);
-
-    let latestRows = [];
-    let bookCarryRows = [];
-
-    for (let i = dates.length - 1; i >= 0; i--) {
-      const d = dates[i];
-      if (d >= today) continue;
-      const prev = (state.logs[d] || {})[sid];
-      if (!prev) continue;
-
-      if (Array.isArray(prev.homeworkTable) && prev.homeworkTable.length) {
-        let rows = [];
-        const first = prev.homeworkTable[0] || {};
-        if (Object.prototype.hasOwnProperty.call(first, 'book') || Object.prototype.hasOwnProperty.call(first, 'this')) {
-          rows = activeHwRows(prev.homeworkTable);
-        } else {
-          rows = normOldHwRows4(prev.homeworkTable);
-        }
-
-        if (latestRows.length === 0 && hasMeaningfulHwRows(rows)) latestRows = rows;
-
-        if (bookCarryRows.length === 0 && rows.some(r => (r.book || '').trim())) {
-          bookCarryRows = rows.map(r => ({ book: r.book, this: '', pct: '', comment: '', next: '', _deleted: false }));
-        }
-
-        if (latestRows.length && bookCarryRows.length) break;
-      }
-
-      if (typeof prev.homework === 'string' && prev.homework.trim()) {
-        if (latestRows.length === 0) latestRows = [{ book: '', this: '', pct: '', comment: prev.homework.trim(), next: '', _deleted: false }];
-        if (latestRows.length) break;
-      }
-    }
-
-    const sleepingHomeworkBooks = resolveSleepingHomeworkBooks({ logEntry, dates, today, sid });
-    const merged = mergeHwRows({ todayRows, latestRows, bookCarryRows });
-    renderHwTable(merged, sleepingHomeworkBooks);
-    if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
-      const warning = document.createElement('p');
-      warning.className = 'hwCanonicalError';
-      warning.setAttribute('role', 'alert');
-      warning.textContent = canonicalHomework.error
-        || '숙제 상세를 불러오지 못해 저장을 잠시 사용할 수 없습니다. 닫은 뒤 다시 시도해 주세요.';
-      $('hwWrap')?.prepend(warning);
-    }
-    applyReadOnlyRecordAccess();
-
-    logModalSnapshot = {
-      // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
-      // 변경 기준은 오늘 서버값을 스냅샷으로 둔다.
-      notes: (todayNotes || '').trim(),
-      homeworkTable: collectHwTable(),
-      sleepingHomeworkBooks: collectSleepingHomeworkBooks(),
-    };
-    logModalServerSnapshot = {
-      notes: (logEntry.notes || '').trim(),
-      homeworkTable: normalizeHwRowsForCompare(todayRows),
-      sleepingHomeworkBooks: entryHasSleepingHomeworkBooks(logEntry)
-        ? normalizeSleepingHomeworkBooks(logEntry[HOMEWORK_SLEEPING_BOOKS_KEY])
-        : [],
-    };
 
     progEl.innerHTML = '';
     state.videos
@@ -2799,18 +2902,6 @@ export function initLogModal() {
       resetLogModalScroll();
     });
 
-    try {
-      if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
-        window.showStudentTooltipForSid(editingLogSid, {
-          variant: 'log',
-          fixed: true,
-          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
-        });
-      }
-      mountHomeworkInTooltip();
-    } catch (err) {
-      console.warn('[logModal] show tooltip failed:', err);
-    }
   }
 
   window.openRecordPopupForRow = openLogModalForRow;
@@ -2859,6 +2950,50 @@ export function initLogModal() {
   }
 
   window.openStudentPopupsForRow = openStudentPopupsForRow;
+
+  let homeworkPrefetchTimer = null;
+  let homeworkPrefetchButton = null;
+  const openButtonFromEvent = event => event.target?.closest?.('.editLog,.openStudentPopups') || null;
+  const prefetchForButton = button => {
+    const row = button?.closest?.('tr[data-sid]');
+    if (!row) return;
+    prefetchLogModalDataForRow(row);
+    void window.prefetchVideoAssignmentPopupForRow?.(row);
+    void window.prefetchTestAssignmentPopupForRow?.(row);
+  };
+
+  document.body.addEventListener('pointerover', event => {
+    const button = openButtonFromEvent(event);
+    if (!button || button.contains(event.relatedTarget)) return;
+    if (homeworkPrefetchTimer) window.clearTimeout(homeworkPrefetchTimer);
+    homeworkPrefetchButton = button;
+    homeworkPrefetchTimer = window.setTimeout(() => {
+      homeworkPrefetchTimer = null;
+      prefetchForButton(homeworkPrefetchButton);
+      homeworkPrefetchButton = null;
+    }, 120);
+  }, { passive: true });
+
+  document.body.addEventListener('pointerout', event => {
+    const button = openButtonFromEvent(event);
+    if (!button || button.contains(event.relatedTarget) || button !== homeworkPrefetchButton) return;
+    if (homeworkPrefetchTimer) window.clearTimeout(homeworkPrefetchTimer);
+    homeworkPrefetchTimer = null;
+    homeworkPrefetchButton = null;
+  }, { passive: true });
+
+  document.body.addEventListener('pointerdown', event => {
+    const button = openButtonFromEvent(event);
+    if (!button) return;
+    if (homeworkPrefetchTimer) window.clearTimeout(homeworkPrefetchTimer);
+    homeworkPrefetchTimer = null;
+    homeworkPrefetchButton = null;
+    prefetchForButton(button);
+  }, { passive: true });
+
+  document.body.addEventListener('focusin', event => {
+    prefetchForButton(openButtonFromEvent(event));
+  });
 
   document.body.addEventListener('click', async (e) => {
     const btn = e.target.closest('.editLog,.openStudentPopups');
@@ -2910,9 +3045,10 @@ export function initLogModal() {
   window.closeStudentWorkPopups = close;
   logModal.addEventListener('admin:assistant-notes-close', close);
 
-  async function saveBase(doneFlag) {
+  async function saveBase(doneFlag, options = {}) {
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
+    const homeworkCheckedAt = options.homeworkChecked === true ? nowHHMM() : '';
 
     if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'error') {
       throw new Error(canonicalHomework.error || '숙제 상세를 불러오지 못했습니다. 닫은 뒤 다시 시도해 주세요.');
@@ -2945,6 +3081,7 @@ export function initLogModal() {
       prevLog,
       doneFlag,
       summary,
+      homeworkCheckedAt,
     });
 
     let returned = null;
@@ -2989,13 +3126,14 @@ export function initLogModal() {
     applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });
 
     setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);
+    invalidateLogModalHydrationCaches(today, sid);
 
-    return {};
+    return { homeworkCheckedAt };
   }
 
-  async function saveRecordPopupForCurrent() {
+  async function saveRecordPopupForCurrent(options = {}) {
     if (!logModalReady) throw new Error('기록 팝업을 불러오는 중입니다.');
-    return await saveBase(false);
+    return await saveBase(false, options);
   }
 
   window.saveRecordPopup = saveRecordPopupForCurrent;
@@ -3069,8 +3207,39 @@ export function initLogModal() {
     };
   }
 
+  function runLogRecordAction(button, pendingLabel, action) {
+    if (logRecordActionPromise) return logRecordActionPromise;
+    if (saveAllStudentPopupPromise) return saveAllStudentPopupPromise;
+
+    const priorLabel = String(button?.textContent || '');
+    const unlock = lockStudentPopupControls([
+      '#assistantStudentNotes [data-note-save-close]',
+      '#assistantStudentNotes [data-note-close]',
+      '#logSave',
+      '#logCompleteBtn',
+    ]);
+    if (button) {
+      button.setAttribute('aria-busy', 'true');
+      button.textContent = pendingLabel;
+    }
+
+    logRecordActionPromise = (async () => {
+      await action();
+    })().finally(() => {
+      unlock();
+      if (button) button.removeAttribute('aria-busy');
+      if (logModal.style.display !== 'none') {
+        if (button === logSave) applyReadOnlyRecordAccess();
+        else if (button) button.textContent = priorLabel;
+      }
+      logRecordActionPromise = null;
+    });
+    return logRecordActionPromise;
+  }
+
   async function saveAllStudentPopupChangesAndClose() {
     if (saveAllStudentPopupPromise) return saveAllStudentPopupPromise;
+    if (logRecordActionPromise) return logRecordActionPromise;
 
     saveAllStudentPopupPromise = (async () => {
       const unified = logModal.classList.contains('student-work-layout');
@@ -3126,41 +3295,43 @@ export function initLogModal() {
   }
 
   logSave.addEventListener('click', async () => {
-    try {
-      await saveRecordPopupForCurrent();
-      if (!isContextMenuOnlyAccess()) {
-        await reapplyCarriedTestAssignmentForCurrent();
+    void runLogRecordAction(logSave, '저장 중…', async () => {
+      try {
+        await saveRecordPopupForCurrent();
+        toast(isContextMenuOnlyAccess() ? '영상 제외 상태 저장됨' : '숙제 저장됨');
+        close();
+        document.dispatchEvent(new CustomEvent('admin:refresh'));
+      } catch (err) {
+        if (err?.message) {
+          alert(err.message);
+          return;
+        }
+        console.error(err);
+        alert('저장 실패');
       }
-      toast(isContextMenuOnlyAccess() ? '영상 제외 상태 저장됨' : '숙제 저장됨');
-      close();
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
-    } catch (err) {
-      if (err?.message) {
-        alert(err.message);
-        return;
-      }
-      console.error(err);
-      alert('저장 실패');
-    }
+    });
   });
 
-  logComplete.addEventListener('click', async () => {
-    try {
-      await saveRecordPopupForCurrent();
-      await reapplyCarriedTestAssignmentForCurrent();
-      const today = editingLogDate || getAdminDate();
-      await markHwFlagsRemote(today, editingLogSid, { assigned: true, checked: true });
-      toast(`숙제 검사 완료 (${nowHHMM()})`);
-      close();
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
-    } catch (err) {
-      if (err?.message) {
-        alert(err.message);
-        return;
+  logComplete.addEventListener('click', () => {
+    void runLogRecordAction(logComplete, '처리 중…', async () => {
+      try {
+        await saveRecordPopupForCurrent({ homeworkChecked: true });
+        close();
+        if (typeof window.showStudentPopupSaveResult === 'function') {
+          window.showStudentPopupSaveResult('저장 완료');
+        } else {
+          toast('저장 완료');
+        }
+        document.dispatchEvent(new CustomEvent('admin:refresh'));
+      } catch (err) {
+        if (err?.message) {
+          alert(err.message);
+          return;
+        }
+        console.error(err);
+        alert('숙제 검사 완료 저장 실패');
       }
-      console.error(err);
-      alert('숙제 검사 완료 저장 실패');
-    }
+    });
   });
 }
 
