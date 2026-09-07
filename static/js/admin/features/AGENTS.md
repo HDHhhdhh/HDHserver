@@ -8,10 +8,12 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 |---|---|---|
 | Today list state | `today.state.js` | Attendance/contact/arrive-time caches, saved order, schedule helpers. |
 | Today/done rendering | `today.render.js` | Row DOM, `tr[data-sid][data-date]`, row actions, absence/contact/homework patches. |
-| Today orchestration | `today.js` | Fetching, sorting, search, auto-refresh, stale-done warning. |
+| Today orchestration | `today.js` | Fetching, sorting, search, auto-refresh, stale-done and missing-leave warnings. |
 | Log/homework/progress modal | `logModal.js` | `/api/logs`, `/api/progress`, homework table, manual progress states. |
 | Video assignment modal | `videoModal.js` | Updates/progress/watch integration and manual/auto assignment. |
 | Test assignment modal | `testModal.js` | Assigned tests, status changes, log/progress patching. |
+| Test assignment rules | `testAssignmentRules.js` | DOM/transport-free status cycles, normalization and catalog ordering; opening subject is injected. |
+| Test assignment rules | `testAssignmentRules.js` | DOM/transport-free status cycles, subject/difficulty/key normalization and catalog ordering; opening subject is injected. |
 | Calendar/absence/makeup | `calendar.js`, `makeupPending.js`, `absentRecovery.js` | Absence, makeup, carryover, manual absence selection. |
 | Toolbar date modals | `extraModal.js`, `absentRegister.js` | Must freeze their opening date before any later save. |
 | Assistant notes | `hoverTooltip.js`, `assistantStudentNotes.js` | Student-scoped mount/load/save flow; not date-scoped or exportable. |
@@ -22,9 +24,13 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 ## Conventions
 - Prefer row `data-date` for supplement/absence/contact/homework/log/video/test actions.
 - Freeze a modal's target date when it opens; never call live `getAdminDate()` again to decide where its save lands.
+- Test save commands freeze SID/date/payload before awaiting, deduplicate per open session, and show completion only after progress plus log success. Late responses must not reset a newly opened popup. Exercise delayed reads, duplicate clicks, partial failure and retry through the real module.
+- Keep assignment normalization/catalog projection in `testAssignmentRules.js`; modal state, recent-view storage, DOM, requests and save ordering remain in `testModal.js`. `normalizeConfig` deliberately retains its legacy in-place repair contract. Preserve the pre-extraction hash and literal oracle in `verify_test_assignment_rules.mjs` alongside the actual modal behavior driver and browser QA.
+- Keep assignment normalization/catalog projection in `testAssignmentRules.js`; modal state, recent-view storage, DOM, requests and save ordering remain in `testModal.js`. `normalizeConfig` deliberately retains its legacy in-place repair contract. Preserve the pre-extraction hash and literal oracle in `verify_test_assignment_rules.mjs` alongside the actual modal behavior driver and browser QA.
+- Keep assignment normalization/catalog projection in `testAssignmentRules.js`; modal state, recent-view storage, DOM, requests and save ordering remain in `testModal.js`. `normalizeConfig` deliberately retains its legacy in-place repair contract. Preserve the pre-extraction hash and literal oracle in `verify_test_assignment_rules.mjs` alongside the actual modal behavior driver and browser QA.
 - Manual white/skip/none progress must survive automatic watch progress.
 - Empty save values must not erase meaningful server data unless an explicit clear/delete field is sent.
-- `logModal.js` owns the shared unified launcher for the fixed student tooltip plus log, video-assignment, and test-assignment modals. Its `all-students-readonly` log access locks notes/homework, suppresses log/done writes, and allows only right-click skip changes in the progress grid.
+- `logModal.js` owns the shared unified launcher for the fixed student tooltip plus log, video-assignment, and test-assignment modals. Its `all-students-readonly` log access locks class-log notes/homework, suppresses log/done writes, allows only right-click skip changes in the progress grid, and leaves the separate assistant-note thread available for list/create only.
 - At `600px` and below, `videoModal.js` keeps those four unified surfaces reachable through the shared mobile tab switcher; do not restore off-screen fixed columns.
 - Merge log modal saves with the latest server entry and preserve unknown fields.
 - Keep homework book/current/next and notes readable; never display `???`/`????`.
@@ -36,10 +42,12 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - `today.state.js` is the merge-safe client patch boundary. Preserve `__clear`, server-entry preference, unknown fields, and `done` behavior.
 - The today-table `백지` checkbox is the SID-level `students.json.whiteReviewPending` flag, not a selected-date log field. Render it between `진도` and `작업`, save only an exact boolean through `/api/update`, roll back on failure, and never clear it from leave, homework-leave, record cleanup, attendance, progress, or date changes. Keep `진도`/`백지` at 36px each, reduce only `작업` to 232px, and preserve the `보강`/`문서` widths and total table width.
 - Assistant-note mounts use a per-mount token to suppress stale responses. Keep authors/content student-scoped and out of CSV/print, class-log notes, and browser storage.
+- All-students note mounts carry `existingReadOnly` into the note renderer itself; disable existing-note actions even after the thread moves outside `#logModal`. Keep list/create enabled and retain server-side PATCH/DELETE rejection.
 - `testModal.js` initializes through `logModal.js`; `attendanceLedgerLink.js` initializes through `uiEnhance.js`. The comment-only `materials.js` module was retired after consumer audit; do not restore it or `/api/material-upload`.
 - `main.js` may dynamically initialize calendar, announcements, operation notes, student logs/accounts/focus, and OCR only after the first today render. Their exported `init*` functions must remain idempotent and must not depend on receiving the first `today:rendered` event.
 - Popup prefetch/cache changes follow [the canonical admin latency contract](../../../../docs/PROJECT_FUNCTIONS_AND_LOGIC.md#admin-latency-contract). Preserve date/SID/URL scope, failed-promise eviction, save-time invalidation, and authoritative-load edit locking together; do not add a cache when any one gate is absent.
 - After changes here, reload `/admin` and verify the affected modal/table.
+- `examAttendance.js` owns the read-only exam-attendance projection and short-lived four-endpoint loader; meaning stays in the canonical logic document §7. `hoverTooltip.js` updates only its count spans after hydration, with popup epoch guards and attendance/refresh invalidation. Keep the existing thread/modal DOM intact and run `verify_exam_attendance.mjs` plus the real tooltip driver.
 - OCR review freezes the selected date at load, uses only administrator endpoints, never displays answer keys on a student surface, and permits only pending correct/incorrect resolution plus incorrect-to-correct correction. Prefer the official solution crop; show the expected value and Drive source only when that crop is unavailable.
 
 ## Export Guardrails
@@ -48,6 +56,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - `로그 내보내기` TXT와 CSV `progress` 열은 같은 비완료 변화 목록을 사용한다. 둘 다 `done`(파란색)을 제외하고 `interrupted` 같은 비완료 표시만 유지하되, CSV의 고정 14열 구조는 보존한다.
 - 두 내보내기의 테스트 텍스트는 현재 커리큘럼의 `assigned`(초록색) 배정 이름만 한 줄에 하나씩 출력한다. `SCHOOL_PAST`는 `학군지(난이도) 회차 이름`, `ILSAN_PAST`는 `일산(난이도) 회차 이름`으로 표기하고, 점수·오답·메모 같은 채점 정보는 포함하지 않는다.
 - 회귀 검증은 `python scripts/verify_refactor_safety.py --only-export-log-format`으로 실행하고, 실제 관리자 선택일에서 명단/로그 TXT를 각각 확인한다.
+- 빠른 인쇄기 CSV는 선택 타임과 현재 과목의 초록 `assigned` 조건, 운영판 학생/카탈로그 순서, BOM·헤더·이스케이프·파일명을 유지한다. 팝업 preview는 정확한 결석 이월 후 재배정된 항목의 자동 제외 `명 · 건`을 표시하며 재인쇄 checkbox는 매번 기본 꺼짐이다. 과거 CSV 이력은 감사 기록이지 자동 제외의 필수 조건이 아니다. 0행 응답은 download helper에 전달하지 않고 이유를 표시한다. 회귀 검증은 `--only-quick-printer-export`와 관리형 8004 실제 modal로 수행한다.
 
 ## Video Assignment Guardrails
 
@@ -79,6 +88,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 ## Record Cleanup Guardrails
 
 - Record cleanup means finalizing an active done row; it is not an alias for `하원` or `숙검하원`.
+- The missing-leave warning is a separate alert on the shared hero warning stack: it uses only the server summary of pre-today arrival records without `done:true` and loads in parallel with the unarchived-done summary after the first table render. By the approved 2026-09-05 B design, its visible text is only `하원 미완료`, with a small decorative `aria-hidden` red dot and no background, border, dates, counts, or action button. Keep the existing date eligibility and empty/error suppression. The stale-done warning retains `date · 기록 정리` and its decorative SVG icon; long dates truncate visually on one line while the full DOM text stays accessible. Each visible warning spans both quick-action columns, with missing-leave first when both are visible. Keep both rows above `.hero-actions` without an internal scrollbar and maintain readable light/dark contrast.
 - Individual cleanup uses the row's frozen `data-date` and sid. Bulk cleanup uses every unique row currently rendered in `#doneWrap`, preloads latest logs/progress once per rendered date, preserves each row's frozen date and sid, and invokes the same helper once per target.
 - Both paths must call `completeAssignedTestsForRecordCleanup()`; do not duplicate status transitions in click handlers.
 - A nonempty `state.logs` or `state.progress` entry is still only a cache. Cleanup must issue `no-store` reads for the latest log and, unless absent, the exact date/sid progress entry.

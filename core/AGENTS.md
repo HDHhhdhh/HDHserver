@@ -12,6 +12,7 @@ this file owns core-module edit and verification constraints.
 | Person identity persistence | `person_identity_store.py` | Strict two-store load, deterministic locks, journaled commit/rollback/recovery, and fail-closed configured-state detection. |
 | Student auto-assignment settings | `student_auto_assignment_rules.py` | Pure A:Ble detection, default/count coercion, and configured-count interpretation shared by roster writes and automatic assignment. |
 | Student schedule rules | `student_schedule_rules.py` | Pure date, regular/weekend slot, slot-absence, consecutive-count, self-study, log-entry, and daily-absence interpretation. |
+| Student schedule projection | `student_schedule_projection.py` | Pure public schedule rows plus exact-date effective attendance roster IDs for regular, extra, active makeup, and absence precedence. |
 | Student video projection | `student_video_projection.py` | Pure curriculum scoping, completion/blocking state, response filtering, and sanitized review projection. |
 | Student video assignment transforms | `student_video_assignment_rules.py` | Pure self-study prior-video selection and metadata-preserving auto append/rebase transforms. |
 | Update assignment rules | `update_assignment_rules.py` | Pure SID alias, video-list normalization, merge/source, and self-study boundary vocabulary. |
@@ -34,8 +35,10 @@ this file owns core-module edit and verification constraints.
 | Runtime paths | `paths.py` | Canonical JSON/SQLite path constants. |
 | Runtime server guard | `runtime_server_guard.py` | Refuses a second Waitress/Flask network server against the live repository runtime while production port 8003 is listening. A marker-verified copied code root is allowed; test-client imports remain allowed. |
 | JSON storage/locks | `storage.py` | Atomic replace, mirror/snapshot copies, active-token-protected interprocess locks, and ownerless local-orphan recovery. |
+| Request/read consistency | `request_consistency.py`, `read_cohort.py` | Pure absence HTTP classification and process-local read cohorts holding the unchanged cross-process file lease; only explicitly storage-only requests may share. |
 | Network gating | `network_access.py` | Answer-link and academy-network visibility behavior. |
 | Test answer-link resolution | `test_answer_links.py` | Pure assignment -> config -> generated-map precedence shared by bootstrap and test-record routes. |
+| Quick-printer CSV/history | `quick_printer_export.py`, `quick_printer_export_history.py` | Current-subject green-assignment projection plus exact absence provenance and a separate SQLite per-assignment generated-export history. |
 | Student test OCR | `student_test_ocr_rules.py`, `student_test_ocr_repository.py`, `student_test_ocr_service.py`, engine/job/assets/config helpers | Default-off, migration-explicit UNIT capture, OCR, grading, retention, and review boundary. |
 | UNIT solution crop | `student_test_solution_crop.py` | Optional read-only crop from the official first-page answer table; Drive source remains the fallback. |
 | Announcement image access | `announcement_image_access.py` | Pure path/membership/visibility rules plus a path-injected locked store reader for public student files. |
@@ -70,12 +73,14 @@ this file owns core-module edit and verification constraints.
 - The admin latency/cache contract is canonical in [PROJECT_FUNCTIONS_AND_LOGIC §6·§8](../docs/PROJECT_FUNCTIONS_AND_LOGIC.md#admin-latency-contract). `logs.json` cache entries require a stable before/after file signature, a 16-path cap, and defensive copies at every public read boundary. Never break a live same-process token or another live process's lock; only a same-process lock file with no registered owner may use the short orphan grace.
 - Repository connections enable WAL and ensure schema. Log reads and assistant-note lists can therefore create sidecars or migrate/backfill rows.
 - Keep assistant notes out of class-log notes, counseling data, CSV/print exports, and browser storage. Tests inject a temporary `db_path`.
+- Quick-printer history is not a class-log field. Keep it in its separate SQLite repository with `(student_id, test_id, material_id, assignment_date)` uniqueness, `BEGIN IMMEDIATE` upserts, exact-boolean reprint policy at the route, and temp-only restart/concurrency/rollback verification. Exact absence provenance plus an originally `assigned` carryover is sufficient for default exclusion even when the successful CSV predates history tracking; generated-export history remains the audit record, not an exclusion prerequisite.
 
 ## Anti-Patterns
 - Do not move homework placeholder repair into `log_rules.py`; it can depend on student/book runtime data.
 - Do not collapse watch/progress auto-status rules into log rules.
 - Do not make `video_review_rules.py` read the video catalog or infer current curriculum; catalog scoping and response sanitization belong in `student_video_projection.py`, while runtime file loads and writes remain outside both modules.
 - Do not bypass `LogRepository` for class-log writes.
+- Follow `RULE-LOG-001` for complete snapshots. Keep the internal row marker out of public entry/map/export projections, hydrate unknown legacy fields before sealing a row, and prove clear/reload/restart after a JSON mirror failure. Absence raw snapshots must preserve the marker byte-for-byte for rollback.
 - Do not use `logs_sqlite.py` for new reads or writes.
 - Do not merge the assistant-note repository with `LogRepository` merely because both resolve to `app.sqlite`.
 - Do not add broad data cleanup inside pure helpers. The absence cleanup service is an explicit path-injected mutation boundary and must never widen beyond the supplied date/SID pairs.

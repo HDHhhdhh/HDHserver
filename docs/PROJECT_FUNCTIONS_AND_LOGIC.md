@@ -96,6 +96,8 @@
 
 - 첫 관리자 운영표의 blocking bootstrap은 그 표를 그리는 데 필요한 학생·영상·배정·로그·결석·진도·학교일정만 기다린다. 자료·교재 배정·테스트 카탈로그와 독립 패널은 팝업이 요구할 때 또는 첫 운영표 렌더 뒤에 초기화한다. 같은 동작의 독립 I/O는 병렬로 시작하고, 동시에 시작된 동일 초기화는 한 진행 중 promise만 공유한다.
 - 학생 통합 팝업의 짧은 읽기 cache는 날짜·SID·URL 범위가 명확하고, 실패 promise를 즉시 제거하며, 저장 성공 뒤 관련 범위를 무효화하고, 최신 권위 응답 전 편집을 잠그는 경우에만 허용한다. 네 조건 중 하나라도 없으면 cache를 추가하지 않는다.
+- 테스트 저장은 첫 비동기 요청 전에 SID·날짜·변경 키를 고정하고 같은 팝업 세션의 중복 호출은 한 저장 작업으로 합친다. 저장 중 해당 팝업 편집은 잠그며, 이전 세션의 응답은 새 팝업의 편집 상태를 초기화하지 않는다. 진도와 후속 로그가 모두 성공한 뒤에만 `저장 완료`를 표시한다. 후속 로그 실패는 진도 부분 성공을 명시하고 재시도할 변경값을 보존한다.
+- 관리자/전체학생의 공용 팝업 import는 같은 버전 키를 사용한다. 정적 JS·CSS는 페이지 재로드 때 HTTP 재검증하며, 검사는 과거 날짜 문자열이 아니라 두 소비자의 버전 일치와 실제 응답을 확인한다.
 - 브라우저의 자동 재시도는 구조화된 `*_lock_timeout` 또는 동등한 legacy lock-timeout 응답에만 허용한다. `retryable: true`만으로 revision conflict를 재시도하지 않으며, 실제 revision/base conflict는 최신값 재조회나 사용자 확인 없이 덮어쓰지 않는다. 응답과 안내에는 raw lock 경로나 근거 없는 “다른 사용자/컴퓨터” 표현을 노출하지 않는다.
 
 ### 백지리뷰 검사 대기
@@ -111,7 +113,11 @@
 - 보강은 `extra_attend.json`, 주말 시간은 `weekend_slots.json`, 보강 이월은 전용 carryover API가 담당한다. 앞의 두 HTTP 경계는 `routes/api_schedule_overrides.py`가 소유하고, 오늘 자동 배정 후처리는 `app.py`가 주입한 public callback으로 연결한다. 보강 예약이 먼저 저장되고 `extra_attend.json` 반영이 일시 실패한 경우에도 오늘 명단과 날짜별 출결 명단은 활성 `scheduledMakeup`을 보조 권위로 합쳐 누락을 막되, 같은 날짜의 명시적 결석은 계속 최우선으로 제외한다. 후처리 재시도 의미는 §9의 자동 배정 불변식을 따른다.
 - 오늘 순서의 유일한 원본은 `data/today_order.json`이다. 루트 `today_order.json`은 2026-08-24 백업·통합 후 제거됐으며 다시 만들지 않는다.
 - 오늘표의 완료는 수업 로그의 `done`과 연결되지만 결석·출석·하원 버튼의 의미와 동일하지 않다.
+- 관리자 운영판은 2026-08-29부터 실제 KST 오늘보다 이전 날짜의 `arrive_time.json` 등원시각과 수업 로그를 대조해, 명시적 결석이 아니고 그 날짜의 현재 유효 명단(정규 등원·추가등원·활성 `scheduledMakeup`, 결석 우선 제외)에 계속 속하면서 같은 날짜 로그가 `done:true`가 아닌 학생만 하원 누락으로 경고한다. 보강을 다른 날짜로 옮기거나 취소해 옛 날짜 명단에서 빠진 뒤 남은 등원시각 흔적은 경고 근거가 아니다. 2026-08-28의 과거 등원 흔적은 당시 명단·하원 근거가 완전하지 않아 경고 기준선 밖에 둔다. 현재 선택해 직접 확인 중인 날짜는 집계에서 제외한다. 화면의 하원·기록 정리 경고는 각각 `날짜 · 하원`, `날짜 · 기록 정리`만 표시하고, 색상 외에도 장식용 SVG 경고 아이콘과 고대비 경계로 구분한다. 경고 영역에는 내부 스크롤을 만들지 않으며, 한 건이면 빠른 작업 버튼 두 칸의 전체 폭을 쓰고 두 건이면 두 칸에 나란히 배치해 버튼 영역과 겹치지 않는다. 두 요약은 전체 로그 내용을 브라우저로 보내지 않고 첫 표 렌더 뒤 병렬로 읽는다.
 - “숙검하원”은 오후 6시 전 연강 학생을 제외하고, 오후 6시 이후에는 포함한다. 자습 학생은 포함한다.
+- 학생 툴팁의 시험 전 출석 횟수는 화면에 표시되는 정규 등원요일과 같은 규칙으로 선택 운영일의 다음 날부터 시험 시작 전날까지 센다. 현재 선택일 수업을 남은 회차로 다시 포함하지 않으며, `selfStudyDays`로 지정된 자습 요일은 정규 등원 표시와 횟수 양쪽에서 모두 제외한다. 과목 시험일이 하루로 확정되면 학교 시험기간 시작일보다 우선하고, 과목 일정 행이 없더라도 같은 학교·학년의 공통 시험기간이 하나로 확정되면 그 기간을 사용한다.
+- 시험 전 출석 횟수에는 같은 기간의 활성 보강 예약과 추가등원도 포함한다. 정규 등원은 기존대로 날짜당 한 번, 추가 보강은 타임 단위로 세며 날짜·SID·타임이 같은 정규 수업/예약/추가등원 반영은 중복 집계하지 않는다. 명시적 날짜·타임 결석은 해당 회차를 제외한다. 이동한 예약은 새 날짜만 사용하고 취소한 예약은 제외한다. 보강 예약은 저장됐지만 추가등원 반영이 누락된 경우에도 예약 자체를 포함한다.
+- 시험일 전에 발생한 미예약 보강 대기가 있으면 `N회 (+n회 : 보강 잡자!)`로 표시한다. `n`은 기존 보강 대기 계산(`buildPendingMakeups`)을 재사용하며 본 횟수에 미리 더하지 않는다. 이미 처리하거나 시험 이후로라도 예약한 결석분을 미예약으로 되살리지 않는다. 관리자 운영 팝업·이름 툴팁·전체학생의 공유 팝업이 같은 계산을 사용한다. 조회 중/실패는 명시적으로 표시하고 실패를 보강 0건으로 취급하지 않는다.
 - 연강/보강/주말 slot 배열은 기존 문자열 sid와 다중 slot 호환을 유지한다.
 - 결석 전체 저장에 실제 달력에 없는 `YYYY-MM-DD`가 신규로 들어오면 현재 500을 반환하는 알려진 제한이 있다. 사용자 선택 B에 따라 선행 400 검증은 추가하지 않았으며, 이 실패는 모든 관련 저장소 무변경·무알림이어야 한다.
 
@@ -121,6 +127,8 @@
 
 - 논리 원본은 `LogRepository`다. SQLite가 우선이며 `logs.json`은 호환 fallback·mirror 역할을 한다.
 - 같은 날짜/sid가 두 저장소에 있으면 SQLite의 의미 있는 필드를 보존하고 JSON은 빠진 필드만 좁게 채운다.
+- 위 결손 보충은 기존 legacy 행에 적용한다. 새 PATCH/batch 저장은 JSON의 기존 고유 필드를 먼저 합친 뒤 완전한 SQLite 행을 확정한다. 내부 저장 표식 `__logRepositoryCompleteV1`이 있는 행은 필드의 부재도 권위 값이므로 JSON에서 삭제된 메모·배정을 되살리지 않는다. 표식은 API·내보내기에서 제거하며 클라이언트 입력으로 설정하지 못한다. 기존 운영 행을 일괄 변환하지 않는다.
+- SQLite base 충돌은 JSON에도 쓰지 않고 재시도 불가 409를 반환한다. SQLite 실패는 JSON-only 쓰기로 우회하지 않는다. SQLite 성공 뒤 JSON 미러만 실패하면 기존 부분 성공 응답을 유지하되 재조회는 확정된 SQLite snapshot과 일치한다. 손상된 JSON은 빈 맵으로 덮어쓰지 않고 저장을 중단한다.
 - 저장은 `routes/log_repository_provider.py`의 `get_log_repository()`를 통하고, 순수 병합·충돌 규칙은 `core/log_rules.py`에 둔다. 기존 `routes.api_basic` import 경로는 호환 재노출이다.
 - 큰 `logs.json` 호환 병합은 파일 identity·mtime·size signature가 읽기 전후 안정된 경우에만 process-local cache를 재사용한다. 교체 중 signature가 계속 바뀌면 그 snapshot을 cache하지 않고 다음 호출에서 다시 읽으며, 경로 수는 16개로 제한한다. 호출자에게 반환하는 로그 entry/map은 방어 복사해 cache 원본을 오염시킬 수 없게 한다.
 - 빈 값은 명시적 clear/delete 계약이 없으면 기존 교재, 숙제표, 메모를 지우지 않는다.
@@ -132,6 +140,7 @@
 - 학생 페이지의 수업·숙제 미완료 패널은 로그의 완료/보관 상태를 읽는다.
 - 전체 학생/관리자 팝업은 같은 로그 계약을 공유하되 선택 날짜를 유지한다.
 - 숙제 검사 팝업은 입력칸 자체가 위치를 설명하므로 교재·이번 숙제/진행률·코멘트·다음 숙제 헤더 문구를 표시하지 않는다.
+- 숙제 검사 팝업에서 한 교재 행의 이번 숙제·진행률·코멘트·다음 숙제를 모두 비운 채 `숙검 완료`를 누르면, 화면에 제시된 직전 숙제를 그 행의 이번 숙제로 확정하고 진행률 `0%`로 같은 로그 저장에 포함한다. 일반 `저장`, 재운 교재, 사용자가 값을 하나라도 입력한 행에는 이 자동 이월을 적용하지 않는다. 저장된 이번 숙제는 다음 등원일의 직전 숙제 원본이 된다.
 - 단순 `하원`과 `숙검하원`은 하원 완료만 기록하며 시험 상태를 바꾸지 않는다.
 - `기록 정리`는 하원 완료 행을 최종 보관하는 별도 명령이며, 이때만 시험 완료 전이를 수행한다.
 
@@ -251,6 +260,8 @@
 
 - 카탈로그 원본은 `tests-config.json`이다. `tests.json`과 legacy 로그의 기존 성적은 읽기 전용 과거 기록이며 학생 화면에서 새 기록을 만들지 않는다.
 - 학생별 배정 상태의 원본은 `progress[date][sid].tests`다. 로그의 `assignedTests`는 메타데이터·호환 fallback이며 명시적으로 비운 배정을 되살리면 안 된다.
+- 빠른 인쇄기 CSV는 선택한 타임 학생 중 현재 과목의 `assigned` 테스트만 기존 카탈로그 순서로 내보낸다. CSV가 성공 생성될 때 포함된 각 배정을 `app.sqlite`의 `quick_printer_export_history` 테이블에 `(student_id, test_id, material_id, original_assignment_date)` 복합 키로 기록하며 preview·빈 결과·미매칭·저장 실패는 이력을 남기지 않는다.
+- 현재 로그의 `testAssignmentAbsenceSourceDate`와 출처 로그의 `testAssignmentAbsenceCarryover.assignedTests`가 정확히 같은 시험을 가리키며 출처 항목의 당시 상태가 `assigned`이면, 이월 체인으로 복원한 최초 배정 키의 과거 빠른 인쇄기 이력 유무와 관계없이 기본 CSV에서 자동 제외한다. 이 규칙은 이력 기능 도입 전에 출력된 결석 이월도 첫 재배정 CSV부터 제외하기 위한 것이다. 결석과 무관한 수동 상태 변경, 출처 당시 `done`·`interrupted`였던 시험, 같은 학생의 다른 시험은 포함한다. 성공 생성 이력은 계속 별도 감사 기록으로 남긴다. 팝업은 자동 제외 `학생 수 · 건수`를 보여 주고, 기본 꺼짐인 `이미 출력한 결석 이월 항목도 포함(재인쇄)`으로 다시 포함할 수 있다. 자동 제외 뒤 0건이면 CSV를 만들지 않고 이유와 집계를 안내한다.
 - `GET /api/tests-config`는 `X-Tests-Config-Revision`을 반환한다. 개별 시험 정의 추가·수정·분류 이동은 `PATCH /api/tests-config/test`와 같은 revision을 사용하며, 기존 unknown 필드와 source/답지 메타데이터를 보존하고 `clearFields`로 허용된 필드만 명시적으로 지운다.
 - 전체 규칙·bulk import·명시적 삭제는 revision을 포함한 `POST /api/tests-config`를 사용한다. revision이 없거나 stale이면 428/409로 실패하고, 관리 화면은 최신 카탈로그를 다시 읽거나 저장 전 스냅샷으로 복구한다.
 - `/api/tests-config`의 전체 저장은 기존 시험의 암묵적 삭제를 409로 거부한다. 삭제는 명시적 ID 목록으로 요청한다.
@@ -268,8 +279,9 @@
 - 시험 배정 상태는 기본 `assigned`, 완료/정리 후 `done`이다. 화면 편의 상태가 기록 원본을 임의로 대체하면 안 된다.
 - 학생별 단원평가 기본 레벨은 학생 레코드의 `testLevelDefaults.UNIT[정규화 과목]`이 원본이다. 테스트 배정 팝업의 `레벨 설정`은 Lv.3~Lv.6 GUI에서 이 필드만 `/api/update`로 저장하며, 현재 배정 상태나 관리 페이지의 공통 규칙을 함께 바꾸지 않는다.
 - 학생별 기본 레벨이 있어도 일반 `난이도` 선택에는 해당 분류의 전체 난이도(UNIT은 Lv.3~Lv.6)를 계속 노출한다.
+- 배정 팝업의 상태 순환·정규화·카탈로그 정렬은 `static/js/admin/features/testAssignmentRules.js`가 DOM·통신·전역 상태 없이 소유한다. `testModal.js`는 현재 과목을 주입하고 최근 보기·편집 상태·DOM·저장 순서를 소유한다. 분할은 배정 의미와 화면을 바꾸지 않으며 기존 config 정규화의 제자리 보정 계약도 유지한다.
 - 테스트 배정 팝업의 최초 과목은 현재 학생 레코드의 `curriculum` 정규화값이 절대 우선이다. 학생별 브라우저 최근 보기나 배정 이력이 다른 과목이어도 최초 과목을 덮어쓰지 않는다.
-- 현재 커리큘럼 과목 안에서만 첫 보기 우선순위를 학생별 브라우저 최근 보기(`admin.testAssignment.recentView.v1:<sid>`) → 현재/직전 배정 이력의 마지막 유효 항목 → 학생별 기본값과 테스트 관리 공통 규칙 순으로 적용한다.
+- 현재 커리큘럼 과목 안에서만 첫 보기 우선순위를 최근 배정 이력의 유효 항목 → 학생별 브라우저 최근 보기(`admin.testAssignment.recentView.v1:<sid>`) → 학생별 기본값과 테스트 관리 공통 규칙 순으로 적용한다. 최근 배정은 `progress[date][sid].__testAssignmentChangeOrder`의 시험별 순번으로 판정하고, 분류 탭을 바꾸면 그 분류의 최근 배정을 우선한다. 이 우선순위는 결정 원장 D-13의 사용자 확인을 따른다.
 - 최근 보기는 현재 커리큘럼과 같은 과목의 분류·난이도·고사·회차만 복원한다. 카탈로그에서 삭제되었거나 조합이 맞지 않거나 다른 과목인 저장값·이력은 무시하며, 팝업 안에서 수동으로 본 다른 과목은 다음 오픈의 시작값으로 저장하지 않는다.
 - Ctrl/Cmd+클릭의 다중 선택은 배정 상태와 별개인 `선택` 표시다. 방향키 상태 순환은 왼쪽/오른쪽 모두 `흰(없음) ↔ 주(배부) ↔ 초(배정) ↔ 파(완료) ↔ 빨(제외)`의 역/정방향을 유지한다.
 - 학생별 통합 팝업의 `저장 후 닫기`는 영상 배정, 숙제·수업 로그, 결석 테스트 이월을 먼저 저장한 뒤 테스트 배정을 마지막으로 저장한다. 사용자가 테스트 상태를 직접 바꾼 경우 이 마지막 저장이 권위이므로, 같은 팝업을 열 때 포착한 과거 이월 snapshot이 삭제한 초록 배정을 다시 만들면 안 된다. 테스트를 바꾸지 않은 저장은 기존 이월을 유지한다.
@@ -289,6 +301,7 @@
 확인일 메모 카드는 `[상태] 작성일 → 확인일`을 단독 행으로 유지하고, 다음 행의 왼쪽에는 작성자·핀, 오른쪽 끝에는 `수정 · 삭제`를 배치하며 메모 내용은 그 아래 행에서 시작한다. 날짜와 작업 버튼은 같은 가로 영역에서 겹치면 안 된다.
 
 조교 메모는 고정·확인일 우선순위를 유지하되 같은 우선순위 안에서는 `created_at DESC, id DESC`로 최신 작성 메모를 위에 표시하고, 목록을 열거나 새 메모를 등록한 뒤에도 맨 위를 보여준다.
+관리자 운영판은 조교 학생 메모 전체 CRUD를 제공한다. 전체학생 관리페이지는 같은 학생별 쓰레드를 조회하고 신규 메모를 등록할 수 있지만, 기존 메모의 편집·삭제·핀 등 후속 변경은 잠근다. 학생 개인페이지와 내보내기에는 노출하지 않는다.
 
 삭제·완료·핀·리마인더는 각각 다른 상태 변화다. UI에서 한 동작을 다른 저장소의 삭제로 확대하지 않는다.
 
@@ -296,10 +309,11 @@
 
 - 공지는 목록/작성/수정/삭제, 이미지 업로드/다운로드 소스, 확인, 답글·설문 제출을 지원한다. 학생 화면의 정규화·미확인/완료·확인/설문/답장 상태·답장 3회 제한·게시판 필터/페이지 병합은 `static/js/student/announcementState.js`, 실제 통신과 modal/carousel/form·접근성·피드백은 `static/js/student.js`가 소유한다.
 - 학교 일정은 `school_calendar.json`과 `routes/api_school_calendar.py`가 담당하며 sheet/import 작업은 기존 학교·학기 키를 merge한다. GET은 `X-School-Calendar-Revision`과 ETag를 반환하고, whole-document POST는 직전 revision의 `If-Match`가 없으면 428, stale이면 무쓰기 409다. 화면의 순수 문서↔편집 행 projection은 `static/js/school-calendar/state.js`, GET·revision 초기화·auto/switch/flush/metadata 저장은 `static/js/school-calendar/persistence.js`가 담당한다. 저장은 한 queue로 조합하며 성공 revision을 다음 요청에 인계한다. 구형 backend가 revision header를 주지 않는 전환 구간에는 client가 header를 생략하지만, 새 backend는 428로 닫고 reload를 요구한다.
+- 학교 일정 화면의 최초 연도·학기·시험 선택은 서버의 활성 페이지 메타데이터가 브라우저의 과거 선택값보다 우선한다. localStorage는 구형 문서의 누락값 폴백일 뿐이며, 이후 사용자가 명시적으로 과거 학기/시험을 선택하는 기능은 유지한다. 활성 페이지 변경은 기존 revision 저장 경계를 사용하고 다른 학기·학교의 날짜나 시험 범위를 이동·삭제하지 않는다. 2026-09-06 운영 활성 선택을 2026년 2학기 중간고사로 정정했다.
 - 자료 HTTP는 `routes/api_materials.py`의 GET-only `/api/materials`와 revisioned `/api/mat-assign`, 파일 작업은 `routes/api_fs.py`가 담당한다. bootstrap은 `routes/material_state_provider.py`의 같은 path-injected coherent read를 사용한다.
 - 파일 API는 tree, folder, rename, move, delete, upload를 제공한다. 한글 이름을 보존하고 폴더 하위 materials URL, assignment ID·URL·relative·DIR token, page-folder 값을 segment 단위로 함께 갱신한다. 루트 이동은 빈 dst를 사용한다. 삭제는 staging 뒤 세 JSON을 저널 커밋하며 pre-journal 실패는 파일을 복구한다. /api/fs/page-folders HTTP 표면은 폐기됐지만 내부 저장소는 참조 무결성 대상으로 유지한다.
 - `materials.json`, `mat_assign.json`, `page_folders.json`은 결정적 잠금 순서와 하나의 복구 저널로 읽고 저장한다. `/api/mat-assign` GET의 revision을 POST `If-Match`로 돌려주지 않으면 428, 낡았으면 무쓰기 409다. 유효한 미완료 저널은 roll-forward하고, 손상된 저널·저장소에서는 마지막 정상 snapshot으로 조회만 유지하며 파일·교재 mutation은 503이다. 이 장애는 서버의 다른 기능과 시작을 막지 않는다.
-- 보강 이월과 시트 동기화는 전용 API다. 대량 적용 전 런타임 백업이 필요하다.
+- 보강 이월과 시트 동기화는 전용 API다. 서버는 브라우저 로그인 쿠키 없이 Google CSV export를 읽으므로, 대상 시트의 일반 액세스는 `링크가 있는 모든 사용자 - 뷰어`여야 한다. 웹 게시까지는 필요 없다. 링크에 탭 `gid`가 명시되면 그 탭만 읽고, 없으면 Google이 선택하는 기본 탭을 읽으며 존재를 보장할 수 없는 `gid=0`을 임의로 붙이지 않는다. 401/403이면 원인을 JSON으로 안내하고 결석·보강 저장은 시작하지 않는다. 대량 적용 전 런타임 백업이 필요하다.
 - 비학생 OCR review cache는 내부 API이며 실제 시험 제출과 분리한다.
 
 ## 14. 주요 데이터 원본
@@ -314,9 +328,10 @@
 | 화면 진도 상태 | `progress.json` | 수동/자동 메타키 포함 |
 | 시청 위치 | `watch.json` | `last`, `dur`, monotonic `completed`, 의도된 밀리초 `updatedAt` |
 | 학생 복습 재생목록 | 브라우저 localStorage `student:review-playlist:<sid>:<date>` | fresh bootstrap `reviewVideos`로 매번 교집합 정리; 서버 이력 아님 |
-| 수업·숙제 로그 | SQLite `app.sqlite` + `logs.json` | SQLite 우선, JSON 결손 보충 |
+| 수업·숙제 로그 | SQLite `app.sqlite` + `logs.json` | §8의 legacy 보충·완전 snapshot 구분 |
 | 시험 카탈로그 | `tests-config.json` | 암묵 삭제 금지 |
 | 과거 시험 결과 | `tests.json` + legacy 로그 | 기존 점수·오답 조회 전용; 학생 제출 쓰기 없음 |
+| 빠른 인쇄기 내보내기 이력 | `app.sqlite` → `quick_printer_export_history` | SID + 시험 ID + 자료 ID + 최초 배정일 복합 키; 성공 생성된 CSV 행만 upsert |
 | 출결 계열 | `attendance.json`, `absent.json`, `arrive_time.json`, `contact.json` | 날짜/sid 부분 갱신 |
 | 미완료 결석 트랜잭션 | `instance/absence_transactions/pending.json` | 진행 중에만 존재; 민감 before-image는 미러하지 않고 commit/rollback 뒤 제거 |
 | 보강 | `extra_attend.json`, `weekend_slots.json` | carryover 별도 |
@@ -330,6 +345,16 @@
 | 업로드 | `files/` | Git 코드와 분리한 운영 자료 |
 
 `app.sqlite-wal`, `app.sqlite-shm`, `data/`, `files/`, `_data_mirror/`, `_runtime_backups/`, root `*.tmp`도 런타임 데이터다.
+
+### 백업 확정 경계
+
+유지보수의 정지 완료는 8003 리스너가 사라진 시점만으로 판정하지 않는다. 해당 운영 runner에 연결된 `guard_waitress_shadow_listener.ps1` 프로세스도 종료됐는지 확인한 뒤 백업을 시작한다. 감시 프로세스는 runner 종료를 감지한 뒤 `instance/waitress-shadow-guard.log`에 마지막 종료 기록을 쓸 수 있다. 이 파일을 임의로 제외하거나 원본 변화 검사를 약화하지 않는다.
+
+`scripts/backup_runtime_data.py`는 승인된 유지보수로 운영 서버와 다른 데이터 작성자를 정지한 뒤 실행한다. 스크립트가 서버를 자동 종료하지 않으며, 해당 서버 리스너·저장 잠금·미완료 저널이 있으면 거부한다. 정지된 SQLite 본체와 존재하는 WAL을 임시 경로에 복사한 뒤 그 복사본에 backup API를 적용하여 커밋분을 포함한 독립 DB와 integrity check를 만든다. 읽기 전용 연결도 WAL/SHM을 생성할 수 있으므로 SQLite가 운영 원본을 직접 열지 않는다. WAL/SHM을 별도 복구 파일로 묶지 않으며 격리 8004 runtime과 비밀키·일회성 승인은 제외한다. 명세 해시는 원본 재조회가 아니라 실제 압축한 바이트에서 계산한다. 복사 도중 파일 집합/signature가 바뀌거나 압축 검증이 실패하면 최종 ZIP을 공개하지 않는다. 복원 검증은 임시 경로에서만 수행하며 운영 복원은 별도 승인 대상이다.
+
+### 결석 조회 snapshot 경계
+
+`core/request_consistency.py`가 관련 HTTP 경로를 분류한다. 빠른 인쇄 preview/export와 하원 누락 요약도 결석 coordinator를 통과한다. 명시적인 storage-only GET은 같은 프로세스의 짧은 read cohort로 하나의 interprocess lease를 공유하고, 마지막 조회가 끝날 때까지 다른 스레드·프로세스의 결석 쓰기를 배제한다. 일반 mutation, 자동 배정 가능한 updates/bootstrap GET은 공유 조회로 분류하지 않아 잠금 승격을 피한다. 기존 rollback·recovery·동일 컨텍스트 재진입 계약은 유지한다.
 
 루트 SQLite 정본은 `app.sqlite` 하나다. 데이터가 없고 코드 참조도 없던 구형 `vacation.db`는 2026-08-24 백업 후 제거했으며 다시 만들지 않는다.
 
@@ -348,7 +373,7 @@
 
 `/api/updates` 기본 주소는 GET 전용이다. 영상 배정 저장은 학생·날짜 단위의 `/api/updates/patch` 또는 검증된 `/api/updates/self-study`만 사용하며, 여러 날짜·학생을 한꺼번에 합치던 기본 주소 POST는 제거되었다.
 - 로그: /api/logs(GET 전용), /api/logs/patch, /api/logs/patch-batch, /api/logs/entry, 미보관 요약, 숙제 교재
-- 시험: `/api/tests`(GET 전용), `/api/tests-config`(GET·전체 POST), `/api/tests-config/test`(개별 PATCH), `/api/tests-records`, `/api/tests-stats`; 학생 제출/OCR 제출 API 없음
+- 시험: `/api/tests`(GET 전용), `/api/tests-config`(GET·전체 POST), `/api/tests-config/test`(개별 PATCH), `/api/tests-records`, `/api/tests-stats`, 관리자 빠른 인쇄기 `/api/tests/quick-printer-export/preview`·`/api/tests/quick-printer-export`; 과거 학생 제출/OCR API는 폐기하고 신규 기능 플래그 OFF의 `/api/student-test-ocr/*`는 §21로 분리
 - 출결: attendance, attend, today, absent, arrive-time, contact
 
 등원시간의 표준 주소는 `/api/arrive-time`과 `/api/arrive-time/patch`다. 접두어가 없던 옛 `/arrive-time*` 주소는 제거되었으며 다시 사용하지 않는다.
@@ -384,6 +409,8 @@
 | 날짜별 영상 배정 strict object 저장·잠금 | `core/update_assignment_store.py` |
 | 네트워크/답지 strip | `core/network_access.py` |
 | 시험 답지 링크 우선순위 | `core/test_answer_links.py` |
+| 빠른 인쇄기 CSV 투영·이월 판정 | `core/quick_printer_export.py` |
+| 빠른 인쇄기 배정별 성공 생성 이력 | `core/quick_printer_export_history.py` |
 | 공지 이미지 학생 공개 멤버십 | `core/announcement_image_access.py` |
 | 로그 병합 규칙 | `core/log_rules.py` |
 | 로그 저장소 | `core/log_repository.py` |
@@ -449,6 +476,7 @@
 | 학생 시험 presentation | top-level `assignedTests`, unknown-field 보존·dedupe, status/일산 라벨, 답지 alias·학원망 gate, 모바일 same-tab, read-only DOM | `verify_student_test_presentation.mjs` + answer-mobile + material-access VM + 브라우저 |
 | 시험 관리 | catalog 정규화·검색/정렬/그룹, 답안/mode/CSV projection, reorder scope, revision POST/PATCH, 409 rollback, config 삭제 안전 | 두 catalog state oracle + 실제 entrypoint 회귀 + answer-mode backend/migration + temp Flask write-safety + 브라우저 |
 | 시험 배정·답지·기록 | 답지 우선순위, 과거 기록 보존, 제출 경로 부재 | assignment/bootstrap/history + retired-surface 검증 |
+| 빠른 인쇄기 CSV | 현재 과목 초록 배정, 타임·순서·BOM·이스케이프, 정확한 결석 이월 provenance, 배정별 영구 출력 이력, 기본 제외·명시 재인쇄, 0건 무다운로드 | `verify_quick_printer_export.py` + `.mjs` + 관리형 8004 브라우저 |
 | 출결/오늘 순서 | 문자열 sid, 선택 날짜, `data/today_order.json` | route unit + 해당 화면 |
 | 학교 일정 | literal 문서/행 oracle, 독립 hash, 428/409 무쓰기, 실제 두 writer 경합, save queue 직렬화·revision chain·flush | `verify_school_calendar_state.mjs` + `verify_school_calendar_revision.py` + `verify_school_calendar_save_queue.mjs` + 두 브라우저 화면 |
 | 인증/프록시 | Basic fail-closed, AUTH_SECRET 지속, 신뢰 프록시, HTTPS loop 없음 | admin/auth/proxy 검증 + 실제 HTTP/HTTPS |
@@ -544,17 +572,17 @@ python scripts/verify_refactor_safety.py --smoke
 - 테스트 관리 저장은 현재 회차의 `answerModes[round]`와 `answerKeys[round]`만 갱신하고 다른 회차 및 알 수 없는 필드를 보존한다.
 - 신규 학생 제출은 과거 `/student-test/<sid>`, `/api/submit-test`, `/api/ocr-test-sheet*`를 복원하지 않고 `/student-test-capture`와 `/api/student-test-ocr/*`로 분리한다. 기능 플래그는 정확도·속도 gate 전까지 기본 OFF다.
 - 첫 rollout 대상은 `UNIT`, 20문항, `choice_number`·`answer_value`만 포함한 시험이다. `manual_review`, 유형 누락, 객관식 정답 1~5 위반은 제출 세션 생성 전에 fail-closed로 제외한다.
-- v4 정형 답안지의 ArUco 4개 모서리로 원근을 보정하고, 실제 답안칸을 검출한 뒤 blank-template 차영상으로 테두리·인쇄물을 제거한 20개 recognition crop을 만든다. 서버 router만 카탈로그의 `answerModes`를 보고 crop을 나눈다. `choice_number`는 1~5 전용 숫자 분류기를 주 경로로 쓰고 PaddleOCR 결과는 진단·보조 신호로 유지한다. `answer_value`는 UniMERNet 원본/보정본 합의를 주 경로로 쓰며 PP-FormulaNet-S와 PaddleOCR를 보조 신호로 사용한다. 1~3개 수식 문항만 불확실할 때에는 추가 전처리 2차 인식을 실행한다. 개별 OCR worker에는 `questionNo`와 crop 경로만 전달하고 정답키는 인식 완료 뒤 서버 채점 단계에서만 사용한다.
+- v4 정형 답안지의 ArUco 4개 모서리로 원근을 보정하고, 실제 답안칸의 원본 crop과 blank-template 차영상 기반 recognition crop을 만든다. 서버 router만 카탈로그의 `answerModes`를 보고 입력을 선택한다. `choice_number`는 recognition crop을 1~5 전용 숫자 분류기에 보내고 PaddleOCR 결과는 진단·보조 신호로 유지한다. `answer_value`는 수식 획·명암을 보존한 원본 crop을 UniMERNet에 보내며 worker 내부 원본/autocontrast 합의와 PP-FormulaNet-S·PaddleOCR 보조 신호를 사용한다. 같은 모델 variant를 독립 엔진으로 세지 않는다. 1~3개 수식 문항만 불확실할 때에는 추가 전처리 2차 인식을 실행한다. 개별 OCR worker에는 `questionNo`와 crop 경로만 전달하고 정답키는 인식 완료 뒤 서버 채점 단계에서만 사용한다.
 - 객관식 숫자 모델은 고1·고2·고3을 나누지 않은 공용 모델 하나를 사용한다. AI Hub 학습 crop은 학년 비율을 1:1:1로 맞추지 않고 작성자별 상한을 적용한 뒤, 모든 학년을 합친 전체 pool에서 숫자 `1`~`5` 클래스만 균형화한다. 평가는 고1·고2·고3을 각각 표시하고 실제 유의한 격차가 확인될 때만 학년 전용 모델을 검토한다.
 - 주관식 UniMERNet은 시험 정의의 `curriculum`으로 두 데이터 프로필 중 하나를 고정한다. `공통수학1`·`공통수학2`는 AI Hub `M_G3+H_G1`, `대수`·`미적분1`·`확통`·`기하`·`미적분2`는 `M_G3+H_G1+H_G2+H_G3`로 학습한 모델을 쓴다. 학생의 현재 학년은 라우팅 입력이 아니다. 주관식이 있는데 과목이 이 목록 밖이거나 작업 payload의 프로필이 현재 카탈로그와 다르면 추정하지 않고 fail-closed한다. 재촬영도 최초 작업과 같은 프로필을 사용한다.
-- 0문항 불확실이면 자동 채점한다. 1~3문항은 객관식 1~5 직접 선택 또는 해당 주관식 문항 재촬영으로 보완한다. 4문항 이상은 전체 답안지를 다시 촬영한다. 주관식 재촬영은 최대 2회이며 이후에도 불확실하면 교사 판정 `pending_teacher`로 접수한다.
+- 0문항 불확실이면 인식 commit 후 callback이 서버 채점·저장을 실행한다. 학생 status 조회는 정상 채점의 선행조건이 아니며 callback 오류 시 보완 재시도 경로로 남는다. worker 실패는 submission에도 `failed`를 기록한다. 1~3문항은 객관식 1~5 직접 선택 또는 해당 주관식 문항 재촬영으로 보완한다. 4문항 이상은 전체 답안지를 다시 촬영한다. 주관식 재촬영은 최대 2회이며 이후에도 불확실하면 교사 판정 `pending_teacher`로 접수한다.
 - 보류 결과는 정답·오답·보류 수와 오답 문항만 학생에게 표시하고 최종 점수는 숨긴다. 답지 Drive 링크는 정상 제공한다. 관리자는 학생 crop과 답지 crop을 비교한다. `STUDENT_TEST_OCR_SOLUTION_PDF_ROOT`의 공식 UNIT PDF가 있으면 1쪽의 공통 4열×5행 정답표에서 문항 셀을 동적으로 잘라 no-store로 제공하고, cache 부재·손상·layout 미지원 시 기대값과 대상 Drive 원문 링크로 대체한다.
 - 관리자는 보류를 정답/오답으로 확정할 수 있고, 이미 오답인 문항만 정답으로 수정할 수 있다. 공개 이력은 `{questionNo, from:"incorrect", to:"correct"}`만 남기며 최초 OCR·최초 채점은 보존한다.
-- 학생 crop·등록형 답지 crop·원본 촬영은 생성 시점부터 정확히 7일 뒤 삭제 대상이다. 동적 답지 crop은 저장하지 않으며 공식 PDF cache는 시험 원본 자료로 별도 관리한다. 보류 문항의 운영 목표는 당일 확정이지만 자정 자동 판정은 하지 않는다.
+- 학생 crop·등록형 답지 crop·원본 촬영은 생성 시점부터 정확히 7일 뒤 삭제 대상이다. 삭제 함수는 구현되어 있으나 정기 실행 연결은 아직 rollout 전 작업이다. DB에 보관하지 않는 recognition 중간 crop은 사용 직후 정리하며 commit된 학생 crop은 후속 채점 실패에도 보존한다. 동적 답지 crop은 저장하지 않으며 공식 PDF cache는 시험 원본 자료로 별도 관리한다. 보류 문항의 운영 목표는 당일 확정이지만 자정 자동 판정은 하지 않는다.
 - 학생 촬영은 학원망, 실시간 `getUserMedia` 카메라, SID·testId·round·date에 묶인 일회용 토큰만 허용한다. 앨범 업로드와 수락 후 재제출은 제공하지 않으며 최초 제출 재시도는 idempotency key로 같은 결과를 반환한다.
 - 비학생 OCR은 `/api/internal/non-student-ocr/review-cache`의 비활성 기본·내부 토큰 경계만 사용하며 `tests.json`, 로그, 진도, 학생 화면에 쓰지 않는다.
 - `choice_number`는 1~5만, `answer_value`는 제한된 숫자·분수·루트 동치만 자동 채점한다. 변수식은 정규화된 완전 일치만 허용한다.
-- 현재 CPU 목표는 p90 30초 이내, 파일럿 상한 60초, 한 번 촬영 성공 90% 이상, 전체 재촬영 5% 이하, 보류 2% 이하, 실제 정답을 오답으로 확정하는 오류 0건이다. 2026-08-28 숫자 분류기 v3는 사람이 전사한 crop 61개뿐이라 `NO_GO`이고, 분리 holdout 18개에서 운영 임계값(신뢰도 0.995·margin 0.90)은 11개만 자동 수락했으며 오수락은 0개였다. 2026-08-29 MNIST·EMNIST 판과 실제 필체 적응판도 모두 `NO_GO`였다. 이후 AI Hub 고1·고2·고3 Training을 합친 공용 모델은 같은 독립 holdout에서 14/18 수락·고신뢰 오답 0으로 개선됐지만 reject recall 1/2였고, 공식 Validation 단일-crop 진단에서 고1·고2·고3 고신뢰 오답이 각각 288·252·380건이라 채택하지 않는다. 수식 Training/Validation은 `m3_h1` 17,977/11,595개와 `m3_h1_h2_h3` 29,247/13,661개로 구성했고 CUDA config와 순차 실행기를 검증했지만, 현재 `torch 2.12.1+cpu` 호스트에는 CUDA 장치가 없어 실제 UniMERNet weight update와 학년별 수식 정확도 평가는 대기한다. 미세조정 전 수식 3엔진의 28문항 raw 2/28·자동수락 2/28·오수락 1건 상태는 그대로 `NO_GO`다. AI Hub 자동 변환·학습 경로와 수치·평가 한계는 [`STUDENT_TEST_OCR_PUBLIC_DATA.md`](STUDENT_TEST_OCR_PUBLIC_DATA.md)가 소유한다. 모델 `metrics.json`이 `GO`가 아니면 단순 기능 플래그만으로 runtime을 열 수 없고, 미준비 모델 우회는 marker-verified 격리 서버에서만 허용한다. gate 실패 시 정확도 기준을 낮추지 않고 기능을 OFF/파일럿에 둔다.
+- CPU 목표는 p90 30초 이내, 파일럿 상한 60초, 한 번 촬영 성공 90% 이상, 전체 재촬영 5% 이하, 보류 2% 이하, 실제 정답을 오답으로 확정하는 오류 0건이다. 데이터·학습·반환 모델·수치 정정·출시 준비의 현재 상태는 [`STUDENT_TEST_OCR_PUBLIC_DATA.md`](STUDENT_TEST_OCR_PUBLIC_DATA.md)가 소유한다. `readiness_report()`는 파일 설치와 독립 촬영 기반 출시 증거를 분리하며 숫자 `metrics.json:GO`만으로 runtime을 열지 않는다. `student_test_ocr_readiness`가 모델·tokenizer·전처리·정책 해시와 평가 증거 계약을 확인한다. 미준비 모델 우회는 marker-verified 격리 서버에서만 허용한다. gate 실패 시 기능을 OFF/파일럿에 두며 운영 migration·활성화는 별도 단계다.
 - UNIT 전체 유형 마이그레이션은 Drive 해설 PDF별 근거 JSON이 카탈로그 전체를 덮을 때만 허용한다. live `tests-config.json` 쓰기 전 `scripts/backup_runtime_data.py` 백업과 `--backup-confirmed`가 필요하다.
 
 최소 검증:

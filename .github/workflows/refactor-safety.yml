@@ -27,6 +27,9 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q app.py routes core scripts
 
+      - name: Install server verification dependencies
+        run: python -m pip install -r requirements.txt
+
       - name: Run safety verification
         run: python scripts/verify_refactor_safety.py
 
@@ -47,6 +50,7 @@ jobs:
       - name: Install student app dependencies
         run: |
           .\venv\Scripts\python.exe -m pip install --upgrade pip
+          .\venv\Scripts\python.exe -m pip install -r requirements.txt
           .\venv\Scripts\python.exe -m pip install -r requirements-student-app.txt
 
       - name: Run Windows deployment contract

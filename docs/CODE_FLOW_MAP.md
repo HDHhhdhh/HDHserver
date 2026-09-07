@@ -54,7 +54,7 @@
 | 영상 카탈로그 | `api_videos`의 `/api/videos` | route-local normal-save identity guard + offline correction rules | `videos.json` | 영상 관리, 관리자 배정, 학생 |
 | 영상 배정 | `api_updates`의 `/api/updates*`, `api_student_bootstrap`의 `/api/student/bootstrap` | `update_assignment_store`, `student_auto_assignment_service`, `student_schedule_rules`, `student_video_projection`, `student_video_assignment_rules`, `student_bootstrap_projection`, update assignment 규칙 | `updates.json`, `progress.json`, `watch.json` | 관리자 영상 팝업, 학생 재생목록 |
 | 시청·진도 | `api_progress`, `api_watch`, `api_kollus` | `watch_progress_writer`, `progress_rules`, `progress_store`, `progress_notifications` | `watch.json`, `progress.json` | 학생 재생, 관리자 상태색 |
-| 시험 | `api_tests`, bootstrap | test config safety, answer-link projection | `tests-config.json`, `tests.json`, progress/log metadata | 시험 관리, 관리자 배정, 학생 카드 |
+| 시험 | `api_tests`, bootstrap | test config safety, answer-link projection, quick-printer CSV·결석 이월 투영 | `tests-config.json`, `tests.json`, progress/log metadata, `app.sqlite`의 `quick_printer_export_history` | 시험 관리, 관리자 배정·인쇄, 학생 카드 |
 | 공지·게시판 | `api_announcements`, 조건부 `api_student_board` | board projection, notification event ID | `announcements.json`, `announce_status.json`, 첨부 파일 | 관리자 공지, 학생/학생 앱 |
 | 학교 일정 | `api_school_calendar` | `school_calendar_store` | `school_calendar.json` | 학교 일정 편집, 관리자·전체 학생 일정 조회 |
 | 자료·파일 | `api_materials`, `api_fs` | `material_state_provider` + material_reference_rules + material_state journal + 경로/파일-tree 잠금 | materials.json, mat_assign.json, page_folders.json, files/ | 관리자·학생 자료 |
@@ -136,6 +136,8 @@ tests-config revision GET
   → bootstrap이 답지 우선순위와 네트워크 제한을 투영
 ```
 
+빠른 인쇄기 흐름은 선택 타임 SID와 선택일 progress의 현재 과목 `assigned` 시험을 `test.id`·영구 `materialId`로 해석한다. `LogRepository.read_export_history()`의 결석 이월 출처를 따라 최초 배정일을 복원하고 출처 당시 `assigned`였던 정확한 이월 재배정을 기본 제외한다. 이 제외는 이력 기능 이전 출력분도 첫 재배정 CSV부터 막기 위해 과거 키 존재를 요구하지 않는다. 별도 `quick_printer_export_history` SQLite repository는 실제 성공 CSV 키를 감사 기록으로 조회·원자 기록한다. preview는 집계만 반환하며 실제 export는 이력 저장까지 성공해야 BOM CSV를 응답한다.
+
 `tests.json`과 legacy 로그는 과거 기록 읽기용이다. 과거 학생 제출·OCR 표면은 등록하지 않으며 새 흐름은 아래 전용 경계로 분리한다.
 
 ### 5.5A 학생 시험 OCR
@@ -145,8 +147,9 @@ tests-config revision GET
   → 기능·학원망·오늘 배정·UNIT 20문항 eligibility
   → SID/testId/round/date 일회용 capture token
   → 실시간 카메라 안정 프레임 5회 확인 + 3장 중 최적 full-sheet 저장
-  → ArUco 4점 원근 보정 + 답안칸 검출 + blank-template 제거
-  → answerModes별 1~5 숫자 분류/PaddleOCR 또는 UniMERNet/PP-FormulaNet-S
+  → ArUco 4점 원근 보정 + 답안칸 검출 + 원본/blank-template 보정 crop
+  → answerModes별 보정 crop(객관식) / 원본 crop(주관식)
+  → 1~5 숫자 분류/PaddleOCR 또는 UniMERNet/PP-FormulaNet-S
      · 1~3개 수식 불확실에만 적응형 2차 전처리
   → 0개 불확실: 서버 채점
      1~3개: 객관식 선택 또는 주관식 문항 재촬영
@@ -158,7 +161,9 @@ tests-config revision GET
      · 없거나 손상되면 기대값 + Drive 원문 링크로 fallback
 ```
 
-`student_test_ocr_repository`가 submission/question/job/asset/history를 revision으로 묶는다. 서버 router만 `answerModes`로 crop을 분기하며 OCR worker payload에는 `questionNo`와 `imagePath`만 들어간다. 정답키는 채점 서비스가 카탈로그 revision을 다시 확인한 뒤 사용한다. 학생 파일은 생성 후 7일 보관한다. 공식 PDF crop은 `STUDENT_TEST_OCR_SOLUTION_PDF_ROOT` 아래 UNIT PDF를 읽기만 하고 no-store로 응답한다. 운영 schema migration과 feature flag 활성화는 품질 gate와 별도이며, 숫자 모델의 key-free `metrics.json`이 `GO`가 아니면 일반 runtime availability도 닫힌다.
+`student_test_ocr_repository`가 submission/question/job/asset/history를 revision으로 묶는다. 서버 router만 `answerModes`로 crop을 분기하며 OCR worker payload에는 `questionNo`와 `imagePath`만 들어간다. 정답키는 채점 서비스가 카탈로그 revision을 다시 확인한 뒤 사용한다. `student_test_ocr_job_runner`의 recognition commit callback → service `complete_recognition`이 학생 조회 없이 채점하며 worker 실패는 submission에도 반영한다. 학생 파일은 7일 뒤 삭제 대상이며 정기 purge 연결은 아직 출시 전 작업이다. 공식 PDF crop은 `STUDENT_TEST_OCR_SOLUTION_PDF_ROOT` 아래 UNIT PDF를 읽기만 하고 no-store로 응답한다.
+
+`student_test_ocr_config.readiness_report`는 설치 파일 확인을, `student_test_ocr_readiness`는 현재 artifact/정책과 묶인 독립 촬영 출시 증거 계약을 소유한다. 숫자 `metrics.json:GO`와 파일 존재만으로 일반 runtime을 열지 않는다. `scripts/student_test_ocr_evidence.py`는 진단 입력 identity, `scripts/student_test_formula_dataset_contract.py`는 학습 이미지/annotation identity 경계다. 학습·평가 상태는 [OCR 정본](STUDENT_TEST_OCR_PUBLIC_DATA.md)을 참조한다. 운영 migration과 기능 활성화는 별도 승인 단계다.
 
 ### 5.6 학생 앱 알림
 
@@ -207,6 +212,7 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 주요 테이블군은 다음과 같다.
 
 - `logs`
+- `quick_printer_export_history`
 - `assistant_student_notes`, `admin_operation_notes`, `student_operation_logs`
 - `student_app_sessions`, `student_account_audit`, `student_activation_codes`, `student_login_throttle`
 - `student_push_subscriptions`, `student_push_outbox`, `student_push_bypasses`
@@ -250,6 +256,8 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 | `routes/student_bootstrap_projection.py` | Flask-free bootstrap aggregate payload와 course/review/material/test 조합 |
 | `routes/student_auto_assignment_service.py` | 주입된 결석 coordinator barrier·strict updates 저장·repository·lock·clock을 사용한 자동 초기화·자습 reconcile |
 | `core/update_assignment_store.py` | `updates.json` strict object 읽기·원자 저장·공용 잠금과 typed store failure |
+| `core/request_consistency.py`, `core/read_cohort.py` | `app.py`의 결석 관련 HTTP 분류 → storage-only 조회 cohort → 기존 interprocess coordinator lease |
+| `scripts/backup_runtime_data.py` | 유지보수 상태 확인 → SQLite native snapshot → 압축 바이트/명세 검증 → 최종 ZIP 공개 |
 | `routes/api_basic.py` | 자동배정 dependency factory·호환 hook과 bootstrap dependency 조립 |
 | `routes/api_students.py` | 학생 명단 GET, add/clone, 단일 필드 update, `whiteReviewPending` exact-boolean gate, retire와 app-injected 배정 후처리 |
 | `routes/api_logs.py` / `routes/log_repository_provider.py` | 수업 로그 HTTP·숙제 교재 조회 / placeholder repair·공용 repository wiring |
@@ -261,7 +269,8 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 | `static/js/admin/features/announcements.js` | 공지 편집·설문·대상·이미지 |
 | `static/js/admin/features/logModal.js` | 로그·숙제·진도·통합 팝업 |
 | `static/js/admin/features/videoModal.js` | 배정·진도·watch·로그 연계 |
-| `static/js/admin/features/testModal.js` | 카탈로그 선택·최근 보기·상태 저장 |
+| `static/js/admin/features/testModal.js` | 카탈로그 선택 UI·최근 보기·상태 저장 |
+| `static/js/admin/features/testAssignmentRules.js` | 상태 순환·과목/난이도/키 정규화·과목 주입형 카탈로그 정렬 |
 | `static/js/tests.js` | 개별 시험 PATCH, 전체 규칙·삭제 저장, 기록·통계 |
 | `static/js/admin/features/today.render.js` | 오늘/완료 행, 백지리뷰 검사 대기 표시·저장, 대부분의 row action |
 | `static/js/school-cal.js` | 학기/시험 DOM 상태, 표 렌더링, 이벤트, 저장 시점·사용자 피드백 |

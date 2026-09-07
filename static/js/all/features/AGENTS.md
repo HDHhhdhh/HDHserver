@@ -23,7 +23,7 @@ All-students feature modules render the roster, inline-edit student fields, muta
 - The `.miniProgBtn` uses the admin unified launcher to open the fixed student tooltip plus log, video-assignment, and test-assignment modals together, with the row's real local date and `all-students-readonly` log access.
 - Keep the admin popup module graph behind the first `.miniProgBtn` interaction. Do not statically import `studentRecordPopup.js` from `all/main.js` or mount admin modal DOM during roster startup.
 - On mobile, the shared `영상 / 상담 / 테스트 / 학생정보` switcher must keep all four surfaces reachable without horizontal clipping.
-- In that mode notes/homework must never be patched; only right-click progress changes may reach `/api/progress/patch`.
+- In that mode class-log notes/homework must never be patched; the separate assistant-note thread may list and create only, while existing-note actions stay locked. Only right-click progress changes may reach `/api/progress/patch`.
 - Delete uses only `DELETE /api/students/:sid`; success and failure must issue exactly one request.
 
 ## Anti-Patterns

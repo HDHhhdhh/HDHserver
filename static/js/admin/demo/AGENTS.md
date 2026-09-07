@@ -10,6 +10,7 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 | Primary synthetic API | `fetch.js` | Emulates supported endpoints and mutations; unsupported API requests return synthetic errors. |
 | Session store | `store.js` | `academy.adminDemo.v1`, schema validation, clone/load/save/reset helpers. |
 | Initial fixtures | `data.js` | Fixed synthetic time, students, logs, progress, tests, announcements, and calendar data. |
+| Quick-printer sandbox | `quickPrinterContract.js` | Synthetic preview/export, automatic exclusion counts, default-off reprint behavior, and session-only export receipts. |
 | Tutorial controller | `tutorial.js` | Idempotent feature-help mounting and popover/center orchestration. |
 | Tutorial metadata | `tutorial.features.js`, `tutorial.targets.js` | Page routing, selectors, target ranking, and feature descriptions. |
 | Tutorial UI/state | `tutorial.render.js`, `tutorial.styles.js`, `tutorial.state.js` | DOM, injected styles, and a separate session key. |
@@ -27,6 +28,8 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 - Extra attendance supports only `/api/extra-attend`; obsolete `/api/extra`, `/api/extra_attend`, and `/api/extra-attend/all` requests must return synthetic unsupported responses.
 - `/api/delete-student` and `/api/material-upload` are retired and stay unsupported. Demo deletion uses canonical `DELETE /api/students/:sid`; material state uses `/api/materials`.
 - Keep fixed synthetic time/schema changes synchronized across `data.js`, `store.js`, and request handlers.
+- Quick-printer preview/export must be handled in both primary and fallback routers. Preview and zero-row failure write no session receipt; a successful synthetic CSV may append only to `quickPrinterExports` in the demo session store and must never call the live route or a print device.
+- Missing-leave summaries in both demo routers must intersect arrival traces with the exact-date effective regular/extra/active-makeup roster. Keep a moved-makeup negative fixture so stale arrival residue cannot reintroduce the warning.
 - New demo pages require coordinated changes to `DEMO_PATHS`, `DEMO_ROUTE_MAP`, `routes/pages.py`, shell script order, and tutorial page resolution.
 - Navigation and `window.open` remain sandboxed; production aliases remap to demo routes and external/unknown targets block.
 - Preserve readable Korean strings and tutorial selectors tied to live shell DOM hooks.

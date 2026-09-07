@@ -20,7 +20,7 @@ The all-students page is a standalone static frontend with its own core wrapper 
 - `core/state.js` lazy-loads progress once per SID and merges date/SID entries. Do not mark failed loads as cached or replace the map.
 - Field edits preserve unknown student keys through `/api/update`; clone intentionally copies identity fields and clears curriculum/schedule fields.
 - The former student `subBook*` inputs are retired. The table reads `/api/homework-books`, derived from each student's latest registered `homeworkTable[].book`.
-- The row counseling button reuses the admin log modal in `all-students-readonly` mode: notes/homework are read-only and progress accepts right-click skip edits only.
+- The row counseling button reuses the admin log modal in `all-students-readonly` mode: class-log notes/homework are read-only, the separate assistant-note thread supports list/create only, and progress accepts right-click skip edits only.
 - Direct fetch remains in add/clone/delete/progress compatibility paths; do not mass-convert without preserving fallbacks and payloads.
 
 ## Anti-Patterns

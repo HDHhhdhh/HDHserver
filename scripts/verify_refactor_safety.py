@@ -50,8 +50,10 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/core/saveConflict.js",
     ROOT / "static/js/admin/demo/bootstrap.js",
     ROOT / "static/js/admin/demo/fetch.js",
+    ROOT / "static/js/admin/demo/attendanceRosterContract.js",
     ROOT / "static/js/admin/demo/assistantStudentNotesContract.js",
     ROOT / "static/js/admin/demo/testConfigContract.js",
+    ROOT / "static/js/admin/demo/quickPrinterContract.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
     ROOT / "static/js/admin/features/absentRecovery.js",
     ROOT / "static/js/admin/features/absentRegister.js",
@@ -60,11 +62,14 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/extraModal.js",
     ROOT / "static/js/admin/features/logModal.js",
+    ROOT / "static/js/admin/features/quickPrinterExport.js",
+    ROOT / "static/js/admin/features/quickPrinterExportContract.js",
     ROOT / "static/js/admin/features/today.js",
     ROOT / "static/js/admin/features/todayDoneSummary.js",
     ROOT / "static/js/admin/features/today.state.js",
     ROOT / "static/js/admin/features/today.render.js",
     ROOT / "static/js/admin/features/testModal.js",
+    ROOT / "static/js/admin/features/testAssignmentRules.js",
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student-app-push.js",
     ROOT / "static/js/student-app.js",
@@ -102,8 +107,12 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_admin_css_inventory.mjs",
     ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
     ROOT / "scripts/verify_hover_tooltip_performance.mjs",
+    ROOT / "scripts/verify_exam_attendance.mjs",
+    ROOT / "static/js/admin/features/examAttendance.js",
     ROOT / "scripts/verify_admin_latency_contracts.mjs",
+    ROOT / "scripts/verify_test_assignment_rules.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
+    ROOT / "scripts/verify_quick_printer_export.mjs",
     ROOT / "scripts/verify_extra_attendance_merge.mjs",
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
@@ -760,6 +769,24 @@ def run_admin_latency_contract_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin latency/save-conflict contract failed")
 
 
+def run_assistant_note_http_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_assistant_student_notes.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "actual assistant-note repository/HTTP/access contracts failed")
+
+
+def run_review_hardening_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_review_hardening.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "backup/consistency hardening contracts failed")
+
+
 def run_export_log_format_checks() -> None:
     commands = [
         (["node", "scripts/verify_export_log_format.mjs"], "export log format contract failed"),
@@ -772,6 +799,24 @@ def run_export_log_format_checks() -> None:
             proc = _run_captured(cmd)
         except FileNotFoundError:
             raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_quick_printer_export_checks() -> None:
+    commands = [
+        ([sys.executable, "scripts/verify_quick_printer_export.py"], "quick-printer backend/history contract failed"),
+        (["node", "scripts/verify_quick_printer_export.mjs"], "quick-printer frontend contract failed"),
+    ]
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("required quick-printer verifier runtime not found") from None
         if proc.stdout:
             print(proc.stdout, end="")
         if proc.stderr:
@@ -4246,7 +4291,8 @@ def run_log_repository_unit_checks() -> None:
         result = repo.patch_entry(date, sid, {"notes": "incoming"}, base)
         _assert_unit(result.sqlite_base_conflict, "sqlite base conflict must be reported")
         _assert_unit(not result.sqlite_ok, "sqlite conflict must not be reported as synced")
-        _assert_unit(result.merged.get("notes") == "incoming", "json side should still merge non-conflicting patch")
+        _assert_unit(not result.json_ok, "SQLite conflict must not write the compatibility JSON")
+        _assert_unit(json.loads(logs_path.read_text('utf-8'))[date][sid]['notes'] == 'base', "conflict leaves JSON unchanged")
 
         con = repo._connect()
         try:
@@ -4602,6 +4648,7 @@ def run_log_repository_unit_checks() -> None:
                     sqlite_ok=False,
                     sqlite_error=None,
                     sqlite_base_conflict=True,
+                    sqlite_conflict_entry={"notes": "latest"},
                     json_conflict_entry=None,
                     json_ok=False,
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
@@ -5029,13 +5076,13 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     )
     _assert_unit(
         "recover_pending_absence_transactions()" in app_source
-        and "absence_read_barrier()" in app_source
-        and 'path in {"/api/absent", "/api/makeup-sheet-sync"}' in app_source,
+        and "absence_read_barrier(shared=" in app_source
+        and "absence_barrier_mode(request.path, request.method)" in app_source,
         "app startup recovery and request barrier must protect absence-related stores without re-locking owners",
     )
     _assert_unit(
         all(
-            f'"{path}"' in app_source
+            f'"{path}"' in (ROOT / 'core/request_consistency.py').read_text('utf-8')
             for path in (
                 "/api/watch",
                 "/api/watch-status",
@@ -8123,7 +8170,14 @@ ok(lastContactCall?.sid === 's3', 'contact fallback save still uses row sid');
 
 
 def run_admin_test_modal_assignment_source_checks() -> None:
+    proc = _run_captured(["node", "scripts/verify_test_assignment_rules.mjs"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test assignment pure-rule oracle failed")
     test_modal_js = (ROOT / "static/js/admin/features/testModal.js").read_text("utf-8")
+    test_rules_js = (ROOT / "static/js/admin/features/testAssignmentRules.js").read_text("utf-8")
     patch_start = test_modal_js.index("async function patchLogAssignment")
     patch_end = test_modal_js.index("async function saveModal", patch_start)
     patch_block = test_modal_js[patch_start:patch_end]
@@ -8136,16 +8190,16 @@ def run_admin_test_modal_assignment_source_checks() -> None:
         "test assignment latest log read must not silently fall back to an empty entry",
     )
     _assert_unit(
-        "fetchLatestLogEntryForAssignment(editingDate, editingSid)" in save_block,
+        "fetchLatestLogEntryForAssignment(date, sid)" in save_block,
         "test assignment save must preflight latest log before progress patch",
     )
     _assert_unit(
-        save_block.index("fetchLatestLogEntryForAssignment(editingDate, editingSid)") <
+        save_block.index("fetchLatestLogEntryForAssignment(date, sid)") <
         save_block.index("fetchJSONSafe('/api/progress/patch'"),
         "latest log preflight must happen before /api/progress/patch",
     )
     _assert_unit(
-        "function nextExcludedStatusOf" in test_modal_js,
+        "function nextExcludedStatusOf" in test_rules_js,
         "test assignment modal must define a right-click none/제외 toggle helper",
     )
     _assert_unit(
@@ -8162,7 +8216,6 @@ def run_admin_test_modal_assignment_source_checks() -> None:
         ("const difficulties = allDifficulties;", "normal difficulty selector must keep every category level visible"),
         ("field: STUDENT_TEST_LEVEL_DEFAULTS_FIELD", "student level setting must patch only the student default field"),
         ("sendJson('/api/update'", "student level setting must use the single-field student API"),
-        ("const TEST_KEYBOARD_STATUS_ORDER = ['', 'interrupted', 'assigned', 'done', 'skip'];", "keyboard status cycle must remain white-orange-green-blue-red"),
         ("if (e.ctrlKey || e.metaKey) {", "Ctrl/Cmd-click multi-selection must remain wired"),
         ("function activeStudentCurriculumSubject()", "test modal must derive the opening subject from the active student curriculum"),
         ("function restorePreferredInitialTestView(requiredSubject = activeStudentCurriculumSubject())", "test modal must bind recent-view restoration to the curriculum subject"),
@@ -8181,6 +8234,10 @@ def run_admin_test_modal_assignment_source_checks() -> None:
     ]
     for snippet, message in required_ui_contracts:
         _assert_unit(snippet in test_modal_js, message)
+    _assert_unit(
+        "const TEST_KEYBOARD_STATUS_ORDER = ['', 'interrupted', 'assigned', 'done', 'skip'];" in test_rules_js,
+        "keyboard status cycle must remain white-orange-green-blue-red",
+    )
 
     _assert_unit(
         "function showTestSaveSuccess()" in test_modal_js
@@ -8191,10 +8248,10 @@ def run_admin_test_modal_assignment_source_checks() -> None:
         "test saves with or without assignment changes must reuse the video popup's save-complete graphic",
     )
     _assert_unit(
-        save_block.index("applyTestProgressPatchResult(editingDate, editingSid, progressRes)")
-        < save_block.rindex("showTestSaveSuccess();")
-        < save_block.index("await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry)"),
-        "changed test saves must show completion after authoritative progress persistence without waiting for compatibility-log I/O",
+        save_block.index("applyTestProgressPatchResult(date, sid, progressRes)")
+        < save_block.index("await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry, date, sid)")
+        < save_block.rindex("showTestSaveSuccess();"),
+        "completion requires both progress and compatibility-log persistence",
     )
 
     restore_start = test_modal_js.index("function restorePreferredInitialTestView")
@@ -8244,17 +8301,17 @@ def run_admin_test_modal_persistence_bridge_source_checks() -> None:
         _assert_unit(helper in bridge_block, f"test modal persistence bridge must define {helper}")
 
     _assert_unit(
-        "body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus))"
+        "JSON.stringify(buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus))"
         in save_block,
         "test modal save must build /api/progress/patch body through the persistence bridge",
     )
     _assert_unit(
-        "const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged)"
+        "const body = buildLogAssignmentPatchBody(date, sid, patchEntry, clear, entry, notesChanged)"
         in bridge_block,
         "test modal log metadata patch must use a dedicated payload bridge",
     )
     _assert_unit(
-        "applyTestProgressPatchResult(editingDate, editingSid, progressRes)" in save_block,
+        "applyTestProgressPatchResult(date, sid, progressRes)" in save_block,
         "test modal save must apply progress patch results through the persistence bridge",
     )
 
@@ -8275,13 +8332,17 @@ const response = (payload, status = 200) => ({
   text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
 });
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/testModal.js');
+const rulesSource = fs.readFileSync(path.join(process.cwd(), 'static/js/admin/features/testAssignmentRules.js'), 'utf8');
+const rulesUrl = `data:text/javascript;base64,${Buffer.from(rulesSource).toString('base64')}`;
 const source = fs.readFileSync(sourcePath, 'utf8')
+  .replace(/from '\.\/testAssignmentRules\.js\?v=[^']+'/, `from '${rulesUrl}'`)
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';")
   .replace("import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';", "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');");
 const harness = `
 export function __setHarnessState(input) {
+  testOpenSeq += 1;
   editingDate = input.editingDate;
   editingSid = input.editingSid;
   activeStudent = input.activeStudent || { id: input.editingSid, name: '학생', curriculum: '대수', level: '중' };
@@ -8725,10 +8786,60 @@ await mod.__saveModal({ refresh: false });
 const feedbackIndex = feedbackOrder.indexOf('feedback');
 ok(globalThis.__saveResults.join('|') === '저장 완료', 'changed test save shows the shared save-complete graphic');
 ok(
-  feedbackOrder.indexOf('/api/progress/patch') < feedbackIndex
-  && feedbackIndex < feedbackOrder.indexOf('/api/logs/patch'),
-  'save-complete graphic appears after authoritative progress persistence and before compatibility-log I/O',
+  feedbackOrder.indexOf('/api/progress/patch') < feedbackOrder.indexOf('/api/logs/patch')
+  && feedbackOrder.indexOf('/api/logs/patch') < feedbackIndex,
+  'save-complete graphic appears after all persistence requests',
 );
+
+// Observe the real module's outgoing payloads across delayed I/O and remounts.
+const command = (sid, date = '2026-06-05') => ({
+  editingDate: date, editingSid: sid, activeCatalog: [newTest],
+  initialTestMap: {}, selectedStatuses: [[newLabel, 'assigned']], touchedTestKeys: [newLabel],
+});
+let releaseRead;
+const heldRead = new Promise(resolve => { releaseRead = resolve; });
+const raceWrites = [];
+globalThis.fetch = async (url, init = {}) => {
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) { await heldRead; return response({entry: {}}); }
+  raceWrites.push({url: value, body: JSON.parse(init.body || '{}')});
+  return response(value === '/api/progress/patch' ? {progress: {tests: {[newLabel]: 'assigned'}}} : {entry: {saved: true}});
+};
+mod.__setHarnessState(command('save-a'));
+const savingA = mod.__saveModal({refresh: false});
+const duplicateA = mod.__saveModal({refresh: false});
+mod.__setHarnessState(command('save-b', '2026-06-06'));
+globalThis.__saveResults = [];
+releaseRead();
+await Promise.all([savingA, duplicateA]);
+ok(raceWrites.length === 2, 'duplicate clicks issue one progress and one log command');
+ok(raceWrites.every(x => x.body.sid === 'save-a' && x.body.date === '2026-06-05'), 'late writes retain the original student and date');
+ok(globalThis.__saveResults.length === 0, 'old popup save does not announce completion in the new popup');
+await mod.__saveModal({refresh: false});
+ok(raceWrites.slice(2).length === 2 && raceWrites.slice(2).every(x => x.body.sid === 'save-b'), 'old response does not clear the new popup edits');
+
+let releaseLog;
+const heldLog = new Promise(resolve => { releaseLog = resolve; });
+let logStarted;
+const enteredLog = new Promise(resolve => { logStarted = resolve; });
+globalThis.__saveResults = [];
+globalThis.fetch = async (url) => {
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) return response({entry: {}});
+  if (value === '/api/logs/patch') { logStarted(); await heldLog; return response({error: 'injected log failure'}, 503); }
+  return response({progress: {tests: {[newLabel]: 'assigned'}}});
+};
+mod.__setHarnessState(command('save-c'));
+const failedSave = mod.__saveModal({refresh: false}).then(() => null, error => error);
+await enteredLog;
+ok(globalThis.__saveResults.length === 0, 'a pending log response is not save completion');
+releaseLog();
+const failure = await failedSave;
+ok(failure && /상담 기록 저장에 실패/.test(failure.message), 'partial success has an actionable error');
+ok(globalThis.__saveResults.length === 0, 'failed follow-up never displays completion');
+globalThis.fetch = async url => response(String(url).startsWith('/api/logs/entry?') ? {entry: {}} : {entry: {}, progress: {tests: {[newLabel]: 'assigned'}}});
+await mod.__saveModal({refresh: false});
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'failed save evicts its flight and retains changes for retry');
 """
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-test-modal-assignment-driver>")
@@ -10048,11 +10159,14 @@ globalThis.document = {
 };
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.js');
+const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
+const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
   .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 source = source.replace(
   "  logSave.addEventListener('click', async () => {",
@@ -10381,11 +10495,14 @@ const makeProgressCell = ({ mid, initial, state, explicitNone = '', cleared = ''
 });
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.js');
+const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
+const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
   .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
   .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 const harness = `
 export function __initHarness() {
@@ -10985,7 +11102,10 @@ def run_unit_checks() -> bool:
         run_test_catalog_search_sort_checks,
         run_hover_tooltip_performance_checks,
         run_admin_latency_contract_checks,
+        run_assistant_note_http_checks,
+        run_review_hardening_checks,
         run_export_log_format_checks,
+        run_quick_printer_export_checks,
         run_today_completion_checks,
         run_legacy_consumer_cleanup_checks,
         run_person_identity_checks,
@@ -11301,6 +11421,11 @@ def main() -> int:
         help="Run only class-log export format customization and roster regression checks.",
     )
     parser.add_argument(
+        "--only-quick-printer-export",
+        action="store_true",
+        help="Run only quick-printer CSV, carryover history, and popup contract checks.",
+    )
+    parser.add_argument(
         "--only-today-completion",
         action="store_true",
         help="Run only absence recovery convergence and all-date unarchived done checks.",
@@ -11468,6 +11593,8 @@ def main() -> int:
         selected_checks.append(run_hover_tooltip_performance_checks)
     if args.only_export_log_format:
         selected_checks.append(run_export_log_format_checks)
+    if args.only_quick_printer_export:
+        selected_checks.append(run_quick_printer_export_checks)
     if args.only_today_completion:
         selected_checks.append(run_today_completion_checks)
     if args.only_student_install_guide:
