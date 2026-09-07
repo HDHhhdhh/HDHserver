@@ -36,6 +36,7 @@ from core.person_identity_store import (
     recover_identity_state_if_needed,
 )
 from core.runtime_server_guard import refuse_concurrent_live_server
+from core.request_consistency import absence_barrier_mode
 
 from core.network_access import (
     academy_network_allowed,
@@ -240,38 +241,13 @@ def create_app() -> Flask:
         return response
 
     def needs_absence_consistency_barrier() -> bool:
-        path = str(request.path or "").rstrip("/") or "/"
-        if request.method == "POST" and path in {"/api/absent", "/api/makeup-sheet-sync"}:
-            return False
-        exact_paths = {
-            "/api/absent",
-            "/api/absent/recover",
-            "/api/attend",
-            "/api/homework-books",
-            "/api/kollus/lms-callback",
-            "/api/makeup-carryover",
-            "/api/student/bootstrap",
-            "/api/tests-records",
-            "/api/tests-stats",
-            "/api/today",
-            "/api/watch",
-            "/api/watch-status",
-        }
-        prefixes = (
-            "/api/admin/student-homework",
-            "/api/logs",
-            "/api/mobile/student/homework",
-            "/api/progress",
-            "/api/updates",
-            "/api/student-test-ocr",
-        )
-        return path in exact_paths or path.startswith(prefixes)
+        return absence_barrier_mode(request.path, request.method) is not None
 
     @app.before_request
     def wait_for_absence_transaction():
         if not needs_absence_consistency_barrier():
             return
-        barrier = absence_read_barrier()
+        barrier = absence_read_barrier(shared=absence_barrier_mode(request.path, request.method) == "shared")
         try:
             barrier.__enter__()
         except (AbsenceRecoveryRequiredError, TimeoutError) as exc:
@@ -287,6 +263,14 @@ def create_app() -> Flask:
                 exc,
                 exc.__traceback__ if exc is not None else None,
             )
+
+    @app.after_request
+    def revalidate_frontend_assets(response):
+        # All module entrypoints and descendants revalidate after a page reload.
+        # A missed manual query-version bump must not strand one page on old JS.
+        if request.endpoint == "static" and request.path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
 
     @app.before_request
     def block_cross_origin_writes():

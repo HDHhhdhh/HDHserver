@@ -122,11 +122,13 @@ def absence_read_barrier(
     absent_path: Any = ABS_PATH,
     journal_dir: Any | None = None,
     lock_timeout_sec: float = 30.0,
+    shared: bool = False,
 ) -> Iterator[None]:
     with absence_consistency_barrier(
         absent_path=absent_path,
         journal_dir=journal_dir,
         lock_timeout_sec=lock_timeout_sec,
+        shared=shared,
     ):
         yield
 

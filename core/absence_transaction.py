@@ -17,6 +17,7 @@ from core.absence_assignment_cleanup import (
 )
 from core.progress_store import load_progress_strict, save_progress_strict
 from core.storage import file_lock, save_atomic
+from core.read_cohort import shared_file_lease
 
 
 JOURNAL_VERSION = 1
@@ -521,6 +522,7 @@ def absence_consistency_barrier(
     absent_path: Any,
     journal_dir: Any | None = None,
     lock_timeout_sec: float = 30.0,
+    shared: bool = False,
 ) -> Iterator[None]:
     directory = pathlib.Path(journal_dir) if journal_dir is not None else journal_directory_for(absent_path)
     directory.mkdir(parents=True, exist_ok=True)
@@ -531,15 +533,21 @@ def absence_consistency_barrier(
         yield
         return
 
-    with file_lock(coordinator, timeout_sec=lock_timeout_sec):
+    def validate_pending():
+        pending_path = directory / PENDING_JOURNAL_NAME
+        if pending_path.exists():
+            journal = _read_journal(pending_path)
+            if str(journal.get("state") or "") not in {"COMMITTED", "ROLLED_BACK"}:
+                raise AbsenceRecoveryRequiredError("absence transaction recovery is required")
+            _remove_journal(pending_path)
+
+    lease = (shared_file_lease(coordinator, timeout_sec=lock_timeout_sec, validate=validate_pending)
+             if shared else file_lock(coordinator, timeout_sec=lock_timeout_sec))
+    with lease:
         token = _ACTIVE_CONSISTENCY_BARRIERS.set((*active, coordinator_key))
         try:
-            pending_path = directory / PENDING_JOURNAL_NAME
-            if pending_path.exists():
-                journal = _read_journal(pending_path)
-                if str(journal.get("state") or "") not in {"COMMITTED", "ROLLED_BACK"}:
-                    raise AbsenceRecoveryRequiredError("absence transaction recovery is required")
-                _remove_journal(pending_path)
+            if not shared:
+                validate_pending()
             yield
         finally:
             _ACTIVE_CONSISTENCY_BARRIERS.reset(token)

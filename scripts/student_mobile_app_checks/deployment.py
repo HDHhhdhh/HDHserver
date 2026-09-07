@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import uuid
@@ -124,7 +125,10 @@ def _verify_args(paths: dict[str, Path], phase: str = "Preflight") -> list[str]:
 def _backup_contract(state: list[int], temp_root: Path) -> None:
     runtime = temp_root / "runtime"
     _write(runtime / "auth_accounts.json", "{}")
-    _write(runtime / "app.sqlite", "db")
+    con = sqlite3.connect(runtime / "app.sqlite")
+    con.execute("CREATE TABLE backup_fixture (id INTEGER)")
+    con.commit()
+    con.close()
     _write(runtime / "instance" / "student-app-vapid-private.pem", "secret")
     _write(runtime / "instance" / "student-app-vapid-private.pem.tmp", "secret-sidecar")
     _write(runtime / "instance" / "student-app-vapid-public.txt", "public")

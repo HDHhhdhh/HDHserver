@@ -16,6 +16,19 @@ from core.paths import LOGS_PATH
 from core.storage import load, save_atomic
 
 KST = dt.timezone(dt.timedelta(hours=9))
+# Internal storage marker: this row was hydrated and committed as a full snapshot.
+# It is never accepted from the caller or exposed in public log projections.
+_COMPLETE_ENTRY = "__logRepositoryCompleteV1"
+
+
+def _public_entry(entry: dict) -> dict:
+    return {key: copy.deepcopy(value) for key, value in entry.items() if key != _COMPLETE_ENTRY}
+
+
+def _public_map(data: dict) -> dict:
+    return {date: {sid: _public_entry(entry) if isinstance(entry, dict) else entry
+                   for sid, entry in day.items()} if isinstance(day, dict) else day
+            for date, day in data.items()}
 
 
 EntryFn = Callable[[dict, str], dict]
@@ -426,11 +439,15 @@ class LogRepository:
     def _merge_json_fallback_fields(self, primary: dict, fallback: dict, sid: str) -> dict:
         if not isinstance(primary, dict):
             primary = {}
+        if primary.get(_COMPLETE_ENTRY) is True:
+            return self.repair_entry(_public_entry(primary), sid)
         if not isinstance(fallback, dict) or not fallback:
-            return self.repair_entry(primary, sid)
+            return self.repair_entry(_public_entry(primary), sid)
 
         out = dict(primary)
         for key, value in fallback.items():
+            if key == _COMPLETE_ENTRY:
+                continue
             if key not in out or (is_empty_value(out.get(key)) and not is_empty_value(value)):
                 out[key] = copy.deepcopy(value)
         return self.repair_entry(out, sid)
@@ -476,7 +493,7 @@ class LogRepository:
             except Exception:
                 pass
 
-        return LogEntryResult("json", self._json_entry(date, sid))
+        return LogEntryResult("json", _public_entry(self._json_entry(date, sid)))
 
     def read_logs(
         self,
@@ -518,9 +535,9 @@ class LogRepository:
             json_map = self._filter_json_map(json_map, date_filter, sid_filter)
 
         if not sqlite_ok:
-            return copy.deepcopy(json_map)
+            return _public_map(json_map)
 
-        return self._merge_json_fallback_map(sqlite_map, json_map)
+        return _public_map(self._merge_json_fallback_map(sqlite_map, json_map))
 
     def _export_history_entry(self, entry: dict, sid: str, *, full: bool) -> dict:
         if not isinstance(entry, dict) or not entry:
@@ -528,13 +545,21 @@ class LogRepository:
         if full:
             return self.repair_entry(copy.deepcopy(entry), sid)
 
-        # Previous rows are used only to reconstruct assigned-test carry-over
-        # and to detect that the student had activity on that date.
+        # Previous rows reconstruct assigned-test carry-over for exports and
+        # retain only the absence provenance needed by quick-printer filtering.
         out = {"__exportHistoryActivity": True}
+        if entry.get(_COMPLETE_ENTRY) is True:
+            out[_COMPLETE_ENTRY] = True
         for key in ("testAssignmentDailyTests", "assignedTests"):
             value = entry.get(key)
             if isinstance(value, list):
                 out[key] = copy.deepcopy(value)
+        carryover = entry.get("testAssignmentAbsenceCarryover")
+        if isinstance(carryover, dict):
+            out["testAssignmentAbsenceCarryover"] = copy.deepcopy(carryover)
+        source_date = str(entry.get("testAssignmentAbsenceSourceDate") or "").strip()
+        if source_date:
+            out["testAssignmentAbsenceSourceDate"] = source_date
         return out
 
     def read_export_history(self, target_dates: dict[str, str]) -> dict:
@@ -601,7 +626,7 @@ class LogRepository:
                     json_projected.setdefault(date_s, {})[sid] = projected
 
         if not sqlite_ok:
-            return json_projected
+            return _public_map(json_projected)
 
         out = {date: dict(by_sid) for date, by_sid in sqlite_map.items()}
         for date, by_sid in json_projected.items():
@@ -611,6 +636,8 @@ class LogRepository:
                 target_date = normalized_targets.get(sid)
                 if not isinstance(existing, dict):
                     day[sid] = fallback
+                    continue
+                if existing.get(_COMPLETE_ENTRY) is True:
                     continue
                 if date == target_date:
                     day[sid] = self._merge_json_fallback_fields(existing, fallback, sid)
@@ -622,179 +649,97 @@ class LogRepository:
                     ):
                         merged[key] = value
                 day[sid] = merged
-        return out
+        return _public_map(out)
 
     def legacy_post(self, incoming: dict) -> LogPostResult:
-        sqlite_ok = False
-        sqlite_err = None
-        con = None
-
-        try:
-            con = self._connect()
-            self._ensure_schema(con)
-            con.execute("BEGIN IMMEDIATE;")
-            for date, by_sid in incoming.items():
-                if not isinstance(by_sid, dict) or not is_iso_date_key(str(date)):
-                    continue
-                for sid, entry in by_sid.items():
-                    if not isinstance(entry, dict):
+        with self.mutation_lock():
+            current, status = self._read_json_map_with_status()
+            if status == "invalid":
+                raise ValueError("logs.json is unreadable or malformed")
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE;")
+                for date, by_sid in incoming.items():
+                    if not isinstance(by_sid, dict) or not is_iso_date_key(str(date)):
                         continue
                     date_s = str(date)
-                    sid_s = str(sid)
-                    safe_entry = self.repair_entry(entry, sid_s)
-                    cur = self._sqlite_get_entry(con, date_s, sid_s)
-                    merged = self.merge_entry(cur, safe_entry)
-                    self._sqlite_upsert_entry(con, date_s, sid_s, merged)
-            con.execute("COMMIT;")
-            sqlite_ok = True
-        except Exception as exc:
-            sqlite_err = exc
-            try:
-                if con is not None:
-                    con.execute("ROLLBACK;")
+                    day = current.setdefault(date_s, {})
+                    if not isinstance(day, dict):
+                        raise ValueError("invalid log date map")
+                    for sid, entry in by_sid.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        sid_s = str(sid)
+                        cur = self._merge_json_fallback_fields(
+                            self._sqlite_get_entry(con, date_s, sid_s), self._sid_lookup(day, sid_s), sid_s)
+                        merged = self.merge_entry(cur, self.repair_entry(_public_entry(entry), sid_s))
+                        stored = {**merged, _COMPLETE_ENTRY: True}
+                        self._sqlite_upsert_entry(con, date_s, sid_s, stored)
+                        self._write_sid_mapping(day, sid_s, stored)
+                con.execute("COMMIT;")
             except Exception:
-                pass
-            print("[logs] sqlite legacy POST failed:", exc, flush=True)
-        finally:
-            try:
+                if con is not None and con.in_transaction:
+                    con.rollback()
+                raise
+            finally:
                 if con is not None:
                     con.close()
-            except Exception:
-                pass
-
-        self._save_legacy_json(incoming)
-        return LogPostResult(sqlite_ok=sqlite_ok, sqlite_error=sqlite_err)
-
-    def _save_legacy_json(self, incoming: dict) -> None:
-        lock = self.lock_factory() if self.lock_factory else None
-        context = lock if lock is not None else _NullContext()
-        with context:
-            current = self.read_json_map()
-            for date, by_sid in incoming.items():
-                if not isinstance(by_sid, dict):
-                    continue
-                cur_day = current.setdefault(date, {})
-                if not isinstance(cur_day, dict):
-                    current[date] = {}
-                    cur_day = current[date]
-
-                for sid, entry in by_sid.items():
-                    if not isinstance(entry, dict):
-                        continue
-                    sid_s = str(sid)
-                    safe_entry = self.repair_entry(entry, sid_s)
-                    cur_entry = cur_day.get(sid_s, {})
-                    cur_day[sid_s] = self.merge_entry(cur_entry, safe_entry)
-
             save_atomic(self.logs_path, current)
+            return LogPostResult(sqlite_ok=True)
 
     def patch_entry(self, date: str, sid: str, entry: dict, base: dict) -> LogPatchResult:
-        entry = self.repair_entry(entry, sid)
+        entry = self.repair_entry(_public_entry(entry), sid)
         base = self.repair_entry(base, sid)
-        merged: dict = {}
-
-        sqlite_ok = False
-        sqlite_err = None
-        sqlite_base_conflict = False
-        sqlite_conflict_entry = None
-        json_ok = False
-        json_err = None
-        con = None
-
-        try:
-            con = self._connect()
-            self._ensure_schema(con)
-            con.execute("BEGIN IMMEDIATE;")
-            cur = self.repair_entry(self._sqlite_get_entry(con, date, sid), sid)
-            if self.entry_conflicts(cur, base):
-                con.execute("ROLLBACK;")
-                sqlite_base_conflict = True
-                sqlite_conflict_entry = cur
-            else:
-                merged = self.merge_entry(cur, entry)
-                self._sqlite_upsert_entry(con, date, sid, merged)
-                con.execute("COMMIT;")
-                sqlite_ok = True
-        except Exception as exc:
-            sqlite_err = exc
+        result = LogPatchResult(merged={}, sqlite_ok=False)
+        # One canonical lock order and one conflict decision, before either write.
+        # JSON-only legacy fields are hydrated once, then the complete SQLite row
+        # owns both field presence and absence, even if the mirror write fails.
+        with self.mutation_lock():
+            current, status = self._read_json_map_with_status()
+            if status == "invalid":
+                result.sqlite_error = ValueError("logs.json is unreadable or malformed")
+                return result
+            day = current.setdefault(date, {})
+            if not isinstance(day, dict):
+                result.sqlite_error = ValueError("invalid log date map")
+                return result
+            fallback = self._sid_lookup(day, sid)
+            fallback = fallback if isinstance(fallback, dict) else {}
+            con = None
             try:
-                if con is not None:
+                con = self._connect()
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE;")
+                cur = self._merge_json_fallback_fields(self._sqlite_get_entry(con, date, sid), fallback, sid)
+                if self.entry_conflicts(cur, base):
                     con.execute("ROLLBACK;")
-            except Exception:
-                pass
-            print("[logs] sqlite PATCH failed:", exc, flush=True)
-        finally:
-            try:
+                    result.sqlite_base_conflict = True
+                    result.sqlite_conflict_entry = cur
+                    return result
+                merged = self.repair_entry(self.merge_entry(cur, entry), sid)
+                stored = {**merged, _COMPLETE_ENTRY: True}
+                self._sqlite_upsert_entry(con, date, sid, stored)
+                con.execute("COMMIT;")
+                result.sqlite_ok = True
+                result.merged = _public_entry(merged)
+            except Exception as exc:
+                result.sqlite_error = exc
+                if con is not None and con.in_transaction:
+                    con.rollback()
+                return result
+            finally:
                 if con is not None:
                     con.close()
-            except Exception:
-                pass
-
-        try:
-            lock = self.lock_factory() if self.lock_factory else None
-            context = lock if lock is not None else _NullContext()
-            with context:
-                current = self.read_json_map()
-                day = current.setdefault(date, {})
-                if not isinstance(day, dict):
-                    current[date] = {}
-                    day = current[date]
-
-                cur_json = day.get(sid, {})
-                if not isinstance(cur_json, dict):
-                    cur_json = {}
-                cur_json = self.repair_entry(cur_json, sid)
-
-                if self.entry_conflicts(cur_json, base):
-                    return LogPatchResult(
-                        merged=merged,
-                        sqlite_ok=sqlite_ok,
-                        sqlite_error=sqlite_err,
-                        sqlite_base_conflict=sqlite_base_conflict,
-                        sqlite_conflict_entry=sqlite_conflict_entry,
-                        json_ok=json_ok,
-                        json_error=json_err,
-                        json_conflict_entry=cur_json,
-                    )
-
-                if not merged:
-                    merged = self.merge_entry(cur_json, entry)
-                merged = self.repair_entry(merged, sid)
-                day[sid] = merged
-                save_atomic(self.logs_path, current)
-                json_ok = True
-        except Exception as exc:
-            json_err = exc
-            print("[logs] json PATCH failed:", exc, flush=True)
-
-        if not sqlite_ok and not sqlite_base_conflict and merged:
-            con2 = None
             try:
-                con2 = self._connect()
-                self._ensure_schema(con2)
-                self._sqlite_upsert_entry(con2, date, sid, merged)
-                con2.commit()
-                sqlite_ok = True
-                sqlite_err = None
+                self._write_sid_mapping(day, sid, stored)
+                save_atomic(self.logs_path, current)
+                result.json_ok = True
             except Exception as exc:
-                sqlite_err = exc
-                sqlite_ok = False
-            finally:
-                try:
-                    if con2 is not None:
-                        con2.close()
-                except Exception:
-                    pass
-
-        return LogPatchResult(
-            merged=merged,
-            sqlite_ok=sqlite_ok,
-            sqlite_error=sqlite_err,
-            sqlite_base_conflict=sqlite_base_conflict,
-            sqlite_conflict_entry=sqlite_conflict_entry,
-            json_ok=json_ok,
-            json_error=json_err,
-        )
+                result.json_error = exc
+                print("[logs] json PATCH failed:", exc, flush=True)
+            return result
 
     def mutation_lock(self):
         lock = self.lock_factory() if self.lock_factory else None
@@ -1013,6 +958,126 @@ class LogRepository:
 
             if changed_json:
                 save_atomic(self.logs_path, logs)
+
+    def summarize_missing_leave(
+        self,
+        arrivals_by_date: Any,
+        absent_by_date: Any = None,
+        *,
+        since_date: str = "",
+        exclude_date: str = "",
+    ) -> dict:
+        """Summarize arrived students whose exact-date log never reached done."""
+        today = self.today_key()
+        absent_map = absent_by_date if isinstance(absent_by_date, dict) else {}
+        candidates: list[dict[str, str]] = []
+
+        if isinstance(arrivals_by_date, dict):
+            for date_raw, by_sid in arrivals_by_date.items():
+                date = str(date_raw or "").strip()
+                if (
+                    not is_iso_date_key(date)
+                    or date >= today
+                    or (since_date and date < since_date)
+                    or (exclude_date and date == exclude_date)
+                    or not isinstance(by_sid, dict)
+                ):
+                    continue
+                absent_sids = {
+                    str(sid or "").strip()
+                    for sid in (absent_map.get(date) if isinstance(absent_map.get(date), list) else [])
+                    if str(sid or "").strip()
+                }
+                for sid_raw, arrive_raw in by_sid.items():
+                    sid = str(sid_raw or "").strip()
+                    arrive_time = str(arrive_raw or "").strip()
+                    if not sid or not arrive_time or sid in absent_sids:
+                        continue
+                    candidates.append({"date": date, "sid": sid, "arriveTime": arrive_time})
+
+        candidates.sort(key=lambda row: str(row["sid"]))
+        candidates.sort(key=lambda row: str(row["date"]), reverse=True)
+        candidate_keys = {(row["date"], row["sid"]) for row in candidates}
+        if not candidate_keys:
+            return {
+                "ok": True,
+                "sinceDate": since_date,
+                "excludeDate": exclude_date,
+                "total": 0,
+                "students": 0,
+                "byDate": [],
+                "rowsAvailable": True,
+                "rows": [],
+            }
+
+        sqlite_keys: set[tuple[str, str]] = set()
+        done_keys: set[tuple[str, str]] = set()
+        sqlite_available = False
+        con = None
+        try:
+            con = self._connect()
+            self._ensure_schema(con)
+            rows = con.execute(
+                """
+                SELECT date, sid, json_extract(entry_json, '$.done') AS done
+                FROM logs
+                WHERE date >= ? AND date < ?
+                ORDER BY date, sid;
+                """,
+                (since_date or "0000-01-01", today),
+            ).fetchall()
+            for row in rows:
+                key = (str(row["date"] or "").strip(), str(row["sid"] or "").strip())
+                if key not in candidate_keys:
+                    continue
+                sqlite_keys.add(key)
+                if self.truthy(row["done"]):
+                    done_keys.add(key)
+            sqlite_available = True
+        except Exception as exc:
+            print("[logs.missing-leave-summary] sqlite failed:", exc, flush=True)
+        finally:
+            try:
+                if con is not None:
+                    con.close()
+            except Exception:
+                pass
+
+        json_map, json_status = _cached_log_json_for_read(self.logs_path)
+        for date, sid in candidate_keys - sqlite_keys:
+            day = json_map.get(date) if isinstance(json_map, dict) else None
+            entry = self._sid_lookup(day, sid) if isinstance(day, dict) else None
+            if isinstance(entry, dict) and self.truthy(entry.get("done")):
+                done_keys.add((date, sid))
+
+        rows_available = bool(
+            (sqlite_available and json_status != "invalid")
+            or (not sqlite_available and json_status == "available")
+        )
+        missing_rows = [row for row in candidates if (row["date"], row["sid"]) not in done_keys]
+        if not rows_available:
+            missing_rows = []
+
+        by_date: Dict[str, int] = {}
+        students: set[str] = set()
+        for row in missing_rows:
+            date = row["date"]
+            by_date[date] = by_date.get(date, 0) + 1
+            students.add(row["sid"])
+
+        return {
+            "ok": True,
+            "sinceDate": since_date,
+            "excludeDate": exclude_date,
+            "total": len(missing_rows),
+            "students": len(students),
+            "byDate": [
+                {"date": date, "count": by_date[date]}
+                for date in sorted(by_date.keys(), reverse=True)
+            ],
+            "rowsAvailable": rows_available,
+            "rows": missing_rows if rows_available else [],
+        }
 
     def summarize_unarchived_done(self, exclude_date: str = "") -> dict:
         entries: Dict[str, Dict[str, dict]] = {}

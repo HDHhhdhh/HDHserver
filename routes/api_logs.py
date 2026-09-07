@@ -148,20 +148,14 @@ def api_logs_patch():
 
     if not result.sqlite_ok:
         if result.sqlite_base_conflict:
-            if not result.json_ok:
-                return jsonify({
-                    "ok": False,
-                    "sqlite": False,
-                    "json": False,
-                    "error": "sqlite out-of-sync and legacy logs.json save failed",
-                }), 409
             return jsonify({
-                "ok": True,
+                "ok": False,
                 "sqlite": False,
-                "json": result.json_ok,
-                "entry": result.merged,
-                "warning": "sqlite out-of-sync",
-            })
+                "json": False,
+                "retryable": False,
+                "entry": result.sqlite_conflict_entry,
+                "error": "다른 화면에서 기록이 먼저 변경되었습니다. 새로고침 후 다시 저장해 주세요.",
+            }), 409
         return jsonify({
             "ok": False,
             "sqlite": False,
