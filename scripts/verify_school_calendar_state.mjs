@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveSchoolCalendarEntries } from '../static/js/shared/schoolCalendar.js';
 
 import {
   buildSchoolCalendarDocument,
@@ -9,6 +10,7 @@ import {
   coerceSchoolCalendarExam,
   coerceSchoolCalendarSemester,
   loadSchoolCalendarRows,
+  resolveSchoolCalendarPageSelection,
   withActiveSchoolCalendarPage,
 } from '../static/js/school-calendar/state.js';
 
@@ -337,6 +339,34 @@ verifySelectionCoercion();
 verifyLiteralEditableClone();
 verifyPageStateBoundary();
 
+{
+  const saved = { activeYear: '2026', activeSemester: '2', activeExam: 'mid', years: {
+    '2026': { activeSemester: '2', activeExam: 'mid', semesters: {
+      '1': { schools: { '검증학교': { common: { final: '6/30' } } } },
+      '2': { schools: { '검증학교': { common: { midterm: '10/13' } } } },
+    } },
+  } };
+  const before = JSON.stringify(saved);
+  assert.deepEqual(resolveSchoolCalendarPageSelection(saved,
+    { year: '2025', semester: '1', exam: 'final' }, '2026'),
+  { year: '2026', semester: '2', exam: 'mid' }, 'shared active page wins over stale browser selection');
+  assert.deepEqual(resolveSchoolCalendarPageSelection(saved, {}, '2026'),
+    { year: '2026', semester: '2', exam: 'mid' }, 'a fresh browser uses the same active page');
+  assert.deepEqual(resolveSchoolCalendarEntries(saved, '검증학교', '1학년'),
+    [{ grade: '1학년', phase: '', midterm: '10/13' }],
+    'shared admin/all popup consumers resolve semester two, not semester-one final');
+  const historical = withActiveSchoolCalendarPage(saved, { year: '2026', semester: '1', exam: 'final' });
+  assert.deepEqual(resolveSchoolCalendarPageSelection(historical,
+    { year: '2026', semester: '2', exam: 'mid' }, '2026'),
+  { year: '2026', semester: '1', exam: 'final' }, 'explicit later history selection remains supported');
+  assert.deepEqual(resolveSchoolCalendarEntries(historical, '검증학교', '1학년'),
+    [{ grade: '1학년', phase: '', final: '6/30' }], 'semester-one historical schedule remains intact');
+  assert.deepEqual(resolveSchoolCalendarPageSelection({},
+    { year: '2025', semester: '2', exam: 'mid' }, '2026'),
+  { year: '2025', semester: '2', exam: 'mid' }, 'legacy documents retain local selection fallback');
+  assert.equal(JSON.stringify(saved), before, 'page selection does not rewrite dates or rows');
+}
+
 console.log(JSON.stringify({
   ok: true,
   independentObservations: [
@@ -345,6 +375,7 @@ console.log(JSON.stringify({
     'unknown root/year/semester/school metadata preservation',
     'semester-1 compatibility mirror only',
     'active-page update without unrelated-year replacement',
+    'server-authoritative active selection despite stale browser preferences',
     'editable-row cloning without caller mutation',
   ],
   supplementaryBoundaryGuards: [

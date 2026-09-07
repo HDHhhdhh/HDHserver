@@ -1,4 +1,3 @@
-import { getActiveSchoolCalendarYear } from './shared/schoolCalendar.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
@@ -16,6 +15,7 @@ import {
   loadSchoolCalendarRows,
   normalizeSchoolCalendarCommon as normalizeCommonFields,
   normalizeSchoolCalendarGrade as normalizeGradeFields,
+  resolveSchoolCalendarPageSelection,
   withActiveSchoolCalendarPage,
 } from './school-calendar/state.js';
 
@@ -883,9 +883,10 @@ import {
     }
 
     const stored = readStoredPage();
-    editingYear = String(stored.year || calendarDoc.activeYear || getActiveSchoolCalendarYear(calendarDoc) || new Date().getFullYear());
-    editingSemester = coerceSemester(stored.semester || calendarDoc.activeSemester || getYearBundle(calendarDoc, editingYear).activeSemester || '1');
-    viewMode = coerceExam(stored.exam || calendarDoc.activeExam || getYearBundle(calendarDoc, editingYear).activeExam || DEFAULT_EXAM);
+    const selected = resolveSchoolCalendarPageSelection(calendarDoc, stored, String(new Date().getFullYear()));
+    editingYear = selected.year;
+    editingSemester = selected.semester;
+    viewMode = selected.exam;
     syncPageSelectors();
     persistPageSelection();
 

@@ -1,4 +1,5 @@
 import {
+  getActiveSchoolCalendarSemester,
   getActiveSchoolCalendarYear,
   isSchoolCalendarV2,
 } from '../shared/schoolCalendar.js';
@@ -285,4 +286,16 @@ export function coerceSchoolCalendarSemester(value) {
 
 export function coerceSchoolCalendarExam(value) {
   return value === 'final' ? 'final' : 'mid';
+}
+
+export function resolveSchoolCalendarPageSelection(calendarDoc, stored = {}, fallbackYear = '') {
+  const year = String(getActiveSchoolCalendarYear(calendarDoc) || stored.year || fallbackYear);
+  const bundle = getSchoolCalendarYearBundle(calendarDoc, year);
+  const rootIsSelectedYear = year === String(calendarDoc?.activeYear || '');
+  const semester = isSchoolCalendarV2(calendarDoc)
+    ? getActiveSchoolCalendarSemester(calendarDoc, year)
+    : coerceSchoolCalendarSemester(stored.semester);
+  const exam = coerceSchoolCalendarExam(bundle.activeExam
+    || (rootIsSelectedYear ? calendarDoc.activeExam : '') || stored.exam || 'final');
+  return { year, semester, exam };
 }
