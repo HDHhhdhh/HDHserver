@@ -4,6 +4,8 @@ import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
 import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
+import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
+import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -895,6 +897,46 @@ function unarchivedSummaryResponse(root, store, url) {
   });
 }
 
+function missingLeaveSummaryResponse(root, store, url) {
+  const excludeDate = String(
+    url.searchParams.get('exclude_date') || url.searchParams.get('excludeDate') || '',
+  ).trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const absentByDate = store.absent?.by_date || {};
+  const rows = [];
+
+  Object.entries(store.arriveTime || {}).forEach(([date, bySid]) => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey || (today && dateKey >= today) || (excludeDate && dateKey === excludeDate)) return;
+    const absent = new Set(Array.isArray(absentByDate?.[dateKey]) ? absentByDate[dateKey].map(String) : []);
+    const rosterIds = effectiveDemoRosterStudentIds(store, dateKey);
+    Object.entries(bySid && typeof bySid === 'object' ? bySid : {}).forEach(([sid, arriveTime]) => {
+      const sidKey = String(sid || '').trim();
+      const arrive = String(arriveTime || '').trim();
+      if (!sidKey || !arrive || absent.has(sidKey) || !rosterIds.has(sidKey)) return;
+      const entry = store.logs?.[dateKey]?.[sidKey];
+      const done = entry?.done === true || entry?.done === 1 || entry?.done === '1' || entry?.done === 'true';
+      if (!done) rows.push({ date: dateKey, sid: sidKey, arriveTime: arrive });
+    });
+  });
+
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid)));
+  const byDate = new Map();
+  rows.forEach(row => byDate.set(row.date, (byDate.get(row.date) || 0) + 1));
+  return responseJson(root, {
+    ok: true,
+    sinceDate: store.dates?.previous || '',
+    excludeDate,
+    total: rows.length,
+    students: new Set(rows.map(row => row.sid)).size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows,
+  });
+}
+
 function normalizeAnnouncementPayload(payload, previous = {}) {
   const id = String(previous.id || payload.id || `demo-ann-${Date.now()}`).trim();
   const createdAt = previous.createdAt || nowIso();
@@ -1089,6 +1131,7 @@ async function handleGet(root, ctx, store) {
   }
   if (path === '/api/watch/latest') return watchLatestResponse(root, store, url);
   if (path === '/api/logs/unarchived-summary') return unarchivedSummaryResponse(root, store, url);
+  if (path === '/api/arrive-time/missing-leave-summary') return missingLeaveSummaryResponse(root, store, url);
   return null;
 }
 
@@ -1101,6 +1144,18 @@ async function handleWrite(root, ctx, store) {
     } catch {
       return badRequest(root, 'invalid json body');
     }
+  }
+
+  const quickPrinterResult = applyDemoQuickPrinterRequest({
+    method,
+    path,
+    body,
+    store,
+    createdAt: nowIso,
+  });
+  if (quickPrinterResult) {
+    if (quickPrinterResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(quickPrinterResult.payload), quickPrinterResult.status);
   }
 
   const homeworkResult = applyDemoHomeworkRequest({

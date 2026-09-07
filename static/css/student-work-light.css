@@ -832,6 +832,7 @@ html body.admin.student-popup-open #adminSchoolTip.student-work-layout
 
 html body.admin.student-popup-open #adminSchoolTip.student-work-layout
   .student-tooltip-exam-attendance {
+  --exam-attendance-pending-color: #bd5362;
   margin-top: 5px !important;
   color: var(--work-muted) !important;
   font-size: 10.5px !important;
@@ -1779,7 +1780,7 @@ html body.admin.student-popup-open #logModal.student-work-layout
   color: var(--assistant-note-item-color) !important;
   line-height: 1 !important;
   white-space: nowrap !important;
-  font-size: calc(var(--assistant-note-author-font-size) - 5px) !important;
+  font-size: calc(var(--assistant-note-author-font-size) - 3px) !important;
 }
 
 html body.admin.student-popup-open #logModal.student-work-layout

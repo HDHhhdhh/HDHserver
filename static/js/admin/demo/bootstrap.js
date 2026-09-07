@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260828-calendar-revision1';
+import { createDemoFetch } from './fetch.js?v=20260830-carryover-history1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -14,6 +14,8 @@ import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
 import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
+import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
+import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -384,8 +386,11 @@ async function handleDemoApiRequest(request, input, init, demo) {
 
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
-    return demoJson(mutation, {
-      status: mutation?.ok === false ? 400 : 200,
+    const responseStatus = Number(mutation?.__demoStatus) || (mutation?.ok === false ? 400 : 200);
+    const responsePayload = { ...(mutation || {}) };
+    delete responsePayload.__demoStatus;
+    return demoJson(responsePayload, {
+      status: responseStatus,
       handler: 'bootstrap-fallback',
     });
   }
@@ -465,6 +470,8 @@ function fallbackPayloadForGet(path, params, store) {
       };
     case '/api/logs/unarchived-summary':
       return unarchivedDoneSummary(store, params);
+    case '/api/arrive-time/missing-leave-summary':
+      return missingLeaveSummary(store, params);
     case '/api/progress':
       return cloneDemoValue(filterDateSidMap(store.progress || {}, params));
     case '/api/extra-attend':
@@ -560,6 +567,44 @@ function unarchivedDoneSummary(store, params) {
   };
 }
 
+function missingLeaveSummary(store, params) {
+  const excludeDate = String(params.get('exclude_date') || params.get('excludeDate') || '').trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const absentByDate = store.absent?.by_date || {};
+  const rows = [];
+
+  Object.entries(store.arriveTime || {}).forEach(([date, bySid]) => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey || (today && dateKey >= today) || (excludeDate && dateKey === excludeDate)) return;
+    const absent = new Set(Array.isArray(absentByDate?.[dateKey]) ? absentByDate[dateKey].map(String) : []);
+    const rosterIds = effectiveDemoRosterStudentIds(store, dateKey);
+    Object.entries(bySid && typeof bySid === 'object' ? bySid : {}).forEach(([sid, arriveTime]) => {
+      const sidKey = String(sid || '').trim();
+      const arrive = String(arriveTime || '').trim();
+      if (!sidKey || !arrive || absent.has(sidKey) || !rosterIds.has(sidKey)) return;
+      const entry = store.logs?.[dateKey]?.[sidKey];
+      const done = entry?.done === true || entry?.done === 1 || entry?.done === '1' || entry?.done === 'true';
+      if (!done) rows.push({ date: dateKey, sid: sidKey, arriveTime: arrive });
+    });
+  });
+
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid)));
+  const byDate = new Map();
+  rows.forEach(row => byDate.set(row.date, (byDate.get(row.date) || 0) + 1));
+  return {
+    ok: true,
+    sinceDate: store.dates?.previous || '',
+    excludeDate,
+    total: rows.length,
+    students: new Set(rows.map(row => row.sid)).size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows,
+  };
+}
+
 function homeworkBooksBySid(logs) {
   const out = {};
   Object.keys(logs || {}).sort().reverse().forEach(date => {
@@ -622,6 +667,22 @@ async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
   const request = normalizeFetchRequest(input, init);
   const method = request?.method || String(init?.method || 'POST').toUpperCase();
+
+  const quickPrinterStore = loadDemoStore();
+  const quickPrinterResult = applyDemoQuickPrinterRequest({
+    method,
+    path,
+    body,
+    store: quickPrinterStore,
+    createdAt: () => new Date().toISOString(),
+  });
+  if (quickPrinterResult) {
+    if (quickPrinterResult.changed) saveDemoStore(quickPrinterStore);
+    return {
+      ...cloneDemoValue(quickPrinterResult.payload),
+      __demoStatus: quickPrinterResult.status,
+    };
+  }
 
   if (path === '/api/tests-config/test' && method === 'PATCH') {
     const store = loadDemoStore();

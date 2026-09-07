@@ -1,13 +1,13 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js?v=20260829-video-snapshot1';
-import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260819-subject-days1';
-import { initVideoModal } from '../../admin/features/videoModal.js';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260905-save-context1';
+import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
+import { initVideoModal } from '../../admin/features/videoModal.js?v=20260830-popup-load3';
 import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260821-note-body-row2';
 
 const ADMIN_POPUP_STYLESHEETS = [
   '/css/main.css?v=20260417a',
   '/css/admin.css?v=20260527chat',
-  '/css/student-work-light.css?v=20260821-note-reminder-vertical1',
+  '/css/student-work-light.css?v=20260906-exam-pending-color1',
 ];
 const ADMIN_POPUP_STYLESHEET_MARKER = 'data-all-students-admin-popup-style';
 
@@ -118,8 +118,10 @@ function installReadOnlyAssignmentGuard() {
     '#testModal.student-work-layout .test-row',
     '#testModal.student-work-layout .test-mini-actions button',
     '#testModal.student-work-layout .test-note-option input',
-    '#logModal.student-work-layout .assistant-note-compose',
+    '#logModal.student-work-layout .assistant-note-pin',
     '#logModal.student-work-layout .assistant-note-action-group',
+    '#assistantStudentNotes[data-existing-read-only="true"] .assistant-note-pin',
+    '#assistantStudentNotes[data-existing-read-only="true"] .assistant-note-action-group',
   ].join(',');
   const blockMutation = (event) => {
     const target = event.target?.closest?.(mutationSelector);

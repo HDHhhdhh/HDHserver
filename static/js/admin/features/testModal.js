@@ -7,21 +7,17 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';
 
-const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
-const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
-const CATEGORY_DEFS = [
-  { key: 'REVIEW', label: '복습 테스트', short: '복습', difficulties: ['상', '중상'] },
-  { key: 'UNIT', label: '단원평가', short: '단원', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
-  { key: 'SCHOOL_PAST', label: '학군지 기출', short: '학군지', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
-];
-const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
-const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
-const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
-const STUDENT_LEVELS = ['하', '중', '중상', '상'];
-const ROUND_OPTIONS = ['1', '2', '3'];
-const TERM_OPTIONS = ['중간고사', '기말고사'];
-const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
+import {
+  ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY, CATEGORY_DEFS, CATEGORY_BY_KEY,
+  CATEGORY_KEYS, SUBJECTS, STUDENT_LEVELS, ROUND_OPTIONS,
+  TERM_OPTIONS, DEFAULT_TERM, TEST_STATUS_LABELS, TEST_KEYBOARD_STATUS_ORDER,
+  isUnitCategory, isTermCategory, canonText, normalizeSubject,
+  categoryLabel, canonicalCategoryKey, isIlsanGraphDifficultyText, normalizeDifficulty,
+  normalizeRound, roundLabel, normalizeTerm, normalizeAssignmentStatus,
+  testStatusLabel, nextStatusOf, nextExcludedStatusOf, nextKeyboardStatusOf,
+  isInProgressTestStatus, isResolvedTestStatus, isExplicitBlankTestStatus, testKey,
+  normalizeConfig, collectTestCatalog,
+} from './testAssignmentRules.js?v=20260905-rules1';
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
@@ -30,17 +26,11 @@ const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
 const STUDENT_TEST_LEVEL_DEFAULTS_FIELD = 'testLevelDefaults';
 const STUDENT_LEVEL_SETTING_CATEGORY = 'UNIT';
 const TEST_RECENT_VIEW_STORAGE_PREFIX = 'admin.testAssignment.recentView.v1';
-const TEST_STATUS_LABELS = {
-  assigned: '배정',
-  done: '완료',
-  interrupted: '배부',
-  skip: '제외',
-};
-const TEST_KEYBOARD_STATUS_ORDER = ['', 'interrupted', 'assigned', 'done', 'skip'];
 
 let initialized = false;
 let editingSid = null;
 let editingDate = null;
+const testSaveFlights = new Map();
 let activeStudent = null;
 let activeCategory = 'UNIT';
 let activeSubject = '공수1';
@@ -63,14 +53,6 @@ let submittedNames = new Set();
 let testSelectionTouched = false;
 let testOpenSeq = 0;
 
-function isUnitCategory(categoryKey) {
-  return String(categoryKey || '') === 'UNIT';
-}
-
-function isTermCategory(categoryKey) {
-  const key = String(categoryKey || '');
-  return key === 'SCHOOL_PAST' || key === 'ILSAN_PAST';
-}
 
 function isLockConflictResponse(status, text) {
   const body = String(text || '').toLowerCase();
@@ -136,87 +118,6 @@ function escapeHtml(s) {
   }[m]));
 }
 
-function canonText(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ');
-}
-
-function normalizeSubject(value) {
-  const compact = String(value || '').trim().replace(/\s+/g, '');
-  const aliases = {
-    '공통수학1': '공수1',
-    '공통수학2': '공수2',
-    '미적1': '미적분1',
-    '미적분Ⅰ': '미적분1',
-    '미적분I': '미적분1',
-    '미적2': '미적분2',
-    '미적분Ⅱ': '미적분2',
-    '미적분II': '미적분2',
-    '확률과통계': '확통',
-  };
-  return aliases[compact] || compact || '공수1';
-}
-
-function categoryLabel(key) {
-  return CATEGORY_BY_KEY[key]?.label || key || '';
-}
-
-function canonicalCategoryKey(key, label = '') {
-  const raw = `${key || ''} ${label || ''}`.toUpperCase();
-  const ko = `${key || ''} ${label || ''}`.replace(/\s+/g, '');
-  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
-  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
-  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
-  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
-  return String(key || '').trim();
-}
-
-function isIlsanGraphDifficultyText(source) {
-  const text = String(source || '');
-  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes('그래프');
-}
-
-function normalizeDifficulty(categoryKey, raw, name = '') {
-  const text = String(raw || '').trim();
-  const source = `${text} ${name}`;
-  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
-  const def = CATEGORY_BY_KEY[categoryKey];
-  if (def?.difficulties.includes(text)) return text;
-
-  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
-  if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return '중상';
-  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
-
-  return def?.difficulties?.[0] || '';
-}
-
-function normalizeRound(value, name = '') {
-  const raw = String(value || '').trim();
-  const source = `${raw} ${name}`;
-  const m = source.match(/(\d{1,2})\s*(?:회차|회)/);
-  if (m) return m[1];
-  if (/^\d{1,2}$/.test(raw)) return raw;
-  return raw || '1';
-}
-
-function roundLabel(value) {
-  const r = String(value || '').trim();
-  if (!r) return '';
-  return /회/.test(r) ? r : `${r}회차`;
-}
-
-function normalizeTerm(value, name = '') {
-  const source = `${value || ''} ${name || ''}`.trim();
-  if (!source) return DEFAULT_TERM;
-  if (TERM_OPTIONS.includes(source)) return source;
-  const lower = source.toLowerCase();
-  if (lower.includes('final') || lower.includes('end') || source.includes(TERM_OPTIONS[1])) return TERM_OPTIONS[1] || DEFAULT_TERM;
-  if (lower.includes('mid') || lower.includes('middle') || source.includes(TERM_OPTIONS[0])) return TERM_OPTIONS[0] || DEFAULT_TERM;
-  return DEFAULT_TERM;
-}
 
 function readSchoolCalendarPageSelection() {
   try {
@@ -247,58 +148,11 @@ function defaultTermFromSchoolCalendar() {
   return termFromSchoolCalendarExam(stored.exam || cal.activeExam || yearBundle.activeExam) || DEFAULT_TERM;
 }
 
-function normalizeAssignmentStatus(status) {
-  const raw = status && typeof status === 'object' ? status.status : status;
-  const s = String(raw || '').trim();
-  if (!s || s === 'none') return '';
-  if (s === 'assigned' || s === 'done' || s === 'interrupted' || s === 'skip') return s;
-  return 'assigned';
-}
-
-function testStatusLabel(status, submitted = false) {
-  if (submitted) return '완료';
-  const s = normalizeAssignmentStatus(status);
-  return s ? (TEST_STATUS_LABELS[s] || '배정') : '';
-}
-
-function nextStatusOf(status) {
-  const s = normalizeAssignmentStatus(status);
-  if (!s || s === 'skip') return 'assigned';
-  if (s === 'assigned') return 'interrupted';
-  if (s === 'interrupted') return 'done';
-  return '';
-}
-
-function nextExcludedStatusOf(status) {
-  return normalizeAssignmentStatus(status) === 'skip' ? '' : 'skip';
-}
-
-function nextKeyboardStatusOf(status, direction = 1) {
-  const normalized = normalizeAssignmentStatus(status);
-  const currentIndex = Math.max(0, TEST_KEYBOARD_STATUS_ORDER.indexOf(normalized));
-  const step = Number(direction) < 0 ? -1 : 1;
-  const nextIndex = (currentIndex + step + TEST_KEYBOARD_STATUS_ORDER.length) % TEST_KEYBOARD_STATUS_ORDER.length;
-  return TEST_KEYBOARD_STATUS_ORDER[nextIndex];
-}
 
 function statusForKey(key) {
   return normalizeAssignmentStatus(selectedStatuses.get(key));
 }
 
-function isInProgressTestStatus(status) {
-  const normalized = normalizeAssignmentStatus(status);
-  return normalized === 'assigned' || normalized === 'interrupted';
-}
-
-function isResolvedTestStatus(status) {
-  const normalized = normalizeAssignmentStatus(status);
-  return normalized === 'done' || normalized === 'skip';
-}
-
-function isExplicitBlankTestStatus(status) {
-  if (!status || typeof status !== 'object') return false;
-  return normalizeAssignmentStatus(status) === '' && status.explicitBlank === true;
-}
 
 function setTestStatus(key, status) {
   const k = String(key || '').trim();
@@ -319,52 +173,6 @@ function markTestTouched(key) {
   if (normalizedKey) touchedTestKeys.add(normalizedKey);
 }
 
-function testKey(test) {
-  return [
-    categoryLabel(test.categoryKey),
-    test.curriculum,
-    test.difficulty,
-    isTermCategory(test.categoryKey) ? test.term : '',
-    roundLabel(test.round),
-    test.name,
-  ].filter(Boolean).join(' / ');
-}
-
-function normalizeConfig(cfg) {
-  const out = (cfg && typeof cfg === 'object') ? cfg : {};
-  if (!out.categories || typeof out.categories !== 'object') out.categories = {};
-
-  CATEGORY_DEFS.forEach(def => {
-    if (!out.categories[def.key] || typeof out.categories[def.key] !== 'object') {
-      out.categories[def.key] = { label: def.label, tests: [] };
-    }
-    if (!Array.isArray(out.categories[def.key].tests)) out.categories[def.key].tests = [];
-    out.categories[def.key].label = out.categories[def.key].label || def.label;
-  });
-
-  const ilsanRules = out.autoAssignRules?.ILSAN_PAST;
-  if (ilsanRules && typeof ilsanRules === 'object') {
-    Object.values(ilsanRules).forEach(subjectRules => {
-      if (!subjectRules || typeof subjectRules !== 'object') return;
-      const mergeLevels = (target, ...sources) => {
-        const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
-        const next = [...current];
-        sources.forEach(sourceKey => {
-          if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
-          if (sourceKey !== target) delete subjectRules[sourceKey];
-        });
-        subjectRules[target] = Array.from(new Set(next.map(String)));
-      };
-      mergeLevels('중상', '상');
-      mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
-      CATEGORY_BY_KEY.ILSAN_PAST.difficulties.forEach(difficulty => {
-        subjectRules[difficulty] = STUDENT_LEVELS.slice();
-      });
-    });
-  }
-
-  return out;
-}
 
 function ruleDefaultDifficulty(categoryKey, subject, student = activeStudent) {
   const hits = ruleDefaultDifficulties(categoryKey, subject, student);
@@ -541,73 +349,7 @@ function applyRuleDefaults(categoryKey = activeCategory) {
 }
 
 function collectCatalog(cfg) {
-  const out = [];
-  const categories = cfg?.categories || {};
-
-  Object.entries(categories).forEach(([rawKey, cat]) => {
-    if (!cat || typeof cat !== 'object') return;
-    const categoryKey = canonicalCategoryKey(rawKey, cat.label);
-    if (!CATEGORY_BY_KEY[categoryKey]) return;
-
-    const tests = Array.isArray(cat.tests) ? cat.tests : [];
-    tests.forEach((rawTest, idx) => {
-      if (!rawTest || typeof rawTest !== 'object') return;
-      const name = canonText(rawTest.name || rawTest.title || `테스트 ${idx + 1}`);
-      const curriculum = normalizeSubject(rawTest.curriculum || rawTest.subject || rawTest.course || activeSubject);
-      const difficulty = normalizeDifficulty(categoryKey, rawTest.difficulty || rawTest.level, name);
-      const round = normalizeRound(rawTest.round || rawTest.session || rawTest.no, name);
-      const term = isTermCategory(categoryKey)
-        ? normalizeTerm(rawTest.term || rawTest.examTerm || rawTest.semesterTerm, name)
-        : '';
-      const id = canonText(rawTest.id) || `t_${categoryKey}_${curriculum}_${difficulty}_${idx}`;
-
-      const test = {
-        ...rawTest,
-        id,
-        name,
-        categoryKey,
-        curriculum,
-        difficulty,
-        round,
-        term,
-        problems: Number.isFinite(+rawTest.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
-        _catalogIndex: idx,
-      };
-      test._key = testKey(test);
-      out.push(test);
-    });
-  });
-
-  const rankIn = (list, value) => {
-    const index = list.indexOf(value);
-    return index >= 0 ? index : list.length;
-  };
-  const orderValue = (test) => {
-    const raw = test?.sortOrder ?? test?.sourceOrder ?? test?.order ?? test?.sourceIndex ?? test?._catalogIndex;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 999999;
-  };
-
-  out.sort((a, b) => {
-    const aDifficulties = CATEGORY_BY_KEY[a.categoryKey]?.difficulties || [];
-    const bDifficulties = CATEGORY_BY_KEY[b.categoryKey]?.difficulties || [];
-    const base =
-      rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
-      rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
-      rankIn(aDifficulties, a.difficulty) - rankIn(bDifficulties, b.difficulty) ||
-      String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
-    if (base) return base;
-    if (isUnitCategory(a.categoryKey) && isUnitCategory(b.categoryKey)) {
-      return Number(a.round || 0) - Number(b.round || 0) ||
-        orderValue(a) - orderValue(b) ||
-        String(a.name).localeCompare(String(b.name), 'ko');
-    }
-    return orderValue(a) - orderValue(b) ||
-      Number(a.round || 0) - Number(b.round || 0) ||
-      String(a.name).localeCompare(String(b.name), 'ko');
-  });
-
-  return out;
+  return collectTestCatalog(cfg, activeSubject);
 }
 
 function mergeDateSidMap(target, incoming) {
@@ -1381,6 +1123,7 @@ function setModalOpen(open, layout) {
 }
 
 function renderLoadingState(student) {
+  if ($('testModal')) { $('testModal').inert = false; $('testModal').removeAttribute('aria-busy'); }
   const title = $('testTitle');
   const meta = $('testStudentMeta');
   const count = $('testVisibleCount');
@@ -1872,10 +1615,10 @@ async function fetchLatestLogEntryForAssignment(date, sid) {
   return latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
 }
 
-async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], latestEntry = null) {
+async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], latestEntry = null, date = editingDate, sid = editingSid) {
   const entry = latestEntry && typeof latestEntry === 'object'
     ? latestEntry
-    : await fetchLatestLogEntryForAssignment(editingDate, editingSid);
+    : await fetchLatestLogEntryForAssignment(date, sid);
   const clear = [];
   const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
   const currentItemsByLabel = new Map(logItems.map(item => [assignmentLabel(item), item]).filter(([label]) => label));
@@ -1918,7 +1661,7 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
     }
   }
 
-  const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged);
+  const body = buildLogAssignmentPatchBody(date, sid, patchEntry, clear, entry, notesChanged);
 
   const saved = await fetchJSONSafe('/api/logs/patch', {
     method: 'POST',
@@ -1928,8 +1671,8 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
 
   if (saved?.entry && typeof saved.entry === 'object') {
     state.logs = state.logs || {};
-    state.logs[editingDate] = state.logs[editingDate] || {};
-    state.logs[editingDate][editingSid] = saved.entry;
+    state.logs[date] = state.logs[date] || {};
+    state.logs[date][sid] = saved.entry;
     window.logs = state.logs;
   }
 }
@@ -1995,6 +1738,11 @@ function showTestSaveSuccess() {
 
 async function saveModal(options = {}) {
   if (!editingSid || !editingDate) return [];
+  const sid = editingSid;
+  const date = editingDate;
+  const seq = testOpenSeq;
+  const flightKey = JSON.stringify([seq, date, sid]);
+  if (testSaveFlights.has(flightKey)) return testSaveFlights.get(flightKey);
   if (!testSelectionTouched) {
     const items = selectedAssignmentObjects();
     if (options.showPopup !== false) showTestSaveSuccess();
@@ -2006,31 +1754,45 @@ async function saveModal(options = {}) {
   const items = selectedAssignmentObjects();
   const newlyAddedItems = dailyAssignmentNoteItems(items, initialTestMap);
   const appendToNotes = Boolean($('testAppendNotes')?.checked);
-  const latestLogEntry = await fetchLatestLogEntryForAssignment(editingDate, editingSid);
-
-  ensureProgressEntryForTestSave(editingDate, editingSid);
-
-  const progressRes = await fetchJSONSafe('/api/progress/patch', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus)),
-  });
-
-  applyTestProgressPatchResult(editingDate, editingSid, progressRes);
-  invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(editingSid)}`);
-  window.invalidateVideoAssignmentPopupCache?.(editingDate, editingSid);
-  if (options.showPopup !== false) showTestSaveSuccess();
-
-  await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
-  invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(editingSid)}`);
-  window.invalidateVideoAssignmentPopupCache?.(editingDate, editingSid);
-
-  if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
-  initialTestMap = { ...getCurrentProgressTests() };
-  testChangeOrderByKey = currentTestChangeOrderMap();
-  touchedTestKeys = new Set();
-  testSelectionTouched = false;
-  return items;
+  // Freeze the complete command, including touched keys, before the first await.
+  const progressBody = JSON.stringify(buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus));
+  const stillCurrent = () => testOpenSeq === seq && editingSid === sid && editingDate === date;
+  const modal = $('testModal');
+  if (modal) { modal.inert = true; modal.setAttribute('aria-busy', 'true'); }
+  const flight = (async () => {
+    let progressSaved = false;
+    try {
+      const latestLogEntry = await fetchLatestLogEntryForAssignment(date, sid);
+      ensureProgressEntryForTestSave(date, sid);
+      const progressRes = await fetchJSONSafe('/api/progress/patch', {
+        method: 'POST', headers: CT, body: progressBody,
+      });
+      progressSaved = true;
+      applyTestProgressPatchResult(date, sid, progressRes);
+      invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(sid)}`);
+      window.invalidateVideoAssignmentPopupCache?.(date, sid);
+      await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry, date, sid);
+      if (stillCurrent()) {
+        initialTestMap = { ...getCurrentProgressTests() };
+        testChangeOrderByKey = currentTestChangeOrderMap();
+        touchedTestKeys = new Set();
+        testSelectionTouched = false;
+        if (options.showPopup !== false) showTestSaveSuccess();
+      }
+      if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
+      return items;
+    } catch (error) {
+      if (progressSaved) throw new Error(`테스트 상태는 저장됐지만 상담 기록 저장에 실패했습니다. 다시 저장해 주세요. ${error?.message || ''}`);
+      throw error;
+    } finally {
+      invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(sid)}`);
+      window.invalidateVideoAssignmentPopupCache?.(date, sid);
+      if (stillCurrent() && modal) { modal.inert = false; modal.removeAttribute('aria-busy'); }
+      testSaveFlights.delete(flightKey);
+    }
+  })();
+  testSaveFlights.set(flightKey, flight);
+  return flight;
 }
 
 function bindEventsOnce() {

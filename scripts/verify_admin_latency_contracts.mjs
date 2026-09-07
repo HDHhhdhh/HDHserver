@@ -212,8 +212,13 @@ function verifyBootstrapAndFeaturePrioritySource() {
     adminShell.indexOf('admin/demo/bootstrap.js') < adminShell.indexOf('admin/main.js'),
     'the existing server process must install the demo guard before admin main',
   );
-  assert.match(mainSource, /videoModal\.js\?v=20260830-popup-load3/);
-  assert.match(mainSource, /logModal\.js\?v=20260830-popup-load3/);
+  const allPopupSource = read('static/js/all/features/studentRecordPopup.js');
+  for (const module of ['logModal', 'videoModal']) {
+    const version = new RegExp(`${module}\\.js\\?v=([^"']+)`);
+    const adminVersion = mainSource.match(version)?.[1];
+    assert.ok(adminVersion, `${module} must carry a version`);
+    assert.equal(allPopupSource.match(version)?.[1], adminVersion, `${module} must use one version on both pages`);
+  }
 
   const doneSource = read('static/js/admin/features/done.js');
   const todaySource = read('static/js/admin/features/today.js');

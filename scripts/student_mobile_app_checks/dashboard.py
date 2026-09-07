@@ -18,6 +18,7 @@ IMPORT_MODULE_STATE = {name: name in sys.modules for name in ("app", "core.paths
 
 from core.student_curriculum_progress import build_curriculum_progress  # noqa: E402
 from core.student_schedule_projection import (  # noqa: E402
+    effective_attendance_student_ids,
     project_student_schedule,
     select_next_schedule,
 )
@@ -144,6 +145,25 @@ def _schedule_checks(state: dict[str, int]) -> None:
     _check(state, project_student_schedule(student, sid="sid-a", start_date="2026-08-10", end_date="2026-10-10") != [], "exactly 62 inclusive days were rejected")
     _check(state, project_student_schedule(student, sid="sid-a", start_date="2026-08-01", end_date="2026-10-02") == [], "over-62-day range did not fail closed")
     _check(state, project_student_schedule(student, sid="sid-b", start_date="2026-08-10", end_date="2026-08-10") == [], "student/SID mismatch did not fail closed")
+
+    attendance_roster = effective_attendance_student_ids(
+        [
+            {"id": "regular", "day1": "월1"},
+            {"id": "extra", "day1": "화1"},
+            {"id": "active-makeup", "day1": "화1"},
+            {"id": "moved-makeup", "day1": "화1"},
+            {"id": "absent", "day1": "월2"},
+        ],
+        date_key="2026-08-10",
+        absence={"by_date": {"2026-08-10": ["absent"]}},
+        extra={"2026-08-10": ["extra"]},
+        makeup={"schedules": [
+            {"studentId": "active-makeup", "makeupDate": "2026-08-10", "status": "scheduled"},
+            {"studentId": "moved-makeup", "makeupDate": "2026-08-11", "status": "scheduled"},
+        ]},
+    )
+    _check(state, attendance_roster == {"regular", "extra", "active-makeup"}, "effective attendance roster retained moved makeup or lost an active source")
+    _check(state, effective_attendance_student_ids([], date_key="2026-02-30") == set(), "effective attendance roster accepted an invalid date")
 
     next_row = select_next_schedule(rows, as_of="2026-08-10T14:00:00+09:00")
     _check(state, next_row is not None and next_row["kind"] == "absence" and next_row["status"] == "cancelled", "today's absence was hidden by next-schedule selection")

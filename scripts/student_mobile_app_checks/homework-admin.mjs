@@ -11,6 +11,7 @@ const files = Object.freeze({
   testModal: path.join(root, 'static', 'js', 'admin', 'features', 'testModal.js'),
   css: path.join(root, 'static', 'css', 'admin.css'),
   lightCss: path.join(root, 'static', 'css', 'student-work-light.css'),
+  carryover: path.join(root, 'static', 'js', 'admin', 'features', 'homeworkCarryover.js'),
   contract: path.join(root, 'static', 'js', 'admin', 'demo', 'homeworkContract.js'),
   demoData: path.join(root, 'static', 'js', 'admin', 'demo', 'data.js'),
   demoStore: path.join(root, 'static', 'js', 'admin', 'demo', 'store.js'),
@@ -22,16 +23,42 @@ function runtimeScript() {
   return `
     import assert from 'node:assert/strict';
     import { pathToFileURL } from 'node:url';
-    const [contractPath, storePath, fetchPath] = process.argv.slice(1);
+    const [contractPath, storePath, fetchPath, carryoverPath] = process.argv.slice(1);
     const contract = await import(pathToFileURL(contractPath).href);
     const storeModule = await import(pathToFileURL(storePath).href);
     const fetchModule = await import(pathToFileURL(fetchPath).href);
+    const carryover = await import(pathToFileURL(carryoverPath).href);
 
     assert.equal(contract.homeworkLocalDateTimeToKst('2026-08-11T18:05'), '2026-08-11T18:05:00+09:00');
     assert.equal(contract.homeworkLocalDateTimeToKst(''), null);
     assert.equal(contract.homeworkDueAtToLocalInput('2026-08-11T18:05:00+09:00'), '2026-08-11T18:05');
     assert.equal(contract.homeworkEffectiveStatus({ status: 'assigned', dueAt: '2026-08-11T18:05:00+09:00' }, new Date('2026-08-11T18:05:00+09:00')), 'overdue');
     assert.equal(contract.homeworkEffectiveStatus({ status: 'completed', dueAt: '2026-08-01T00:00:00+09:00' }, new Date('2026-08-11T18:05:00+09:00')), 'completed');
+
+    const projectedCarryover = carryover.projectBlankHomeworkCheckCarryover([
+      {
+        book: '쎈', this: '', pct: '', comment: '', next: '',
+        previousThis: 'p.31~35', vendorMeta: { keep: true },
+      },
+      {
+        book: 'APEX', this: '', pct: '', comment: '', next: '',
+        previousThis: '2회차', sleeping: true,
+      },
+      {
+        book: '라쎈', this: '새 숙제', pct: '', comment: '', next: '',
+        previousThis: '이전 숙제',
+      },
+    ]);
+    assert.equal(projectedCarryover[0].this, 'p.31~35');
+    assert.equal(projectedCarryover[0].pct, '0');
+    assert.equal(projectedCarryover[0].carriedFromPrevious, true);
+    assert.deepEqual(projectedCarryover[0].vendorMeta, { keep: true });
+    assert.equal(carryover.previousHomeworkText(projectedCarryover[0]), 'p.31~35');
+    assert.equal(projectedCarryover[1].this, '');
+    assert.equal(projectedCarryover[1].carriedFromPrevious, false);
+    assert.equal(projectedCarryover[2].this, '새 숙제');
+    assert.equal(projectedCarryover[2].carriedFromPrevious, false);
+    assert.equal(carryover.previousHomeworkText({ this: '이번', next: '다음' }), '다음');
 
     const merged = contract.mergeHomeworkLogRow(
       { book: '기존 교재', vendorMeta: { keep: true }, _ph: { next: '복제 금지' } },
@@ -273,6 +300,19 @@ export async function runChecks() {
     assert.match(commit, /restoreButtonDisabledState/);
   });
 
+  check('blank homework completion carries the previous assignment into the same log at zero percent', () => {
+    assert.match(sources.logModal, /if \(options\.homeworkChecked === true\) \{\s*applyBlankHomeworkCheckCarryoverToForm\(\);\s*\}/);
+    const saveStart = sources.logModal.indexOf('async function saveBase(doneFlag, options = {})');
+    const saveEnd = sources.logModal.indexOf('async function saveRecordPopupForCurrent(options = {})', saveStart);
+    const saveSource = sources.logModal.slice(saveStart, saveEnd);
+    assert.ok(saveStart >= 0 && saveEnd > saveStart);
+    assert.ok(saveSource.indexOf('applyBlankHomeworkCheckCarryoverToForm()') < saveSource.indexOf('const hwRows = collectHwTable()'));
+    assert.match(sources.carryover, /this:\s*previous,\s*pct:\s*['"]0['"],\s*carriedFromPrevious:\s*true/);
+    assert.match(sources.carryover, /row\.sleeping !== true/);
+    assert.match(sources.carryover, /!hasExplicitHomeworkValue\(row\)/);
+    assert.match(sources.logModal, /const phThis = previousHomeworkText\(l\)/);
+  });
+
   check('homework opens from cached rows before noncritical progress history finishes', () => {
     const openStart = sources.logModal.indexOf('async function openLogModalForRow');
     const openEnd = sources.logModal.indexOf('window.openRecordPopupForRow', openStart);
@@ -393,6 +433,7 @@ export async function runChecks() {
       files.contract,
       files.demoStore,
       files.demoFetch,
+      files.carryover,
     ], { encoding: 'utf8', cwd: root });
     assert.equal(result.status, 0, result.stderr || result.stdout);
   });

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { buildExamAttendance } from '../static/js/admin/features/examAttendance.js';
+import './verify_exam_attendance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const calendarSource = fs.readFileSync(path.join(ROOT, 'static', 'js', 'shared', 'schoolCalendar.js'), 'utf8');
@@ -37,6 +39,8 @@ assert.ok(calendarModule.getSchoolCalendarSchoolMap(legacyPayload).레거시고,
 const SOURCE_PATH = path.join(ROOT, 'static', 'js', 'admin', 'features', 'hoverTooltip.js');
 const originalSource = fs.readFileSync(SOURCE_PATH, 'utf8');
 const source = originalSource
+  .replace("import { fetchJsonChecked } from '../../shared/api.js';", 'const fetchJsonChecked = async () => ({});')
+  .replace("import { buildExamAttendance, createExamAttendanceLoader } from './examAttendance.js';", 'const buildExamAttendance = globalThis.__buildExamAttendance; const createExamAttendanceLoader = () => ({ peek: () => null, load: () => new Promise(() => {}), invalidate() {} });')
   .replace("import { state } from '../core/state.js';", 'const state = globalThis.__state;')
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate;")
   .replace(
@@ -48,6 +52,7 @@ const source = originalSource
     'const regularAttendanceDaysForStudent = globalThis.__attendanceDays;',
   )
   .replace('export function initHoverTooltip()', 'function initHoverTooltip()')
+  .replace('  function attendanceHtml(entry, stu, referenceDate) {', '  globalThis.__attendanceMarkup = attendanceMarkup;\n  function attendanceHtml(entry, stu, referenceDate) {')
   .concat('\nglobalThis.__initHoverTooltip = initHoverTooltip;\n');
 
 class ElementStub {
@@ -151,7 +156,20 @@ const flushFrames = () => {
   }
 };
 
+const NativeDate = Date;
+class FixedDate extends NativeDate {
+  constructor(...args) {
+    if (args.length) super(...args);
+    else super(2026, 8, 4, 12, 0, 0, 0);
+  }
+
+  static now() {
+    return new FixedDate().getTime();
+  }
+}
+
 let scheduleResolveCount = 0;
+let resolvedScheduleEntries = [];
 const students = Array.from({ length: 10_000 }, (_, index) => ({
   id: `sid-${index}`,
   name: `학생 ${index}`,
@@ -163,11 +181,20 @@ const students = Array.from({ length: 10_000 }, (_, index) => ({
 }));
 
 const context = {
-  __adminDate: '2026-08-13',
+  __buildExamAttendance: buildExamAttendance,
+  __adminDate: '2026-09-04',
   __state: { students, schoolCal: {}, progress: {}, videos: [], homeworkBooksBySid: {} },
-  __resolveMany() { scheduleResolveCount += 1; return []; },
+  __resolveMany() { scheduleResolveCount += 1; return resolvedScheduleEntries; },
   __resolveOne() { return {}; },
-  __attendanceDays() { return ['월', '수']; },
+  __attendanceDays(student) {
+    const selfStudyDays = student?.selfStudyDays || {};
+    const days = ['day1', 'day2', 'day3', 'day4', 'day5']
+      .filter(field => selfStudyDays[field] !== true)
+      .map(field => String(student?.[field] || '').trim())
+      .filter(Boolean)
+      .slice(0, 4);
+    return days.length ? days : ['월', '수'];
+  },
   document,
   window: {
     innerWidth: 1440,
@@ -185,7 +212,7 @@ const context = {
   cancelAnimationFrame,
   queueMicrotask,
   console,
-  Date,
+  Date: FixedDate,
   Math,
   Number,
   String,
@@ -203,6 +230,12 @@ vm.createContext(context);
 vm.runInContext(source, context, { filename: 'hoverTooltip.js' });
 context.__initHoverTooltip();
 context.__initHoverTooltip();
+assert.equal(context.__attendanceMarkup({total:5, regular:4, pending:1}, {}), '5회 <span class="student-tooltip-exam-pending" style="color:var(--exam-attendance-pending-color, #fda4af)">(+1회 : 보강 잡자!)</span>', 'only the unreserved reminder gets the color span');
+assert.equal(context.__attendanceMarkup({total:5, regular:4, pending:0}, {}), '5회', 'no reminder when nothing is pending');
+assert.equal(context.__attendanceMarkup({regular:4}, null), '정규 4회 · 보강 확인 중…');
+assert.equal(context.__attendanceMarkup({regular:4}, null, true), '정규 4회 · 보강 확인 실패');
+assert.equal(context.__attendanceMarkup(null, {}), '-');
+assert.ok(!context.__attendanceMarkup({total:'<img>', pending:1}, {}).includes('<img>'), 'numeric projection output remains escaped');
 
 for (const host of Object.values(hosts)) {
   for (const type of ['pointerover', 'pointermove', 'pointerout', 'focusin', 'focusout', 'keydown']) {
@@ -419,6 +452,104 @@ assert.doesNotMatch(tip.innerHTML, /첫 번째 학교/, 'duplicate-name fallback
 hosts.allWrap.listeners('focusout')[0]({ target: allAnchor });
 document.activeElement = null;
 flushMicrotasks();
+
+resolvedScheduleEntries = [{
+  phase: '미적분1',
+  midterm: '10/7(수)~10/8(목)',
+}];
+const selfStudyStudent = {
+  id: 'sid-self-study',
+  name: '자습 제외 학생',
+  school: '고국고',
+  grade: '고2',
+  curriculum: '미적분1',
+  day1: '금2',
+  day2: '일1',
+  day3: '토1',
+  selfStudyDays: { day3: true },
+};
+context.__state.students = [...context.__state.students, selfStudyStudent];
+const selfStudyAnchor = new ElementStub({ tagName: 'A', classes: ['stuName'], host });
+selfStudyAnchor.dataset.sid = selfStudyStudent.id;
+selfStudyAnchor.textContent = selfStudyStudent.name;
+context.window.showStudentTooltipForElement(selfStudyAnchor, {
+  fixed: true,
+  variant: 'today',
+  subject: '미적분1',
+});
+flushFrames();
+assert.match(tip.innerHTML, /금2 · 일1/, 'regular attendance days were not rendered');
+assert.doesNotMatch(tip.innerHTML, /토1/, 'self-study day leaked into regular attendance days');
+assert.match(
+  tip.innerHTML,
+  /남은출석횟수[\s\S]*9회/,
+  'selected-date attendance or a self-study day was counted before the exam',
+);
+assert.doesNotMatch(tip.innerHTML, /남은출석횟수[\s\S]*10회/, 'selected operating date was counted again');
+context.window.hideStudentTooltip();
+
+context.__adminDate = '2026-09-11';
+context.window.showStudentTooltipForElement(selfStudyAnchor, {
+  fixed: true,
+  variant: 'today',
+  subject: '미적분1',
+});
+flushFrames();
+assert.match(
+  tip.innerHTML,
+  /남은출석횟수[\s\S]*7회/,
+  'remaining sessions ignored the selected admin date',
+);
+context.window.hideStudentTooltip();
+
+context.__adminDate = '2026-09-04';
+resolvedScheduleEntries = [{
+  phase: '미적분1',
+  midterm: '10/1(목)~10/7(수)',
+  midtermMath: '10/5(월)',
+}];
+context.window.showStudentTooltipForElement(selfStudyAnchor, {
+  fixed: true,
+  variant: 'today',
+  subject: '미적분1',
+});
+flushFrames();
+assert.match(
+  tip.innerHTML,
+  /남은출석횟수[\s\S]*9회/,
+  'an exact subject exam date did not override the school exam-period start',
+);
+context.window.hideStudentTooltip();
+
+resolvedScheduleEntries = [
+  { phase: '대수', midterm: '9/29(화)~10/2(금)' },
+  { phase: '미적분1', midterm: '9/29(화)~10/2(금)' },
+];
+const sharedPeriodStudent = {
+  id: 'sid-shared-period',
+  name: '공통 기간 학생',
+  school: '공통고',
+  grade: '고2',
+  curriculum: '확통',
+  day1: '토1',
+};
+context.__state.students = [...context.__state.students, sharedPeriodStudent];
+const sharedPeriodAnchor = new ElementStub({ tagName: 'A', classes: ['stuName'], host });
+sharedPeriodAnchor.dataset.sid = sharedPeriodStudent.id;
+sharedPeriodAnchor.textContent = sharedPeriodStudent.name;
+context.window.showStudentTooltipForElement(sharedPeriodAnchor, {
+  fixed: true,
+  variant: 'today',
+  subject: '확통',
+});
+flushFrames();
+assert.match(
+  tip.innerHTML,
+  /남은출석횟수[\s\S]*4회/,
+  'shared school exam period was not used when the academy subject had no exact calendar row',
+);
+context.window.hideStudentTooltip();
+resolvedScheduleEntries = [];
 
 context.window.showStudentTooltipForElement(anchor, { fixed: true, variant: 'log' });
 flushFrames();

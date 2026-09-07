@@ -3,6 +3,8 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js?v=20260814-active-semester1';
 import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
+import { fetchJsonChecked } from '../../shared/api.js';
+import { buildExamAttendance, createExamAttendanceLoader } from './examAttendance.js';
 
 export function initHoverTooltip() {
   if (document._adminHoverTooltipInitialized) return;
@@ -27,6 +29,11 @@ export function initHoverTooltip() {
   let studentsBySid = new Map();
   let studentsByName = new Map();
   let placementEpoch = 0;
+  let attendanceTargets = [];
+  let attendanceRequest = 0;
+  const attendanceLoader = createExamAttendanceLoader(url => fetchJsonChecked(url, '시험 전 출석 조회', {
+    cache: 'no-store', credentials: 'same-origin',
+  }));
 
   const WCHR = '일월화수목금토';
   const LOG_TIP_POS_KEY = 'admin:logTipPos'; // 로그 모달 툴팁 위치 저장 키
@@ -193,7 +200,7 @@ export function initHoverTooltip() {
     </div>`;
 
 
-  function todayInfoRow(icon, label, value) {
+  function todayInfoRow(icon, label, value, valueHtml = null) {
     return `
       <div style="display:grid; grid-template-columns:38px minmax(92px,128px) minmax(0,1fr); gap:12px; align-items:center;">
         <span
@@ -206,7 +213,7 @@ export function initHoverTooltip() {
           "
         >${icon}</span>
         <span style="min-width:0; opacity:.82; font-size:16px; font-weight:850; word-break:normal; overflow-wrap:anywhere;">${escHtml(label)}</span>
-        <span style="min-width:0; font-size:19px; font-weight:950; word-break:normal; overflow-wrap:anywhere;">${escHtml(value || '-')}</span>
+        <span style="min-width:0; font-size:19px; font-weight:950; word-break:normal; overflow-wrap:anywhere;">${valueHtml ?? escHtml(value || '-')}</span>
       </div>`;
   }
 
@@ -299,7 +306,7 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // 학사일정: 기말(final) 우선, 없으면 중간(midterm) 폴백
   // ───────────────────────────────────────────
-  function pickExam(sc, prefer = 'auto') {
+  function pickExam(sc, prefer = 'auto', referenceDate = null) {
     const get = (obj, k, altKeys = []) => {
       for (const key of [k, ...altKeys]) {
         if (obj[key] != null && String(obj[key]).trim()) return obj[key];
@@ -328,18 +335,17 @@ export function initHoverTooltip() {
       .some(v => v && String(v).trim());
 
     if (prefer === 'auto') {
-      const today = new Date();
+      const today = referenceDate instanceof Date
+        ? new Date(referenceDate)
+        : new Date();
       today.setHours(0, 0, 0, 0);
 
       const score = (pack, order) => {
         if (!hasAny(pack)) return [9, order];
-        const source = pack.date || pack.math || '';
-        const m = String(source).match(/(\d{1,2})\/(\d{1,2})/);
-        if (!m) return [8, order];
-        const month = parseInt(m[1], 10);
-        const day = parseInt(m[2], 10);
-        const d = new Date(today.getFullYear(), month - 1, day);
-        d.setHours(0, 0, 0, 0);
+        const mathIsExactDate = classifySubjectExamTiming(pack.math) === 'date';
+        const source = mathIsExactDate ? pack.math : (pack.date || pack.math || '');
+        const d = parseFirstMonthDay(source, today);
+        if (!d) return [8, order];
         const diff = d.getTime() - today.getTime();
         return diff >= 0 ? [0, diff, order] : [1, Math.abs(diff), order];
       };
@@ -397,31 +403,51 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // 날짜 파싱 & 시험까지 남은 출석일 계산
   // ───────────────────────────────────────────
-  function parseFirstMonthDay(str) {
-    if (!str) return null;
-    const m = String(str).match(/(\d{1,2})\/(\d{1,2})/);
-    if (!m) return null;
-    const month = parseInt(m[1], 10);
-    const day = parseInt(m[2], 10);
-    if (!month || !day) return null;
+  function adminReferenceDate() {
+    const raw = String(getAdminDate() || '').trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      const parsed = new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+      );
+      parsed.setHours(0, 0, 0, 0);
+      if (
+        parsed.getFullYear() === Number(match[1])
+        && parsed.getMonth() === Number(match[2]) - 1
+        && parsed.getDate() === Number(match[3])
+      ) return parsed;
+    }
 
-    const today = new Date();
-    const year = today.getFullYear();
-    const d = new Date(year, month - 1, day);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    const fallback = new Date();
+    fallback.setHours(0, 0, 0, 0);
+    return fallback;
   }
 
-  function extractAttendWeekdays(stu) {
-    const set = new Set();
-    Object.keys(stu || {}).forEach(k => {
-      if (!/^day\d+$/.test(k)) return;
-      const v = String(stu[k] || '').trim();
-      if (!v) return;
-      const ch = v[0];
-      if ('월화수목금토일'.includes(ch)) set.add(ch);
-    });
-    return [...set];
+  function parseFirstMonthDay(str, referenceDate = null) {
+    if (!str) return null;
+    const text = String(str).trim();
+    const full = text.match(/\b((?:19|20)\d{2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})\b/);
+    const short = full
+      ? null
+      : text.match(/(?:^|[^\d])(\d{1,2})\s*(?:[-./]|월)\s*(\d{1,2})(?:\s*일)?/);
+    if (!full && !short) return null;
+
+    const base = referenceDate instanceof Date ? new Date(referenceDate) : adminReferenceDate();
+    base.setHours(0, 0, 0, 0);
+    const year = full ? Number(full[1]) : base.getFullYear();
+    const month = Number(full ? full[2] : short[1]);
+    const day = Number(full ? full[3] : short[2]);
+    const d = new Date(year, month - 1, day);
+    d.setHours(0, 0, 0, 0);
+    if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+
+    // 연도 없는 1~2월 시험을 전년도 말 운영일에서 볼 때만 다음 해로 해석한다.
+    if (!full && d.getTime() < base.getTime() - 183 * 24 * 60 * 60 * 1000) {
+      d.setFullYear(year + 1);
+    }
+    return d;
   }
 
   function tooltipStudentSchool(student) {
@@ -459,63 +485,84 @@ export function initHoverTooltip() {
     return true;
   }
 
-  function attendanceDaysForTooltip(stu, subjectContext = '') {
-    const fallback = regularAttendanceDaysForStudent(stu);
+  function attendanceStudentsForTooltip(stu, subjectContext = '') {
     const contextKey = normalizeSubjectKey(subjectContext);
-    if (!contextKey || subjectMatchesTooltipContext(stu?.curriculum, contextKey)) return fallback;
+    if (!contextKey || subjectMatchesTooltipContext(stu?.curriculum, contextKey)) return [stu];
 
     const records = Array.isArray(state.students) ? state.students : [];
     const subjectRecords = records.filter((record) => (
       sameTooltipStudent(record, stu) && subjectMatchesTooltipContext(record?.curriculum, contextKey)
     ));
-    if (!subjectRecords.length) return fallback;
+    return subjectRecords.length ? subjectRecords : [stu];
+  }
 
-    return [...new Set(subjectRecords.flatMap(record => regularAttendanceDaysForStudent(record)))];
+  function attendanceDaysForTooltip(stu, subjectContext = '') {
+    return [...new Set(attendanceStudentsForTooltip(stu, subjectContext)
+      .flatMap(record => regularAttendanceDaysForStudent(record)))];
   }
   // "시험 시작일" 직전까지 등원 요일만 카운트
-  function calcRemainingSessions(sc, stu) {
+  function calcRemainingSessions(sc, stu, referenceDate = null, snapshot = null) {
     if (!sc || !stu) return null;
 
-    // 툴팁에 쓰는 것과 동일한 학사일정 패키지
-    const examPack = pickExam(sc, 'auto');
+    const baseDate = referenceDate instanceof Date
+      ? new Date(referenceDate)
+      : adminReferenceDate();
+    baseDate.setHours(0, 0, 0, 0);
 
-    // 1순위: 기말 시작일(기간) → 예: "12/3(수)~12/9(화)"
-    // 2순위: 수학시험일 → 예: "12/4(목)"
+    // 툴팁에 쓰는 것과 동일한 학사일정 패키지
+    const examPack = pickExam(sc, 'auto', baseDate);
+
+    // 과목 시험일이 정확한 하루로 확정되면 그 날짜를 우선한다.
+    // 아직 기간만 있으면 학교 시험기간 시작일을 사용한다.
     let examDate = null;
-    if (examPack.date) {
-      examDate = parseFirstMonthDay(examPack.date);
+    if (classifySubjectExamTiming(examPack.math) === 'date') {
+      examDate = parseFirstMonthDay(examPack.math, baseDate);
+    }
+    if (!examDate && examPack.date) {
+      examDate = parseFirstMonthDay(examPack.date, baseDate);
     }
     if (!examDate && examPack.math) {
-      examDate = parseFirstMonthDay(examPack.math);
+      examDate = parseFirstMonthDay(examPack.math, baseDate);
     }
     if (!examDate) return null;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // 시험이 선택 운영일이거나 이미 시작한 경우: 남은 등원 0회
+    const subject = String(sc?.phase || stu?.curriculum || '');
+    return buildExamAttendance({
+      students: attendanceStudentsForTooltip(stu, subject),
+      attendanceDays: attendanceDaysForTooltip(stu, subject),
+      referenceDate: baseDate, examDate, snapshot,
+    });
+  }
 
-    // 시험이 오늘이거나 이미 시작한 경우: 남은 등원 0회
-    if (examDate <= today) return 0;
+  function attendanceMarkup(result, snapshot, failed = false) {
+    if (!result) return '-';
+    if (!snapshot) return `정규 ${escHtml(result.regular)}회 · 보강 ${failed ? '확인 실패' : '확인 중…'}`;
+    return `${escHtml(result.total)}회${result.pending > 0 ? ` <span class="student-tooltip-exam-pending" style="color:var(--exam-attendance-pending-color, #fda4af)">(+${escHtml(result.pending)}회 : 보강 잡자!)</span>` : ''}`;
+  }
 
-    // "시험 시작일" 전날까지만 포함
-    const end = new Date(examDate);
-    end.setDate(end.getDate() - 1);
-    end.setHours(0, 0, 0, 0);
+  function attendanceHtml(entry, stu, referenceDate) {
+    const index = attendanceTargets.push({ entry, stu, referenceDate }) - 1;
+    const snapshot = attendanceLoader.peek();
+    const result = calcRemainingSessions(entry, stu, referenceDate, snapshot);
+    return `<span data-exam-attendance="${index}">${attendanceMarkup(result, snapshot)}</span>`;
+  }
 
-    const daysOfWeek = extractAttendWeekdays(stu);
-    if (!daysOfWeek.length) return null;
-
-    let count = 0;
-    const cur = new Date(today);
-
-    // 오늘 ~ (시험 시작 전날)까지, 등원 요일 카운트
-    while (cur <= end) {
-      const w = WCHR[cur.getDay()];
-      if (daysOfWeek.includes(w)) count++;
-      cur.setDate(cur.getDate() + 1);
-      cur.setHours(0, 0, 0, 0);
-    }
-
-    return count;
+  function hydrateAttendance() {
+    if (!attendanceTargets.length || !tipEl || tipEl.style.display === 'none') return;
+    const targets = attendanceTargets;
+    const epoch = placementEpoch;
+    const request = ++attendanceRequest;
+    const apply = (snapshot, failed = false) => {
+      if (request !== attendanceRequest || epoch !== placementEpoch || tipEl.style.display === 'none') return;
+      for (const node of tipEl.querySelectorAll('[data-exam-attendance]')) {
+        const target = targets[Number(node.dataset.examAttendance)];
+        if (!target) continue;
+        node.innerHTML = attendanceMarkup(calcRemainingSessions(target.entry, target.stu, target.referenceDate, snapshot), snapshot, failed);
+      }
+      hoverTipSize = null;
+    };
+    attendanceLoader.load().then(snapshot => apply(snapshot)).catch(() => apply(null, true));
   }
 
 
@@ -793,6 +840,7 @@ export function initHoverTooltip() {
           ? [sharedExamPeriodEntry]
           : (sc && Object.keys(sc).length ? [sc] : []));
     const visibleExamEntries = examEntries.filter(hasExamSchedule);
+    const referenceDate = adminReferenceDate();
 
 
 
@@ -815,11 +863,11 @@ export function initHoverTooltip() {
       : (!includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px'));
 
     const examRows = visibleExamEntries.map((entry, idx) => {
-      const exam = pickExam(entry || {}, 'auto');
-      const remain = calcRemainingSessions(entry || {}, stu);
+      const exam = pickExam(entry || {}, 'auto', referenceDate);
+      const remain = calcRemainingSessions(entry || {}, stu, referenceDate);
       const attendanceBlock = (remain != null)
         ? `<div class="student-tooltip-exam-attendance" style="margin-top:8px;font-size:12px;font-weight:800;">
-             시험 전 출석 횟수 : <strong>${remain}회</strong>
+             시험 전 출석 횟수 : <strong>${attendanceHtml(entry || {}, stu, referenceDate)}</strong>
            </div>`
         : '';
       const examInfoBlock = `
@@ -898,14 +946,15 @@ export function initHoverTooltip() {
     const fallbackScheduleEntry = !allScheduleEntries.length
       ? resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade)
       : {};
-    const sc = scheduleEntries[0] || fallbackScheduleEntry;
+    const sharedExamPeriodEntry = buildSharedExamPeriodEntry(allScheduleEntries);
+    const sc = scheduleEntries[0]
+      || (Object.keys(sharedExamPeriodEntry).length ? sharedExamPeriodEntry : fallbackScheduleEntry);
     const remainEntries = scheduleEntries.length
       ? scheduleEntries
       : (sc && Object.keys(sc).length ? [sc] : []);
-    const remain = remainEntries
-      .map(entry => calcRemainingSessions(entry || {}, stu))
-      .find(value => value != null);
-    const remainText = remain == null ? '-' : `${remain}회`;
+    const referenceDate = adminReferenceDate();
+    const remainEntry = remainEntries.find(entry => calcRemainingSessions(entry || {}, stu, referenceDate) != null);
+    const remainHtml = remainEntry ? attendanceHtml(remainEntry, stu, referenceDate) : null;
 
     return `
       <div style="width:min(420px, calc(92vw - 36px)); max-width:100%; box-sizing:border-box; padding:4px 2px 6px;">
@@ -914,7 +963,7 @@ export function initHoverTooltip() {
         </div>
         <div style="display:grid; gap:14px; line-height:1.35">
           ${todayInfoRow('📅', '등원요일', days)}
-          ${todayInfoRow('⏱️', '남은출석횟수', remainText)}
+          ${todayInfoRow('⏱️', '남은출석횟수', '-', remainHtml)}
           ${todayInfoRow('🏫', '학교', schoolName)}
         </div>
       </div>
@@ -1006,10 +1055,12 @@ export function initHoverTooltip() {
     el.setAttribute('aria-hidden', 'false');
     const useStudentWorkLayout = opts.layout === 'student-work';
     if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
+    attendanceTargets = [];
     el.innerHTML = variant === 'today'
       ? buildTodayNameTipHtml(stu, { attendanceSubject })
       : buildTipHtml(stu, { includeVideo, includeTests, studentWorkLayout: useStudentWorkLayout, attendanceSubject });
     el.style.display = 'block';
+    hydrateAttendance();
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
     if (tipMode === 'fixed') {
@@ -1247,6 +1298,12 @@ export function initHoverTooltip() {
   bindTooltipHosts();
   document.addEventListener('today:rendered', onTodayRendered);
   document.addEventListener('all:rendered', onAllRendered);
+  ['admin:refresh', 'attendance:updated', 'admin:date-change'].forEach(type => {
+    document.addEventListener(type, () => {
+      attendanceLoader.invalidate();
+      hydrateAttendance();
+    });
+  });
   window.addEventListener('resize', () => {
     hoverTipSize = null;
     if (!tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;

@@ -6,9 +6,9 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260829-quick-print-filter1">
+  <link rel="stylesheet" href="/css/admin.css?v=20260831-quick-print-filter2-warning-visual2&amp;leaveLabel=20260905b">
   <link rel="stylesheet" href="/css/admin-export-logs.css?v=20260829-export-split1">
-  <link rel="stylesheet" href="/css/student-work-light.css?v=20260828-pinned-vertical1">
+  <link rel="stylesheet" href="/css/student-work-light.css?v=20260906-exam-pending-color1">
   <link rel="stylesheet" href="/css/student-test-ocr-admin.css?v=20260828-1">
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
@@ -84,6 +84,7 @@
             <span class="count-unit">명</span>
           </div>
           <p id="todaySlotCounts" class="hero-sub muted"></p>
+          <div id="todayOperationWarnings" class="hero-warning-stack" aria-label="운영 확인" hidden></div>
         </div>
 
         <div class="hero-metrics-grid" aria-label="오늘 운영 지표">
@@ -501,6 +502,11 @@
           </div>
         </fieldset>
         <p class="quick-printer-export-note">선택한 타임 학생의 현재 과목 초록색 테스트만 운영판 순서대로 CSV에 포함됩니다.</p>
+        <p id="quickPrinterCarryoverExclusionSummary" class="quick-printer-carryover-summary" aria-live="polite">결석 이월 재배정 자동 제외: 확인 중…</p>
+        <label class="quick-printer-reprint-option">
+          <input id="quickPrinterIncludeReprints" type="checkbox">
+          <span>이미 출력한 결석 이월 항목도 포함(재인쇄)</span>
+        </label>
         <p id="quickPrinterExportStatus" class="quick-printer-export-status" role="status" aria-live="polite"></p>
         <div class="quick-printer-export-actions">
           <button id="quickPrinterExportSelectAll" class="btn secondary" type="button">전체 선택</button>
@@ -679,7 +685,7 @@
     </section>
   </div>
 
-  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1"></script>
-  <script type="module" src="/js/admin/main.js?v=20260826-roster-current-content2&amp;linkedLeave=1&amp;homeworkOrder=1&amp;sheetSync=3&amp;saveFeedback=2&amp;bookSleep=3&amp;notePin=3&amp;quickPrint=2&amp;testClearOrder=1&amp;videoSnapshot=1&amp;makeupRoster=1&amp;latency=4"></script>
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260830-missing-leave-roster1&amp;quickPrinter=1"></script>
+  <script type="module" src="/js/admin/main.js?v=20260826-roster-current-content2&amp;linkedLeave=1&amp;homeworkOrder=1&amp;sheetSync=3&amp;saveFeedback=2&amp;bookSleep=3&amp;notePin=3&amp;quickPrint=3&amp;testClearOrder=1&amp;videoSnapshot=1&amp;makeupRoster=1&amp;latency=4&amp;missingLeave=2&amp;warningVisual=1&amp;blankHomeworkCheck=1&amp;leaveLabel=20260905b"></script>
 </body>
 </html>

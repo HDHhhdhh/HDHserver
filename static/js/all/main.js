@@ -2,7 +2,7 @@
 import { $ } from './core/utils.js';
 import { loadAll, loadHomeworkBooks, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
-import { renderHomeworkBooks, renderTable } from './features/table.js?v=20260821-note-body-row2';
+import { renderHomeworkBooks, renderTable } from './features/table.js?v=20260831-all-notes1';
 import './features/progressModal.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
@@ -13,7 +13,7 @@ import { mountNewStudentBar } from './features/addStudent.js';
 import { mountChatRosterExport } from './features/chatRosterExport.js';
 import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 import { state as adminTooltipState } from '../admin/core/state.js';
-import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260819-subject-days1';
+import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
 
 function syncAdminTooltipState() {
   adminTooltipState.students = state.students;

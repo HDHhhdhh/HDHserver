@@ -5,7 +5,11 @@ import { $, toast, postJSON } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { classifySaveConflict } from '../core/saveConflict.js';
-import { initTestModal } from './testModal.js?v=20260830-popup-load2';
+import { initTestModal } from './testModal.js?v=20260905-rules1';
+import {
+  previousHomeworkText,
+  projectBlankHomeworkCheckCarryover,
+} from './homeworkCarryover.js?v=20260904-blank-check1';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
@@ -1111,6 +1115,7 @@ function mountAssistantThread(student) {
   host.innerHTML = renderTemplate({
     studentId: String(student.id || ''),
     nextReminderDate: nextRegularAttendanceDate(student),
+    existingReadOnly: isContextMenuOnlyAccess(),
   });
   const root = host.querySelector('#assistantStudentNotes');
   if (!root) return;
@@ -1346,7 +1351,7 @@ function mergeHwRows({ todayRows, latestRows, bookCarryRows }) {
     const l = b[i] || { book: '', this: '', pct: '', comment: '', next: '', _deleted: false };
     const bc = c[i] || { book: '', this: '', pct: '', comment: '', next: '', _deleted: false };
 
-    const phThis = (l.next || '').trim() ? l.next : (l.this || '');
+    const phThis = previousHomeworkText(l);
     const hasTodayRow = i < a.length;
 
     out.push({
@@ -1996,6 +2001,56 @@ function collectHwTable() {
   });
 
   return out;
+}
+
+function applyBlankHomeworkCheckCarryoverToForm() {
+  const items = visibleHomeworkRows();
+  const projected = projectBlankHomeworkCheckCarryover(items.map(item => {
+    const wrap = item.querySelector('.pctWrap');
+    const range = item.querySelector('.hwPctRange');
+    return {
+      book: cleanHwText(item.querySelector('.hwBook')?.value),
+      this: cleanHwText(item.querySelector('.hwThis')?.value),
+      pct: wrap?.dataset?.empty === '1' ? '' : String(snap10(range?.value || 0)),
+      comment: cleanHwText(item.querySelector('.hwComment')?.value),
+      next: cleanHwText(item.querySelector('.hwNext')?.value),
+      previousThis: cleanHwText(item.querySelector('.hwThis')?.placeholder),
+      sleeping: item.dataset.sleeping === '1',
+      deleted: item.dataset.deleted === '1',
+    };
+  }));
+
+  let applied = 0;
+  projected.forEach((row, index) => {
+    if (!row.carriedFromPrevious) return;
+    const item = items[index];
+    if (!item) return;
+
+    const thisInput = item.querySelector('.hwThis');
+    const wrap = item.querySelector('.pctWrap');
+    const range = item.querySelector('.hwPctRange');
+    if (!thisInput || !wrap || !range) return;
+
+    thisInput.value = row.this;
+    range.value = '0';
+    wrap.dataset.empty = '0';
+    updatePctBubble(wrap, 0, { isPlaceholder: false });
+
+    if (canonicalHomework.mode === 'canonical') {
+      const title = item.querySelector('.hwTitle');
+      const scope = item.querySelector('.hwScope');
+      const book = cleanHwText(item.querySelector('.hwBook')?.value);
+      if (title && (!cleanHwText(title.value) || cleanHwText(title.value) === book)) {
+        title.value = row.this;
+      }
+      if (scope && !cleanHwText(scope.value)) scope.value = row.this;
+      item.__homeworkCanonicalDirty = true;
+      if (!canonicalHomework.pendingPayload) canonicalHomework.operationId = null;
+    }
+    applied += 1;
+  });
+
+  return applied;
 }
 
 function collectCanonicalHomeworkRows() {
@@ -3071,6 +3126,9 @@ export function initLogModal() {
     const oldTotal = collectPriorProgressByMid(today, sid);
     const summary = summarizeProgressPatch(changedProg, oldTotal);
 
+    if (options.homeworkChecked === true) {
+      applyBlankHomeworkCheckCarryoverToForm();
+    }
     const hwRows = collectHwTable();
     const sleepingHomeworkBooks = collectSleepingHomeworkBooks();
     const notesNow = cleanHwText(logNotes.value);

@@ -629,6 +629,46 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
   const videos = createVideos();
   const dayMaps = createDayMaps(currentDate, nextDate, weekendDate, students);
   const logs = createLogs(currentDate, previousDate, students);
+  const missingLeaveStudent = students[1];
+  if (missingLeaveStudent) {
+    dayMaps.arriveTime[previousDate] = {
+      ...(dayMaps.arriveTime[previousDate] || {}),
+      [missingLeaveStudent.id]: '17:45',
+    };
+    logs[previousDate][missingLeaveStudent.id] = {
+      ...logs[previousDate][missingLeaveStudent.id],
+      done: false,
+    };
+    delete logs[previousDate][missingLeaveStudent.id].leaveTime;
+    delete logs[previousDate][missingLeaveStudent.id].archived;
+  }
+  const movedMakeupStudent = students[2];
+  if (movedMakeupStudent) {
+    dayMaps.arriveTime[previousDate] = {
+      ...(dayMaps.arriveTime[previousDate] || {}),
+      [movedMakeupStudent.id]: '17:50',
+    };
+    logs[previousDate][movedMakeupStudent.id] = {
+      ...logs[previousDate][movedMakeupStudent.id],
+      done: false,
+    };
+    delete logs[previousDate][movedMakeupStudent.id].leaveTime;
+    delete logs[previousDate][movedMakeupStudent.id].archived;
+    const originalAbsenceDate = addDays(previousDate, -7);
+    dayMaps.makeupCarryover.by_absence = {
+      [originalAbsenceDate]: {
+        [`${movedMakeupStudent.id}|1`]: {
+          scheduledMakeup: {
+            originalAbsenceId: `absence|${originalAbsenceDate}|${movedMakeupStudent.id}|1`,
+            studentId: movedMakeupStudent.id,
+            makeupDate: nextDate,
+            makeupTimes: [1],
+            status: 'scheduled',
+          },
+        },
+      },
+    };
+  }
   const homeworkAssignments = createHomeworkAssignments(logs, currentDate, students);
 
   return {
@@ -652,6 +692,7 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
     homeworkAssignments,
     homeworkOperations: {},
     progress: createProgress(currentDate, previousDate, students, videos),
+    quickPrinterExports: [],
     testsConfig: createTestsConfig(),
     tests: createTests(previousDate, currentDate),
     attendance: dayMaps.attendance,

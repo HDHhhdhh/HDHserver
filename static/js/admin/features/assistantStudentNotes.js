@@ -19,11 +19,12 @@ function escapeMarkup(value) {
     .replaceAll("'", '&#39;');
 }
 
-export function assistantStudentNotesTemplate({ studentId = '', nextReminderDate = '' } = {}) {
+export function assistantStudentNotesTemplate({ studentId = '', nextReminderDate = '', existingReadOnly = false } = {}) {
   return `
     <section id="assistantStudentNotes" class="assistant-student-notes"
              data-student-id="${escapeMarkup(studentId)}"
              data-next-reminder-date="${escapeMarkup(nextReminderDate)}"
+             data-existing-read-only="${existingReadOnly ? 'true' : 'false'}"
              data-note-mode="general">
       <div class="assistant-note-heading">
         <h3>조교 메모</h3>
@@ -294,6 +295,7 @@ function renderNotes(
     const pinButton = document.createElement('button');
     pinButton.type = 'button';
     pinButton.className = 'assistant-note-pin';
+    pinButton.disabled = root.dataset.existingReadOnly === 'true';
     pinButton.dataset.notePin = String(note.id || '');
     pinButton.setAttribute('aria-pressed', pinned ? 'true' : 'false');
     pinButton.setAttribute('aria-label', pinned ? `${authorLabel} 메모 고정 해제` : `${authorLabel} 메모 고정`);
@@ -320,6 +322,7 @@ function renderNotes(
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
     deleteButton.className = 'assistant-note-delete';
+    deleteButton.disabled = root.dataset.existingReadOnly === 'true';
     deleteButton.dataset.noteDelete = String(note.id || '');
     deleteButton.setAttribute('aria-label', `${authorLabel} 댓글 삭제`);
     deleteButton.title = '댓글 삭제';
@@ -329,6 +332,7 @@ function renderNotes(
     const editButton = document.createElement('button');
     editButton.type = 'button';
     editButton.className = 'assistant-note-edit';
+    editButton.disabled = root.dataset.existingReadOnly === 'true';
     editButton.dataset.noteEdit = String(note.id || '');
     editButton.setAttribute('aria-label', `${authorLabel} \uB313\uAE00 \uC218\uC815`);
     editButton.title = '\uB313\uAE00 \uC218\uC815';

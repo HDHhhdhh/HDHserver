@@ -13,6 +13,7 @@ class MemoryStorage {
 globalThis.sessionStorage = new MemoryStorage();
 
 const { createDemoFetch } = await import('../static/js/admin/demo/fetch.js');
+const { loadDemoStore } = await import('../static/js/admin/demo/store.js');
 
 let forwarded = 0;
 const originalFetch = async () => {
@@ -269,17 +270,17 @@ const arriveDate = '2026-06-16';
 const arriveSaved = await demoFetch('/api/arrive-time', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ [arriveDate]: { 'demo-arrive-sid': '15:00' } }),
+  body: JSON.stringify({ [arriveDate]: { 'demo-s002': '15:00', 'demo-s003': '17:50' } }),
 });
 assert.equal(arriveSaved.status, 200);
 const arrivePatched = await demoFetch('/api/arrive-time/patch', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ date: arriveDate, sid: 'demo-arrive-sid', value: '16:30' }),
+  body: JSON.stringify({ date: arriveDate, sid: 'demo-s002', value: '16:30' }),
 });
 assert.equal(arrivePatched.status, 200);
 const arriveBeforeRetiredRequests = await (await demoFetch(`/api/arrive-time?date=${arriveDate}`)).json();
-assert.deepEqual(arriveBeforeRetiredRequests, { 'demo-arrive-sid': '16:30' });
+assert.deepEqual(arriveBeforeRetiredRequests, { 'demo-s002': '16:30', 'demo-s003': '17:50' });
 for (const [retiredUrl, init] of [
   [`/arrive-time?date=${arriveDate}`, undefined],
   ['/arrive-time', {
@@ -459,9 +460,71 @@ for (const row of summary.rows || []) {
     'demo summary leaked full log metadata',
   );
 }
+const missingLeaveSummary = await (
+  await demoFetch('/api/arrive-time/missing-leave-summary?exclude_date=2026-06-17')
+).json();
+assert.equal(missingLeaveSummary.rowsAvailable, true);
+assert.equal(missingLeaveSummary.total, 1);
+assert.deepEqual(missingLeaveSummary.rows, [
+  { date: '2026-06-16', sid: 'demo-s002', arriveTime: '16:30' },
+]);
+assert.equal(
+  missingLeaveSummary.rows.some(row => row.sid === 'demo-s003' || row.sid === 'demo-arrive-sid'),
+  false,
+  'moved-makeup or unknown roster residue triggered a leave warning',
+);
+
+const quickPrinterBefore = loadDemoStore().quickPrinterExports.length;
+const quickPrinterPreview = await demoFetch('/api/tests/quick-printer-export/preview', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-17',
+    studentIds: ['demo-s001', 'demo-s002', 'demo-s005'],
+    includePreviouslyExportedCarryovers: false,
+  }),
+});
+assert.equal(quickPrinterPreview.status, 200);
+const quickPrinterPreviewPayload = await quickPrinterPreview.json();
+assert.equal(quickPrinterPreviewPayload.automaticExclusionStudentCount, 2);
+assert.equal(quickPrinterPreviewPayload.automaticExclusionCount, 3);
+assert.equal(quickPrinterPreviewPayload.rowCount, 1);
+assert.equal(quickPrinterPreviewPayload.csv, undefined);
+assert.equal(loadDemoStore().quickPrinterExports.length, quickPrinterBefore, 'preview wrote demo export history');
+
+const zeroQuickPrinterExport = await demoFetch('/api/tests/quick-printer-export', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-17',
+    studentIds: ['demo-s001'],
+    includePreviouslyExportedCarryovers: false,
+  }),
+});
+assert.equal(zeroQuickPrinterExport.status, 422);
+const zeroQuickPrinterPayload = await zeroQuickPrinterExport.json();
+assert.equal(zeroQuickPrinterPayload.code, 'no_new_assignments_after_carryover_exclusion');
+assert.equal(zeroQuickPrinterPayload.csv, undefined);
+assert.equal(loadDemoStore().quickPrinterExports.length, quickPrinterBefore, 'zero-row export wrote demo history');
+
+const reprintQuickPrinterExport = await demoFetch('/api/tests/quick-printer-export', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    date: '2026-06-17',
+    studentIds: ['demo-s001'],
+    includePreviouslyExportedCarryovers: true,
+  }),
+});
+assert.equal(reprintQuickPrinterExport.status, 200);
+const reprintQuickPrinterPayload = await reprintQuickPrinterExport.json();
+assert.equal(reprintQuickPrinterPayload.rowCount, 2);
+assert.ok(reprintQuickPrinterPayload.csv.startsWith('\uFEFF'));
+assert.equal(loadDemoStore().quickPrinterExports.length, quickPrinterBefore + 1);
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
-assert.match(fallbackSource, /\.\/fetch\.js\?v=20260828-calendar-revision1/);
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260830-carryover-history1/);
+assert.match(fallbackSource, /applyDemoQuickPrinterRequest/);
 assert.match(fallbackSource, /path === '\/api\/tests-config\/test' && method === 'PATCH'/);
 assert.match(fallbackSource, /patchDemoTestConfig\(store\.testsConfig/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'PATCH'/);
@@ -469,6 +532,7 @@ assert.doesNotMatch(fallbackSource, /path === '\/api\/today_order' && method ===
 assert.doesNotMatch(fallbackSource, /path === '\/api\/updates' && method === 'POST'/);
 assert.match(fallbackSource, /path === '\/api\/today_order' && method === 'DELETE'/);
 assert.match(fallbackSource, /case '\/api\/arrive-time':/);
+assert.match(fallbackSource, /case '\/api\/arrive-time\/missing-leave-summary':/);
 assert.doesNotMatch(fallbackSource, /case '\/arrive-time':/);
 assert.match(fallbackSource, /path === '\/arrive-time'/, 'retired arrive-time requests must remain demo-blocked');
 assert.match(fallbackSource, /path === '\/api\/absent\/recover'/);
@@ -480,14 +544,13 @@ assert.match(fallbackSource, /method === 'POST' && path === '\/api\/school-calen
 assert.match(fallbackSource, /X-School-Calendar-Revision/);
 assert.match(fallbackSource, /school_calendar_conflict/);
 assert.match(fallbackSource, /function applyFallbackLogPatchBatch\(store, body\)/);
-assert.match(fallbackSource, /status: mutation\?\.ok === false \? 400 : 200/, 'fallback mutations must preserve HTTP error status');
+assert.match(fallbackSource, /Number\(mutation\?\.__demoStatus\)/, 'fallback mutations must preserve endpoint-specific HTTP error status');
 for (const shell of ['admin.html', 'all.html', 'school-cal.html', 'video-manage.html', 'tests.html']) {
   const shellSource = fs.readFileSync(`static/${shell}`, 'utf8');
-  assert.match(
-    shellSource,
-    /\/js\/admin\/demo\/bootstrap\.js\?v=20260828-calendar-revision1/,
-    `${shell} did not cache-bust the demo bootstrap contract`,
-  );
+  const expectedBootstrapVersion = shell === 'admin.html'
+    ? '/js/admin/demo/bootstrap.js?v=20260830-missing-leave-roster1&amp;quickPrinter=1'
+    : '/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1';
+  assert.ok(shellSource.includes(expectedBootstrapVersion), `${shell} has the wrong demo bootstrap cache key`);
 }
 assert.equal(forwarded, 0, 'Phase16 demo API escaped to the live fetch implementation');
 

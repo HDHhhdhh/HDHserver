@@ -77,6 +77,7 @@ def route_checks() -> None:
             app.register_blueprint(api_assistant_notes.bp_api_assistant_notes)
             client = app.test_client()
             admin_headers = {"Referer": "http://localhost/admin"}
+            all_students_headers = {"Referer": "http://localhost/students"}
 
             denied = client.get("/api/assistant-student-notes?student_id=student-a")
             check(denied.status_code == 403, "request outside admin surface must return 403")
@@ -85,6 +86,36 @@ def route_checks() -> None:
                 headers={"Referer": "http://localhost/student/student-a"},
             )
             check(denied_student.status_code == 403, "student page request must return 403")
+
+            all_students_list = client.get(
+                "/api/assistant-student-notes?student_id=student-a",
+                headers=all_students_headers,
+            )
+            check(all_students_list.status_code == 200, "all-students page must be allowed to list notes")
+            all_students_created = client.post(
+                "/api/assistant-student-notes",
+                json={"student_id": "student-a", "content": "전체학생 신규 메모", "author": "귤"},
+                headers=all_students_headers,
+            )
+            check(all_students_created.status_code == 201, "all-students page must be allowed to create notes")
+            all_students_note = all_students_created.get_json()["note"]
+            all_students_update = client.patch(
+                f"/api/assistant-student-notes/{all_students_note['id']}",
+                json={"student_id": "student-a", "content": "수정 차단", "author": "세빈"},
+                headers=all_students_headers,
+            )
+            check(all_students_update.status_code == 403, "all-students page must not update existing notes")
+            all_students_delete = client.delete(
+                f"/api/assistant-student-notes/{all_students_note['id']}",
+                json={"student_id": "student-a"},
+                headers=all_students_headers,
+            )
+            check(all_students_delete.status_code == 403, "all-students page must not delete existing notes")
+            cross_origin_all_students = client.get(
+                "/api/assistant-student-notes?student_id=student-a",
+                headers={"Referer": "http://example.test/students"},
+            )
+            check(cross_origin_all_students.status_code == 403, "cross-origin all-students referer must be rejected")
 
             empty = client.post(
                 "/api/assistant-student-notes",
@@ -222,10 +253,25 @@ def source_boundary_checks() -> None:
     tooltip_source = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8-sig")
     log_modal_source = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8-sig")
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
+    all_students_popup_source = (ROOT / "static/js/all/features/studentRecordPopup.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
     light_css = (ROOT / "static/css/student-work-light.css").read_text("utf-8-sig")
     check("assistantStudentNotes" not in tooltip_source, "student info/homework popup must not retain assistant notes")
+    check(
+        "'#logModal.student-work-layout .assistant-note-compose'" not in all_students_popup_source,
+        "all-students popup must allow composing a new assistant note",
+    )
+    check(
+        "'#logModal.student-work-layout .assistant-note-pin'" in all_students_popup_source
+        and "'#logModal.student-work-layout .assistant-note-action-group'" in all_students_popup_source,
+        "all-students popup must keep existing-note mutation actions locked",
+    )
     check("assistantStudentNotesTemplate" in log_modal_source, "main popup must mount assistant notes")
+    check("existingReadOnly: isContextMenuOnlyAccess()" in log_modal_source,
+          "read-only ownership must follow the note mount, not a movable parent selector")
+    for button in ("pinButton", "deleteButton", "editButton"):
+        check(f"{button}.disabled = root.dataset.existingReadOnly === 'true'" in notes_source,
+              "existing note actions must stay disabled on all-students mounts")
     check('id="logTitle"' not in log_modal_source and "메모 쓰레드" not in log_modal_source, "thread popup must not render the oversized student-name title")
     check(
         'class="log-header-row"' not in log_modal_source
