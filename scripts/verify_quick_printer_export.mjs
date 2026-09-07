@@ -33,7 +33,9 @@ const {
   collectQuickPrinterStudents,
   collectQuickPrinterStudentIds,
   filterQuickPrinterStudentIds,
+  formatQuickPrinterAutomaticExclusion,
   formatQuickPrinterExportIssues,
+  isQuickPrinterDownloadPayload,
   quickPrinterTimeGroupForRow,
   summarizeQuickPrinterTimeGroups,
 } = await import(pathToFileURL(contractPath).href);
@@ -49,7 +51,7 @@ assert.match(
   /<button id="exportQuickPrinterTests" class="btn secondary" type="button">테스트 인쇄<\/button>/,
   'test print button does not reuse the existing export button class',
 );
-assert.ok(html.includes('&amp;quickPrint=2'), 'admin entry cache key was not advanced');
+assert.ok(html.includes('&amp;quickPrint=3'), 'admin entry cache key was not advanced');
 
 for (const id of [
   'quickPrinterExportModal',
@@ -63,6 +65,8 @@ for (const id of [
   'quickPrinterExportCancel',
   'quickPrinterExportSubmit',
   'quickPrinterExportStatus',
+  'quickPrinterCarryoverExclusionSummary',
+  'quickPrinterIncludeReprints',
 ]) {
   assert.ok(html.includes(`id="${id}"`), `quick-printer dialog is missing #${id}`);
 }
@@ -72,9 +76,17 @@ assert.match(
   'quick-printer target picker lacks dialog semantics',
 );
 assert.ok(html.includes('1·2타임 (연강)'), 'consecutive-time option is missing');
+assert.ok(
+  html.includes('이미 출력한 결석 이월 항목도 포함(재인쇄)'),
+  'explicit carryover reprint option is missing',
+);
+assert.ok(
+  !/<input id="quickPrinterIncludeReprints"[^>]*\schecked(?:\s|>)/.test(html),
+  'carryover reprint option must default off',
+);
 
 assert.ok(
-  main.includes("import { initQuickPrinterExport } from './features/quickPrinterExport.js?v=20260829-time-filter1';"),
+  main.includes("import { initQuickPrinterExport } from './features/quickPrinterExport.js?v=20260830-carryover-history1';"),
   'admin entry does not import the quick-printer feature',
 );
 assert.ok(main.includes('initExport();\ninitQuickPrinterExport();'), 'quick-printer init is not adjacent to existing exports');
@@ -89,12 +101,17 @@ assert.ok(
   exporter.includes("const QUICK_PRINTER_EXPORT_URL = '/api/tests/quick-printer-export';"),
   'quick-printer export endpoint changed',
 );
+assert.ok(
+  exporter.includes("const QUICK_PRINTER_PREVIEW_URL = '/api/tests/quick-printer-export/preview';"),
+  'quick-printer exclusion preview endpoint is missing',
+);
 assert.ok(exporter.includes('sendJson('), 'shared JSON request helper is not reused');
 assert.ok(exporter.includes('downloadTextFile('), 'existing download helper is not reused');
 assert.ok(exporter.includes("button.addEventListener('click', openDialog)"), 'test print button does not open the target picker');
 assert.ok(exporter.includes('filterQuickPrinterStudentIds(activeStudents, readSelectedGroups())'), 'selected time groups do not control student IDs');
 assert.ok(exporter.includes('activeDate = dateStr'), 'dialog does not freeze the selected operating date');
-assert.ok(exporter.includes("payload.csv.startsWith('\\uFEFF')"), 'browser does not reject a missing UTF-8 BOM');
+assert.ok(exporter.includes('includePreviouslyExportedCarryovers: includeReprints'), 'reprint option is not sent as an exact request field');
+assert.ok(exporter.includes('isQuickPrinterDownloadPayload(payload)'), 'browser download is not gated by the nonempty BOM payload contract');
 assert.ok(sharedDownload.includes('export function downloadTextFile('), 'shared download helper is not exported');
 assert.ok(
   existingExporter.includes("from '../../shared/download.js?v=20260828-1'"),
@@ -123,6 +140,41 @@ assert.deepEqual(
   collectQuickPrinterStudentIds(fakeDocument, '2026-08-28'),
   ['20', '10', '40', '30', '50'],
   'rendered student order/date filter/deduplication changed',
+);
+
+assert.equal(
+  formatQuickPrinterAutomaticExclusion({
+    automaticExclusionStudentCount: 2,
+    automaticExclusionCount: 3,
+  }),
+  '결석 이월 재배정 자동 제외: 2명 · 3건',
+  'automatic exclusion summary changed',
+);
+assert.equal(
+  formatQuickPrinterAutomaticExclusion({
+    automaticExclusionStudentCount: 2,
+    automaticExclusionCount: 3,
+  }, true),
+  '결석 이월 재배정 자동 제외: 2명 · 3건 · 재인쇄 포함 중',
+  'reprint-enabled summary changed',
+);
+assert.equal(
+  isQuickPrinterDownloadPayload({
+    rowCount: 0,
+    filename: 'empty.csv',
+    csv: '\uFEFF주문번호,자료ID\r\n',
+  }),
+  false,
+  'zero-row response can still trigger a download',
+);
+assert.equal(
+  isQuickPrinterDownloadPayload({
+    rowCount: 1,
+    filename: 'one.csv',
+    csv: '\uFEFF주문번호,자료ID\r\n1,A\r\n',
+  }),
+  true,
+  'valid nonempty BOM response no longer triggers a download',
 );
 
 const collectedStudents = collectQuickPrinterStudents(fakeDocument, '2026-08-28');
@@ -188,6 +240,11 @@ assert.match(
   css,
   /body\.admin\.admin-simple \.hero-actions #exportQuickPrinterTests\s*\{\s*display:\s*none !important;\s*\}/,
   'simple layout does not keep the new export control out of the fixed two-button action area',
+);
+assert.match(
+  css,
+  /body\.admin #quickPrinterExportModal \.quick-printer-reprint-option\s*\{/,
+  'reprint option styles are not scoped to the existing modal',
 );
 const quickPrinterCssRules = css.match(/[^{}]*#exportQuickPrinterTests[^{}]*\{[^{}]*\}/g) || [];
 assert.equal(quickPrinterCssRules.length, 1, 'test print button received unexpected layout-specific CSS');

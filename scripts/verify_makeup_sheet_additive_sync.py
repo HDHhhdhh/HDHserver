@@ -4,6 +4,7 @@ import copy
 import datetime as dt
 from pathlib import Path
 import sys
+import urllib.error
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -254,6 +255,48 @@ def test_candidate_exclusions_are_exact_date_and_student_pairs() -> None:
     assert excluded == candidates[:3]
 
 
+def test_private_sheet_access_reports_the_required_action() -> None:
+    original_open = makeup_sheet_reader.urllib.request.urlopen
+
+    def reject_private_sheet(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "https://docs.google.com/spreadsheets/d/test/export",
+            401,
+            "Unauthorized",
+            {},
+            None,
+        )
+
+    makeup_sheet_reader.urllib.request.urlopen = reject_private_sheet
+    try:
+        try:
+            makeup_sheet_reader._download_csv_rows(
+                "https://docs.google.com/spreadsheets/d/test/edit?gid=0",
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            assert "제한됨" in message
+            assert "링크가 있는 모든 사용자 - 뷰어" in message
+            assert "웹에 게시할 필요는 없습니다" in message
+        else:
+            raise AssertionError("private sheet access must fail with an actionable message")
+    finally:
+        makeup_sheet_reader.urllib.request.urlopen = original_open
+
+
+def test_csv_export_url_only_uses_an_explicit_sheet_gid() -> None:
+    base = "https://docs.google.com/spreadsheets/d/test-sheet/export?format=csv"
+    assert makeup_sheet_reader._csv_export_url(
+        "https://docs.google.com/spreadsheets/d/test-sheet/edit?usp=sharing",
+    ) == base
+    assert makeup_sheet_reader._csv_export_url(
+        "https://docs.google.com/spreadsheets/d/test-sheet/edit?gid=12345",
+    ) == f"{base}&gid=12345"
+    assert makeup_sheet_reader._csv_export_url(
+        "https://docs.google.com/spreadsheets/d/test-sheet/edit#gid=67890",
+    ) == f"{base}&gid=67890"
+
+
 def main() -> int:
     test_additive_merge_never_changes_existing_schedule()
     test_additive_merge_is_idempotent_and_never_deletes()
@@ -262,6 +305,8 @@ def main() -> int:
     test_reader_uses_unique_name_and_school_when_course_changed()
     test_candidate_window_reads_previous_and_current_month()
     test_candidate_exclusions_are_exact_date_and_student_pairs()
+    test_private_sheet_access_reports_the_required_action()
+    test_csv_export_url_only_uses_an_explicit_sheet_gid()
     print("additive makeup sheet sync safety checks: OK")
     return 0
 

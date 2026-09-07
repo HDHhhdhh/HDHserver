@@ -247,6 +247,44 @@ def test_config_endpoint_preserves_unknown_fields() -> None:
         finally:
             route.MAKEUP_SHEET_SYNC_CONFIG_PATH = original
 
+
+def test_sheet_read_failure_is_returned_as_actionable_json() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-makeup-sheet-error-") as tmpdir:
+        config_path = Path(tmpdir) / "makeup_sheet_sync.json"
+        config_path.write_text(
+            json.dumps({
+                "sheetUrl": "https://docs.google.com/spreadsheets/d/private-sheet/edit?gid=0",
+            }),
+            encoding="utf-8",
+        )
+        original_config = route.MAKEUP_SHEET_SYNC_CONFIG_PATH
+        original_read = route.read_additive_sheet_candidate_window
+        route.MAKEUP_SHEET_SYNC_CONFIG_PATH = config_path
+        route.read_additive_sheet_candidate_window = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "현재 시트는 서버에서 읽을 수 없는 '제한됨' 상태입니다. "
+                "Google Sheets 공유의 일반 액세스를 '링크가 있는 모든 사용자 - 뷰어'로 "
+                "바꾼 뒤 다시 시도해주세요. 웹에 게시할 필요는 없습니다."
+            )
+        )
+        try:
+            app = Flask("verify-makeup-sheet-json-error")
+            app.register_blueprint(route.bp_api_makeup_carryover)
+            response = app.test_client().post(
+                "/api/makeup-sheet-sync",
+                json={"date": "2026-08-23"},
+            )
+            payload = response.get_json()
+            assert response.status_code == 400
+            assert response.headers["Cache-Control"] == "no-store"
+            assert payload["ok"] is False
+            assert payload["error"] == "sheet_read_failed"
+            assert "링크가 있는 모든 사용자 - 뷰어" in payload["message"]
+            assert "웹에 게시할 필요는 없습니다" in payload["message"]
+        finally:
+            route.MAKEUP_SHEET_SYNC_CONFIG_PATH = original_config
+            route.read_additive_sheet_candidate_window = original_read
+
 def main() -> int:
     test_noop_route_writes_nothing()
     test_transaction_failure_leaves_route_state_unchanged()
@@ -255,6 +293,7 @@ def main() -> int:
     test_configured_candidate_exclusion_is_date_scoped()
     test_sync_date_rejects_far_future_year_inference()
     test_config_endpoint_preserves_unknown_fields()
+    test_sheet_read_failure_is_returned_as_actionable_json()
     print("makeup sheet route atomic transaction checks: OK")
     return 0
 

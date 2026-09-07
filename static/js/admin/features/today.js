@@ -25,9 +25,17 @@ import {
   countPendingMakeupsBySid,
   scheduledMakeupStudentIdsForDate,
 } from './makeupPending.js';
-import { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
+import {
+  doneEntriesFromUnarchivedSummary,
+  missingLeaveWarningText,
+  recordCleanupWarningText,
+} from './todayDoneSummary.js?v=20260830-warning-boundary1';
 
-export { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
+export {
+  doneEntriesFromUnarchivedSummary,
+  missingLeaveWarningText,
+  recordCleanupWarningText,
+} from './todayDoneSummary.js?v=20260830-warning-boundary1';
 
 import {
   loadWeekendSlots,
@@ -289,60 +297,92 @@ async function refreshAbsencesIfNeeded(options = {}) {
   } catch {}
 }
 
-function ensureStaleDoneWarningStyle() {
-  if (document.getElementById('staleDoneWarningStyle')) return;
-  const s = document.createElement('style');
-  s.id = 'staleDoneWarningStyle';
-  s.textContent = `
-    #staleDoneWarning{
-      display:block;margin:8px 0 0;padding:7px 9px;border-radius:8px;
-      border:1px solid rgba(245,158,11,.45);
-      background:rgba(245,158,11,.12);
-      color:#92400e;font-weight:700;line-height:1.35;
-    }
-    body.dark #staleDoneWarning{
-      border-color:rgba(251,191,36,.5);
-      background:rgba(251,191,36,.13);
-      color:#fde68a;
-    }
-    #staleDoneWarning[hidden]{display:none}
-  `;
-  document.head.appendChild(s);
+function todayOperationWarningStack() {
+  return document.getElementById('todayOperationWarnings');
+}
+
+function syncTodayOperationWarningStack() {
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
+  stack.hidden = !Array.from(stack.children).some(child => !child.hidden);
+}
+
+function createOperationWarningIcon() {
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(svgNs, 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('fill', 'none');
+  icon.setAttribute('stroke', 'currentColor');
+  icon.setAttribute('stroke-width', '2');
+  icon.setAttribute('stroke-linecap', 'round');
+  icon.setAttribute('stroke-linejoin', 'round');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+
+  const triangle = document.createElementNS(svgNs, 'path');
+  triangle.setAttribute('d', 'M10.3 3.2 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0Z');
+  const stem = document.createElementNS(svgNs, 'path');
+  stem.setAttribute('d', 'M12 9v4');
+  const dot = document.createElementNS(svgNs, 'path');
+  dot.setAttribute('d', 'M12 17h.01');
+  icon.append(triangle, stem, dot);
+  return icon;
+}
+
+function setOperationWarningMessage(el, message) {
+  const text = String(message || '').trim();
+  el.hidden = !text;
+  let label = el.querySelector('.hero-warning-label');
+  if (!text) {
+    if (label) label.textContent = '';
+    return;
+  }
+  if (!label) {
+    const icon = document.createElement('span');
+    icon.className = 'hero-warning-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.appendChild(createOperationWarningIcon());
+    label = document.createElement('span');
+    label.className = 'hero-warning-label';
+    el.replaceChildren(icon, label);
+  }
+  label.textContent = text;
 }
 
 function renderStaleDoneWarning(summary) {
-  const anchor = document.getElementById('todaySlotCounts');
-  if (!anchor) return;
-
-  ensureStaleDoneWarningStyle();
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
 
   let el = document.getElementById('staleDoneWarning');
   if (!el) {
     el = document.createElement('p');
     el.id = 'staleDoneWarning';
-    el.className = 'hero-sub';
+    el.className = 'hero-sub hero-operation-warning hero-operation-warning--cleanup';
     el.setAttribute('aria-live', 'polite');
-    anchor.insertAdjacentElement('afterend', el);
+    stack.appendChild(el);
   }
 
-  const byDateRows = Array.isArray(summary?.byDate) ? summary.byDate : [];
-  const total = Number(summary?.total || 0);
-  if (!total || !byDateRows.length) {
-    el.hidden = true;
-    el.textContent = '';
-    return;
+  const message = recordCleanupWarningText(summary);
+  setOperationWarningMessage(el, message);
+  syncTodayOperationWarningStack();
+}
+
+function renderMissingLeaveWarning(summary) {
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
+  let el = document.getElementById('missingLeaveWarning');
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'missingLeaveWarning';
+    el.className = 'hero-sub hero-operation-warning hero-operation-warning--leave';
+    el.setAttribute('role', 'alert');
+    el.setAttribute('aria-live', 'assertive');
+    stack.appendChild(el);
   }
 
-  const preview = byDateRows
-    .slice(0, 3)
-    .map((row) => `${row.date} ${row.count}건`)
-    .join(', ');
-  const more = byDateRows.length > 3 ? ` 외 ${byDateRows.length - 3}일` : '';
-  const students = Number(summary?.students || 0);
-  const studentText = students && students !== total ? `/${students}명` : '';
-
-  el.hidden = false;
-  el.textContent = `정리 필요: 어제까지 하원 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+  const message = missingLeaveWarningText(summary);
+  setOperationWarningMessage(el, message ? '하원 미완료' : '');
+  syncTodayOperationWarningStack();
 }
 
 async function fetchUnarchivedDoneSummary(dateKey) {
@@ -354,6 +394,19 @@ async function fetchUnarchivedDoneSummary(dateKey) {
     return data && typeof data === 'object' ? data : null;
   } catch (err) {
     console.warn('[today] stale done summary failed:', err);
+    return null;
+  }
+}
+
+async function fetchMissingLeaveSummary(dateKey) {
+  try {
+    const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
+    const res = await fetch(`/api/arrive-time/missing-leave-summary?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && typeof data === 'object' ? data : null;
+  } catch (err) {
+    console.warn('[today] missing leave summary failed:', err);
     return null;
   }
 }
@@ -919,16 +972,21 @@ export async function loadTodayAndRender(options = {}) {
   renderToday(list, dateKey, false, makeupCounts);
   applyTodaySearchFilter();
   renderStaleDoneWarning({ total: 0, byDate: [] });
+  renderMissingLeaveWarning({ total: 0, rowsAvailable: true, rows: [] });
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));
 
   void (async () => {
-    const unarchivedSummary = await fetchUnarchivedDoneSummary(dateKey);
+    const [unarchivedSummary, missingLeaveSummary] = await Promise.all([
+      fetchUnarchivedDoneSummary(dateKey),
+      fetchMissingLeaveSummary(dateKey),
+    ]);
     if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
     const summaryDoneEntries = doneEntriesFromUnarchivedSummary(unarchivedSummary);
     if (summaryDoneEntries !== null) renderDoneSummaryWhenIdle(summaryDoneEntries, seq, dateKey);
     renderStaleDoneWarning(unarchivedSummary || { total: 0, byDate: [] });
+    renderMissingLeaveWarning(missingLeaveSummary || { total: 0, rowsAvailable: false, rows: [] });
   })();
 }
 

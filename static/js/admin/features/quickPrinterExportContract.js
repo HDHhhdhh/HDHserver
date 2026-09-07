@@ -77,6 +77,20 @@ export function summarizeQuickPrinterTimeGroups(students) {
   return counts;
 }
 
+export function formatQuickPrinterAutomaticExclusion(payload, includeReprints = false) {
+  const studentCount = Math.max(0, Number(payload?.automaticExclusionStudentCount) || 0);
+  const assignmentCount = Math.max(0, Number(payload?.automaticExclusionCount) || 0);
+  const suffix = includeReprints && assignmentCount ? ' · 재인쇄 포함 중' : '';
+  return `결석 이월 재배정 자동 제외: ${studentCount}명 · ${assignmentCount}건${suffix}`;
+}
+
+export function isQuickPrinterDownloadPayload(payload) {
+  return Number(payload?.rowCount) > 0
+    && typeof payload?.csv === 'string'
+    && payload.csv.startsWith('\uFEFF')
+    && Boolean(String(payload?.filename || '').trim());
+}
+
 export function collectQuickPrinterStudentIds(
   documentRef,
   dateStr,

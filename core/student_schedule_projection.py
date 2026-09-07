@@ -154,6 +154,35 @@ def scheduled_makeup_student_ids(makeup: object, *, date_key: str) -> set[str]:
     return student_ids
 
 
+def effective_attendance_student_ids(
+    students: object,
+    *,
+    date_key: str,
+    absence: object = None,
+    extra: object = None,
+    makeup: object = None,
+) -> set[str]:
+    """Return the exact-date regular/extra/active-makeup roster after absences."""
+    target = _date(date_key)
+    if target is None or isinstance(students, (str, bytes, Mapping)) or not isinstance(students, Iterable):
+        return set()
+
+    extra_rows = _day_value(extra, date_key)
+    makeup_ids = scheduled_makeup_student_ids(makeup, date_key=date_key)
+    roster: set[str] = set()
+    for student in students:
+        if not isinstance(student, Mapping):
+            continue
+        sid = _text(student.get("id"))
+        if not sid:
+            continue
+        is_absent, _ = _absence(absence, date_key, sid)
+        regular_slots, _ = _regular_plan(student, target)
+        if not is_absent and (regular_slots or _has_sid(extra_rows, sid) or sid in makeup_ids):
+            roster.add(sid)
+    return roster
+
+
 def _makeup(makeup: object, target: date, sid: str) -> tuple[str, list[int]] | None:
     chosen_status = ""
     chosen_slots: set[int] = set()
@@ -264,6 +293,7 @@ build_student_schedule_projection = project_student_schedule
 __all__ = [
     "MAX_RANGE_DAYS",
     "build_student_schedule_projection",
+    "effective_attendance_student_ids",
     "project_student_schedule",
     "scheduled_makeup_student_ids",
     "select_next_schedule",

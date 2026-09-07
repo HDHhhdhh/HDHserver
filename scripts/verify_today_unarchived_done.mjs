@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { doneEntriesFromUnarchivedSummary } from '../static/js/admin/features/todayDoneSummary.js';
+import {
+  doneEntriesFromUnarchivedSummary,
+  missingLeaveWarningText,
+  recordCleanupWarningText,
+} from '../static/js/admin/features/todayDoneSummary.js';
 
 const older = { done: true, leaveTime: '17:00' };
 const latest = { done: 'true', archived: false, hwChecked: true };
@@ -39,9 +43,57 @@ assert.deepEqual(
   'an authoritative empty summary must stay empty',
 );
 
+assert.equal(
+  missingLeaveWarningText({
+    rowsAvailable: true,
+    total: 4,
+    students: 3,
+    rows: [
+      { date: '2026-08-26', sid: 'sid-a', arriveTime: '18:00' },
+      { date: '2026-08-29', sid: 'sid-a', arriveTime: '17:45' },
+      { date: '2026-08-28', sid: 'sid-b', arriveTime: '18:05' },
+      { date: '2026-08-27', sid: 'sid-c', arriveTime: '13:00' },
+    ],
+  }),
+  '2026-08-29 · 하원',
+  'missing-leave warning must expose only in-baseline dates and its action type',
+);
+assert.equal(
+  missingLeaveWarningText({
+    rowsAvailable: true,
+    total: 2,
+    byDate: [{ date: '2026-08-28', count: 2 }],
+    rows: [
+      { date: '2026-08-28', sid: 'legacy-a', arriveTime: '17:47' },
+      { date: '2026-08-28', sid: 'legacy-b', arriveTime: '17:20' },
+    ],
+  }),
+  '',
+  'the known incomplete 2026-08-28 traces must not render a warning before a server restart',
+);
+assert.equal(
+  recordCleanupWarningText({
+    rowsAvailable: true,
+    total: 5,
+    byDate: [
+      { date: '2026-08-29', count: 2 },
+      { date: '2026-08-28', count: 3 },
+    ],
+  }),
+  '2026-08-29, 2026-08-28 · 기록 정리',
+  'record-cleanup warning must expose only dates and its action type',
+);
+assert.equal(missingLeaveWarningText({ rowsAvailable: false, total: 1, rows: [] }), '');
+assert.equal(missingLeaveWarningText({ rowsAvailable: true, total: 0, rows: [] }), '');
+assert.equal(recordCleanupWarningText({ rowsAvailable: false, total: 1, byDate: [{ date: '2026-08-29', count: 1 }] }), '');
+
 const renderSource = fs.readFileSync('static/js/admin/features/today.render.js', 'utf8');
 const todaySource = fs.readFileSync('static/js/admin/features/today.js', 'utf8');
 const apiSource = fs.readFileSync('routes/api_logs.py', 'utf8');
+const arriveApiSource = fs.readFileSync('routes/api_arrive_time.py', 'utf8');
+const mainSource = fs.readFileSync('static/js/admin/main.js', 'utf8');
+const adminHtml = fs.readFileSync('static/admin.html', 'utf8');
+const adminCss = fs.readFileSync('static/css/admin.css', 'utf8');
 assert.match(renderSource, /dateKey === String\(getAdminDate\(\) \|\| ''\)/, 'historical rows need a selected-date edit gate');
 assert.match(renderSource, /renderReadonlySlotLabel\('—'\)/, 'historical slot labels must not show an unhydrated value');
 assert.match(renderSource, /class="arriveLabelReadonly"/, 'historical arrive values must render read-only');
@@ -52,5 +104,26 @@ assert.match(todaySource, /function renderDoneSummaryWhenIdle\(/, 'async done su
 assert.match(todaySource, /wrap\.contains\(active\)/, 'async done summary replacement must defer while editing');
 assert.match(todaySource, /renderDone\(sortDoneEntries\(entries\)\);\s*applyTodaySearchFilter\(\);/, 'async done summaries must preserve the active search filter');
 assert.match(apiSource, /return nocache_resp\(get_log_repository\(\)\.summarize_unarchived_done\(exclude_date\)\)/, 'all-date per-student summaries must be no-store');
+assert.match(arriveApiSource, /MISSING_LEAVE_WARNING_START_DATE = "2026-08-29"/, 'known pre-baseline arrival noise must stay outside the warning');
+assert.match(arriveApiSource, /@bp_api_arrive_time\.get\("\/api\/arrive-time\/missing-leave-summary"\)/, 'arrival owner must expose the missing-leave summary');
+assert.match(todaySource, /fetchMissingLeaveSummary\(dateKey\)/, 'today view must request the missing-leave summary');
+assert.match(todaySource, /const \[unarchivedSummary, missingLeaveSummary\] = await Promise\.all\(/, 'independent warnings must load in parallel');
+assert.match(todaySource, /el\.setAttribute\('role', 'alert'\)/, 'missing-leave warning must be announced assertively');
+assert.match(todaySource, /function createOperationWarningIcon\(\)/, 'warning rows need a shared vector icon factory');
+assert.match(todaySource, /icon\.setAttribute\('aria-hidden', 'true'\)/, 'the visible label must own warning semantics while the SVG stays decorative');
+assert.match(todaySource, /className = 'hero-warning-icon'/, 'warning icon wrapper must remain explicit');
+assert.match(todaySource, /className = 'hero-warning-label'/, 'warning text must remain separately styleable');
+assert.doesNotMatch(todaySource, /하원 확인 필요|내보내기 전 확인/, 'warning prose must not leak names, counts, or instructions');
+assert.match(mainSource, /today\.js\?v=20260830-warning-visual1/, 'today entrypoint cache key must expose the warning visual change');
+assert.match(adminHtml, /id="todayOperationWarnings" class="hero-warning-stack"/, 'admin hero needs a dedicated warning boundary');
+assert.match(adminHtml, /missingLeave=2/, 'admin shell cache key must expose the warning change');
+assert.match(adminHtml, /warningVisual=1/, 'admin shell cache key must expose the warning visual change');
+assert.match(adminHtml, /admin\.css\?v=20260831-quick-print-filter2-warning-visual2/, 'admin shell cache key must expose the full-width warning change');
+assert.match(adminCss, /body\.admin \.hero-warning-stack\s*\{[\s\S]*?max-height:\s*none;[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?overflow:\s*visible;/, 'warning stack must not create an internal scrollbar');
+assert.match(adminCss, /body\.admin \.hero-warning-stack:not\(:has\(> \.hero-operation-warning:not\(\[hidden\]\) ~ \.hero-operation-warning:not\(\[hidden\]\)\)\)[\s\S]*?> \.hero-operation-warning:not\(\[hidden\]\)\s*\{[\s\S]*?grid-column:\s*1 \/ -1;/, 'a single visible warning must span both quick-action columns');
+assert.match(adminCss, /body\.admin \.hero-warning-stack > \.hero-operation-warning\s*\{[\s\S]*?font-size:\s*14px;[\s\S]*?font-weight:\s*900;/, 'warning typography must be visibly larger and stronger');
+assert.match(adminCss, /body\.admin #staleDoneWarning\s*\{[\s\S]*?border-color:\s*var\(--hero-warning-amber\);/, 'record-cleanup warning needs the amber warning treatment');
+assert.match(adminCss, /body\.admin #missingLeaveWarning\s*\{[\s\S]*?var\(--hero-warning-red\)/, 'missing-leave warning needs the danger treatment');
+assert.match(adminCss, /body\.admin\.dark #missingLeaveWarning\s*\{[\s\S]*?color:\s*#fecaca;/, 'danger warning needs an explicit dark-mode contrast pair');
 
 console.log('today unarchived done projection checks passed');

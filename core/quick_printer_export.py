@@ -10,6 +10,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from core.date_rules import is_iso_date_key
+from core.quick_printer_export_history import (
+    QuickPrinterHistoryKey,
+    quick_printer_history_key,
+)
+
 
 CSV_COLUMNS = ("주문번호", "자료ID", "학생이름", "부수", "메모")
 MAPPING_VERSION = 1
@@ -53,6 +59,9 @@ REGISTERED_CATALOG_COLUMNS = (
     "상대경로",
 )
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
+TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = "testAssignmentAbsenceCarryover"
+TEST_ASSIGN_ABSENCE_SOURCE_KEY = "testAssignmentAbsenceSourceDate"
 
 
 class QuickPrinterExportFailure(RuntimeError):
@@ -600,6 +609,108 @@ def _sid_entry(day: Any, sid: str) -> dict:
     return {}
 
 
+def _log_entry(log_history: Any, date_key: str, sid: str) -> dict:
+    if not isinstance(log_history, dict):
+        return {}
+    return _sid_entry(log_history.get(date_key), sid)
+
+
+def _assignment_item_matches_definition(item: Any, definition: dict) -> bool:
+    if not isinstance(item, dict):
+        return False
+    item_id = _text(item.get("id") or item.get("testId"))
+    definition_id = _text(definition.get("id"))
+    if item_id:
+        return bool(definition_id) and item_id == definition_id
+    return _text(item.get("label")) == _text(definition.get("label"))
+
+
+def _entry_contains_assignment(entry: dict, definition: dict) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    for field in ("assignedTests", TEST_ASSIGN_DAILY_ITEMS_KEY):
+        items = entry.get(field)
+        if isinstance(items, list) and any(
+            _assignment_item_matches_definition(item, definition) for item in items
+        ):
+            return True
+    return False
+
+
+def _source_carryover_contains_assignment(
+    source_entry: dict,
+    source_date: str,
+    definition: dict,
+) -> bool:
+    carryover = source_entry.get(TEST_ASSIGN_ABSENCE_CARRYOVER_KEY)
+    if not isinstance(carryover, dict):
+        return False
+    if _text(carryover.get("sourceDate")) != source_date:
+        return False
+    items = carryover.get("assignedTests")
+    return isinstance(items, list) and any(
+        _assignment_item_matches_definition(item, definition)
+        and normalize_assignment_status(item.get("status")) == "assigned"
+        for item in items
+        if isinstance(item, dict)
+    )
+
+
+def resolve_absence_carryover_origin_date(
+    *,
+    log_history: Any,
+    date_str: str,
+    sid: str,
+    definition: dict,
+) -> str:
+    """Return the earliest exact absence-carryover source for one assignment."""
+    current_date = _text(date_str)
+    current_entry = _log_entry(log_history, current_date, sid)
+    if not _entry_contains_assignment(current_entry, definition):
+        return ""
+
+    source_date = _text(current_entry.get(TEST_ASSIGN_ABSENCE_SOURCE_KEY))
+    if not is_iso_date_key(source_date) or source_date >= current_date:
+        return ""
+
+    visited = {current_date}
+    origin = ""
+    cursor_date = current_date
+    while source_date and source_date not in visited:
+        if source_date >= cursor_date:
+            return ""
+        source_entry = _log_entry(log_history, source_date, sid)
+        if not _source_carryover_contains_assignment(source_entry, source_date, definition):
+            return ""
+        visited.add(source_date)
+        origin = source_date
+        previous_source = _text(source_entry.get(TEST_ASSIGN_ABSENCE_SOURCE_KEY))
+        if not is_iso_date_key(previous_source) or previous_source >= source_date:
+            break
+        cursor_date = source_date
+        source_date = previous_source
+    return origin
+
+
+def _normalized_history_keys(values: Iterable[Any]) -> set[QuickPrinterHistoryKey]:
+    out: set[QuickPrinterHistoryKey] = set()
+    for raw in values or ():
+        if isinstance(raw, dict):
+            key = quick_printer_history_key(
+                raw.get("studentId"),
+                raw.get("testId"),
+                raw.get("materialId"),
+                raw.get("assignmentDate"),
+            )
+        elif isinstance(raw, (list, tuple)) and len(raw) == 4:
+            key = quick_printer_history_key(*raw)
+        else:
+            continue
+        if all(key[:3]) and is_iso_date_key(key[3]):
+            out.add(key)
+    return out
+
+
 def _student_index(students: Any) -> dict[str, dict]:
     index: dict[str, dict] = {}
     for student in students if isinstance(students, list) else []:
@@ -679,6 +790,10 @@ def build_quick_printer_export(
     mapping_bundle: dict,
     catalog_rows: list[dict],
     catalog_sha256: str = "",
+    log_history: Any = None,
+    exported_assignment_keys: Iterable[Any] = (),
+    include_previously_exported_carryovers: bool = False,
+    allow_empty: bool = False,
 ) -> dict:
     date_key = _text(date_str)
     if not _DATE_RE.fullmatch(date_key):
@@ -710,10 +825,13 @@ def build_quick_printer_export(
     }
     mappings = validated["mappings"]
     stored_issues = validated["issues"]
+    known_history_keys = _normalized_history_keys(exported_assignment_keys)
 
     issues: list[dict] = []
     csv_rows: list[dict] = []
+    history_items: list[dict] = []
     exported_students: set[str] = set()
+    automatic_exclusions: list[dict] = []
     compact_date = date_key.replace("-", "")
 
     for sid in ordered_sids:
@@ -798,6 +916,35 @@ def build_quick_printer_export(
                 continue
 
             material_id = _text(mapping.get("materialId"))
+            carryover_origin = resolve_absence_carryover_origin_date(
+                log_history=log_history,
+                date_str=date_key,
+                sid=sid,
+                definition=definition,
+            )
+            assignment_date = carryover_origin or date_key
+            history_key = quick_printer_history_key(
+                sid,
+                test_id,
+                material_id,
+                assignment_date,
+            )
+            is_absence_carryover_reassignment = bool(carryover_origin)
+            was_previously_exported = history_key in known_history_keys
+            if is_absence_carryover_reassignment:
+                automatic_exclusions.append(
+                    {
+                        "studentId": sid,
+                        "studentName": student_name,
+                        "testId": test_id,
+                        "testName": definition.get("name"),
+                        "materialId": material_id,
+                        "assignmentDate": assignment_date,
+                        "previouslyExported": was_previously_exported,
+                    }
+                )
+                if not include_previously_exported_carryovers:
+                    continue
             csv_rows.append(
                 {
                     "주문번호": f"ASSIGN-{compact_date}-{sid}-{test_id}",
@@ -805,6 +952,15 @@ def build_quick_printer_export(
                     "학생이름": student_name,
                     "부수": 1,
                     "메모": "",
+                }
+            )
+            history_items.append(
+                {
+                    "studentId": sid,
+                    "testId": test_id,
+                    "materialId": material_id,
+                    "assignmentDate": assignment_date,
+                    "exportDate": date_key,
                 }
             )
             exported_students.add(sid)
@@ -815,6 +971,40 @@ def build_quick_printer_export(
             "미매칭 또는 중복 매칭 시험이 있어 CSV 전체 생성을 중단했습니다.",
             issues,
         )
+    automatic_exclusion_students = {
+        item["studentId"] for item in automatic_exclusions if item.get("studentId")
+    }
+    automatic_exclusion_count = len(automatic_exclusions)
+    automatic_exclusion_student_count = len(automatic_exclusion_students)
+    if not csv_rows and automatic_exclusion_count:
+        message = (
+            f"결석 이월 재배정 {automatic_exclusion_count}건({automatic_exclusion_student_count}명)은 "
+            "원래 배정 때 이미 출력된 항목으로 보아 자동 제외되었습니다. "
+            "재인쇄 옵션을 켜면 포함할 수 있습니다."
+        )
+        if not allow_empty:
+            raise NoQuickPrinterAssignments(
+                "no_new_assignments_after_carryover_exclusion",
+                message,
+                (
+                    {
+                        "code": "previously_exported_absence_carryover",
+                        "reason": message,
+                        "studentCount": automatic_exclusion_student_count,
+                        "assignmentCount": automatic_exclusion_count,
+                    },
+                ),
+            )
+        return {
+            "rowCount": 0,
+            "studentCount": 0,
+            "date": date_key,
+            "automaticExclusionCount": automatic_exclusion_count,
+            "automaticExclusionStudentCount": automatic_exclusion_student_count,
+            "includedReprints": bool(include_previously_exported_carryovers),
+            "message": message,
+            "historyItems": [],
+        }
     if not csv_rows:
         raise NoQuickPrinterAssignments(
             "no_assigned_tests",
@@ -827,6 +1017,10 @@ def build_quick_printer_export(
         "rowCount": len(csv_rows),
         "studentCount": len(exported_students),
         "date": date_key,
+        "automaticExclusionCount": automatic_exclusion_count,
+        "automaticExclusionStudentCount": automatic_exclusion_student_count,
+        "includedReprints": bool(include_previously_exported_carryovers),
+        "historyItems": history_items,
     }
 
 
@@ -847,6 +1041,7 @@ __all__ = (
     "normalize_difficulty",
     "normalize_subject",
     "normalize_term",
+    "resolve_absence_carryover_origin_date",
     "read_mapping_bundle",
     "read_registered_catalog",
     "test_definition_signature",

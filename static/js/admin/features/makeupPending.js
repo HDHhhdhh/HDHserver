@@ -148,7 +148,7 @@ export function formatMakeupCopyText(item = {}) {
   return `${parts.filter(Boolean).join(' ')} >>`;
 }
 
-function parseSlotNumbers(raw) {
+export function parseSlotNumbers(raw) {
   const values = Array.isArray(raw) ? raw : [raw];
   const slots = values.flatMap(value => {
     const matches = String(value ?? '').match(/\d+/g) || [];

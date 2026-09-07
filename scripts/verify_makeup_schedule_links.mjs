@@ -121,6 +121,60 @@ const elapsedScheduledRows = buildActiveScheduledMakeupRows({
 assert.equal(elapsedScheduledRows.length, 0);
 assert.equal(buildScheduledMakeupRows({ students, carryover }).length, 1);
 
+// A displayed count is not a quota: render more than 40 active reservations,
+// keep today's rows, and hide only reservations before the operating date.
+const manyStudents = Array.from({ length: 76 }, (_, i) => ({
+  id: `scroll-${i}`, name: `검증${String(i).padStart(3, '0')}`, school: '검증고', curriculum: '미적분1',
+}));
+const manyCarryover = { by_absence: { '2026-09-01': Object.fromEntries(manyStudents.map((student, i) => [
+  `${student.id}|2`, { state: 'carried', scheduledMakeup: {
+    originalAbsenceId: `absence|2026-09-01|${student.id}|2`, studentId: student.id,
+    makeupDate: i === 75 ? '2026-09-04' : i % 2 ? '2026-09-06' : '2026-09-05',
+    makeupTimes: [2], status: 'scheduled',
+  } },
+])) } };
+const untouchedReservations = JSON.stringify(manyCarryover);
+let scrollOperatingDate = '2026-09-05';
+const activeScrollRows = () => buildActiveScheduledMakeupRows({
+  students: manyStudents, carryover: manyCarryover, operatingDate: scrollOperatingDate,
+});
+assert.equal(activeScrollRows().length, 75);
+const scrollElements = Object.fromEntries([
+  'makeupPlannerList', 'makeupPlannerHint', 'makeupPlannerSearch',
+  'makeupStatusList', 'makeupStatusSearch', 'makeupStatusHint', 'attendanceCheckToggle',
+].map(id => [id, { innerHTML: '', textContent: '', value: '' }]));
+const renderSource = calendarSource.slice(
+  calendarSource.indexOf('  function renderMakeupPlanner() {'),
+  calendarSource.indexOf('  async function refreshMakeupPlanner() {'),
+);
+const renderSandbox = {
+  $: id => scrollElements[id], ensureMakeupPlanner() {}, updateMakeupFocusUI() {},
+  sortPlannerItems: rows => rows, studentSearchKey: (student, fields) => [student.name, ...fields].join(' '),
+  matchesSearchKey: (key, query) => key.includes(query.trim()), applySearchPlaceholder() {},
+  getPendingMakeups: () => [], getScheduledMakeupStatusRows: activeScrollRows,
+  attendanceCheckMode: false, manualAbsenceSelection: null, makeupSelection: null,
+  makeupItemKey: makeupOriginalAbsenceId, formatMakeupDate, formatMakeupCopyText,
+  escapeHtml: value => String(value), escapeAttr: value => String(value),
+  parseSlotNumbers: slots => slots, slotGroupLabel: slots => `${slots.join(',')}타임`,
+};
+vm.runInNewContext(`${renderSource}\nrenderMakeupPlanner();`, renderSandbox);
+assert.equal((scrollElements.makeupStatusList.innerHTML.match(/class="makeup-row"/g) || []).length, 75);
+assert.equal(scrollElements.makeupStatusHint.textContent, '전체 75건');
+assert.match(scrollElements.makeupStatusList.innerHTML, /검증074/);
+assert.doesNotMatch(scrollElements.makeupStatusList.innerHTML, /검증075/);
+scrollElements.makeupStatusSearch.value = '검증074';
+vm.runInNewContext(`${renderSource}\nrenderMakeupPlanner();`, renderSandbox);
+assert.equal((scrollElements.makeupStatusList.innerHTML.match(/class="makeup-row"/g) || []).length, 1);
+assert.equal(scrollElements.makeupStatusHint.textContent, '검색 1건 · 전체 75건');
+scrollElements.makeupStatusSearch.value = '';
+scrollOperatingDate = '2026-09-07';
+vm.runInNewContext(`${renderSource}\nrenderMakeupPlanner();`, renderSandbox);
+assert.equal(scrollElements.makeupStatusHint.textContent, '전체 0건');
+assert.match(scrollElements.makeupStatusList.innerHTML, /보강 예정이 없습니다/);
+assert.equal(JSON.stringify(manyCarryover), untouchedReservations, 'display filtering must not change reservations');
+assert.match(calendarSource, /id="makeupStatusList"[^>]*tabindex="0"[^>]*aria-label="보강 예정 목록"/);
+assert.match(adminCssSource, /#makeupStatusList\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable;/);
+
 const pendingRows = buildPendingMakeups({
   students,
   absentByDate: { '2026-07-03': ['stu-1'] },

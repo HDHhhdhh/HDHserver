@@ -5,10 +5,15 @@ from typing import Dict, Any
 
 from flask import Blueprint, abort, jsonify, request
 
-from core.paths import ARRIVE_TIME_PATH
+from core.absent import load_absent
+from core.paths import ARRIVE_TIME_PATH, EXTRA_PATH, STU_PATH
+from core.student_schedule_projection import effective_attendance_student_ids
 from core.storage import load, save_atomic, file_lock
+from routes.absence_assignment_cleanup import MAKEUP_CARRYOVER_PATH
+from routes.log_repository_provider import get_log_repository
 
 bp_api_arrive_time = Blueprint("api_arrive_time", __name__)
+MISSING_LEAVE_WARNING_START_DATE = "2026-08-29"
 
 
 def _norm_date(date_str_full: str) -> str:
@@ -33,6 +38,50 @@ def _is_time_like(v: str) -> bool:
 def _load_all_arrive_times() -> Dict[str, Dict[str, str]]:
     all_map: Dict[str, Dict[str, str]] = load(ARRIVE_TIME_PATH) or {}
     return all_map if isinstance(all_map, dict) else {}
+
+
+def _filter_arrivals_to_effective_roster(
+    arrivals_by_date: Any,
+    absent: Any,
+) -> tuple[Dict[str, Dict[str, str]], bool]:
+    """Keep arrival traces only while the SID remains on that date's roster."""
+    try:
+        students = load(STU_PATH)
+        extra = load(EXTRA_PATH)
+        makeup = load(MAKEUP_CARRYOVER_PATH)
+    except Exception:
+        return {}, False
+
+    if not isinstance(students, list):
+        return {}, False
+    extra_map = extra if isinstance(extra, dict) else {}
+    makeup_map = makeup if isinstance(makeup, dict) else {}
+    absence_map = absent if isinstance(absent, dict) else {}
+    scoped: Dict[str, Dict[str, str]] = {}
+
+    if not isinstance(arrivals_by_date, dict):
+        return scoped, True
+
+    for date_raw, by_sid in arrivals_by_date.items():
+        date_key = str(date_raw or "").strip()
+        if not isinstance(by_sid, dict):
+            continue
+        roster_ids = effective_attendance_student_ids(
+            students,
+            date_key=date_key,
+            absence=absence_map,
+            extra=extra_map,
+            makeup=makeup_map,
+        )
+        day: Dict[str, str] = {}
+        for sid_raw, arrive_raw in by_sid.items():
+            sid = str(sid_raw or "").strip()
+            if not sid or sid not in roster_ids:
+                continue
+            day[sid] = arrive_raw
+        if day:
+            scoped[date_key] = day
+    return scoped, True
 
 
 def _day_map(all_map: Dict[str, Dict[str, str]], date_key: str) -> Dict[str, str]:
@@ -65,6 +114,33 @@ def api_arrive_time_get():
 
     date_key = _norm_date(date_q)
     return jsonify(_day_map(all_map, date_key))
+
+
+@bp_api_arrive_time.get("/api/arrive-time/missing-leave-summary")
+def api_arrive_time_missing_leave_summary():
+    exclude_raw = str(
+        request.args.get("exclude_date")
+        or request.args.get("excludeDate")
+        or ""
+    ).strip()
+    exclude_date = _norm_date(exclude_raw) if exclude_raw else ""
+    absent = load_absent()
+    absent_by_date = absent.get("by_date") if isinstance(absent, dict) else {}
+    scoped_arrivals, roster_available = _filter_arrivals_to_effective_roster(
+        _load_all_arrive_times(),
+        absent,
+    )
+    result = get_log_repository().summarize_missing_leave(
+        scoped_arrivals,
+        absent_by_date,
+        since_date=MISSING_LEAVE_WARNING_START_DATE,
+        exclude_date=exclude_date,
+    )
+    if not roster_available:
+        result["rowsAvailable"] = False
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @bp_api_arrive_time.post("/api/arrive-time")

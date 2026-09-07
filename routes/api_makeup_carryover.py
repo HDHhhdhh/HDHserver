@@ -100,6 +100,13 @@ def _makeup_response(
     return response
 
 
+def _sheet_sync_error(message: str, status: int, code: str):
+    response = jsonify({"ok": False, "error": code, "message": message})
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _norm_date(value: Any) -> str:
     text = str(value or "").split("T")[0].strip()
     try:
@@ -370,14 +377,18 @@ def api_makeup_sheet_sync_post():
     try:
         date_key = _sheet_sync_date(payload.get("date") or dt.datetime.now(KST).date().isoformat())
         sheet_url, sheet_source = _sheet_sync_url(payload)
+        exclusions = _sheet_sync_exclusions()
+    except RuntimeError as exc:
+        return _sheet_sync_error(str(exc), 400, "sheet_sync_config_invalid")
+    try:
         sheet = read_additive_sheet_candidate_window(sheet_url, date_key, months_back=1)
         included_candidates, excluded_candidates = partition_excluded_sheet_candidates(
             sheet.get("candidates") or [],
-            _sheet_sync_exclusions(),
+            exclusions,
         )
         sheet = {**sheet, "candidates": included_candidates}
     except RuntimeError as exc:
-        abort(400, description=str(exc))
+        return _sheet_sync_error(str(exc), 400, "sheet_read_failed")
 
     # Network parsing is complete before live transaction locks are acquired.
     try:
@@ -407,11 +418,23 @@ def api_makeup_sheet_sync_post():
                     kind="makeup-sheet-api",
                 )
     except AbsenceRecoveryRequiredError as exc:
-        abort(503, description=f"Absence transaction recovery required: {exc}")
+        return _sheet_sync_error(
+            f"결석 처리 복구가 필요합니다: {exc}",
+            503,
+            "absence_recovery_required",
+        )
     except TimeoutError as exc:
-        abort(409, description=f"Failed to apply makeup sheet absences: {exc}")
+        return _sheet_sync_error(
+            f"결석 저장 요청이 잠시 겹쳤습니다: {exc}",
+            409,
+            "absence_lock_timeout",
+        )
     except Exception as exc:
-        abort(500, description=f"Failed to apply makeup sheet absences: {exc}")
+        return _sheet_sync_error(
+            f"시트 결석 반영에 실패했습니다: {exc}",
+            500,
+            "sheet_sync_apply_failed",
+        )
     if result.get("added"):
         enqueue_current_schedule_changes(result.get("addedSids") or [])
     result["sheetSource"] = sheet_source

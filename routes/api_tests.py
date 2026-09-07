@@ -32,6 +32,7 @@ from core.quick_printer_export import (
     read_mapping_bundle,
     read_registered_catalog,
 )
+from core.quick_printer_export_history import QuickPrinterExportHistoryRepository
 from core.storage import file_lock, load, save_atomic, nocache_resp, utc_now_isoz
 from core.test_answer_links import resolve_test_assignment_answer_url
 from core.test_config_safety import (
@@ -40,6 +41,7 @@ from core.test_config_safety import (
     patch_test_config_record,
     tests_config_revision,
 )
+from routes.log_repository_provider import get_log_repository
 
 
 
@@ -516,8 +518,7 @@ def _quick_printer_json(payload: dict, status: int = 200):
     return response
 
 
-@bp_api_tests.post("/api/tests/quick-printer-export")
-def export_quick_printer_tests():
+def _handle_quick_printer_export(*, preview: bool):
     if _is_public_student_request():
         return _quick_printer_json(
             {"ok": False, "code": "administrator_only", "message": "관리자 전용 기능입니다."},
@@ -541,10 +542,24 @@ def export_quick_printer_tests():
             },
             400,
         )
+    include_reprints = payload.get("includePreviouslyExportedCarryovers", False)
+    if type(include_reprints) is not bool:
+        return _quick_printer_json(
+            {
+                "ok": False,
+                "code": "invalid_reprint_option",
+                "message": "재인쇄 포함 옵션은 JSON boolean이어야 합니다.",
+            },
+            400,
+        )
 
     try:
         catalog_rows = read_registered_catalog(QUICK_PRINTER_CATALOG_PATH)
         mapping_bundle = read_mapping_bundle(QUICK_PRINTER_MAPPING_PATH)
+        log_history = get_log_repository().read_export_history(
+            {str(sid or "").strip(): date_str for sid in student_ids}
+        )
+        history_repository = QuickPrinterExportHistoryRepository()
         result = build_quick_printer_export(
             date_str=date_str,
             ordered_student_ids=student_ids,
@@ -554,7 +569,17 @@ def export_quick_printer_tests():
             mapping_bundle=mapping_bundle,
             catalog_rows=catalog_rows,
             catalog_sha256=file_sha256(QUICK_PRINTER_CATALOG_PATH),
+            log_history=log_history,
+            exported_assignment_keys=history_repository.keys_for_students(student_ids),
+            include_previously_exported_carryovers=include_reprints,
+            allow_empty=preview,
         )
+        history_items = result.pop("historyItems", [])
+        if preview:
+            result.pop("csv", None)
+            result.pop("filename", None)
+        else:
+            history_repository.record_generated(history_items)
     except NoQuickPrinterAssignments as exc:
         return _quick_printer_json(
             {"ok": False, "code": exc.code, "message": exc.message, "issues": exc.issues},
@@ -572,7 +597,7 @@ def export_quick_printer_tests():
             {"ok": False, "code": exc.code, "message": exc.message, "issues": exc.issues},
             status,
         )
-    except RuntimeError as exc:
+    except Exception as exc:
         current_app.logger.error("quick-printer export read failed: %s", exc)
         return _quick_printer_json(
             {
@@ -584,6 +609,16 @@ def export_quick_printer_tests():
         )
 
     return _quick_printer_json({"ok": True, **result})
+
+
+@bp_api_tests.post("/api/tests/quick-printer-export")
+def export_quick_printer_tests():
+    return _handle_quick_printer_export(preview=False)
+
+
+@bp_api_tests.post("/api/tests/quick-printer-export/preview")
+def preview_quick_printer_tests():
+    return _handle_quick_printer_export(preview=True)
 
 @bp_api_tests.post("/api/tests-config")
 def post_tests_config():

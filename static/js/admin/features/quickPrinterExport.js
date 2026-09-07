@@ -7,11 +7,14 @@ import {
   QUICK_PRINTER_TIME_GROUP_VALUES,
   collectQuickPrinterStudents,
   filterQuickPrinterStudentIds,
+  formatQuickPrinterAutomaticExclusion,
   formatQuickPrinterExportIssues,
+  isQuickPrinterDownloadPayload,
   summarizeQuickPrinterTimeGroups,
-} from './quickPrinterExportContract.js?v=20260829-time-filter1';
+} from './quickPrinterExportContract.js?v=20260830-carryover-history1';
 
 const QUICK_PRINTER_EXPORT_URL = '/api/tests/quick-printer-export';
+const QUICK_PRINTER_PREVIEW_URL = '/api/tests/quick-printer-export/preview';
 const TIME_GROUP_CONTROLS = [
   {
     key: QUICK_PRINTER_TIME_GROUPS.SLOT1,
@@ -32,10 +35,14 @@ const TIME_GROUP_CONTROLS = [
 
 let initialized = false;
 
-async function createQuickPrinterCsv({ dateStr, studentIds, signal }) {
+async function requestQuickPrinter({ url, dateStr, studentIds, includeReprints = false, signal }) {
   const response = await sendJson(
-    QUICK_PRINTER_EXPORT_URL,
-    { date: dateStr, studentIds },
+    url,
+    {
+      date: dateStr,
+      studentIds,
+      includePreviouslyExportedCarryovers: includeReprints,
+    },
     { cache: 'no-store', credentials: 'same-origin', signal },
   );
   const payload = await response.json().catch(() => ({}));
@@ -46,18 +53,44 @@ async function createQuickPrinterCsv({ dateStr, studentIds, signal }) {
       message: formatQuickPrinterExportIssues(payload),
     };
   }
-  if (typeof payload.csv !== 'string' || !payload.csv.startsWith('\uFEFF') || !payload.filename) {
+  return { ok: true, payload };
+}
+
+async function previewQuickPrinterCsv({ dateStr, studentIds, includeReprints = false, signal }) {
+  return requestQuickPrinter({
+    url: QUICK_PRINTER_PREVIEW_URL,
+    dateStr,
+    studentIds,
+    includeReprints,
+    signal,
+  });
+}
+
+async function createQuickPrinterCsv({ dateStr, studentIds, includeReprints = false, signal }) {
+  const result = await requestQuickPrinter({
+    url: QUICK_PRINTER_EXPORT_URL,
+    dateStr,
+    studentIds,
+    includeReprints,
+    signal,
+  });
+  if (!result.ok) return result;
+  const { payload } = result;
+  if (!isQuickPrinterDownloadPayload(payload)) {
     throw new Error('서버가 올바른 UTF-8 BOM CSV를 반환하지 않았습니다.');
   }
 
   downloadTextFile(payload.filename, payload.csv, 'text/csv;charset=utf-8');
-  return { ok: true, payload };
+  return result;
 }
 
 function showExportFailure(result) {
   const summary = String(result?.payload?.message || '테스트 인쇄 CSV 생성 실패');
   toast(summary);
-  if (Array.isArray(result?.payload?.issues) && result.payload.issues.length) {
+  if (
+    result?.payload?.code !== 'no_new_assignments_after_carryover_exclusion' &&
+    Array.isArray(result?.payload?.issues) && result.payload.issues.length
+  ) {
     window.alert(result.message);
   }
 }
@@ -105,6 +138,8 @@ export function initQuickPrinterExport() {
   const selectAllButton = $('quickPrinterExportSelectAll');
   const submitButton = $('quickPrinterExportSubmit');
   const dateLabel = $('quickPrinterExportDate');
+  const exclusionSummary = $('quickPrinterCarryoverExclusionSummary');
+  const includeReprintsInput = $('quickPrinterIncludeReprints');
   const status = $('quickPrinterExportStatus');
   const controls = TIME_GROUP_CONTROLS.map(meta => ({
     ...meta,
@@ -114,7 +149,8 @@ export function initQuickPrinterExport() {
 
   const dialogReady = !!(
     modal && form && closeButton && cancelButton && selectAllButton && submitButton &&
-    dateLabel && status && controls.every(item => item.input && item.count)
+    dateLabel && exclusionSummary && includeReprintsInput && status &&
+    controls.every(item => item.input && item.count)
   );
   if (!dialogReady) {
     button.addEventListener('click', () => exportWithoutDialog(button));
@@ -127,6 +163,8 @@ export function initQuickPrinterExport() {
   let currentGroups = new Set(QUICK_PRINTER_TIME_GROUP_VALUES);
   let exportInFlight = false;
   let activeController = null;
+  let previewController = null;
+  let previewSequence = 0;
   let restoreFocus = null;
 
   function setStatus(message = '', kind = '') {
@@ -148,12 +186,57 @@ export function initQuickPrinterExport() {
     setStatus(`${activeDate} · ${selectedCount}명 선택 / 전체 ${activeStudents.length}명`);
   }
 
+  async function refreshPreview() {
+    const studentIds = selectedStudentIds();
+    const includeReprints = Boolean(includeReprintsInput.checked);
+    const sequence = ++previewSequence;
+    previewController?.abort();
+    if (!studentIds.length) {
+      exclusionSummary.textContent = formatQuickPrinterAutomaticExclusion({}, includeReprints);
+      setStatus('내보낼 타임을 하나 이상 선택해 주세요.', 'error');
+      return;
+    }
+
+    const controller = new AbortController();
+    previewController = controller;
+    exclusionSummary.textContent = '결석 이월 재배정 자동 제외: 확인 중…';
+    try {
+      const result = await previewQuickPrinterCsv({
+        dateStr: activeDate,
+        studentIds,
+        includeReprints,
+        signal: controller.signal,
+      });
+      if (sequence !== previewSequence || modal.hidden) return;
+      if (!result.ok) {
+        exclusionSummary.textContent = formatQuickPrinterAutomaticExclusion(result.payload, includeReprints);
+        setStatus(String(result.payload?.message || '내보내기 대상을 확인할 수 없습니다.'), 'error');
+        return;
+      }
+      exclusionSummary.textContent = formatQuickPrinterAutomaticExclusion(result.payload, includeReprints);
+      const rowCount = Math.max(0, Number(result.payload?.rowCount) || 0);
+      if (!rowCount) {
+        setStatus(String(result.payload?.message || '내보낼 새 테스트가 없습니다.'), 'error');
+        return;
+      }
+      setStatus(`${activeDate} · ${studentIds.length}명 선택 / 전체 ${activeStudents.length}명 · CSV ${rowCount}행`);
+    } catch (error) {
+      if (error?.name === 'AbortError' || sequence !== previewSequence) return;
+      console.error('[quickPrinterExport] preview failed:', error);
+      exclusionSummary.textContent = '결석 이월 재배정 자동 제외: 확인 실패';
+      setStatus(error?.message || '내보내기 대상을 확인할 수 없습니다.', 'error');
+    } finally {
+      if (previewController === controller) previewController = null;
+    }
+  }
+
   function setBusy(busy) {
     exportInFlight = busy;
     modal.setAttribute('aria-busy', busy ? 'true' : 'false');
     button.disabled = busy;
     selectAllButton.disabled = busy;
     submitButton.disabled = busy;
+    includeReprintsInput.disabled = busy;
     submitButton.textContent = busy ? 'CSV 생성 중…' : '선택 타임 CSV 내보내기';
     controls.forEach(item => {
       item.input.disabled = busy || Number(activeCounts[item.key] || 0) === 0;
@@ -162,6 +245,9 @@ export function initQuickPrinterExport() {
 
   function closeDialog() {
     if (exportInFlight) activeController?.abort();
+    previewController?.abort();
+    previewController = null;
+    previewSequence += 1;
     modal.style.display = 'none';
     modal.hidden = true;
     document.body.classList.remove('quick-printer-export-open');
@@ -185,6 +271,7 @@ export function initQuickPrinterExport() {
     activeStudents = students;
     activeCounts = summarizeQuickPrinterTimeGroups(activeStudents);
     dateLabel.textContent = activeDate;
+    includeReprintsInput.checked = false;
 
     controls.forEach(item => {
       const count = Number(activeCounts[item.key] || 0);
@@ -204,6 +291,7 @@ export function initQuickPrinterExport() {
     modal.hidden = false;
     modal.style.display = 'flex';
     document.body.classList.add('quick-printer-export-open');
+    refreshPreview();
     requestAnimationFrame(() => {
       (controls.find(item => item.input.checked && !item.input.disabled)?.input || submitButton).focus();
     });
@@ -218,13 +306,16 @@ export function initQuickPrinterExport() {
     });
     currentGroups = new Set(readSelectedGroups());
     updateSelectionStatus();
+    refreshPreview();
   });
   controls.forEach(item => {
     item.input.addEventListener('change', () => {
       currentGroups = new Set(readSelectedGroups());
       updateSelectionStatus();
+      refreshPreview();
     });
   });
+  includeReprintsInput.addEventListener('change', refreshPreview);
   modal.addEventListener('click', event => {
     if (event.target === modal) closeDialog();
   });
@@ -276,6 +367,7 @@ export function initQuickPrinterExport() {
       const result = await createQuickPrinterCsv({
         dateStr: activeDate,
         studentIds,
+        includeReprints: Boolean(includeReprintsInput.checked),
         signal: controller.signal,
       });
       if (!result.ok) {
@@ -285,6 +377,10 @@ export function initQuickPrinterExport() {
       }
 
       const rowCount = Number(result.payload.rowCount) || 0;
+      exclusionSummary.textContent = formatQuickPrinterAutomaticExclusion(
+        result.payload,
+        Boolean(includeReprintsInput.checked),
+      );
       toast(`테스트 인쇄 CSV ${rowCount}행 내보내기 완료`);
       setStatus(`${studentIds.length}명 · ${rowCount}행 CSV를 내려받았습니다.`, 'success');
       closeAfterExport = true;

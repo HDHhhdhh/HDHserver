@@ -1434,7 +1434,7 @@ export function initCalendar() {
           <div><h4>보강 현황</h4><p id="makeupStatusHint">배정 완료된 보강입니다.</p></div>
           <input id="makeupStatusSearch" type="search" autocomplete="off" placeholder="보강 현황 검색">
         </div>
-        <div id="makeupStatusList" class="makeup-planner-list"></div>
+        <div id="makeupStatusList" class="makeup-planner-list" tabindex="0" role="region" aria-label="보강 예정 목록"></div>
       </section>
       </div>
     `);
@@ -2184,7 +2184,9 @@ export function initCalendar() {
       }).join('');
     }
     const statusHint = $('makeupStatusHint');
-    if (statusHint) statusHint.textContent = `${statusVisible.length}/${scheduled.length}건`;
+    if (statusHint) statusHint.textContent = statusSearch?.value.trim()
+      ? `검색 ${statusVisible.length}건 · 전체 ${scheduled.length}건`
+      : `전체 ${scheduled.length}건`;
   }
 
   async function refreshMakeupPlanner() {
