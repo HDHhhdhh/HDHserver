@@ -142,7 +142,7 @@ def run() -> dict:
             for number in range(1, 21):
                 path = output_dir / f"q{number:03d}.png"
                 path.write_bytes(b"crop")
-                items.append({"questionNo": number, "imagePath": str(path), "warnings": []})
+                items.append({"questionNo": number, "imagePath": str(path), "recognitionImagePath": str(path), "warnings": []})
             return {"quality": {"ok": True, "failures": []}, "items": items}
 
         def recognizer(*, crops, asset_root, formula_profile):
@@ -167,9 +167,11 @@ def run() -> dict:
             cropper=cropper,
             recognizer=recognizer,
             clock=lambda: now + dt.timedelta(seconds=1),
+            on_recognition_committed=service.complete_recognition,
         )
         processed = processing_runner.run_one()
         assert processed is not None and processed["state"] == "succeeded"
+        assert repository.get(submission_id)["status"] == "finalized"  # No student status GET needed.
         processing_runner.shutdown()
         assertions += 1
 

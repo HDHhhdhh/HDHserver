@@ -1074,7 +1074,7 @@ class StudentTestOcrRepository:
 
         def action(connection: sqlite3.Connection):
             row = connection.execute(
-                "SELECT state,lease_token FROM student_test_ocr_jobs WHERE id=?",
+                "SELECT state,lease_token,submission_id FROM student_test_ocr_jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
             if row is None or row["state"] != "running" or row["lease_token"] != lease_token:
@@ -1085,6 +1085,12 @@ class StudentTestOcrRepository:
                 "error_code=?,updated_at=? WHERE id=?",
                 (state, result_json, "" if succeeded else str(error_code or "ocr_failed"), now, job_id),
             )
+            if not succeeded:
+                connection.execute(
+                    "UPDATE student_test_ocr_submissions SET status='failed',revision=revision+1,updated_at=? "
+                    "WHERE id=? AND status='processing'",
+                    (now, row["submission_id"]),
+                )
             saved = connection.execute(
                 "SELECT id,submission_id,state,payload_json,result_json,attempts,lease_token,lease_expires_at,"
                 "error_code,created_at,updated_at FROM student_test_ocr_jobs WHERE id=?",

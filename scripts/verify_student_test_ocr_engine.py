@@ -12,6 +12,7 @@ from core.student_test_ocr_engine import (
     WorkerSpec,
     recognize_answer_value_crop,
     recognize_sheet,
+    _build_answer_candidate,
 )
 from core.student_test_ocr_rules import (
     ANSWER_VALUE,
@@ -109,6 +110,20 @@ def run() -> dict:
         )
         assert routed["status"] == STATUS_READY_TO_GRADE and routed["uncertainCount"] == 0
         assert set(routed["workers"]) == {"choice_digit", "paddle", "formula", "unimernet"}
+        assertions += 2
+
+        primary = {"text": "1/2", "tokenConfidence": 0.9999, "variantText": "1/2", "variantAgreed": True}
+        assert _build_answer_candidate(crops[1], {}, primary, {}, ConfidencePolicy())["confident"] is False
+        assert _build_answer_candidate(crops[1], {"text": "0.5"}, primary, {}, ConfidencePolicy())["confident"] is True
+        assert _build_answer_candidate(crops[1], {"text": "0.6"}, primary, {}, ConfidencePolicy())["confident"] is False
+        assertions += 3
+        all_choice = [OcrCrop(c.question_no, CHOICE_NUMBER, c.image_path) for c in crops]
+        absent_worker = WorkerSpec("paddle", root / "missing.exe", root / "missing.py")
+        only_choice = recognize_sheet(crops=all_choice, asset_root=asset_root, paddle_worker=absent_worker,
+                                     unimernet_worker=absent_worker, choice_worker=choice, formula_worker=absent_worker,
+                                     policy=ConfidencePolicy(require_choice_cross_engine_agreement=False))
+        assert only_choice["status"] == STATUS_READY_TO_GRADE
+        assert set(only_choice["workers"]) == {"choice_digit"}
         assertions += 2
 
         adaptive_unimernet = WorkerSpec(

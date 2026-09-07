@@ -148,7 +148,7 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
         result = get_log_repository().read_entry(date_key, sid)
         return result.entry if isinstance(result.entry, dict) else {}
 
-    return StudentTestOcrService(
+    service = StudentTestOcrService(
         repository=repository,
         job_runner=runner,
         asset_root=config.asset_root,
@@ -162,6 +162,8 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
         solution_crop_provider=UnitSolutionCropProvider(config.solution_pdf_root),
         token_ttl_seconds=config.token_ttl_seconds,
     )
+    runner.on_recognition_committed = service.complete_recognition
+    return service
 
 
 def _service() -> StudentTestOcrService:

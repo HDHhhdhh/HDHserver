@@ -6,10 +6,12 @@ import os
 import random
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final, Sequence
 
 from core.student_test_formula_profiles import FORMULA_PROFILE_DATASETS, formula_profile_datasets
+from scripts.student_test_formula_dataset_contract import dataset_signature
 
 
 ROOT: Final = Path(__file__).resolve().parents[1]
@@ -54,11 +56,18 @@ def training_config_contract(path: Path) -> dict:
     weight = Path(str(manifest.get("baseWeight") or "")).resolve()
     if not weight.is_file():
         raise ValueError("UniMERNet base weight is missing")
+    if manifest.get("baseWeightSha256") != _sha256_file(weight):
+        raise ValueError("base weight is unbound or changed; regenerate the training config manifest")
     expected_splits = {
         "train": (Path(str(manifest.get("trainDataset") or "")).resolve(), int(manifest.get("trainCount") or 0)),
         "eval": (Path(str(manifest.get("validationDataset") or "")).resolve(), int(manifest.get("validationCount") or 0)),
     }
     split_rows = {}
+    if expected_splits["train"][0] == expected_splits["eval"][0]:
+        raise ValueError("training and validation roots must differ")
+    signatures = manifest.get("datasetSignatures")
+    if not isinstance(signatures, dict):
+        raise ValueError("training data is unbound; regenerate the training config manifest")
     for split_name, (dataset_root, expected_count) in expected_splits.items():
         images = dataset_root / "images"
         annotation = dataset_root / "equations.txt"
@@ -66,6 +75,8 @@ def training_config_contract(path: Path) -> dict:
             raise ValueError("UniMERNet formula training dataset input is missing")
         if len(annotation.read_text(encoding="utf-8").splitlines()) != expected_count:
             raise ValueError("UniMERNet formula training annotation count mismatch")
+        if dataset_signature(dataset_root) != signatures.get(split_name):
+            raise ValueError("UniMERNet training dataset content changed")
         split_rows[split_name] = {"count": expected_count, "images": str(images), "annotation": str(annotation)}
     return {
         "profile": profile,
@@ -124,7 +135,7 @@ def preflight(config_paths: Sequence[Path]) -> dict:
     return {
         "schema": "student_test_formula_training_preflight_v1",
         "ready": bool(cuda["cudaAvailable"] and cuda["cudaDeviceCount"] >= 1),
-        "execution": "sequential single-GPU torchrun jobs",
+        "execution": "sequential single-GPU direct jobs" if sys.platform == "win32" else "sequential single-GPU torchrun jobs",
         "configs": configs,
         "cuda": cuda,
         "answerKeyFieldsUsed": 0,
@@ -143,6 +154,39 @@ def torchrun_command(config_path: Path) -> list[str]:
         "--single-config",
         str(config_path.resolve()),
     ]
+
+
+def training_command(config_path: Path, *, platform: str | None = None) -> list[str]:
+    if (platform or sys.platform) == "win32":
+        return [sys.executable, "-B", "-m", "scripts.train_student_test_formula_profiles",
+                "--single-config", str(config_path.resolve())]
+    return torchrun_command(config_path)
+
+
+@contextmanager
+def single_process_barrier(dist):
+    """Upstream runner_iter calls barrier even with distributed:false.
+
+    This adapter is confined to the single-config subprocess, leaves an initialized
+    process group untouched, and restores the library function on every exit.
+    """
+    barrier = dist.barrier
+    def guarded(*args, **kwargs):
+        if dist.is_available() and dist.is_initialized():
+            return barrier(*args, **kwargs)
+        return None
+    dist.barrier = guarded
+    try:
+        yield
+    finally:
+        dist.barrier = barrier
+
+
+def selected_checkpoint(run_directory: Path) -> Path:
+    path = run_directory / "checkpoint_best.pth"
+    if not path.is_file():
+        raise RuntimeError("best checkpoint is missing; latest must not be substituted")
+    return path
 
 
 def _setup_seeds(config) -> None:
@@ -165,6 +209,7 @@ def run_single_config(config_path: Path) -> None:
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     import unimernet.datasets.builders  # noqa: F401
+    import unimernet.common.optims  # noqa: F401 -- registers the configured LR schedule
     import unimernet.models  # noqa: F401
     import unimernet.processors  # noqa: F401
     import unimernet.runners  # noqa: F401
@@ -190,7 +235,13 @@ def run_single_config(config_path: Path) -> None:
         raise RuntimeError("UniMERNet training runner is unavailable")
     runner = runner_class(cfg=cfg, job_id=now(), task=task, model=model, datasets=datasets)
     print(json.dumps({"progress": "formula_training_started", "profile": contract["profile"]}), flush=True)
-    runner.train()
+    import torch.distributed as dist
+    with single_process_barrier(dist):
+        runner.train()
+    selected = selected_checkpoint(Path(runner.output_dir))
+    print(json.dumps({"progress": "formula_training_completed", "profile": contract["profile"],
+                      "selection": "best_validation", "checkpoint": str(selected),
+                      "checkpointSha256": _sha256_file(selected), "deploymentReady": False}), flush=True)
 
 
 def main() -> int:
@@ -205,7 +256,7 @@ def main() -> int:
     if not report["ready"]:
         raise RuntimeError("UniMERNet formula fine-tuning is blocked: NVIDIA CUDA is unavailable")
     for config_path in args.config:
-        subprocess.run(torchrun_command(config_path), cwd=ROOT, check=True)
+        subprocess.run(training_command(config_path), cwd=ROOT, check=True)
     return 0
 
 

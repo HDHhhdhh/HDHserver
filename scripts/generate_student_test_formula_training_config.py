@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from core.student_test_formula_profiles import FORMULA_PROFILE_DATASETS, formula_profile_datasets
+from scripts.student_test_formula_dataset_contract import dataset_signature
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iters", type=int, default=5000)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--accum-grad-iters", type=int, default=2)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260829)
     return parser.parse_args()
 
@@ -157,7 +158,7 @@ def generate(
     max_iters: int = 5000,
     batch_size: int = 4,
     accum_grad_iters: int = 2,
-    num_workers: int = 4,
+    num_workers: int = 0,
     seed: int = 20260829,
 ) -> dict:
     formula_profile_datasets(profile)
@@ -173,6 +174,11 @@ def generate(
         raise ValueError("UniMERNet base model and weight must exist")
     if max_iters < 1 or batch_size < 1 or accum_grad_iters < 1 or num_workers < 0:
         raise ValueError("UniMERNet training parameters are invalid")
+    if train_root == validation_root:
+        raise ValueError("training and validation roots must differ")
+    signatures = {"train": dataset_signature(train_root), "eval": dataset_signature(validation_root)}
+    if signatures["train"]["count"] != train_manifest.get("count") or signatures["eval"]["count"] != validation_manifest.get("count"):
+        raise ValueError("formula manifest count disagrees with actual images")
     text = training_config_text(
         train_root=train_root,
         validation_root=validation_root,
@@ -197,6 +203,10 @@ def generate(
         "validationDataset": str(validation_root),
         "baseModelDir": str(base_model_dir),
         "baseWeight": str(base_weight),
+        "baseWeightSha256": _sha256_file(base_weight),
+        "datasetSignatures": signatures,
+        "validationEvidence": "official_split_diagnostic_not_camera_holdout",
+        "returnCheckpointSelection": "best_validation; never silently substitute latest",
         "outputConfig": str(output_config),
         "outputDir": str(output_dir),
         "device": "cuda",

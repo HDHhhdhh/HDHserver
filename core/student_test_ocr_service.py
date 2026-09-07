@@ -299,6 +299,13 @@ class StudentTestOcrService:
         except StudentTestOcrConflictError as error:
             raise StudentTestOcrServiceError(error.code, str(error), 409) from error
 
+    def complete_recognition(self, submission: dict) -> dict:
+        """Finish server-side grading even if the camera page stops polling."""
+        fresh = self.repository.get(submission["id"])
+        if fresh is None:
+            _fail("submission_not_found", "OCR submission was not found", 404)
+        return self._grade_if_ready(fresh)
+
     def status(self, *, submission_id: str, sid: str) -> dict:
         submission = self.repository.get(submission_id, sid=sid)
         if submission is None:

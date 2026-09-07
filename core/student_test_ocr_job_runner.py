@@ -121,6 +121,7 @@ class StudentTestOcrJobRunner:
         recognizer: Callable[..., dict],
         clock: Callable[[], dt.datetime],
         lease_seconds: int = 180,
+        on_recognition_committed: Callable[[dict], dict] | None = None,
     ):
         self.repository = repository
         self.asset_root = asset_root.resolve()
@@ -128,6 +129,7 @@ class StudentTestOcrJobRunner:
         self.recognizer = recognizer
         self.clock = clock
         self.lease_seconds = lease_seconds
+        self.on_recognition_committed = on_recognition_committed
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="student-test-ocr-job")
         self._guard = threading.Lock()
         self._active: Future | None = None
@@ -138,12 +140,17 @@ class StudentTestOcrJobRunner:
             raise ValueError("OCR job clock must return timezone-aware datetimes")
         return value
 
-    @staticmethod
-    def _cleanup_generated(items: Sequence[Mapping[str, object]]) -> None:
+    def _cleanup_generated(self, items: Sequence[Mapping[str, object]], output_dir: Path | None) -> None:
+        if output_dir is None or not output_dir.is_relative_to(self.asset_root):
+            return
         parents: set[Path] = set()
         for item in items:
             for key in ("imagePath", "recognitionImagePath"):
-                path = Path(str(item.get(key) or ""))
+                if not item.get(key):
+                    continue
+                path = Path(str(item[key])).resolve()
+                if not path.is_relative_to(output_dir):
+                    continue
                 parents.add(path.parent)
                 try:
                     path.unlink(missing_ok=True)
@@ -168,6 +175,7 @@ class StudentTestOcrJobRunner:
         if job is None:
             return None
         generated_items: list[dict] = []
+        output_dir: Path | None = None
         try:
             payload = validate_job_payload(job["payload"])
             capture_path = _safe_asset_path(self.asset_root, payload["captureRelativePath"])
@@ -184,6 +192,13 @@ class StudentTestOcrJobRunner:
             generated_items = [dict(item) for item in raw_crop_items if isinstance(item, dict)]
             if len(generated_items) != 20:
                 raise OcrJobPayloadError("crop worker item contract is invalid")
+            for number, item in enumerate(generated_items, 1):
+                if item.get("questionNo") != number:
+                    raise OcrJobPayloadError("crop worker question order is invalid")
+                for key in ("imagePath", "recognitionImagePath"):
+                    path = Path(str(item.get(key) or "")).resolve()
+                    if not path.is_relative_to(output_dir) or not path.is_file():
+                        raise OcrJobPayloadError("crop worker returned an invalid output path")
             quality = crop_response.get("quality")
             quality = quality if isinstance(quality, dict) else {"ok": False, "failures": ["quality_missing"]}
             crops = [
@@ -191,7 +206,9 @@ class StudentTestOcrJobRunner:
                     question_no=question_no,
                     answer_mode=payload["answerModes"][question_no - 1],
                     image_path=Path(
-                        str(generated_items[question_no - 1].get("recognitionImagePath") or "")
+                        str(generated_items[question_no - 1].get(
+                            "imagePath" if payload["answerModes"][question_no - 1] == ANSWER_VALUE else "recognitionImagePath"
+                        ) or "")
                     ),
                 )
                 for question_no in range(1, 21)
@@ -237,9 +254,8 @@ class StudentTestOcrJobRunner:
                 expected_revision=payload["submissionRevision"],
                 now=now_text,
             )
-            return {"jobId": job["id"], "state": "succeeded", "submission": committed["submission"]}
         except Exception as error:
-            self._cleanup_generated(generated_items)
+            self._cleanup_generated(generated_items, output_dir)
             code = getattr(error, "code", "ocr_job_failed")
             try:
                 self.repository.finish_job(
@@ -253,6 +269,23 @@ class StudentTestOcrJobRunner:
             except StudentTestOcrConflictError:
                 pass
             return {"jobId": job["id"], "state": "failed", "errorCode": str(code)}
+        # Committed review crops must survive a later grading failure. Recognition-only
+        # intermediates have no retention row, so remove them immediately after use.
+        for item in generated_items:
+            if item["recognitionImagePath"] != item["imagePath"]:
+                try:
+                    Path(item["recognitionImagePath"]).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        submission = committed["submission"]
+        result = {"jobId": job["id"], "state": "succeeded", "submission": submission}
+        if self.on_recognition_committed is not None:
+            try:
+                result["submission"] = self.on_recognition_committed(submission)
+            except Exception as error:
+                # A later status read can retry grading with a fresh catalog revision.
+                result["gradingErrorCode"] = str(getattr(error, "code", "grading_failed"))
+        return result
 
     def run_until_empty(self, *, maximum_jobs: int = 100) -> list[dict]:
         results: list[dict] = []

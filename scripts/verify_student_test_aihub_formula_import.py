@@ -128,6 +128,24 @@ def run() -> dict:
             )
         )
         assertions += 6
+        other = root / "other-h1"
+        _write_converted_root(other, "H_G1", ["x+1", "3", "-7"])
+        focused = build_profile(profile=FORMULA_PROFILE_COMMON, grade_roots={"M_G3": m3, "H_G1": other},
+                                output_root=root / "focused", numeric_answers_only=True)
+        assert focused["count"] == 3 and focused["filtered"]["outsideNumericAnswerGrammar"] == 1
+        assert "3" in (root / "focused" / "equations.txt").read_text(encoding="utf-8").splitlines()
+        strict = build_profile(profile=FORMULA_PROFILE_COMMON, grade_roots={"M_G3": m3, "H_G1": other},
+                               output_root=root / "strict", exclude_writers_from=profile_output)
+        assert strict["count"] == 1
+        assert (root / "strict" / "equations.txt").read_text(encoding="utf-8").strip() == "-7"
+        assertions += 4
+        empty_training = root / "empty-training"
+        empty_training.mkdir()
+        (empty_training / "provenance.jsonl").write_text("", encoding="utf-8")
+        _raises(lambda: build_profile(profile=FORMULA_PROFILE_COMMON, grade_roots={"M_G3": m3, "H_G1": h1},
+            output_root=root / "invalid-strict", exclude_writers_from=empty_training))
+        assert not (root / "invalid-strict").exists()
+        assertions += 2
 
     return {"name": "student-test-aihub-formula-import", "assertions": assertions, "passed": True}
 

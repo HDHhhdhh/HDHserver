@@ -57,18 +57,21 @@ def run() -> dict:
         capture.write_bytes(b"capture")
 
         def cropper(*, asset_root, image_path, output_dir):
-            assert asset_root == root.resolve() and image_path == capture.resolve()
+            assert asset_root == root.resolve() and image_path.is_file()
             output_dir.mkdir(parents=True)
             items = []
             for number in range(1, 21):
                 path = output_dir / f"q{number:03d}.png"
                 path.write_bytes(b"crop")
-                items.append({"questionNo": number, "imagePath": str(path), "warnings": []})
+                cleaned = output_dir / f"recognition-{number:03d}.png"
+                cleaned.write_bytes(b"cleaned")
+                items.append({"questionNo": number, "imagePath": str(path), "recognitionImagePath": str(cleaned), "warnings": []})
             return {"quality": {"ok": True, "failures": []}, "items": items}
 
         def recognizer(*, crops, asset_root, formula_profile):
             assert len(crops) == 20 and asset_root == root.resolve()
             assert formula_profile == FORMULA_PROFILE_COMMON
+            assert all(crop.image_path.read_bytes() == (b"crop" if crop.answer_mode == ANSWER_VALUE else b"cleaned") for crop in crops)
             candidates = [
                 {
                     "questionNo": crop.question_no,
@@ -97,6 +100,9 @@ def run() -> dict:
         assert runner.run_one() is None
         assertions += 6
         runner.shutdown()
+        assert not list((root / "sub-ok" / "crops").rglob("recognition-*.png"))
+        assert len(list((root / "sub-ok" / "crops").rglob("q*.png"))) == 20
+        assertions += 2
 
         _setup(repository, suffix="fail")
         failed_capture = root / "sub-fail" / "capture.jpg"
@@ -115,12 +121,42 @@ def run() -> dict:
         )
         failed = failed_runner.run_one()
         assert failed is not None and failed["state"] == "failed"
-        assert repository.get("sub-fail")["status"] == "processing"
+        assert repository.get("sub-fail")["status"] == "failed"
         assert repository.get_job_for_submission("sub-fail")["state"] == "failed"
         assert repository.list_assets_for_submission("sub-fail") == []
         assert not any((root / "sub-fail" / "crops").rglob("*.png"))
         assertions += 5
         failed_runner.shutdown()
+
+        _setup(repository, suffix="callback")
+        callback_capture = root / "sub-callback" / "capture.jpg"
+        callback_capture.parent.mkdir()
+        callback_capture.write_bytes(b"capture")
+        def failed_grading(_submission):
+            raise RuntimeError("catalog read failed after commit")
+        callback_runner = StudentTestOcrJobRunner(repository=repository, asset_root=root, cropper=cropper,
+            recognizer=recognizer, clock=lambda: now, on_recognition_committed=failed_grading)
+        outcome = callback_runner.run_one()
+        assert outcome["state"] == "succeeded" and outcome["gradingErrorCode"] == "grading_failed"
+        assert repository.get_job_for_submission("sub-callback")["state"] == "succeeded"
+        assert len(list((root / "sub-callback" / "crops").rglob("q*.png"))) == 20
+        callback_runner.shutdown()
+        assertions += 3
+
+        _setup(repository, suffix="invalid-output")
+        invalid_capture = root / "sub-invalid-output" / "capture.jpg"
+        invalid_capture.parent.mkdir()
+        invalid_capture.write_bytes(b"preserve original capture")
+        def invalid_cropper(**kwargs):
+            response = cropper(**kwargs)
+            response["items"][0]["imagePath"] = str(invalid_capture)
+            return response
+        invalid_runner = StudentTestOcrJobRunner(repository=repository, asset_root=root, cropper=invalid_cropper,
+            recognizer=recognizer, clock=lambda: now)
+        assert invalid_runner.run_one()["state"] == "failed"
+        assert invalid_capture.read_bytes() == b"preserve original capture"
+        invalid_runner.shutdown()
+        assertions += 2
 
     return {"name": "student-test-ocr-job-runner", "assertions": assertions, "passed": True}
 

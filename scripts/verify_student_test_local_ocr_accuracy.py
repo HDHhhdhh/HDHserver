@@ -36,7 +36,7 @@ def main() -> int:
         assert targets[1] == "3" and targets[2] == REJECT_LABEL and targets[20] == REJECT_LABEL
         assertions += 1
         formulas, unsupported = formula_targets(transcription)
-        assert formulas == {2: r"\frac{1}{2}"} and unsupported == (3,)
+        assert formulas == {1: "3", 2: r"\frac{1}{2}"} and unsupported == (3,)
         assertions += 1
 
     choice_rows = [
@@ -47,6 +47,25 @@ def main() -> int:
     choice = summarize_choice_rows(choice_rows)
     assert choice["evaluated"] == 3 and choice["choiceEvaluated"] == 2 and choice["rejectEvaluated"] == 1
     assertions += 1
+
+    from scripts.student_test_ocr_evidence import check_transcription_source, validate_eval_inputs
+    observed = {"case": {"cropCount": 20, "cropContentSha256": "a" * 64, "humanTranscriptionSha256": "b" * 64}}
+    manifest = {"schema": "student_test_ocr_eval_inputs_v1", "templateSha256": "c" * 64,
+                "cases": {"case": {**observed["case"], "answerMode": "answer_value"}}}
+    validate_eval_inputs(manifest, observed, template_sha256="c" * 64, choice_cases=(), formula_cases=("case",))
+    changed = {"case": {**observed["case"], "cropContentSha256": "d" * 64}}
+    for callback in (
+        lambda: validate_eval_inputs(manifest, changed, template_sha256="c" * 64, choice_cases=(), formula_cases=("case",)),
+        lambda: validate_eval_inputs(manifest, observed, template_sha256="e" * 64, choice_cases=(), formula_cases=("case",)),
+        lambda: check_transcription_source({"visual_sources": [str(Path("first/crops").resolve())]}, Path("other/crops")),
+    ):
+        try:
+            callback()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("mismatched OCR evidence was accepted")
+    assertions += 4
     assert choice["rawAccuracy"] == 2 / 3 and choice["coverage"] == 1 / 2
     assertions += 1
     assert choice["wrongAutoGrades"] == 0 and choice["rejectRecall"] == 1.0
@@ -85,6 +104,12 @@ def main() -> int:
     }
     markdown = render_markdown(report)
     assert "wrong auto grades" in markdown and "provider calls: 0" in markdown
+    assertions += 1
+    assert "Missing profile checkpoints keep production at NO_GO." in markdown
+    assertions += 1
+    ready_markdown = render_markdown({**report, "profileModelsReady": True})
+    assert "Production activation remains gated by the configured readiness checks." in ready_markdown
+    assert "Missing profile checkpoints" not in ready_markdown
     assertions += 1
 
     print(f"student test local OCR accuracy verification passed: {assertions} assertions")

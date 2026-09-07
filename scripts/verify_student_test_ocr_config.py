@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from core.student_test_formula_profiles import FORMULA_PROFILE_COMMON, FORMULA_PROFILE_UPPER
 from core.student_test_ocr_config import load_student_test_ocr_config
+from core.student_test_ocr_readiness import UNIMERNET_ASSETS, deployment_evidence_reasons
 
 
 def run() -> dict:
@@ -86,6 +87,9 @@ def run() -> dict:
             runtime_root / "paddlex-cache" / "official_models" / "PP-FormulaNet-S",
         ):
             directory.mkdir(parents=True, exist_ok=True)
+        for model_dir in (runtime_root / "models").iterdir():
+            for name in UNIMERNET_ASSETS:
+                (model_dir / name).write_text("{}", encoding="utf-8")
         scripts_dir = root / "scripts"
         scripts_dir.mkdir(exist_ok=True)
         for filename in (
@@ -120,7 +124,9 @@ def run() -> dict:
         metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
         with patch.dict(os.environ, base_environment, clear=True):
             ready = load_student_test_ocr_config(project_root=root)
-        assert ready.runtime_available() is True
+        assert ready.runtime_available() is False  # Choice GO cannot release untested formula routes.
+        assert ready.readiness_report()["installed"] is True
+        assert "deployment_evidence_missing_or_unreadable" in ready.readiness_report()["reasons"]
         assertions += 1
 
         metrics["readiness"]["status"] = "NO_GO"
@@ -135,8 +141,19 @@ def run() -> dict:
             clear=True,
         ):
             qa_override = load_student_test_ocr_config(project_root=root)
-        assert qa_override.allow_unready_models is True
-        assert qa_override.runtime_available() is True
+        assert qa_override.allow_unready_models is False  # Environment alone is not isolation evidence.
+        assert qa_override.runtime_available() is False
+        assertions += 2
+        (root / ".academy-isolated-server.json").write_text(json.dumps({
+            "format": "academy-isolated-server/v1", "isolatedRoot": str(root), "sourceRoot": str(root / "source"),
+        }), encoding="utf-8")
+        with patch.dict(os.environ, {**base_environment, "ACADEMY_ISOLATED_SERVER_ROOT": str(root),
+                                    "STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS": "1"}, clear=True):
+            verified_qa = load_student_test_ocr_config(project_root=root)
+        assert verified_qa.allow_unready_models and verified_qa.runtime_available()
+        asset = runtime_root / "models" / "unimernet_m3_h1" / "tokenizer.json"
+        asset.unlink()
+        assert not verified_qa.runtime_available()  # QA can skip quality, not missing tokenizer assets.
         assertions += 2
 
         with patch.dict(
@@ -148,7 +165,56 @@ def run() -> dict:
         assert production_override.allow_unready_models is False
         assert production_override.runtime_available() is False
         assertions += 2
+        assertions += _verify_deployment_evidence(root)
     return {"name": "student-test-ocr-config", "assertions": assertions, "passed": True}
+
+
+def _verify_deployment_evidence(root: Path) -> int:
+    import hashlib
+    from copy import deepcopy
+
+    artifact = root / "test-model.bin"
+    artifact.write_bytes(b"reviewed-model")
+    evidence_path = root / "evidence.json"
+    policy = {"threshold": 0.995}
+    route = {"evaluated": 300, "accepted": 299, "wrongAccepted": 0,
+             "kinds": {"number": 200, "fraction": 50, "root": 50}}
+    evidence = {
+        "schema": "student_test_ocr_deployment_evidence_v1", "status": "GO",
+        "evidenceClass": "independent_v4_camera_holdout", "policy": policy,
+        "holdout": {"writerDisjoint": True, "labelsCheckedAgainstImages": True,
+                    "lockedBeforeEvaluation": True, "notUsedForTuning": True,
+                    "writerClusterReviewPassed": True, "manifestSha256": "a" * 64},
+        "routes": {"choice": {**route, "rejectEvaluated": 20, "rejectCorrect": 20,
+                              "perChoiceClass": {label: 60 for label in "12345"}},
+                   "m3_h1": dict(route), "m3_h1_h2_h3": dict(route)},
+        "sheetMetrics": {"p90Seconds": 25, "firstCaptureSuccessRate": 0.95, "fullRetakeRate": 0.03, "pendingRate": 0.01},
+        "artifactSha256": {"model": hashlib.sha256(b"reviewed-model").hexdigest()},
+    }
+
+    def reasons(payload):
+        evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+        return deployment_evidence_reasons(evidence_path, artifacts={"model": artifact}, policy=policy,
+                                           profiles=("m3_h1", "m3_h1_h2_h3"))
+
+    assert reasons(evidence) == []
+    mutations = [
+        lambda e: e["routes"].pop("m3_h1"),
+        lambda e: e["routes"]["m3_h1"].update(wrongAccepted=1),
+        lambda e: e["routes"]["choice"].update(accepted=20),
+        lambda e: e["holdout"].update(writerDisjoint=False),
+        lambda e: e["holdout"].update(writerClusterReviewPassed=False),
+        lambda e: e.update(evidenceClass="legacy_crop_diagnostic"),
+        lambda e: e["sheetMetrics"].update(p90Seconds=float("nan")),
+        lambda e: e["policy"].update(threshold=0.95),
+    ]
+    for change in mutations:
+        candidate = deepcopy(evidence)
+        change(candidate)
+        assert reasons(candidate)
+    artifact.write_bytes(b"unreviewed-model")
+    assert reasons(evidence) == ["artifact_changed:model"]
+    return 10
 
 
 if __name__ == "__main__":

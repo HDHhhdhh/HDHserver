@@ -335,8 +335,7 @@ def _build_answer_candidate(
         confident = confident and variant_agreed and answer_values_equivalent(primary, variant)
 
     supporters = 0
-    if variant_agreed and _valid_numeric_answer(variant) and answer_values_equivalent(primary, variant):
-        supporters += 1
+    # A second view of the same model is a stability check, not another engine.
     paddle_numeric = canonicalize_answer_text(paddle.get("text"))
     if _valid_numeric_answer(paddle_numeric) and answer_values_equivalent(primary, paddle_numeric):
         supporters += 1
@@ -397,6 +396,15 @@ def recognize_sheet(
     else:
         choice_crops = tuple(crop for crop in validated if crop.answer_mode == CHOICE_NUMBER)
         answer_crops = tuple(crop for crop in validated if crop.answer_mode == ANSWER_VALUE)
+        if not answer_crops and not selected_policy.require_choice_cross_engine_agreement:
+            response = run_json_worker(choice_worker, choice_crops)
+            items = _index_worker_items(response, "choice_digit", [crop.question_no for crop in choice_crops])
+            candidates = [_build_choice_candidate(crop, {}, items[crop.question_no], selected_policy) for crop in choice_crops]
+            return {
+                **classify_sheet_recognition([crop.answer_mode for crop in validated], candidates),
+                "engineSeconds": round(time.perf_counter() - started, 4),
+                "workers": {"choice_digit": {"wallSeconds": response["wallSeconds"]}},
+            }
         maximum_workers = 2 + int(bool(choice_crops)) + int(bool(answer_crops))
         with ThreadPoolExecutor(max_workers=maximum_workers, thread_name_prefix="student-test-ocr-engine") as pool:
             paddle_future = pool.submit(run_json_worker, paddle_worker, validated)

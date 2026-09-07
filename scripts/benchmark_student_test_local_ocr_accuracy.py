@@ -27,6 +27,7 @@ from core.student_test_ocr_rules import (
     numeric_answer_value,
 )
 from scripts.benchmark_student_test_choice_supporters import recognition_crops
+from scripts.student_test_ocr_evidence import check_transcription_source, validate_eval_inputs
 from scripts.student_test_choice_worker import (
     REJECT_LABEL,
     build_model,
@@ -41,7 +42,7 @@ from scripts.student_test_unimernet_worker import (
 )
 
 
-SCHEMA: Final = "student_test_local_ocr_accuracy_v1"
+SCHEMA: Final = "student_test_local_ocr_accuracy_v2"
 CHOICE_LABELS: Final = ("1", "2", "3", "4", "5")
 
 
@@ -60,6 +61,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--formula-case", nargs=3, action="append", default=[], metavar=("NAME", "CROPS", "TRANSCRIPTION"))
     parser.add_argument("--choice-model", nargs=2, action="append", default=[], metavar=("NAME", "CHECKPOINT"))
     parser.add_argument("--template", type=Path, required=True)
+    parser.add_argument("--input-manifest", type=Path, required=True,
+                        help="Frozen crop/transcription/template hashes and explicit case routes.")
     parser.add_argument("--formula-model-dir", type=Path, required=True)
     parser.add_argument("--formula-weight", default="unimernet_tiny.pth")
     parser.add_argument("--output", type=Path, required=True)
@@ -82,6 +85,7 @@ def cases(values: Sequence[Sequence[str]]) -> tuple[CaseSpec, ...]:
         actual = {path.name for path in case.crop_dir.glob("q*.png") if path.is_file()}
         if not expected.issubset(actual):
             raise ValueError(f"benchmark case must contain q001-q020: {case.name}")
+        check_transcription_source(json.loads(case.transcription.read_text(encoding="utf-8-sig")), case.crop_dir)
     return output
 
 
@@ -147,7 +151,7 @@ def formula_targets(path: Path) -> tuple[dict[int, str], tuple[int, ...]]:
     unsupported = []
     for row in human_answers(path):
         text = row["text"]
-        if row["confidence"] != "high" or text in CHOICE_LABELS:
+        if row["confidence"] != "high":
             continue
         try:
             numeric_answer_value(text)
@@ -406,6 +410,7 @@ def evaluate_formula(
                     "recognized": primary,
                     "variant": variant,
                     "rawCorrect": _safe_numeric_equivalent(primary, human),
+                    "transcriptionExact": normalized_formula(primary) == normalized_formula(human),
                     "variantAgreed": variant_agreed,
                     "tokenConfidence": token_confidence,
                     "minTokenConfidence": minimum_confidence,
@@ -435,7 +440,9 @@ def evaluate_formula(
                 )
             per_case[case_name] = summarize_formula_rows(case_rows)
     return {
-        "engine": "unimernet_tiny+paddle+pp_formulanet_s",
+        "engine": "unimernet+paddle+pp_formulanet_s",
+        "weightFilename": weight_filename,
+        "metric": "numeric_value_equivalence; not exact transcription",
         "modelSha256": sha256_file(model_dir.resolve() / weight_filename),
         "device": str(device),
         "modelLoadSeconds": model_load_seconds,
@@ -455,6 +462,7 @@ def render_markdown(report: Mapping[str, object]) -> str:
         f"- created: {report['createdAt']}",
         f"- operational status: {report.get('operationalStatus', 'not evaluated')}",
         f"- profile models ready: {report.get('profileModelsReady', False)}",
+        "- evidence: crop diagnostic only; not v4 whole-sheet or deployment validation",
         f"- provider calls: {report['safety']['providerCallCount']}",
         f"- answer-key fields used: {report['safety']['answerKeyFieldsUsed']}",
         f"- production state changed: {report['safety']['productionStateChanged']}",
@@ -508,7 +516,12 @@ def render_markdown(report: Mapping[str, object]) -> str:
                 for kind, values in formula["aggregate"]["kinds"].items()
             ),
             "",
-            "This is a local, key-free diagnostic. Missing profile checkpoints keep production at NO_GO.",
+            (
+                "This is a local, key-free diagnostic. Production activation remains gated by "
+                "the configured readiness checks."
+                if report.get("profileModelsReady") is True
+                else "This is a local, key-free diagnostic. Missing profile checkpoints keep production at NO_GO."
+            ),
         ]
     )
     return "\n".join(lines) + "\n"
@@ -530,6 +543,11 @@ def main() -> int:
     if len(all_cases) != len(choice_cases) + len(formula_cases):
         raise ValueError("choice and formula case names must be globally unique")
     before_manifests = {name: case_manifest(case) for name, case in all_cases.items()}
+    input_manifest = json.loads(args.input_manifest.read_text(encoding="utf-8"))
+    template_hash = sha256_file(template)
+    validate_eval_inputs(input_manifest, before_manifests, template_sha256=template_hash,
+                         choice_cases=[case.name for case in choice_cases],
+                         formula_cases=[case.name for case in formula_cases])
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="student-test-ocr-accuracy-") as temp_dir:
         prepared = {}
@@ -559,7 +577,7 @@ def main() -> int:
             supporter_timeout=max(60.0, args.supporter_timeout),
         )
     after_manifests = {name: case_manifest(case) for name, case in all_cases.items()}
-    if before_manifests != after_manifests:
+    if before_manifests != after_manifests or template_hash != sha256_file(template):
         raise RuntimeError("benchmark inputs changed during evaluation")
     profile_models_ready = bool(
         Path(r"C:\server-ocr\models\unimernet_m3_h1\unimernet_m3_h1.pth").is_file()
@@ -570,13 +588,17 @@ def main() -> int:
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "durationSeconds": round(time.perf_counter() - started, 4),
         "inputManifests": list(before_manifests.values()),
+        "inputManifestSha256": sha256_file(args.input_manifest),
+        "templateSha256": template_hash,
+        "evidenceClass": "crop_diagnostic",
+        "deploymentReady": False,
         "choice": {
             "policy": "digit_model_only_current_runtime_policy",
             "models": choice_models,
         },
         "formula": formula,
         "profileModelsReady": profile_models_ready,
-        "operationalStatus": "NO_GO" if not profile_models_ready else "REQUIRES_GATE_REVIEW",
+        "operationalStatus": "NO_GO",
         "safety": {
             "humanTranscriptionOnly": True,
             "answerKeyFieldsUsed": 0,

@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.train_student_test_formula_profiles import preflight, torchrun_command, training_config_contract
+from scripts.student_test_formula_dataset_contract import dataset_signature
+from scripts.train_student_test_formula_profiles import training_command, single_process_barrier, selected_checkpoint
 
 
 def run() -> dict:
@@ -58,6 +60,8 @@ run:
                     "trainDataset": str(train.resolve()),
                     "validationDataset": str(validation.resolve()),
                     "baseWeight": str(weight.resolve()),
+                    "baseWeightSha256": hashlib.sha256(weight.read_bytes()).hexdigest(),
+                    "datasetSignatures": {"train": dataset_signature(train), "eval": dataset_signature(validation)},
                     "outputConfig": str(config.resolve()),
                     "outputDir": str((root / "output").resolve()),
                     "device": "cuda",
@@ -75,6 +79,23 @@ run:
         assert contract["profile"] == "m3_h1" and contract["splits"]["train"]["count"] == 2
         assert contract["splits"]["eval"]["count"] == 1 and contract["answerKeyFieldsUsed"] == 0
         assertions += 2
+        image = train / "images" / "0000001.png"
+        image.unlink()
+        try:
+            training_config_contract(config)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing training image was accepted")
+        image.write_bytes(b"changed-image")
+        try:
+            training_config_contract(config)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("changed training image was accepted")
+        image.write_bytes(b"fixture")
+        assertions += 2
         with patch(
             "scripts.train_student_test_formula_profiles.cuda_status",
             return_value={
@@ -86,13 +107,37 @@ run:
             },
         ):
             report = preflight([config])
-        assert report["execution"] == "sequential single-GPU torchrun jobs"
+        import sys
+        assert report["execution"] == ("sequential single-GPU direct jobs" if sys.platform == "win32" else "sequential single-GPU torchrun jobs")
         assert report["ready"] is True and report["cuda"]["cudaDeviceCount"] == 1
         assertions += 2
         command = torchrun_command(config)
         assert command[-3:] == ["scripts.train_student_test_formula_profiles", "--single-config", str(config.resolve())]
         assert "--nproc_per_node=1" in command and "--standalone" in command
         assertions += 2
+        assert "torch.distributed.run" not in training_command(config, platform="win32")
+        assert "torch.distributed.run" in training_command(config, platform="linux")
+        from types import SimpleNamespace
+        calls = []
+        dist = SimpleNamespace(is_available=lambda: True, is_initialized=lambda: False,
+                               barrier=lambda: calls.append("barrier"))
+        original = dist.barrier
+        with single_process_barrier(dist):
+            dist.barrier()
+            assert not calls
+            dist.is_initialized = lambda: True
+            dist.barrier()
+        assert calls == ["barrier"] and dist.barrier is original
+        (root / "checkpoint_latest.pth").write_bytes(b"latest")
+        try:
+            selected_checkpoint(root)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("latest silently replaced best")
+        (root / "checkpoint_best.pth").write_bytes(b"best")
+        assert selected_checkpoint(root).name == "checkpoint_best.pth"
+        assertions += 6
     return {"name": "student-test-formula-profile-training", "assertions": assertions, "passed": True}
 
 

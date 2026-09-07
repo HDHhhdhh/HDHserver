@@ -1,6 +1,16 @@
 # 학생 시험 OCR 공개 데이터·학습 운영 메모
 
-**상태:** AI Hub Training/Validation 변환과 객관식 재학습 완료, 수식 CUDA 미세조정 대기. 연구·파일럿 전용이며 운영 모델 교체나 기능 플래그 활성화를 승인하지 않는다.
+**현재 상태(2026-09-06):** AI Hub 이미지 변환과 외부 NVIDIA 수식 학습은 완료했고 두 반환 체크포인트가 설치되어 있다. 그러나 새 v4 답안지의 실제 학생 촬영 holdout은 없고 운영은 **OFF / NO_GO**다. 기본 객관식은 v3를 유지한다. 이 문서가 OCR 학습·평가·출시 준비 상태의 정본이며, [전면 검토 기록](STUDENT_TEST_OCR_REVIEW_2026-09-06.md)은 이번 판단의 근거와 수정 범위를 보존한다.
+
+**무료 개선 후속:** 사용자는 유료 전환 대신 무료 개선 전체 진행을 승인했다. 원본/기존/테두리 제거 후보를 동일 입력으로 비교했고, 수식은 원본 crop이 유리하여 유형별 입력 경로를 분리했다. 실제 비교 수치·공개 파생 데이터·검증한 GPU 전달 패키지는 [무료 OCR 실행 결과](STUDENT_TEST_FREE_OCR_RESULTS_2026-09-06.md)에 기록했다. 추가 GPU 학습 자체는 미실행이며, 현재 컴퓨터에서 할 수 있는 데이터 준비·실행 코드·패키지 검증을 완료했다. 운영 OFF는 유지한다.
+
+## 이번 검토의 정정
+
+- 2026-08-31 반환 모델 재검증에는 `formula_daesu` 전사와 다른 사진 crop을 연결한 오류가 있었다. 당시 35.7%·32.1% 및 이를 이용한 학습 전후 개선 결론은 철회한다. 과거 `generated/gpu_formula_return_integration_20260831.md`와 그 실행 JSON은 감사용으로 보존하되 현재 품질 근거로 쓰지 않는다.
+- 2026-09-06 재검증은 8/29 원래 crop·전사·template 해시에 맞춰 입력을 고정했다. 주관식 `1~5`를 제외하던 평가 필터도 제거했으므로 수식 경로 진단 분모는 28개에서 60개가 됐다. 새 결과를 옛 28개 점수와 직접 비교하지 않는다.
+- 수식 보고서의 `rawAccuracy`는 **숫자값 동치율**이며 문자 전사 완전 일치율이나 20문항 전체 촬영 성공률이 아니다. 결과 상세는 [검토 기록의 진단 결과](STUDENT_TEST_OCR_REVIEW_2026-09-06.md#동일-입력-재진단)에 둔다.
+- 파일 설치, 학습 로그 지표, 과거 crop 진단, 실제 카메라 출시 검증을 서로 다른 증거로 취급한다. 과거 crop 전처리에서 테두리·점선 잔존을 직접 확인했다. 낮은 점수를 모델 학습량 또는 촬영 도메인 차이 하나로 단정하지 않는다.
+- 현재 환경에서 `readiness_report()`는 `installed:true`, `deploymentReady:false`다. 숫자 학습 gate와 독립 카메라 증거가 모두 부족하다. 플래그만으로 활성화할 수 없고 미준비 모델 우회는 marker-verified 격리 서버에 한정한다.
 
 ## 결론
 
@@ -10,7 +20,9 @@
 - 수식은 UniMERNet 사전학습 가중치에서 시작하되 AI Hub 교육 OCR의 `Bbox.type == 2` 수식 crop으로 두 개의 과목 프로필을 미세조정한다. `공통수학1·2`용은 `M_G3+H_G1`, 상위 과목용은 `M_G3+H_G1+H_G2+H_G3`를 사용한다.
 - 인터넷 데이터만으로 운영 정확도를 선언하지 않는다. 정답키가 아닌 독립 사람 전사 holdout에서 오수락 0건과 통계 gate를 함께 통과해야 한다.
 
-## 적용 완료
+## 데이터 구성과 2026-08-29까지의 진단 기록
+
+이 절의 날짜별 모델 점수는 당시 실험 기록이다. 이후 반환 모델·입력 오류 정정은 위 현재 상태와 검토 기록을 우선한다.
 
 `scripts/train_student_test_choice_classifier.py`는 다음 데이터를 한 번에 섞는다.
 
@@ -105,7 +117,9 @@ python -B -m scripts.build_student_test_formula_profile_dataset `
   --output <FORMULA_PROFILE_M3_H1>
 ```
 
-공식 UniMERNet의 `images/0000000.png + equations.txt` 학습 형식으로 생성하며, 프로필 병합은 grade별 수를 같게 만들지 않는다. `scripts.generate_student_test_formula_training_config`가 기존 `unimernet_tiny.pth`에서 시작하는 CUDA 미세조정 설정을 만들고, `scripts.train_student_test_formula_profiles`가 config SHA-256·입력 개수·CUDA를 검증한 뒤 두 프로필을 단일 GPU `torchrun` 작업으로 순차 실행한다. 현재 호스트는 `torch 2.12.1+cpu`, CUDA build와 장치가 모두 없어 preflight `ready:false`이며 weight update를 실행하지 않는다. NVIDIA CUDA 호스트에서는 다음 한 명령으로 하위 프로필 뒤 상위 프로필을 이어서 학습한다.
+공식 UniMERNet의 `images/0000000.png + equations.txt` 형식으로 생성하며 학년별 수를 같게 만들지 않는다. 설정 생성기와 학습 실행기는 annotation·연속 이미지 파일의 실제 개수/내용 SHA-256·base weight SHA-256·CUDA를 검증한다. 이미지가 없거나 입력이 바뀌면 학습을 거부한다. 이 검사는 이미지 decode 품질이나 라벨 정답성까지 보증하지 않는다. 과거 count-only manifest는 새 설정 생성기로 다시 생성해야 한다.
+
+Windows는 single-config subprocess, 그 외는 단일 GPU `torchrun`을 사용한다. 기본 DataLoader worker는 0이며 upstream optimizer registry와 비분산 barrier 호환을 실행기에 보존했다. 이번 로컬 검증은 계약/회귀 테스트이며 새 CUDA 경로의 실제 학습 검증은 다음 GPU 호스트에서 수행한다. 반환 산출물은 `checkpoint_best.pth`를 필수로 선택하고 latest로 몰래 대체하지 않는다. 현재 CPU 호스트에서는 weight update를 하지 않는다. 새 manifest를 생성한 NVIDIA 호스트에서 다음처럼 두 프로필을 순차 실행한다.
 
 ```powershell
 C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.train_student_test_formula_profiles `
@@ -129,14 +143,26 @@ C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.train_student_tes
 - 각 `1`~`5`마다 holdout 20개 이상, reject 20개 이상을 확보한다.
 - 신뢰도 0.995, margin 0.90, 두 전처리 variant 합의 기준을 낮추지 않는다.
 - 자동 수락 오인식 0건, 객관식 coverage 98% 이상, reject recall 98% 이상을 요구한다.
-- 오수락 0건이어도 자동 수락 표본에서 오류율의 단측 95% 상한이 1% 이하여야 한다. 이 조건만으로도 최소 299건의 무오류 자동 수락이 필요하다.
-- 모델의 `metrics.json`이 `GO`가 아니면 일반 runtime에서 로드하지 않는다.
+- 독립·동일분포 이항 시행 가정에서 무오류 `n`건의 단측 95% 오류율 상한은 `1 - 0.05^(1/n)`이며 1% 이하의 산술 최소값은 299다. 같은 작성자의 여러 문항/사진은 독립 시행으로 간주할 수 없으므로 **299 crop 또는 26명만으로 충분하다는 뜻이 아니다**. 작성자 군집 검토와 실제 운영 분포 검토를 별도로 통과해야 한다.
+- 숫자 `metrics.json:GO`는 필요조건일 뿐 충분조건이 아니다. `core/student_test_ocr_readiness.py`가 소유하는 `student_test_ocr_deployment_evidence_v1` 계약으로 choice/두 수식 경로의 검토 증거, 표본별 전사 확인·분리, sheet 속도/재촬영/보류 지표, 현재 모델·tokenizer·전처리 파일·정책 해시까지 함께 확인한다. 경로당 299건 무오류는 보수적 사전 심사선이며 통계적 안전 보증이 아니다. 수식 경로의 coverage는 보고하고, 98% 고정 gate는 객관식에만 적용한다.
+- `STUDENT_TEST_OCR_DEPLOYMENT_EVIDENCE`의 기본 경로는 `C:\server-ocr\deployment_evidence.json`이다. 사람이 검토한 증거 계약이며 JSON의 자기선언 자체를 독립 검증으로 보지 않는다. 현재 GO 파일은 생성하지 않았다.
 
 ## 현재 평가의 신뢰도 한계
 
-현재 holdout 답안지는 학습 필체와 분리되어 있고 정답키 대신 보이는 글자를 전사했지만, 그 전사를 만든 주체와 실험을 설계·검토한 주체가 같은 Codex 시각 검토 흐름이다. 따라서 `verifier = designer`와 동일 labeler pool 편향이 남는다. 현재 수치는 모델 비교용 진단으로는 쓰되 운영 `GO`의 독립 ground truth로 쓰지 않는다.
+과거 사람 전사 crop의 라벨 작성·설계·검토는 같은 Codex 시각 검토 흐름이다. 실험별 필체 분리 여부와 별개로 동일 labeler pool 편향이 남고 여러 번 모델 선택에 사용한 사진은 untouched holdout이 아니다. 현재 수치는 회귀 진단에만 쓰며 운영 `GO`의 독립 ground truth로 쓰지 않는다. 새 v4 답안지 실제 필체 데이터는 아직 없다.
 
 최종 gate에서는 답안 작성자 또는 실험 설계와 무관한 판독자가 OCR 출력과 정답키를 보지 않은 채 실제로 적힌 값을 먼저 확정하고, 전사 파일 hash를 고정한 뒤 모델을 실행한다. 이 작업은 매 제출마다 하는 교사 확인이 아니라 rollout 전 한 번의 표본 감사다.
+
+지정값을 베껴 쓰게 하더라도 지시값과 실제 필기는 다를 수 있다. 지정 답안표를 사진 확인 없이 정답 라벨로 사용하지 않는다. 같은 종이를 두 번 찍은 사진은 반드시 같은 split에 두며, calibration용 작성자와 최종 평가용 작성자를 분리한다. 수집 인원은 예비 결과와 군집 단위 불확실성을 보고 정한다.
+
+## 다음 GPU 실험과 출시 순서
+
+1. 상위 과목의 기존 best(4,000 iteration) 체크포인트를 회수해 현재 반환 latest(5,000)와 같은 고정 진단 입력으로 비교한다. 하위는 반환 로그상 best가 5,000이다. 기존 가중치와 변환 이미지/provenance는 삭제하지 않는다.
+2. 새 이미지 제작 없이 공식 Training에서 짧은 수치 답안 후보를 만든다. 프로필 생성기의 `--numeric-answers-only`는 기존 숫자값 문법으로 라벨을 선별하며 `1~5`도 포함한다. 기존 전체 수식 학습과 숫자·분수·루트 중심 학습을 비교하고, 한쪽을 사전 승자로 선언하지 않는다.
+3. 공식 Validation에서 `--exclude-writers-from <TRAIN_PROFILE>`로 Training 작성자를 뺀 평가 프로필을 만든다. 이 배제는 기존 `grade:writer` 기반 `writerHash` 범위이며 학년 간 동일 인물까지 증명하지 않는다. 두 프로필의 학년 구성은 사용자 결정대로 고정한다. 학년·표현 종류별 숫자값 동치율/전사 일치율/실패율을 별도로 기록한다.
+4. 전처리 3종 비교는 후속 실험에서 완료했다. 수식은 원본, 객관식은 기존 보정 경로를 채택하고 테두리 제거 후보는 기각했다. 근거와 제한은 [무료 OCR 실행 결과](STUDENT_TEST_FREE_OCR_RESULTS_2026-09-06.md)에 둔다. 학습량·전처리·confidence를 동시에 바꾸지 않으며 실제 20문항 지연시간은 별도로 확인한다.
+5. 공공 데이터에서 후보가 개선된 뒤 v4 실카메라 calibration과 별도 최종 holdout을 수집한다. threshold를 그 holdout으로 고르지 않는다. 토큰 score 0.995를 99.5% 정답 확률로 해석하지 않는다.
+6. 출시 전 20문항 end-to-end/대기열/재시작 복구, 7일 만료 삭제의 정기 실행, 당일 보류 처리 절차를 격리 환경에서 확인한다. 현재 만료 삭제 함수만 있고 정기 호출 연결은 없으므로 **7일 자동 삭제 운영은 미완료**다. 운영 migration·유지보수·기능 활성화는 별도 승인 단계다.
 
 ## 재현 경계
 

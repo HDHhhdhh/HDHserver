@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final, Mapping
 
@@ -13,6 +13,8 @@ from core.student_test_formula_profiles import (
 )
 from core.student_test_ocr_engine import ConfidencePolicy, WorkerSpec
 from core.student_test_sheet_cropper import CropWorkerSpec
+from core.runtime_server_guard import is_verified_isolated_server_root
+from core.student_test_ocr_readiness import UNIMERNET_ASSETS, deployment_evidence_reasons
 
 
 TRUTHY: Final = frozenset({"1", "true", "yes", "on"})
@@ -33,6 +35,7 @@ class StudentTestOcrConfig:
     confidence_policy: ConfidencePolicy
     token_ttl_seconds: int = 600
     allow_unready_models: bool = False
+    deployment_evidence_path: Path | None = None
 
     def unimernet_worker_for_profile(self, profile: object) -> WorkerSpec:
         normalized = str(profile or "").strip()
@@ -41,7 +44,8 @@ class StudentTestOcrConfig:
             raise ValueError("subjective OCR model profile is unavailable")
         return worker
 
-    def runtime_available(self) -> bool:
+    def readiness_report(self) -> dict:
+        """Installation and quality are independent; this method never enables OCR."""
         choice_model_path = Path(
             self.choice_worker.environment.get("STUDENT_TEST_OCR_CHOICE_MODEL_PATH", "")
         )
@@ -61,13 +65,14 @@ class StudentTestOcrConfig:
         profile_model_files: tuple[Path, ...] = ()
         profile_model_directories: tuple[Path, ...] = ()
         if set(self.unimernet_profile_workers) != set(FORMULA_PROFILE_DATASETS):
-            return False
+            return {"installed": False, "deploymentReady": False, "reasons": ["formula_profiles_incomplete"]}
         for worker in self.unimernet_profile_workers.values():
             model_dir = Path(worker.environment.get("STUDENT_TEST_OCR_UNIMERNET_MODEL_DIR", ""))
             weight = worker.environment.get("STUDENT_TEST_OCR_UNIMERNET_WEIGHT", "").strip()
             if not weight:
-                return False
+                return {"installed": False, "deploymentReady": False, "reasons": ["formula_weight_missing"]}
             profile_model_files += (worker.python_path, worker.script_path, model_dir / weight)
+            profile_model_files += tuple(model_dir / name for name in UNIMERNET_ASSETS)
             profile_model_directories += (model_dir,)
         required_files = (
             self.crop_worker.python_path,
@@ -82,7 +87,7 @@ class StudentTestOcrConfig:
             self.unimernet_worker.script_path,
             choice_model_path,
             unimernet_model_dir / unimernet_weight,
-        ) + profile_model_files
+        ) + profile_model_files + tuple(unimernet_model_dir / name for name in UNIMERNET_ASSETS)
         if self.crop_worker.template_path is not None:
             required_files += (self.crop_worker.template_path,)
         required_directories = (
@@ -94,24 +99,46 @@ class StudentTestOcrConfig:
         if not all(path.is_file() for path in required_files) or not all(
             path.is_dir() for path in required_directories
         ):
-            return False
-        if self.allow_unready_models:
-            return True
+            return {"installed": False, "deploymentReady": False, "reasons": ["runtime_assets_missing"]}
+        reasons = []
         metrics_path = choice_model_path.parent / "metrics.json"
         try:
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             checkpoint = Path(str(metrics.get("checkpoint") or "")).resolve()
             readiness = metrics.get("readiness")
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            return False
-        return bool(
+        except (OSError, ValueError, TypeError, AttributeError):
+            metrics, checkpoint, readiness = {}, None, None
+        if not (
             metrics.get("ok") is True
             and isinstance(readiness, dict)
             and readiness.get("status") == "GO"
             and metrics.get("answerKeyFieldsUsed") == 0
             and metrics.get("providerCallCount") == 0
             and checkpoint == choice_model_path.resolve()
-        )
+        ):
+            reasons.append("choice_training_gate_not_met")
+        artifacts = {str(path.resolve()): path for path in required_files}
+        core_root = Path(__file__).resolve().parent
+        for name in ("student_test_ocr_config.py", "student_test_ocr_engine.py", "student_test_ocr_rules.py",
+                     "student_test_formula_profiles.py", "student_test_ocr_readiness.py", "student_test_ocr_job_runner.py"):
+            path = core_root / name
+            artifacts[str(path.resolve())] = path
+        for directory in (paddle_model_dir, formula_model_dir):
+            for path in directory.rglob("*"):
+                if path.is_file():
+                    artifacts[str(path.resolve())] = path
+        if self.deployment_evidence_path is None:
+            reasons.append("deployment_evidence_missing_or_unreadable")
+        else:
+            reasons.extend(deployment_evidence_reasons(
+                self.deployment_evidence_path, artifacts=artifacts,
+                policy=asdict(self.confidence_policy), profiles=tuple(FORMULA_PROFILE_DATASETS),
+            ))
+        return {"installed": True, "deploymentReady": not reasons, "reasons": reasons}
+
+    def runtime_available(self) -> bool:
+        readiness = self.readiness_report()
+        return bool(readiness["installed"] and (readiness["deploymentReady"] or self.allow_unready_models))
 
 
 def _truthy(name: str) -> bool:
@@ -129,10 +156,8 @@ def _float(name: str, default: float, minimum: float, maximum: float) -> float:
 
 def load_student_test_ocr_config(*, project_root: Path | None = None) -> StudentTestOcrConfig:
     root = (project_root or Path(__file__).resolve().parents[1]).resolve()
-    isolated_root_text = os.environ.get("ACADEMY_ISOLATED_SERVER_ROOT", "").strip()
-    isolated_root = Path(isolated_root_text).resolve() if isolated_root_text else None
     allow_unready_models = bool(
-        isolated_root == root and _truthy("STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS")
+        _truthy("STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS") and is_verified_isolated_server_root(code_root=root)
     )
     runtime_root = Path(os.environ.get("STUDENT_TEST_OCR_RUNTIME_ROOT", r"C:\server-ocr")).resolve()
     server_python = runtime_root / ".venv" / "Scripts" / "python.exe"
@@ -278,4 +303,7 @@ def load_student_test_ocr_config(*, project_root: Path | None = None) -> Student
             require_unimernet_variant_agreement=_truthy("STUDENT_TEST_OCR_REQUIRE_SECOND_PASS"),
         ),
         allow_unready_models=allow_unready_models,
+        deployment_evidence_path=Path(os.environ.get(
+            "STUDENT_TEST_OCR_DEPLOYMENT_EVIDENCE", str(runtime_root / "deployment_evidence.json")
+        )).resolve(),
     )
