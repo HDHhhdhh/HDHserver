@@ -306,6 +306,10 @@
       word-break: break-word;
     }
 
+    .recognized-box {
+      white-space: pre-wrap;
+    }
+
     .reason-list {
       display: flex;
       flex-wrap: wrap;
@@ -599,7 +603,7 @@
         <button id="btnGeneratePayload" class="primary" type="button">최종 제출 payload 생성</button>
       </div>
       <p id="submitMessage" class="muted">실제 서버 제출은 하지 않습니다. 이 버튼은 mock payload만 생성합니다.</p>
-      <pre id="finalPayload">{"answers":[]}</pre>
+      <pre id="finalPayload">{}</pre>
     </section>
 
     <details class="panel">
@@ -612,7 +616,7 @@
             <button id="btnPick" type="button">JSON 열기</button>
           </label>
           <button id="btnRefreshExport" type="button">export 새로고침</button>
-          <button id="btnForcePayload" type="button">강제 payload 생성</button>
+          <button id="btnForcePayload" type="button">최종 JSON 검사</button>
           <button id="btnDownload" type="button">결과 JSON 다운로드</button>
           <span id="sampleName" class="sample-pill">sample: -</span>
         </div>
@@ -626,7 +630,7 @@
     <details id="debugDetails" class="panel">
       <summary>개발자 debug 정보 열기</summary>
       <div class="panel-body">
-        <p class="muted">이 영역에는 학생에게 보여주지 않는 expected, accepted_answers, raw warnings 등이 포함됩니다.</p>
+        <p class="muted">이 영역에는 같은 실행의 검토 상태와 이력만 포함됩니다.</p>
         <pre id="debugPayload">[]</pre>
       </div>
     </details>
@@ -645,10 +649,11 @@
     </div>
   </div>
 
+  <script src="ocr_review_run_contract.js"></script>
   <script>
     "use strict";
 
-    const SAMPLE_JSON = "review_ui_mock_sample_person02.json";
+
     const KEYPAD_GROUPS = [
       ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
       ["x", "y", "n"],
@@ -695,47 +700,6 @@
       crop_failed: "답안 영역을 정확히 찾지 못했습니다."
     };
 
-    const FALLBACK_SAMPLE = {
-      source: "embedded_person_02_student_review_sample",
-      test_id: "mock_test",
-      round: "2",
-      mock_retake_results: {
-        "6": {
-          question_no: 6,
-          status: "review_required",
-          recognized: "\u3134,\u3139",
-          candidates: ["\u3134,\u3139", "4,2"],
-          warnings: ["jamo_choice_confusion"],
-          crop_original_path: null,
-          crop_enhanced_path: null,
-          source_note: "mock_retake_recognition"
-        }
-      },
-      items: [
-        safeItem(1, "/"),
-        safeItem(2, "-3"),
-        dataCheckItem(3, "x=2", "x\u2192n", ["variable_confusion_x_n", "equation_part_missing", "possible_answer_key_or_crop_mismatch"]),
-        reviewItem(4, "0.5", "O.5", ["0.5", "O.5", "0,5"], ["digit_or_letter_confusion"]),
-        safeItem(5, "1/2"),
-        retakeItem(6, ["low_visibility", "answer_outside_safe_zone"]),
-        safeItem(7, "5"),
-        safeItem(8, "2x+1"),
-        safeItem(9, "3sqrt(2)"),
-        reviewItem(10, "0", "6", ["0", "6", "?"], ["digit_confusion_0_6"]),
-        safeItem(11, "256"),
-        safeItem(12, "a/2"),
-        safeItem(13, "1,3"),
-        reviewItem(14, "1<=x<=3", "14x63", ["1<=x<=3", "14x63", "1<x<3"], ["inequality_confusion", "operator_missing", "equation_part_missing"]),
-        reviewItem(15, "-1<x<5", "-145", ["-1<x<5", "-145", "-1<=x<=5"], ["inequality_confusion", "operator_missing"]),
-        reviewItem(16, "y=3", "y=n", ["y=3", "y=n", "y=?"], ["variable_confusion_x_n", "equation_part_missing"]),
-        safeItem(17, "1/2,9/2"),
-        reviewItem(18, "129/2", "139/2", ["129/2", "139/2", "?/2"], ["digit_confusion", "fraction_confusion"]),
-        safeItem(19, "2a1"),
-        reviewItem(20, "26sqrt(21)", "26??1", ["26sqrt(21)", "26??1", "26sqrt(?)"], ["sqrt_confusion", "missing_radical"]),
-        acceptedWarningItem(21, "0", ["digit_confusion_0_6"])
-      ]
-    };
-
     const state = {
       payload: null,
       items: [],
@@ -774,7 +738,7 @@
     document.getElementById("btnLoad").addEventListener("click", loadSample);
     document.getElementById("btnPick").addEventListener("click", () => els.fileInput.click());
     document.getElementById("btnRefreshExport").addEventListener("click", refreshDeveloperOutput);
-    document.getElementById("btnForcePayload").addEventListener("click", () => generateFinalPayload({ force: true }));
+    document.getElementById("btnForcePayload").addEventListener("click", generateFinalPayload);
     document.getElementById("btnDownload").addEventListener("click", downloadFinalPayload);
     document.getElementById("btnGeneratePayload").addEventListener("click", generateFinalPayload);
     document.getElementById("btnRetakeChoose").addEventListener("click", () => els.retakeImageInput.click());
@@ -782,222 +746,78 @@
     els.fileInput.addEventListener("change", loadPickedFile);
     els.retakeImageInput.addEventListener("change", handleRetakeImageSelected);
 
-    loadSample();
+    setSubmitMessage("같은 실행의 versioned 검수 JSON을 선택하세요. 실제 서버 제출은 없습니다.", false);
 
-    function safeItem(question, recognized) {
-      return {
-        question,
-        status: "safe_auto_grade",
-        recognized,
-        expected: recognized,
-        canonical_answer: recognized,
-        accepted_answers: [recognized],
-        warnings: [],
-        cropImage: cropPath(question),
-        enhancedImage: enhancedPath(question)
-      };
-    }
 
-    function reviewItem(question, expected, recognized, candidates, warnings) {
-      return {
-        question,
-        status: "review_required",
-        expected,
-        canonical_answer: expected,
-        accepted_answers: [expected],
-        recognized,
-        candidates,
-        warnings,
-        review_required: true,
-        needs_review: true,
-        cropImage: cropPath(question),
-        enhancedImage: enhancedPath(question)
-      };
-    }
 
-    function dataCheckItem(question, expected, recognized, warnings) {
-      return {
-        question,
-        status: "data_check_required",
-        review_policy: "data_check_required",
-        expected,
-        canonical_answer: expected,
-        accepted_answers: [expected],
-        recognized,
-        candidates: [],
-        warnings,
-        review_required: true,
-        needs_review: true,
-        cropImage: cropPath(question),
-        enhancedImage: enhancedPath(question)
-      };
-    }
 
-    function acceptedWarningItem(question, recognized, warnings) {
-      return {
-        question,
-        status: "safe_auto_grade",
-        review_policy: "review_required",
-        expected: recognized,
-        canonical_answer: recognized,
-        accepted_answers: [recognized],
-        recognized,
-        candidates: [recognized, "6", "?"],
-        warnings,
-        review_required: true,
-        needs_review: true,
-        cropImage: "",
-        enhancedImage: ""
-      };
-    }
 
-    function retakeItem(question, warnings) {
-      return {
-        question,
-        status: "retake_required",
-        recognized: "",
-        expected: "",
-        canonical_answer: "",
-        accepted_answers: [],
-        warnings,
-        review_required: true,
-        needs_review: true,
-        cropImage: cropPath(question),
-        enhancedImage: enhancedPath(question)
-      };
-    }
 
-    function cropPath(question) {
-      return `file:///C:/server-ocr/crop_benchmark_inputs/person_02/crops/q${String(question).padStart(3, "0")}.png`;
-    }
 
-    function enhancedPath(question) {
-      return `file:///C:/server-ocr/gemini_contact_benchmark_outputs/person_02/enhanced/q${String(question).padStart(3, "0")}.png`;
-    }
+
+
+
+
+
+
+
 
     async function loadSample() {
-      if (window.location.protocol === "file:") {
-        loadPayload(FALLBACK_SAMPLE, "embedded sample");
-        return;
-      }
-      try {
-        const response = await fetch(SAMPLE_JSON, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        loadPayload(await response.json(), SAMPLE_JSON);
-      } catch (error) {
-        loadPayload(FALLBACK_SAMPLE, "embedded sample");
-        setSubmitMessage(`샘플 파일을 직접 읽지 못해 내장 샘플을 표시했습니다. (${error.message})`, false);
-      }
+      clearInputState();
+      setSubmitMessage("내장 demo는 완료 검증에 사용하지 않습니다. 실행 JSON 파일을 선택하세요.", true);
     }
 
     function loadPickedFile(event) {
-      const file = event.target.files && event.target.files[0];
-      if (!file) {
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          loadPayload(JSON.parse(String(reader.result)), file.name);
-        } catch (error) {
-          setSubmitMessage(`JSON을 읽지 못했습니다: ${error.message}`, true);
-        }
+      const file=event.target.files?.[0];
+      if(!file) return;
+      const reader=new FileReader();
+      reader.onload=async()=>{
+        try { await loadPayload(JSON.parse(String(reader.result)), file.name); }
+        catch { clearInputState(); setSubmitMessage("입력 JSON 검증에 실패했습니다.",true); }
       };
-      reader.readAsText(file, "utf-8");
+      reader.onerror=()=>{clearInputState();setSubmitMessage("파일을 읽지 못했습니다.",true);};
+      reader.readAsText(file,"utf-8");
     }
 
-    function loadPayload(payload, label) {
-      state.payload = payload;
-      state.items = normalizeItems(payload.items || []);
-      state.decisions = new Map();
-      state.finalPayload = null;
-      state.activeRetakeQuestion = null;
-      clearFinalPayload();
-
-      for (const item of state.items) {
-        if (item.status === "review_required") {
-          state.decisions.set(item.question, {
-            question: item.question,
-            draft: item.recognized || "",
-            draftSource: "student_direct_input",
-            confirmed: false,
-            final_answer: item.recognized || "",
-            source: "pending"
-          });
-        } else if (item.status === "data_check_required") {
-          state.decisions.set(item.question, {
-            question: item.question,
-            confirmed: false,
-            final_answer: null,
-            source: "data_check_required"
-          });
-        } else if (item.status === "retake_required") {
-          state.decisions.set(item.question, {
-            question: item.question,
-            confirmed: false,
-            final_answer: null,
-            source: "pending_retake",
-            retake_image_attached: false,
-            retakePreviewUrl: "",
-            retakeFileName: ""
+    async function loadPayload(payload, label) {
+      clearInputState();
+      try {
+        const clean=await OCRReviewContract.parse(payload);
+        state.payload=clean;
+        state.items=normalizeItems(clean.items);
+        for(const item of state.items) {
+          state.decisions.set(item.question,{
+            question:item.question,draft:initialManualDraft(item.recognized),draftSource:"student_direct_input",
+            confirmed:item.status==="safe_auto_grade",final_answer:item.final_answer,
+            source:item.source||"pending",manualAllowed:item.candidates.length===0,
+            history:structuredClone(item.review_history||[]),retake_image_attached:false,
+            retakePreviewUrl:"",retakeFileName:""
           });
         }
+        els.sampleName.textContent="run: "+clean.identity.identity_sha256.slice(0,16);
+        renderAll();
+        setSubmitMessage(clean.demo?"demo는 최종화할 수 없습니다.":"검수 후 최종 JSON 미리보기를 생성하세요.",clean.demo);
+        return true;
+      } catch {
+        clearInputState();
+        setSubmitMessage("입력·실행·문항·이미지 검증에 실패했습니다. 새 검수 자료가 필요합니다.",true);
+        return false;
       }
-
-      els.sampleName.textContent = `sample: ${payload.source || label}`;
-      renderAll();
-      setSubmitMessage("실제 서버 제출은 하지 않습니다. 이 버튼은 mock payload만 생성합니다.", false);
     }
 
     function normalizeItems(items) {
-      return items.map((item) => {
-        const question = Number(item.question ?? item.question_no);
-        const warnings = Array.isArray(item.warnings) ? item.warnings.map(String) : [];
-        const status = normalizeStatus(item, item.status || inferStatus(item), warnings);
-        return {
-          ...item,
-          question,
-          status,
-          recognized: String(item.recognized ?? item.answer ?? ""),
-          candidates: Array.isArray(item.candidates) ? item.candidates.map(String) : [],
-          warnings,
-          cropImage: item.cropImage || item.crop_original_path || item.cropOriginalPath || "",
-          enhancedImage: item.enhancedImage || item.crop_enhanced_path || item.cropEnhancedPath || ""
-        };
-      }).filter((item) => Number.isFinite(item.question)).sort((a, b) => a.question - b.question);
+      return items.map(item=>({
+        ...item,question:item.question_no,
+        status:normalizeStatus(item,item.status,item.warnings),
+        cropImage:item.crop_preview,enhancedImage:""
+      }));
     }
 
-    function inferStatus(item) {
-      if (item.status) {
-        return item.status;
-      }
-      if (item.review_policy === "data_check_required") {
-        return "data_check_required";
-      }
-      if (item.retake_required) {
-        return "retake_required";
-      }
-      if (item.review_required || item.needs_review) {
-        return "review_required";
-      }
-      if (item.review_policy === "review_required") {
-        return "review_required";
-      }
-      return "safe_auto_grade";
-    }
+    function inferStatus() { return "data_check_required"; }
 
-    function normalizeStatus(item, status, warnings) {
-      if (status === "data_check_required" || item.review_policy === "data_check_required" || hasAnyWarning(warnings, DATA_CHECK_WARNINGS)) {
-        return "data_check_required";
-      }
-      if ((status === "safe_auto_grade" || status === "accepted") && hasAnyWarning(warnings, REVIEW_BLOCKING_WARNINGS)) {
-        return "review_required";
-      }
-      if (status === "accepted") {
-        return "safe_auto_grade";
-      }
+    function normalizeStatus(item,status,warnings) {
+      if(status==="data_check_required"||hasAnyWarning(warnings,DATA_CHECK_WARNINGS)) return "data_check_required";
+      if(status==="safe_auto_grade"&&hasAnyWarning(warnings,REVIEW_BLOCKING_WARNINGS)) return "review_required";
       return status;
     }
 
@@ -1104,6 +924,15 @@
       return card;
     }
 
+    function initialManualDraft(recognized) {
+      try {
+        OCRReviewContract.answer(recognized);
+        return recognized;
+      } catch {
+        return "";
+      }
+    }
+
     function renderReviewCard(item) {
       const decision = state.decisions.get(item.question);
       const card = document.createElement("article");
@@ -1121,8 +950,7 @@
       fields.append(infoBlock("자동 인식값", item.recognized || "인식값 없음", "recognized-box"));
       fields.append(studentReasons(item, "아래에서 맞는 답을 선택하거나 직접 수정해주세요."));
       fields.append(candidateButtons(item, decision));
-      fields.append(answerEditor(item, decision));
-      fields.append(keypad(item));
+      if (decision.manualAllowed) { fields.append(answerEditor(item, decision)); fields.append(keypad(item)); }
       if (decision.retakePreviewUrl) {
         fields.append(retakePreview(decision));
       }
@@ -1281,24 +1109,28 @@
       return item.warnings.map((warning) => map[warning] || "인식 결과 확인이 필요합니다.");
     }
 
-    function candidateButtons(item, decision) {
-      const row = document.createElement("div");
-      row.className = "info-row";
-      const label = document.createElement("div");
-      label.className = "info-label";
-      label.textContent = "후보";
-      const grid = document.createElement("div");
-      grid.className = "candidate-grid";
-      for (const candidate of item.candidates) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = candidate;
-        button.className = decision.draft === candidate ? "selected" : "";
-        button.addEventListener("click", () => selectCandidate(item.question, candidate));
-        grid.append(button);
+    function candidateButtons(item,decision) {
+      const row=document.createElement("div");row.className="info-row";
+      const label=document.createElement("div");label.className="info-label";label.textContent="후보";
+      const grid=document.createElement("div");grid.className="candidate-grid";
+      for(const candidate of item.candidates) {
+        const button=document.createElement("button");button.type="button";button.textContent=candidate;
+        button.dataset.candidate=candidate;
+        button.className=decision.draft===candidate&&decision.draftSource===candidateSource(item.question)?"selected":"";
+        button.addEventListener("click",()=>selectCandidate(item.question,candidate));grid.append(button);
       }
-      row.append(label, grid);
-      return row;
+      if(item.candidates.length) {
+        const none=document.createElement("button");none.type="button";none.textContent="맞는 후보 없음";
+        none.dataset.noCandidate="true";
+        none.addEventListener("click",()=>{
+          decision.manualAllowed=true;decision.draft="";decision.draftSource=directInputSource(item.question);
+          decision.confirmed=false;decision.final_answer=null;decision.source="pending";
+          decision.history.push({action:"candidates_rejected",value:"",source:"student_direct_input"});
+          clearFinalPayload();renderAll();document.getElementById(inputId(item.question))?.focus();
+        });
+        grid.append(none);
+      }
+      row.append(label,grid);return row;
     }
 
     function answerEditor(item, decision) {
@@ -1384,22 +1216,22 @@
       return wrap;
     }
 
-    function selectCandidate(question, candidate) {
-      updateDraft(question, candidate, candidateSource(question));
+    function selectCandidate(question,candidate) {
+      const item=getItem(question),decision=state.decisions.get(Number(question));
+      if(item?.status!=="review_required"||!item.candidates.includes(candidate)) return;
+      decision.manualAllowed=false;
+      updateDraft(question,candidate,candidateSource(question));
+      decision.history.push({action:"candidate_selected",value:candidate,source:candidateSource(question)});
       renderAll();
     }
 
-    function updateDraft(question, value, source) {
-      const decision = state.decisions.get(Number(question));
-      decision.draft = value;
-      decision.draftSource = source;
-      decision.confirmed = false;
-      decision.final_answer = value;
-      decision.source = "pending";
-      state.decisions.set(Number(question), decision);
-      clearFinalPayload();
-      updateSubmitProgress();
-      refreshDeveloperOutput();
+    function updateDraft(question,value,source) {
+      const item=getItem(question),decision=state.decisions.get(Number(question));
+      if(item?.status!=="review_required"||!decision) return;
+      if(source.includes("direct_input")&&!decision.manualAllowed) return;
+      decision.draft=value;decision.draftSource=source;decision.confirmed=false;
+      decision.final_answer=null;decision.source="pending";
+      clearFinalPayload();updateSubmitProgress();refreshDeveloperOutput();
     }
 
     function appendKey(question, key) {
@@ -1430,7 +1262,7 @@
 
     function resetDraft(question) {
       const item = getItem(question);
-      updateDraft(question, item.recognized || "", directInputSource(question));
+      updateDraft(question, initialManualDraft(item.recognized), directInputSource(question));
       renderAll();
     }
 
@@ -1447,16 +1279,19 @@
     }
 
     function confirmReview(question) {
-      const key = Number(question);
-      const decision = state.decisions.get(key);
-      const input = document.getElementById(inputId(key));
-      decision.draft = input ? input.value : decision.draft;
-      decision.final_answer = decision.draft;
-      decision.source = decision.draftSource || "student_direct_input";
-      decision.confirmed = true;
-      state.decisions.set(key, decision);
-      clearFinalPayload();
-      renderAll();
+      const item=getItem(question),decision=state.decisions.get(Number(question));
+      if(item?.status!=="review_required"||!decision) return;
+      try {
+        const input=document.getElementById(inputId(question));
+        const value=decision.manualAllowed&&input?input.value:decision.draft;
+        decision.final_answer=OCRReviewContract.answer(value);
+        decision.source=decision.manualAllowed?directInputSource(question):candidateSource(question);
+        if(!decision.manualAllowed&&!item.candidates.includes(decision.final_answer)) throw new Error();
+        decision.confirmed=true;
+        decision.history.push({action:decision.manualAllowed?"manual_input":"confirmed_candidate",
+          value:decision.final_answer,source:decision.source});
+        clearFinalPayload();renderAll();
+      } catch { decision.confirmed=false;setSubmitMessage("확정할 답안을 선택하거나 입력하세요.",true); }
     }
 
     function requestRetake(question) {
@@ -1508,90 +1343,14 @@
       renderAll();
     }
 
-    function recognizeRetake(question) {
-      const key = Number(question);
-      const decision = state.decisions.get(key);
-      if (!decision || decision.source !== "retake_uploaded") {
-        return;
-      }
-      decision.recognitionLoading = true;
-      state.decisions.set(key, decision);
+    function recognizeRetake() {
+      setSubmitMessage("실제 재인식은 연결하지 않았습니다. 재촬영 완료를 인식 완료로 처리하지 않습니다.",true);
       clearFinalPayload();
-      renderAll();
-      window.setTimeout(() => applyMockRetakeResult(key), 450);
     }
 
-    function applyMockRetakeResult(question) {
-      const key = Number(question);
-      const item = getItem(key);
-      const decision = state.decisions.get(key);
-      if (!item || !decision) {
-        return;
-      }
-      const result = mockRetakeResult(key);
-      const previousStatus = item.status;
-      item.previous_status = previousStatus;
-      item.status = result.status;
-      item.recognized = String(result.recognized ?? "");
-      item.candidates = Array.isArray(result.candidates) ? result.candidates.map(String) : [];
-      item.warnings = Array.isArray(result.warnings) ? result.warnings : [];
-      item.mock_retake_result_applied = true;
-      item.retake_recognition_source = result.source_note || "mock_retake_recognition";
-      item.retakeRecognitionFailed = result.status === "retake_required";
+    function applyMockRetakeResult() { return false; }
 
-      if (result.crop_original_path) {
-        item.cropImage = result.crop_original_path;
-      } else if (decision.retakePreviewUrl) {
-        item.cropImage = decision.retakePreviewUrl;
-      }
-      if (result.crop_enhanced_path) {
-        item.enhancedImage = result.crop_enhanced_path;
-      }
-
-      decision.recognitionLoading = false;
-      decision.afterRetake = true;
-      decision.mock_retake_result_applied = true;
-      decision.retake_recognition_source = item.retake_recognition_source;
-
-      if (result.status === "safe_auto_grade") {
-        decision.confirmed = true;
-        decision.final_answer = String(result.final_answer ?? result.recognized ?? "");
-        decision.source = "safe_auto_grade_after_retake";
-        decision.draft = decision.final_answer;
-      } else if (result.status === "review_required") {
-        decision.confirmed = false;
-        decision.draft = String(result.recognized ?? "");
-        decision.final_answer = decision.draft;
-        decision.draftSource = "student_direct_input_after_retake";
-        decision.source = "pending_after_retake";
-      } else {
-        decision.confirmed = false;
-        decision.final_answer = null;
-        decision.source = "pending_retake";
-        decision.draft = "";
-      }
-      state.decisions.set(key, decision);
-      renderAll();
-      if (result.status === "review_required") {
-        setSubmitMessage("재촬영한 이미지를 인식했습니다. 아래에서 맞는 답을 선택하거나 수정해주세요.", false);
-      } else if (result.status === "safe_auto_grade") {
-        setSubmitMessage("재촬영한 이미지를 인식했습니다. 이 문항은 추가 확인 없이 제출할 수 있습니다.", false);
-      } else {
-        setSubmitMessage("재촬영한 이미지도 인식이 어렵습니다. 답안이 더 크게 보이도록 다시 촬영해주세요.", true);
-      }
-    }
-
-    function mockRetakeResult(question) {
-      const key = String(Number(question));
-      return state.payload?.mock_retake_results?.[key] || {
-        question_no: Number(question),
-        status: "retake_required",
-        recognized: "",
-        candidates: [],
-        warnings: ["low_visibility"],
-        source_note: "mock_retake_missing_result"
-      };
-    }
+    function mockRetakeResult() { return null; }
 
     function renderSafeList() {
       const items = getItems("safe_auto_grade");
@@ -1605,55 +1364,21 @@
       }
     }
 
-    function generateFinalPayload(options = {}) {
-      const force = options.force === true;
-      const blocker = force ? null : firstBlockingItem();
-      if (blocker) {
-        clearFinalPayload();
-        const message = blocker.status === "data_check_required"
-          ? "검수가 필요한 문항이 있습니다. 학생용 payload를 생성할 수 없습니다."
-          : blocker.status === "retake_uploaded"
-          ? "재촬영 이미지를 다시 인식해야 하는 문항이 있습니다."
-          : `${blocker.question}번 문항 처리가 필요합니다.`;
-        setSubmitMessage(message, true);
-        document.getElementById(cardId(blocker.question))?.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
+    function generateFinalPayload() {
+      clearFinalPayload();
+      try {
+        const blocker=firstBlockingItem();
+        if(blocker) throw new Error("미확정 문항이 있습니다.");
+        const payload={...state.payload,items:state.items.map(({question,cropImage,enhancedImage,...item})=>item)};
+        state.finalPayload=OCRReviewContract.finalize(payload,state.decisions);
+        els.finalPayload.textContent=JSON.stringify(state.finalPayload,null,2);
+        setSubmitMessage("최종 JSON 미리보기입니다. 서버 제출은 없습니다.",false);
+        refreshDeveloperOutput();
+        return structuredClone(state.finalPayload);
+      } catch {
+        clearFinalPayload();setSubmitMessage("미확정·재촬영·자료 불일치·demo는 최종화할 수 없습니다.",true);
+        return null;
       }
-      const answers = state.items.map((item) => {
-        if (item.status === "safe_auto_grade") {
-          const decision = state.decisions.get(item.question);
-          return {
-            question_no: item.question,
-            final_answer: decision?.final_answer ?? item.recognized,
-            source: decision?.source === "safe_auto_grade_after_retake" ? "safe_auto_grade_after_retake" : "safe_auto_grade"
-          };
-        }
-        if (item.status === "data_check_required") {
-          return {
-            question_no: item.question,
-            final_answer: null,
-            source: "data_check_required"
-          };
-        }
-        const decision = state.decisions.get(item.question);
-        const answer = {
-          question_no: item.question,
-          final_answer: decision.final_answer,
-          source: decision.source
-        };
-        if (decision.source === "retake_uploaded") {
-          answer.retake_image_attached = true;
-        }
-        return answer;
-      });
-      state.finalPayload = {
-        test_id: state.payload?.test_id || "mock_test",
-        round: state.payload?.round || "2",
-        answers
-      };
-      els.finalPayload.textContent = JSON.stringify(state.finalPayload, null, 2);
-      setSubmitMessage(force ? "강제 debug payload를 생성했습니다. 실제 서버 제출은 하지 않았습니다." : "최종 제출 payload를 생성했습니다. 실제 서버 제출은 하지 않았습니다.", false);
-      refreshDeveloperOutput();
     }
 
     function firstBlockingItem() {
@@ -1698,34 +1423,13 @@
     }
 
     function refreshDeveloperOutput() {
-      els.rawPayload.textContent = JSON.stringify(state.payload || {}, null, 2);
-      els.debugPayload.textContent = JSON.stringify(state.items.map((item) => {
-        const decision = state.decisions.get(item.question);
-        return {
-          question_no: item.question,
-          previous_status: item.previous_status ?? null,
-          current_status: item.status,
-          status: item.status,
-          recognized: item.recognized,
-          candidates: item.candidates,
-          expected: item.expected ?? null,
-          canonical_answer: item.canonical_answer ?? null,
-          accepted_answers: item.accepted_answers ?? [],
-          warnings_raw: item.warnings,
-          crop_original_path: item.cropImage || null,
-          crop_enhanced_path: item.enhancedImage || null,
-          final_answer: decision?.final_answer ?? (item.status === "safe_auto_grade" ? item.recognized : null),
-          final_source: decision?.source ?? (item.status === "safe_auto_grade" ? "safe_auto_grade" : "pending"),
-          retake_uploaded: item.status === "retake_uploaded" || decision?.source === "retake_uploaded",
-          retake_image_attached: decision?.retake_image_attached === true,
-          retake_file_name: decision?.retakeFileName || null,
-          mock_retake_result_applied: decision?.mock_retake_result_applied === true || item.mock_retake_result_applied === true,
-          retake_recognition_source: decision?.retake_recognition_source || item.retake_recognition_source || null
-        };
-      }), null, 2);
-      if (state.finalPayload) {
-        els.finalPayload.textContent = JSON.stringify(state.finalPayload, null, 2);
-      }
+      els.rawPayload.textContent=JSON.stringify(state.payload||{},null,2);
+      els.debugPayload.textContent=JSON.stringify(state.items.map(item=>{
+        const d=state.decisions.get(item.question);
+        return {question_no:item.question,status:item.status,recognized:item.recognized,
+          candidates:item.candidates,final_answer:d?.final_answer??item.final_answer,
+          source:d?.source??item.source,review_history:d?.history||item.review_history};
+      }),null,2);
     }
 
     function downloadFinalPayload() {
@@ -1775,11 +1479,22 @@
     }
 
     function clearFinalPayload() {
-      state.finalPayload = null;
-      if (els.finalPayload) {
-        els.finalPayload.textContent = "{\"answers\":[]}";
-      }
+      state.finalPayload=null;
+      if(els.finalPayload) els.finalPayload.textContent="{}";
     }
+
+    function clearInputState() {
+      state.payload=null;state.items=[];state.decisions=new Map();state.activeRetakeQuestion=null;
+      clearFinalPayload();
+      if(els.sampleName) els.sampleName.textContent="run: none";
+      if(els.reviewCards) {renderAll();}
+    }
+
+    window.OCRLabReview={
+      loadPayload,generateFinalPayload,
+      snapshot:()=>({payload:structuredClone(state.payload),items:structuredClone(state.items),
+        decisions:Array.from(state.decisions.values(),d=>structuredClone(d)),finalPayload:structuredClone(state.finalPayload)})
+    };
   </script>
 </body>
 </html>

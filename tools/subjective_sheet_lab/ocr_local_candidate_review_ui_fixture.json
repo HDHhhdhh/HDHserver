@@ -1,0 +1,31 @@
+{
+  "fixture": "ocr_local_candidate_review_ui_v1",
+  "local_candidate_review_payload": {
+    "source": "phase2f_local_paddle_ocr",
+    "test_id": "t_unit_daesu_01_lv3_r1",
+    "round": "1",
+    "problem_count": 20,
+    "items": [
+      { "question_no": 1, "status": "review_required", "recognized": "4", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 2, "status": "review_required", "recognized": "12", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 3, "status": "review_required", "recognized": "8", "warnings": ["local_ocr_unverified", "local_ocr_low_confidence"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 4, "status": "review_required", "recognized": "64", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 5, "status": "review_required", "recognized": "2", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 6, "status": "review_required", "recognized": "9", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 7, "status": "review_required", "recognized": "30", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 8, "status": "review_required", "recognized": "81", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 9, "status": "review_required", "recognized": "4", "warnings": ["local_ocr_unverified", "multiple_answer_candidates"], "candidates": ["4", "2"], "final_answer": null, "source": null },
+      { "question_no": 10, "status": "review_required", "recognized": "6", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 11, "status": "review_required", "recognized": "42", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 12, "status": "review_required", "recognized": "3", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 13, "status": "review_required", "recognized": "5", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 14, "status": "review_required", "recognized": "?", "warnings": ["local_ocr_unverified", "digit_shape_confusion"], "candidates": ["2", "4"], "final_answer": null, "source": null },
+      { "question_no": 15, "status": "review_required", "recognized": "16", "warnings": ["local_ocr_unverified"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 16, "status": "review_required", "recognized": "21", "warnings": ["local_ocr_unverified", "overwritten_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 17, "status": "retake_required", "recognized": "", "warnings": ["local_ocr_unverified", "unclear_final_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 18, "status": "review_required", "recognized": "90", "warnings": ["local_ocr_unverified", "multiple_answer_candidates"], "candidates": ["90", "20"], "final_answer": null, "source": null },
+      { "question_no": 19, "status": "retake_required", "recognized": "", "warnings": ["local_ocr_unverified", "crop_quality_blurry"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 20, "status": "retake_required", "recognized": "", "warnings": ["local_ocr_unverified", "crop_quality_cutoff_risk"], "candidates": [], "final_answer": null, "source": null }
+    ]
+  }
+}

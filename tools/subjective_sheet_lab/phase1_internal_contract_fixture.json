@@ -1,0 +1,30 @@
+{
+  "fixture": "phase1_internal_contract_v1",
+  "mode": "phase1_internal_only",
+  "enabled_by_default": false,
+  "linked_from_student_page": false,
+  "request": {
+    "sid": "phase1_fake_student",
+    "testId": "mock_subjective_test",
+    "round": "2",
+    "inputKind": "prepared_local_fixture",
+    "imagePath": "local_fixture://subjective_review_dry_run_fixture.json"
+  },
+  "source_review_fixture": "subjective_review_dry_run_fixture.json",
+  "expected_problem_count": 20,
+  "forbidden_write_targets": [
+    "tests.json",
+    "logs.json",
+    "app.sqlite",
+    "data/**",
+    "/api/submit-test"
+  ],
+  "contract_checks": [
+    "default_off",
+    "not_linked_from_student_page",
+    "no_submit_test_call",
+    "no_student_record_write",
+    "no_answer_key_fields",
+    "stable_twenty_question_payload"
+  ]
+}
