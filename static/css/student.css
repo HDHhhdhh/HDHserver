@@ -316,6 +316,15 @@ body.student-page #player {
   display: block;
 }
 
+body.student-page #youtubeOpenLink:not([hidden]) {
+  display: block;
+  padding: 8px 12px;
+  background: var(--stu-card);
+  color: var(--stu-text);
+  font-size: 13px;
+  text-align: right;
+}
+
 body.student-page .playlist-wrap {
   border-radius: 14px;
   border: 1px solid var(--stu-line);
@@ -1183,7 +1192,6 @@ body.student-page #announceModal.has-image .announce-card {
 
 body.student-page #announceModal.has-image .announce-body {
   grid-template-rows: auto auto minmax(74px, auto) auto;
-  overflow: visible;
   overflow: auto;
   padding-right: 4px;
   overscroll-behavior: contain;
@@ -2816,6 +2824,12 @@ body.student-page .hero-bar {
 body.student-page .namebar-title {
   font-size: clamp(1.8rem, 3.2vw, 2.7rem);
   line-height: 1.08;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+body.student-page #stuName {
+  white-space: normal;
 }
 
 body.student-page .namebar-desc {

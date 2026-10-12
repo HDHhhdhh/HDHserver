@@ -20,6 +20,32 @@ let checks = 0;
 const same = (actual, expected, label) => { assert.deepEqual(actual, expected, label); checks += 1; };
 same(calculate(), { total: 2, regular: 2, makeup: 0, pending: 0 }, 'Tue/Fri only; Saturday self-study excluded');
 {
+  const doubleStudent = { id: 's1', name: '연강 학생', day1: '일1', day2: '일2' };
+  const doubleOptions = {
+    students: [doubleStudent], attendanceDays: ['일1', '일2'],
+    referenceDate: new Date(2026, 8, 13), examDate: new Date(2026, 9, 5),
+  };
+  const countDouble = (data = empty(), overrides = {}) => calculate(data, { ...doubleOptions, ...overrides });
+  // Remaining Sundays are Sep 20, Sep 27 and Oct 4: two lessons on each date.
+  same(countDouble(), { total: 6, regular: 6, makeup: 0, pending: 0 }, 'three Sunday double classes are six sessions, not three dates');
+  same(countDouble(empty(), { students: [{ ...doubleStudent, day3: '일1' }, doubleStudent] }).regular, 6, 'duplicate date/SID/slot is counted once');
+  same(countDouble(empty(), { students: [{ ...doubleStudent, selfStudyDays: { day2: true } }] }).regular, 3, 'only the self-study slot of a double class is excluded');
+  same(countDouble(empty(), { students: [{ ...doubleStudent, day1: '일', day2: '' }], attendanceDays: ['일'] }).regular, 3, 'legacy weekday without a slot remains one session');
+  same(countDouble(empty(), { examDate: new Date(2026, 9, 4) }).regular, 4, 'exam day double class is excluded');
+  const data = empty();
+  data.absentSlotsByDate['2026-09-20'] = { s1: [2] };
+  same(countDouble(data).regular, 5, 'one absent slot removes one session from a double class');
+  data.absentByDate['2026-09-27'] = ['s1'];
+  same(countDouble(data).regular, 3, 'whole-date absence removes both sessions');
+  const linked = empty(); reserve(linked, '2026-09-20', [1, 2]);
+  linked.extra['2026-09-20'] = ['s1']; linked.weekendSlots['2026-09-20'] = { s1: [1, 2] };
+  same(countDouble(linked), { total: 6, regular: 6, makeup: 0, pending: 0 }, 'regular double class and reflected reservation share two sessions');
+  reserve(linked, '2026-09-20', [1, 2, 3]); linked.weekendSlots['2026-09-20'].s1 = [1, 2, 3];
+  same(countDouble(linked), { total: 7, regular: 6, makeup: 1, pending: 0 }, 'a distinct third makeup slot adds one session');
+  const before = JSON.stringify({ doubleOptions, linked }); countDouble(linked);
+  same(JSON.stringify({ doubleOptions, linked }), before, 'slot counting leaves student schedules and snapshots unchanged');
+}
+{
   const data = empty(); reserve(data, '2026-09-09');
   same(calculate(data), { total: 3, regular: 2, makeup: 1, pending: 0 }, 'reservation survives missing extra reflection');
   data.extra['2026-09-09'] = ['s1', 's1']; data.weekendSlots['2026-09-09'] = { s1: [1, 1] };

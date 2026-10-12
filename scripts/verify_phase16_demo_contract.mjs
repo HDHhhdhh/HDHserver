@@ -523,7 +523,14 @@ assert.ok(reprintQuickPrinterPayload.csv.startsWith('\uFEFF'));
 assert.equal(loadDemoStore().quickPrinterExports.length, quickPrinterBefore + 1);
 
 const fallbackSource = fs.readFileSync('static/js/admin/demo/bootstrap.js', 'utf8');
-assert.match(fallbackSource, /\.\/fetch\.js\?v=20260830-carryover-history1/);
+const threadPreviewSource = fs.readFileSync('static/js/admin/demo/threadPreview.js', 'utf8');
+const threadPreviewCss = fs.readFileSync('static/css/demo-thread-preview.css', 'utf8');
+assert.match(fallbackSource, /\.\/fetch\.js\?v=20260912-watch-rearm1/);
+assert.match(fallbackSource, /import\('\.\/threadPreview\.js\?v=20260914-threads1'\)/);
+assert.match(threadPreviewSource, /MutationObserver/);
+assert.match(threadPreviewSource, /demo-thread-avatar/);
+assert.match(threadPreviewCss, /body\.admin\.demo-thread-preview\.student-popup-open/);
+assert.match(threadPreviewCss, /\.assistant-note-item::after/);
 assert.match(fallbackSource, /applyDemoQuickPrinterRequest/);
 assert.match(fallbackSource, /path === '\/api\/tests-config\/test' && method === 'PATCH'/);
 assert.match(fallbackSource, /patchDemoTestConfig\(store\.testsConfig/);

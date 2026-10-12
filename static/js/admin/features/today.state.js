@@ -45,7 +45,22 @@ export function nowHHMM() {
 export function nowISO() { return new Date().toISOString(); }
 
 export function yoilOf(dateStr) { return WCHR[new Date(dateStr).getDay()]; }
+let studentLookup = null;
+export function withStudentLookup(project) {
+  const previous = studentLookup;
+  const students = state.students || [];
+  const bySid = new Map();
+  for (const student of students) {
+    const sid = String(student.id);
+    if (!bySid.has(sid)) bySid.set(sid, student);
+  }
+  // The projection is synchronous; never retain a roster index across an await or refresh.
+  studentLookup = { students, bySid };
+  try { return project(); }
+  finally { studentLookup = previous; }
+}
 export function getStudent(sid) {
+  if (studentLookup?.students === state.students) return studentLookup.bySid.get(String(sid));
   return (state.students || []).find(x => String(x.id) === String(sid));
 }
 export function dayValues(stu) {
@@ -544,15 +559,24 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
 // today_order (드래그 순서)
 // ─────────────────────────────────────────────
 let _orderMap = null; // { "YYYY-MM-DD": ["sid", ...] }
+let _orderMutationEpoch = 0;
 
 export async function loadOrderMap(options = {}) {
   if (_orderMap && !options.force) return _orderMap;
-  try { _orderMap = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
-  catch { _orderMap = {}; }
+  const epoch = _orderMutationEpoch;
+  try {
+    const loaded = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json());
+    if (epoch === _orderMutationEpoch) _orderMap = loaded;
+  } catch {
+    if (epoch === _orderMutationEpoch) _orderMap = {};
+  }
   return _orderMap;
 }
+export function getSavedOrder(dateKey) {
+  return (_orderMap?.[dateKey] || []).map(String);
+}
 export function applySavedOrder(list, dateKey) {
-  const saved = (_orderMap?.[dateKey] || []).map(String);
+  const saved = getSavedOrder(dateKey);
   if (!saved.length) return list;
 
   const byId = new Map(list.map(s => [String(s.id), s]));
@@ -579,6 +603,7 @@ export async function saveOrder(dateKey, newOrderIds) {
   if (!response.ok) throw new Error(`/api/today_order save failed: ${response.status}`);
   const payload = await response.json();
   const savedOrder = Array.isArray(payload?.order) ? payload.order.map(String) : order;
+  _orderMutationEpoch++;
   if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
     _orderMap = { ..._orderMap, [date]: savedOrder };
   } else {
@@ -593,6 +618,7 @@ export async function clearTodayOrder(dateKey) {
   });
   if (!response.ok) throw new Error(`/api/today_order clear failed: ${response.status}`);
   const payload = await response.json();
+  _orderMutationEpoch++;
   if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
     _orderMap = { ..._orderMap };
     delete _orderMap[date];
@@ -772,11 +798,15 @@ export function getArriveOverride(dateKey, sid) {
   return m[String(sid)] ?? '';
 }
 export function setArriveOverride(dateKey, sid, value) {
+  setArriveOverrides(dateKey, { [String(sid)]: value });
+}
+export function setArriveOverrides(dateKey, patch) {
   const m = loadArriveMap(dateKey) || {};
-  const k = String(sid);
-  const v = (value || '').trim();
-  if (v) m[k] = v;
-  else delete m[k];
+  for (const [k, value] of Object.entries(patch)) {
+    const v = (value || '').trim();
+    if (v) m[k] = v;
+    else delete m[k];
+  }
 
   _arriveCache.set(dateKey, m);
   saveArriveMapLocal(dateKey, m);

@@ -3,14 +3,20 @@ from __future__ import annotations
 import os
 import pathlib
 import re
-import shutil
-import uuid
 from contextlib import contextmanager
 from typing import Iterator
 
 from flask import Blueprint, abort, g, jsonify, make_response, request, send_from_directory
 
 from core.announcement_image_access import student_can_access_announcement_image_from_store
+from core.file_material_transaction import (
+    FileMaterialTransactionError,
+    create_planned_directories,
+    entry_identity,
+    make_plan,
+    operation_paths,
+    staging_directory,
+)
 from core.material_reference_rules import (
     path_is_same_or_descendant,
     remove_material_file_references,
@@ -19,13 +25,15 @@ from core.material_reference_rules import (
 from core.material_state import (
     MaterialStateRecoveryRequiredError,
     load_material_state_locked,
-    material_state_journal_path,
     material_state_lock,
+    prepare_file_material_state_locked,
+    recover_material_state_locked,
+    rollback_file_material_state_if_prepared_locked,
     save_material_state_locked,
+    update_prepared_file_material_state_locked,
 )
 from core.paths import ANNS_PATH, FILES_DIR, MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH
 from core.student_public_surface_paths import resolve_raw_request_target, safe_announcement_file
-from core.storage import file_lock
 
 bp_api_fs = Blueprint("api_fs", __name__)
 FILES_ROOT = FILES_DIR.resolve()
@@ -97,9 +105,8 @@ def _scan_tree() -> dict:
 def _file_material_state_scope() -> Iterator[None]:
     # Filesystem mutations always acquire the file-tree lock before the three
     # deterministic material-state locks. Keep this order for every writer.
-    with file_lock(FILES_DIR):
-        with material_state_lock(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH):
-            yield
+    with material_state_lock(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH, files_dir=FILES_DIR):
+        yield
 
 
 def _load_material_state_checked_locked() -> tuple[dict, dict, dict]:
@@ -107,6 +114,7 @@ def _load_material_state_checked_locked() -> tuple[dict, dict, dict]:
         MAT_PATH,
         ASN_PATH,
         PAGE_FOLDERS_PATH,
+        files_dir=FILES_DIR,
     )
     if not isinstance(materials, dict):
         raise RuntimeError("materials store must be an object")
@@ -118,42 +126,61 @@ def _load_material_state_checked_locked() -> tuple[dict, dict, dict]:
 
 
 def _save_material_state_locked(
-    materials: dict,
-    assignments: dict,
-    page_folders: dict,
+    materials: dict, assignments: dict, page_folders: dict,
+    *, file_transaction_id: str | None = None,
 ) -> None:
     save_material_state_locked(
-        MAT_PATH,
-        ASN_PATH,
-        PAGE_FOLDERS_PATH,
-        materials,
-        assignments,
-        page_folders,
+        MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH,
+        materials, assignments, page_folders,
+        file_transaction_id=file_transaction_id, files_dir=FILES_DIR,
     )
 
 
-def _material_commit_started() -> bool:
-    return material_state_journal_path(MAT_PATH).exists()
-
-
-def _rollback_completed_moves(completed: list[tuple[pathlib.Path, pathlib.Path]]) -> None:
-    for source, target in reversed(completed):
-        try:
-            if target.exists() and not source.exists():
-                source.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(target), str(source))
-        except Exception as exc:
-            print(f"[file-manager] rollback failed: {target} -> {source}: {exc}", flush=True)
-
-
-def _remove_staging_dir(path: pathlib.Path | None) -> None:
-    if path is None:
-        return
+def _file_plan(kind: str, pairs: list[tuple[str, str]], *, directories=(), transaction_id=None) -> dict:
     try:
-        if path.exists():
-            shutil.rmtree(path)
-    except Exception as exc:
-        print(f"[file-manager] staging cleanup failed: {path}: {exc}", flush=True)
+        return make_plan(FILES_DIR, (MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH), kind, pairs,
+                         directories=directories, transaction_id=transaction_id)
+    except FileMaterialTransactionError as exc:
+        raise MaterialStateRecoveryRequiredError(str(exc)) from exc
+
+
+@contextmanager
+def _file_transaction_scope(state: tuple[dict, dict, dict], plan: dict) -> Iterator[str]:
+    transaction_id = prepare_file_material_state_locked(
+        MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH, *state, plan, files_dir=FILES_DIR,
+    )
+    try:
+        yield transaction_id
+    finally:
+        # A durable committing marker owns forward recovery; only an intent
+        # that never reached that marker may restore/remove filesystem entries.
+        rollback_file_material_state_if_prepared_locked(
+            MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH, transaction_id, files_dir=FILES_DIR,
+        )
+
+
+def _update_file_plan(plan: dict) -> None:
+    update_prepared_file_material_state_locked(
+        MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH, plan, files_dir=FILES_DIR,
+    )
+
+
+def _create_transaction_directories(plan: dict, destination: pathlib.Path) -> None:
+    try:
+        create_planned_directories(plan, _update_file_plan)
+    except (OSError, FileMaterialTransactionError) as exc:
+        raise MaterialStateRecoveryRequiredError("file transaction directory creation is incomplete") from exc
+    if not destination.is_dir():
+        raise FileExistsError("destination is not a directory")
+
+
+def _missing_directories(directory: pathlib.Path) -> list[str]:
+    missing = []
+    current = directory
+    while not current.exists() and current != FILES_ROOT:
+        missing.append(_rel_from_abs(current))
+        current = current.parent
+    return missing
 
 
 def _ensure_dir(rel_dir: str):
@@ -223,24 +250,29 @@ def _planned_move_target(
         index += 1
 
 
-def _unique_name(dst_dir: pathlib.Path, filename: str) -> str:
+def _unique_name(dst_dir: pathlib.Path, filename: str, reserved_names: set[str]) -> str:
     base = _clean_filename(filename)
     stem, dot, ext = base.rpartition(".")
     if not dot:
         stem, ext = base, ""
     name = base
     i = 1
-    while (dst_dir / name).exists():
+    while (dst_dir / name).exists() or name.casefold() in reserved_names:
         suffix = f" ({i})"
         name = f"{stem}{suffix}.{ext}" if ext else f"{stem}{suffix}"
         i += 1
+    reserved_names.add(name.casefold())
     return name
 
 # 트리 조회
 @bp_api_fs.get("/api/fs/tree")
 def api_fs_tree():
-    with file_lock(FILES_DIR):
-        tree = _scan_tree()
+    try:
+        with _file_material_state_scope():
+            recover_material_state_locked(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH, files_dir=FILES_DIR)
+            tree = _scan_tree()
+    except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
     resp = make_response(jsonify({"tree": tree}))
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -295,13 +327,10 @@ def api_fs_rename():
                 [(old_rel, new_rel)],
             )
 
-            abs_src.rename(abs_dst)
-            try:
-                _save_material_state_locked(*next_state)
-            except Exception:
-                if not _material_commit_started():
-                    _rollback_completed_moves([(abs_src, abs_dst)])
-                raise
+            plan = _file_plan("rename", [(old_rel, new_rel)])
+            with _file_transaction_scope((materials, assignments, page_folders), plan) as transaction_id:
+                abs_src.rename(abs_dst)
+                _save_material_state_locked(*next_state, file_transaction_id=transaction_id)
 
         return jsonify({"ok": True, "path": new_rel})
     except (ValueError, FileNotFoundError, FileExistsError) as exc:
@@ -321,69 +350,60 @@ def api_fs_delete():
 
     deleted: list[str] = []
     errors: list[dict] = []
-    staging_dir: pathlib.Path | None = None
-    staged_moves: list[tuple[pathlib.Path, pathlib.Path]] = []
-
     try:
         with _file_material_state_scope():
-            materials, assignments, page_folders = _load_material_state_checked_locked()
-            deleted_prefixes: list[str] = []
-
+            state = _load_material_state_checked_locked()
+            valid = []
             for raw_rel in items:
                 try:
                     if not isinstance(raw_rel, str) or not raw_rel.strip():
                         raise ValueError("path must be a non-empty string")
-                    abs_path = _safe_join(raw_rel)
-                    _reject_root_path(abs_path)
-                    canonical_rel = _rel_from_abs(abs_path)
-
-                    if abs_path.exists():
-                        if staging_dir is None:
-                            staging_dir = (
-                                pathlib.Path(FILES_DIR).parent
-                                / f".file-delete-stage-{uuid.uuid4().hex}"
-                            )
-                            staging_dir.mkdir(parents=True, exist_ok=False)
-                        staged_path = staging_dir / str(len(staged_moves))
-                        shutil.move(str(abs_path), str(staged_path))
-                        staged_moves.append((abs_path, staged_path))
-
-                    deleted.append(raw_rel)
-                    deleted_prefixes.append(canonical_rel)
+                    absolute = _safe_join(raw_rel)
+                    _reject_root_path(absolute)
+                    valid.append((raw_rel, absolute, _rel_from_abs(absolute)))
                 except Exception as exc:
                     errors.append({"path": raw_rel, "error": str(exc)})
-
-            if deleted_prefixes:
-                try:
-                    next_state = remove_material_file_references(
-                        materials,
-                        assignments,
-                        page_folders,
-                        deleted_prefixes,
-                    )
-                    _save_material_state_locked(*next_state)
-                except Exception:
-                    if not _material_commit_started():
-                        _rollback_completed_moves(staged_moves)
-                    raise
-
-            _remove_staging_dir(staging_dir)
-
+            if valid:
+                # Ancestors subsume descendant delete requests; each inode is staged once.
+                existing = {relative: absolute for _raw, absolute, relative in valid if absolute.exists()}
+                roots = [relative for relative in existing
+                         if not any(relative != other and path_is_same_or_descendant(relative, other)
+                                    for other in existing)]
+                plan = _file_plan("delete", [(relative, str(index)) for index, relative in enumerate(roots)])
+                failed = {}
+                with _file_transaction_scope(state, plan) as transaction_id:
+                    staging = staging_directory(plan)
+                    if plan["operations"]:
+                        staging.mkdir(parents=True, exist_ok=False)
+                    successful = []
+                    for operation in plan["operations"]:
+                        absolute, staged = operation_paths(plan, operation)
+                        try:
+                            absolute.rename(staged)
+                            successful.append(operation)
+                        except Exception as exc:
+                            failed[operation["source"]] = str(exc)
+                    plan["operations"] = successful
+                    _update_file_plan(plan)
+                    prefixes = []
+                    for raw_rel, _absolute, relative in valid:
+                        failure = next((error for prefix, error in failed.items()
+                                        if path_is_same_or_descendant(relative, prefix)), None)
+                        if failure is not None:
+                            errors.append({"path": raw_rel, "error": failure})
+                        else:
+                            deleted.append(raw_rel)
+                            prefixes.append(relative)
+                    if prefixes:
+                        next_state = remove_material_file_references(*state, prefixes)
+                        _save_material_state_locked(*next_state, file_transaction_id=transaction_id)
         return jsonify({"ok": True, "deleted": deleted, "errors": errors})
     except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
-        _rollback_completed_moves(staged_moves)
-        _remove_staging_dir(staging_dir)
         return jsonify({"ok": False, "error": str(exc)}), 503
     except Exception as exc:
-        if _material_commit_started():
-            # The journal contains the forward state; startup/next mutation can
-            # finish it, so staged deleted content must not be restored.
-            _remove_staging_dir(staging_dir)
-        else:
-            _rollback_completed_moves(staged_moves)
-            _remove_staging_dir(staging_dir)
         print(f"[file-manager] delete failed: {exc}", flush=True)
         return jsonify({"ok": False, "error": "delete failed"}), 500
+
 
 @bp_api_fs.post("/api/fs/move")
 def api_fs_move():
@@ -394,7 +414,6 @@ def api_fs_move():
         return jsonify({"ok": False, "error": "paths[] and dst required"}), 400
     dst = dst_value.strip()
 
-    completed_moves: list[tuple[pathlib.Path, pathlib.Path]] = []
     try:
         with _file_material_state_scope():
             materials, assignments, page_folders = _load_material_state_checked_locked()
@@ -434,21 +453,12 @@ def api_fs_move():
                 replacements,
             )
 
-            abs_dst.mkdir(parents=True, exist_ok=True)
-            try:
+            plan = _file_plan("move", replacements, directories=_missing_directories(abs_dst))
+            with _file_transaction_scope((materials, assignments, page_folders), plan) as transaction_id:
+                _create_transaction_directories(plan, abs_dst)
                 for _raw_rel, abs_src, target, _old_rel, _new_rel in move_plan:
-                    shutil.move(str(abs_src), str(target))
-                    completed_moves.append((abs_src, target))
-            except Exception:
-                _rollback_completed_moves(completed_moves)
-                raise
-
-            try:
-                _save_material_state_locked(*next_state)
-            except Exception:
-                if not _material_commit_started():
-                    _rollback_completed_moves(completed_moves)
-                raise
+                    abs_src.rename(target)
+                _save_material_state_locked(*next_state, file_transaction_id=transaction_id)
 
             moved = [
                 {"src": raw_rel, "dst": new_rel}
@@ -472,86 +482,70 @@ def api_fs_upload():
         return jsonify({"ok": False, "error": "no files"}), 400
 
     out: list[dict] = []
-    uploaded_paths: list[pathlib.Path] = []
     try:
         with _file_material_state_scope():
-            materials, assignments, page_folders = _load_material_state_checked_locked()
-            abs_dst = _ensure_dir(dst)
-
-            for uploaded_file in files:
-                try:
-                    filename = _unique_name(abs_dst, uploaded_file.filename)
-                    target = abs_dst / filename
-                    uploaded_file.save(target)
-                    uploaded_paths.append(target)
-                    relative = _rel_from_abs(target)
-                    out.append({
-                        "name": filename,
-                        "path": relative,
-                        "url": f"/files/{relative}",
-                    })
-                except Exception as exc:
-                    out.append({"name": uploaded_file.filename, "error": str(exc)})
-
-            new_rel_urls = [
-                (str(item["path"]), str(item["url"]))
-                for item in out
-                if not item.get("error")
-            ]
-            assignments_changed = False
-            if new_rel_urls:
+            state = _load_material_state_checked_locked()
+            materials, assignments, page_folders = state
+            abs_dst = _safe_join(dst)
+            reserved_names: set[str] = set()
+            pairs = [(str(index), _rel_from_abs(abs_dst / _unique_name(abs_dst, uploaded.filename, reserved_names)))
+                     for index, uploaded in enumerate(files)]
+            plan = _file_plan("upload", pairs, directories=_missing_directories(abs_dst))
+            with _file_transaction_scope(state, plan) as transaction_id:
+                staging_directory(plan).mkdir(parents=True, exist_ok=False)
+                ready = []
+                for uploaded, operation in zip(files, plan["operations"]):
+                    staged, target = operation_paths(plan, operation)
+                    try:
+                        uploaded.save(staged)
+                        with staged.open("rb+") as handle:
+                            os.fsync(handle.fileno())
+                        operation["identity"] = entry_identity(staged)
+                        ready.append(operation)
+                        out.append({"name": target.name, "path": operation["target"],
+                                    "url": f'/files/{operation["target"]}'})
+                    except Exception as exc:
+                        out.append({"name": uploaded.filename, "error": str(exc)})
+                plan["operations"] = ready
+                _update_file_plan(plan)
+                _create_transaction_directories(plan, abs_dst)
+                published = []
+                for operation in ready:
+                    staged, target = operation_paths(plan, operation)
+                    try:
+                        staged.rename(target)
+                        published.append(operation)
+                    except Exception as exc:
+                        index = int(operation["source"])
+                        out[index] = {"name": files[index].filename, "error": str(exc)}
+                plan["operations"] = published
+                _update_file_plan(plan)
+                new_rel_urls = [(str(item["path"]), str(item["url"])) for item in out if not item.get("error")]
                 for sid, tokens in list(assignments.items()):
                     if not isinstance(tokens, list):
                         continue
-
-                    directory_tokens: list[str] = []
-                    for token in tokens:
-                        text_token = str(token)
-                        if not text_token.startswith("DIR:"):
-                            continue
-                        directory = text_token[4:].lstrip("/").replace("\\", "/")
-                        if directory:
-                            directory_tokens.append(directory)
-                    if not directory_tokens:
-                        continue
-
+                    directories = [str(token)[4:].lstrip("/").replace("\\", "/")
+                                   for token in tokens if str(token).startswith("DIR:")]
+                    directories = [directory for directory in directories if directory]
                     token_set = set(map(str, tokens))
                     for relative, url in new_rel_urls:
                         try:
-                            in_scope = any(
-                                path_is_same_or_descendant(relative, directory)
-                                for directory in directory_tokens
-                            )
+                            in_scope = any(path_is_same_or_descendant(relative, directory) for directory in directories)
                         except ValueError:
                             in_scope = False
-                        if not in_scope or url in token_set or relative in token_set:
-                            continue
-                        tokens.append(url)
-                        token_set.add(url)
-                        assignments_changed = True
-
+                        if in_scope and url not in token_set and relative not in token_set:
+                            tokens.append(url)
+                            token_set.add(url)
                     assignments[sid] = tokens
-
-            if assignments_changed:
-                _save_material_state_locked(materials, assignments, page_folders)
-
+                if published:
+                    _save_material_state_locked(materials, assignments, page_folders,
+                                                file_transaction_id=transaction_id)
         return jsonify({"ok": True, "files": out})
     except ValueError as exc:
-        for uploaded_path in uploaded_paths:
-            try:
-                uploaded_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         return jsonify({"ok": False, "error": f"invalid dst: {exc}"}), 400
     except (MaterialStateRecoveryRequiredError, TimeoutError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 503
     except Exception as exc:
-        if not _material_commit_started():
-            for uploaded_path in uploaded_paths:
-                try:
-                    uploaded_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
         print(f"[file-manager] upload failed: {exc}", flush=True)
         return jsonify({"ok": False, "error": "upload failed"}), 500
 

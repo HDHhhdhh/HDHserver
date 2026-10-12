@@ -1,7 +1,7 @@
 import { buildInitialDemoData } from './data.js';
 
 export const DEMO_STORAGE_KEY = 'academy.adminDemo.v1';
-export const DEMO_SCHEMA_VERSION = 4;
+export const DEMO_SCHEMA_VERSION = 5;
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 

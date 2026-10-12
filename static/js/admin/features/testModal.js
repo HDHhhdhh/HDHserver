@@ -5,19 +5,20 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { createAssignmentDragAutoScroll } from './assignmentDragAutoScroll.js?v=20261007';
 import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';
 
 import {
-  ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY, CATEGORY_DEFS, CATEGORY_BY_KEY,
-  CATEGORY_KEYS, SUBJECTS, STUDENT_LEVELS, ROUND_OPTIONS,
-  TERM_OPTIONS, DEFAULT_TERM, TEST_STATUS_LABELS, TEST_KEYBOARD_STATUS_ORDER,
+  CATEGORY_DEFS, CATEGORY_BY_KEY,
+  CATEGORY_KEYS, ROUND_OPTIONS,
+  TERM_OPTIONS, DEFAULT_TERM,
   isUnitCategory, isTermCategory, canonText, normalizeSubject,
-  categoryLabel, canonicalCategoryKey, isIlsanGraphDifficultyText, normalizeDifficulty,
+  categoryLabel, canonicalCategoryKey, isIlsanGraphDifficultyText,
   normalizeRound, roundLabel, normalizeTerm, normalizeAssignmentStatus,
   testStatusLabel, nextStatusOf, nextExcludedStatusOf, nextKeyboardStatusOf,
-  isInProgressTestStatus, isResolvedTestStatus, isExplicitBlankTestStatus, testKey,
+  isInProgressTestStatus, isResolvedTestStatus, isExplicitBlankTestStatus,
   normalizeConfig, collectTestCatalog,
-} from './testAssignmentRules.js?v=20260905-rules1';
+} from './testAssignmentRules.js?v=20260907-ilsan-level-r1';
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
 const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
@@ -30,6 +31,7 @@ const TEST_RECENT_VIEW_STORAGE_PREFIX = 'admin.testAssignment.recentView.v1';
 let initialized = false;
 let editingSid = null;
 let editingDate = null;
+let testModalReady = false;
 const testSaveFlights = new Map();
 let activeStudent = null;
 let activeCategory = 'UNIT';
@@ -41,7 +43,6 @@ let levelSettingOpen = false;
 let activeCatalog = [];
 let catalogByKey = new Map();
 let initialTestMap = {};
-let selectedKeys = new Set();
 let selectedStatuses = new Map();
 let multiSelectedKeys = new Set();
 let explicitBlankKeys = new Set();
@@ -52,6 +53,7 @@ let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
 let testOpenSeq = 0;
+let stopTestAssignmentDrag = () => {};
 
 
 function isLockConflictResponse(status, text) {
@@ -89,14 +91,39 @@ async function fetchJSONSafe(url, init = {}) {
   throw new Error(`[testModal] ${fetchInit.method || 'GET'} ${url} failed after lock retries`);
 }
 
+function requireTestPopupDocument(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false) {
+    throw new Error('시험 조회 응답이 올바르지 않습니다.');
+  }
+  return value;
+}
+
 async function fetchJSONCached(url, ttlMs = 2500) {
   const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  const readEpoch = epochs.get(url) || 0;
   const now = Date.now();
   const hit = cache.get(url);
-  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+  if (hit && (hit.pending || (now - hit.ts) < ttlMs)) {
+    return hit.promise.then(requireTestPopupDocument).catch(error => {
+      if (cache.get(url)?.promise === hit.promise) cache.delete(url);
+      throw error;
+    });
+  }
 
-  const promise = fetchJSONSafe(url);
-  cache.set(url, { ts: now, promise });
+  const pending = fetchJSONSafe(url).then(requireTestPopupDocument);
+  const promise = pending.then(value => {
+    if ((epochs.get(url) || 0) !== readEpoch) {
+      throw new Error('팝업 데이터가 변경되었습니다. 다시 열어 주세요.');
+    }
+    return value;
+  });
+  cache.set(url, { ts: now, promise, pending: true });
+  promise.then(() => {
+    if (cache.get(url)?.promise === promise) {
+      cache.set(url, { ts: Date.now(), promise, pending: false });
+    }
+  }, () => {});
   promise.catch(() => {
     if (cache.get(url)?.promise === promise) cache.delete(url);
   });
@@ -104,9 +131,11 @@ async function fetchJSONCached(url, ttlMs = 2500) {
 }
 
 function invalidateStudentWorkFetchCache(url) {
-  const cache = window.__studentWorkFetchCache;
-  if (cache && typeof cache.delete === 'function') cache.delete(url);
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  epochs.set(url, (epochs.get(url) || 0) + 1);
+  window.__studentWorkFetchCache?.delete?.(url);
 }
+
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (m) => ({
@@ -160,11 +189,9 @@ function setTestStatus(key, status) {
   const normalized = normalizeAssignmentStatus(status);
   if (normalized) {
     selectedStatuses.set(k, normalized);
-    selectedKeys.add(k);
     explicitBlankKeys.delete(k);
   } else {
     selectedStatuses.delete(k);
-    selectedKeys.delete(k);
   }
 }
 
@@ -372,9 +399,7 @@ function entryForDateSid(source, date, sid) {
   const sidKey = String(sid || '').trim();
   const direct = bySid[sidKey];
   if (direct && typeof direct === 'object') return direct;
-  const matchedKey = Object.keys(bySid).find(key => String(key) === sidKey);
-  const matched = matchedKey ? bySid[matchedKey] : null;
-  return matched && typeof matched === 'object' ? matched : {};
+  return {};
 }
 
 function currentProgressEntry() {
@@ -400,9 +425,6 @@ function logAssignmentStatusMap(entry) {
   return out;
 }
 
-function hasCurrentTestClearMarker() {
-  return Boolean(currentProgressEntry()?.[TEST_ASSIGN_CLEAR_KEY]);
-}
 
 function pushSubmittedRecord(rec) {
   if (!rec || typeof rec !== 'object') return;
@@ -450,13 +472,17 @@ function prefetchTestModalDataForRow(row) {
   return Promise.allSettled(testPopupReadUrls(sid).map(url => fetchJSONCached(url)));
 }
 
-async function hydrateForTestPopup(date, sid) {
+async function hydrateForTestPopup(date, sid, isCurrent = () => true) {
   const [cfg, logs, progress, testsJson] = await Promise.all([
-    fetchJSONCached('/api/tests-config').catch(() => ({ categories: {} })),
-    fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
-    fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`).catch(() => ({})),
-    fetchJSONCached('/api/tests').catch(() => ({})),
+    fetchJSONCached('/api/tests-config'),
+    fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`),
+    fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`),
+    fetchJSONCached('/api/tests'),
   ]);
+  if (!isCurrent()) return false;
+  if ([cfg, logs, progress, testsJson].some(value => !value || typeof value !== 'object' || Array.isArray(value))) {
+    throw new Error('시험 조회 응답이 올바르지 않습니다.');
+  }
 
   state.testsConfig = normalizeConfig(cfg);
   window.testsConfig = state.testsConfig;
@@ -483,6 +509,7 @@ async function hydrateForTestPopup(date, sid) {
     curriculumSubject && normalizeSubject(test.curriculum) === curriculumSubject
   );
   catalogByKey = new Map(activeCatalog.map(test => [test._key, test]));
+  return true;
 }
 
 function getCurrentProgressTests() {
@@ -511,9 +538,9 @@ function getCurrentProgressTests() {
   for (const d of dates) {
     const entry = entryForDateSid(state.progress, d, sid);
     if (!entry || typeof entry !== 'object') continue;
-    if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
     const tests = entry.tests;
     if (tests && typeof tests === 'object' && Object.keys(tests).length) return tests;
+    if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
   }
   return {};
 }
@@ -581,14 +608,13 @@ function visibleTests() {
 function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
   testChangeOrderByKey = currentTestChangeOrderMap();
-  selectedKeys = new Set();
   selectedStatuses = new Map();
   multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
   touchedTestKeys = new Set();
   pendingCenteredTestKey = '';
   Object.entries(initialTestMap).forEach(([key, status]) => {
-    if (isExplicitBlankTestStatus(status)) {
+    if (isExplicitBlankTestStatus(status) || status === '') {
       explicitBlankKeys.add(key);
       return;
     }
@@ -645,8 +671,10 @@ function applyKeyboardStatusToSelection(direction) {
   if (!keys.length) return false;
 
   keys.forEach(key => {
-    setTestStatus(key, nextKeyboardStatusOf(statusForKey(key), direction));
-    explicitBlankKeys.delete(key);
+    const next = nextKeyboardStatusOf(statusForKey(key), direction);
+    setTestStatus(key, next);
+    if (next) explicitBlankKeys.delete(key);
+    else explicitBlankKeys.add(key);
   });
 
   document.querySelectorAll('#testAssignList .test-row').forEach(row => {
@@ -717,10 +745,9 @@ function renderFilters() {
     subjectSel.disabled = true;
   }
 
-  const allDifficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
-  const difficulties = allDifficulties;
+  const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
   if (!difficulties.includes(activeDifficulty)) {
-    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent) || allDifficulties[0] || '';
+    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent) || difficulties[0] || '';
   }
   if (difficultySel) {
     difficultySel.innerHTML = difficulties.map(diff =>
@@ -775,12 +802,15 @@ function applyTestRowStatus(row, status, options = {}) {
   const next = normalizeAssignmentStatus(status);
   setTestStatus(key, next);
   if (options.touch !== false) markTestTouched(key);
-  explicitBlankKeys.delete(key);
+  if (next) explicitBlankKeys.delete(key);
+  else if (options.touch !== false || isExplicitBlankTestStatus(initialTestMap[key]) || initialTestMap[key] === '') {
+    explicitBlankKeys.add(key);
+  }
   row.dataset.state = next || 'none';
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
   if (statusEl) statusEl.textContent = testStatusLabel(next);
-  rememberCurrentTestView(catalogByKey.get(key));
+  if (options.remember !== false) rememberCurrentTestView(catalogByKey.get(key));
 }
 
 function centerTestRowInScroller(row, scroller) {
@@ -813,6 +843,7 @@ function centerPendingTestRow() {
 }
 
 function renderList() {
+  stopTestAssignmentDrag();
   const list = $('testAssignList');
   if (!list) return;
 
@@ -1133,7 +1164,11 @@ function renderLoadingState(student) {
   if (count) count.textContent = '';
   const selectionMeta = $('testSelectionMeta');
   if (selectionMeta) selectionMeta.textContent = '';
-  if (save) save.disabled = true;
+  if (save) {
+    save.disabled = true;
+    save.textContent = '저장';
+    save.removeAttribute('aria-busy');
+  }
   const tabs = $('testCategoryTabs');
   if (tabs) tabs.innerHTML = '<button type="button" class="test-tab is-active" disabled>불러오는 중</button>';
   ['testSubject', 'testDifficulty', 'testTerm', 'testRound'].forEach((id) => {
@@ -1155,7 +1190,9 @@ function renderLoadingState(student) {
 }
 
 function closeModal() {
+  stopTestAssignmentDrag();
   testOpenSeq += 1;
+  testModalReady = false;
   const wasUnified = $('testModal')?.classList.contains('student-work-layout');
   setModalOpen(false);
   editingSid = null;
@@ -1165,7 +1202,6 @@ function closeModal() {
   levelSettingOpen = false;
   catalogByKey = new Map();
   initialTestMap = {};
-  selectedKeys = new Set();
   selectedStatuses = new Map();
   explicitBlankKeys = new Set();
   multiSelectedKeys = new Set();
@@ -1401,8 +1437,10 @@ function restorePreferredCategoryTestView(categoryKey, requiredSubject = activeS
 }
 
 async function openModalForRow(rowOrButton, opts = {}) {
+  stopTestAssignmentDrag();
   ensureModal();
   const openSeq = ++testOpenSeq;
+  testModalReady = false;
 
   const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
   editingSid = String(tr?.dataset?.sid || '').trim();
@@ -1418,8 +1456,22 @@ async function openModalForRow(rowOrButton, opts = {}) {
   renderLoadingState(activeStudent);
   levelSettingOpen = false;
   setModalOpen(true, opts.layout);
-  await hydrateForTestPopup(editingDate, editingSid);
-  if (openSeq !== testOpenSeq || editingSid !== String(tr?.dataset?.sid || '').trim()) return;
+  const targetSid = editingSid;
+  const targetDate = editingDate;
+  const isCurrent = () => openSeq === testOpenSeq && editingSid === targetSid && editingDate === targetDate;
+  try {
+    const hydrated = await hydrateForTestPopup(targetDate, targetSid, isCurrent);
+    if (!isCurrent() || hydrated === false) return;
+  } catch (error) {
+    if (!isCurrent()) return;
+    const message = '시험 데이터를 불러오지 못했습니다. 닫은 뒤 다시 열어 주세요.';
+    const meta = $('testStudentMeta');
+    if (meta) meta.textContent = message;
+    const list = $('testAssignList');
+    if (list) list.textContent = message;
+    toast(message);
+    return;
+  }
   activeTerm = defaultTermFromSchoolCalendar();
   syncSelectedFromProgress();
 
@@ -1441,6 +1493,7 @@ async function openModalForRow(rowOrButton, opts = {}) {
   const roundEl = $('testRound');
   if (roundEl) roundEl.disabled = !isUnitCategory(activeCategory);
   const save = $('testSave');
+  testModalReady = true;
   if (save) save.disabled = false;
   setModalOpen(true, opts.layout);
 }
@@ -1476,8 +1529,7 @@ function isAssignmentNoteStatus(status) {
 
 export function shouldIncludeInAssignmentNote(item) {
   const rawStatus = item && Object.prototype.hasOwnProperty.call(item, 'status') ? item.status : 'assigned';
-  const status = normalizeAssignmentStatus(rawStatus);
-  return status === 'interrupted' || status === 'done';
+  return isAssignmentNoteStatus(rawStatus);
 }
 
 export function assignmentLabel(item) {
@@ -1737,7 +1789,9 @@ function showTestSaveSuccess() {
 }
 
 async function saveModal(options = {}) {
+  stopTestAssignmentDrag();
   if (!editingSid || !editingDate) return [];
+  if (!testModalReady) throw new Error('시험 데이터를 불러온 뒤 저장해 주세요.');
   const sid = editingSid;
   const date = editingDate;
   const seq = testOpenSeq;
@@ -1758,6 +1812,14 @@ async function saveModal(options = {}) {
   const progressBody = JSON.stringify(buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus));
   const stillCurrent = () => testOpenSeq === seq && editingSid === sid && editingDate === date;
   const modal = $('testModal');
+  const save = $('testSave');
+  const saveCaption = save?.textContent;
+  const saveWasDisabled = Boolean(save?.disabled);
+  if (save) {
+    save.textContent = '저장 중…';
+    save.disabled = true;
+    save.setAttribute('aria-busy', 'true');
+  }
   if (modal) { modal.inert = true; modal.setAttribute('aria-busy', 'true'); }
   const flight = (async () => {
     let progressSaved = false;
@@ -1788,6 +1850,11 @@ async function saveModal(options = {}) {
       invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(sid)}`);
       window.invalidateVideoAssignmentPopupCache?.(date, sid);
       if (stillCurrent() && modal) { modal.inert = false; modal.removeAttribute('aria-busy'); }
+      if (stillCurrent() && save) {
+        save.textContent = saveCaption;
+        save.disabled = saveWasDisabled;
+        save.removeAttribute('aria-busy');
+      }
       testSaveFlights.delete(flightKey);
     }
   })();
@@ -1809,36 +1876,76 @@ function bindEventsOnce() {
   let suppressContextOnce = false;
   let dragRows = [];
   let dragInitialStatuses = [];
+  let lastDragIndex = -1;
+  let dragAutoScroll = null;
+  let dragOpenSeq = 0;
+
+  function finishDrag(cancelled = false) {
+    dragAutoScroll?.stop();
+    if (!cancelled && pointerDown && dragActive) {
+      if (dragButton === 0) suppressClickOnce = true;
+      if (dragButton === 2) suppressContextOnce = true;
+    }
+    if (cancelled) suppressClickOnce = suppressContextOnce = false;
+    pointerDown = dragActive = false;
+    dragTarget = null;
+    dragButton = 0;
+    startStatus = '';
+    startIndex = lastDragIndex = -1;
+    dragRows = [];
+    dragInitialStatuses = [];
+  }
+  stopTestAssignmentDrag = () => finishDrag(true);
 
   const testRowFromTarget = (target) => target?.closest?.('#testAssignList .test-row');
   const rebuildDragRows = () => {
     dragRows = Array.from(document.querySelectorAll('#testAssignList .test-row:not(:disabled)'));
     dragInitialStatuses = dragRows.map(row => statusForKey(row.dataset.testKey));
+    lastDragIndex = -1;
   };
 
   function applyDragRange(currentRow) {
     if (!pointerDown || !dragActive) return;
     const curIndex = dragRows.indexOf(currentRow);
     if (curIndex === -1 || startIndex === -1) return;
+    if (curIndex === lastDragIndex) return;
+    lastDragIndex = curIndex;
 
     const lo = Math.min(startIndex, curIndex);
     const hi = Math.max(startIndex, curIndex);
+    let lastViewRow = null;
     dragRows.forEach((row, idx) => {
       const initial = dragInitialStatuses[idx] || '';
       const inRange = idx >= lo && idx <= hi;
       const next = inRange ? dragTarget : initial;
-      applyTestRowStatus(row, next, { touch: inRange });
+      applyTestRowStatus(row, next, { touch: inRange, remember: false });
+      if (!row.disabled && row.dataset.testKey) lastViewRow = row;
     });
+    if (lastViewRow) rememberCurrentTestView(catalogByKey.get(lastViewRow.dataset.testKey));
   }
 
   function handleDragMove(e) {
     if (!pointerDown) return;
-    const row = testRowFromTarget(e.target);
-    if (!row || row.disabled) return;
+    if (e.type === 'mousemove' && typeof e.buttons === 'number' && !(e.buttons & (dragButton === 2 ? 2 : 1))) {
+      finishDrag();
+      return;
+    }
+    const hit = testRowFromTarget(e.target);
+    if (dragActive && (!hit || hit.disabled)) return;
+    const row = hit && !hit.disabled ? hit : dragRows[startIndex];
+    if (!row) return;
 
     if (!dragActive) {
       dragActive = true;
       dragTarget = dragButton === 2 ? nextExcludedStatusOf(startStatus) : nextStatusOf(startStatus);
+      dragAutoScroll ||= createAssignmentDragAutoScroll({
+        rowSelector: '#testAssignList .test-row:not(:disabled)',
+        scrollerForRow: row => row.closest('#testAssignList'),
+        isActive: () => pointerDown && dragActive && dragOpenSeq === testOpenSeq && dragRows[startIndex]?.isConnected,
+        onRow: row => { applyDragRange(row); testSelectionTouched = true; },
+        onStop: () => finishDrag(),
+      });
+      dragAutoScroll.start(e, row, dragButton);
     }
     applyDragRange(row);
     testSelectionTouched = true;
@@ -1954,6 +2061,7 @@ function bindEventsOnce() {
         return;
       }
       const key = row.dataset.testKey || '';
+      lastDragIndex = -1;
       applyTestRowStatus(row, nextStatusOf(statusForKey(key)));
       testSelectionTouched = true;
     }
@@ -1961,6 +2069,7 @@ function bindEventsOnce() {
 
   document.body.addEventListener('mousedown', (e) => {
     if (e.button !== 0 && e.button !== 2) return;
+    finishDrag(true);
     const row = testRowFromTarget(e.target);
     if (!row || row.disabled) return;
     if (e.ctrlKey || e.metaKey) return;
@@ -1971,6 +2080,7 @@ function bindEventsOnce() {
     if (startIndex === -1) return;
 
     pointerDown = true;
+    dragOpenSeq = testOpenSeq;
     dragActive = false;
     dragTarget = null;
     dragButton = e.button;
@@ -1989,21 +2099,13 @@ function bindEventsOnce() {
       return;
     }
     const key = row.dataset.testKey || '';
+    lastDragIndex = -1;
     applyTestRowStatus(row, nextExcludedStatusOf(statusForKey(key)));
     testSelectionTouched = true;
   });
 
   document.addEventListener('mouseup', () => {
-    if (!pointerDown) return;
-    pointerDown = false;
-    if (dragActive && dragButton === 0) suppressClickOnce = true;
-    if (dragActive && dragButton === 2) suppressContextOnce = true;
-
-    dragActive = false;
-    dragTarget = null;
-    dragButton = 0;
-    startStatus = '';
-    startIndex = -1;
+    finishDrag();
   });
 
   document.body.addEventListener('change', (e) => {
@@ -2046,6 +2148,7 @@ function bindEventsOnce() {
     if (document.activeElement?.matches?.('#testModal select, #testModal input, #testModal textarea, #testModal button:not(.test-row), [contenteditable="true"]')) return;
 
     if (applyKeyboardStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)) {
+      lastDragIndex = -1;
       e.preventDefault();
       e.stopPropagation();
     }

@@ -1,15 +1,16 @@
 // /js/admin/features/logModal.js
 /* global fetch */
 
-import { $, toast, postJSON } from '../core/utils.js';
+import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { classifySaveConflict } from '../core/saveConflict.js';
-import { initTestModal } from './testModal.js?v=20260905-rules1';
+import { initTestModal } from './testModal.js?v=20260907-ilsan-level-r1&whiteRetest=20260928&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007';
 import {
+  placeSleepingHomeworkRowsLast,
   previousHomeworkText,
   projectBlankHomeworkCheckCarryover,
-} from './homeworkCarryover.js?v=20260904-blank-check1';
+} from './homeworkCarryover.js?v=20260914-sleep-last1';
 
 console.log('[logModal] HW-TABLE v6.7 (progress patch mode + SQLite-friendly logs patch)');
 
@@ -25,11 +26,11 @@ const HOMEWORK_SLEEPING_BOOKS_KEY = 'sleepingHomeworkBooks';
 let logOpenSeq = 0;
 let logModalReady = true;
 let logModalCarriedTestAssignment = null;
-let logKeybound = false; // Ctrl/Cmd+Enter 전역 바인딩 중복 방지
 let logModalAccessMode = 'full';
 let saveAllStudentPopupPromise = null;
 let logRecordActionPromise = null;
 const canonicalHomeworkFetchCache = new Map();
+const canonicalHomeworkFetchEpochs = new Map();
 let canonicalHomework = createCanonicalHomeworkState();
 let homeworkRemoveSelectionActive = false;
 let homeworkReorderActive = false;
@@ -191,6 +192,10 @@ async function patchLogEntry(date, sid, entry, clearKeys, options = {}) {
       throw new Error(msg);
     }
 
+    if (options.commitOutcome && typeof options.commitOutcome === 'object') {
+      options.commitOutcome.sqlite = data.sqlite === true;
+      options.commitOutcome.json = data.json === true;
+    }
     const returnedEntry = (data && data.entry && typeof data.entry === 'object') ? data.entry : null;
     return returnedEntry;
   }
@@ -265,6 +270,9 @@ async function fetchLogEntryFromServer(date, sid) {
       let data = null;
       try { data = await res.json(); } catch {}
       if (data?.ok) {
+        if (data.entry != null && (typeof data.entry !== 'object' || Array.isArray(data.entry))) {
+          throw new Error('logs.entry 응답 형식이 올바르지 않습니다.');
+        }
         const entry = (data && data.entry && typeof data.entry === 'object') ? data.entry : {};
         return entry;
       }
@@ -282,6 +290,9 @@ async function fetchLogEntryFromServer(date, sid) {
 
     let all = null;
     try { all = await res.json(); } catch {}
+    if (!all || typeof all !== 'object' || Array.isArray(all) || all.ok === false) {
+      throw new Error('logs.get 응답 형식이 올바르지 않습니다.');
+    }
     const entry = (all && all[t] && typeof all[t] === 'object' && all[t][s] && typeof all[t][s] === 'object')
       ? all[t][s]
       : {};
@@ -318,12 +329,25 @@ function canonicalHomeworkFetchKey(date, sid) {
 
 function fetchCanonicalHomeworkForLogCached(date, sid, ttlMs = 2500) {
   const key = canonicalHomeworkFetchKey(date, sid);
+  const epochs = canonicalHomeworkFetchEpochs;
+  const readEpoch = epochs.get(key) || 0;
   const now = Date.now();
   const hit = canonicalHomeworkFetchCache.get(key);
-  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+  if (hit && (hit.pending || (now - hit.ts) < ttlMs)) return hit.promise;
 
-  const promise = fetchCanonicalHomeworkForLog(date, sid);
-  canonicalHomeworkFetchCache.set(key, { ts: now, promise });
+  const pending = fetchCanonicalHomeworkForLog(date, sid);
+  const promise = pending.then(value => {
+    if ((epochs.get(key) || 0) !== readEpoch) {
+      throw new Error('팝업 데이터가 변경되었습니다. 다시 열어 주세요.');
+    }
+    return value;
+  });
+  canonicalHomeworkFetchCache.set(key, { ts: now, promise, pending: true });
+  promise.then(() => {
+    if (canonicalHomeworkFetchCache.get(key)?.promise === promise) {
+      canonicalHomeworkFetchCache.set(key, { ts: Date.now(), promise, pending: false });
+    }
+  }, () => {});
   promise.catch(() => {
     if (canonicalHomeworkFetchCache.get(key)?.promise === promise) {
       canonicalHomeworkFetchCache.delete(key);
@@ -337,10 +361,12 @@ function invalidateLogModalHydrationCaches(date, sid) {
   const query = new URLSearchParams({ sid: sidText }).toString();
   const sharedCache = window.__studentWorkFetchCache;
   if (sharedCache && typeof sharedCache.delete === 'function') {
-    sharedCache.delete(`/api/logs?${query}`);
-    sharedCache.delete(`/api/progress?${query}`);
+    invalidateStudentWorkFetchCache(`/api/logs?${query}`);
+    invalidateStudentWorkFetchCache(`/api/progress?${query}`);
   }
-  canonicalHomeworkFetchCache.delete(canonicalHomeworkFetchKey(date, sidText));
+  const homeworkKey = canonicalHomeworkFetchKey(date, sidText);
+  canonicalHomeworkFetchEpochs.set(homeworkKey, (canonicalHomeworkFetchEpochs.get(homeworkKey) || 0) + 1);
+  canonicalHomeworkFetchCache.delete(homeworkKey);
   window.invalidateVideoAssignmentPopupCache?.(date, sidText);
 }
 
@@ -369,13 +395,21 @@ async function fetchLatestCarriedTestLogEntry(date, sid) {
   return (data.entry && typeof data.entry === 'object') ? data.entry : {};
 }
 
+function invalidateStudentWorkFetchCache(url) {
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  epochs.set(url, (epochs.get(url) || 0) + 1);
+  window.__studentWorkFetchCache?.delete?.(url);
+}
+
 async function fetchJSONCached(url, ttlMs = 2500) {
   const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  const readEpoch = epochs.get(url) || 0;
   const now = Date.now();
   const hit = cache.get(url);
-  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+  if (hit && (hit.pending || (now - hit.ts) < ttlMs)) return hit.promise;
 
-  const promise = fetch(url, { cache: 'no-store' }).then(async (res) => {
+  const pending = fetch(url, { cache: 'no-store' }).then(async (res) => {
     if (!res.ok) throw new Error(`[logModal] GET ${url} -> ${res.status}`);
     try {
       return await res.json();
@@ -383,7 +417,18 @@ async function fetchJSONCached(url, ttlMs = 2500) {
       throw new Error(`[logModal] GET ${url} returned invalid JSON: ${error?.message || error}`);
     }
   });
-  cache.set(url, { ts: now, promise });
+  const promise = pending.then(value => {
+    if ((epochs.get(url) || 0) !== readEpoch) {
+      throw new Error('팝업 데이터가 변경되었습니다. 다시 열어 주세요.');
+    }
+    return value;
+  });
+  cache.set(url, { ts: now, promise, pending: true });
+  promise.then(() => {
+    if (cache.get(url)?.promise === promise) {
+      cache.set(url, { ts: Date.now(), promise, pending: false });
+    }
+  }, () => {});
   promise.catch(() => {
     if (cache.get(url)?.promise === promise) cache.delete(url);
   });
@@ -405,13 +450,15 @@ function mergeDateSidMap(target, incoming) {
   });
 }
 
-async function hydrateLogHistoryForSid(sid) {
+async function hydrateLogHistoryForSid(sid, isCurrent = () => true) {
   const s = String(sid);
   if (!s) return false;
 
   try {
     const q = new URLSearchParams({ sid: s }).toString();
     const data = await fetchJSONCached(`/api/logs?${q}`);
+    if (!data || typeof data !== 'object' || Array.isArray(data) || data.ok === false) return false;
+    if (!isCurrent()) return false;
     state.logs = state.logs || {};
     mergeDateSidMap(state.logs, data);
     window.logs = state.logs;
@@ -422,13 +469,15 @@ async function hydrateLogHistoryForSid(sid) {
   }
 }
 
-async function hydrateProgressHistoryForSid(sid) {
+async function hydrateProgressHistoryForSid(sid, isCurrent = () => true) {
   const s = String(sid);
   if (!s) return false;
 
   try {
     const q = new URLSearchParams({ sid: s }).toString();
     const data = await fetchJSONCached(`/api/progress?${q}`);
+    if (!data || typeof data !== 'object' || Array.isArray(data) || data.ok === false) return false;
+    if (!isCurrent()) return false;
     state.progress = state.progress || {};
     mergeDateSidMap(state.progress, data);
     window.progressData = state.progress;
@@ -450,12 +499,13 @@ function prefetchLogModalDataForRow(row) {
   ]);
 }
 
-async function hydrateTodayLogFromServer(today, sid) {
+async function hydrateTodayLogFromServer(today, sid, isCurrent = () => true) {
   const t = String(today);
   const s = String(sid);
 
   try {
     const entry = await fetchLogEntryFromServer(t, s);
+    if (!isCurrent()) return { ok: false, entry: {} };
     state.logs = state.logs || {};
     state.logs[t] = state.logs[t] || {};
     state.logs[t][s] = entry;
@@ -631,6 +681,10 @@ function injectStyles() {
       display:flex;
       flex-direction:column;
       gap:12px;
+    }
+    #hwBody.is-hydrating :is(.hwItem,input,select,button){
+      animation:none !important;
+      transition:none !important;
     }
 
     .hwItem{ display:flex; flex-direction:column; gap:8px; }
@@ -1459,11 +1513,10 @@ function updatePctBubble(wrapEl, value, { isPlaceholder = false } = {}) {
   if (!bubble) return;
 
   const v = snap10(value);
-  const clamped = Math.max(0, Math.min(100, v));
   bubble.textContent = `${v}%`;
   bubble.classList.toggle('is-ph', !!isPlaceholder);
-  bubble.style.left = `${clamped}%`;
-  bubble.style.transform = `translateX(${-clamped}%)`;
+  bubble.style.left = `${v}%`;
+  bubble.style.transform = `translateX(${-v}%)`;
 }
 
 function assignmentForHomeworkRow(row, claimedIds) {
@@ -1646,8 +1699,21 @@ function renderHwTable(mergedRows, sleepingBooks = []) {
   const host = $('hwBody');
   if (!host) return;
 
-  const rows = Array.isArray(mergedRows) ? mergedRows : [];
+  const rows = placeSleepingHomeworkRowsLast(mergedRows, sleepingBooks);
   const sleepingBookKeys = new Set(normalizeSleepingHomeworkBooks(sleepingBooks).map(homeworkBookKey));
+  const renderKey = JSON.stringify({
+    rows,
+    sleepingBooks: normalizeSleepingHomeworkBooks(sleepingBooks),
+    canonicalAssignments: canonicalHomework.mode === 'canonical' ? canonicalHomework.assignments : null,
+  });
+  if (host.__homeworkRenderKey === renderKey) {
+    syncHomeworkRemovalControls();
+    syncHomeworkSleepingControls();
+    return;
+  }
+  const hydratingExistingRows = typeof host.__homeworkRenderKey === 'string'
+    && host.classList.contains('is-hydrating');
+  host.__homeworkRenderKey = renderKey;
   const n = Math.max(rows.length, 1);
 
   const hasPrevAny = rows.some(r => {
@@ -1661,10 +1727,9 @@ function renderHwTable(mergedRows, sleepingBooks = []) {
   });
   const EMPTY_PH_TEXT = '숙제 없음';
 
-  const itemHtml = (i) => {
+  const rowView = (i) => {
     const r = rows[i] || { book: '', this: '', pct: '', comment: '', next: '', _deleted: false, _ph: {} };
     const ph = r._ph || {};
-    const removeChoiceHtml = `<button type="button" class="hw-remove-choice" aria-label="${i + 1}번째 교재 선택 제거" hidden>선택</button>`;
 
     const bookVal = (r.book || '').trim();
     const thisVal = (r.this || '').trim();
@@ -1683,6 +1748,12 @@ function renderHwTable(mergedRows, sleepingBooks = []) {
 
     const deleted = !!r._deleted;
     const sleeping = Boolean(bookVal && sleepingBookKeys.has(homeworkBookKey(bookVal)));
+    return { bookVal, thisVal, cmtVal, nextVal, phThis, phCmt, phNext, displayPct, emptyFlag, deleted, sleeping };
+  };
+
+  const itemHtml = (i) => {
+    const { bookVal, thisVal, cmtVal, nextVal, phThis, phCmt, phNext, displayPct, emptyFlag, deleted, sleeping } = rowView(i);
+    const removeChoiceHtml = `<button type="button" class="hw-remove-choice" aria-label="${i + 1}번째 교재 선택 제거" hidden>선택</button>`;
     const delAttr = deleted ? '1' : '0';
     const hideStyle = deleted ? 'style="display:none"' : '';
 
@@ -1729,7 +1800,36 @@ function renderHwTable(mergedRows, sleepingBooks = []) {
       </div>`;
   };
 
-  host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
+  const existingItems = hydratingExistingRows ? Array.from(host.querySelectorAll('.hwItem')) : [];
+  const canHydrateInPlace = existingItems.length === n && existingItems.every((item, index) => (
+    !item.querySelector('.hwCanonical')
+    && homeworkBookKey(item.querySelector('.hwBook')?.value) === homeworkBookKey(rows[index]?.book)
+    && ['.hwBook', '.hwThis', '.hwComment', '.hwNext', '.hwPctRange', '.pctWrap']
+      .every(selector => item.querySelector(selector))
+  ));
+  if (canHydrateInPlace) {
+    // Loading controls are locked: hydrate their values without replacing the visible inputs.
+    existingItems.forEach((item, index) => {
+      const view = rowView(index);
+      [
+        ['.hwBook', view.bookVal, ''],
+        ['.hwThis', view.thisVal, view.phThis],
+        ['.hwComment', view.cmtVal, view.phCmt],
+        ['.hwNext', view.nextVal, view.phNext],
+      ].forEach(([selector, value, placeholder]) => {
+        const input = item.querySelector(selector);
+        input.value = value;
+        input.placeholder = placeholder;
+      });
+      item.querySelector('.hwPctRange').value = view.displayPct;
+      item.querySelector('.pctWrap').dataset.empty = view.emptyFlag;
+      item.dataset.deleted = view.deleted ? '1' : '0';
+      item.style.display = view.deleted ? 'none' : '';
+      setHomeworkItemSleeping(item, view.sleeping);
+    });
+  } else {
+    host.innerHTML = Array.from({ length: n }, (_, i) => itemHtml(i)).join('');
+  }
   resetHomeworkInteractionModes();
 
   const claimedIds = new Set();
@@ -2330,9 +2430,7 @@ function logEntryForSid(dateKey, sid) {
   const sidKey = String(sid || '');
   const direct = day[sidKey];
   if (direct && typeof direct === 'object') return direct;
-  const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
-  const entry = matchedSid ? day[matchedSid] : null;
-  return (entry && typeof entry === 'object') ? entry : {};
+  return {};
 }
 
 function carryoverTestItems(entry) {
@@ -2477,6 +2575,7 @@ function buildLogSavePatch({
       logModalServerSnapshot.sleepingHomeworkBooks,
     );
     entry[HOMEWORK_SLEEPING_BOOKS_KEY] = sleepingBooksNow;
+    if (!sleepingBooksNow.length) clearKeys.push(HOMEWORK_SLEEPING_BOOKS_KEY);
     contentChanged = true;
   }
 
@@ -2525,6 +2624,9 @@ function applyLogSaveResult({ date, sid, entry, clearKeys, returned, doneFlag, p
 
   const next = { ...(state.logs[date][sid] || {}), ...entry };
   clearKeys.forEach(k => { delete next[String(k)]; });
+  if (clearKeys.includes(HOMEWORK_SLEEPING_BOOKS_KEY) && Array.isArray(entry[HOMEWORK_SLEEPING_BOOKS_KEY])) {
+    next[HOMEWORK_SLEEPING_BOOKS_KEY] = entry[HOMEWORK_SLEEPING_BOOKS_KEY];
+  }
   if (!doneFlag && prevDone) next.done = true;
   state.logs[date][sid] = next;
 }
@@ -2761,6 +2863,7 @@ export function initLogModal() {
   });
 
   async function openLogModalForRow(rowOrButton, opts = {}) {
+    if (logRecordActionPromise || saveAllStudentPopupPromise) return;
     const openSeq = ++logOpenSeq;
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     editingLogSid = tr?.dataset?.sid;
@@ -2774,11 +2877,13 @@ export function initLogModal() {
     const stu = state.students.find(x => String(x.id) === String(editingLogSid));
     if (!stu) { alert('학생 정보를 찾을 수 없습니다.'); return; }
 
+    const prepareUnifiedHomework = opts.layout === 'student-work';
     parkHomeworkWorkspace();
 
     mountAssistantThread(stu);
     const today = editingLogDate;
     const sid = String(editingLogSid);
+    const isCurrentOpen = () => openSeq === logOpenSeq && sid === String(editingLogSid) && today === editingLogDate;
 
     logModalReady = false;
     logModalSnapshot = { notes: '', homeworkTable: [], sleepingHomeworkBooks: [] };
@@ -2791,33 +2896,43 @@ export function initLogModal() {
     if (logSave) logSave.disabled = true;
     if (logComplete) logComplete.disabled = true;
     progEl.innerHTML = '<div class="log-loading">진도 불러오는 중...</div>';
+    const homeworkBody = $('hwBody');
+    if (homeworkBody) {
+      homeworkBody.__homeworkRenderKey = null;
+      homeworkBody.classList.add('is-hydrating');
+      homeworkBody.setAttribute('aria-busy', 'true');
+    }
     const cachedHomework = projectHomeworkRowsFromLogState(today, sid);
     const cachedRows = cachedHomework.mergedRows.some(row => cleanHwText(row.book))
       ? cachedHomework.mergedRows
       : configuredHomeworkBookRows(stu);
     renderHwTable(cachedRows.length ? cachedRows : cachedHomework.mergedRows, cachedHomework.sleepingHomeworkBooks);
-    logModal.style.display = 'flex';
     resetLogModalScroll();
+    logModal.style.display = 'flex';
 
-    try {
-      if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
-        window.showStudentTooltipForSid(editingLogSid, {
-          variant: 'log',
-          fixed: true,
-          layout: opts.layout === 'student-work' ? 'student-work' : undefined,
-        });
+    const showHomeworkTooltip = () => {
+      try {
+        if (!opts.tooltipAlreadyShown && window.showStudentTooltipForSid) {
+          window.showStudentTooltipForSid(sid, {
+            variant: 'log',
+            fixed: true,
+            layout: prepareUnifiedHomework ? 'student-work' : undefined,
+          });
+        }
+        mountHomeworkInTooltip();
+        applyReadOnlyRecordAccess();
+      } catch (err) {
+        console.warn('[logModal] show homework tooltip failed:', err);
       }
-      mountHomeworkInTooltip();
-      applyReadOnlyRecordAccess();
-    } catch (err) {
-      console.warn('[logModal] show loading tooltip failed:', err);
-    }
+    };
+    showHomeworkTooltip();
 
-    const progressHydrationPromise = hydrateProgressHistoryForSid(sid);
+    const progressHydrationPromise = hydrateProgressHistoryForSid(sid, isCurrentOpen);
     const logHydrationPromise = (async () => {
-      const historyLoaded = await hydrateLogHistoryForSid(sid);
+      const historyLoaded = await hydrateLogHistoryForSid(sid, isCurrentOpen);
+      if (!isCurrentOpen()) return false;
       if (historyLoaded) return true;
-      const fallback = await hydrateTodayLogFromServer(today, sid);
+      const fallback = await hydrateTodayLogFromServer(today, sid, isCurrentOpen);
       return fallback.ok;
     })();
     const hydrationResults = await Promise.allSettled([
@@ -2825,6 +2940,36 @@ export function initLogModal() {
       fetchCanonicalHomeworkForLogCached(today, sid),
     ]);
     if (openSeq !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) return;
+    const logHydrationReady = hydrationResults[0]?.status === 'fulfilled' && hydrationResults[0].value === true;
+    if (!logHydrationReady) {
+      canonicalHomework.mode = 'error';
+      canonicalHomework.error = '로그를 불러오지 못해 숙제 편집과 저장을 사용할 수 없습니다. 다시 불러와 주세요.';
+      logNotes.value = '';
+      logNotes.disabled = true;
+      if (logSave) logSave.disabled = true;
+      if (logComplete) logComplete.disabled = true;
+      applyReadOnlyRecordAccess();
+      if (homeworkBody) {
+        homeworkBody.classList.remove('is-hydrating');
+        homeworkBody.removeAttribute('aria-busy');
+      }
+      const warning = document.createElement('p');
+      warning.className = 'hwCanonicalError';
+      warning.setAttribute('role', 'alert');
+      warning.textContent = canonicalHomework.error + ' ';
+      const retry = document.createElement('button');
+      retry.id = 'logLoadRetry';
+      retry.type = 'button';
+      retry.textContent = '다시 불러오기';
+      retry.addEventListener('click', () => {
+        if (!isCurrentOpen()) return;
+        invalidateLogModalHydrationCaches(today, sid);
+        void openLogModalForRow(tr, opts);
+      });
+      warning.append(retry);
+      $('hwWrap')?.prepend(warning);
+      return;
+    }
     const canonicalResult = hydrationResults[1];
     if (canonicalResult?.status === 'fulfilled') {
       const payload = canonicalResult.value || {};
@@ -2866,6 +3011,10 @@ export function initLogModal() {
       $('hwWrap')?.prepend(warning);
     }
     applyReadOnlyRecordAccess();
+    if (homeworkBody) {
+      homeworkBody.classList.remove('is-hydrating');
+      homeworkBody.removeAttribute('aria-busy');
+    }
 
     logModalSnapshot = {
       // "최근 특이사항 미리 채움"은 오늘 서버값과는 다를 수 있으므로,
@@ -2962,23 +3111,15 @@ export function initLogModal() {
   window.openRecordPopupForRow = openLogModalForRow;
 
   async function openStudentPopupsForRow(rowOrButton, opts = {}) {
+    if (logRecordActionPromise || saveAllStudentPopupPromise) return;
     const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
     if (!tr?.dataset?.sid) return;
 
     if (window.showStudentPopupBackdrop) {
       try { window.showStudentPopupBackdrop(); } catch {}
     }
-    try {
-      window.showStudentTooltipForSid?.(tr.dataset.sid, {
-        variant: 'log',
-        fixed: true,
-        layout: 'student-work',
-      });
-    } catch {}
-
     const logOptions = {
       layout: 'student-work',
-      tooltipAlreadyShown: true,
     };
     if (opts.accessMode) logOptions.accessMode = opts.accessMode;
 
@@ -3072,7 +3213,8 @@ export function initLogModal() {
     }
   });
 
-  const close = (event = null) => {
+  const close = (event = null, { saveCompleted = false } = {}) => {
+    if (!saveCompleted && (logRecordActionPromise || saveAllStudentPopupPromise)) return;
     if (event?.detail?.saveAll) {
       void saveAllStudentPopupChangesAndClose();
       return;
@@ -3098,9 +3240,11 @@ export function initLogModal() {
     try { if (window.hideStudentPopupBackdrop) window.hideStudentPopupBackdrop(); } catch {}
   };
   window.closeStudentWorkPopups = close;
+  window.isStudentPopupSavePending = () => Boolean(logRecordActionPromise || saveAllStudentPopupPromise);
   logModal.addEventListener('admin:assistant-notes-close', close);
 
   async function saveBase(doneFlag, options = {}) {
+    if (!logModalReady) throw new Error('기록 팝업을 다시 불러온 뒤 저장해 주세요.');
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid);
     const homeworkCheckedAt = options.homeworkChecked === true ? nowHHMM() : '';
@@ -3116,8 +3260,12 @@ export function initLogModal() {
     const prevDone =
       prevLog?.done === true || prevLog?.done === 'true' || prevLog?.done === 1 || prevLog?.done === '1';
 
+    const saveSequence = logOpenSeq;
     const changedProg = collectChangedProgressPatch();
     await saveChangedProgressPatch(today, sid, changedProg);
+    if (saveSequence !== logOpenSeq || sid !== String(editingLogSid) || today !== editingLogDate) {
+      throw new Error('저장 중 대상이 바뀌었습니다. 원래 학생의 팝업을 다시 열어 확인해 주세요.');
+    }
 
     if (isContextMenuOnlyAccess()) {
       return {};
@@ -3143,6 +3291,7 @@ export function initLogModal() {
     });
 
     let returned = null;
+    const commitOutcome = { sqlite: false, json: false };
     if (canonicalHomework.mode === 'canonical') {
       const canonicalRows = collectCanonicalHomeworkRows();
       if (hwRows.length) {
@@ -3173,12 +3322,14 @@ export function initLogModal() {
         removedAssignmentIds: Array.from(canonicalHomework.removedAssignmentIds),
       };
       const committed = await commitCanonicalHomework(commitPayload);
+      commitOutcome.sqlite = committed?.log?.sqlite === true;
+      commitOutcome.json = committed?.log?.json === true;
       returned = (committed?.entry && typeof committed.entry === 'object')
         ? committed.entry
         : ((committed?.log?.entry && typeof committed.log.entry === 'object') ? committed.log.entry : null);
     } else if (Object.keys(entry).length || clearKeys.length) {
       entry.updatedAt = nowISO();
-      returned = await patchLogEntry(today, sid, entry, clearKeys, contentChanged ? { base } : {});
+      returned = await patchLogEntry(today, sid, entry, clearKeys, { ...(contentChanged ? { base } : {}), commitOutcome });
     }
 
     applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });
@@ -3186,7 +3337,8 @@ export function initLogModal() {
     setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);
     invalidateLogModalHydrationCaches(today, sid);
 
-    return { homeworkCheckedAt };
+    return { homeworkCheckedAt, carryoverCommitScope: commitOutcome.sqlite && commitOutcome.json
+      ? { date: today, sid, seq: saveSequence } : null };
   }
 
   async function saveRecordPopupForCurrent(options = {}) {
@@ -3196,7 +3348,7 @@ export function initLogModal() {
 
   window.saveRecordPopup = saveRecordPopupForCurrent;
 
-  async function reapplyCarriedTestAssignmentForCurrent() {
+  async function reapplyCarriedTestAssignmentForCurrent(options = {}) {
     if (!logModalCarriedTestAssignment?.items?.length) return;
     const today = editingLogDate || getAdminDate();
     const sid = String(editingLogSid || '');
@@ -3223,6 +3375,12 @@ export function initLogModal() {
     };
     if (noteBlock) entry.testAssignmentNote = noteBlock;
     if (nextNotes !== prevNotes) entry.notes = nextNotes;
+
+    const scope = options.commitScope;
+    const identical = Object.entries(entry).every(([key, value]) => key === 'updatedAt'
+      || (Object.prototype.hasOwnProperty.call(latestEntry, key)
+        && JSON.stringify(latestEntry[key]) === JSON.stringify(value)));
+    if (scope && scope.date === today && scope.sid === sid && scope.seq === logOpenSeq && identical) return;
 
     const saved = await patchLogEntry(
       today,
@@ -3300,17 +3458,34 @@ export function initLogModal() {
     if (logRecordActionPromise) return logRecordActionPromise;
 
     saveAllStudentPopupPromise = (async () => {
+      const saveSequence = logOpenSeq;
+      const saveSid = String(editingLogSid);
+      const saveDate = editingLogDate;
+      const assertSaveTarget = () => {
+        if (saveSequence !== logOpenSeq || saveSid !== String(editingLogSid) || saveDate !== editingLogDate) {
+          throw new Error('저장 중 대상이 바뀌었습니다. 원래 학생의 팝업을 다시 열어 확인해 주세요.');
+        }
+      };
       const unified = logModal.classList.contains('student-work-layout');
+      const saveButton = document.querySelector('#assistantStudentNotes [data-note-save-close]');
+      const saveLabel = saveButton?.textContent;
+      if (saveButton) {
+        saveButton.textContent = '저장 중…';
+        saveButton.setAttribute('aria-busy', 'true');
+      }
       const closeUnlock = lockStudentPopupControls([
         '#assistantStudentNotes [data-note-save-close]',
         '#assistantStudentNotes [data-note-close]',
       ]);
       let allUnlock = null;
       try {
+        if (!logModalReady) throw new Error('기록 팝업을 다시 불러온 뒤 저장해 주세요.');
         await waitForStudentPopupSaveReady('#logSave', '숙제');
+        assertSaveTarget();
         if (unified) {
           await waitForStudentPopupSaveReady('#mSave', '영상 배정');
           await waitForStudentPopupSaveReady('#testSave', '테스트 배정');
+          assertSaveTarget();
           allUnlock = lockStudentPopupControls([
             '#assistantStudentNotes [data-note-save-close]',
             '#assistantStudentNotes [data-note-close]',
@@ -3320,19 +3495,23 @@ export function initLogModal() {
             '#testSave',
           ]);
           if (typeof window.saveVideoAssignmentPopup === 'function') {
-            await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false });
+            await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false, skipUnchanged: true });
           }
         }
-        await saveRecordPopupForCurrent();
+        assertSaveTarget();
+        const recordResult = await saveRecordPopupForCurrent();
+        assertSaveTarget();
         if (!isContextMenuOnlyAccess()) {
-          await reapplyCarriedTestAssignmentForCurrent();
+          await reapplyCarriedTestAssignmentForCurrent({ commitScope: recordResult?.carryoverCommitScope });
         }
+        assertSaveTarget();
         // The log save can merge an absence carryover captured when the popup opened.
         // Persist the current test UI last so an explicit removal remains authoritative.
         if (unified && typeof window.saveTestAssignmentPopup === 'function') {
           await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
         }
-        close();
+        assertSaveTarget();
+        close(null, { saveCompleted: true });
         if (typeof window.showStudentPopupSaveResult === 'function') {
           window.showStudentPopupSaveResult('저장 완료');
         } else {
@@ -3345,6 +3524,10 @@ export function initLogModal() {
       } finally {
         allUnlock?.();
         closeUnlock();
+        if (saveButton) {
+          saveButton.textContent = saveLabel;
+          saveButton.removeAttribute('aria-busy');
+        }
       }
     })().finally(() => {
       saveAllStudentPopupPromise = null;
@@ -3357,7 +3540,7 @@ export function initLogModal() {
       try {
         await saveRecordPopupForCurrent();
         toast(isContextMenuOnlyAccess() ? '영상 제외 상태 저장됨' : '숙제 저장됨');
-        close();
+        close(null, { saveCompleted: true });
         document.dispatchEvent(new CustomEvent('admin:refresh'));
       } catch (err) {
         if (err?.message) {
@@ -3374,7 +3557,7 @@ export function initLogModal() {
     void runLogRecordAction(logComplete, '처리 중…', async () => {
       try {
         await saveRecordPopupForCurrent({ homeworkChecked: true });
-        close();
+        close(null, { saveCompleted: true });
         if (typeof window.showStudentPopupSaveResult === 'function') {
           window.showStudentPopupSaveResult('저장 완료');
         } else {
@@ -3406,9 +3589,10 @@ export function initLogModal() {
       : (pctOf(w) >= TH_INTERRUPTED) ? 'interrupted'
         : null;
 
-  function applyAutoWhenReady(watchByMid) {
+  function applyAutoWhenReady(watchByMid, isCurrent) {
     let tries = 0;
     const tick = () => {
+      if (!isCurrent()) return;
       const grid = document.getElementById('logProgress');
       if (!grid || !grid.children.length) {
         if (tries++ < 10) return setTimeout(tick, 100);
@@ -3440,13 +3624,22 @@ export function initLogModal() {
     const tr = btn.closest('tr[data-sid]');
     const sid = tr?.dataset?.sid;
     if (!sid) return;
-
-    const date = tr?.dataset?.date || editingLogDate || getAdminDate();
+    // The primary open listener updates this scope later in the same click.
+    await Promise.resolve();
+    const date = tr?.dataset?.date || getAdminDate();
+    const openSeq = logOpenSeq;
+    const isCurrent = () => openSeq === logOpenSeq
+      && String(editingLogSid) === String(sid) && editingLogDate === date
+      && document.getElementById('logModal')?.style.display !== 'none';
+    if (!isCurrent()) return;
     const raw = await fetchWatchForSid(sid, date);
+    if (!isCurrent()) return;
 
     const watchByMid = {};
     Object.keys(raw).forEach(k => { watchByMid[String(k)] = raw[k]; });
 
-    requestAnimationFrame(() => applyAutoWhenReady(watchByMid));
+    requestAnimationFrame(() => {
+      if (isCurrent()) applyAutoWhenReady(watchByMid, isCurrent);
+    });
   }, false);
 })();

@@ -11,6 +11,8 @@ from core.progress_rules import (
     WATCH_AUTO_PROGRESS_META_KEY,
     merge_watch_entry,
 )
+from core.video_watch_cycles import VIDEO_WATCH_CYCLES_KEY
+from core.video_sources import parse_youtube_url
 
 
 DRAFT_KIND = "academy-video-catalog-correction"
@@ -19,6 +21,7 @@ _PROGRESS_META_KEYS = (
     PROGRESS_MANUAL_META_KEY,
     WATCH_AUTO_PROGRESS_META_KEY,
     PROGRESS_ALL_STUDENTS_META_KEY,
+    VIDEO_WATCH_CYCLES_KEY,
 )
 _WATCH_FIELDS = frozenset({"last", "dur", "completed", "updatedAt"})
 _MID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -85,7 +88,11 @@ def _catalog_by_id(rows: Any, label: str) -> tuple[dict[str, dict], dict[str, st
             raise CorrectionValidationError(
                 f"{label} has duplicate MID {mid} on ids {mid_owner[mid]} and {row_id}"
             )
-        url_mid = extract_kollus_mid(raw.get("url"))
+        try:
+            youtube = parse_youtube_url(raw.get("url"), catalog_id=raw.get("id"))
+        except ValueError as exc:
+            raise CorrectionValidationError(str(exc)) from exc
+        url_mid = youtube["mid"] if youtube else extract_kollus_mid(raw.get("url"))
         if url_mid != mid:
             raise CorrectionValidationError(f"{label} id {row_id} URL does not resolve to MID {mid}")
         by_id[row_id] = raw
@@ -255,6 +262,8 @@ def _progress_rank(status: Any) -> int:
 def _higher_progress_status(left: Any, right: Any) -> str:
     a = str(left or "").strip()
     b = str(right or "").strip()
+    if not a and b == "none":
+        return b
     return a if _progress_rank(a) >= _progress_rank(b) else b
 
 
@@ -312,6 +321,17 @@ def _replace_progress(data: dict, replacements: dict[str, str]) -> dict:
             if not isinstance(per_sid, dict):
                 continue
             before = deepcopy(per_sid)
+            cycles = before.get(VIDEO_WATCH_CYCLES_KEY)
+            if isinstance(cycles, dict):
+                remapped_cycles = {}
+                for mid, cycle in cycles.items():
+                    target = replacements.get(mid, mid)
+                    if target != mid and target in before and target not in replacements:
+                        raise CorrectionValidationError("Fresh-watch cycle cannot merge with a different existing progress entry")
+                    if target in remapped_cycles and remapped_cycles[target] != cycle:
+                        raise CorrectionValidationError("Conflicting fresh-watch cycles cannot be merged")
+                    remapped_cycles[target] = deepcopy(cycle)
+                per_sid[VIDEO_WATCH_CYCLES_KEY] = remapped_cycles
             manual_raw = before.get(PROGRESS_MANUAL_META_KEY)
             manual_raw = dict(manual_raw) if isinstance(manual_raw, dict) else {}
             auto_raw = before.get(WATCH_AUTO_PROGRESS_META_KEY)

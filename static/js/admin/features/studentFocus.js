@@ -73,6 +73,8 @@ export function initStudentFocus() {
   const statusNode = document.getElementById('studentFocusAdminStatus');
   const list = document.getElementById('studentFocusAdminList');
   if (!openButton || !modal || !closeButton || !refreshButton || !dateNode || !statusNode || !list) return;
+  if (modal.dataset.studentFocusReady === '1') return;
+  modal.dataset.studentFocusReady = '1';
 
   let frozenDate = '';
   let opener = null;
@@ -159,6 +161,7 @@ export function initStudentFocus() {
   function trap(event) {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       close();
       return;
     }

@@ -208,8 +208,9 @@ def merge_tests_config_for_write(
 
     Existing test IDs are append/update-safe by default.  A caller must list
     IDs in ``removed_test_ids`` to intentionally delete them.  Answer keys and
-    Drive solution metadata omitted by a network-stripped payload are restored
-    from the current server copy while explicit incoming values remain intact.
+    Drive solution and unknown metadata omitted by a payload are retained.
+    Category membership, test lists and explicit field values come from the
+    incoming document; omitted tests are never appended back.
     """
 
     _validate_config_shape(current, "current")
@@ -222,14 +223,27 @@ def merge_tests_config_for_write(
     if missing_test_ids:
         raise TestsConfigWriteConflict(missing_test_ids)
 
-    merged = deepcopy(incoming)
-    for test_id, incoming_test in _test_records(merged).items():
-        if test_id not in current_records:
-            validate_new_test_answer_modes(incoming_test)
-    for test_id, incoming_test in _test_records(merged).items():
-        current_test = current_records.get(test_id)
-        if current_test is not None:
-            _merge_preserved_fields(current_test, incoming_test)
+    merged = {key: deepcopy(value) for key, value in current.items() if key != "categories"}
+    merged.update(deepcopy(incoming))
+    current_categories = current["categories"]
+    for category_key, incoming_category in merged["categories"].items():
+        current_category = current_categories.get(category_key, {})
+        category = {key: deepcopy(value) for key, value in current_category.items() if key != "tests"}
+        category.update(incoming_category)
+        tests = category.get("tests")
+        if isinstance(tests, list):
+            for index, incoming_test in enumerate(tests):
+                if not isinstance(incoming_test, dict) or not _test_id(incoming_test):
+                    continue
+                current_test = current_records.get(_test_id(incoming_test))
+                if current_test is None:
+                    validate_new_test_answer_modes(incoming_test)
+                    continue
+                _merge_preserved_fields(current_test, incoming_test)
+                test = deepcopy(current_test)
+                test.update(incoming_test)
+                tests[index] = test
+        merged["categories"][category_key] = category
     validate_tests_config_answer_modes(merged)
     return merged
 

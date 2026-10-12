@@ -7,6 +7,7 @@ import os
 import pathlib
 import sqlite3
 import threading
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
@@ -61,7 +62,7 @@ def _log_json_signature(path: pathlib.Path) -> tuple[int, int, int, int] | None:
     )
 
 
-def _read_log_json_for_cache(path: pathlib.Path) -> tuple[dict, str]:
+def _read_log_json_map_with_status(path: pathlib.Path) -> tuple[dict, str]:
     try:
         raw = json.loads(path.read_text("utf-8-sig"))
     except FileNotFoundError:
@@ -69,6 +70,9 @@ def _read_log_json_for_cache(path: pathlib.Path) -> tuple[dict, str]:
     except Exception:
         return {}, "invalid"
     return (raw, "available") if isinstance(raw, dict) else ({}, "invalid")
+
+
+_read_log_json_for_cache = _read_log_json_map_with_status
 
 
 def _cached_log_json_for_read(path_value: Any) -> tuple[dict, str]:
@@ -111,6 +115,8 @@ class LogEntryResult:
 class LogPostResult:
     sqlite_ok: bool
     sqlite_error: Exception | None = None
+    json_ok: bool = False
+    json_error: Exception | None = None
 
 
 @dataclass
@@ -319,14 +325,7 @@ class LogRepository:
         An existing but unreadable/malformed file is different: treating it as
         an authoritative empty fallback could hide rows that still exist there.
         """
-        path = pathlib.Path(self.logs_path)
-        try:
-            raw = json.loads(path.read_text("utf-8-sig"))
-        except FileNotFoundError:
-            return {}, "missing"
-        except Exception:
-            return {}, "invalid"
-        return (raw, "available") if isinstance(raw, dict) else ({}, "invalid")
+        return _read_log_json_map_with_status(pathlib.Path(self.logs_path))
 
     def _filter_json_map(self, data: dict, date_filter: str = "", sid_filter: str = "") -> dict:
         if not isinstance(data, dict):
@@ -482,7 +481,7 @@ class LogRepository:
             self._ensure_schema(con)
             entry = self._sqlite_get_entry(con, date, sid) or {}
             if isinstance(entry, dict) and entry:
-                fallback = self._json_entry(date, sid)
+                fallback = {} if entry.get(_COMPLETE_ENTRY) is True else self._json_entry(date, sid)
                 return LogEntryResult("sqlite", self._merge_json_fallback_fields(entry, fallback, sid))
         except Exception as exc:
             print("[logs.entry] sqlite failed:", exc, flush=True)
@@ -652,10 +651,12 @@ class LogRepository:
         return _public_map(out)
 
     def legacy_post(self, incoming: dict) -> LogPostResult:
+        result = LogPostResult(sqlite_ok=False)
         with self.mutation_lock():
             current, status = self._read_json_map_with_status()
             if status == "invalid":
-                raise ValueError("logs.json is unreadable or malformed")
+                result.sqlite_error = ValueError("logs.json is unreadable or malformed")
+                return result
             con = None
             try:
                 con = self._connect()
@@ -679,15 +680,21 @@ class LogRepository:
                         self._sqlite_upsert_entry(con, date_s, sid_s, stored)
                         self._write_sid_mapping(day, sid_s, stored)
                 con.execute("COMMIT;")
-            except Exception:
+                result.sqlite_ok = True
+            except Exception as exc:
+                result.sqlite_error = exc
                 if con is not None and con.in_transaction:
                     con.rollback()
-                raise
+                return result
             finally:
                 if con is not None:
                     con.close()
-            save_atomic(self.logs_path, current)
-            return LogPostResult(sqlite_ok=True)
+            try:
+                save_atomic(self.logs_path, current, compact=True)
+                result.json_ok = True
+            except Exception as exc:
+                result.json_error = exc
+            return result
 
     def patch_entry(self, date: str, sid: str, entry: dict, base: dict) -> LogPatchResult:
         entry = self.repair_entry(_public_entry(entry), sid)
@@ -734,7 +741,7 @@ class LogRepository:
                     con.close()
             try:
                 self._write_sid_mapping(day, sid, stored)
-                save_atomic(self.logs_path, current)
+                save_atomic(self.logs_path, current, compact=True)
                 result.json_ok = True
             except Exception as exc:
                 result.json_error = exc
@@ -743,7 +750,7 @@ class LogRepository:
 
     def mutation_lock(self):
         lock = self.lock_factory() if self.lock_factory else None
-        return lock if lock is not None else _NullContext()
+        return lock if lock is not None else nullcontext()
 
     def snapshot_entries_raw(
         self,
@@ -752,11 +759,16 @@ class LogRepository:
         json_lock_held: bool = False,
     ) -> tuple[dict, dict[tuple[str, str], dict]]:
         """Capture exact dual-store rows plus the effective entries seen by readers."""
-        context = _NullContext() if json_lock_held else self.mutation_lock()
+        context = nullcontext() if json_lock_held else self.mutation_lock()
         with context:
             json_map, json_status = self._read_json_map_with_status()
             if json_status == "invalid":
                 raise ValueError("logs.json is unreadable or malformed")
+            json_compact = False
+            if json_status == "available":
+                with pathlib.Path(self.logs_path).open("rb") as source:
+                    prefix = source.read(64).removeprefix(b"\xef\xbb\xbf")
+                json_compact = prefix.startswith((b'{"', b'{}'))
 
             dates = sorted({str(date) for date, _sid in pairs})
             json_dates = [
@@ -821,6 +833,7 @@ class LogRepository:
             "version": 1,
             "sqliteRows": sqlite_rows,
             "jsonStatus": json_status,
+            "jsonCompact": json_compact,
             "jsonDates": json_dates,
         }, effective
 
@@ -828,13 +841,15 @@ class LogRepository:
         """Restore an exact narrow snapshot for rollback or crash recovery."""
         if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
             raise ValueError("invalid log entry snapshot")
+        if "jsonCompact" in snapshot and not isinstance(snapshot["jsonCompact"], bool):
+            raise ValueError("invalid log JSON snapshot format")
 
         sqlite_rows = snapshot.get("sqliteRows")
         json_dates = snapshot.get("jsonDates")
         if not isinstance(sqlite_rows, list) or not isinstance(json_dates, list):
             raise ValueError("invalid log entry snapshot rows")
 
-        context = _NullContext() if json_lock_held else self.mutation_lock()
+        context = nullcontext() if json_lock_held else self.mutation_lock()
         with context:
             current_json, current_status = self._read_json_map_with_status()
             if current_status == "invalid":
@@ -884,7 +899,7 @@ class LogRepository:
                         con.execute("DELETE FROM logs WHERE date=? AND sid=?;", (date, sid))
 
                 if restored_json != current_json:
-                    save_atomic(self.logs_path, restored_json)
+                    save_atomic(self.logs_path, restored_json, compact=snapshot.get("jsonCompact") is True)
                 con.execute("COMMIT;")
             except Exception:
                 try:
@@ -907,6 +922,19 @@ class LogRepository:
         *,
         json_lock_held: bool = False,
     ) -> None:
+        self.transform_entries_by_pair(
+            pairs,
+            lambda entry, date, sid: transform_fn(entry, sid),
+            json_lock_held=json_lock_held,
+        )
+
+    def transform_entries_by_pair(
+        self,
+        pairs: set[tuple[str, str]],
+        transform_fn: Callable[[dict, str, str], tuple[dict, bool]],
+        *,
+        json_lock_held: bool = False,
+    ) -> None:
         if not pairs:
             return
 
@@ -917,7 +945,7 @@ class LogRepository:
             con.execute("BEGIN IMMEDIATE;")
             for date, sid in sorted(pairs):
                 entry = self.repair_entry(self._sqlite_get_entry(con, date, sid), sid)
-                next_entry, changed = transform_fn(entry, sid)
+                next_entry, changed = transform_fn(entry, date, sid)
                 if changed:
                     self._sqlite_upsert_entry(con, date, sid, next_entry)
             con.execute("COMMIT;")
@@ -936,7 +964,7 @@ class LogRepository:
                 pass
 
         changed_json = False
-        context = _NullContext() if json_lock_held else self.mutation_lock()
+        context = nullcontext() if json_lock_held else self.mutation_lock()
         with context:
             logs = self.read_json_map()
             if not isinstance(logs, dict):
@@ -950,14 +978,14 @@ class LogRepository:
                 if not isinstance(entry, dict):
                     continue
                 entry = self.repair_entry(entry, sid)
-                next_entry, changed = transform_fn(entry, sid)
+                next_entry, changed = transform_fn(entry, date, sid)
                 if not changed:
                     continue
                 self._write_sid_mapping(day, sid, next_entry)
                 changed_json = True
 
             if changed_json:
-                save_atomic(self.logs_path, logs)
+                save_atomic(self.logs_path, logs, compact=True)
 
     def summarize_missing_leave(
         self,
@@ -1010,7 +1038,7 @@ class LogRepository:
                 "rows": [],
             }
 
-        sqlite_keys: set[tuple[str, str]] = set()
+        sqlite_entries: dict[tuple[str, str], dict] = {}
         done_keys: set[tuple[str, str]] = set()
         sqlite_available = False
         con = None
@@ -1019,7 +1047,9 @@ class LogRepository:
             self._ensure_schema(con)
             rows = con.execute(
                 """
-                SELECT date, sid, json_extract(entry_json, '$.done') AS done
+                SELECT date, sid, json_extract(entry_json, '$.done') AS done,
+                       json_type(entry_json, '$.done') AS done_type,
+                       json_type(entry_json, '$.__logRepositoryCompleteV1') AS complete_type
                 FROM logs
                 WHERE date >= ? AND date < ?
                 ORDER BY date, sid;
@@ -1030,9 +1060,15 @@ class LogRepository:
                 key = (str(row["date"] or "").strip(), str(row["sid"] or "").strip())
                 if key not in candidate_keys:
                     continue
-                sqlite_keys.add(key)
-                if self.truthy(row["done"]):
-                    done_keys.add(key)
+                entry = {}
+                if row["complete_type"] == "true":
+                    entry[_COMPLETE_ENTRY] = True
+                if row["done_type"] is not None:
+                    value = row["done"]
+                    if row["done_type"] in {"array", "object"}:
+                        value = json.loads(value)
+                    entry["done"] = value
+                sqlite_entries[key] = entry
             sqlite_available = True
         except Exception as exc:
             print("[logs.missing-leave-summary] sqlite failed:", exc, flush=True)
@@ -1044,10 +1080,13 @@ class LogRepository:
                 pass
 
         json_map, json_status = _cached_log_json_for_read(self.logs_path)
-        for date, sid in candidate_keys - sqlite_keys:
+        for date, sid in candidate_keys:
             day = json_map.get(date) if isinstance(json_map, dict) else None
             entry = self._sid_lookup(day, sid) if isinstance(day, dict) else None
-            if isinstance(entry, dict) and self.truthy(entry.get("done")):
+            fallback = {"done": entry["done"]} if isinstance(entry, dict) and "done" in entry else {}
+            primary = sqlite_entries.get((date, sid))
+            resolved = self._merge_json_fallback_fields(primary, fallback, sid) if primary is not None else fallback
+            if self.truthy(resolved.get("done")):
                 done_keys.add((date, sid))
 
         rows_available = bool(
@@ -1235,11 +1274,3 @@ class LogRepository:
         if result["rowsAvailable"]:
             result["rows"] = latest_rows
         return result
-
-
-class _NullContext:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return False

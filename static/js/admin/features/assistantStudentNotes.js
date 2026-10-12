@@ -29,7 +29,7 @@ export function assistantStudentNotesTemplate({ studentId = '', nextReminderDate
       <div class="assistant-note-heading">
         <h3>조교 메모</h3>
         <div class="assistant-note-heading-actions" aria-label="조교 메모 창 작업">
-          <button type="button" class="assistant-note-heading-button assistant-note-save-close" data-note-save-close>저장 후 닫기</button>
+          <button type="button" class="assistant-note-heading-button assistant-note-save-close" data-note-save-close>저장</button>
           <button type="button" class="assistant-note-heading-button assistant-note-close" data-note-close>닫기</button>
         </div>
       </div>
@@ -192,12 +192,10 @@ function getReminderInfo(note, today = localDateKey()) {
   const writtenOn = formatNoteDay(note?.created_at || note?.updated_at);
   const targetDate = formatReminderDate(remindOn);
   return {
-    date: remindOn,
     state,
     prefix,
     writtenOn,
     targetDate,
-    label: `[${prefix}] ${writtenOn ? `${writtenOn} \u2192 ` : ''}${targetDate}`,
   };
 }
 
@@ -247,11 +245,7 @@ function renderNotes(
   }
 
   const today = localDateKey();
-  const newestFirst = notes.slice();
-  const displayNotes = [
-    ...newestFirst.filter((note) => isNotePinned(note)),
-    ...newestFirst.filter((note) => !isNotePinned(note)),
-  ].sort((left, right) => {
+  const displayNotes = notes.slice().sort((left, right) => {
     const leftReminderRank = reminderRank(left, today);
     const rightReminderRank = reminderRank(right, today);
     const leftDue = leftReminderRank === 0;

@@ -6,7 +6,10 @@ import json
 import secrets
 import time
 import pathlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
+from threading import get_ident
 from typing import Any, List, Optional
 
 import jwt
@@ -14,6 +17,7 @@ from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from core.person_identity import is_valid_person_id, normalized_text, same_person
+from core.storage import file_lock, save_atomic
 
 bp_api_auth = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
@@ -28,9 +32,35 @@ if not AUTH_SECRET or AUTH_SECRET == "CHANGE_ME_AUTH_SECRET":
     AUTH_SECRET = secrets.token_urlsafe(32)
 TOKEN_EXPIRE_SEC = 60 * 60 * 24 * 30  # 30일
 
-# ✅ 1번 모드: 이 비번이면 어떤 아이디로든 무조건 로그인 통과
-# 서버 환경변수로 설정: MASTER_PW=xxxx
+# 알려진 학생/계정 로그인과 계정 변경에서 허용하는 서버 환경변수.
 MASTER_PW = os.environ.get("MASTER_PW", "").strip()
+_ACCOUNT_LEASE = ContextVar("legacy_auth_account_lease", default=None)
+
+
+@contextmanager
+def _account_lock():
+    # Helpers inside one request reuse its lease; other writers still lock.
+    held = _ACCOUNT_LEASE.get()
+    owner = (os.getpid(), get_ident())
+    if held is not None and held["active"] and held["path"] == ACCT_PATH and held["owner"] == owner:
+        yield
+        return
+    with file_lock(ACCT_PATH):
+        held = {"path": ACCT_PATH, "owner": owner, "active": True}
+        token = _ACCOUNT_LEASE.set(held)
+        try:
+            yield
+        finally:
+            held["active"] = False
+            _ACCOUNT_LEASE.reset(token)
+
+
+def _account_transaction(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        with _account_lock():
+            return f(*args, **kwargs)
+    return wrapper
 
 
 def _load_json(path: pathlib.Path, default: Any):
@@ -40,10 +70,18 @@ def _load_json(path: pathlib.Path, default: Any):
         return default
 
 
-def _save_json_atomic(path: pathlib.Path, obj: Any):
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), "utf-8")
-    os.replace(tmp, path)
+class AuthAccountStoreError(RuntimeError):
+    pass
+
+
+@bp_api_auth.errorhandler(AuthAccountStoreError)
+def _account_store_unavailable(_error):
+    return jsonify({"ok": False, "error": "account_store_unavailable"}), 503
+
+
+@bp_api_auth.errorhandler(TimeoutError)
+def _account_lock_timeout(_error):
+    return jsonify({"ok": False, "error": "account_lock_timeout", "retryable": True}), 409
 
 
 def _json_or_form() -> dict:
@@ -94,12 +132,26 @@ def _load_acct_map() -> dict:
       ...
     }
     """
-    m = _load_json(ACCT_PATH, {})
-    return m if isinstance(m, dict) else {}
+    try:
+        m = json.loads(ACCT_PATH.read_text("utf-8-sig"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AuthAccountStoreError("unreadable_accounts") from exc
+    if not isinstance(m, dict) or any(not isinstance(row, dict) for row in m.values()):
+        raise AuthAccountStoreError("malformed_accounts")
+    if any("legacy_session_id" in row and
+           (not isinstance(row["legacy_session_id"], str) or not row["legacy_session_id"])
+           for row in m.values()):
+        raise AuthAccountStoreError("malformed_account_session")
+    return m
 
 
 def _save_acct_map(m: dict) -> None:
-    _save_json_atomic(ACCT_PATH, m)
+    try:
+        save_atomic(ACCT_PATH, m, mirror=False)
+    except OSError as exc:
+        raise AuthAccountStoreError("accounts_save_failed") from exc
 
 
 def _normalize_id(x: str) -> str:
@@ -219,7 +271,7 @@ def _curris_payload_from_sids(sids: List[str]) -> List[dict]:
     return out
 
 
-def _issue_token(sid: str, aid: str, sids: List[str]) -> str:
+def _issue_token(sid: str, aid: str, sids: List[str], *, session_id: str | None = None) -> str:
     now = int(time.time())
     payload = {
         "sid": sid,      # ✅ 현재 선택된 학생 SID
@@ -228,7 +280,14 @@ def _issue_token(sid: str, aid: str, sids: List[str]) -> str:
         "iat": now,
         "exp": now + TOKEN_EXPIRE_SEC,
     }
+    if session_id is not None:
+        payload["account_session"] = session_id
     return jwt.encode(payload, AUTH_SECRET, algorithm="HS256")
+
+
+def _issue_account_token(sid: str, aid: str, sids: List[str]) -> str:
+    record = _load_acct_map()[aid]
+    return _issue_token(sid, aid, sids, session_id=record.get("legacy_session_id"))
 
 
 def _decode_token(token: str) -> dict | None:
@@ -252,30 +311,24 @@ def require_auth(f):
         if not payload or not payload.get("sid"):
             return jsonify({"ok": False, "error": "bad token"}), 401
 
-        request._sid = str(payload.get("sid") or "")
-        request._aid = str(payload.get("aid") or "")
-        request._sids = payload.get("sids") if isinstance(payload.get("sids"), list) else []
-
-        return f(*args, **kwargs)
+        with _account_lock():
+            aid = str(payload.get("aid") or payload.get("sid") or "")
+            record = _load_acct_map().get(aid)
+            if record is None or payload.get("account_session") != record.get("legacy_session_id"):
+                return jsonify({"ok": False, "error": "bad token"}), 401
+            request._sid = str(payload.get("sid") or "")
+            request._aid = aid
+            request._sids = payload.get("sids") if isinstance(payload.get("sids"), list) else []
+            return f(*args, **kwargs)
     return wrapper
 
 
-def _ensure_account(aid: str, *, base_sid_for_link: Optional[str] = None) -> None:
-    """
-    auth_accounts.json에 aid가 없으면 만든다.
-    - base_sid_for_link 가 있으면 그 SID 기준으로 같은 사람의 sids를 묶어 생성
-    - 기본 비번은 1234
-    """
-    aid = _normalize_id(aid)
-    if not aid:
-        return
-
-    m = _load_acct_map()
+def _ensure_account_in_map(m: dict, aid: str, *, base_sid_for_link: Optional[str] = None) -> bool:
     if aid in m:
         if not isinstance(m[aid].get("sids"), list):
             m[aid]["sids"] = []
-            _save_acct_map(m)
-        return
+            return True
+        return False
 
     sids: List[str] = []
     if base_sid_for_link:
@@ -284,8 +337,19 @@ def _ensure_account(aid: str, *, base_sid_for_link: Optional[str] = None) -> Non
     m[aid] = {
         "pw_hash": generate_password_hash("1234"),
         "sids": sids,
+        "legacy_session_id": secrets.token_urlsafe(32),
     }
-    _save_acct_map(m)
+    return True
+
+
+def _ensure_account(aid: str, *, base_sid_for_link: Optional[str] = None) -> None:
+    aid = _normalize_id(aid)
+    if not aid:
+        return
+    with _account_lock():
+        m = _load_acct_map()
+        if _ensure_account_in_map(m, aid, base_sid_for_link=base_sid_for_link):
+            _save_acct_map(m)
 
 
 def _find_account_by_sid(m: dict, sid: str) -> Optional[str]:
@@ -342,17 +406,13 @@ def _refresh_and_persist_account_sids(aid: str, base_sid: str) -> List[str]:
     if base_sid not in fresh:
         fresh.insert(0, base_sid)
 
-    m = _load_acct_map()
-    if aid not in m:
-        _ensure_account(aid, base_sid_for_link=base_sid)
+    with _account_lock():
         m = _load_acct_map()
-
-    ent = m.get(aid) or {}
-    ent["sids"] = fresh
-    m[aid] = ent
-
-    _prune_duplicate_accounts(m, keep_aid=aid, sids=fresh)
-    _save_acct_map(m)
+        _ensure_account_in_map(m, aid, base_sid_for_link=base_sid)
+        ent = m[aid]
+        ent["sids"] = fresh
+        _prune_duplicate_accounts(m, keep_aid=aid, sids=fresh)
+        _save_acct_map(m)
 
     return fresh
 
@@ -397,14 +457,9 @@ def _recover_sids_from_account_id(aid: str) -> List[str]:
 
 
 @bp_api_auth.post("/login")
+@_account_transaction
 def login():
-    """
-    ✅ '무조건 통과' 모드:
-    - ambiguous name(409) 절대 내보내지 않음
-    - 이름으로 들어오면: 같은 이름이 여러 그룹이어도 그냥 "첫 그룹"으로 묶어서 계정 생성/로그인
-    - base_sid가 이미 다른 계정에 묶여있어도: 그 계정으로 로그인 시도 후 통과
-    - ✅ 추가: MASTER_PW(환경변수)로 로그인하면 어떤 아이디든 비번 검사 스킵
-    """
+    """이름은 기존의 첫 그룹 선택을 유지하고, 변경 ID는 현재 계정으로 로그인한다."""
     data = _json_or_form()
     login_id = _normalize_id(data.get("id") or data.get("sid") or "")
     pw = _normalize_id(data.get("password") or data.get("pw") or "")
@@ -441,7 +496,7 @@ def login():
         sid = _preferred_sid_for_same_person(base_sid)
         if sid not in sids:
             sid = sids[0]
-        token = _issue_token(sid=sid, aid=login_id, sids=sids)
+        token = _issue_account_token(sid=sid, aid=login_id, sids=sids)
         return jsonify({
             "ok": True,
             "sid": sid,
@@ -450,13 +505,11 @@ def login():
             "curris": _curris_payload_from_sids(sids),
         })
 
-    # 2) ✅ "이름"으로 첫 로그인 지원 (무조건 통과)
+    # 이름 로그인도 아래 계정·비밀번호 검증을 거친다.
     same = _find_students_by_name(login_id)
     if not same:
         return jsonify({"ok": False, "error": "unknown id"}), 401
 
-    # ✅ 예전: groups >=2면 ambiguous name(409)
-    # ✅ 지금: 그룹이 여러 개여도 그냥 "첫 그룹"을 선택해서 통과
     groups = {}
     for s in same:
         k = _dedup_key_for_student(s)
@@ -486,7 +539,7 @@ def login():
         sid = _preferred_sid_for_same_person(base_sid)
         if sid not in sids:
             sid = base_sid if base_sid in sids else sids[0]
-        token = _issue_token(sid=sid, aid=already, sids=sids)
+        token = _issue_account_token(sid=sid, aid=already, sids=sids)
         return jsonify({
             "ok": True,
             "sid": sid,
@@ -513,7 +566,7 @@ def login():
     if sid not in sids:
         sid = base_sid if base_sid in sids else sids[0]
 
-    token = _issue_token(sid=sid, aid=login_id, sids=sids)
+    token = _issue_account_token(sid=sid, aid=login_id, sids=sids)
     return jsonify({
         "ok": True,
         "sid": sid,
@@ -588,7 +641,7 @@ def switch():
     if not _student_exists(target):
         return jsonify({"ok": False, "error": "unknown sid"}), 404
 
-    token = _issue_token(sid=target, aid=aid, sids=sids)
+    token = _issue_account_token(sid=target, aid=aid, sids=sids)
     return jsonify({"ok": True, "sid": target, "aid": aid, "token": token})
 
 
@@ -597,7 +650,6 @@ def switch():
 def change():
     sid = getattr(request, "_sid", "")
     aid = getattr(request, "_aid", "") or sid
-    sids = getattr(request, "_sids", []) or [sid]
 
     data = _json_or_form()
 
@@ -608,39 +660,31 @@ def change():
     if not cur_pw:
         return jsonify({"ok": False, "error": "missing curPw"}), 400
 
-    m = _load_acct_map()
-    if aid not in m:
-        _ensure_account(aid, base_sid_for_link=sid)
+    with _account_lock():
         m = _load_acct_map()
+        _ensure_account_in_map(m, aid, base_sid_for_link=sid)
 
-    # ✅ 마스터 비번이면 현재 비번 검사 스킵
-    if not _master_pw_ok(cur_pw):
-        cur_hash = (m.get(aid) or {}).get("pw_hash", "")
-        if not cur_hash or not check_password_hash(cur_hash, cur_pw):
-            return jsonify({"ok": False, "error": "bad password"}), 401
+        if not _master_pw_ok(cur_pw):
+            cur_hash = m[aid].get("pw_hash", "")
+            if not cur_hash or not check_password_hash(cur_hash, cur_pw):
+                return jsonify({"ok": False, "error": "bad password"}), 401
 
-    # 계정 아이디 변경
-    if new_id and new_id != aid:
-        if new_id in m:
-            return jsonify({"ok": False, "error": "id taken"}), 409
-        m[new_id] = m.pop(aid)
-        aid = new_id
+        if new_id and new_id != aid:
+            if new_id in m:
+                return jsonify({"ok": False, "error": "id taken"}), 409
+            m[new_id] = m.pop(aid)
+            aid = new_id
+            m[aid]["legacy_session_id"] = secrets.token_urlsafe(32)
 
-    # 비번 변경
-    if new_pw:
-        m.setdefault(aid, {})
-        m[aid]["pw_hash"] = generate_password_hash(new_pw)
+        if new_pw:
+            m[aid]["pw_hash"] = generate_password_hash(new_pw)
 
-    # ✅ FIX: 변경 시에도 최신 sids로 갱신해서 저장
-    refreshed = _group_sids_for_same_person(sid)
-    refreshed = [x for x in refreshed if _student_exists(x)]
-    if sid not in refreshed:
-        refreshed.insert(0, sid)
-    m.setdefault(aid, {})
-    m[aid]["sids"] = refreshed
+        refreshed = [x for x in _group_sids_for_same_person(sid) if _student_exists(x)]
+        if sid not in refreshed:
+            refreshed.insert(0, sid)
+        m[aid]["sids"] = refreshed
+        _prune_duplicate_accounts(m, keep_aid=aid, sids=refreshed)
+        _save_acct_map(m)
 
-    _prune_duplicate_accounts(m, keep_aid=aid, sids=m[aid]["sids"])
-    _save_acct_map(m)
-
-    token = _issue_token(sid=sid, aid=aid, sids=m[aid]["sids"])
+    token = _issue_account_token(sid=sid, aid=aid, sids=m[aid]["sids"])
     return jsonify({"ok": True, "sid": sid, "aid": aid, "token": token})

@@ -70,6 +70,7 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/features/today.render.js",
     ROOT / "static/js/admin/features/testModal.js",
     ROOT / "static/js/admin/features/testAssignmentRules.js",
+    ROOT / "static/js/admin/features/assignmentDragAutoScroll.js",
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student-app-push.js",
     ROOT / "static/js/student-app.js",
@@ -110,6 +111,16 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_exam_attendance.mjs",
     ROOT / "static/js/admin/features/examAttendance.js",
     ROOT / "scripts/verify_admin_latency_contracts.mjs",
+    ROOT / "scripts/verify_auth_recommendation_feedback.mjs",
+    ROOT / "scripts/verify_assignment_drag_reuse.mjs",
+    ROOT / "scripts/verify_admin_escape_search.mjs",
+    ROOT / "scripts/verify_today_manual_order.mjs",
+    ROOT / "scripts/verify_student_accounts_ui_session.mjs",
+    ROOT / "scripts/verify_video_modal_hydration.mjs",
+    ROOT / "scripts/verify_homework_sleeping_clear.mjs",
+    ROOT / "scripts/verify_calendar_school_exam_metadata.mjs",
+    ROOT / "scripts/verify_log_popup_hydration.mjs",
+    ROOT / "scripts/verify_student_feedback_save.mjs",
     ROOT / "scripts/verify_test_assignment_rules.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
     ROOT / "scripts/verify_quick_printer_export.mjs",
@@ -118,6 +129,7 @@ JS_CHECK_FILES = [
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
     ROOT / "scripts/verify_legacy_consumer_cleanup.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
+    ROOT / "scripts/verify_today_search_fields.mjs",
     ROOT / "scripts/verify_record_cleanup_test_status.mjs",
     ROOT / "scripts/verify_admin_assistant_notes_demo.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
@@ -769,6 +781,76 @@ def run_admin_latency_contract_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin latency/save-conflict contract failed")
 
 
+def run_hub_projection_render_checks() -> None:
+    commands = (
+        [sys.executable, "scripts/verify_legacy_auth_storage.py"],
+        [sys.executable, "-X", "utf8", "scripts/verify_legacy_auth_policy.py"],
+        [sys.executable, "scripts/verify_admin_auth_latency.py"],
+        [sys.executable, "scripts/verify_watch_storage_safety.py"],
+        [sys.executable, "scripts/verify_isolated_kollus_qa.py"],
+        ["node", "scripts/verify_isolated_kollus_qa.mjs"],
+        [sys.executable, "scripts/verify_log_batch_partial_success.py"],
+        [sys.executable, "scripts/verify_request_date_barrier.py"],
+        [sys.executable, "scripts/verify_tests_config_metadata.py"],
+        [sys.executable, "-B", "scripts/verify_test_projection_boundaries.py", "--require-bootstrap-wiring"],
+        [sys.executable, "scripts/verify_file_transaction_crash.py"],
+        [sys.executable, "scripts/verify_file_transaction_routes.py"],
+        [sys.executable, "scripts/verify_file_transaction_ownership.py"],
+        [sys.executable, "-X", "utf8", "-B", "scripts/verify_makeup_payload_rules.py"],
+        [sys.executable, "scripts/verify_attendance_flag_storage.py"],
+        [sys.executable, "scripts/verify_student_bootstrap_projection_scope.py"],
+        ["node", "scripts/verify_video_catalog_render.mjs"],
+        ["node", "scripts/verify_video_catalog_interactions.mjs", "--expect-optimized"],
+        ["node", "scripts/verify_test_catalog_render_projection.mjs"],
+        ["node", "scripts/verify_test_catalog_selection_save.mjs"],
+        ["node", "scripts/verify_test_catalog_csv_index.mjs"],
+        ["node", "scripts/verify_student_material_render.mjs"],
+        ["node", "scripts/verify_school_calendar_render_projection.mjs"],
+        ["node", "scripts/verify_admin_popup_async_scope.mjs"],
+        ["node", "scripts/verify_roster_auth_attendance_async.mjs"],
+        ["node", "scripts/verify_auth_recommendation_feedback.mjs"],
+        ["node", "scripts/verify_assignment_drag_reuse.mjs"],
+        ["node", "scripts/verify_admin_escape_search.mjs"],
+        ["node", "scripts/verify_admin_announcement_async_scope.mjs"],
+        ["node", "scripts/verify_student_announcement_async_scope.mjs"],
+        ["node", "scripts/verify_admin_initializer_idempotence.mjs"],
+        ["node", "scripts/verify_test_popup_hydration.mjs"],
+        ["node", "scripts/verify_log_auto_watch_scope.mjs"],
+        ["node", "scripts/verify_today_refresh_flights.mjs"],
+        ["node", "scripts/verify_today_search_projection.mjs"],
+        ["node", "scripts/verify_today_manual_order.mjs"],
+        ["node", "scripts/verify_admin_startup_overlap.mjs"],
+        ["node", "scripts/verify_today_lookup_scope.mjs"],
+        ["node", "scripts/verify_today_table_reconciliation.mjs"],
+        [sys.executable, "scripts/verify_log_transform_batch.py"],
+        ["node", "scripts/verify_student_accounts_ui_session.mjs"],
+        ["node", "scripts/verify_video_modal_hydration.mjs"],
+        ["node", "scripts/verify_homework_sleeping_clear.mjs"],
+        ["node", "scripts/verify_calendar_school_exam_metadata.mjs"],
+        ["node", "scripts/verify_log_popup_hydration.mjs"],
+        ["node", "scripts/verify_student_feedback_save.mjs"],
+        ["node", "scripts/verify_popup_pending_cache.mjs"],
+        ["node", "scripts/verify_student_mobile_app.mjs", "--only", "homework,admin-accounts,focus"],
+        [sys.executable, "scripts/verify_static_repository_contracts.py"],
+    )
+    for command in commands:
+        proc = _run_captured(command)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "hub storage/projection/render contract failed")
+
+
+def run_file_manager_state_checks() -> None:
+    proc = _run_captured(["node", "scripts/verify_file_manager_state.mjs"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "file-manager load/save/drag contract failed")
+
+
 def run_assistant_note_http_checks() -> None:
     proc = _run_captured([sys.executable, "scripts/verify_assistant_student_notes.py"])
     if proc.stdout:
@@ -776,6 +858,23 @@ def run_assistant_note_http_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "actual assistant-note repository/HTTP/access contracts failed")
+
+
+def run_runtime_initialization_contract_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_runtime_path_initialization.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "runtime-path initialization contract failed")
+    if sys.platform == "win32":
+        proc = _run_captured(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                              "-File", "scripts/verify_isolated_design_server_manager.ps1"])
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "isolated-server manager contract failed")
 
 
 def run_review_hardening_checks() -> None:
@@ -1063,9 +1162,11 @@ print("updates GET-only base route checks passed")
     commands = [
         (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
         (["node", "scripts/verify_makeup_schedule_links.mjs"], "makeup schedule roster-link contract failed"),
+        (["node", "scripts/verify_makeup_projection_oracle.mjs"], "makeup pure projection oracle failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
         (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
         (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
+        (["node", "scripts/verify_today_search_fields.mjs"], "today roster field-scoped search failed"),
         (["node", "scripts/verify_record_cleanup_test_status.mjs"], "record cleanup latest-state and rendered-date contract failed"),
     ]
     for cmd, failure_message in [*command_groups, *commands]:
@@ -1348,6 +1449,14 @@ def run_video_mid_change_guard_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "video MID change guard contract failed")
+    for command in ([sys.executable, "scripts/verify_youtube_video_feature.py"], ["node", "scripts/verify_youtube_video_feature.mjs"]):
+        print("$ " + " ".join(command))
+        result = _run_captured(command)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        _assert_unit(result.returncode == 0, "YouTube video and curriculum overlay contract failed")
 
 
 def run_video_catalog_correction_checks() -> None:
@@ -1429,6 +1538,14 @@ def run_student_test_ocr_contract_checks() -> None:
         ([sys.executable, "-m", "scripts.verify_student_test_formula_profile_training"], "OCR formula profile training"),
         ([sys.executable, "-m", "scripts.verify_aihub_split_archive_unpack"], "OCR AI Hub archive unpack"),
         ([sys.executable, "-m", "scripts.verify_student_test_ocr_job_runner"], "OCR job runner"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_lifecycle"], "OCR queue/recovery lifecycle"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_worker_pool"], "OCR resident worker transport"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_retention"], "OCR retention/lease/path boundaries"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_maintenance"], "OCR maintenance/overdue lifecycle"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_maintenance_wiring"], "OCR opt-in startup/admin inspection"),
+        ([sys.executable, "-m", "scripts.verify_student_test_camera_dataset"], "OCR camera collection/frozen saved-prediction contract"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_release_artifacts"], "OCR release frontend/runtime artifact binding"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_release_preflight"], "OCR NO_GO preflight/saved evidence review"),
         ([sys.executable, "-m", "scripts.verify_student_test_solution_crop"], "OCR solution crop"),
         ([sys.executable, "-m", "scripts.verify_student_test_ocr_service"], "OCR service"),
         ([sys.executable, "-m", "scripts.verify_student_test_ocr_routes"], "OCR routes"),
@@ -1611,14 +1728,13 @@ def run_smoke_sqlite_observation_unit_checks() -> None:
 
 
 def run_app_import_smoke_checks() -> None:
-    import importlib
-
-    if not import_smoke_is_safe(report=False):
-        print("app import smoke skipped because importing app could create runtime files")
-        return
-
-    app_module = importlib.import_module("app")
-    _assert_unit(hasattr(app_module, "create_app"), "app import must expose create_app")
+    cmd = [sys.executable, "-I", "-B", "scripts/verify_app_runtime.py", "import-app"]
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "synthetic app import verification failed")
 
 
 def run_log_rules_unit_checks() -> None:
@@ -1829,8 +1945,9 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
         "homework removal must let the user choose a row, preserve canonical deletion, and restore the two default slots",
     )
     _assert_unit(
-        "bubble.style.left = `${clamped}%`;" in log_modal_js
-        and "bubble.style.transform = `translateX(${-clamped}%)`;" in log_modal_js
+        "const v = snap10(value);" in log_modal_js
+        and "bubble.style.left = `${v}%`;" in log_modal_js
+        and "bubble.style.transform = `translateX(${-v}%)`;" in log_modal_js
         and "#adminSchoolTip .pctBubble{ max-width:100%; box-sizing:border-box;" in log_modal_js,
         "homework progress bubbles must stay inside the tooltip at both range endpoints",
     )
@@ -2556,8 +2673,9 @@ def run_video_completion_source_checks() -> None:
     )
 
     _assert_unit(
-        "mids.every(mid => isFinishedVideoProgressStatus(latest[mid]))" in video_modal_js,
-        "video modal course completion must count green done plus red skip",
+        "if (isFinishedVideoProgressStatus(st)) blocked[mid] = true;" in video_modal_js
+        and "activeBlockedMids = blockedMidsForAutoAssign(activeVideoProgress);" in video_modal_js,
+        "video modal automatic blocklist must count green done plus red skip",
     )
     _assert_unit(
         "clearVideoAssignmentForDateSid" not in log_modal_js
@@ -3939,7 +4057,7 @@ def run_video_assignment_boundary_source_checks() -> None:
         "admin date changes must enter the assignment boundary path",
     )
     _assert_unit(
-        "hydrateUpdates({ readOnly: true })" in video_modal_js
+        "hydrateUpdates({ readOnly: true, isCurrent })" in video_modal_js
         and "'/api/updates?readOnly=1'" in video_modal_js,
         "video progress popup hydration must use a read-only updates snapshot",
     )
@@ -4214,12 +4332,15 @@ def run_watch_route_progress_unit_checks() -> None:
 
 def run_video_progress_integration_matrix_checks() -> None:
     from scripts.verify_video_progress_matrix import main as verify_video_progress_matrix
+    from scripts.verify_video_watch_rearm import main as verify_video_watch_rearm
 
     _assert_unit(
         verify_video_progress_matrix() == 0,
         "watch and Kollus temp-route integration matrix must pass",
     )
+    _assert_unit(verify_video_watch_rearm() == 0, "fresh-watch generation route gates must pass")
     for script, failure_message in (
+        ("scripts/verify_video_watch_rearm.mjs", "fresh-watch browser generation contracts failed"),
         (
             "scripts/verify_student_watch_timestamp.mjs",
             "student watch millisecond timestamp checks failed",
@@ -4536,6 +4657,7 @@ def run_log_repository_unit_checks() -> None:
                 return SimpleNamespace(
                     sqlite_ok=self.sqlite_ok,
                     sqlite_error=RuntimeError(r"C:\runtime\app.sqlite failed") if not self.sqlite_ok else None,
+                    json_ok=self.sqlite_ok,
                 )
 
         fake_batch_repo = FakeBatchLogRepository()
@@ -5077,7 +5199,7 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     _assert_unit(
         "recover_pending_absence_transactions()" in app_source
         and "absence_read_barrier(shared=" in app_source
-        and "absence_barrier_mode(request.path, request.method)" in app_source,
+        and "absence_barrier_mode(request.path, request.method, request.args)" in app_source,
         "app startup recovery and request barrier must protect absence-related stores without re-locking owners",
     )
     _assert_unit(
@@ -5908,11 +6030,6 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         def read_json_map(self):
             return {route_state["date"]: {route_state["sid"]: deepcopy(route_state["log_entry"])}}
 
-    route_namespace["load"] = fixture_load
-    route_namespace["load_absent"] = lambda: deepcopy(route_state["absent"])
-    route_namespace["_load_progress_strict"] = lambda *_args, **_kwargs: deepcopy(route_state["progress"])
-    route_namespace["get_log_repository"] = lambda: FixtureRepository()
-    route_namespace["academy_network_allowed"] = lambda: bool(route_state["academy_allowed"])
     route_namespace["_student_is_registered_on_date"] = lambda *_args, **_kwargs: bool(route_state["registered"])
     route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
     route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
@@ -7037,8 +7154,9 @@ def run_shared_css_scope_source_checks() -> None:
         all(font in combined for font in ("--font-ui:", "--font-display:")),
         "shared CSS must expose shared font tokens",
     )
-    first_root_end = style_css.index("}\n\n/* ========== body")
-    first_root = style_css[:first_root_end]
+    root_match = re.search(r":root\s*\{([^{}]*)\}", _strip_css_comments_preserve_lines(style_css), re.S)
+    _assert_unit(root_match is not None, "style.css must retain the first root declaration block")
+    first_root = root_match.group(1)
     _assert_unit("--font-ui:" in first_root, "style.css must keep shared font tokens in the first root block")
     _assert_unit("--font-display:" in first_root, "style.css must keep shared display font token in the first root block")
     _assert_unit(
@@ -7702,12 +7820,17 @@ def run_admin_wave_b_source_checks() -> None:
     today_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
 
     _assert_unit(
-        "return await api.getStrict(url, label);" in state_js,
+        all(snippet in state_js for snippet in (
+            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
+            "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
+        )),
         "admin bootstrap strict helper must use the admin API wrapper",
     )
     _assert_unit(
-        "async function getCriticalJson(url, label)" in state_js,
-        "admin bootstrap must have a narrow strict GET helper",
+        "api.getOr('/api/absent', {})" in state_js
+        and "api.getOr('/api/school-calendar', {})" in state_js,
+        "admin bootstrap optional reads must preserve their narrow fallback",
     )
     _assert_unit(
         "api.getOr('/api/updates', {})" not in state_js,
@@ -7749,19 +7872,22 @@ def run_admin_wave_b_source_checks() -> None:
             f"deferred bootstrap state must retain its compatibility default: {compatibility_default}",
         )
     for critical_call in [
-        "getCriticalJson('/api/updates'",
-        "getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`",
-        "getCriticalJson(`/api/progress?date=${encodeURIComponent(today)}`",
+        "api.getStrict('/api/updates'",
+        "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`",
+        "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`",
     ]:
         _assert_unit(critical_call in state_js, f"critical bootstrap call must be strict: {critical_call}")
 
-    _assert_unit("try {\n  await bootstrap();" in main_js, "main bootstrap failure must be caught explicitly")
+    _assert_unit(
+        "try {\n  [, criticalInitializers] = await Promise.all([bootstrap(), loadCriticalAdminFeatures()]);" in main_js,
+        "bootstrap and required feature import failures must share the explicit readiness guard",
+    )
     _assert_unit(
         "alert('관리자 초기 데이터를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');" in main_js,
         "main bootstrap failure must be visible to the admin",
     )
 
-    marker = "// Homework completion is the single visible homework flag."
+    marker = "const hc = ev.target.closest?.('.hwCheckChk');"
     start = today_js.index(marker)
     end = today_js.index("  });", start)
     homework_block = today_js[start:end]
@@ -7836,7 +7962,11 @@ def run_admin_api_wrapper_usage_source_checks() -> None:
         "admin bootstrap should not open-code critical JSON fetch",
     )
     _assert_unit(
-        "return await api.getStrict(url, label);" in state_js,
+        all(snippet in state_js for snippet in (
+            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
+            "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
+        )),
         "admin bootstrap critical helper must delegate to api.getStrict",
     )
 
@@ -8213,7 +8343,7 @@ def run_admin_test_modal_assignment_source_checks() -> None:
     required_ui_contracts = [
         ('id="testDifficultyOverride"', "test modal must render the 레벨 설정 button"),
         ('id="testLevelSettingOptions"', "test modal must render the Lv.3-Lv.6 level picker"),
-        ("const difficulties = allDifficulties;", "normal difficulty selector must keep every category level visible"),
+        ("const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];", "normal difficulty selector must keep every category level visible"),
         ("field: STUDENT_TEST_LEVEL_DEFAULTS_FIELD", "student level setting must patch only the student default field"),
         ("sendJson('/api/update'", "student level setting must use the single-field student API"),
         ("if (e.ctrlKey || e.metaKey) {", "Ctrl/Cmd-click multi-selection must remain wired"),
@@ -8336,6 +8466,7 @@ const rulesSource = fs.readFileSync(path.join(process.cwd(), 'static/js/admin/fe
 const rulesUrl = `data:text/javascript;base64,${Buffer.from(rulesSource).toString('base64')}`;
 const source = fs.readFileSync(sourcePath, 'utf8')
   .replace(/from '\.\/testAssignmentRules\.js\?v=[^']+'/, `from '${rulesUrl}'`)
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';")
@@ -8343,6 +8474,7 @@ const source = fs.readFileSync(sourcePath, 'utf8')
 const harness = `
 export function __setHarnessState(input) {
   testOpenSeq += 1;
+  testModalReady = input.testModalReady !== false;
   editingDate = input.editingDate;
   editingSid = input.editingSid;
   activeStudent = input.activeStudent || { id: input.editingSid, name: '학생', curriculum: '대수', level: '중' };
@@ -8355,7 +8487,7 @@ export function __setHarnessState(input) {
   catalogByKey = new Map(activeCatalog.map(test => [test._key, test]));
   initialTestMap = input.initialTestMap || {};
   selectedStatuses = new Map(input.selectedStatuses || []);
-  selectedKeys = new Set(Array.from(selectedStatuses.keys()));
+  explicitBlankKeys = new Set(input.explicitBlankKeys || []);
   touchedTestKeys = new Set(input.touchedTestKeys || []);
   testChangeOrderByKey = input.testChangeOrderByKey || {};
   pendingCenteredTestKey = '';
@@ -8370,6 +8502,10 @@ export {
   restorePreferredCategoryTestView as __restorePreferredCategoryTestView,
   latestAssignmentTestFromHistory as __latestAssignmentTestFromHistory,
   centerTestRowInScroller as __centerTestRowInScroller,
+  applyTestRowStatus as __applyTestRowStatus,
+  collectTestStatusPatch as __collectTestStatusPatch,
+  buildTestProgressPatchBody as __buildTestProgressPatchBody,
+  syncSelectedFromProgress as __syncSelectedFromProgress,
   currentTestView as __currentTestView,
   studentTestLevelDefault as __studentTestLevelDefault,
 };
@@ -8466,6 +8602,61 @@ const newTest = {
   round: '1',
   _key: newLabel,
 };
+
+const reopenedRow = {
+  disabled: false,
+  dataset: { testKey: existingLabel, state: 'done' },
+  classList: { toggle() {} },
+  querySelector: () => null,
+};
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [existingTest],
+  initialTestMap: { [existingLabel]: 'done' },
+  selectedStatuses: [[existingLabel, 'done']],
+});
+mod.__applyTestRowStatus(reopenedRow, '');
+const reopenedPatch = mod.__collectTestStatusPatch();
+ok(reopenedPatch[existingLabel]?.status === 'none' && reopenedPatch[existingLabel]?.explicitBlank === true,
+  'done-to-white must persist an explicit blank instead of deleting the old test key');
+const reopenedBody = mod.__buildTestProgressPatchBody('2026-06-05', 's1', reopenedPatch, false);
+globalThis.__state.progress = { '2026-06-05': { s1: reopenedBody.progress } };
+mod.__setHarnessState({ editingDate: '2026-06-06', editingSid: 's1', activeCatalog: [existingTest] });
+mod.__syncSelectedFromProgress();
+ok(mod.__collectTestStatusPatch()[existingLabel]?.explicitBlank === true,
+  'the next class must inherit the explicit white state rather than an older completion');
+reopenedRow.dataset.state = 'none';
+mod.__applyTestRowStatus(reopenedRow, 'assigned');
+ok(mod.__collectTestStatusPatch()[existingLabel] === 'assigned',
+  'a later reassignment must replace the explicit white marker');
+globalThis.__state.progress = {};
+
+for (const status of ['interrupted', 'skip']) {
+  reopenedRow.dataset.state = 'done';
+  mod.__setHarnessState({
+    editingDate: '2026-06-05',
+    editingSid: 's1',
+    activeCatalog: [existingTest],
+    initialTestMap: { [existingLabel]: 'done' },
+    selectedStatuses: [[existingLabel, 'done']],
+  });
+  mod.__applyTestRowStatus(reopenedRow, status);
+  const patch = mod.__collectTestStatusPatch();
+  ok(patch[existingLabel] === status,
+    `done-to-${status} must save the operator-selected status`);
+  const body = mod.__buildTestProgressPatchBody('2026-06-05', 's1', patch, true);
+  globalThis.__state.progress = { '2026-06-05': { s1: body.progress } };
+  globalThis.__state.logs = {
+    '2026-06-05': { s1: { assignedTests: [{ label: existingLabel, status: 'done' }] } },
+  };
+  mod.__setHarnessState({ editingDate: '2026-06-06', editingSid: 's1', activeCatalog: [existingTest] });
+  mod.__syncSelectedFromProgress();
+  ok(mod.__collectTestStatusPatch()[existingLabel] === status,
+    `the next class must keep ${status} ahead of the previous completed log`);
+}
+globalThis.__state.progress = {};
+globalThis.__state.logs = {};
 
 let calls = [];
 globalThis.fetch = async (url, init = {}) => {
@@ -8906,7 +9097,7 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         and "new URLSearchParams({ date: dateKey, sid: sidKey })" not in hydration_block
         and "delete day[sidKey];" in hydration_block
         and "state.progress[progressDate][sidKey] = entry;" in hydration_block
-        and "hydrateProgressMaybe(today, sid)" in video_modal_js,
+        and "hydrateProgressMaybe(today, sid, isCurrent)" in video_modal_js,
         "video popup open must refresh the selected student's full progress history without replacing other students",
     )
     _assert_unit(
@@ -8923,7 +9114,7 @@ def run_admin_video_modal_preflight_source_checks() -> None:
         "latest log preflight must happen before /api/updates/patch",
     )
     _assert_unit(
-        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);" in save_block,
+        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry, extraVideoItems);" in save_block,
         "extra video log patch must receive the same latest entry used for preflight",
     )
     for snippet in [
@@ -9012,7 +9203,9 @@ def run_admin_student_popup_scroll_source_checks() -> None:
         and "dragTargetState = dragButton === 2" in video_modal_js
         and "? nextExcludedVideoState(startState)" in video_modal_js
         and "applyVideoDragRange(row);" in video_modal_js
-        and "if (dragActive && dragButton === 2) suppressContextOnce = true;" in video_modal_js
+        and "if (!cancelled && pointerDown && dragActive) {" in video_modal_js
+        and "if (dragButton === 2) suppressContextOnce = true;" in video_modal_js
+        and "finishVideoDrag();" in video_modal_js
         and "applyVideoRowState(row, nextExcludedVideoState(row.dataset.state || 'none'));" in video_modal_js,
         "video popup right-click drag must toggle a contiguous range between excluded and none without a duplicate context action",
     )
@@ -9073,15 +9266,18 @@ const callRecord = (url, init = {}) => ({
 });
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/videoModal.js');
 const source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+  .replace("import { $, CT, toast, todayLocalKey } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));" + fs.readFileSync('static/js/admin/core/utils.js', 'utf8').split('export function todayLocalKey()')[1].replace(/^/, 'function todayLocalKey()'))
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-05';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
-  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;")
+  .replace("import { automaticVideoCourse, isYouTubeMid, videoInAssignmentScope } from '../../shared/videoSources.js';", fs.readFileSync('static/js/shared/videoSources.js', 'utf8').replace(/^export /gm, ''));
 const harness = `
 export function __setHarnessState(input) {
   editingSid = input.sid || 's1';
+  videoHydrated = input.hydrated !== false;
   editingVideoDate = input.date || '2026-06-05';
   activeVideoSelectionDirty = input.dirty !== false;
   activeAssignmentManual = input.assignmentManual === true;
@@ -9464,26 +9660,27 @@ installVideoElements();
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/videoModal.js');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+  .replace("import { $, CT, toast, todayLocalKey } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));" + fs.readFileSync('static/js/admin/core/utils.js', 'utf8').split('export function todayLocalKey()')[1].replace(/^/, 'function todayLocalKey()'))
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-07';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
-  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;")
+  .replace("import { automaticVideoCourse, isYouTubeMid, videoInAssignmentScope } from '../../shared/videoSources.js';", fs.readFileSync('static/js/shared/videoSources.js', 'utf8').replace(/^export /gm, ''));
 const harness = `
 export function __initHarness() {
   initVideoModal();
 }
 export function __setHarnessState(input) {
   editingSid = input.sid || '007';
+  videoHydrated = input.hydrated !== false;
   editingVideoDate = input.date || '2026-06-06';
   activeVideoSelectionDirty = input.dirty === true;
   activeAssignmentManual = input.assignmentManual === true;
   activePrimaryVideoMids = new Set((input.primaryVideoMids || []).map(String));
   activeVideoList = input.activeVideoList || [];
   activeBlockedMids = input.activeBlockedMids || {};
-  activeAllowAutoAssign = input.allowAutoAssign === true;
-  activeAutoGenerated = input.autoGenerated === true;
   activeExtraVideoSearchOpen = false;
   activeExtraSubject = '';
   activeExtraSubCurriculum = '';
@@ -10162,11 +10359,11 @@ const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.j
 const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
 const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
+  .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
-  .replace(/import \{\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
+  .replace(/import \{\s*placeSleepingHomeworkRowsLast,\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
   .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 source = source.replace(
   "  logSave.addEventListener('click', async () => {",
@@ -10498,11 +10695,11 @@ const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.j
 const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
 const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
+  .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
   .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
-  .replace(/import \{\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
+  .replace(/import \{\s*placeSleepingHomeworkRowsLast,\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
   .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 const harness = `
 export function __initHarness() {
@@ -10926,7 +11123,8 @@ const loadRenderModule = async () => {
     .replace("import { getAdminDate, getRealToday } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-06'; const getRealToday = () => '2026-06-06';")
     .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
     .replace("import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';", "const decorateStudentTestRecordButtons = async () => {};")
-    .replace(/import \{[\s\S]*?\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
+    .replace("import { ensureOk, sendJson } from '../../shared/api.js';", "const ensureOk = async () => { throw new Error('unexpected JSON response'); }; const sendJson = async () => { throw new Error('unexpected JSON save'); };")
+    .replace(/import \{[^}]*\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
 const labelFor = () => '토1';
 const plannedTimeFor = () => '';
 const plannedTimeBase = () => '13:00';
@@ -10981,6 +11179,8 @@ globalThis.document = {
 };
 const host = {
   _listeners: {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
   addEventListener(type, callback) {
     (this._listeners[type] ||= []).push(callback);
   },
@@ -11034,6 +11234,8 @@ ok(reloads === 0, 'slot label failed save does not reload today table');
 
 const doneHost = {
   _listeners: {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
   _html: '',
   set innerHTML(value) { this._html = String(value); },
   get innerHTML() { return this._html; },
@@ -11102,7 +11304,10 @@ def run_unit_checks() -> bool:
         run_test_catalog_search_sort_checks,
         run_hover_tooltip_performance_checks,
         run_admin_latency_contract_checks,
+        run_file_manager_state_checks,
+        run_hub_projection_render_checks,
         run_assistant_note_http_checks,
+        run_runtime_initialization_contract_checks,
         run_review_hardening_checks,
         run_export_log_format_checks,
         run_quick_printer_export_checks,
@@ -11200,15 +11405,7 @@ def run_unit_checks() -> bool:
         run_admin_log_modal_save_policy_behavior_checks,
         run_admin_weekend_slot_behavior_checks,
     ]
-    ok = True
-    for check in checks:
-        try:
-            check()
-            print(f"unit ok: {check.__name__}")
-        except Exception as exc:
-            ok = False
-            print(f"unit failed: {check.__name__}: {exc}", file=sys.stderr)
-    return ok
+    return run_selected_checks(checks)
 
 
 def run_selected_checks(checks: Iterable[Callable[[], None]]) -> bool:

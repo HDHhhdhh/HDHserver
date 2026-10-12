@@ -8,8 +8,19 @@ const sourcePath = process.env.TEST_MODAL_SOURCE
   : path.join(root, 'static/js/admin/features/testModal.js');
 
 let source = fs.readFileSync(sourcePath, 'utf8');
-source = source.replace(/^import [^\r\n]+;\r?\n/gm, '');
-source = source.replace(/\bexport\s+/g, '');
+const importPattern = /^import\s+[\s\S]*?;\r?\n/gm;
+const imports = source.match(importPattern) || [];
+const preludes = [];
+if (imports.some(statement => /from '\.\/testAssignmentRules\.js(?:\?[^']+)?'/.test(statement))) {
+  preludes.push(fs.readFileSync(path.join(root, 'static/js/admin/features/testAssignmentRules.js'), 'utf8')
+    .replace(/^export\s+/gm, ''));
+}
+if (imports.some(statement => /from '\.\.\/\.\.\/shared\/testCatalogDisplay\.js'/.test(statement))) {
+  preludes.push(fs.readFileSync(path.join(root, 'static/js/shared/testCatalogDisplay.js'), 'utf8')
+    .replace(/^export\s+/gm, ''));
+}
+source = source.replace(importPattern, '').replace(/\bexport\s+/g, '');
+source = `${preludes.join('\n')}\n${source}`;
 source += `
 function __setVerifierState(next) {
   if (Object.prototype.hasOwnProperty.call(next, 'activeCatalog')) activeCatalog = next.activeCatalog;

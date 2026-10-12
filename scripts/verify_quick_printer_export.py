@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
 import sqlite3
 import sys
 import tempfile
+import unicodedata
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -43,8 +45,9 @@ from core.log_repository import LogRepository  # noqa: E402
 
 RESOURCE_DIR = ROOT / "core" / "resources"
 REAL_CATALOG_PATH = RESOURCE_DIR / "quick_printer_registered_tests.csv"
-REAL_MAPPING_PATH = RESOURCE_DIR / "quick_printer_test_mapping.json"
-REAL_TESTS_CONFIG_PATH = ROOT / "tests-config.json"
+# Explicit read-only preview inputs keep production runtime out of an isolated server.
+REAL_MAPPING_PATH = Path(os.environ.get("VERIFY_QUICK_PRINTER_MAPPING_PATH") or RESOURCE_DIR / "quick_printer_test_mapping.json")
+REAL_TESTS_CONFIG_PATH = Path(os.environ.get("VERIFY_QUICK_PRINTER_CONFIG_PATH") or ROOT / "tests-config.json")
 
 
 def registered_row(material_id: str, name: str) -> dict:
@@ -138,12 +141,12 @@ class QuickPrinterExportContractTests(unittest.TestCase):
             catalog_sha256=file_sha256(REAL_CATALOG_PATH),
         )
 
-        self.assertEqual(len(catalog), 1515)
-        self.assertEqual(len({row["자료ID"] for row in catalog}), 1515)
-        self.assertEqual(mapping["server"]["definitionCount"], 1494)
-        self.assertEqual(mapping["server"]["matchedCount"], 1484)
+        self.assertEqual(len(catalog), 1549)
+        self.assertEqual(len({row["자료ID"] for row in catalog}), 1549)
+        self.assertEqual(mapping["server"]["definitionCount"], 1528)
+        self.assertEqual(mapping["server"]["matchedCount"], 1518)
         self.assertEqual(mapping["server"]["issueCount"], 10)
-        self.assertEqual(len(validated["mappings"]), 1484)
+        self.assertEqual(len(validated["mappings"]), 1518)
         self.assertEqual(len(validated["issues"]), 10)
         self.assertEqual(
             sum(issue["code"] == "ambiguous_registered_material" for issue in validated["issues"].values()),
@@ -155,6 +158,83 @@ class QuickPrinterExportContractTests(unittest.TestCase):
         )
         mapped_materials = [entry["materialId"] for entry in validated["mappings"].values()]
         self.assertEqual(len(mapped_materials), len(set(mapped_materials)))
+
+        added_ids = {
+            *(f"t_ilsan_past_gongsu2_mid_high_midterm_{round_no:03d}" for round_no in range(1, 11)),
+            *(f"t_ilsan_past_gongsu2_high_midterm_{round_no:03d}" for round_no in range(1, 7)),
+            *(f"t_ilsan_past_mijeok1_mid_high_midterm_{round_no:03d}" for round_no in range(1, 11)),
+            *(f"t_ilsan_past_mijeok1_high_midterm_{round_no:03d}" for round_no in range(1, 9)),
+        }
+        self.assertEqual(len(added_ids), 34)
+        self.assertTrue(added_ids <= validated["mappings"].keys())
+
+        source_tests = {
+            test["id"]: test
+            for test in config["categories"]["ILSAN_PAST"]["tests"]
+            if test["id"] in added_ids
+        }
+        catalog_by_material_id = {row["자료ID"]: row for row in catalog}
+        added_material_ids = set()
+        for test_id in added_ids:
+            source_test = source_tests[test_id]
+            material_id = validated["mappings"][test_id]["materialId"]
+            registered = catalog_by_material_id[material_id]
+            added_material_ids.add(material_id)
+            subject_directory = "공수2" if source_test["curriculum"] == "공수2" else "미적1"
+            self.assertEqual(registered["자료유형"], "일산기출")
+            self.assertEqual(registered["과목"], source_test["curriculum"])
+            self.assertEqual(registered["레벨"], source_test["difficulty"])
+            self.assertEqual(registered["시험구분"], "중간")
+            self.assertEqual(registered["파일명"], source_test["sourceFiles"]["problemFile"])
+            self.assertEqual(
+                registered["상대경로"],
+                f"{subject_directory}/중간/{source_test['difficulty']}/{source_test['sourceFiles']['problemFile']}",
+            )
+            normalized_path = unicodedata.normalize("NFC", registered["상대경로"]).casefold()
+            expected_material_id = "QT-ILSAN-" + hashlib.sha256(
+                f"test_ilsan\0{normalized_path}".encode("utf-8")
+            ).hexdigest()[:16].upper()
+            self.assertEqual(material_id, expected_material_id)
+        self.assertEqual(len(added_material_ids), 34)
+
+    def test_new_gongsu2_and_mijeok1_ilsan_tests_export_with_registered_material_ids(self):
+        config = json.loads(REAL_TESTS_CONFIG_PATH.read_text(encoding="utf-8-sig"))
+        catalog = read_registered_catalog(REAL_CATALOG_PATH)
+        mapping = read_mapping_bundle(REAL_MAPPING_PATH)
+        definitions = {definition["id"]: definition for definition in build_test_definitions(config)}
+        selected_ids = (
+            "t_ilsan_past_gongsu2_high_midterm_006",
+            "t_ilsan_past_mijeok1_high_midterm_008",
+        )
+
+        result = build_quick_printer_export(
+            date_str="2026-09-09",
+            ordered_student_ids=["1", "2"],
+            students=[
+                {"id": "1", "name": "공수학생", "curriculum": "공수2 APEX"},
+                {"id": "2", "name": "미적학생", "curriculum": "미적1 APEX"},
+            ],
+            progress={
+                "2026-09-09": {
+                    "1": {"tests": {definitions[selected_ids[0]]["label"]: "assigned"}},
+                    "2": {"tests": {definitions[selected_ids[1]]["label"]: "assigned"}},
+                }
+            },
+            tests_config=config,
+            mapping_bundle=mapping,
+            catalog_rows=catalog,
+            catalog_sha256=file_sha256(REAL_CATALOG_PATH),
+        )
+
+        parsed = list(csv.DictReader(io.StringIO(result["csv"][1:], newline="")))
+        self.assertEqual(result["rowCount"], 2)
+        self.assertEqual(
+            [(row["학생이름"], row["자료ID"]) for row in parsed],
+            [
+                ("공수학생", "QT-ILSAN-F1B384B124619774"),
+                ("미적학생", "QT-ILSAN-7023A5A927AB644A"),
+            ],
+        )
 
     def test_green_only_date_order_bom_header_and_csv_escaping(self):
         config, definitions, rows, bundle = synthetic_resources()

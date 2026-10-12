@@ -2,21 +2,21 @@
   "version": 1,
   "catalog": {
     "fileName": "quick_printer_registered_tests.csv",
-    "sha256": "d1e00cb7d1b34cc18e67d904835057de5019f81ff615247fbf441471671a749a",
-    "rowCount": 1515,
-    "uniqueMaterialIdCount": 1515,
+    "sha256": "73d711448935a30cafc4c9fc68e64732e49efef4cff6643b9479e5a09938bee3",
+    "rowCount": 1549,
+    "uniqueMaterialIdCount": 1549,
     "duplicateMaterialIdCount": 0,
     "countsByCategory": {
       "UNIT": 1317,
       "REVIEW": 38,
       "SCHOOL_PAST": 109,
-      "ILSAN_PAST": 51
+      "ILSAN_PAST": 85
     }
   },
   "server": {
-    "definitionCount": 1494,
-    "signatureSha256": "9093e382b39c9d141284628ef0cdcf35df0811f100243b9db28b35f41f5a05a1",
-    "matchedCount": 1484,
+    "definitionCount": 1528,
+    "signatureSha256": "a039de28587012eb02b567578c59959a3c95f166aae10c91f9e3e5ae82fe9ef5",
+    "matchedCount": 1518,
     "issueCount": 10,
     "countsByCategory": {
       "UNIT": {
@@ -30,7 +30,7 @@
         "matched": 107
       },
       "ILSAN_PAST": {
-        "matched": 26,
+        "matched": 60,
         "registered_material_not_found": 8
       }
     }
@@ -138,6 +138,142 @@
     },
     "t_ilsan_past_gongsu1_mid_high_final_005": {
       "materialId": "QT-ILSAN-8D214FE84EDA1D5A",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_001": {
+      "materialId": "QT-ILSAN-50CF32BE55889C70",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_002": {
+      "materialId": "QT-ILSAN-29B523C7BF2E9E7D",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_003": {
+      "materialId": "QT-ILSAN-8CADA0EAE644996C",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_004": {
+      "materialId": "QT-ILSAN-07080C2C4C5ED16F",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_005": {
+      "materialId": "QT-ILSAN-6C5E27D90BE4A6BD",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_high_midterm_006": {
+      "materialId": "QT-ILSAN-F1B384B124619774",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_001": {
+      "materialId": "QT-ILSAN-3F17EC2C37C61BC1",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_002": {
+      "materialId": "QT-ILSAN-FAA10C8EDB811187",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_003": {
+      "materialId": "QT-ILSAN-1B2EFFA262E958BB",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_004": {
+      "materialId": "QT-ILSAN-C486CBDFC36F4B88",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_005": {
+      "materialId": "QT-ILSAN-CDAA73E0D915E337",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_006": {
+      "materialId": "QT-ILSAN-1361E8FB5E8C7B13",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_007": {
+      "materialId": "QT-ILSAN-11DA73642C23623A",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_008": {
+      "materialId": "QT-ILSAN-D4CD45FEBD08C9DC",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_009": {
+      "materialId": "QT-ILSAN-F3E0A80AF59CF196",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_gongsu2_mid_high_midterm_010": {
+      "materialId": "QT-ILSAN-539B1CC585B46FA9",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_001": {
+      "materialId": "QT-ILSAN-52945A2316522C12",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_002": {
+      "materialId": "QT-ILSAN-03C3AB53F9078DE0",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_003": {
+      "materialId": "QT-ILSAN-59C61B6AFCBF9396",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_004": {
+      "materialId": "QT-ILSAN-319061181D499266",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_005": {
+      "materialId": "QT-ILSAN-908BFF54D2009033",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_006": {
+      "materialId": "QT-ILSAN-265970E79C11934E",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_007": {
+      "materialId": "QT-ILSAN-4F4F85008F940033",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_high_midterm_008": {
+      "materialId": "QT-ILSAN-7023A5A927AB644A",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_001": {
+      "materialId": "QT-ILSAN-053D6A8BDB3E566D",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_002": {
+      "materialId": "QT-ILSAN-335D9ABA202E3FBB",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_003": {
+      "materialId": "QT-ILSAN-C387C9255B9CF3A1",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_004": {
+      "materialId": "QT-ILSAN-C01D3C99D2D39E8D",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_005": {
+      "materialId": "QT-ILSAN-2A1AB274A7F868F0",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_006": {
+      "materialId": "QT-ILSAN-D371D51B33F1661F",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_007": {
+      "materialId": "QT-ILSAN-75F682D6C2F14EF0",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_008": {
+      "materialId": "QT-ILSAN-9D72C1B427576897",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_009": {
+      "materialId": "QT-ILSAN-605A22B514EF6CAF",
+      "matchMethod": "exact_subject_term_filename"
+    },
+    "t_ilsan_past_mijeok1_mid_high_midterm_010": {
+      "materialId": "QT-ILSAN-3193FD6EC4FB58B5",
       "matchMethod": "exact_subject_term_filename"
     },
     "t_review_daesu_high_01": {

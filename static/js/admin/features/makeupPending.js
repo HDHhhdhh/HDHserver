@@ -180,6 +180,13 @@ function normalizeSchedule(raw) {
   };
 }
 
+function explicitScheduleValue(row) {
+  if (!row || typeof row !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(row, 'scheduledMakeup')) return row.scheduledMakeup;
+  if (Object.prototype.hasOwnProperty.call(row, 'scheduled_makeup')) return row.scheduled_makeup;
+  return undefined;
+}
+
 export function makeupOriginalAbsenceId(item) {
   const source = String(item?.source || 'absence').trim() || 'absence';
   const absenceDate = normDate(item?.absenceDate);
@@ -220,6 +227,57 @@ function isCarriedRow(row) {
   if (row === true) return true;
   if (typeof row === 'object') return row.state === 'carried' || row.carried === true;
   return false;
+}
+
+function scheduleFromPrecreditNote(row, { originalAbsenceId = '', studentId = '' } = {}) {
+  if (!row || typeof row !== 'object' || !isCarriedRow(row)) return null;
+  if (
+    Object.prototype.hasOwnProperty.call(row, 'scheduledMakeup') ||
+    Object.prototype.hasOwnProperty.call(row, 'scheduled_makeup')
+  ) return null;
+
+  const matches = Array.from(String(row.note || '').matchAll(
+    /직보[ \t]*추가등원[ \t]*예약으로[ \t]*1회[ \t]*차감:[ \t]*(\d{4}-\d{2}-\d{2})[ \t]*([123])타임[^\r\n()[\]]*\(([^()\r\n]+)\)\.[^\r\n]*?실제 이행 완료 표시는 아님\.[ \t]*\[approved-[a-z0-9-]+-\d{8}\]/gu
+  ));
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  const makeupDate = normDate(match?.[1]);
+  const makeupSlot = parseSlotNumbers(match?.[2])[0];
+  const normalizedStudentId = String(studentId || '').trim();
+  const normalizedOriginalAbsenceId = String(originalAbsenceId || '').trim();
+  const creditedStudentId = String(match?.[3] || '').trim();
+  if (!makeupDate || !makeupSlot || !normalizedStudentId || !normalizedOriginalAbsenceId || !creditedStudentId) return null;
+
+  const [source, absenceDate, absenceStudentId, absenceSlotRaw, ...extraParts] = normalizedOriginalAbsenceId.split('|');
+  const absenceSlot = parseSlotNumbers(absenceSlotRaw)[0];
+  const notePrefix = String(row.note || '').slice(0, match.index);
+  const matchingAbsenceClause = new RegExp(
+    `결석[^\\r\\n/]*${absenceDate}[ \\t]*${absenceSlot}[ \\t]*타임[^\\r\\n/]*\\/[ \\t]*$`,
+    'u'
+  );
+  if (
+    source !== 'absence' || extraParts.length || absenceStudentId !== normalizedStudentId ||
+    !absenceDate || !absenceSlot || !matchingAbsenceClause.test(notePrefix)
+  ) return null;
+  const ownsAttendance = creditedStudentId === normalizedStudentId;
+
+  const normalized = normalizeSchedule({
+    originalAbsenceId: normalizedOriginalAbsenceId,
+    studentId: normalizedStudentId,
+    makeupDate,
+    makeupTimes: [makeupSlot],
+    status: 'scheduled',
+    createdAt: String(row.createdAt || row.created_at || '').trim(),
+    updatedAt: String(row.updatedAt || row.updated_at || '').trim(),
+    createdBy: 'direct-credit-note',
+    ownedExtra: ownsAttendance,
+    ownedSlots: ownsAttendance ? [makeupSlot] : [],
+  });
+  return normalized ? {
+    ...normalized,
+    derivedFromPrecreditNote: true,
+    creditedStudentId,
+  } : null;
 }
 
 function isOpenRow(row) {
@@ -347,9 +405,12 @@ export function buildScheduledMakeupRows({ students = [], carryover = {} } = {})
     Object.entries(rows).forEach(([rowKeyRaw, value]) => {
       const rowKey = String(rowKeyRaw || '').trim();
       const row = value && typeof value === 'object' ? value : {};
-      const schedule = normalizeSchedule(row.scheduledMakeup || row.scheduled_makeup);
-      if (!rowKey || !schedule) return;
       const [rowSid, rowSlot] = rowKey.split('|');
+      if (!rowKey || !rowSid) return;
+      const originalAbsenceId = `absence|${absenceDate}|${rowSid}${rowSlot ? `|${rowSlot}` : ''}`;
+      const schedule = normalizeSchedule(explicitScheduleValue(row))
+        || scheduleFromPrecreditNote(row, { originalAbsenceId, studentId: rowSid });
+      if (!schedule) return;
       const sid = String(schedule.studentId || rowSid || '').trim();
       if (!sid) return;
       const slot = parseSlotNumbers(rowSlot || schedule.originalAbsenceId.split('|').pop())[0] || '';
@@ -383,8 +444,13 @@ export function buildScheduledMakeupRows({ students = [], carryover = {} } = {})
     Object.entries(rows).forEach(([manualKeyRaw, value]) => {
       const manualKey = String(manualKeyRaw || '').trim();
       const row = value && typeof value === 'object' ? value : {};
-      const schedule = normalizeSchedule(row.scheduledMakeup || row.scheduled_makeup);
-      const sid = String(schedule?.studentId || row.sid || '').trim();
+      const rawSchedule = explicitScheduleValue(row);
+      const sid = String(rawSchedule?.studentId || rawSchedule?.student_id || row.sid || '').trim();
+      const schedule = normalizeSchedule(rawSchedule)
+        || scheduleFromPrecreditNote(row, {
+          originalAbsenceId: `manual|${absenceDate}|${manualKey}`,
+          studentId: sid,
+        });
       if (!manualKey || !sid || !schedule) return;
       const stu = studentsBySid.get(sid) || { id: sid, name: sid };
       const dateOnly = row.dateOnly === true || row.date_only === true || row.slotless === true;
@@ -499,6 +565,7 @@ export function buildPendingMakeups({
       return;
     }
     const carryoverRow = carriedRowValue(carryover, item.absenceDate, item.sid, item.slot);
+    if (carryoverRow?.state === 'self-study') return;
     if (isCarriedRow(carryoverRow)) return;
     if (isOpenRow(carryoverRow)) {
       pending.push(item);
@@ -564,13 +631,6 @@ export function buildMakeupExportRows(items = []) {
         String(a.course || '').localeCompare(String(b.course || ''), 'ko', { numeric: true }) ||
         Number(a.slot || 0) - Number(b.slot || 0)
       );
-    const duplicateCounts = new Map();
-    entries.forEach(item => {
-      const course = courseForExport(item.course);
-      const key = `${item.absenceDate || ''}|${course}`;
-      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
-    });
-
     const seenDetails = new Set();
     const details = [];
     entries.forEach(item => {

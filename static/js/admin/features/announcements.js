@@ -1,5 +1,6 @@
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { sendJson } from '../../shared/api.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
@@ -30,7 +31,6 @@ const TARGET_MODE_ORDER = ['today', 'slot1', 'slot2', 'all', 'curriculum', 'grad
 const DEFAULT_EXPIRY_HOURS = 4;
 const MAX_EXPIRY_HOURS = 24 * 30;
 
-let latestRoster = [];
 let todayRoster = [];
 let allRoster = [];
 let targetMode = 'today';
@@ -52,8 +52,24 @@ let expiryMode = 'hours';
 let expiryHours = DEFAULT_EXPIRY_HOURS;
 let expiryManual = makeDefaultManualExpiry();
 let composeBackdropPointerDown = false;
+let composeSession = 0;
+let imageRevision = 0;
+let imageUploadSequence = 0;
+let pendingImageUploads = 0;
+let publishPromise = null;
+let announcementLoadSequence = 0;
+let pendingAnnouncementLoad = null;
+let announcementsInitialized = false;
+const announcementMarkup = new WeakMap();
 
 const $ = (id) => document.getElementById(id);
+
+function updateAnnouncementMarkup(host, html) {
+  if (announcementMarkup.get(host) === html) return false;
+  host.innerHTML = html;
+  announcementMarkup.set(host, html);
+  return true;
+}
 const ANONYMOUS_REPLY_LABEL = '\uC775\uBA85';
 const ANONYMOUS_REPLY_NAME_PATTERN = new RegExp(`^\\s*${ANONYMOUS_REPLY_LABEL}\\s*\\((.*)\\)\\s*$`);
 
@@ -197,7 +213,7 @@ function bindAnonymousReplyNameReveal() {
     showAnonymousReplyNamePopover(studentName, ev.clientX, ev.clientY);
   });
   document.addEventListener('click', hideAnonymousReplyNamePopover, true);
-  document.addEventListener('keydown', (ev) => {
+  window.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') hideAnonymousReplyNamePopover();
   }, true);
   document.addEventListener('scroll', hideAnonymousReplyNamePopover, true);
@@ -301,29 +317,6 @@ function setExpiryFromAnnouncement(item) {
   syncExpiryUi();
 }
 
-function formatBytes(value) {
-  const size = Number(value || 0);
-  if (!Number.isFinite(size) || size <= 0) return '';
-  if (size < 1024) return `${size}B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)}KB`;
-  return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
-}
-
-function imageFileName(image) {
-  return String(image?.originalName || image?.name || '첨부 이미지').trim() || '첨부 이미지';
-}
-
-function imageFileMeta(image) {
-  return [imageFileName(image), formatBytes(image?.size)].filter(Boolean).join(' · ');
-}
-
-function imageCollectionMeta(images) {
-  const list = Array.isArray(images) ? images : [];
-  if (!list.length) return '';
-  const totalSize = list.reduce((sum, image) => sum + (Number(image?.size || 0) || 0), 0);
-  if (list.length === 1) return imageFileMeta(list[0]);
-  return [`이미지 ${list.length}장`, formatBytes(totalSize)].filter(Boolean).join(' · ');
-}
 
 function isSupportedImageFile(file) {
   if (!file) return false;
@@ -996,6 +989,7 @@ function renderExpandedSurveyBuilder() {
   renderTargetFilterOptions();
   syncExpiryUi();
   renderExpandedDirectList();
+  syncComposeBusyUi();
 }
 
 function refreshExpandedSurveyDerivedViews() {
@@ -1106,6 +1100,7 @@ function syncExpiryUi() {
 }
 
 function setComposeMode(mode) {
+  composeSession += 1;
   composeMode = ['announcement', 'survey', 'video'].includes(mode) ? mode : 'announcement';
   const isSurvey = composeMode === 'survey';
   const isVideo = composeMode === 'video';
@@ -1189,6 +1184,26 @@ function syncEditStateUi() {
     }
   });
   syncComposeExpandUi();
+  syncComposeBusyUi();
+}
+
+function syncComposeBusyUi() {
+  const busy = !!publishPromise || pendingImageUploads > 0;
+  [$('annPublish'), ...document.querySelectorAll('[data-expanded-publish]')].forEach((button) => {
+    if (!button) return;
+    button.disabled = busy;
+    button.setAttribute('aria-busy', String(busy));
+  });
+  if ($('annImagePick')) $('annImagePick').disabled = busy;
+}
+
+function composeDraftKey() {
+  return JSON.stringify([
+    composeSession, composeMode, editingAnnouncementId, getAdminDate(),
+    $('annTitle')?.value || '', $('annContent')?.value || '', $('annVideoMid')?.value || '',
+    selectedAnnouncementImages, surveyDraft, targetMode, targetFilters,
+    [...directSelected].sort(), expiryMode, expiryHours, expiryManual,
+  ]);
 }
 
 function ensureComposeHomeMarker(compose) {
@@ -1319,6 +1334,7 @@ function openComposeExpandModal() {
 }
 
 function closeComposeExpandModal({ focusTrigger = true } = {}) {
+  composeSession += 1;
   const modal = $('annComposeExpandModal');
   const mount = $('annComposeExpandMount');
   $('annTargetMenu')?.setAttribute('hidden', '');
@@ -1355,6 +1371,7 @@ function renderSelectedImage() {
 }
 
 function setSelectedImages(images) {
+  imageRevision += 1;
   selectedAnnouncementImages = normalizeImages(images);
   renderSelectedImage();
   renderAnnouncementStudentPreview();
@@ -1539,7 +1556,6 @@ function syncRoster(rows = null) {
   const todayBySid = new Map(todayRoster.map(row => [row.sid, row]));
   allRoster = allRoster.map(row => todayBySid.has(row.sid) ? mergeRow(row, todayBySid.get(row.sid)) : row);
   mergeEditingFallbackRows();
-  latestRoster = rosterBaseRows();
   reconcileDirectSelection();
   renderTargetFilterOptions();
   renderDirectList();
@@ -1747,21 +1763,27 @@ async function uploadAnnouncementImageFiles(files) {
     throw new Error(`이미지는 최대 ${ANN_IMAGE_MAX_COUNT}장까지 첨부할 수 있습니다.`);
   }
 
-  const pickBtn = $('annImagePick');
-  const publishBtn = $('annPublish');
-  if (pickBtn) pickBtn.disabled = true;
-  if (publishBtn) publishBtn.disabled = true;
+  const session = composeSession;
+  const revision = imageRevision;
+  const sequence = ++imageUploadSequence;
+  const isCurrent = () => session === composeSession && revision === imageRevision && sequence === imageUploadSequence;
+  pendingImageUploads += 1;
+  syncComposeBusyUi();
   try {
     const uploaded = [];
     for (const file of picked) {
       const image = await uploadAnnouncementImageFile(file);
       if (image) uploaded.push(image);
     }
-    setSelectedImages(uploaded);
-    toast(uploaded.length > 1 ? `이미지 ${uploaded.length}장 첨부 완료` : '이미지 첨부 완료');
+    if (isCurrent()) {
+      setSelectedImages(uploaded);
+      toast(uploaded.length > 1 ? `이미지 ${uploaded.length}장 첨부 완료` : '이미지 첨부 완료');
+    }
+  } catch (err) {
+    if (isCurrent()) throw err;
   } finally {
-    if (pickBtn) pickBtn.disabled = false;
-    if (publishBtn) publishBtn.disabled = false;
+    pendingImageUploads -= 1;
+    syncComposeBusyUi();
   }
 }
 
@@ -2058,6 +2080,7 @@ function bindExpandedSurveyBuilder() {
       const key = targetFilter.dataset.annTargetFilter;
       if (key && Object.prototype.hasOwnProperty.call(targetFilters, key)) {
         targetFilters = { ...targetFilters, [key]: targetFilter.value || '' };
+        updateTargetSummary();
         renderExpandedSurveyBuilder();
       }
       return;
@@ -2232,6 +2255,7 @@ function bindExpandedSurveyBuilder() {
 }
 
 async function publishAnnouncement() {
+  if (publishPromise || pendingImageUploads > 0) return;
   syncRoster();
 
   const isSurvey = composeMode === 'survey';
@@ -2295,93 +2319,79 @@ async function publishAnnouncement() {
   };
   if (isVideo) payload.videoMid = videoMid;
 
-  const res = await fetch(isEditing ? `/api/announcements/${encodeURIComponent(editingAnnouncementId)}` : '/api/announcements', {
-    method: isEditing ? 'PUT' : 'POST',
-    headers: CT,
-    body: JSON.stringify(payload),
+  const draftKey = composeDraftKey();
+  const editId = editingAnnouncementId;
+  publishPromise = (async () => {
+    const res = await sendJson(isEditing ? `/api/announcements/${encodeURIComponent(editId)}` : '/api/announcements', payload, {
+      method: isEditing ? 'PUT' : 'POST',
+      headers: CT,
+    });
+    if (!res.ok) {
+      let text = '';
+      try { text = await res.text(); } catch {}
+      throw new Error(text || `공지 등록 실패 (${res.status})`);
+    }
+    const created = await res.json();
+    if (draftKey === composeDraftKey()) {
+      selectedAnnouncementId = String(created?.id || '');
+      editingAnnouncementId = '';
+      editingFallbackTargets = [];
+      syncEditStateUi();
+      $('annTitle').value = '';
+      $('annContent').value = '';
+      if ($('annVideoMid')) $('annVideoMid').value = '';
+      setSelectedImages([]);
+      resetExpiryDefaults();
+      $('annTargetMenu')?.setAttribute('hidden', '');
+      document.querySelector('#annBoardShell')?.setAttribute('open', '');
+      if (isSurvey) {
+        surveyDraft = emptySurveyDraft();
+        renderSurveyBuilder();
+      }
+      if (isComposeExpandOpen()) {
+        closeComposeExpandModal();
+      } else {
+        $('annTitle')?.focus();
+      }
+    }
+    const noun = isSurvey ? '설문' : isVideo ? '영상 게시물' : '공지';
+    toast(isEditing ? `${noun} 수정 완료` : `${noun} 등록 완료`);
+    try {
+      await loadAndRenderAnnouncements({ afterMutation: true });
+    } catch (err) {
+      console.warn(err);
+      toast('등록은 완료됐지만 목록을 새로고침하지 못했습니다.');
+    }
+  })().finally(() => {
+    publishPromise = null;
+    syncComposeBusyUi();
   });
-  if (!res.ok) {
-    let text = '';
-    try { text = await res.text(); } catch {}
-    throw new Error(text || `공지 등록 실패 (${res.status})`);
-  }
-  const created = await res.json();
-  selectedAnnouncementId = String(created?.id || '');
-  editingAnnouncementId = '';
-  editingFallbackTargets = [];
-  syncEditStateUi();
-  $('annTitle').value = '';
-  $('annContent').value = '';
-  if ($('annVideoMid')) $('annVideoMid').value = '';
-  setSelectedImages([]);
-  resetExpiryDefaults();
-  $('annTargetMenu')?.setAttribute('hidden', '');
-  document.querySelector('#annBoardShell')?.setAttribute('open', '');
-  if (isSurvey) {
-    surveyDraft = emptySurveyDraft();
-    renderSurveyBuilder();
-  }
-  const noun = isSurvey ? '설문' : isVideo ? '영상 게시물' : '공지';
-  toast(isEditing ? `${noun} 수정 완료` : `${noun} 등록 완료`);
-  await loadAndRenderAnnouncements();
-  if (isComposeExpandOpen()) {
-    closeComposeExpandModal();
-  } else {
-    $('annTitle')?.focus();
-  }
+  syncComposeBusyUi();
+  await publishPromise;
 }
 
 async function deleteAnnouncement(id) {
   if (!id) return;
   const item = latestAnnouncements.find(row => String(row?.id) === String(id));
   if (!confirm(`이 ${isSurveyItem(item) ? '설문' : isVideoItem(item) ? '영상 게시물' : '공지'}을 삭제할까요? 학생 페이지에서도 바로 사라집니다.`)) return;
+  const deleteComposeSession = composeSession;
   const res = await fetch(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`공지 삭제 실패 (${res.status})`);
   if (String(selectedAnnouncementId) === String(id)) selectedAnnouncementId = '';
-  if (String(editingAnnouncementId) === String(id)) editingAnnouncementId = '';
-  editingFallbackTargets = [];
+  if (String(editingAnnouncementId) === String(id) && deleteComposeSession === composeSession) {
+    editingAnnouncementId = '';
+    editingFallbackTargets = [];
+  }
   syncEditStateUi();
   toast(isSurveyItem(item) ? '설문 삭제 완료' : '공지 삭제 완료');
-  await loadAndRenderAnnouncements();
+  try {
+    await loadAndRenderAnnouncements({ afterMutation: true });
+  } catch (error) {
+    console.warn(error);
+    toast('삭제는 완료됐지만 목록을 새로고침하지 못했습니다.');
+  }
 }
 
-function beginSurveyEdit(id) {
-  const item = latestAnnouncements.find(row => String(row?.id) === String(id));
-  if (!item || !isSurveyItem(item)) return;
-  setComposeMode('survey');
-  editingAnnouncementId = String(item.id || '');
-  selectedAnnouncementId = editingAnnouncementId;
-  $('annTitle').value = item.title || '';
-  $('annContent').value = item.content || '';
-  setSelectedImages(normalizeImages(item.images, item.image));
-  surveyDraft = cloneSurveyForDraft(item.survey);
-
-  const sids = Array.isArray(item.targetSids) ? item.targetSids.map(String) : [];
-  editingFallbackTargets = sids.map((sid) => {
-    const stu = studentById(sid) || {};
-    const snap = (Array.isArray(item.targetSnapshot) ? item.targetSnapshot : []).find(row => String(row?.sid || row?.id) === sid) || {};
-    return {
-      sid,
-      name: String(snap.name || stu.name || sid).trim() || sid,
-      slot: String(snap.slot || '').trim(),
-      school: String(snap.school || stu.school || '').trim(),
-      grade: String(snap.grade || stu.grade || stu.gradeLevel || stu.studentGrade || stu['학년'] || '').trim(),
-      curriculum: String(snap.curriculum || stu.curriculum || '').trim(),
-      subCurriculum: String(snap.subCurriculum || stu.subCurriculum || '').trim(),
-      level: String(snap.level || stu.level || '').trim(),
-      slots: [],
-      key: '',
-    };
-  });
-  targetMode = 'direct';
-  directSelected = new Set(sids);
-  setExpiryFromAnnouncement(item);
-  syncRoster();
-  updateTargetSummary();
-  renderSurveyBuilder();
-  toast('설문 수정 모드입니다.');
-  $('annTitle')?.focus();
-}
 
 function beginAnnouncementEdit(id) {
   const item = latestAnnouncements.find(row => String(row?.id) === String(id));
@@ -2434,7 +2444,7 @@ function renderAnnouncementList(items) {
 
   if (!visibleItems.length) {
     selectedAnnouncementId = '';
-    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`;
+    updateAnnouncementMarkup(host, `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`);
     renderReplyDock(null);
     renderExpandedAnnouncementList([]);
     return;
@@ -2444,7 +2454,7 @@ function renderAnnouncementList(items) {
     selectedAnnouncementId = String(visibleItems[0]?.id || '');
   }
 
-  host.innerHTML = visibleItems.map(item => renderAnnouncementListItem(item)).join('');
+  updateAnnouncementMarkup(host, visibleItems.map(item => renderAnnouncementListItem(item)).join(''));
 
   renderReplyDock(visibleItems.find(item => String(item.id) === String(selectedAnnouncementId)) || visibleItems[0]);
   renderExpandedAnnouncementList(visibleItems);
@@ -2489,10 +2499,10 @@ function renderExpandedAnnouncementList(items = visibleAnnouncementItems()) {
   const visibleItems = Array.isArray(items) ? items : [];
   if (count) count.textContent = `${visibleItems.length}건`;
   if (!visibleItems.length) {
-    host.innerHTML = `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`;
+    updateAnnouncementMarkup(host, `<div class="ann-empty">최근 4시간 안에 발행한 ${composeMode === 'survey' ? '설문' : composeMode === 'video' ? '영상' : '공지'}가 없습니다.</div>`);
     return;
   }
-  host.innerHTML = visibleItems.map(item => renderAnnouncementListItem(item, { compact: true })).join('');
+  updateAnnouncementMarkup(host, visibleItems.map(item => renderAnnouncementListItem(item, { compact: true })).join(''));
 }
 
 function selectAnnouncement(id) {
@@ -2529,7 +2539,7 @@ function renderReplyDock(item) {
       imagePreview.removeAttribute('src');
       imagePreview.alt = '';
     }
-    feed.innerHTML = `<div class="ann-empty">${isSurveyMode ? '설문' : isVideoMode ? '영상' : '공지'} 목록에서 항목을 선택하세요.</div>`;
+    updateAnnouncementMarkup(feed, `<div class="ann-empty">${isSurveyMode ? '설문' : isVideoMode ? '영상' : '공지'} 목록에서 항목을 선택하세요.</div>`);
     if (deleteBtn) {
       deleteBtn.hidden = true;
       delete deleteBtn.dataset.annDelete;
@@ -2588,7 +2598,7 @@ function renderReplyDock(item) {
   const previousScrollTop = previousFeedKey === feedKey ? feed.scrollTop : 0;
   const shouldPinTop = previousFeedKey !== feedKey || previousScrollTop < 8;
 
-  feed.innerHTML = replies.length ? replies.map(reply => `
+  const feedChanged = updateAnnouncementMarkup(feed, replies.length ? replies.map(reply => `
     <article class="ann-chat-message" data-reply-id="${escapeHtml(reply.id || '')}"${anonymousReplyNameAttributes(reply)}>
       <div class="ann-chat-meta">
         <strong>${escapeHtml(replyDisplayName(reply))}</strong>
@@ -2596,10 +2606,10 @@ function renderReplyDock(item) {
       </div>
       <p>${escapeHtml(reply.reply || '')}</p>
     </article>
-  `).join('') : '<div class="ann-empty">아직 도착한 답장이 없습니다.</div>';
+  `).join('') : '<div class="ann-empty">아직 도착한 답장이 없습니다.</div>');
   feed.dataset.annFeedKey = feedKey;
 
-  requestAnimationFrame(() => {
+  if (feedChanged || previousFeedKey !== feedKey) requestAnimationFrame(() => {
     feed.scrollTop = shouldPinTop ? 0 : previousScrollTop;
   });
   syncExpandedReplyModal();
@@ -2647,7 +2657,7 @@ function renderSurveyResultDock(item, els) {
   }
 
   if (!questions.length) {
-    feed.innerHTML = '<div class="ann-empty">아직 설문 결과가 없습니다.</div>';
+    updateAnnouncementMarkup(feed, '<div class="ann-empty">아직 설문 결과가 없습니다.</div>');
     syncExpandedReplyModal();
     return;
   }
@@ -2664,7 +2674,7 @@ function renderSurveyResultDock(item, els) {
   const previousScrollTop = previousFeedKey === feedKey ? feed.scrollTop : 0;
   const shouldPinTop = previousFeedKey !== feedKey || previousScrollTop < 8;
 
-  feed.innerHTML = `
+  const feedChanged = updateAnnouncementMarkup(feed, `
     <div class="ann-survey-result-summary">
       <strong>${responseCount}</strong>
       <span>전체 응답</span>
@@ -2722,10 +2732,10 @@ function renderSurveyResultDock(item, els) {
       <strong>최근 제출</strong>
       ${latest || '<span>아직 제출된 응답이 없습니다.</span>'}
     </div>
-  `;
+  `);
   feed.dataset.annFeedKey = feedKey;
 
-  requestAnimationFrame(() => {
+  if (feedChanged || previousFeedKey !== feedKey) requestAnimationFrame(() => {
     feed.scrollTop = shouldPinTop ? 0 : previousScrollTop;
   });
   syncExpandedReplyModal();
@@ -2786,9 +2796,9 @@ function syncExpandedReplyModal() {
     const previousFeedKey = feed.dataset.annFeedKey || '';
     const previousScrollTop = previousFeedKey === feedKey ? feed.scrollTop : 0;
     const shouldPinTop = previousFeedKey !== feedKey || previousScrollTop < 8;
-    feed.innerHTML = $('annLiveReplies')?.innerHTML || '<div class="ann-empty">표시할 내용이 없습니다.</div>';
+    const feedChanged = updateAnnouncementMarkup(feed, $('annLiveReplies')?.innerHTML || '<div class="ann-empty">표시할 내용이 없습니다.</div>');
     feed.dataset.annFeedKey = feedKey;
-    requestAnimationFrame(() => {
+    if (feedChanged || previousFeedKey !== feedKey) requestAnimationFrame(() => {
       feed.scrollTop = shouldPinTop ? 0 : previousScrollTop;
     });
   }
@@ -2829,12 +2839,28 @@ function closeExpandedReplyModal() {
   $('annReplyExpand')?.focus();
 }
 
-async function loadAndRenderAnnouncements() {
-  const res = await fetch('/api/announce-status', { cache: 'no-store' });
-  if (!res.ok) throw new Error(`공지 목록 로드 실패 (${res.status})`);
-  const data = await res.json();
-  latestAnnouncements = Array.isArray(data) ? data : [];
-  renderAnnouncementList(latestAnnouncements);
+async function loadAndRenderAnnouncements({ afterMutation = false } = {}) {
+  if (afterMutation) pendingAnnouncementLoad = null;
+  if (pendingAnnouncementLoad) return pendingAnnouncementLoad;
+  const sequence = ++announcementLoadSequence;
+  const pending = (async () => {
+    try {
+      const res = await fetch('/api/announce-status', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`공지 목록 로드 실패 (${res.status})`);
+      const data = await res.json();
+      if (sequence !== announcementLoadSequence) return;
+      latestAnnouncements = Array.isArray(data) ? data : [];
+      renderAnnouncementList(latestAnnouncements);
+    } catch (err) {
+      if (sequence === announcementLoadSequence) throw err;
+    }
+  })();
+  pendingAnnouncementLoad = pending;
+  try {
+    return await pending;
+  } finally {
+    if (pendingAnnouncementLoad === pending) pendingAnnouncementLoad = null;
+  }
 }
 
 function bindTargetMenu() {
@@ -3042,7 +3068,8 @@ function bindAnnouncementBoard() {
 }
 
 export function initAnnouncements() {
-  if (!$('announcementSection')) return;
+  if (!$('announcementSection') || announcementsInitialized) return;
+  announcementsInitialized = true;
   ensureAnnouncementControls();
   bindImageTools();
   bindExpiryControls();
@@ -3056,7 +3083,7 @@ export function initAnnouncements() {
   loadAndRenderAnnouncements().catch((err) => {
     console.warn('[announcements] initial load failed:', err);
     const host = $('annList');
-    if (host) host.innerHTML = '<div class="ann-empty">공지 목록을 불러오지 못했습니다.</div>';
+    if (host) updateAnnouncementMarkup(host, '<div class="ann-empty">공지 목록을 불러오지 못했습니다.</div>');
   });
 
   document.addEventListener('today:rendered', (ev) => {

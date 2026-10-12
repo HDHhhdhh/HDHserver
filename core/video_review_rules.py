@@ -5,6 +5,7 @@ from datetime import date
 from typing import Final, Literal, TypeAlias, TypedDict
 
 from core.progress_rules import watch_auto_status
+from core.video_watch_cycles import VIDEO_WATCH_CYCLES_KEY
 
 
 JsonValue: TypeAlias = (
@@ -122,6 +123,7 @@ def resolve_video_review_states_before_date(
     event_dates = _valid_dates(progress, cutoff) | _valid_dates(watch, cutoff)
     states: ReviewStates = {}
     manual_overrides: set[str] = set()
+    cycled_mids: set[str] = set()
 
     for event_date in sorted(event_dates):
         date_key = event_date.isoformat()
@@ -132,6 +134,9 @@ def resolve_video_review_states_before_date(
         manual_mids: set[str] = set()
 
         if progress_map is not None:
+            cycles = _as_mapping(progress_map.get(VIDEO_WATCH_CYCLES_KEY))
+            if cycles is not None:
+                cycled_mids.update(str(mid) for mid in cycles)
             metadata = _as_mapping(progress_map.get(MANUAL_META_KEY))
             if metadata is not None:
                 for raw_mid, marker in metadata.items():
@@ -162,7 +167,7 @@ def resolve_video_review_states_before_date(
                 mid = str(raw_mid).strip()
                 if not mid or mid == "tests" or mid.startswith("__"):
                     continue
-                if mid in progress_presence or mid in manual_overrides:
+                if mid in progress_presence or mid in manual_overrides or mid in cycled_mids:
                     continue
                 review_status = _as_review_status(_review_watch_status(entry))
                 if review_status is not None:

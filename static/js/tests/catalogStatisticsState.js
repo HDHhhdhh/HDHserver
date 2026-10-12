@@ -5,7 +5,7 @@ import {
   roundLabel,
   roundSortValue,
   termSortValue,
-} from './catalogState.js?v=20260829-catalog-state-r1';
+} from './catalogState.js?v=20260907-ilsan-level-r1';
 
 export const STATS_TYPE_LABELS = Object.freeze({
   REVIEW: '복테',
@@ -108,6 +108,7 @@ export function projectStatsRows({
   searchKeyForText = value => String(value || ''),
   matchesSearchKey = (key, query) => String(key || '').includes(String(query || '')),
 } = {}) {
+  const hasSearch = Boolean(String(queryText || '').trim());
   return tests.map(test => ({
     ...test,
     displayName: displayNameFor(test),
@@ -115,7 +116,7 @@ export function projectStatsRows({
     typeSearchLabel: definition.label,
     stat: statForTest(test, stats, definition.key),
   }))
-    .filter(row => matchesSearchKey(statsSearchText(row, searchKeyForText), queryText))
+    .filter(row => !hasSearch || matchesSearchKey(statsSearchText(row, searchKeyForText), queryText))
     .sort((left, right) => compareStatsRows(left, right, sort));
 }
 

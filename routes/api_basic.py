@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import re
-import time
 import json
 
-from flask import Blueprint, current_app, jsonify, make_response, request
+from flask import Blueprint, current_app, jsonify, request
 
 from core.paths import (
     BASE,
@@ -83,6 +81,23 @@ from core.student_notification_hooks import (
     student_schedule_changed_sids,
 )
 from core.test_answer_links import resolve_test_assignment_answer_url
+from core.student_test_projection import (
+    _normalize_test_assignment_status,
+    _test_assignment_status_label,
+    _is_active_test_assignment_status,
+    _round_label_for_assignment,
+    _fallback_assigned_test_from_label,
+    _normalized_test_curriculum,
+    _assigned_test_curriculum,
+    _filter_assigned_tests_for_student_curriculum,
+    _assigned_test_label,
+    _normalized_test_status_map,
+    _append_unique_assigned_test_label,
+    _collect_assigned_test_metadata,
+    _student_assigned_test_labels,
+    project_student_assigned_tests,
+    resolve_student_assigned_tests,
+)
 from core.storage import InterProcessFileLock, file_lock, load, save_atomic
 from core.absent import load_absent, save_absent
 from core.date_rules import is_iso_date_key
@@ -159,176 +174,6 @@ def _auto_assignment_absence_barrier():
     return absence_consistency_barrier(absent_path=ABS_PATH)
 
 
-def _normalize_test_assignment_status(value) -> str:
-    if isinstance(value, dict):
-        value = value.get("status")
-    s = str(value or "").strip()
-    if not s or s == "none":
-        return ""
-    if s in ("assigned", "done", "interrupted", "skip"):
-        return s
-    return "assigned"
-
-
-def _test_assignment_status_label(status: str) -> str:
-    s = _normalize_test_assignment_status(status)
-    if s == "done":
-        return "완료"
-    if s == "interrupted":
-        return "배부"
-    if s == "skip":
-        return "제외"
-    return "배정" if s else ""
-
-
-def _is_active_test_assignment_status(status: str) -> bool:
-    return _normalize_test_assignment_status(status) in {"assigned", "interrupted"}
-
-
-def _round_label_for_assignment(value) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    return raw if "회" in raw else f"{raw}회차"
-
-
-def _fallback_assigned_test_from_label(label: str, status: str) -> dict:
-    parts = [p.strip() for p in str(label or "").split(" / ") if p.strip()]
-    item = {
-        "label": str(label or "").strip(),
-        "name": parts[-1] if parts else str(label or "").strip(),
-        "status": status,
-        "statusLabel": _test_assignment_status_label(status),
-    }
-    if len(parts) >= 5:
-        item.update({
-            "categoryLabel": parts[0],
-            "curriculum": parts[1],
-            "difficulty": parts[2],
-            "round": parts[3].replace("회차", "").replace("회", "").strip(),
-        })
-    return item
-
-
-def _normalized_test_curriculum(value) -> str:
-    compact = re.sub(r"\s+", "", str(value or ""))
-    aliases = {
-        "공통수학1": "공수1",
-        "공통수학2": "공수2",
-        "미적1": "미적분1",
-        "미적분Ⅰ": "미적분1",
-        "미적분I": "미적분1",
-        "미적2": "미적분2",
-        "미적분Ⅱ": "미적분2",
-        "미적분II": "미적분2",
-        "확률과통계": "확통",
-    }
-    return aliases.get(compact, "미적분1" if compact == "미적분" else compact)
-
-
-def _assigned_test_curriculum(item: dict) -> str:
-    direct = item.get("curriculum") or item.get("subject") or item.get("course")
-    if str(direct or "").strip():
-        return _normalized_test_curriculum(direct)
-    parts = [part.strip() for part in str(item.get("label") or "").split("/") if part.strip()]
-    return _normalized_test_curriculum(parts[1] if len(parts) > 1 else "")
-
-
-def _filter_assigned_tests_for_student_curriculum(items: list[dict], student: dict) -> list[dict]:
-    current = _normalized_test_curriculum(student.get("curriculum") or student.get("subject"))
-    if not current:
-        return items
-    return [item for item in items if _assigned_test_curriculum(item) == current]
-
-
-def _assigned_test_label(raw: dict) -> str:
-    label = str(raw.get("label") or "").strip()
-    if label:
-        return label
-    pieces = [
-        raw.get("categoryLabel"),
-        raw.get("curriculum"),
-        raw.get("difficulty"),
-        _round_label_for_assignment(raw.get("round")),
-        raw.get("name"),
-    ]
-    return " / ".join(str(x).strip() for x in pieces if str(x or "").strip())
-
-
-def _normalized_test_status_map(tests) -> dict:
-    if not isinstance(tests, dict):
-        return {}
-    statuses = {
-        str(label).strip(): _normalize_test_assignment_status(status)
-        for label, status in tests.items()
-    }
-    return {label: status for label, status in statuses.items() if label and status}
-
-
-def _latest_previous_test_statuses(progress_all: dict, date: str, sid: str) -> dict:
-    return _latest_previous_test_statuses_from_sources(progress_all, None, date, sid)
-
-
-def _log_test_statuses_for_sid(logs_map: dict | None, date: str, sid: str) -> dict:
-    if not isinstance(logs_map, dict):
-        return {}
-    day_logs = logs_map.get(date)
-    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
-    if not isinstance(log_entry, dict):
-        return {}
-
-    out = {}
-    for field in (TEST_ASSIGN_DAILY_ITEMS_KEY, "assignedTests"):
-        items = log_entry.get(field)
-        if not isinstance(items, list):
-            continue
-        for raw in items:
-            if not isinstance(raw, dict):
-                continue
-            label = _assigned_test_label(raw)
-            status = _normalize_test_assignment_status(raw.get("status") or "assigned")
-            if label and _is_active_test_assignment_status(status):
-                out[label] = status
-    return out
-
-
-def _latest_previous_test_statuses_from_sources(
-    progress_all: dict,
-    logs_map: dict | None,
-    date: str,
-    sid: str,
-) -> dict:
-    previous_date_keys = set()
-    for source in (progress_all, logs_map):
-        if not isinstance(source, dict):
-            continue
-        for raw_date in source.keys():
-            raw_date_s = str(raw_date or "")
-            if is_iso_date_key(raw_date_s) and raw_date_s < str(date):
-                previous_date_keys.add(raw_date_s)
-
-    for prev_date in sorted(previous_date_keys, reverse=True):
-        prev_day = progress_all.get(prev_date) if isinstance(progress_all, dict) else {}
-        prev_entry = _sid_lookup(prev_day if isinstance(prev_day, dict) else {}, sid)
-        if isinstance(prev_entry, dict):
-            if prev_entry.get(TEST_ASSIGN_CLEAR_META_KEY):
-                break
-            prev_tests = prev_entry.get("tests")
-            if isinstance(prev_tests, dict) and prev_tests:
-                prev_statuses = _normalized_test_status_map(prev_tests)
-                # Previous skip means inactive/excluded, so it must not hide a
-                # test that became newly assigned on the current date.
-                return {
-                    label: status
-                    for label, status in prev_statuses.items()
-                    if _is_active_test_assignment_status(status)
-                }
-        log_statuses = _log_test_statuses_for_sid(logs_map, prev_date, sid)
-        if log_statuses:
-            return log_statuses
-    return {}
-
-
 def _load_tests_config_for_answer_links() -> dict:
     try:
         mtime = TESTS_CFG_PATH.stat().st_mtime
@@ -380,113 +225,6 @@ def _test_assignment_answer_url(item: dict) -> str:
         answer_link_map=_load_test_answer_link_map(),
     )
 
-def _append_unique_assigned_test_label(labels: list[str], label: str) -> None:
-    if label not in labels:
-        labels.append(label)
-
-
-def _collect_assigned_test_metadata(
-    source_map,
-    date: str,
-    sid: str,
-    by_label: dict,
-    log_labels: list[str],
-    daily_labels: list[str],
-) -> None:
-    day_logs = source_map.get(date) if isinstance(source_map, dict) else {}
-    log_entry = _sid_lookup(day_logs if isinstance(day_logs, dict) else {}, sid)
-
-    daily_items = log_entry.get(TEST_ASSIGN_DAILY_ITEMS_KEY) if isinstance(log_entry, dict) else []
-    if isinstance(daily_items, list):
-        for raw in daily_items:
-            if not isinstance(raw, dict):
-                continue
-            label = _assigned_test_label(raw)
-            if not label:
-                continue
-            _append_unique_assigned_test_label(daily_labels, label)
-            by_label[label] = {**by_label.get(label, {}), **raw, "label": label}
-
-    log_items = log_entry.get("assignedTests") if isinstance(log_entry, dict) else []
-    if not isinstance(log_items, list):
-        return
-
-    for raw in log_items:
-        if not isinstance(raw, dict):
-            continue
-        label = _assigned_test_label(raw)
-        if not label:
-            continue
-        _append_unique_assigned_test_label(log_labels, label)
-        item = dict(raw)
-        if label in by_label:
-            merged = dict(item)
-            merged.update(by_label[label])
-            by_label[label] = merged
-        else:
-            by_label[label] = item
-
-
-def _student_assigned_test_labels(
-    status_by_label: dict,
-    log_labels: list[str],
-    daily_labels: list[str],
-) -> list[str]:
-    if daily_labels:
-        if status_by_label:
-            labels = [
-                label
-                for label in daily_labels
-                if (
-                    label in status_by_label
-                    and _is_active_test_assignment_status(status_by_label.get(label))
-                )
-            ]
-            for label, status in status_by_label.items():
-                if not _is_active_test_assignment_status(status) or label in labels:
-                    continue
-                labels.append(label)
-            return labels
-        return [
-            label
-            for label in daily_labels
-        ]
-
-    active_labels = [
-        label
-        for label, status in status_by_label.items()
-        if _is_active_test_assignment_status(status)
-    ] if status_by_label else list(log_labels)
-    return active_labels
-
-
-def _build_student_assigned_test_items(
-    labels: list[str],
-    by_label: dict,
-    status_by_label: dict,
-) -> list[dict]:
-    out = []
-    for label in labels:
-        item = dict(by_label.get(label) or {})
-        status = (
-            status_by_label.get(label)
-            or _normalize_test_assignment_status(item.get("status"))
-            or "assigned"
-        )
-        if not _is_active_test_assignment_status(status):
-            continue
-        if not item:
-            item = _fallback_assigned_test_from_label(label, status)
-        item["label"] = item.get("label") or label
-        item["status"] = status
-        item["statusLabel"] = _test_assignment_status_label(status)
-        answer_url = _test_assignment_answer_url(item)
-        if answer_url:
-            item["answerUrl"] = answer_url
-        out.append(item)
-
-    return out
-
 
 def _student_assigned_tests_for_date(
     progress_all: dict,
@@ -495,32 +233,17 @@ def _student_assigned_tests_for_date(
     sid: str,
     fallback_logs_map=None,
 ) -> list[dict]:
-    day_progress = progress_all.get(date) if isinstance(progress_all, dict) else {}
-    progress_entry = _sid_lookup(day_progress if isinstance(day_progress, dict) else {}, sid)
-    current_cleared = isinstance(progress_entry, dict) and bool(progress_entry.get(TEST_ASSIGN_CLEAR_META_KEY))
-    progress_tests = progress_entry.get("tests") if isinstance(progress_entry, dict) else {}
-    if not isinstance(progress_tests, dict):
-        progress_tests = {}
-
-    status_by_label = _normalized_test_status_map(progress_tests)
-
-    by_label = {}
-    log_labels = []
-    daily_labels = []
-
-    if current_cleared and not status_by_label:
-        return []
-
-    _collect_assigned_test_metadata(logs_map, date, sid, by_label, log_labels, daily_labels)
-    if not log_labels:
-        _collect_assigned_test_metadata(fallback_logs_map, date, sid, by_label, log_labels, daily_labels)
-
-    labels = _student_assigned_test_labels(
-        status_by_label,
-        log_labels,
-        daily_labels,
+    items = project_student_assigned_tests(
+        progress_all, logs_map, date, sid, fallback_logs_map,
     )
-    return _build_student_assigned_test_items(labels, by_label, status_by_label)
+    out = []
+    for item in items:
+        out.extend(resolve_student_assigned_tests(
+            [item],
+            tests_config=_load_tests_config_for_answer_links(),
+            answer_link_map=_load_test_answer_link_map(),
+        ))
+    return out
 
 
 def _assigned_material_list(value) -> list[str]:

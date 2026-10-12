@@ -58,7 +58,7 @@ const SCHOOL_PAST_TESTS = [
 ];
 
 const ILSAN_PAST_TESTS = [
-  ['demo-test-ilsan-001', '일산권 공통수학 대표기출', '공통수학1', '중', '1', '기말고사'],
+  ['demo-test-ilsan-001', '일산권 공통수학 대표기출', '공통수학1', '중상', '1', '기말고사'],
   ['demo-test-ilsan-002', '일산권 미적분 그래프 특강', '미적분', '그래프 포함', '1', '기말고사'],
 ];
 
@@ -717,6 +717,43 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
         created_at: isoAt(currentDate, '09:10'),
       },
     ],
-    assistantStudentNotes: [],
+    assistantStudentNotes: [
+      {
+        id: 3,
+        student_id: 'demo-s001',
+        content: '개념원리 STEP1까지 풀이를 확인하고, APEX는 오답 표시 후 다시 풀게 하기.',
+        created_by: '귤',
+        updated_by: '귤',
+        pinned: true,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(currentDate, '16:40'),
+        updated_at: isoAt(currentDate, '16:40'),
+      },
+      {
+        id: 2,
+        student_id: 'demo-s001',
+        content: '단원평가에서 부호 실수가 반복됨. 계산식을 한 줄씩 쓰고 마지막 검산까지 확인하기.',
+        created_by: '세빈',
+        updated_by: '세빈',
+        pinned: false,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(currentDate, '14:10'),
+        updated_at: isoAt(currentDate, '14:10'),
+      },
+      {
+        id: 1,
+        student_id: 'demo-s001',
+        content: '다음 수업 전에 백지복습 10분 진행. 질문 표시한 문제부터 같이 보기.',
+        created_by: '동훈',
+        updated_by: '동훈',
+        pinned: false,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(previousDate, '18:30'),
+        updated_at: isoAt(previousDate, '18:30'),
+      },
+    ],
   };
 }

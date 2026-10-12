@@ -5,9 +5,13 @@ import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
 import { saveWeekendSlotsPatch } from './today.state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
-import { flattenSchoolCalendarRows, getActiveSchoolCalendarYear } from '../../shared/schoolCalendar.js?v=20260814-active-semester1';
+import {
+  flattenSchoolCalendarRows,
+  getActiveSchoolCalendarYear,
+  normalizeSchoolCalendarSubject as normalizeExamSubject,
+} from '../../shared/schoolCalendar.js?v=20260927-subject-alias1';
 import { applySearchPlaceholder, matchesSearchKey, normalizeSearch, studentSearchKey } from '../../shared/search.js';
-import { ensureOk, sendJson } from '../../shared/api.js';
+import { ensureOk, fetchJsonChecked, sendJson } from '../../shared/api.js';
 import {
   buildPendingMakeups,
   buildActiveScheduledMakeupRows,
@@ -16,9 +20,15 @@ import {
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
 } from './makeupPending.js';
+import { saveScheduleOverridesFailClosed } from './scheduleOverrideSave.js?v=20260927-orphan-extra1';
+import { legacyExtraAttendanceIds } from './extraAttendanceMerge.js?v=20260821-safe-merge1';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
+  if (calendarEl.dataset.calendarReady === '1') return;
+  if (typeof FullCalendar === 'undefined' || typeof FullCalendar.Calendar !== 'function') {
+    throw new Error('FullCalendar library is not available');
+  }
 
   const CT = { 'Content-Type': 'application/json' };
   const WCHR = '일월화수목금토';
@@ -30,7 +40,6 @@ export function initCalendar() {
   let absenceRevision = '';
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const yoil = dateStr => WCHR[new Date(dateStr).getDay()];
-  const isWeekend = dateStr => ['토', '일'].includes(yoil(dateStr));
 
   async function fetchAbsentSnapshot() {
     const response = await fetch('/api/absent', { cache: 'no-store' });
@@ -49,6 +58,7 @@ export function initCalendar() {
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(`/api/absent ${response.status}`);
     absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
+    invalidateCalendarPreload();
     return data || payload;
   }
 
@@ -163,16 +173,6 @@ export function initCalendar() {
     });
   }
 
-  function normalizeExamSubject(value) {
-    const compact = normalizeStudentIdentity(value)
-      .replace(/공통수학1/u, '공수1')
-      .replace(/공통수학I/iu, '공수1')
-      .replace(/미적분I/iu, '미적분1')
-      .replace(/확률과통계/u, '확통');
-    if (compact === '미적분') return '미적분1';
-    return compact;
-  }
-
   function studentGradeLabel(stu) {
     return String(
       stu?.grade ??
@@ -247,7 +247,7 @@ export function initCalendar() {
       row?.course ||
       '수학'
     ).trim() || '수학';
-    const pushRawEvent = ({ kind, subject, label, school, grade, span, range, note, sourceText }) => {
+    const pushRawEvent = ({ kind, subject, label, school, grade, textbook, span, range, note, sourceText }) => {
       if (!school || !span?.start || !span?.end) return;
       const subjectName = String(subject || '').trim() || '수학';
       const students = matchingStudentsForExam({ school, grade, subject: subjectName });
@@ -258,6 +258,7 @@ export function initCalendar() {
         label: label || `${subjectName} 시험일`,
         school,
         grade: String(grade || '').trim(),
+        textbook: String(textbook || '').trim(),
         start: span.start,
         end: span.end,
         range: String(range || '').trim(),
@@ -273,7 +274,8 @@ export function initCalendar() {
 
       const grade = String(row?.grade || '').trim();
       if (!grade && schoolHasGradeRows.get(school)) return; // avoid common+grade duplicates
-      const subject = examSubjectForRow(row);
+      const rawSubject = examSubjectForRow(row);
+      const subject = normalizeExamSubject(rawSubject) || rawSubject;
 
       parseDateSpans(row?.midtermMath, activeYear, false).forEach((span) => {
         pushRawEvent({
@@ -282,8 +284,11 @@ export function initCalendar() {
           label: `${subject} 시험일`,
           school,
           grade,
+          textbook: row?.textbook,
           span,
           sourceText: row?.midtermMath,
+          range: row?.midtermRange,
+          note: row?.midtermNote,
         });
       });
 
@@ -294,8 +299,11 @@ export function initCalendar() {
           label: `${subject} 시험일`,
           school,
           grade,
+          textbook: row?.textbook,
           span,
           sourceText: row?.finalMath,
+          range: row?.finalRange,
+          note: row?.finalNote,
         });
       });
     });
@@ -313,6 +321,7 @@ export function initCalendar() {
           start: row.start,
           end: row.end,
           grades: new Set(),
+          textbooks: new Set(),
           ranges: new Set(),
           notes: new Set(),
           sourceTexts: new Set(),
@@ -322,6 +331,7 @@ export function initCalendar() {
       }
 
       if (row.grade) bucket.grades.add(row.grade);
+      if (row.textbook) bucket.textbooks.add(row.textbook);
       if (row.range) bucket.ranges.add(row.range);
       if (row.note) bucket.notes.add(row.note);
       if (row.sourceText) bucket.sourceTexts.add(row.sourceText);
@@ -365,6 +375,7 @@ export function initCalendar() {
         school: row.school,
         grade: gradeList,
         subject: row.subject,
+        ...(row.textbooks.size ? { textbook: [...row.textbooks].join(' / ') } : {}),
         sourceText: [...row.sourceTexts].join(' / '),
         range: [...row.ranges].join(' / '),
         note: [...row.notes].join(' / '),
@@ -401,7 +412,6 @@ export function initCalendar() {
           ? `${row.school} ${gradeList} ${row.label}`
           : `${row.school} ${row.label}`;
         const tooltipParts = [headline.trim()];
-
         if (row.ranges.size === 1) tooltipParts.push(`범위: ${[...row.ranges][0]}`);
         else if (row.ranges.size > 1) tooltipParts.push(`범위: 학교별 상이 (${row.ranges.size}개)`);
 
@@ -478,6 +488,8 @@ export function initCalendar() {
   let WEEKEND = {};   // {"YYYY-MM-DD": {sid: 1|2|3 | [1,2,3]}}
   let CARRYOVER = {}; // {"by_absence":{"YYYY-MM-DD":{"sid":{state:"carried"}}}}
   let preloadExtraWeekendPromise = null;
+  let calendarMutationGeneration = 0;
+  let calendarReadGeneration = 0;
 
   // 슬롯 버튼 클릭 핸들러 중복 방지 플래그
   let slotClickBound = false;
@@ -744,31 +756,42 @@ export function initCalendar() {
     (finalSlots.length ? finalSlots : [1]).forEach(slot => slotSets[slot].add(String(sid)));
   }
 
+  function invalidateCalendarPreload() {
+    calendarMutationGeneration += 1;
+  }
+
   async function preloadExtraWeekend() {
-    if (preloadExtraWeekendPromise) return preloadExtraWeekendPromise;
+    while (true) {
+      if (!preloadExtraWeekendPromise) {
+        const generation = calendarMutationGeneration;
+        calendarReadGeneration = generation;
+        preloadExtraWeekendPromise = (async () => {
+          const [extraResult, weekendResult, carryoverResult, absentResult] = await Promise.allSettled([
+            fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
+            fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()),
+            fetchMakeupCarryoverSnapshot(),
+            fetchAbsentSnapshot(),
+          ]);
 
-    const request = (async () => {
-      const [extraResult, weekendResult, carryoverResult, absentResult] = await Promise.allSettled([
-        fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
-        fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()),
-        fetchMakeupCarryoverSnapshot(),
-        fetchAbsentSnapshot(),
-      ]);
-
-      EXTRA = extraResult.status === 'fulfilled' ? extraResult.value : {};
-      WEEKEND = weekendResult.status === 'fulfilled' ? weekendResult.value : {};
-      CARRYOVER = carryoverResult.status === 'fulfilled' ? carryoverResult.value.payload : {};
-      if (absentResult.status === 'fulfilled') applyAbsentPayload(absentResult.value);
-      state.extra = EXTRA || {};
-      window.extra = state.extra;
-      CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
-    })();
-
-    preloadExtraWeekendPromise = request;
-    try {
-      return await request;
-    } finally {
-      if (preloadExtraWeekendPromise === request) preloadExtraWeekendPromise = null;
+          // A committed mutation makes a previously started snapshot stale.
+          if (generation !== calendarMutationGeneration) return;
+          EXTRA = extraResult.status === 'fulfilled' ? extraResult.value : {};
+          WEEKEND = weekendResult.status === 'fulfilled' ? weekendResult.value : {};
+          CARRYOVER = carryoverResult.status === 'fulfilled' ? carryoverResult.value.payload : {};
+          if (absentResult.status === 'fulfilled') applyAbsentPayload(absentResult.value);
+          state.extra = EXTRA || {};
+          window.extra = state.extra;
+          CARRYOVER = normalizeCarryoverPayload(CARRYOVER);
+        })();
+      }
+      const request = preloadExtraWeekendPromise;
+      const generation = calendarReadGeneration;
+      try {
+        await request;
+      } finally {
+        if (preloadExtraWeekendPromise === request) preloadExtraWeekendPromise = null;
+      }
+      if (generation === calendarMutationGeneration) return;
     }
   }
 
@@ -814,11 +837,13 @@ export function initCalendar() {
   function refreshCountBadges() {
     document.querySelectorAll('.fc-daygrid-day').forEach(cell => {
       const dateStr = cell.getAttribute('data-date'); if (!dateStr) return;
+      const frame = cell.querySelector('.fc-daygrid-day-frame') || cell;
+      const eventList = frame.querySelector('.fc-daygrid-day-events');
       let badge = cell.querySelector('.att-count-badge');
       if (!badge) {
         badge = document.createElement('div'); badge.className = 'att-count-badge';
-        cell.style.position = 'relative'; cell.appendChild(badge);
       }
+      frame.insertBefore(badge, eventList || null);
       const counts = countMap[dateStr] || {};
       badge.textContent = `${counts[1] || 0}명 / ${counts[2] || 0}명`;
     });
@@ -836,7 +861,7 @@ export function initCalendar() {
   }
 
   function escapeAttr(value) {
-    return escapeHtml(value).replace(/"/g, '&quot;');
+    return escapeHtml(value);
   }
 
   function makeupItemKey(item) {
@@ -866,6 +891,7 @@ export function initCalendar() {
   async function postJson(url, payload) {
     const response = await sendJson(url, payload);
     await ensureOk(response, url);
+    invalidateCalendarPreload();
     const text = await response.text().catch(() => '');
     return text ? JSON.parse(text) : null;
   }
@@ -888,6 +914,7 @@ export function initCalendar() {
       throw error;
     }
     await ensureOk(response, '보강 이월 저장');
+    invalidateCalendarPreload();
     return await response.json();
   }
 
@@ -904,6 +931,7 @@ export function initCalendar() {
 
     const response = await sendJson('/api/extra-attend', { dates }, { method: 'PATCH' });
     await ensureOk(response, '보강 명단 저장');
+    invalidateCalendarPreload();
     return await response.json();
   }
 
@@ -1367,6 +1395,7 @@ export function initCalendar() {
       if (!res.ok || !data?.ok) {
         throw new Error(data?.message || data?.error || `시트 동기화 실패 (${res.status})`);
       }
+      invalidateCalendarPreload();
       CARRYOVER = normalizeCarryoverPayload(data.carryover || {});
       EXTRA = data.extra || {};
       WEEKEND = data.weekendSlots || {};
@@ -1374,10 +1403,7 @@ export function initCalendar() {
       window.extra = EXTRA;
       window.weekendSlots = WEEKEND;
       applyAbsentPayload(data.absent || {});
-      await window.recalcCalendarCounts?.();
-      renderMakeupPlanner();
-      document.dispatchEvent(new CustomEvent('attendance:updated'));
-      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+      await refreshCalendarAfterMutation({ attendance: true });
       const opened = Number(data.opened || 0);
       const existing = Number(data.skippedExisting || 0);
       const unmatched = Number(data.unmatchedStarredRows || 0);
@@ -1672,10 +1698,7 @@ export function initCalendar() {
       setMakeupSelection(null);
       closeMakeupSlotPicker();
     }
-    await refreshMakeupPlanner();
-    await window.recalcCalendarCounts?.();
-    document.dispatchEvent(new CustomEvent('attendance:updated'));
-    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    await refreshCalendarAfterMutation({ attendance: true });
     toast('결석을 취소했습니다.');
   }
 
@@ -1721,70 +1744,10 @@ export function initCalendar() {
       setMakeupSelection(null);
       closeMakeupSlotPicker();
     }
-    await refreshMakeupPlanner();
-    await window.recalcCalendarCounts?.();
-    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    await refreshCalendarAfterMutation();
     toast('보강 없이 이월 처리했습니다.');
   }
 
-  async function resolveManualMakeupDemand(item) {
-    if (!item || item.source !== 'manual') return;
-    const sid = String(item.sid || '').trim();
-    const absenceDate = String(item.absenceDate || '').trim();
-    const manualKey = String(item.manualKey || '').trim();
-    if (!sid || !absenceDate || !manualKey) return;
-
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
-    const next = normalizeCarryoverPayload(latest);
-    next.manual[absenceDate] = next.manual[absenceDate] || {};
-    const prev = next.manual[absenceDate][manualKey] || {};
-    next.manual[absenceDate][manualKey] = {
-      ...prev,
-      sid,
-      slots: item.dateOnly ? [] : parseSlotNumbers(item.slot),
-      dateOnly: item.dateOnly === true,
-      state: 'carried',
-      createdAt: prev.createdAt || '',
-      updatedAt: new Date().toISOString(),
-      note: prev.note || '',
-      course: prev.course || item.course || studentCourseLabel(item.student || {}) || '',
-    };
-
-    const data = await postMakeupCarryoverSnapshot(next, revision);
-    CARRYOVER = normalizeCarryoverPayload(data || next);
-  }
-
-  async function resolveAbsenceMakeupDemand(item) {
-    if (!item || item.source === 'manual') return;
-    const sid = String(item.sid || '').trim();
-    const absenceDate = String(item.absenceDate || '').trim();
-    if (!sid || !absenceDate) return;
-
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
-    const next = normalizeCarryoverPayload(latest);
-    const carryKey = makeupCarryoverKey(item);
-    const prev = next.by_absence[absenceDate]?.[carryKey] || {};
-    next.by_absence[absenceDate] = {
-      ...(next.by_absence[absenceDate] || {}),
-      [carryKey]: {
-        ...prev,
-        state: 'carried',
-        updatedAt: new Date().toISOString(),
-        note: prev.note || '',
-      },
-    };
-
-    const data = await postMakeupCarryoverSnapshot(next, revision);
-    CARRYOVER = normalizeCarryoverPayload(data || next);
-  }
-
-  async function resolveScheduledMakeupDemand(item) {
-    if (item?.source === 'manual') {
-      await resolveManualMakeupDemand(item);
-      return;
-    }
-    await resolveAbsenceMakeupDemand(item);
-  }
 
   function scheduledSlots(schedule) {
     return parseSlotNumbers(schedule?.makeupTimes || schedule?.makeup_times || schedule?.slots || schedule?.slot);
@@ -1798,10 +1761,29 @@ export function initCalendar() {
     const ownsSlots = Object.prototype.hasOwnProperty.call(schedule || {}, 'ownedSlots') ||
       Object.prototype.hasOwnProperty.call(schedule || {}, 'owned_slots');
     if (ownsSlots) return scheduledOwnedSlots(schedule);
-    return schedule?.createdBy === 'makeup-planner' ? scheduledSlots(schedule) : [];
+    return schedule?.createdBy === 'makeup-planner' && schedule?.ownedExtra === true
+      ? scheduledSlots(schedule) : [];
   }
 
-  function applyScheduledAttendance(extraMap, weekendMap, item, dateStr, slot, previousSchedule = null) {
+  async function loadRecordedMakeupDates(sid, dates) {
+    const recorded = new Set();
+    await Promise.all([...new Set(dates.filter(Boolean))].map(async date => {
+      const query = new URLSearchParams({ date, sid: String(sid) });
+      const [attendance, log] = await Promise.all([
+        fetchJsonChecked(`/api/attendance?${query}`, '보강 출석 이력 조회', { cache: 'no-store' }),
+        fetchJsonChecked(`/api/logs/entry?${query}`, '보강 수업 로그 조회', { cache: 'no-store' }),
+      ]);
+      const isMap = value => value && typeof value === 'object' && !Array.isArray(value);
+      if (!isMap(attendance) || log?.ok !== true || !isMap(log.entry)) {
+        throw new Error('출석 이력 확인 실패: 보강 연결을 변경하지 않았습니다.');
+      }
+      if (attendance[String(sid)] === true || attendance[String(sid)] === 1 || Object.keys(log.entry).length) recorded.add(date);
+    }));
+    return recorded;
+  }
+
+  function applyScheduledAttendance(extraMap, weekendMap, item, dateStr, slot, previousSchedule = null, recordedDates = new Set()) {
+    if (recordedDates.has(dateStr)) return { ownedExtra: false, ownedSlots: [], weekendPatch: {} };
     const sid = String(item?.sid || '').trim();
     const stu = item?.student ||
       (state.students || []).find(row => String(row?.id || '') === sid) ||
@@ -1823,10 +1805,10 @@ export function initCalendar() {
     return { ownedExtra, ownedSlots, weekendPatch: { [dateStr]: { [sid]: perDaySlots[sid] } } };
   }
 
-  function releaseScheduledAttendance(extraMap, weekendMap, item, previousSchedule, carryoverAfter) {
+  function releaseScheduledAttendance(extraMap, weekendMap, item, previousSchedule, carryoverAfter, recordedDates = new Set()) {
     const sid = String(item?.sid || previousSchedule?.studentId || '').trim();
     const dateStr = String(previousSchedule?.makeupDate || '').trim();
-    if (!sid || !dateStr) return {};
+    if (!sid || !dateStr || recordedDates.has(dateStr)) return {};
 
     const stu = item?.student ||
       (state.students || []).find(row => String(row?.id || '') === sid) ||
@@ -1881,6 +1863,7 @@ export function initCalendar() {
     for (const [dateStr, mapping] of Object.entries(patch)) {
       if (!mapping || typeof mapping !== 'object' || !Object.keys(mapping).length) continue;
       await saveWeekendSlotsPatch(dateStr, mapping);
+      invalidateCalendarPreload();
     }
   }
 
@@ -1895,14 +1878,14 @@ export function initCalendar() {
     return out;
   }
 
-  async function saveScheduledMakeupDemand(item, makeupDate, slot, ownership = {}) {
+  async function saveScheduledMakeupDemand(item, makeupDate, slot, ownership = {}, snapshot = null) {
     const sid = String(item?.sid || '').trim();
     const absenceDate = String(item?.absenceDate || '').trim();
     if (!sid || !absenceDate || !DATE_RE.test(makeupDate) || !MAKEUP_SLOTS.includes(slot)) {
       throw new Error('Invalid makeup schedule');
     }
 
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision } = snapshot || await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const now = new Date().toISOString();
     const originalAbsenceId = item.originalAbsenceId || makeupOriginalAbsenceId(item);
@@ -1960,11 +1943,12 @@ export function initCalendar() {
   async function carryoverScheduledMakeup(item) {
     if (!item) return;
     await preloadExtraWeekend();
-    const previousSchedule = getScheduledMakeupForItem(item);
-    if (!previousSchedule) return;
-
     const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
+    const previousSchedule = getScheduledMakeupForItem(item, next);
+    if (!previousSchedule) return;
+    const recordedDates = await loadRecordedMakeupDates(item.sid, [previousSchedule.makeupDate]);
+
     const absenceDate = String(item.absenceDate || '').trim();
     const now = new Date().toISOString();
 
@@ -1976,7 +1960,7 @@ export function initCalendar() {
           ...prev,
           state: 'carried',
           updatedAt: now,
-          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now },
+          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now, ownedExtra: false, ownedSlots: [] },
         };
       }
     } else {
@@ -1989,7 +1973,7 @@ export function initCalendar() {
           state: 'carried',
           updatedAt: now,
           note: prev.note || '',
-          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now },
+          scheduledMakeup: { ...previousSchedule, status: 'cancelled', updatedAt: now, ownedExtra: false, ownedSlots: [] },
         },
       };
     }
@@ -1998,8 +1982,10 @@ export function initCalendar() {
     const nextCarryover = normalizeCarryoverPayload(data || next);
     const nextExtra = clonePlainMap(EXTRA);
     const nextWeekend = clonePlainMap(WEEKEND);
-    const weekendPatch = releaseScheduledAttendance(nextExtra, nextWeekend, item, previousSchedule, nextCarryover);
-    await patchExtraAttendDates(nextExtra, [previousSchedule.makeupDate]);
+    const weekendPatch = releaseScheduledAttendance(nextExtra, nextWeekend, item, previousSchedule, nextCarryover, recordedDates);
+    if (!recordedDates.has(previousSchedule.makeupDate)) {
+      await patchExtraAttendDates(nextExtra, [previousSchedule.makeupDate]);
+    }
     await postWeekendPatch(weekendPatch);
 
     CARRYOVER = nextCarryover;
@@ -2011,9 +1997,7 @@ export function initCalendar() {
       setMakeupSelection(null);
       closeMakeupSlotPicker();
     }
-    await refreshMakeupPlanner();
-    await window.recalcCalendarCounts?.();
-    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    await refreshCalendarAfterMutation();
     toast('보강 없이 이월 처리했습니다.');
   }
 
@@ -2029,8 +2013,10 @@ export function initCalendar() {
     const next = normalizeCarryoverPayload(latest);
     const dateRows = { ...(next.by_absence[date] || {}) };
     const updatedAt = new Date().toISOString();
+    let changed = false;
 
     rowsToOpen.forEach(({ sid, slots }) => {
+      if (dateRows[sid]?.state === 'self-study') return;
       const slotList = slots.length ? slots : [''];
       slotList.forEach(slot => {
         const key = slot ? `${sid}|${slot}` : sid;
@@ -2041,9 +2027,14 @@ export function initCalendar() {
           updatedAt,
           note: prev.note || '',
         };
+        changed = true;
       });
     });
 
+    if (!changed) {
+      CARRYOVER = next;
+      return;
+    }
     next.by_absence[date] = dateRows;
     const data = await postMakeupCarryoverSnapshot(next, revision);
     CARRYOVER = normalizeCarryoverPayload(data || next);
@@ -2065,6 +2056,7 @@ export function initCalendar() {
       for (const key of Object.keys(rows).sort()) {
         const sid = String(key).split('|')[0];
         if (!targets.has(sid) || consumed.has(sid)) continue;
+        if (rows[sid]?.state === 'self-study') continue;
         const row = rows[key];
         const isOpen = row && typeof row === 'object' && (row.state === 'open' || row.open === true || row.pending === true);
         if (!isOpen) continue;
@@ -2086,7 +2078,7 @@ export function initCalendar() {
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
-  function renderMakeupPlanner() {
+  function renderMakeupPlanner(event) {
     ensureMakeupPlanner();
     updateMakeupFocusUI();
     const list = $('makeupPlannerList');
@@ -2095,6 +2087,8 @@ export function initCalendar() {
     const statusList = $('makeupStatusList');
     const statusSearch = $('makeupStatusSearch');
     if (!list || !statusList) return;
+    const renderPending = event?.target?.id !== 'makeupStatusSearch';
+    const renderStatus = event?.target?.id !== 'makeupPlannerSearch';
 
     const filterRows = (items, queryText) => sortPlannerItems(items.filter(item => {
       const key = studentSearchKey(item.student, [
@@ -2112,50 +2106,51 @@ export function initCalendar() {
     }));
 
     const queryText = search?.value || '';
-    const pending = getPendingMakeups();
-    const scheduled = getScheduledMakeupStatusRows();
-    const visible = filterRows(pending, queryText);
-    const statusVisible = filterRows(scheduled, statusSearch?.value || '');
-    const checkToggle = $('attendanceCheckToggle');
-    if (checkToggle) checkToggle.hidden = attendanceCheckMode;
-    if (search) applySearchPlaceholder(search, attendanceCheckMode ? '학생 이름 검색' : '보강 학생 검색');
+    const pending = renderPending ? getPendingMakeups() : [];
+    const scheduled = renderStatus ? getScheduledMakeupStatusRows() : [];
+    const visible = renderPending ? filterRows(pending, queryText) : [];
+    const statusVisible = renderStatus ? filterRows(scheduled, statusSearch?.value || '') : [];
+    if (renderPending) {
+      const checkToggle = $('attendanceCheckToggle');
+      if (checkToggle) checkToggle.hidden = attendanceCheckMode;
+      if (search) applySearchPlaceholder(search, attendanceCheckMode ? '학생 이름 검색' : '보강 학생 검색');
 
-    if (hint) {
-      const suffix = manualAbsenceSelection ? ' 결석 날짜 선택 중' : (makeupSelection ? ' 날짜 선택 중' : '');
-      hint.textContent = queryText.trim()
-        ? `${visible.length}/${pending.length}${suffix}`
-        : `${pending.length}건${suffix}`;
-    }
+      if (hint) {
+        const suffix = manualAbsenceSelection ? ' 결석 날짜 선택 중' : (makeupSelection ? ' 날짜 선택 중' : '');
+        hint.textContent = queryText.trim()
+          ? `${visible.length}/${pending.length}${suffix}`
+          : `${pending.length}건${suffix}`;
+      }
 
-    if (attendanceCheckMode) {
-      const studentRows = (state.students || []).filter(student => matchesSearchKey(studentSearchKey(student), queryText));
-      if (hint) hint.textContent = queryText.trim()
-        ? `${studentRows.length}명 · 등원일 확인 중 · ESC를 누르면 확인 모드가 종료됩니다.`
-        : '학생 이름을 검색하세요. ESC를 누르면 확인 모드가 종료됩니다.';
-      list.innerHTML = studentRows.length ? studentRows.map(student => {
-        const key = String(student.id || '');
-        const selected = attendanceCheckSelection?.sid === key ? ' is-active' : '';
-        return `<div class="makeup-row${selected}" data-key="${escapeAttr(key)}"><div class="makeup-label"><span>${escapeHtml(student.name || '')} - ${escapeHtml(studentSchoolLabel(student))} - ${escapeHtml(studentCourseLabel(student))}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="check" data-key="${escapeAttr(key)}">확인</button></div></div>`;
-      }).join('') : `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '학생 이름을 검색하세요.'}</div>`;
-    } else if (!visible.length) {
-      list.innerHTML = `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
-    } else {
-      const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
-      list.innerHTML = visible.map(item => {
-      const key = makeupItemKey(item);
-      const sourceLabel = item.source === 'manual' ? '추가 결석' : '결석';
-      const slotLabel = item.dateOnly
-        ? ` - ${sourceLabel}`
-        : item.slot ? ` - ${sourceLabel} ${item.slot}타임` : '';
-      const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
-      const active = key === activeKey ? ' is-active' : '';
-      const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
-      const copyText = formatMakeupCopyText(item);
-      const secondaryActions = `
+      if (attendanceCheckMode) {
+        const studentRows = (state.students || []).filter(student => matchesSearchKey(studentSearchKey(student), queryText));
+        if (hint) hint.textContent = queryText.trim()
+          ? `${studentRows.length}명 · 등원일 확인 중 · ESC를 누르면 확인 모드가 종료됩니다.`
+          : '학생 이름을 검색하세요. ESC를 누르면 확인 모드가 종료됩니다.';
+        list.innerHTML = studentRows.length ? studentRows.map(student => {
+          const key = String(student.id || '');
+          const selected = attendanceCheckSelection?.sid === key ? ' is-active' : '';
+          return `<div class="makeup-row${selected}" data-key="${escapeAttr(key)}"><div class="makeup-label"><span>${escapeHtml(student.name || '')} - ${escapeHtml(studentSchoolLabel(student))} - ${escapeHtml(studentCourseLabel(student))}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="check" data-key="${escapeAttr(key)}">확인</button></div></div>`;
+        }).join('') : `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '학생 이름을 검색하세요.'}</div>`;
+      } else if (!visible.length) {
+        list.innerHTML = `<div class="makeup-empty">${queryText.trim() ? '검색 결과가 없습니다.' : '보강 잡을 학생이 없습니다.'}</div>`;
+      } else {
+        const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
+        list.innerHTML = visible.map(item => {
+        const key = makeupItemKey(item);
+        const sourceLabel = item.source === 'manual' ? '추가 결석' : '결석';
+        const slotLabel = item.dateOnly
+          ? ` - ${sourceLabel}`
+          : item.slot ? ` - ${sourceLabel} ${item.slot}타임` : '';
+        const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
+        const active = key === activeKey ? ' is-active' : '';
+        const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
+        const copyText = formatMakeupCopyText(item);
+        const secondaryActions = `
             <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>
             <button type="button" class="makeup-carryover-btn" data-makeup-action="carryover" data-key="${escapeAttr(key)}">이월</button>
           `;
-      return `
+        return `
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}">
           <div class="makeup-label">
             <span>${escapeHtml(label)}</span>
@@ -2166,33 +2161,43 @@ export function initCalendar() {
           </div>
         </div>
       `;
-      }).join('');
+        }).join('');
+      }
+
     }
 
-    if (!statusVisible.length) {
-      statusList.innerHTML = `<div class="makeup-empty">${statusSearch?.value.trim() ? '검색 결과가 없습니다.' : '보강 예정이 없습니다.'}</div>`;
-    } else {
-      statusList.innerHTML = statusVisible.map(item => {
-        const key = makeupItemKey(item);
-        const slotLabel = item.dateOnly ? '결석' : `${item.slot || 1}타임 결석`;
-        const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)} - ${slotLabel}`;
-        const copyText = formatMakeupCopyText(item);
-        const scheduledDate = formatMakeupDate(item.scheduledMakeup?.makeupDate);
-        const scheduledTimeLabel = slotGroupLabel(parseSlotNumbers(item.scheduledMakeup?.makeupTimes));
-        const scheduledLabel = [scheduledDate, scheduledTimeLabel].filter(Boolean).join(' · ');
-        return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(scheduledLabel)}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
-      }).join('');
+    if (renderStatus) {
+      if (!statusVisible.length) {
+        statusList.innerHTML = `<div class="makeup-empty">${statusSearch?.value.trim() ? '검색 결과가 없습니다.' : '보강 예정이 없습니다.'}</div>`;
+      } else {
+        statusList.innerHTML = statusVisible.map(item => {
+          const key = makeupItemKey(item);
+          const slotLabel = item.dateOnly ? '결석' : `${item.slot || 1}타임 결석`;
+          const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)} - ${slotLabel}`;
+          const copyText = formatMakeupCopyText(item);
+          const scheduledDate = formatMakeupDate(item.scheduledMakeup?.makeupDate);
+          const scheduledTimeLabel = slotGroupLabel(parseSlotNumbers(item.scheduledMakeup?.makeupTimes));
+          const scheduledLabel = [scheduledDate, scheduledTimeLabel].filter(Boolean).join(' · ');
+          return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(scheduledLabel)}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
+        }).join('');
+      }
+      const statusHint = $('makeupStatusHint');
+      if (statusHint) statusHint.textContent = statusSearch?.value.trim()
+        ? `검색 ${statusVisible.length}건 · 전체 ${scheduled.length}건`
+        : `전체 ${scheduled.length}건`;
     }
-    const statusHint = $('makeupStatusHint');
-    if (statusHint) statusHint.textContent = statusSearch?.value.trim()
-      ? `검색 ${statusVisible.length}건 · 전체 ${scheduled.length}건`
-      : `전체 ${scheduled.length}건`;
   }
 
   async function refreshMakeupPlanner() {
     await preloadExtraWeekend();
     renderMakeupPlanner();
     refreshMakeupConflictHints();
+  }
+
+  async function refreshCalendarAfterMutation({ attendance = false } = {}) {
+    if (attendance) document.dispatchEvent(new CustomEvent('attendance:updated'));
+    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    await Promise.all([refreshMakeupPlanner(), window.recalcCalendarCounts?.()]);
   }
 
   function closeMakeupSlotPicker() {
@@ -2253,10 +2258,10 @@ export function initCalendar() {
     await preloadExtraWeekend();
 
     const sid = String(selectedDemand.sid);
-    const stu = selectedDemand.student ||
-      (state.students || []).find(row => String(row?.id || '') === sid) ||
-      {};
-    const previousSchedule = getScheduledMakeupForItem(selectedDemand);
+    const carryoverSnapshot = await fetchMakeupCarryoverSnapshot();
+    const latestCarryover = normalizeCarryoverPayload(carryoverSnapshot.payload);
+    const previousSchedule = getScheduledMakeupForItem(selectedDemand, latestCarryover);
+    const recordedDates = await loadRecordedMakeupDates(sid, [dateStr, previousSchedule?.makeupDate]);
     const carryoverBeforeSave = CARRYOVER;
     const nextExtra = clonePlainMap(EXTRA);
     const nextWeekend = clonePlainMap(WEEKEND);
@@ -2268,21 +2273,29 @@ export function initCalendar() {
         selectedDemand,
         dateStr,
         slot,
-        previousSchedule
+        previousSchedule,
+        recordedDates
       );
-      nextCarryover = await saveScheduledMakeupDemand(selectedDemand, dateStr, slot, { ownedExtra, ownedSlots });
+      nextCarryover = await saveScheduledMakeupDemand(selectedDemand, dateStr, slot, { ownedExtra, ownedSlots }, carryoverSnapshot);
       const releasePatch = previousSchedule
-        ? releaseScheduledAttendance(nextExtra, nextWeekend, selectedDemand, previousSchedule, nextCarryover)
+        ? releaseScheduledAttendance(nextExtra, nextWeekend, selectedDemand, previousSchedule, nextCarryover, recordedDates)
         : {};
       const mergedWeekendPatch = mergeWeekendPatches(weekendPatch, releasePatch);
-      await patchExtraAttendDates(nextExtra, [dateStr, previousSchedule?.makeupDate]);
-      await postWeekendPatch(mergedWeekendPatch);
-      const storedSlots = parseSlotNumbers(nextWeekend?.[dateStr]?.[sid]);
-      await postJson('/api/arrive-time/patch', {
-        date: dateStr,
-        sid,
-        value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...(storedSlots.length ? storedSlots : [slot]))] || '',
+      const changedDates = [...new Set([dateStr, previousSchedule?.makeupDate].filter(date => date && !recordedDates.has(date)))];
+      if (changedDates.length) await saveScheduleOverridesFailClosed({
+        extraMap: nextExtra,
+        weekendPatch: mergedWeekendPatch,
+        saveExtra: () => patchExtraAttendDates(nextExtra, changedDates),
+        saveWeekend: postWeekendPatch,
       });
+      if (!recordedDates.has(dateStr)) {
+        const storedSlots = parseSlotNumbers(nextWeekend?.[dateStr]?.[sid]);
+        await postJson('/api/arrive-time/patch', {
+          date: dateStr,
+          sid,
+          value: MAKEUP_ARRIVE_BY_SLOT[Math.min(...(storedSlots.length ? storedSlots : [slot]))] || '',
+        });
+      }
     } catch (err) {
       CARRYOVER = carryoverBeforeSave;
       throw err;
@@ -2297,9 +2310,7 @@ export function initCalendar() {
     toast(`${selectedDemand.name || sid}: ${formatMakeupDate(selectedDemand.absenceDate)} 결석 → ${formatMakeupDate(dateStr)} 보강 등록 완료`);
     setMakeupSelection(null);
     closeMakeupSlotPicker();
-    await refreshMakeupPlanner();
-    await window.recalcCalendarCounts?.();
-    document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { force: true } }));
+    await refreshCalendarAfterMutation();
   }
 
   const calBadge = $('calTodayBadge');
@@ -2414,10 +2425,11 @@ export function initCalendar() {
               <section class="school-exam-info-item" style="position:relative;overflow:hidden;border:1px solid ${theme.border};border-left:7px solid ${theme.accent};border-radius:8px;padding:12px 14px;background:linear-gradient(90deg,${theme.soft},color-mix(in srgb,var(--card) 92%,#fff 8%));box-shadow:0 1px 3px rgba(15,23,42,.08)">
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:9px">
                   <div style="min-width:0">
-                    <div style="font-weight:900;margin-bottom:6px;color:#0f172a">${escapeHtml(entry.school || title)}</div>
+                    <div style="font-weight:900;margin-bottom:6px;color:#344054">${escapeHtml(entry.school || title)}</div>
                     <div style="display:flex;flex-wrap:wrap;gap:6px">
                       ${entry.grade ? `<span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:${theme.chipBg};color:${theme.chipText};font-size:12px;font-weight:800">${escapeHtml(entry.grade)}</span>` : ''}
                       <span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:${theme.accent};color:#fff;font-size:12px;font-weight:900">${escapeHtml(entry.subject || '수학')}</span>
+                      ${entry.textbook ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid #e4e7ec;border-radius:999px;background:#f7f8fa;color:#475467;font-size:12px;font-weight:700"><span aria-hidden="true">📕</span><span>교과서: ${escapeHtml(entry.textbook)}</span></span>` : ''}
                     </div>
                   </div>
                   <div style="flex:0 0 auto;min-width:58px;text-align:center;border:1px solid ${theme.border};border-radius:8px;background:rgba(255,255,255,.72);padding:5px 8px;color:${theme.chipText}">
@@ -2512,6 +2524,7 @@ export function initCalendar() {
       return String(a.title || '').localeCompare(String(b.title || ''), 'ko');
     },
     dateClick: info => {
+      if (info.jsEvent?.target?.closest?.('.makeup-slot-popover')) return;
       if (manualAbsenceSelection) {
         if (!recentlyHandledManualAbsenceDate(info.dateStr)) toggleManualAbsenceDate(info.dateStr);
         return;
@@ -2544,6 +2557,7 @@ export function initCalendar() {
     }
   });
   calendar.render();
+  calendarEl.dataset.calendarReady = '1';
   function bindCenterTodayButton() {
     calendarEl.querySelector('#calendarTodayButton')?.remove();
     const buttons = Array.from(calendarEl.querySelectorAll('.fc-centerToday-button'));
@@ -2649,16 +2663,30 @@ export function initCalendar() {
     return fetchCountsForRange(viewStart, viewEnd)
       .then(() => {
         refreshCountBadges();
-        return refreshMakeupPlanner();
+        renderMakeupPlanner();
       });
   };
 
   // ───────────────── 출결 모달 ─────────────────
+  let attendOpenSequence = 0;
+
+  function closeAttendModal() {
+    attendOpenSequence += 1;
+    if ($('attendModal')) $('attendModal').style.display = 'none';
+  }
+  window.closeDateAttendancePopup = closeAttendModal;
+
   function openAttendModal(dateStr) {
     const attendModal = $('attendModal'), titleEl = $('attendDateTitle'), listEl = $('attendList');
     if (!attendModal || !titleEl || !listEl) return;
+    const sequence = ++attendOpenSequence;
+    const isCurrent = () => sequence === attendOpenSequence && attendModal.style.display === 'flex';
 
     titleEl.textContent = `${dateStr} (${yoil(dateStr)})`;
+    listEl.textContent = '출결 정보를 불러오는 중입니다.';
+    attendModal.style.display = 'flex';
+    [$('addExtraBtn'), $('markAbsentBtn')].forEach(button => { if (button) button.disabled = true; });
+    if ($('timeGraphWrapForDate')) $('timeGraphWrapForDate').innerHTML = '';
 
     // 모달 안에 "그 날짜용 시간 그래프" 컨테이너 보장
     if (listEl.parentElement && !$('timeGraphWrapForDate')) {
@@ -2668,11 +2696,13 @@ export function initCalendar() {
       listEl.parentElement.insertBefore(g, listEl);
     }
 
-    Promise.all([
-      fetch(`/api/attend?date=${dateStr}`, { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
+    return Promise.all([
+      fetchJsonChecked(`/api/attend?date=${dateStr}`, { cache: 'no-store' }),
+      fetchJsonChecked('/api/extra-attend', { cache: 'no-store' }),
+      fetchJsonChecked('/api/weekend-slots', { cache: 'no-store' })
     ]).then(([att, extraMap, weekendMap]) => {
+      if (!isCurrent()) return;
+      if (!Array.isArray(att)) throw new Error('출결 명단 형식이 올바르지 않습니다.');
       EXTRA = extraMap || {};
       WEEKEND = weekendMap || {};
       const extras = (EXTRA[dateStr] || []).map(String);
@@ -2712,13 +2742,17 @@ export function initCalendar() {
       // 🔹 이 날짜의 attend 명단으로 시간대 그래프 그리기
       renderTimeGraphForDate(dateStr, att, 'timeGraphWrapForDate');
 
-      attendModal.style.display = 'flex';
-    }).catch(() => alert('출결 정보를 불러올 수 없습니다.'));
+      [$('addExtraBtn'), $('markAbsentBtn')].forEach(button => { if (button) button.disabled = false; });
+    }).catch((error) => {
+      if (!isCurrent()) return;
+      console.warn('[calendar] date attendance failed:', error);
+      listEl.textContent = '출결 정보를 불러오지 못했습니다. 날짜를 다시 선택해 주세요.';
+    });
   }
 
   // 닫기
-  $('attendClose')?.addEventListener('click', () => $('attendModal').style.display = 'none');
-  document.body.addEventListener('click', (e) => { if (e.target.id === 'attendModal') $('attendModal').style.display = 'none'; });
+  $('attendClose')?.addEventListener('click', closeAttendModal);
+  document.body.addEventListener('click', (e) => { if (e.target.id === 'attendModal') closeAttendModal(); });
 
   // ───────────── 보강/결석 선택 모달 ─────────────
   const selectionModal = $('selectionModal'),
@@ -3055,7 +3089,11 @@ export function initCalendar() {
     // ── 보강 추가/해제 ──
     await preloadExtraWeekend(); // 최신화
     const previousExtraSet = new Set((EXTRA[dateStr] || []).map(String));
-    const nextSet = new Set(selectedIds);
+    // 선택 UI에는 현행 학생만 있으므로 퇴원 SID는 기존 보강 기록에 그대로 둔다.
+    const nextSet = new Set([
+      ...selectedIds,
+      ...legacyExtraAttendanceIds(state.students, [...previousExtraSet]),
+    ]);
     const nextExtra = clonePlainMap(EXTRA);
     nextExtra[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
     const newlyAddedExtraIds = selectedIds.filter(sid => !previousExtraSet.has(String(sid)));
@@ -3083,9 +3121,14 @@ export function initCalendar() {
     nextWeekend[dateStr] = perDate;
 
     try {
-      // 보강 명단과 학생별 슬롯 패치 저장
-      await patchExtraAttendDates(nextExtra, [dateStr]);
-      await postWeekendPatch({ [dateStr]: weekendPatch });
+      // 추가 학생의 슬롯을 먼저 저장하고, 제거 학생의 슬롯은 명단 제거 뒤
+      // 정리한다. 중간 실패가 발생해도 타임 없는 고아 명단은 남기지 않는다.
+      await saveScheduleOverridesFailClosed({
+        extraMap: nextExtra,
+        weekendPatch: { [dateStr]: weekendPatch },
+        saveExtra: () => patchExtraAttendDates(nextExtra, [dateStr]),
+        saveWeekend: postWeekendPatch,
+      });
       const arrivePatch = {};
       for (const sid of selectedIds) {
         const slots = parseSlotNumbers(perDate[sid]);
@@ -3117,8 +3160,20 @@ export function initCalendar() {
   });
 
   selectionClose?.addEventListener('click', () => selectionModal.style.display = 'none');
-  document.addEventListener('admin:refresh', () => refreshMakeupPlanner());
-  document.addEventListener('attendance:updated', () => refreshMakeupPlanner());
+  let calendarMutationRefreshPromise = null;
+  const refreshAfterMutation = () => {
+    invalidateCalendarPreload();
+    if (!calendarMutationRefreshPromise) {
+      const pending = Promise.resolve().then(refreshMakeupPlanner);
+      calendarMutationRefreshPromise = pending;
+      void pending.finally(() => {
+        if (calendarMutationRefreshPromise === pending) calendarMutationRefreshPromise = null;
+      }).catch(() => {});
+    }
+    return calendarMutationRefreshPromise;
+  };
+  document.addEventListener('admin:refresh', refreshAfterMutation);
+  document.addEventListener('attendance:updated', refreshAfterMutation);
   document.addEventListener('admin:date-change', () => refreshMakeupPlanner());
 }
 

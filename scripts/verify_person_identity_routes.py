@@ -410,6 +410,40 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
     )
 
 
+def verify_identity_read_failures(api_students, root: pathlib.Path) -> None:
+    directory, students = literal_identity_fixture()
+    for damage in ("missing-students", "missing-persons", "corrupt-students", "corrupt-persons", "pending", "degraded"):
+        case_root = root / damage
+        students_path = case_root / "students.json"
+        persons_path = case_root / "persons.json"
+        journal_path = case_root / "instance" / "person_identity_transactions" / "pending.json"
+        write_json(students_path, students)
+        write_json(persons_path, directory)
+        api_students.STU_PATH = students_path
+        api_students.PERSONS_PATH = persons_path
+        api_students.PERSON_IDENTITY_JOURNAL_PATH = journal_path
+        app = make_app(api_students)
+        client = app.test_client()
+        check(client.get("/api/students").get_json() == students, "configured complete roster remains readable")
+        if damage == "missing-students":
+            students_path.unlink()
+        elif damage == "missing-persons":
+            persons_path.unlink()
+        elif damage == "corrupt-students":
+            students_path.write_bytes(b'[{"truncated":')
+        elif damage == "corrupt-persons":
+            persons_path.write_bytes(b'{"truncated":')
+        elif damage == "pending":
+            write_json(journal_path, {"recovery": "required"})
+        else:
+            app.config["PERSON_IDENTITY_WRITES_DEGRADED"] = True
+        paths = (students_path, persons_path, journal_path)
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None for path in paths}
+        check(client.get("/api/students").status_code == 503, f"{damage} blocks roster reads")
+        after = {path: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None for path in paths}
+        check(after == before, f"{damage} roster read never replaces or repairs runtime bytes")
+
+
 def verify_legacy_fallback(api_students, root: pathlib.Path) -> None:
     students_path = root / "students.json"
     persons_path = root / "persons.json"
@@ -489,6 +523,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="person-identity-routes-") as tmp:
             verify_identity_routes(api_students, api_auth, pathlib.Path(tmp) / "identity")
             verify_legacy_fallback(api_students, pathlib.Path(tmp) / "legacy")
+            verify_identity_read_failures(api_students, pathlib.Path(tmp) / "read-failures")
     finally:
         api_students.STU_PATH = original["students"]
         api_students.PERSONS_PATH = original["persons"]

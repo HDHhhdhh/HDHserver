@@ -1,5 +1,5 @@
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
-const GRADE_PHASE_DELIM = '::';
+export const GRADE_PHASE_DELIM = '::';
 const SCHEDULE_KEYS = [
   'textbook',
   'semesterStart',
@@ -34,7 +34,7 @@ function firstNonBlank(...values) {
   return '';
 }
 
-function pickScheduleFields(entry = {}) {
+export function pickScheduleFields(entry = {}) {
   const out = {};
   for (const key of SCHEDULE_KEYS) {
     out[key] = String(entry?.[key] ?? '').trim();
@@ -42,11 +42,11 @@ function pickScheduleFields(entry = {}) {
   return out;
 }
 
-function hasAnyScheduleValue(entry = {}) {
+export function hasAnyScheduleValue(entry = {}) {
   return SCHEDULE_KEYS.some((key) => String(entry?.[key] ?? '').trim());
 }
 
-function parseGradeToken(rawKey, gradeEntry = {}) {
+export function parseGradeToken(rawKey, gradeEntry = {}) {
   const key = String(rawKey ?? '').trim();
   const explicitGrade = String(gradeEntry?.__grade ?? '').trim();
   const explicitPhase = String(gradeEntry?.__phase ?? '').trim();
@@ -89,6 +89,20 @@ export function normalizeGradeLabel(value) {
   const compact = String(value ?? '').trim().replace(/\s+/g, '');
   const gradeMatch = compact.match(/^(?:고|중)?([1-3])(?:학년)?$/);
   return gradeMatch ? `${gradeMatch[1]}학년` : compact;
+}
+
+export function normalizeSchoolCalendarSubject(value) {
+  const compact = String(value ?? '')
+    .trim()
+    .replace(/\s*[\(\[][^()\[\]]+[\)\]]\s*$/u, '')
+    .replace(/\s+/g, '');
+
+  if (/^공통수학(?:2|II|Ⅱ)$/iu.test(compact)) return '공수2';
+  if (/^공통수학(?:1|I|Ⅰ)$/iu.test(compact)) return '공수1';
+  if (/^미적분(?:2|II|Ⅱ)$/iu.test(compact)) return '미적분2';
+  if (/^미적분(?:1|I|Ⅰ)?$/iu.test(compact)) return '미적분1';
+  if (/^확률과통계$/u.test(compact)) return '확통';
+  return compact;
 }
 
 export function getActiveSchoolCalendarYear(payload) {

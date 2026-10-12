@@ -1,6 +1,8 @@
 // /static/js/admin/features/escClose.js
 export function initEscClose() {
   const ESC_TARGET_SELECTOR = '[id$="Modal"],[role="dialog"],.modal,.popup,.dialog,#schoolTip,#adminSchoolTip';
+  const SEARCH_SELECTOR = 'input[type="search"],input[role="searchbox"]';
+  const EDITABLE_SELECTOR = 'input:not([type="checkbox"]):not([type="radio"]),textarea,select,[contenteditable]:not([contenteditable="false"])';
 
   function isVisible(el) {
     if (!el) return false;
@@ -14,9 +16,7 @@ export function initEscClose() {
     return Array.from(document.querySelectorAll(ESC_TARGET_SELECTOR)).some(isVisible);
   }
 
-  function focusTodaySearch() {
-    const input = document.getElementById('todaySearchInput');
-    if (!input) return;
+  function clearSearch(input) {
     input.value = '';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     try { input.focus({ preventScroll: true }); }
@@ -24,10 +24,41 @@ export function initEscClose() {
     try { input.select(); } catch {}
   }
 
+  function focusTodaySearch(focusAtEscape) {
+    if (document.activeElement !== focusAtEscape) return;
+    if (hasOpenEscTarget() || document.activeElement?.matches?.(EDITABLE_SELECTOR)) return;
+    const input = document.getElementById('todaySearchInput');
+    if (!input) return;
+    clearSearch(input);
+    input.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    const input = e.target?.closest?.(SEARCH_SELECTOR) ||
+      (document.activeElement?.matches?.(SEARCH_SELECTOR) ? document.activeElement : null);
+    if (!input || input.disabled || input.readOnly || !isVisible(input)) return;
+    e.stopImmediatePropagation();
+    if (e.isComposing) return;
+    e.preventDefault();
+    clearSearch(input);
+  }, true);
+
   function hide(el) {
-    if (el && getComputedStyle(el).display !== 'none') {
-      el.style.display = 'none';
+    if (!el || getComputedStyle(el).display === 'none') return;
+    const closeOwner = {
+      extraModal: window.closeExtraAttendancePopup,
+      attendModal: window.closeDateAttendancePopup,
+      absentRegisterModal: window.closeAbsentRegistrationPopup,
+      logModal: window.closeStudentWorkPopups,
+      vidModal: window.closeVideoAssignmentPopup,
+      testModal: window.closeTestAssignmentPopup,
+    }[el.id];
+    if (typeof closeOwner === 'function') {
+      closeOwner();
+      return;
     }
+    el.style.display = 'none';
   }
 
   // 학생 툴팁(hoverTooltip.js) 강제 숨기기
@@ -52,7 +83,8 @@ export function initEscClose() {
   }
 
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
+    if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+    if (window.isStudentPopupSavePending?.()) return;
 
     const hadOpenTarget = hasOpenEscTarget();
 
@@ -73,7 +105,9 @@ export function initEscClose() {
     }
 
     if (!hadOpenTarget) {
-      requestAnimationFrame(focusTodaySearch);
+      if (e.target?.closest?.(EDITABLE_SELECTOR) || document.activeElement?.matches?.(EDITABLE_SELECTOR)) return;
+      const focusAtEscape = document.activeElement;
+      requestAnimationFrame(() => focusTodaySearch(focusAtEscape));
       return;
     }
 

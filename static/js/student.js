@@ -818,7 +818,6 @@ window.todayLocalKey = function () {
   const LS_TOKEN_MASTER = "studentTokenMaster";
   const {
     normalizeAssignedTests,
-    normalizeStatus: normalizeAssignedTestStatus,
     pendingCount: pendingAssignedTestCount,
     shouldOpenAnswerInSameTab,
     viewModel: assignedTestViewModel,
@@ -870,6 +869,8 @@ window.todayLocalKey = function () {
   let courseBlockMessage = "오늘은 지정된 수업일이 아닙니다. 일정이 다르면 학원에 문의해 주세요.";
   let courseVideosCompleted = false;
   let academyAccessAllowed = !STUDENT_APP_PUBLIC_MODE;
+  let localVideoQaMids = new Set();
+  const canPlayVideo = mid => academyAccessAllowed || localVideoQaMids.has(String(mid ?? '').trim());
   let academyOnlyMessage = "영상 재생과 테스트 답지는 학원 Wi-Fi에서만 볼 수 있습니다.";
   let academyOnlyInitialNoticeShown = false;
 
@@ -900,6 +901,8 @@ window.todayLocalKey = function () {
   }
 
   function setPlayerEmptyState(message = '') {
+    const youtubeLink = $('youtubeOpenLink');
+    if (youtubeLink) { youtubeLink.hidden = true; youtubeLink.removeAttribute('href'); }
     const frame = $('player');
     const card = frame?.closest?.('.player-card');
     const box = $('playerBox');
@@ -933,8 +936,11 @@ window.todayLocalKey = function () {
     getSid: () => sid,
     getCanonicalSid: () => String(stuCache?.id || sid || '').trim(),
     getDate: todayLocalKey,
-    getCurrentMid: () => playbackController?.currentMid() || null,
-    canSync: () => academyAccessAllowed,
+    getCurrentMid: () => {
+      const mid = playbackController?.currentMid();
+      return window.StudentPlayback?.isYouTube?.(mid) ? null : (mid || null);
+    },
+    canSync: mid => canPlayVideo(mid),
     request: studentAppRequest,
     headers: CT,
     setTimer: setTimeout,
@@ -942,6 +948,7 @@ window.todayLocalKey = function () {
     now: Date.now,
     onProgressChange: () => updateListCompletionBadges(),
     onSyncError: error => console.warn('[watch sync] failed', error),
+    onCycleChanged: () => location.reload(),
   });
   const {
     flushSyncQueue,
@@ -958,14 +965,28 @@ window.todayLocalKey = function () {
     locationRef: location,
     getFrame: () => $('player'),
     getSid: () => sid,
-    canPlay: () => academyAccessAllowed,
+    canPlay: mid => canPlayVideo(mid),
     showRestrictedNotice: () => showAcademyOnlyNotice(),
     showLoadFailure: () => alert('영상을 불러오지 못했습니다.'),
+    showYouTubeFallback: url => {
+      const link = $('youtubeOpenLink');
+      if (!link) return;
+      link.hidden = true;
+      link.removeAttribute('href');
+      if (!academyAccessAllowed || !url) return;
+      try {
+        const target = new URL(url);
+        if (target.protocol !== 'https:' || target.hostname !== 'www.youtube.com' || !['/watch', '/playlist'].includes(target.pathname)) return;
+        link.href = target.href;
+        link.hidden = false;
+      } catch { }
+    },
     flushWatch: flushSyncQueue,
     setLastMid,
     getProgress,
     setProgress,
     request: studentAppRequest,
+    onWatchCycle: (mid, record) => watchState.acceptPlaybackWatch(mid, record),
     doneRatio: WATCH_DONE_RATIO,
     setIntervalImpl: setInterval,
     clearIntervalImpl: clearInterval,
@@ -989,8 +1010,9 @@ window.todayLocalKey = function () {
     const assigned = new Set(getAssignedVideos(updates, studentDataDateKey(), sid).map(String));
     (videos || []).forEach(video => {
       const mid = String(video?.mid ?? video?.id ?? '').trim();
-      if (!mid || !assigned.has(mid) || !studentWatchState.normalizeRecord(getProgress(mid)).completed) return;
+      if (!mid || studentPlayback.isYouTube?.(mid) || !assigned.has(mid) || !studentWatchState.normalizeRecord(getProgress(mid)).completed) return;
       if (video?.todayAutoAssignmentStatus === 'done') return;
+      if (getProgress(mid)?.cycleToken) return;
       watchState.clearProgress(mid);
     });
   }
@@ -1607,16 +1629,6 @@ window.todayLocalKey = function () {
     syncReviewRegisterControl(register);
   }
 
-  function normalizedTestDifficultyForCategory(categoryKey, difficulty) {
-    const text = String(difficulty || '').trim();
-    if (String(categoryKey || '') === 'ILSAN_PAST') {
-      if (text.includes('그래프')) return '그래프 포함';
-      if (text === '상' || text.includes('중상')) return '중상';
-      if (text.includes('중')) return '중';
-    }
-    return text;
-  }
-
   function cleanHomeworkBookName(value) {
     const text = String(value || '').trim();
     if (!text || text.includes('\ufffd')) return '';
@@ -2111,13 +2123,18 @@ window.todayLocalKey = function () {
     courseBlockMessage = bootstrapMeta?.blockMessage || courseBlockMessage;
     courseVideosCompleted = bootstrapMeta?.courseVideosCompleted === true;
     academyAccessAllowed = studentAppAcademyAccessFromBootstrap(STUDENT_APP_PUBLIC_MODE, bootstrapMeta);
+    localVideoQaMids = new Set(
+      !STUDENT_APP_PUBLIC_MODE && location.hostname === '127.0.0.1' && location.port === '8004'
+        ? vidsCache.filter(video => video?.localPlaybackQaAllowed === true).map(video => String(video.mid ?? '').trim()).filter(Boolean)
+        : [],
+    );
     academyOnlyMessage = bootstrapMeta?.academyOnlyMessage || academyOnlyMessage;
 
     publishStudentAccess();
-    if (academyAccessAllowed) {
+    if (academyAccessAllowed || localVideoQaMids.size > 0) {
       void loadStudentAppKollusController({
         publicMode: STUDENT_APP_PUBLIC_MODE,
-        academyAccessAllowed,
+        academyAccessAllowed: academyAccessAllowed || localVideoQaMids.size > 0,
         documentRef: document,
         globalRef: window,
       }).catch(err => console.warn('[KollusBridge] controller load failed:', err));
@@ -2150,7 +2167,7 @@ window.todayLocalKey = function () {
       listBox.onclick = e => {
         const li = e.target.closest('li[data-mid]');
         if (!li) return;
-        if (!academyAccessAllowed) {
+        if (!canPlayVideo(li.dataset.mid)) {
           showAcademyOnlyNotice();
           return;
         }
@@ -2184,9 +2201,7 @@ window.todayLocalKey = function () {
       for (const [key, val] of Object.entries(matsMap || {})) {
         const m = { key, ...(val || {}) };
         const candidates = [
-          m.id, m.mid, key,
-          typeof m.id === 'number' ? String(m.id) : null,
-          typeof key === 'string' ? key : null
+          m.id, m.mid, key
         ].filter(x => x !== undefined && x !== null);
         for (const c of candidates) byId.set(String(c), m);
       }
@@ -2217,7 +2232,7 @@ window.todayLocalKey = function () {
       }
 
       if (/\.(pdf|png|jpe?g|pptx?|docx?)$/i.test(s)) {
-        const url = s.startsWith('/files/') ? s : `/files/${s.replace(/^\/+/, '')}`;
+        const url = `/files/${s.replace(/^\/+/, '')}`;
         const rawName = decodeURIComponent(url.split('/').pop() || '파일');
         return { title: cleanDisplayName(rawName), url, _from: 'url' };
       }
@@ -2379,19 +2394,58 @@ window.todayLocalKey = function () {
       list.appendChild(li);
     }
 
+    let materialFolderCache = new WeakMap();
+    let materialFlatCache = null;
+    let materialSearchKeySource = window.SearchUtils?.searchKeyForText;
+
+    function getMaterialFolderRows(nd) {
+      if (!materialFolderCache.has(nd)) {
+        materialFolderCache.set(nd, {
+          folders: Array.from(nd.children.values())
+            .map(node => ({ node, key: studentSearchKeyForText(node.name) }))
+            .sort((a, b) => a.node.name.localeCompare(b.node.name, 'ko')),
+          files: (nd.files || [])
+            .map(file => ({ file, key: studentSearchKeyForText([file.title, file.name].join(' ')) }))
+            .sort((a, b) => (a.file.title || a.file.name).localeCompare(b.file.title || b.file.name, 'ko')),
+        });
+      }
+      return materialFolderCache.get(nd);
+    }
+
+    function getMaterialFlatRows() {
+      if (materialFlatCache) return materialFlatCache;
+      const all = [];
+      (function walk(nd, acc = []) {
+        const path = acc.join('/');
+        for (const f of (nd.files || [])) {
+          const title = f.title || f.name;
+          all.push({ title, url: f.url, path, key: studentSearchKeyForText([title, path].join(' ')) });
+        }
+        for (const ch of nd.children.values()) walk(ch, [...acc, ch.name]);
+      })(tree, []);
+      all.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
+      materialFlatCache = all;
+      return materialFlatCache;
+    }
+
     function renderMat() {
       const list = $('matList'); if (!list) return;
+      const keySource = window.SearchUtils?.searchKeyForText;
+      if (materialSearchKeySource !== keySource) {
+        materialSearchKeySource = keySource;
+        materialFolderCache = new WeakMap();
+        materialFlatCache = null;
+      }
       renderCrumb();
       const q = state.query;
 
       if (state.mode === 'tree') {
         const cur = getNode(state.curPath) || tree;
-        const folders = Array.from(cur.children.values())
-          .filter(nd => studentMatchesSearchKey(studentSearchKeyForText(nd.name), q))
-          .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-        const files = (cur.files || [])
-          .filter(f => studentMatchesSearchKey(studentSearchKeyForText([f.title, f.name].join(' ')), q))
-          .sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, 'ko'));
+        const rows = getMaterialFolderRows(cur);
+        const folders = rows.folders
+          .filter(row => studentMatchesSearchKey(row.key, q)).map(row => row.node);
+        const files = rows.files
+          .filter(row => studentMatchesSearchKey(row.key, q)).map(row => row.file);
 
         list.textContent = '';
         folders.forEach(nd => list.appendChild(liFolder(nd.name, nd.files.length + nd.children.size)));
@@ -2402,17 +2456,8 @@ window.todayLocalKey = function () {
           li.addEventListener('click', () => setPath([...state.curPath, li.getAttribute('data-name')]));
         });
       } else {
-        const all = [];
-        (function walk(nd, acc = []) {
-          for (const f of (nd.files || [])) {
-            const t = f.title || f.name;
-            if (studentMatchesSearchKey(studentSearchKeyForText([t, acc.join('/')].join(' ')), q)) {
-              all.push({ title: t, url: f.url, path: acc.join('/') });
-            }
-          }
-          for (const ch of nd.children.values()) walk(ch, [...acc, ch.name]);
-        })(tree, []);
-        all.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
+        const all = getMaterialFlatRows()
+          .filter(row => studentMatchesSearchKey(row.key, q));
         list.textContent = '';
         all.forEach(f => list.appendChild(liFile(f.title, f.url, f.path)));
         if (!all.length) appendEmptyMatMessage(list, '표시할 파일이 없습니다');
@@ -2422,26 +2467,32 @@ window.todayLocalKey = function () {
     $('matSearch')?.addEventListener('input', e => setQuery(e.target.value || ''));
     $('matMode')?.addEventListener('click', () => setMode(state.mode === 'tree' ? 'flat' : 'tree'));
     setMode(state.mode);
-    setPath(state.curPath);
 
     /* ───────────── 건의사항 제출 ───────────── */
     const fbBtn = document.querySelector('#submitFeedback');
     if (fbBtn) {
       fbBtn.addEventListener('click', () => {
+        if (fbBtn.disabled) return;
         const text = document.querySelector('#feedbackBox')?.value.trim();
         if (!text) return alert('내용을 입력해주세요!');
         const name = stu?.name || '익명';
+        fbBtn.disabled = true;
+        fbBtn.setAttribute('aria-busy', 'true');
 
         studentAppRequest('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, text })
-        }).then(() => {
+        }).then(response => {
+          if (!response.ok) throw new Error(`feedback ${response.status}`);
           alert('소중한 의견 감사합니다!');
           const box = document.querySelector('#feedbackBox');
-          if (box) box.value = '';
+          if (box && box.value.trim() === text) box.value = '';
         }).catch(() => {
           alert('전송에 실패했습니다. 나중에 다시 시도해주세요.');
+        }).finally(() => {
+          fbBtn.disabled = false;
+          fbBtn.removeAttribute('aria-busy');
         });
       });
     }
@@ -2455,7 +2506,6 @@ window.todayLocalKey = function () {
   async function renderAssignedList(options = {}) {
     if (!stuCache) return;
     const listBox = $('vidList');
-    const frame = $('player');
 
     const today = studentDataDateKey();
     const keepCompletedAutoAssignment = isTodayAutoVideoAssignment(updatesCache, today, sid);
@@ -2511,7 +2561,7 @@ window.todayLocalKey = function () {
       const kId = String(v?.id ?? '');
       const playlistMid = (kMid || kId).trim();
       return ((kMid && chosenStrs.has(kMid)) || (kId && chosenStrs.has(kId)))
-        && (keepCompletedAutoAssignment || !getProgress(playlistMid)?.completed);
+        && (keepCompletedAutoAssignment || studentPlayback.isYouTube?.(playlistMid) || !getProgress(playlistMid)?.completed);
     });
 
     // 보충 영상은 먼저 보여주고, 각 그룹 안에서는 기존 오늘 목록 순서를 유지한다.
@@ -2543,7 +2593,7 @@ window.todayLocalKey = function () {
         const isRegisteredReview = index >= myVids.length;
         const num = v.exNum?.[essayBandOf(stuCache.level)] || '';
         const mid = String(v?.mid ?? v?.id ?? '').trim();
-        const prog = getProgress(mid);
+        const prog = studentPlayback.isYouTube?.(mid) ? null : getProgress(mid);
         const done = prog?.completed || v?.todayAutoAssignmentStatus === 'done';
         const pct = (prog?.dur > 0)
           ? Math.min(100, Math.round((prog.last || 0) / prog.dur * 100))
@@ -2585,13 +2635,14 @@ window.todayLocalKey = function () {
     }
 
     const preferMid = getLastMid();
-    const firstMid = myVids.length
-      ? ((preferMid && myVids.some(x => String(x.mid) === String(preferMid)))
+    const playableVids = myVids.filter(video => canPlayVideo(video.mid ?? video.id));
+    const firstMid = playableVids.length
+      ? ((preferMid && playableVids.some(x => String(x.mid) === String(preferMid)))
         ? preferMid
-        : myVids[0]?.mid)
+        : playableVids[0]?.mid)
       : null;
 
-    if (!academyAccessAllowed) {
+    if (!canPlayVideo(firstMid)) {
       setPlayerEmptyState(academyOnlyMessage);
       return;
     }
@@ -2615,7 +2666,7 @@ window.todayLocalKey = function () {
     );
     listBox.querySelectorAll('li[data-mid]').forEach(li => {
       const mid = li.dataset.mid;
-      const prog = getProgress(mid);
+      const prog = studentPlayback.isYouTube?.(mid) ? null : getProgress(mid);
       const serverDone = (vidsCache || []).some(video => {
         const videoMid = String(video?.mid ?? video?.id ?? '').trim();
         return videoMid === mid && video?.todayAutoAssignmentStatus === 'done';
@@ -2764,7 +2815,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
 
   let active = null;
   let activeFromHistory = false;
-  let loading = false;
+  let activeSession = 0;
+  const pendingAnnouncementActions = new Set();
+  let announcementLoadPromise = null;
+  let announcementLoadIntent = 0;
+  let announcementMutationVersion = 0;
+  let surveySubmitSequence = 0;
   let boardLoading = false;
   let boardRequestId = 0;
   let imageCarouselIndex = 0;
@@ -2844,6 +2900,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   function closeAnnouncementDialog(options = {}) {
+    activeSession += 1;
     const restoreFocus = options.restoreFocus !== false && !!announcementReturnFocus;
     closeDialog(modal, announcementReturnFocus || noticeBtn, { restoreFocus });
     if (options.restoreFocus !== false) announcementReturnFocus = null;
@@ -3040,7 +3097,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     if (!active || !annReply || !annSendReply) return;
     const isMaxed = announcementState.replyLimitReached(active);
     annReply.disabled = isMaxed;
-    annSendReply.disabled = isMaxed;
+    annSendReply.disabled = isMaxed || pendingAnnouncementActions.has(`reply:${active.id}`);
     annReply.placeholder = isMaxed ? '답장은 최대 3회까지 가능합니다.' : '답장을 입력하세요.';
   }
 
@@ -3078,11 +3135,6 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     }
 
     annSurvey.hidden = false;
-    if (annSurveyMeta) {
-      annSurveyMeta.textContent = submitted && !survey.allowMultiple
-        ? '이미 제출한 설문입니다.'
-        : `${survey.anonymous ? '익명 응답' : '실명 응답'} · ${survey.allowMultiple ? '여러 번 제출 가능' : '1회 제출'}`;
-    }
 
     const latestAnswers = status.surveyAnswers && typeof status.surveyAnswers === 'object'
       ? status.surveyAnswers
@@ -3138,7 +3190,17 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       `;
     }).join('');
 
-    if (annSurveyError) annSurveyError.textContent = submitted && !survey.allowMultiple ? '제출 완료된 설문입니다.' : '';
+    renderSurveyFeedback(ann, survey);
+  }
+
+  function renderSurveyFeedback(ann, survey) {
+    const submitted = announcementState.hasSurveySubmission(ann);
+    const readonly = submitted && !survey.allowMultiple;
+    if (annSurveyMeta) {
+      annSurveyMeta.textContent = readonly ? '이미 제출한 설문입니다.'
+        : `${survey.anonymous ? '익명 응답' : '실명 응답'} · ${survey.allowMultiple ? '여러 번 제출 가능' : '1회 제출'}`;
+    }
+    if (annSurveyError) annSurveyError.textContent = readonly ? '제출 완료된 설문입니다.' : '';
     if (annSurveySubmit) {
       annSurveySubmit.hidden = readonly;
       annSurveySubmit.disabled = readonly;
@@ -3273,6 +3335,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   function renderActive(ann, options = {}) {
+    activeSession += 1;
     active = ann || null;
     activeFromHistory = !!options.fromHistory;
     if (!active) return;
@@ -3287,7 +3350,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     if (annAnonymous) annAnonymous.checked = !!activeStatus.anonymous;
     if (annReplyStatus) annReplyStatus.textContent = '';
     renderSurvey(active);
-    syncReplyLimitUi();
+    syncAnnouncementActionUi();
     if (annRead) annRead.textContent = announcementState.getSurvey(active) && !announcementState.hasSurveySubmission(active) ? '설문 제출 필요' : '읽었습니다.';
     openAnnouncementDialog(options.opener);
   }
@@ -3333,6 +3396,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         body: JSON.stringify({ sid: requestSid, id: item.id }),
       });
       announcementState.markAcked(item.id);
+      announcementMutationVersion += 1;
       announcementState.markBoardItemRead(item.id);
     } catch (error) {
       handleAnnouncementSessionFailure(error);
@@ -3372,17 +3436,27 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   async function loadAnnouncements({ showPopup = true } = {}) {
-    if (loading) return;
-    loading = true;
+    const intent = ++announcementLoadIntent;
+    const session = activeSession;
+    if (!announcementLoadPromise) {
+      announcementLoadPromise = (async () => {
+        let anns, stat, version;
+        do {
+          version = announcementMutationVersion;
+          const requestSid = await announcementSid();
+          [anns, stat] = await Promise.all([
+            fetchJSON(`/api/announcements?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
+            fetchJSON(`/api/announce-status?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
+          ]);
+        } while (version !== announcementMutationVersion);
+        announcementState.replaceAnnouncements(anns, stat);
+        updatePending();
+        renderHistory();
+      })().finally(() => { announcementLoadPromise = null; });
+    }
     try {
-      const requestSid = await announcementSid();
-      const [anns, stat] = await Promise.all([
-        fetchJSON(`/api/announcements?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
-        fetchJSON(`/api/announce-status?sid=${encodeURIComponent(requestSid)}`, { cache: 'no-store' }),
-      ]);
-      announcementState.replaceAnnouncements(anns, stat);
-      updatePending();
-      renderHistory();
+      await announcementLoadPromise;
+      if (intent !== announcementLoadIntent || session !== activeSession) return;
       if (showPopup && !announcementDeepLinkHandled) {
         announcementDeepLinkHandled = studentAppOpenAnnouncementDeepLink(requestedAnnouncementId, announcementState.announcementItems(), ann => renderActive(ann, { fromHistory: true }));
         if (announcementDeepLinkHandled || requestedAnnouncementId) return;
@@ -3391,9 +3465,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     } catch (err) {
       handleAnnouncementSessionFailure(err);
       console.warn('[announce] load failed:', err);
-      if (historyList) historyList.innerHTML = '<div class="muted">공지를 불러오지 못했습니다.</div>';
-    } finally {
-      loading = false;
+      if (intent === announcementLoadIntent && historyList) historyList.innerHTML = '<div class="muted">공지를 불러오지 못했습니다.</div>';
     }
   }
 
@@ -3407,7 +3479,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       return;
     }
     const id = active.id;
+    const session = activeSession;
+    const action = `ack:${id}`;
+    if (pendingAnnouncementActions.has(action)) return;
     const shouldContinuePending = !activeFromHistory;
+    pendingAnnouncementActions.add(action);
+    syncAnnouncementActionUi();
     try {
       const requestSid = await announcementSid();
       await fetchJSON('/api/announce-ack', {
@@ -3416,21 +3493,37 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         body: JSON.stringify({ sid: requestSid, id }),
       });
       announcementState.markAcked(id);
-      active = null;
-      activeFromHistory = false;
+      announcementMutationVersion += 1;
       updatePending();
       renderHistory();
+      if (session !== activeSession || active?.id !== id) return;
+      active = null;
+      activeFromHistory = false;
       const pending = announcementState.pendingItems();
       if (shouldContinuePending && pending.length) renderActive(pending[0]);
       else closeAnnouncementDialog();
     } catch (err) {
       handleAnnouncementSessionFailure(err);
       console.warn('[announce] ack failed:', err);
-      if (annReplyStatus) annReplyStatus.textContent = '읽음 처리에 실패했습니다. 다시 눌러 주세요.';
+      if (session === activeSession && annReplyStatus) annReplyStatus.textContent = '읽음 처리에 실패했습니다. 다시 눌러 주세요.';
+    } finally {
+      pendingAnnouncementActions.delete(action);
+      syncAnnouncementActionUi();
     }
   }
 
-  function collectSurveyAnswers({ focusInvalid = false } = {}) {
+  function syncAnnouncementActionUi() {
+    if (!active) return;
+    if (annRead) annRead.disabled = pendingAnnouncementActions.has(`ack:${active.id}`);
+    if (annSurveySubmit) {
+      const survey = announcementState.getSurvey(active);
+      annSurveySubmit.disabled = pendingAnnouncementActions.has(`survey:${active.id}`)
+        || !!(survey && !survey.allowMultiple && announcementState.hasSurveySubmission(active));
+    }
+    syncReplyLimitUi();
+  }
+
+  function collectSurveyAnswers({ focusInvalid = false, validateRequired = true } = {}) {
     if (!active || !annSurveyQuestions) return null;
     const survey = announcementState.getSurvey(active);
     if (!survey) return null;
@@ -3453,8 +3546,8 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       }
 
       const missing = type === 'multiple' ? !value.length : !String(value || '').trim();
-      field.classList.toggle('is-invalid', required && missing);
-      if (required && missing) {
+      if (validateRequired) field.classList.toggle('is-invalid', required && missing);
+      if (validateRequired && required && missing) {
         if (annSurveyError) annSurveyError.textContent = '필수 질문에 모두 응답해 주세요.';
         if (focusInvalid) field.querySelector('input, textarea')?.focus?.();
         return null;
@@ -3463,7 +3556,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       if (!missing) answers[qid] = value;
     }
 
-    if (annSurveyError) annSurveyError.textContent = '';
+    if (validateRequired && annSurveyError) annSurveyError.textContent = '';
     return answers;
   }
 
@@ -3477,8 +3570,14 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     }
     const surveyAnswers = collectSurveyAnswers({ focusInvalid: true });
     if (!surveyAnswers) return;
-
-    annSurveySubmit.disabled = true;
+    const item = active;
+    const session = activeSession;
+    const action = `survey:${item.id}`;
+    if (pendingAnnouncementActions.has(action)) return;
+    const dialogHadFocus = modal.contains(document.activeElement);
+    const submitSequence = ++surveySubmitSequence;
+    pendingAnnouncementActions.add(action);
+    syncAnnouncementActionUi();
     try {
       const requestSid = await announcementSid();
       const saved = await fetchJSON('/api/announce-submit', {
@@ -3486,7 +3585,7 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         headers: CT,
         body: JSON.stringify({
           sid: requestSid,
-          id: active.id,
+          id: item.id,
           surveyAnswers,
         }),
       });
@@ -3495,19 +3594,24 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         anonymous: !!survey.anonymous,
         submittedAt: new Date().toISOString(),
       };
-      announcementState.recordSurvey(active, {
+      announcementState.recordSurvey(item, {
         surveyAnswers,
         surveyEntry,
         survey,
       });
-      renderSurvey(active);
+      announcementMutationVersion += 1;
       updatePending();
       renderHistory();
+      if (session !== activeSession || active?.id !== item.id) return;
+      const hasNewDraft = () => survey.allowMultiple && JSON.stringify(collectSurveyAnswers({ validateRequired: false })) !== JSON.stringify(surveyAnswers);
+      if (hasNewDraft()) renderSurveyFeedback(item, survey);
+      else renderSurvey(item);
       if (annReplyStatus) annReplyStatus.textContent = '설문을 제출했습니다.';
       if (!activeFromHistory) {
-        const submittedAnnId = active.id;
         window.setTimeout(() => {
-          if (active?.id !== submittedAnnId) return;
+          if (session !== activeSession || active?.id !== item.id) return;
+          if (submitSequence !== surveySubmitSequence) return;
+          if (hasNewDraft()) return;
           closeAnnouncementDialog({ restoreFocus: false });
           active = null;
           showNextPending();
@@ -3516,9 +3620,15 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
     } catch (err) {
       handleAnnouncementSessionFailure(err);
       console.warn('[announce] survey submit failed:', err);
-      if (annSurveyError) annSurveyError.textContent = '설문 제출에 실패했습니다.';
+      if (session === activeSession && annSurveyError) annSurveyError.textContent = '설문 제출에 실패했습니다.';
     } finally {
-      annSurveySubmit.disabled = false;
+      pendingAnnouncementActions.delete(action);
+      syncAnnouncementActionUi();
+      if (session === activeSession && active?.id === item.id && modal.style.display === 'flex'
+        && dialogHadFocus && !modal.contains(document.activeElement)) {
+        (annSurveyQuestions?.querySelector('input:not(:disabled), textarea:not(:disabled)')
+          || dialogControls(modal)[0])?.focus?.();
+      }
     }
   }
 
@@ -3535,7 +3645,13 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
       if (annReplyStatus) annReplyStatus.textContent = '답장을 입력해 주세요.';
       return;
     }
-    annSendReply.disabled = true;
+    const item = active;
+    const session = activeSession;
+    const anonymous = !!annAnonymous?.checked;
+    const action = `reply:${item.id}`;
+    if (pendingAnnouncementActions.has(action)) return;
+    pendingAnnouncementActions.add(action);
+    syncAnnouncementActionUi();
     try {
       const requestSid = await announcementSid();
       const saved = await fetchJSON('/api/announce-submit', {
@@ -3543,37 +3659,41 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
         headers: CT,
         body: JSON.stringify({
           sid: requestSid,
-          id: active.id,
+          id: item.id,
           reply,
-          anonymous: !!annAnonymous?.checked,
+          anonymous,
         }),
       });
       const replyEntry = saved?.reply || {
         reply,
-        anonymous: !!annAnonymous?.checked,
+        anonymous,
         repliedAt: new Date().toISOString(),
       };
-      announcementState.recordReply(active, {
+      announcementState.recordReply(item, {
         reply,
-        anonymous: !!annAnonymous?.checked,
+        anonymous,
         replyEntry,
       });
-      annReply.value = '';
+      announcementMutationVersion += 1;
+      renderHistory();
+      if (session !== activeSession || active?.id !== item.id) return;
+      if (annReply.value.trim() === reply) annReply.value = '';
       if (annReplyStatus) annReplyStatus.textContent = '답장을 보냈습니다.';
       const nextCount = announcementState.replyCount(active);
       alert(replyLimitMessage(nextCount));
       syncReplyLimitUi();
-      renderHistory();
     } catch (err) {
       handleAnnouncementSessionFailure(err);
       console.warn('[announce] reply failed:', err);
+      if (session !== activeSession) return;
       if (err?.message?.includes('reply limit') || err?.message?.includes('429')) {
         alert('이제 쉿!');
         syncReplyLimitUi();
       }
       if (annReplyStatus) annReplyStatus.textContent = '전송에 실패했습니다.';
     } finally {
-      syncReplyLimitUi();
+      pendingAnnouncementActions.delete(action);
+      syncAnnouncementActionUi();
     }
   }
 
@@ -3639,8 +3759,13 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   }
 
   noticeBtn.addEventListener('click', async () => {
+    const localHistory = !STUDENT_APP_PUBLIC_MODE;
+    if (localHistory) {
+      if (historyList) historyList.innerHTML = '<div class="muted" role="status">공지를 불러오는 중…</div>';
+      openHistoryDialog(noticeBtn);
+    }
     await loadAnnouncements({ showPopup: false });
-    openHistoryDialog(noticeBtn);
+    if (!localHistory) openHistoryDialog(noticeBtn);
     if (STUDENT_APP_PUBLIC_MODE) await loadStudentBoard({ reset: true });
   });
 
@@ -3779,14 +3904,12 @@ function studentAppOpenAnnouncementDeepLink(id, announcements, openAnnouncement)
   annRead.addEventListener('click', ackActive);
   annSendReply?.addEventListener('click', submitReply);
   annSurveySubmit?.addEventListener('click', submitSurvey);
-  annSurveyQuestions?.addEventListener('input', () => {
+  const clearSurveyError = () => {
     if (annSurveyError) annSurveyError.textContent = '';
     annSurveyQuestions.querySelectorAll('.is-invalid').forEach(field => field.classList.remove('is-invalid'));
-  });
-  annSurveyQuestions?.addEventListener('change', () => {
-    if (annSurveyError) annSurveyError.textContent = '';
-    annSurveyQuestions.querySelectorAll('.is-invalid').forEach(field => field.classList.remove('is-invalid'));
-  });
+  };
+  annSurveyQuestions?.addEventListener('input', clearSurveyError);
+  annSurveyQuestions?.addEventListener('change', clearSurveyError);
   annReply?.addEventListener('keydown', (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
       ev.preventDefault();

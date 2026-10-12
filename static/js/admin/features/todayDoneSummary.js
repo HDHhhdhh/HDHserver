@@ -19,7 +19,7 @@ export function doneEntriesFromUnarchivedSummary(summary) {
     const sid = String(row?.sid || '').trim();
     const date = canonicalDate(row?.date);
     const entry = row?.entry;
-    if (!sid || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !entry || typeof entry !== 'object') return;
+    if (!sid || !date || !entry || typeof entry !== 'object') return;
     if (!truthyFlag(entry.done) || truthyFlag(entry.archived)) return;
 
     const previous = latestBySid.get(sid);
@@ -65,4 +65,21 @@ export function missingLeaveWarningText(summary) {
   const rows = (Array.isArray(summary?.rows) ? summary.rows : [])
     .filter(row => canonicalDate(row?.date) >= MISSING_LEAVE_WARNING_START_DATE);
   return warningDateTypeText({ ...summary, byDate, rows }, '하원');
+}
+
+export function missingLeaveWarningRows(summary, { today = '', excludeDate = '' } = {}) {
+  if (summary?.rowsAvailable !== true || !(Number(summary?.total) > 0)) return [];
+  const rows = [];
+  const seen = new Set();
+  for (const row of Array.isArray(summary.rows) ? summary.rows : []) {
+    const date = canonicalDate(row?.date);
+    const sid = String(row?.sid || '').trim();
+    const arriveTime = typeof row?.arriveTime === 'string' ? row.arriveTime.trim() : '';
+    const key = JSON.stringify([date, sid]);
+    if (!date || date < MISSING_LEAVE_WARNING_START_DATE || !sid || !arriveTime
+        || (today && date >= today) || date === excludeDate || seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ date, sid, arriveTime });
+  }
+  return rows.sort((a, b) => b.date.localeCompare(a.date) || a.sid.localeCompare(b.sid));
 }

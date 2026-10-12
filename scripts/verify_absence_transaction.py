@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from unittest import mock
 
@@ -24,6 +26,8 @@ from core.absence_transaction import (
     recover_pending_absence_transaction,
 )
 from core.log_repository import LogRepository
+from core.request_consistency import absence_barrier_mode
+import core.absence_transaction as transaction_module
 from core.storage import InterProcessFileLock, file_lock
 
 
@@ -283,7 +287,7 @@ def test_each_synchronous_failure_rolls_every_store_back() -> None:
             assert_restored(fixture)
 
 
-def test_crash_journal_recovers_to_before_state() -> None:
+def test_crash_journal_recovers_to_before_state(*, legacy_pretty=False) -> None:
     with tempfile.TemporaryDirectory(prefix="verify-absence-transaction-crash-") as tmpdir:
         fixture = build_fixture(Path(tmpdir))
         paths = fixture["paths"]
@@ -301,6 +305,8 @@ def test_crash_journal_recovers_to_before_state() -> None:
 
         pending = journal_path_for(paths["absent"], paths["journal"])
         assert pending.exists()
+        if legacy_pretty:
+            write_json(pending, read_json(pending))
         assert read_json(paths["updates"]) != fixture["initial"]["updates"]
 
         recovered_id = recover_pending_absence_transaction(
@@ -478,10 +484,79 @@ def test_consistency_barrier_is_reentrant_in_one_context() -> None:
                 ).exists()
 
 
+def test_compact_journal_preserves_payload() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-compact-absence-journal-") as tmp:
+        path = Path(tmp) / "pending.json"
+        journal = {"version": 1, "state": "PREPARED", "unknown": {"한글": ["보존"] * 40}}
+        with mock.patch.object(transaction_module, "_utc_now", return_value="2026-10-03T00:00:00Z"):
+            transaction_module._write_journal(path, journal)
+        assert transaction_module._read_journal(path) == {
+            "version": 1, "state": "PREPARED", "unknown": {"한글": ["보존"] * 40},
+            "updatedAt": "2026-10-03T00:00:00Z",
+        }
+        assert len(path.read_bytes()) < len(json.dumps(journal, ensure_ascii=False, indent=2).encode("utf-8"))
+        assert not (path.parent / "_data_mirror").exists()
+
+
+def test_storage_only_readers_preserve_writer_exclusion() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-absence-read-cohort-") as tmp:
+        root = Path(tmp)
+        absent = root / "absent.json"
+        journal = root / "journal"
+        write_json(absent, {})
+        entered = [threading.Event(), threading.Event()]
+        released = [threading.Event(), threading.Event()]
+        start = threading.Barrier(3)
+        writer_entered = threading.Event()
+
+        def reader(index, path, query):
+            mode = absence_barrier_mode(path, "GET", query)
+            assert mode == "shared"
+            start.wait(timeout=2)
+            with absence_consistency_barrier(absent_path=absent, journal_dir=journal,
+                                             lock_timeout_sec=2, shared=mode == "shared"):
+                entered[index].set()
+                assert released[index].wait(timeout=3)
+
+        def writer():
+            assert absence_barrier_mode("/api/progress/patch", "POST", {}) == "exclusive"
+            with absence_consistency_barrier(absent_path=absent, journal_dir=journal, lock_timeout_sec=2):
+                writer_entered.set()
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            readers = [pool.submit(reader, 0, "/api/makeup-carryover", {}),
+                       pool.submit(reader, 1, "/api/updates", {"readOnly": "true"})]
+            try:
+                start.wait(timeout=2)
+                assert all(event.wait(timeout=2) for event in entered), "both storage-only readers join"
+                writing = pool.submit(writer)
+                assert not writer_entered.wait(timeout=0.05), "writer cannot bypass active readers"
+                released[0].set()
+                readers[0].result(timeout=1)
+                assert not writer_entered.wait(timeout=0.05), "last reader still owns the lease"
+                released[1].set()
+                readers[1].result(timeout=1)
+                writing.result(timeout=2)
+                assert writer_entered.is_set()
+            finally:
+                released[0].set()
+                released[1].set()
+        assert read_json(absent) == {}
+        write_json(journal_path_for(absent, journal), {"version": 1, "state": "PREPARED"})
+        try:
+            with absence_consistency_barrier(absent_path=absent, journal_dir=journal, shared=True):
+                raise AssertionError("shared reads must reject a pending journal")
+        except AbsenceRecoveryRequiredError:
+            pass
+
+
 def main() -> int:
     test_success_keeps_existing_semantics()
     test_each_synchronous_failure_rolls_every_store_back()
     test_crash_journal_recovers_to_before_state()
+    test_crash_journal_recovers_to_before_state(legacy_pretty=True)
+    test_compact_journal_preserves_payload()
+    test_storage_only_readers_preserve_writer_exclusion()
     test_failed_rollback_stays_recoverable_and_fails_closed()
     test_lock_release_retries_a_transient_windows_remove_failure()
     test_active_same_process_lock_is_never_broken_as_stale()

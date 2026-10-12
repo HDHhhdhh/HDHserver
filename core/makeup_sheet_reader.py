@@ -138,21 +138,6 @@ def _date_columns(rows: list[list[str]], year: int, month: int) -> dict[int, str
     return out
 
 
-def _match_sheet_rows(
-    rows: list[list[str]],
-    students: list[dict[str, Any]],
-    *,
-    max_sheet_row: int = 127,
-) -> list[tuple[int, list[str], dict[str, Any]]]:
-    matched, _unmatched = _match_sheet_rows_detailed(
-        rows,
-        students,
-        date_columns={},
-        max_sheet_row=max_sheet_row,
-    )
-    return matched
-
-
 def _match_sheet_rows_detailed(
     rows: list[list[str]],
     students: list[dict[str, Any]],

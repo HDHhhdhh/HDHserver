@@ -18,18 +18,27 @@ export function buildExamAttendance({ students, attendanceDays, referenceDate, e
   const regularSlots = (student, date) => {
     const weekday = WCHR[new Date(date + 'T00:00:00').getDay()];
     const labels = regularAttendanceDaysForStudent(student).filter(value => value.startsWith(weekday));
-    return labels.length ? (parseSlotNumbers(labels).length ? parseSlotNumbers(labels) : [1]) : [];
+    if (!labels.length) return [];
+    const slots = parseSlotNumbers(labels);
+    return slots.length ? slots : [1];
   };
-  let regular = 0;
+  const regularSessions = new Set();
   const weekdays = new Set(attendanceDays.map(value => String(value).trim()[0]));
   const cursor = new Date(referenceDate);
   cursor.setDate(cursor.getDate() + 1);
   while (cursor < examDate) {
     const date = dateKey(cursor);
-    if (weekdays.has(WCHR[cursor.getDay()]) && students.some(student =>
-      regularSlots(student, date).some(slot => !absent(date, String(student.id), slot)))) regular += 1;
+    if (weekdays.has(WCHR[cursor.getDay()])) {
+      for (const student of students) {
+        const sid = String(student.id);
+        for (const slot of regularSlots(student, date)) {
+          if (!absent(date, sid, slot)) regularSessions.add([date, sid, slot].join('|'));
+        }
+      }
+    }
     cursor.setDate(cursor.getDate() + 1);
   }
+  const regular = regularSessions.size;
 
   // A reservation and its extra-attendance reflection are the same date/SID/slot.
   const makeupSlots = new Set();

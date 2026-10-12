@@ -289,7 +289,7 @@ def source_boundary_checks() -> None:
     )
     check(
         "data-note-save-close" in notes_source
-        and ">저장 후 닫기</button>" in notes_source
+        and ">저장</button>" in notes_source
         and "data-note-close" in notes_source
         and ">닫기</button>" in notes_source
         and "assistant-note-heading-actions" in admin_css
@@ -417,9 +417,11 @@ def source_boundary_checks() -> None:
         and "background: rgba(var(--assistant-note-item-rgb), .16);" in admin_css,
         "dark pinned cards must retain author-colored rails and pin emphasis",
     )
-    check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
+    check("const pinDiff = Number(isNotePinned(right)) - Number(isNotePinned(left));" in notes_source
+          and "if (pinDiff) return pinDiff;" in notes_source,
+          "pinned comments must retain their comparator priority; literal DOM ordering is verified separately")
     check(
-        "const newestFirst = notes.slice()" in notes_source
+        "const displayNotes = notes.slice().sort(" in notes_source
         and "compareNewestNoteFirst(left, right)" in notes_source
         and "notes.slice().reverse()" not in notes_source,
         "existing notes must render from newest to oldest",
@@ -461,16 +463,14 @@ def source_boundary_checks() -> None:
     check("max-height: 210px" in admin_css and "overflow-y: auto" in admin_css, "comment thread must be scrollable")
     check("white-space: pre-wrap" in admin_css, "comment line breaks must be preserved")
     check(
-        "/* Compact saved-note controls and author row. */" in light_css
-        and "min-height: 18px !important;" in light_css
+        "min-height: 18px !important;" in light_css
         and "height: 26px !important;" in light_css
         and "font-size: 13px !important;" in light_css,
         "light-theme saved-note author row and edit/delete controls must stay compact",
     )
 
     check(
-        "/* Saved memo body copy stays compact while the composer keeps its larger input size. */" in light_css
-        and light_css.count("border-left-color: #d4a72c !important;") == 0
+        light_css.count("border-left-color: #d4a72c !important;") == 0
         and "border-left: 4px solid var(--assistant-note-item-color) !important;" in light_css
         and "#assistantStudentNotesHost .assistant-note-edit-input" in light_css
         and "font-size: 18px !important;" in light_css,
@@ -486,8 +486,7 @@ def source_boundary_checks() -> None:
         "light pinned cards must use each author's outline and filled interactive pin",
     )
     check(
-        "/* Compact reminder memo metadata without changing the memo body. */" in light_css
-        and "padding: 6px 8px 8px 12px !important;" in light_css
+        "padding: 6px 8px 8px 12px !important;" in light_css
         and "width: 30px !important;" in light_css
         and "min-height: 24px !important;" in light_css
         and "font-size: 17px !important;" in light_css

@@ -238,6 +238,25 @@ def main() -> int:
             }
             _assert_unchanged(progress_path, before_failure_bytes, before_failure_hash, "lock timeout")
 
+            white_label = "단원평가 / 대수 / Lv.3 / 재시험"
+            white_status = {"status": "none", "explicitBlank": True}
+            response = client.post(
+                "/api/progress/patch",
+                json={
+                    "date": DATE,
+                    "sid": "s2",
+                    "progress": {
+                        "tests": {white_label: white_status},
+                        "__testsClearedAt": "2026-06-01T12:00:00+09:00",
+                    },
+                },
+            )
+            assert response.status_code == 200
+            assert response.get_json()["progress"]["tests"][white_label] == white_status
+            assert _read_json(progress_path)[DATE]["s2"]["tests"][white_label] == white_status
+            reloaded = client.get(f"/api/progress?date={DATE}&sid=s2").get_json()
+            assert reloaded[DATE]["s2"]["tests"][white_label] == white_status
+
             basic_source = (ROOT / "routes" / "api_basic.py").read_text(encoding="utf-8")
             progress_source = (ROOT / "routes" / "api_progress.py").read_text(encoding="utf-8")
             app_source = (ROOT / "app.py").read_text(encoding="utf-8")

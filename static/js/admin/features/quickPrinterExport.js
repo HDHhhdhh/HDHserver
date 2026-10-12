@@ -271,7 +271,7 @@ export function initQuickPrinterExport() {
     activeStudents = students;
     activeCounts = summarizeQuickPrinterTimeGroups(activeStudents);
     dateLabel.textContent = activeDate;
-    includeReprintsInput.checked = false;
+    includeReprintsInput.checked = true;
 
     controls.forEach(item => {
       const count = Number(activeCounts[item.key] || 0);

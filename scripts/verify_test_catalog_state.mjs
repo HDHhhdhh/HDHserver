@@ -36,7 +36,7 @@ const legacyConfig = {
     REVIEW: { '공수1': { '상': ['상'] } },
     ILSAN_PAST: {
       '대수': {
-        '상': ['상'],
+        '중': ['중'],
         '삼각함수 그래프 포함': ['중'],
       },
     },
@@ -48,9 +48,10 @@ assert.equal(ensured.futureRoot.preserve, true);
 assert.equal(ensured.categories.ILSAN_PAST.tests[0].futureField.nested, true);
 assert.deepEqual(Object.keys(plain(ensured.categories)).sort(), ['ILSAN_PAST', 'REVIEW', 'SCHOOL_PAST', 'TRAINING_PACK', 'UNIT']);
 assert.equal(ensured.categories.ILSAN_PAST.label, '일산 기출');
-assert.equal(Object.hasOwn(ensured.autoAssignRules.ILSAN_PAST.대수, '상'), false);
+assert.equal(Object.hasOwn(ensured.autoAssignRules.ILSAN_PAST.대수, '중'), false);
 assert.equal(Object.hasOwn(ensured.autoAssignRules.ILSAN_PAST.대수, '삼각함수 그래프 포함'), false);
 assert.deepEqual(plain(ensured.autoAssignRules.ILSAN_PAST.대수['중상']), ['하', '중', '중상', '상']);
+assert.deepEqual(plain(ensured.autoAssignRules.ILSAN_PAST.대수['상']), ['하', '중', '중상', '상']);
 assert.deepEqual(plain(ensured.autoAssignRules.ILSAN_PAST.대수['그래프 포함']), ['하', '중', '중상', '상']);
 assert.deepEqual(plain(ensured.autoAssignRules.REVIEW['공수1']['상']), ['상'], 'non-Ilsan custom arrays must survive');
 
@@ -68,7 +69,9 @@ assert.equal(normalized.id, 't_ILSAN_PAST_1234_4');
 assert.equal(normalized.name, rawTest.title);
 assert.equal(normalized.categoryKey, 'ILSAN_PAST');
 assert.equal(normalized.curriculum, '미적분1');
-assert.equal(normalized.difficulty, '그래프 포함');
+assert.equal(normalized.difficulty, '상');
+const graphFallback = plain(api.normalizeCatalogTest({ title: '그래프 포함 일산 기출', difficulty: '' }, '일산', 5, { now: 1234 }));
+assert.equal(graphFallback.difficulty, '그래프 포함');
 assert.equal(normalized.term, '기말고사');
 assert.equal(normalized.round, '2');
 assert.equal(normalized.problems, 1);
@@ -158,7 +161,7 @@ for (const retired of [
   assert.equal(entrySource.includes(retired), false, `tests entrypoint still owns catalog state primitive: ${retired}`);
 }
 for (const delegated of [
-  "from './tests/catalogState.js?v=20260829-catalog-state-r1'",
+  "from './tests/catalogState.js?v=20260907-ilsan-level-r1&hub=20261001-search1'",
   'normalizeCatalogTest(rawTest, rawCategoryKey, idx, {',
   'visibleCatalogTests(getCategoryTests(ui.category), ui, {',
   'projectCatalogOrderBlock({',
@@ -167,6 +170,6 @@ for (const delegated of [
 ]) {
   assert.ok(entrySource.includes(delegated), `tests entrypoint is missing catalog-state delegation: ${delegated}`);
 }
-assert.match(htmlSource, /<script src="\/js\/tests\.js\?v=20260829-catalog-statistics-state-r1" type="module"><\/script>/);
+assert.match(htmlSource, /<script src="\/js\/tests\.js\?v=20260907-ilsan-level-r1&hub=20261001-detail1" type="module"><\/script>/);
 
 console.log('test catalog state checks passed: config/test normalization, search/sort/grouping, order gates, revisioned write projections, rollback snapshot, isolation, and entrypoint delegation');

@@ -10,7 +10,7 @@ const modulePath = path.join(root, 'static', 'js', 'student', 'bootstrapState.js
 const studentPath = path.join(root, 'static', 'js', 'student.js');
 const htmlPath = path.join(root, 'static', 'student.html');
 const moduleSource = fs.readFileSync(modulePath, 'utf8');
-const studentSource = fs.readFileSync(studentPath, 'utf8');
+const studentSource = fs.readFileSync(studentPath, 'utf8').replace(/\r\n/g, '\n');
 const htmlSource = fs.readFileSync(htmlPath, 'utf8');
 
 const browserWindow = {};
@@ -351,12 +351,12 @@ assert.deepEqual(plain(publicLoaded.initialData), [
 ]);
 
 const bootstrapScript = '/js/student/bootstrapState.js?v=20260828-bootstrap-state-r1';
-const watchScript = '/js/student/watchState.js?v=20260828-watch-state-r1';
-const playbackScript = '/js/student/playback.js?v=20260828-playback-r1';
+const watchScript = '/js/student/watchState.js?v=20261002-native-watch1';
+const playbackScript = '/js/student/playback.js?v=20261002-native-watch1&amp;youtube=20260913';
 const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
 const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.equal((htmlSource.match(/\/js\/student\/bootstrapState\.js/g) || []).length, 1);
 assert.equal((htmlSource.match(/\/js\/student\/watchState\.js/g) || []).length, 1);
 assert.equal((htmlSource.match(/\/js\/student\/playback\.js/g) || []).length, 1);

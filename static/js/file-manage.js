@@ -15,7 +15,10 @@ let SELECTED = new Set();    // 파일/폴더 선택 집합
 // 배정 패널 상태
 let STUDENTS = [];           // /api/students
 let ASSIGNS  = {};           // /api/mat-assign  { sid: [token,...] }
-let ASSIGNS_REVISION = "";
+let ASSIGNMENT_READY = false;
+let ASSIGNMENT_SAVING = false;
+let assignmentSaveDone = null;
+let refreshRequestId = 0;
 let PICKED   = [];           // 추가(배정) 모드에서 담은 항목 (file/dir)
 let MODE     = "add";        // "add" | "remove"
 
@@ -45,7 +48,10 @@ async function getAssignSnapshot(){
   const t = await r.text();
   if (!r.ok) throw new Error(t || `배정 조회 실패 (HTTP ${r.status})`);
   const parsed = t ? JSON.parse(t) : {};
-  const assigns = parsed && typeof parsed==="object" && !Array.isArray(parsed) ? parsed : {};
+  if (!parsed || typeof parsed!=="object" || Array.isArray(parsed)) {
+    throw new Error("배정 정보를 읽을 수 없습니다. 다시 불러와 주세요.");
+  }
+  const assigns = parsed;
   return {
     assigns,
     revision: r.headers.get("X-Material-State-Revision") || ""
@@ -161,13 +167,15 @@ function endMoveMode(){
   hideMoveToast();
 }
 async function doMoveTo(dstPath){
+  let committed = false;
   try{
     await jpost('/api/fs/move', { paths: MOVE_SRC_PATHS, dst: (dstPath||'') });
+    committed = true;
     endMoveMode();
     await refresh();
   }catch(e){
     endMoveMode();
-    alert('이동 실패: ' + e);
+    alert((committed ? '이동은 완료됐지만 목록을 불러오지 못했습니다. 새로고침해 주세요: ' : '이동 실패: ') + e);
   }
 }
 
@@ -196,10 +204,12 @@ function renderTree(){
       const txt = e.dataTransfer.getData("application/x-paths");
       if (!txt) return;
       const paths = JSON.parse(txt);
+      let committed = false;
       try{
         await jpost("/api/fs/move", { paths, dst:n.path });
+        committed = true;
         await refresh();
-      }catch(err){ alert("이동 실패: "+err); }
+      }catch(err){ alert((committed ? '이동은 완료됐지만 목록을 불러오지 못했습니다. 새로고침해 주세요: ' : '이동 실패: ') + err); }
     });
 
     // 클릭: 이동 모드면 이동, 아니면 열기
@@ -228,6 +238,17 @@ function findFolderNode(path){
 }
 
 let sortState = { key:"name", dir:1 };
+function selectOnlyFileRow(tr){
+  SELECTED.clear();
+  $$("#list tbody tr").forEach(row=>{
+    row.classList.remove("sel");
+    row.querySelector(".ck").checked = false;
+  });
+  SELECTED.add(tr.dataset.path);
+  tr.classList.add("sel");
+  tr.querySelector(".ck").checked = true;
+}
+
 function renderList(){
   const wrap = $("#list"); if (!wrap) return;
   SELECTED.clear();
@@ -278,9 +299,7 @@ function renderList(){
       const p = tr.dataset.path;
       // 단일 드래그면 해당 행만 선택
       if (!SELECTED.has(p)){
-        SELECTED.clear(); $$("#list tbody tr.sel").forEach(r=>r.classList.remove("sel"));
-        SELECTED.add(p); tr.classList.add("sel");
-        tr.querySelector(".ck").checked = true;
+        selectOnlyFileRow(tr);
       }
       e.dataTransfer.setData("application/x-paths", JSON.stringify([...SELECTED]));
       e.dataTransfer.effectAllowed = "copyMove";
@@ -300,9 +319,7 @@ function renderList(){
     e.preventDefault();
     const p = tr.dataset.path;
     if (!SELECTED.has(p)){
-      SELECTED.clear(); $$("#list tbody tr.sel").forEach(r=>r.classList.remove("sel"));
-      SELECTED.add(p); tr.classList.add("sel");
-      tr.querySelector(".ck").checked = true;
+      selectOnlyFileRow(tr);
     }
     openCtxMenu(e.clientX, e.clientY, tr.dataset);
   });
@@ -321,8 +338,9 @@ function sortList(key){
   const rows = Array.from(tbody.children);
   const dir = (sortState.key===key) ? -sortState.dir : 1;
   sortState = { key, dir };
+  const valuesByRow = new Map();
 
-  function get(tr){
+  function readSortValue(tr){
     if (key==="name"){
       const isDir = tr.dataset.type==="dir" ? 0 : 1;
       const txt = tr.querySelector(".name")?.textContent?.trim()?.toLowerCase() || "";
@@ -338,6 +356,11 @@ function sortList(key){
       return [node?.mtime ?? 0];
     }
     return [0];
+  }
+
+  function get(tr){
+    if (!valuesByRow.has(tr)) valuesByRow.set(tr, readSortValue(tr));
+    return valuesByRow.get(tr);
   }
 
   rows.sort((r1,r2)=>{
@@ -361,17 +384,32 @@ function updateAll(){
 
 /* ---------------- server I/O ---------------- */
 async function refresh(){
-  const data = await jget("/api/fs/tree");
-  TREE = data.tree;
-
-  try { STUDENTS = await jget("/api/students"); } catch { STUDENTS = []; }
+  while (assignmentSaveDone) await assignmentSaveDone;
+  const requestId = ++refreshRequestId;
+  ASSIGNMENT_READY = false;
+  const actionButton = $("#amDoAssign");
+  if (actionButton) actionButton.disabled = true;
+  let bundle;
   try {
-    const snapshot = await getAssignSnapshot();
-    ASSIGNS = snapshot.assigns;
-    ASSIGNS_REVISION = snapshot.revision;
-  } catch {
-    ASSIGNS = {}; ASSIGNS_REVISION = "";
+    bundle = await Promise.all([
+      jget("/api/fs/tree"),
+      jget("/api/students"),
+      getAssignSnapshot()
+    ]);
+  } catch (error) {
+    if (requestId !== refreshRequestId) return;
+    throw error;
   }
+  if (requestId !== refreshRequestId) return;
+  const [data, students, snapshot] = bundle;
+  if (!data?.tree || !Array.isArray(students)) {
+    throw new Error("파일 또는 학생 정보를 읽을 수 없습니다. 다시 불러와 주세요.");
+  }
+  TREE = data.tree;
+  STUDENTS = students;
+  ASSIGNS = snapshot.assigns;
+  ASSIGNMENT_READY = true;
+  if (actionButton) actionButton.disabled = ASSIGNMENT_SAVING;
 
   updateAll();
   buildAssignFilters();
@@ -415,7 +453,7 @@ async function uploadFiles(files){
 
 /* ---------------- events ---------------- */
 function bind(){
-  $("#btnRefresh")?.addEventListener("click", refresh);
+  $("#btnRefresh")?.addEventListener("click", ()=> refresh().catch(error=>alert("로드 실패: "+error)));
   $("#btnMake")?.addEventListener("click", makeFolder);
   $("#btnRename")?.addEventListener("click", renameOne);
   $("#btnMove")?.addEventListener("click", startMoveMode); // 이동 모드
@@ -494,11 +532,14 @@ function bind(){
 
 /* ---------------- 박스(러버밴드) 선택 ---------------- */
 let _boxSelecting = false;
+let boxSelectArea = null;
 function enableBoxSelect(){
   const area = $("#list");
   const table = area?.querySelector("tbody");
-  if (!table) return;
+  if (!table || boxSelectArea === area) return;
+  boxSelectArea = area;
   let startX=0, startY=0, box=null, selecting=false;
+  let initialSelection = new Set();
 
   const rows = () => $$("#list tbody tr");
   const rect = (el)=> el.getBoundingClientRect();
@@ -506,9 +547,10 @@ function enableBoxSelect(){
 
   area.addEventListener("mousedown", (e)=>{
     if (e.button!==0) return;
-    if (e.target.closest("a, input, textarea, select, button")) return;
+    if (e.target.closest("a, input, textarea, select, button, thead")) return;
     selecting = true; _boxSelecting = true;
     startX = e.clientX; startY = e.clientY;
+    initialSelection = new Set((e.ctrlKey || e.metaKey || e.shiftKey) ? SELECTED : []);
 
     box = document.createElement("div");
     Object.assign(box.style,{
@@ -531,14 +573,13 @@ function enableBoxSelect(){
     if (!selecting || !box) return;
     const x1 = Math.min(startX, e.clientX), y1 = Math.min(startY, e.clientY);
     const x2 = Math.max(startX, e.clientX), y2 = Math.max(startY, e.clientY);
+    const rBox = { left:x1, top:y1, right:x2, bottom:y2 };
+    const hits = rows().map(tr => ({ tr, hit: intersect(rBox, rect(tr)) }));
     Object.assign(box.style,{ left:x1+"px", top:y1+"px", width:(x2-x1)+"px", height:(y2-y1)+"px" });
 
-    const rBox = { left:x1, top:y1, right:x2, bottom:y2 };
-    $$("#list tbody tr").forEach(tr=>{
-      const r = rect(tr);
-      const hit = intersect(rBox, r);
+    hits.forEach(({ tr, hit })=>{
       const path = tr.dataset.path;
-      if (hit){ tr.classList.add("sel"); SELECTED.add(path); tr.querySelector(".ck").checked=true; }
+      if (hit || initialSelection.has(path)){ tr.classList.add("sel"); SELECTED.add(path); tr.querySelector(".ck").checked=true; }
       else { tr.classList.remove("sel"); SELECTED.delete(path); tr.querySelector(".ck").checked=false; }
     });
   });
@@ -710,15 +751,31 @@ function setAll(sel, on){ $$(sel).forEach(i=> i.checked=!!on); }
 
 /* ---------------- 실행 (모드별 동작) ---------------- */
 async function runAction(){
-  if (MODE==="add") return doAssignAdd();
-  return doAssignRemove();
+  if (ASSIGNMENT_SAVING) return;
+  if (!ASSIGNMENT_READY) return alert("배정 정보를 먼저 다시 불러와 주세요.");
+  ASSIGNMENT_SAVING = true;
+  let finishSave;
+  assignmentSaveDone = new Promise(resolve => { finishSave = resolve; });
+  try {
+    if (MODE==="add") return await doAssignAdd();
+    return await doAssignRemove();
+  } finally {
+    ASSIGNMENT_SAVING = false;
+    const button = $("#amDoAssign");
+    if (button) button.disabled = !ASSIGNMENT_READY;
+    assignmentSaveDone = null;
+    finishSave();
+  }
 }
 
 // 추가(배정)
 async function doAssignAdd(){
   const sidList = getFilteredSids();
   const isGlobalCancel = sidList.length===0;
-  if (!PICKED.length && !isGlobalCancel) return alert("배정할 항목을 먼저 드롭하세요.");
+  const picked = PICKED.slice();
+  const items = picked.map(f=> f.type==="dir" ? `DIR:${f.path}` : (f.url || f.path)).filter(Boolean);
+  const selectedSids = new Set(sidList.map(String));
+  if (!picked.length && !isGlobalCancel) return alert("배정할 항목을 먼저 드롭하세요.");
 
   const btn = $("#amDoAssign"); const orig = btn?.innerHTML;
   if (btn){ btn.disabled=true; btn.innerHTML="배정 중…"; }
@@ -727,7 +784,6 @@ async function doAssignAdd(){
     const snapshot = await getAssignSnapshot();
     const assigns = {...snapshot.assigns};
 
-    const items = PICKED.map(f=> f.type==="dir" ? `DIR:${f.path}` : (f.url || f.path)).filter(Boolean);
     let addOps=0, removeOps=0;
 
     // 보정
@@ -741,7 +797,7 @@ async function doAssignAdd(){
       if (isGlobalCancel){
         for (const it of items){ if (set.delete(String(it))) removeOps++; }
       } else {
-        if (!sidList.includes(String(sid))){
+        if (!selectedSids.has(String(sid))){
           for (const it of items){ if (set.delete(String(it))) removeOps++; }
         } else {
           for (const it of items){ const s=String(it); if (!set.has(s)){ set.add(s); addOps++; } }
@@ -751,14 +807,15 @@ async function doAssignAdd(){
       if (next.length) assigns[sid]=next; else delete assigns[sid];
     }
 
-    ASSIGNS_REVISION = await saveAssignSnapshot(assigns, snapshot.revision);
+    await saveAssignSnapshot(assigns, snapshot.revision);
     ASSIGNS = assigns;
 
     alert(isGlobalCancel
       ? `전체 취소 완료\n- 항목: ${items.length}개\n- 제거: ${removeOps}회`
       : `배정 갱신 완료\n- 대상 학생: ${sidList.length}명\n- 항목: ${items.length}개\n- 추가: ${addOps} / 제거: ${removeOps}`);
 
-    PICKED.length=0; renderPickedList();
+    PICKED = PICKED.filter(item => !picked.includes(item));
+    renderPickedList();
     if (MODE==="remove") renderAssignedUnion();
   } catch(err){
     alert("배정 실패: "+(err?.message||err));
@@ -794,7 +851,7 @@ async function doAssignRemove(){
       if (next.length) assigns[sid]=next; else delete assigns[sid];
     }
 
-    ASSIGNS_REVISION = await saveAssignSnapshot(assigns, snapshot.revision);
+    await saveAssignSnapshot(assigns, snapshot.revision);
     ASSIGNS = assigns;
 
     alert(isGlobal

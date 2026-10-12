@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js?v=20260830-carryover-history1';
+import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -111,6 +111,18 @@ function installDemoBootstrap() {
   onReady(() => {
     injectDemoControls();
     installDemoTutorial({ window, demo });
+    if (currentPath === DEMO_ROOT_PATH) {
+      void import('./threadPreview.js?v=20260914-threads1')
+        .then(({ initDemoThreadPreview }) => initDemoThreadPreview())
+        .catch((error) => {
+          demo.errors = Array.isArray(demo.errors) ? demo.errors : [];
+          demo.errors.push({
+            at: new Date().toISOString(),
+            type: 'thread-preview-load-failed',
+            message: error?.message || String(error),
+          });
+        });
+    }
   });
   showDemoMessage('데모 모드입니다. 모든 응답은 더미 데이터 기준입니다.', { quiet: true });
 }
@@ -398,7 +410,9 @@ async function handleDemoApiRequest(request, input, init, demo) {
   const store = loadDemoStore();
   const payload = fallbackPayloadForGet(path, url.searchParams, store);
   const responseHeaders = {};
-  if (path === '/api/makeup-carryover') {
+  if (path === '/api/progress') {
+    responseHeaders['X-Video-Watch-Cycles'] = '1';
+  } else if (path === '/api/makeup-carryover') {
     responseHeaders['X-Makeup-Carryover-Revision'] = demoRevision(payload);
   } else if (path === '/api/school-calendar') {
     responseHeaders['X-School-Calendar-Revision'] = schoolCalendarDemoRevision(payload);
@@ -667,6 +681,13 @@ async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
   const request = normalizeFetchRequest(input, init);
   const method = request?.method || String(init?.method || 'POST').toUpperCase();
+  if (path === '/api/progress/patch' && (method === 'POST' || method === 'PATCH')) {
+    const store = loadDemoStore();
+    const result = mergeProgressPatch(store, body);
+    if (result.error) return { ok: false, error: result.error, __demoStatus: result.status || 400 };
+    saveDemoStore(store);
+    return { ok: true, progress: result.progress };
+  }
 
   const quickPrinterStore = loadDemoStore();
   const quickPrinterResult = applyDemoQuickPrinterRequest({

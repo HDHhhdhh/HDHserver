@@ -28,11 +28,10 @@ import {
   projectCatalogOrderBlock,
   roundLabel,
   roundSortValue,
-  termSortValue,
   testDefinitionWriteRequest,
   visibleCatalogTests,
   wholeConfigWriteRequest,
-} from './tests/catalogState.js?v=20260829-catalog-state-r1';
+} from './tests/catalogState.js?v=20260907-ilsan-level-r1&hub=20261001-search1';
 import {
   ANSWER_MODE_OPTIONS,
   answerKeyFromCsvRow,
@@ -49,14 +48,14 @@ import {
   parseCsv,
   projectAnswerRound,
   rowObject,
-} from './tests/catalogEditorState.js?v=20260829-catalog-editor-state-r1';
+} from './tests/catalogEditorState.js?v=20260907-ilsan-answers-r1';
 import {
   formatPercent,
   projectStatsDetail,
   projectStatsRows,
   projectStatsSummary,
   statForTest,
-} from './tests/catalogStatisticsState.js?v=20260829-catalog-statistics-state-r1';
+} from './tests/catalogStatisticsState.js?v=20260907-ilsan-level-r1';
 
 const $ = (sel) => document.querySelector(sel);
 const MISSING_ANSWER_LINK_STATUS = 'missing';
@@ -66,6 +65,7 @@ let TEST_CFG_REVISION = '';
 let TEST_STATS = null;
 let TEST_STATS_DETAIL = null;
 let statsLoadVersion = 0;
+let statsDetailLoadVersion = 0;
 let ruleSaveTimer = null;
 let ruleSaveInFlight = false;
 let ruleSavePending = false;
@@ -107,7 +107,7 @@ function escapeHtml(s) {
 }
 
 function escapeAttr(s) {
-  return escapeHtml(s).replace(/"/g, '&quot;');
+  return escapeHtml(s);
 }
 
 
@@ -139,6 +139,23 @@ function getCategoryTests(categoryKey = ui.category) {
 
 function displayTestName(test) {
   return createUnitTestDisplayNameResolver(getCategoryTests('UNIT'))(test);
+}
+
+function categoryTestCount(categoryKey) {
+  const tests = TEST_CFG.categories?.[categoryKey]?.tests;
+  return Array.isArray(tests) ? tests.length : 0;
+}
+
+function createCatalogRenderProjection() {
+  const categoryTests = getCategoryTests(ui.category);
+  const unitTests = ui.category === 'UNIT' ? categoryTests : getCategoryTests('UNIT');
+  const displayNameFor = createUnitTestDisplayNameResolver(unitTests);
+  const tests = visibleCatalogTests(categoryTests, ui, {
+    displayNameFor,
+    matchesSearchKey,
+    searchKeyForText,
+  });
+  return { tests, displayNameFor };
 }
 
 function getVisibleTests() {
@@ -308,6 +325,7 @@ function syncCatalogMutationControls() {
     '#btnReloadStats', '#statRecent',
   ].forEach(selector => setCatalogOrderControlLock($(selector), locked));
   document.querySelectorAll('.rule-check').forEach(control => setCatalogOrderControlLock(control, locked));
+  document.querySelectorAll('button.test-select-button[data-id]').forEach(control => setCatalogOrderControlLock(control, locked));
 }
 
 function updateCatalogOrderHint() {
@@ -430,9 +448,9 @@ function updateEditTermOptions(categoryKey = editCategoryValue()) {
   if (!TERM_OPTIONS.includes(sel.value)) sel.value = TERM_OPTIONS[0] || '';
 }
 
-function updateChrome(selected = null, displayNameFor = displayTestName) {
-  const visible = getVisibleTests();
-  const total = CATEGORY_DEFS.reduce((sum, def) => sum + getCategoryTests(def.key).length, 0);
+function updateChrome(selected = null, projection = createCatalogRenderProjection()) {
+  const { tests: visible, displayNameFor } = projection;
+  const total = CATEGORY_DEFS.reduce((sum, def) => sum + categoryTestCount(def.key), 0);
   const scope = [
     categoryLabel(ui.category),
     ui.subject,
@@ -455,26 +473,29 @@ function renderTestList() {
   const listEl = $('#testList');
   if (!listEl) return;
 
-  const tests = getVisibleTests();
+  const projection = createCatalogRenderProjection();
+  const { tests, displayNameFor } = projection;
   const selected = tests.find(test => test.id === ui.selectedId) || null;
-  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
-  updateChrome(selected, displayNameFor);
+  updateChrome(selected, projection);
 
   if (!tests.length) {
     const emptyText = String(ui.catalogSearch || '').trim()
       ? '목록 검색 결과가 없습니다.'
       : '등록된 테스트가 없습니다. 새 테스트를 추가하세요.';
     listEl.innerHTML = `<div style="font-size:12px; opacity:.7; padding:4px;">${escapeHtml(emptyText)}</div>`;
-    return;
+    return projection;
   }
 
   listEl.innerHTML = renderGroupedTestList(tests, displayNameFor);
 
   listEl.querySelectorAll('button.test-select-button[data-id]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (catalogMutationControlsLocked()) return;
       ui.selectedId = btn.dataset.id || '';
-      renderTestList();
-      fillEditor();
+      listEl.querySelectorAll('button.test-select-button[data-id]').forEach(button => {
+        button.classList.toggle('active', button.dataset.id === ui.selectedId);
+      });
+      fillEditor(projection);
     });
   });
 
@@ -487,6 +508,8 @@ function renderTestList() {
   });
 
   bindCatalogDragAndDrop(listEl);
+  syncCatalogMutationControls();
+  return projection;
 }
 
 function renderGroupedTestList(tests, displayNameFor = displayTestName) {
@@ -498,7 +521,7 @@ function renderGroupedTestList(tests, displayNameFor = displayTestName) {
   });
 
   return Array.from(groups.entries()).map(([key, items]) => {
-    const [partA, partB, partC] = key.split('|||');
+    const [partA, partB] = key.split('|||');
     const head = isPastCategory(ui.category)
       ? `${partA || '고사 미분류'} · ${partB || '-'} · 전체 순번`
       : `${partA || '-'} · ${partB ? roundLabel(partB) : '전체 순번'}`;
@@ -737,7 +760,7 @@ async function moveCatalogTestByKeyboard(catalogIndex, direction) {
   return persistCatalogReorder(catalogIndex, target._catalogIndex, direction < 0 ? 'before' : 'after', move);
 }
 
-function fillEditor() {
+function fillEditor(projection = createCatalogRenderProjection()) {
   updateSubjectOptions();
 
   const ref = selectedTestRef();
@@ -758,7 +781,7 @@ function fillEditor() {
     $('#cfgProblems') && ($('#cfgProblems').value = '');
     $('#cfgAnswers') && ($('#cfgAnswers').value = '');
     renderAnswerModeEditor(null);
-    updateChrome(null);
+    updateChrome(null, projection);
     setTestSaveStatus('ready', '변경 없음');
     return;
   }
@@ -774,7 +797,7 @@ function fillEditor() {
   if ($('#cfgProblems')) $('#cfgProblems').value = test.problems || '';
   if ($('#cfgAnswers')) $('#cfgAnswers').value = answerKeysToText(test);
   renderAnswerModeEditor(raw);
-  updateChrome(test);
+  updateChrome(test, projection);
   setTestSaveStatus('ready', '저장된 상태');
 }
 
@@ -998,19 +1021,59 @@ function downloadCsvTemplate() {
   URL.revokeObjectURL(url);
 }
 
-function findExistingTest(cat, patch) {
-  const tests = Array.isArray(cat.tests) ? cat.tests : [];
-  if (patch.id) {
-    const byId = tests.find(test => String(test?.id || '').trim() === patch.id);
-    if (byId) return byId;
+function createCsvTestIndex(cat, categoryKey) {
+  const byId = new Map();
+  const bySignature = new Map();
+  let nextOrder = 0;
+  const pastCategory = isPastCategory(categoryKey);
+  const idFor = test => String(test?.id || '').trim();
+  const signatureFor = test => JSON.stringify([
+    canonText(test?.name),
+    normalizeSubject(test?.curriculum || test?.subject),
+    String(normalizeDifficulty(categoryKey, test?.difficulty || test?.level, test?.name)).trim(),
+    String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim(),
+    pastCategory ? normalizeTerm(test?.term || test?.examTerm || test?.examPeriod || test?.exam_period, test?.name) : '',
+  ]);
+  function insert(map, key, entry) {
+    const bucket = map.get(key) || [];
+    let position = bucket.length;
+    // Key changes must retain the catalog's first-match order.
+    while (position > 0 && bucket[position - 1].order > entry.order) position -= 1;
+    bucket.splice(position, 0, entry);
+    map.set(key, bucket);
   }
-  return tests.find(test =>
-    canonText(test?.name) === patch.name &&
-    normalizeSubject(test?.curriculum || test?.subject) === patch.curriculum &&
-    String(normalizeDifficulty(patch.categoryKey, test?.difficulty || test?.level, test?.name)).trim() === patch.difficulty &&
-    String(normalizeRound(test?.round || test?.session || test?.no, test?.name)).trim() === patch.round &&
-    (!isPastCategory(patch.categoryKey) || normalizeTerm(test?.term || test?.examTerm || test?.examPeriod || test?.exam_period, test?.name) === patch.term)
-  ) || null;
+  function remove(map, key, entry) {
+    const bucket = map.get(key);
+    bucket.splice(bucket.indexOf(entry), 1);
+    if (!bucket.length) map.delete(key);
+  }
+  function add(test) {
+    const entry = { test, order: nextOrder++, id: idFor(test), signature: signatureFor(test) };
+    insert(byId, entry.id, entry);
+    insert(bySignature, entry.signature, entry);
+  }
+  function refresh(entry) {
+    const id = idFor(entry.test);
+    const signature = signatureFor(entry.test);
+    if (id !== entry.id) {
+      remove(byId, entry.id, entry);
+      entry.id = id;
+      insert(byId, id, entry);
+    }
+    if (signature !== entry.signature) {
+      remove(bySignature, entry.signature, entry);
+      entry.signature = signature;
+      insert(bySignature, signature, entry);
+    }
+  }
+  cat.tests.forEach(add);
+  return {
+    find: patch => (patch.id ? byId.get(patch.id)?.[0] : null) || bySignature.get(JSON.stringify([
+      patch.name, patch.curriculum, patch.difficulty, patch.round, pastCategory ? patch.term : '',
+    ]))?.[0] || null,
+    refresh,
+    add,
+  };
 }
 
 function reportCsvParseWarning(message, error) {
@@ -1039,6 +1102,7 @@ async function importTestsFromCsv(file) {
   let lastDifficulty = ui.difficulty;
   let lastTerm = ui.term;
   let lastRound = ui.round;
+  const csvIndexes = new Map();
 
   rows.slice(1).forEach((cells, idx) => {
     const sourceOrder = idx + 1;
@@ -1110,13 +1174,24 @@ async function importTestsFromCsv(file) {
         patch.examTerm = term;
       }
 
-      const existing = findExistingTest(cat, patch);
+      let index = csvIndexes.get(cat);
+      if (!index) {
+        index = createCsvTestIndex(cat, categoryKey);
+        csvIndexes.set(cat, index);
+      }
+      const match = index.find(patch);
+      const existing = match?.test;
       if (existing) {
         if (!rawId && rounds.length === 1) patch.id = canonText(existing.id) || patch.id;
+        const answers = projectAnswerRound(existing, { answers: answerKey, modes: answerModes, problems, round });
+        patch.answerKeys = answers.answerKeys;
+        patch.answerModes = answers.answerModes;
         Object.assign(existing, patch);
+        index.refresh(match);
         updated += 1;
       } else {
         cat.tests.push(patch);
+        index.add(patch);
         added += 1;
       }
     });
@@ -1141,13 +1216,13 @@ async function importTestsFromCsv(file) {
   ui.selectedId = '';
   $('#cfgType') && ($('#cfgType').value = ui.category);
   $('#cfgCur') && ($('#cfgCur').value = ui.subject);
-  await loadConfigAndStats();
+  await loadConfigAndStats({ waitForStats: false });
 
   const detail = errors.length ? `\n건너뜀 ${skipped}건\n${errors.slice(0, 5).join('\n')}` : '';
   alert(`CSV 가져오기 완료\n추가 ${added}건 · 업데이트 ${updated}건${detail}`);
 }
 
-async function loadConfigAndStats() {
+async function loadConfigAndStats({ waitForStats = true } = {}) {
   const statsVersion = ++statsLoadVersion;
   TEST_STATS_DETAIL = null;
   ui.statsTestId = '';
@@ -1171,8 +1246,7 @@ async function loadConfigAndStats() {
   updateTermOptions();
   updateRoundOptions();
   updateEditCategoryOptions(ui.category);
-  renderTestList();
-  fillEditor();
+  fillEditor(renderTestList());
   renderRules();
   syncCatalogMutationControls();
   renderStatsSummary();
@@ -1180,20 +1254,24 @@ async function loadConfigAndStats() {
   renderStatsDetail();
   testList?.setAttribute('aria-busy', 'false');
 
-  await new Promise(resolve => setTimeout(resolve, 0));
-  let nextStats = null;
-  try {
-    const recent = Number($('#statRecent')?.value || '30') || 30;
-    nextStats = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
-  } catch {
-    nextStats = null;
-  }
-  if (statsVersion !== statsLoadVersion) return;
-  TEST_STATS = nextStats;
-  renderTestList();
-  renderStatsSummary();
-  renderStatsTable();
-  renderStatsDetail();
+  const statsFlight = (async () => {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    let nextStats = null;
+    try {
+      const recent = Number($('#statRecent')?.value || '30') || 30;
+      nextStats = await fetchJSONSafe(`/api/tests-stats?recent_days=${recent}&include_wrong=0`);
+    } catch {
+      nextStats = null;
+    }
+    if (statsVersion !== statsLoadVersion) return;
+    TEST_STATS = nextStats;
+    renderTestList();
+    renderStatsSummary();
+    renderStatsTable();
+    renderStatsDetail();
+  })();
+  if (waitForStats) await statsFlight;
+  else void statsFlight.catch(error => console.error('[tests] statistics refresh failed', error));
 }
 
 async function loadStatsOnly() {
@@ -1218,7 +1296,7 @@ function renderStatsSummary() {
   const box = $('#statsSummary');
   if (!box) return;
   const categoryCounts = Object.fromEntries(
-    CATEGORY_DEFS.map(definition => [definition.key, getCategoryTests(definition.key).length]),
+    CATEGORY_DEFS.map(definition => [definition.key, categoryTestCount(definition.key)]),
   );
   const cards = projectStatsSummary({
     categoryDefinitions: CATEGORY_DEFS,
@@ -1265,9 +1343,10 @@ function renderStatsTable() {
   syncStatsControls();
   const def = CATEGORY_BY_KEY[ui.statsCategory] || CATEGORY_BY_KEY.UNIT;
   const queryText = ui.statsSearch || '';
-  const displayNameFor = createUnitTestDisplayNameResolver(getCategoryTests('UNIT'));
+  const tests = getCategoryTests(def.key);
+  const displayNameFor = createUnitTestDisplayNameResolver(def.key === 'UNIT' ? tests : getCategoryTests('UNIT'));
   const rows = projectStatsRows({
-    tests: getCategoryTests(def.key),
+    tests,
     definition: def,
     stats: TEST_STATS,
     queryText,
@@ -1373,6 +1452,7 @@ function openStatsDetailModal(test) {
 }
 
 function closeStatsDetailModal() {
+  statsDetailLoadVersion += 1;
   const modal = $('#statsDetailModal');
   if (!modal || modal.hidden) return;
   modal.hidden = true;
@@ -1399,19 +1479,30 @@ function renderStatsDetail(test = null, fetchDetail = false) {
 
   const selected = test || getCategoryTests(ui.statsCategory).find(item => item.id === ui.statsTestId);
   if (!selected) {
+    statsDetailLoadVersion += 1;
     host.innerHTML = '';
     return;
   }
 
   const stat = statForTest(selected, TEST_STATS, ui.statsCategory) || {};
   if (fetchDetail) {
+    const requestVersion = ++statsDetailLoadVersion;
+    const requestCategory = ui.statsCategory;
+    const requestRecent = String($('#statRecent')?.value || '30');
+    const isCurrentRequest = () => requestVersion === statsDetailLoadVersion &&
+      ui.statsTestId === selected.id && ui.statsCategory === requestCategory &&
+      String($('#statRecent')?.value || '30') === requestRecent;
     TEST_STATS_DETAIL = { records: [] };
     renderStatsDetail(selected, false);
+    host.innerHTML = '<p role="status">응시 기록을 불러오는 중입니다.</p>' + host.innerHTML;
     loadStatsDetail(selected).then(detail => {
+      if (!isCurrentRequest()) return;
       TEST_STATS_DETAIL = detail;
       renderStatsDetail(selected, false);
     }).catch(err => {
+      if (!isCurrentRequest()) return;
       console.error(err);
+      host.innerHTML = '<p role="alert">응시 기록을 불러오지 못했습니다. 닫은 뒤 다시 열어 주세요.</p>';
     });
     return;
   }
@@ -1499,8 +1590,7 @@ function bindUI() {
     updateTermOptions();
     updateRoundOptions();
     updateEditCategoryOptions(ui.category);
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
     renderRules();
     renderStatsSummary();
     renderStatsTable();
@@ -1515,8 +1605,7 @@ function bindUI() {
     updateListDifficultyOptions();
     updateTermOptions();
     updateRoundOptions();
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
     renderRules();
   });
 
@@ -1528,16 +1617,14 @@ function bindUI() {
     ui.selectedId = '';
     updateTermOptions();
     updateRoundOptions();
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
   });
 
   $('#cfgRoundFilter')?.addEventListener('change', e => {
     clearCatalogOrderFeedback();
     ui.round = String(e.target.value || '').trim();
     ui.selectedId = '';
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
   });
 
   $('#cfgEditType')?.addEventListener('change', e => {
@@ -1562,8 +1649,7 @@ function bindUI() {
     clearCatalogOrderFeedback();
     ui.term = String(e.target.value || '').trim();
     ui.selectedId = '';
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
   });
 
   $('#cfgCatalogSearch')?.addEventListener('input', e => {
@@ -1628,8 +1714,7 @@ function bindUI() {
     updateListDifficultyOptions();
     updateTermOptions();
     updateRoundOptions();
-    renderTestList();
-    fillEditor();
+    fillEditor(renderTestList());
     if ($('#cfgEditType')) $('#cfgEditType').value = ui.category;
     updateDifficultyOptions(ui.category);
     updateEditTermOptions(ui.category);
@@ -1655,12 +1740,19 @@ function bindUI() {
     const round = normalizeRound($('#cfgRound')?.value || '1');
     const answers = $('#cfgAnswers')?.value || '';
     const answerModes = currentAnswerModes(problems);
-    const answerProjection = projectAnswerRound(selectedTestRef()?.test || null, {
-      answers,
-      problems,
-      round,
-      modes: answerModes,
-    });
+    let answerProjection;
+    try {
+      answerProjection = projectAnswerRound(selectedTestRef()?.test || null, {
+        answers,
+        problems,
+        round,
+        modes: answerModes,
+      });
+    } catch (error) {
+      setTestSaveStatus('error', error?.message || '정답 입력 형식을 확인해주세요');
+      $('#cfgAnswers')?.focus?.();
+      return;
+    }
     const answerKey = answerProjection.answerKey;
 
     if (!name) {
@@ -1736,8 +1828,7 @@ function bindUI() {
       updateTermOptions();
       updateRoundOptions();
       updateEditCategoryOptions(targetCategory);
-      renderTestList();
-      fillEditor();
+      fillEditor(renderTestList());
       renderRules();
       renderStatsSummary();
       setTestSaveStatus('success', `저장 완료 · ${testSaveClock()}`);

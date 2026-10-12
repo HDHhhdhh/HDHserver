@@ -10,6 +10,8 @@ const historicalSidB = 'student-cleanup-history-b';
 const historicalSidNoProgress = 'student-cleanup-no-progress';
 const testLabel = '단원평가 / 공수1 / Lv.3 / 1회차 / 테스트 A';
 const explicitBlankLabel = '단원평가 / 공수1 / Lv.3 / 2회차 / 테스트 B';
+const interruptedLabel = '단원평가 / 공수1 / Lv.3 / 3회차 / 테스트 C';
+const skipLabel = '단원평가 / 공수1 / Lv.3 / 4회차 / 테스트 D';
 
 class StubElement {
   constructor(tagName = 'div') {
@@ -125,6 +127,7 @@ const { state } = await import('../static/js/admin/core/state.js');
 const {
   bindTodayTableEvents,
   completeAssignedTestsForRecordCleanup,
+  preloadRecordCleanupEntries,
 } = await import('../static/js/admin/features/today.render.js?v=20260824-linked-leave1');
 
 const requestKey = (date, sid) => `${date}\u0000${sid}`;
@@ -137,12 +140,14 @@ const batchProgressReadDates = [];
 const progressPatchBodies = [];
 const logPatchBodies = [];
 const batchLogPatchBodies = [];
+let youtubeCleanupSupported = false;
 
 function okJson(body) {
   const text = JSON.stringify(body);
   return {
     ok: true,
     status: 200,
+    headers: { get: name => name === 'X-YouTube-Record-Cleanup' && youtubeCleanupSupported ? '1' : null },
     json: async () => body,
     text: async () => text,
   };
@@ -259,7 +264,8 @@ state.logs = {
     [selectedSid]: {
       done: true,
       archived: false,
-      testAssignmentDailyTests: [{ label: explicitBlankLabel, status: 'assigned' }],
+      testAssignmentDailyTests: [explicitBlankLabel, interruptedLabel, skipLabel]
+        .map(label => ({ label, status: 'assigned' })),
     },
   },
 };
@@ -283,13 +289,16 @@ window.logs = state.logs;
 authoritativeLogs.set(requestKey(selectedDate, selectedSid), {
   done: true,
   archived: false,
-  testAssignmentDailyTests: [{ label: explicitBlankLabel, status: 'assigned' }],
+  testAssignmentDailyTests: [explicitBlankLabel, interruptedLabel, skipLabel]
+    .map(label => ({ label, status: 'assigned' })),
 });
 authoritativeProgress.set(requestKey(selectedDate, selectedSid), {
   video_1: 'done',
   tests: {
     [testLabel]: 'assigned',
-    [explicitBlankLabel]: '',
+    [explicitBlankLabel]: { status: 'none', explicitBlank: true },
+    [interruptedLabel]: 'interrupted',
+    [skipLabel]: 'skip',
   },
 });
 
@@ -325,7 +334,15 @@ assert.equal(
   'cleanup must complete assigned log metadata',
 );
 assert.equal(state.progress[selectedDate][selectedSid].tests[testLabel], 'done', 'local progress cache must become done');
-assert.equal(state.progress[selectedDate][selectedSid].tests[explicitBlankLabel], '', 'explicit blank cache value must survive');
+assert.deepEqual(
+  state.progress[selectedDate][selectedSid].tests[explicitBlankLabel],
+  { status: 'none', explicitBlank: true },
+  'explicit white retest state must survive record cleanup',
+);
+assert.equal(state.progress[selectedDate][selectedSid].tests[interruptedLabel], 'interrupted',
+  'orange retest state must survive record cleanup despite stale assigned log metadata');
+assert.equal(state.progress[selectedDate][selectedSid].tests[skipLabel], 'skip',
+  'red retest state must survive record cleanup despite stale assigned log metadata');
 assert.equal(reloadOptions.length, 1, 'cleanup must reload today table once');
 
 console.log('record cleanup assigned-test status verifier passed');
@@ -540,3 +557,25 @@ assert.equal(logPatchBodies.length, 0, 'malformed progress must leave the row un
 assert.equal(batchLogPatchBodies.length, 0, 'malformed progress must not batch archive the row');
 
 console.log('record cleanup latest-read fail-closed verifier passed');
+
+resetTracking();
+youtubeCleanupSupported = true;
+state.videos = []; // A stale catalog must not suppress a server-supported command.
+const youtubeSid = 'student-youtube-cleanup';
+authoritativeLogs.set(requestKey(selectedDate, youtubeSid), { done: true, archived: false });
+authoritativeProgress.set(requestKey(selectedDate, youtubeSid), {});
+await completeAssignedTestsForRecordCleanup(selectedDate, youtubeSid);
+assert.equal(progressPatchBodies.length, 1);
+assert.deepEqual(progressPatchBodies[0], { date: selectedDate, sid: youtubeSid, progress: { tests: {} }, completeAssignedYouTube: true });
+resetTracking();
+const latestYoutube = await preloadRecordCleanupEntries([[selectedDate, youtubeSid]]);
+await completeAssignedTestsForRecordCleanup(selectedDate, youtubeSid, latestYoutube.get(requestKey(selectedDate, youtubeSid)));
+assert.equal(progressPatchBodies.length, 1);
+assert.equal(progressPatchBodies[0].completeAssignedYouTube, true, 'bulk cleanup must issue the same command');
+youtubeCleanupSupported = false;
+state.videos = [{ provider: 'youtube' }];
+resetTracking();
+await assert.rejects(completeAssignedTestsForRecordCleanup(selectedDate, youtubeSid), /서버 반영/);
+assert.equal(progressPatchBodies.length, 0, 'old backend must not silently ignore YouTube completion');
+assert.equal(logPatchBodies.length, 0);
+console.log('record cleanup YouTube capability, stale catalog, shared bulk command and old-server fail-closed checks passed');

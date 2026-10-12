@@ -21,8 +21,9 @@
     const category = `${item?.categoryKey || ''} ${item?.categoryLabel || ''} ${item?.category || ''} ${item?.label || ''}`;
     const difficulty = String(item?.difficulty || '').trim();
     if (category.includes('ILSAN') || category.includes('일산')) {
+      if (difficulty === '중상' || difficulty === '상' || difficulty === '그래프 포함') return difficulty;
       if (difficulty.includes('그래프')) return '그래프 포함';
-      if (difficulty === '상') return '중상';
+      if (difficulty === '중') return '중상';
     }
     return difficulty;
   }

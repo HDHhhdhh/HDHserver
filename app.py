@@ -23,6 +23,7 @@ from core.paths import (
     PAGE_FOLDERS_PATH,
     STU_PATH,
 )
+from core import paths as runtime_paths
 try:
     from core.paths import PERSONS_PATH, PERSON_IDENTITY_JOURNAL_PATH
 except ImportError:  # Compatibility for isolated app fixtures with a minimal paths stub.
@@ -36,7 +37,7 @@ from core.person_identity_store import (
     recover_identity_state_if_needed,
 )
 from core.runtime_server_guard import refuse_concurrent_live_server
-from core.request_consistency import absence_barrier_mode
+from core.request_consistency import POST_DATE_ENDPOINTS, absence_barrier_mode, request_has_invalid_scoped_date
 
 from core.network_access import (
     academy_network_allowed,
@@ -104,7 +105,7 @@ from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_student_logs import bp_api_student_logs
 from routes.api_non_student_ocr import bp_api_non_student_ocr
-from routes.api_student_test_ocr import bp_api_student_test_ocr
+from routes.api_student_test_ocr import bp_api_student_test_ocr, configure_student_test_ocr_maintenance
 from routes.absence_assignment_cleanup import (
     AbsenceRecoveryRequiredError,
     absence_read_barrier,
@@ -114,6 +115,10 @@ from routes.absence_assignment_cleanup import (
 
 def create_app() -> Flask:
     refuse_concurrent_live_server()
+    # Older isolated app fixtures inject a constants-only paths module.
+    initialize_paths = getattr(runtime_paths, "initialize_runtime_paths", None)
+    if initialize_paths is not None:
+        initialize_paths()
 
     recovered_absence_transaction = recover_pending_absence_transactions()
     if recovered_absence_transaction:
@@ -241,13 +246,18 @@ def create_app() -> Flask:
         return response
 
     def needs_absence_consistency_barrier() -> bool:
-        return absence_barrier_mode(request.path, request.method) is not None
+        return absence_barrier_mode(request.path, request.method, request.args) is not None
 
     @app.before_request
     def wait_for_absence_transaction():
         if not needs_absence_consistency_barrier():
             return
-        barrier = absence_read_barrier(shared=absence_barrier_mode(request.path, request.method) == "shared")
+        date_body = None
+        if request.method == "POST" and request.path in POST_DATE_ENDPOINTS:
+            date_body = request.get_json(force=request.path != "/api/absent/recover", silent=True)
+        if request_has_invalid_scoped_date(request.path, request.method, request.args, date_body):
+            return
+        barrier = absence_read_barrier(shared=absence_barrier_mode(request.path, request.method, request.args) == "shared")
         try:
             barrier.__enter__()
         except (AbsenceRecoveryRequiredError, TimeoutError) as exc:
@@ -374,6 +384,7 @@ def create_app() -> Flask:
     if student_app_config.homework_enabled:
         app.register_blueprint(bp_api_student_homework_admin)
     app.register_blueprint(bp_api_student_focus_admin)
+    configure_student_test_ocr_maintenance()
     return app
 
 

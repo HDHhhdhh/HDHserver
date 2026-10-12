@@ -1,5 +1,6 @@
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from './shared/search.js';
 import { nextVideoId } from './shared/videoIds.js';
+import { parseYouTubeUrl, GICHUL_COURSE } from './shared/videoSources.js';
 import { buildVideoCorrectionDraft, protectedVideoIdentityChanges, videoCorrectionSummary } from './shared/videoCatalogIdentity.js';
 
 const toast = msg => {
@@ -23,8 +24,10 @@ const $ = id => document.getElementById(id);
         '대수': ['A:Ble', 'APEX'], '기하': ['A:Ble', 'APEX'],
         '확통': ['A:Ble', 'APEX']
     };
+    Object.values(SUB).forEach(courses => courses.push(GICHUL_COURSE));
 
     let videos = [];
+    let youtubeSupported = false;
     const CT = { "Content-Type": "application/json" };
     const vidTable = $('vidTable');
     const saveVidBtn = $('saveVid');
@@ -80,32 +83,49 @@ const $ = id => document.getElementById(id);
         return saved;
     }
 
-    function syncVisibleVideoRowsFromTable() {
-        document.querySelectorAll('#vidTable tr[data-idx]').forEach(tr => {
-            const i = +tr.dataset.idx;
-            const row = videos[i];
-            const cells = tr.children;
-            if (!row || cells.length < 9) return;
+    function syncVideoRowFromTable(tr) {
+        if (!tr) return;
+        const i = +tr.dataset.idx;
+        const row = videos[i];
+        const cells = tr.children;
+        if (!row || cells.length < 9) return;
 
-            row.curriculum = cells[1].innerText.trim();
-            row.subCurriculum = cells[2].innerText.trim();
-            row.chapter = +cells[3].innerText.trim() || 1;
-            const exS = cells[4].innerText.trim();
-            const exM = cells[5].innerText.trim();
-            const exH = cells[6].innerText.trim();
-            if (exS || exM || exH) {
-                row.exNum = {};
-                if (exS) row.exNum['상'] = +exS;
-                if (exM) row.exNum['중'] = +exM;
-                if (exH) row.exNum['하'] = +exH;
-            } else {
-                delete row.exNum;
+        row.curriculum = cells[1].innerText.trim();
+        row.subCurriculum = cells[2].innerText.trim();
+        row.chapter = +cells[3].innerText.trim() || 1;
+        const exS = cells[4].innerText.trim();
+        const exM = cells[5].innerText.trim();
+        const exH = cells[6].innerText.trim();
+        if (exS || exM || exH) {
+            row.exNum = {};
+            if (exS) row.exNum['상'] = +exS;
+            if (exM) row.exNum['중'] = +exM;
+            if (exH) row.exNum['하'] = +exH;
+        } else {
+            delete row.exNum;
+        }
+        row.title = cells[7].innerText.trim();
+        row.url = cells[8].innerText.trim();
+        try {
+            const youtube = parseYouTubeUrl(row.url, row.id);
+            if (youtube) Object.assign(row, youtube);
+            else {
+                const nextMid = extractKollusMid(row.url);
+                if (nextMid) row.mid = nextMid;
             }
-            row.title = cells[7].innerText.trim();
-            row.url = cells[8].innerText.trim();
-            const nextMid = extractKollusMid(row.url);
-            if (nextMid) row.mid = nextMid;
-        });
+        } catch { /* The authoritative save rejects malformed YouTube links. */ }
+        const cachedSearch = drawVid.searchKeys?.get(row);
+        if (cachedSearch) {
+            const searchText = [
+                row.id, row.curriculum, row.subCurriculum, row.chapter,
+                row.title, row.url, row.mid, JSON.stringify(row.exNum || {}),
+            ].join(' ');
+            if (searchText !== cachedSearch.text) drawVid.searchKeys.delete(row);
+        }
+    }
+
+    function syncVisibleVideoRowsFromTable() {
+        document.querySelectorAll('#vidTable tr[data-idx]').forEach(syncVideoRowFromTable);
     }
 
     function hasCorrectionChanges(summary) {
@@ -141,9 +161,9 @@ const $ = id => document.getElementById(id);
         }
     }
 
-    function updateCorrectionStatus(suffix = '') {
+    function updateCorrectionStatus(suffix = '', syncRows = true) {
         if (!correctionMode || !correctionBaseVideos) return;
-        syncVisibleVideoRowsFromTable();
+        if (syncRows) syncVisibleVideoRowsFromTable();
         const summary = videoCorrectionSummary(correctionBaseVideos, videos);
         if (correctionStatus) {
             correctionStatus.textContent = `서버 미반영 · ${correctionSummaryText(summary)}${suffix}`;
@@ -215,7 +235,7 @@ const $ = id => document.getElementById(id);
         anchor.click();
         anchor.remove();
         setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-        updateCorrectionStatus(' · 수정안 다운로드 완료(아직 서버 미반영)');
+        updateCorrectionStatus(' · 수정안 다운로드 완료(아직 서버 미반영)', false);
         toast('수정안 파일 다운로드 완료');
     }
 
@@ -282,7 +302,7 @@ const $ = id => document.getElementById(id);
                 const cand = String(parts[parts.length - 1] || '').replace(/\.[A-Za-z0-9]+$/, '');
                 if (/^[A-Za-z0-9_-]+$/.test(cand)) return cand;
             }
-            if (!/kollus\.com$/i.test(u.hostname) && !/\.kollus\.com$/i.test(u.hostname)) return '';
+            if (!/kollus\.com$/i.test(u.hostname)) return '';
 
             for (const key of ['mid', 'm', 'media_content_key', 'MEDIA_CONTENT_KEY', 'content_key']) {
                 const cand = String(u.searchParams.get(key) || '').trim();
@@ -362,7 +382,10 @@ const $ = id => document.getElementById(id);
 
     // 공통 초기 로드
     Promise.all([
-        fetch('/api/videos').then(r => r.json())
+        fetch('/api/videos', { cache: 'no-store' }).then(r => {
+            youtubeSupported = String(r.headers.get('X-Video-Providers') || '').split(',').includes('youtube');
+            return r.json();
+        })
     ]).then(([vids]) => {
         videos = vids;
         lastSavedVideoBody = JSON.stringify(videos);
@@ -380,21 +403,34 @@ const $ = id => document.getElementById(id);
         const queryText = searchEl ? searchEl.value : '';
         if (!vidTable) return;
 
+        const videoIndexes = new Map();
+        const duplicateIndexes = new Set();
+        videos.forEach((video, index) => {
+            if (!videoIndexes.has(video.id)) videoIndexes.set(video.id, index);
+            else duplicateIndexes.add(videoIndexes.get(video.id));
+        });
+        drawVid.duplicateIndexes = duplicateIndexes;
+        const hasSearch = Boolean(queryText.trim());
+        const searchKeys = drawVid.searchKeys || (drawVid.searchKeys = new WeakMap());
+        const keyForVideo = video => {
+            let cached = searchKeys.get(video);
+            if (!cached) {
+                const text = [
+                    video.id, video.curriculum, video.subCurriculum, video.chapter,
+                    video.title, video.url, video.mid, JSON.stringify(video.exNum || {}),
+                ].join(' ');
+                cached = { text, key: searchKeyForText(text) };
+                searchKeys.set(video, cached);
+            }
+            return cached.key;
+        };
+
         // ② videos 배열에서 필터 적용 (빈 값이면 전체)
         const list = videos
             .filter(v =>
                 (!curSel || v.curriculum === curSel) &&
                 (!subSel || v.subCurriculum === subSel) &&
-                matchesSearchKey(searchKeyForText([
-                    v.id,
-                    v.curriculum,
-                    v.subCurriculum,
-                    v.chapter,
-                    v.title,
-                    v.url,
-                    v.mid,
-                    JSON.stringify(v.exNum || {}),
-                ].join(' ')), queryText)
+                (!hasSearch || matchesSearchKey(keyForVideo(v), queryText))
             )
             // ③ 커리큘럼→세부과정→챕터 순으로 정렬
             .sort((a, b) => {
@@ -421,13 +457,13 @@ const $ = id => document.getElementById(id);
       <th style="width:40px">Del</th>
     </tr>
     ${list.map(v => {
-            const idx = videos.findIndex(x => x.id === v.id);
+            const idx = videoIndexes.get(v.id);
             return `
         <tr data-idx="${idx}">
           <td>${v.id}</td>
           <td>${v.curriculum}</td>
           <td>${v.subCurriculum || ''}</td>
-          <td contenteditable>${v.chapter}</td>
+          <td contenteditable>${v.chapter ?? ''}</td>
           <td contenteditable>${v.exNum?.['상'] || ''}</td>
           <td contenteditable>${v.exNum?.['중'] || ''}</td>
           <td contenteditable>${v.exNum?.['하'] || ''}</td>
@@ -452,15 +488,17 @@ const $ = id => document.getElementById(id);
         // ⑥ 편집 셀 blur 시 현재 화면을 배열에 반영한다. 저장 여부는 모드가 결정한다.
         vidTable.querySelectorAll('td[contenteditable]').forEach(td => {
             td.addEventListener('blur', () => {
-                syncVisibleVideoRowsFromTable();
-                if (correctionMode) updateCorrectionStatus();
+                const tr = td.closest('tr');
+                if (drawVid.duplicateIndexes?.has(+tr.dataset.idx)) syncVisibleVideoRowsFromTable();
+                else syncVideoRowFromTable(tr);
+                if (correctionMode) updateCorrectionStatus('', false);
             });
         });
     }
 
 
 
-    const videoSection = document.getElementById('videoSection');  // 영상 관리 섹션 :contentReference[oaicite:2]{index=2}
+    const videoSection = document.getElementById('videoSection');  // 영상 관리 섹션
     const maincurricula = [
         '공수1',
         '공수2',
@@ -472,7 +510,7 @@ const $ = id => document.getElementById(id);
     ];
     const subCurricula = [
         'A:Ble',
-        'APEX'
+        'APEX', GICHUL_COURSE
     ];
     const filterDiv = document.createElement('div');
     filterDiv.className = 'video-filter-row';
@@ -535,8 +573,14 @@ const $ = id => document.getElementById(id);
             if (!subVidEl.value) return alert('세부과정을 선택하세요.');
             if (!vTitleEl.value.trim()) return alert('제목을 입력하세요.');
             const fullUrl = vUrlEl.value.trim();
-            const mid = extractKollusMid(fullUrl);
-            if (!mid) return alert('유효한 Kollus URL이 아닙니다.');
+            let youtube;
+            try { youtube = parseYouTubeUrl(fullUrl, nextVideoId(videos)); } catch (error) { return alert(error.message); }
+            if (youtube && !youtubeSupported) return alert('YouTube 기능의 서버 반영 후 등록할 수 있습니다.');
+            const mid = youtube?.mid || extractKollusMid(fullUrl);
+            if (!mid) return alert('유효한 Kollus 또는 YouTube 영상·재생목록 URL을 입력하세요.');
+            if (youtube && videos.some(v => v.youtubeId === youtube.youtubeId && v.youtubeKind === youtube.youtubeKind && v.curriculum === vCurEl.value && v.subCurriculum === subVidEl.value)) {
+                return alert('같은 커리큘럼에 이미 등록된 YouTube 영상/재생목록입니다.');
+            }
 
             // 값 파싱
             const curriculum = vCurEl.value;
@@ -555,6 +599,7 @@ const $ = id => document.getElementById(id);
                 url: fullUrl,
                 exNum: {}
             };
+            if (youtube) Object.assign(newVid, youtube);
             if (exHighEl.value) newVid.exNum['상'] = parseInt(exHighEl.value, 10);
             if (exMidEl.value) newVid.exNum['중'] = parseInt(exMidEl.value, 10);
             if (exLowEl.value) newVid.exNum['하'] = parseInt(exLowEl.value, 10);
@@ -582,7 +627,7 @@ const $ = id => document.getElementById(id);
         }
         syncVisibleVideoRowsFromTable();
         if (correctionMode) {
-            updateCorrectionStatus();
+            updateCorrectionStatus('', false);
             toast('수정 모드에서는 서버 저장 안 됨');
             return;
         }
@@ -632,6 +677,7 @@ const $ = id => document.getElementById(id);
                     return;
                 }
                 console.error('[video-manage] save failed', err);
+                setVideoSafetyNotice(err.message || '영상 저장 실패', true);
                 toast('영상 저장 실패');
             })
             .finally(() => {

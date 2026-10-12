@@ -17,6 +17,7 @@ from core.quick_printer_export import (
     build_test_definitions,
     file_sha256,
     normalize_subject,
+    normalize_difficulty,
     normalize_term,
     read_registered_catalog,
     test_definitions_sha256,
@@ -70,18 +71,22 @@ def _positive_int(value: Any) -> int | None:
 
 
 def _catalog_meta(row: dict) -> dict:
+    category_key = CATALOG_CATEGORY_KEYS.get(_text(row.get("자료유형")), "")
+    display_name = _text(row.get("표시이름"))
     return {
         "materialId": _text(row.get("자료ID")),
-        "categoryKey": CATALOG_CATEGORY_KEYS.get(_text(row.get("자료유형")), ""),
+        "categoryKey": category_key,
         "subject": normalize_subject(row.get("과목")),
-        "difficulty": _difficulty(row.get("레벨")),
+        "difficulty": (
+            normalize_difficulty(category_key, row.get("레벨"), display_name)
+            if category_key == "ILSAN_PAST" else _difficulty(row.get("레벨"))
+        ),
         "term": _term(row.get("시험구분")),
         "round": _text(row.get("회차")),
         "individualNumber": _positive_int(row.get("개별번호")),
-        "displayName": _text(row.get("표시이름")),
+        "displayName": display_name,
         "fileName": _text(row.get("파일명")),
         "relativePath": _text(row.get("상대경로")),
-        "row": row,
     }
 
 
@@ -126,7 +131,6 @@ def _related_candidates(definition: dict, catalog: list[dict]) -> list[dict]:
 
 
 def _issue(
-    definition: dict,
     *,
     code: str,
     reason: str,
@@ -209,7 +213,6 @@ def build_mapping_bundle(tests_config: dict, catalog_rows: list[dict], catalog_h
                 continue
             candidates = catalog_unit_groups.get(group_key, [])[:8]
             issues[test_id] = _issue(
-                definition,
                 code="unit_group_not_exact",
                 reason=unit_group_failures.get(group_key, "단원평가 그룹을 정확히 대조할 수 없습니다."),
                 candidates=candidates,
@@ -244,7 +247,6 @@ def build_mapping_bundle(tests_config: dict, catalog_rows: list[dict], catalog_h
             )
         elif len(candidates) > 1:
             issues[test_id] = _issue(
-                definition,
                 code="ambiguous_registered_material",
                 reason="같은 서버 시험과 정확히 일치하는 등록 자료가 여러 개입니다.",
                 candidates=candidates,
@@ -252,7 +254,6 @@ def build_mapping_bundle(tests_config: dict, catalog_rows: list[dict], catalog_h
             )
         else:
             issues[test_id] = _issue(
-                definition,
                 code="registered_material_not_found",
                 reason="서버 시험과 정확히 일치하는 등록 자료가 없습니다.",
                 candidates=_related_candidates(definition, catalog),
@@ -268,9 +269,7 @@ def build_mapping_bundle(tests_config: dict, catalog_rows: list[dict], catalog_h
         candidate = next((row for row in catalog if row["materialId"] == material_id), None)
         for test_id in owner_ids:
             mapping = mappings.pop(test_id)
-            definition = next(row for row in definitions if row["id"] == test_id)
             issues[test_id] = _issue(
-                definition,
                 code="duplicate_material_mapping",
                 reason="하나의 자료ID가 여러 서버 시험에 매핑되어 자동 선택할 수 없습니다.",
                 candidates=[candidate] if candidate else [],

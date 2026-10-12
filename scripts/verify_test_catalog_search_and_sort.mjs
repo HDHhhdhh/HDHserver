@@ -58,6 +58,7 @@ class ElementStub {
     this.disabled = false;
     this.dataset = {};
     this.style = {};
+    this.handlers = {};
     this.classList = {
       add() {},
       remove() {},
@@ -65,7 +66,7 @@ class ElementStub {
     };
   }
 
-  addEventListener() {}
+  addEventListener(type, handler) { this.handlers[type] = handler; }
   setAttribute(name, value) { this[name] = String(value); }
   querySelector() { return null; }
   querySelectorAll() { return []; }
@@ -138,7 +139,7 @@ const context = {
         status: 200,
         headers: { get: name => String(name).toLowerCase() === 'x-tests-config-revision' ? 'b'.repeat(64) : '' },
         text: async () => '{}',
-        json: async () => ({ test: { id: 'patch-check', saved: true } }),
+        json: async () => ({ test: init.body ? JSON.parse(init.body).test : { id: 'patch-check', saved: true } }),
       }
       : { ok: false, status: 500, headers: { get: () => '' }, text: async () => 'failure' };
   },
@@ -410,11 +411,41 @@ window.__catalogSortScenario = (async () => {
     'single-test save omitted explicit term clears',
   );
 
+  const compoundAnswers = ['1', '-1/7', 'M = 44, m = 3', '(9/7, 50/7)'];
+  const compoundModes = ['choice_number', 'answer_value', 'answer_value', 'answer_value'];
+  const compound = {
+    id: 'ilsan-compound', name: '서술형 보존', curriculum: '공수2', difficulty: '상',
+    term: '중간고사', round: '1', problems: 4, answerKey: compoundAnswers.slice(),
+    answerKeys: { '1': compoundAnswers.slice() }, answerModes: { '1': compoundModes.slice() },
+    sourceFiles: { solutionFileId: 'synthetic-solution', futureMetadata: 'preserve' },
+  };
+  TEST_CFG = ensureConfig({ categories: { ILSAN_PAST: { label: '일산 기출', tests: [compound] } } });
+  ui.category = 'ILSAN_PAST'; ui.subject = '공수2'; ui.difficulty = '상';
+  ui.term = '중간고사'; ui.selectedId = compound.id;
+  document.querySelectorAll = selector => selector === '#cfgAnswerModes select[data-question-no]'
+    ? compoundModes.map(value => ({ value })) : [];
+  bindUI();
+  fillEditor();
+  check(JSON.stringify(JSON.parse($('#cfgAnswers').value)) === JSON.stringify(compoundAnswers), 'editor split a compound answer on load');
+  $('#cfgName').value = '이름만 변경';
+  await $('#btnSaveTest').handlers.click();
+  const compoundPatch = fetchCalls.at(-1);
+  check(compoundPatch.method === 'PATCH' && compoundPatch.body.test.id === compound.id, 'editor did not save the selected synthetic test');
+  check(compoundPatch.body.test.difficulty === '상', 'editor collapsed high difficulty');
+  check(JSON.stringify(compoundPatch.body.test.answerKey) === JSON.stringify(compoundAnswers), 'rename/save changed compound answers');
+  check(compoundPatch.body.test.sourceFiles.futureMetadata === 'preserve', 'rename/save dropped source metadata');
+  const writesBeforeInvalid = fetchCalls.length;
+  $('#cfgAnswers').value = '["1",';
+  await $('#btnSaveTest').handlers.click();
+  check(fetchCalls.length === writesBeforeInvalid, 'invalid answer JSON reached transport');
+  check($('#testSaveStatus').textContent.includes('JSON 배열'), 'invalid answer JSON did not show editor feedback');
+
   return {
     successfulPosts: fetchCalls.filter(call => call.method === 'POST').length - 1,
     rollbackVerified: true,
     searchAndScopeGuardsVerified: true,
     rawMetadataVerified: true,
+    compoundAnswerEditorRoundTripVerified: true,
   };
 })();
 `, context, { filename: 'verify_test_catalog_search_and_sort.scenario.js' });
@@ -426,7 +457,7 @@ assert.match(testsHtml, /id="cfgCatalogSearch"[^>]*type="search"/);
 assert.match(testsHtml, /id="catalogOrderHint"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="testSaveStatus"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="statSearch"[^>]*type="search"/);
-assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260829-catalog-statistics-state-r1" type="module"><\/script>/);
+assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260907-ilsan-level-r1&hub=20261001-detail1" type="module"><\/script>/);
 assert.doesNotMatch(testsHtml, /sortable(?:\.min)?\.js|jquery-ui/i);
 assert.match(source, /\.test-drag-handle\[draggable="true"\]/);
 assert.match(source, /data-move="up"/);

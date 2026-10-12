@@ -155,7 +155,6 @@ body.admin .admin-workspace {
    Left rail
    ========================================= */
 body.admin .control-rail {
-  display: none !important;
   position: sticky;
   top: 12px;
   max-height: calc(100vh - 24px);
@@ -413,15 +412,6 @@ body.admin .hero-date-mount {
   min-width: 0;
 }
 
-body.admin .hero-panel.is-date-centered .hero-date-mount {
-  position: absolute;
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
-  left: var(--hero-date-left, 50%);
-  top: var(--hero-date-top, 50%);
-  transform: translate(-50%, -50%);
-  z-index: 1;
-}
 
 body.admin .hero-panel.is-date-centered .hero-date-mount {
   position: static !important;
@@ -978,10 +968,20 @@ body.admin.dark #calendar .fc-col-header-cell-cushion {
 
 body.admin #calendar .fc-daygrid-day-frame {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: var(--calendar-cell-height, 96px);
   min-height: var(--calendar-cell-height, 96px);
-  padding-top: 22px;
+  padding-top: 30px;
   box-sizing: border-box;
+}
+
+body.admin #calendar .fc-daygrid-day-events {
+  order: 3;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 4px;
 }
 
 body.admin #calendar .fc-daygrid-day-top {
@@ -1046,10 +1046,13 @@ body.admin #calendar .fc-daygrid-day.fc-day-today .att-count-badge {
 }
 
 body.admin #calendar .att-count-badge {
-  position: absolute;
-  left: 50%;
-  top: 54%;
-  transform: translate(-50%, -50%);
+  position: static;
+  order: 2;
+  flex: 1 1 auto;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 15px;
   font-weight: 800;
   line-height: 1;
@@ -1066,10 +1069,10 @@ body.admin #calendar .fc-daygrid-day.cal-main-week .att-count-badge {
 }
 
 body.admin #calendar .makeup-conflict-list {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  top: calc(54% + 18px);
+  position: static;
+  order: 4;
+  flex: 0 0 auto;
+  margin: 2px 6px 4px;
   z-index: 5;
   display: grid;
   justify-items: center;
@@ -1375,36 +1378,6 @@ body.admin.dark .makeup-planner input[type="search"] {
   background: #0b1220;
 }
 
-@media (max-width: 640px) {
-  body.admin .makeup-planner-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  body.admin .makeup-planner-head > div,
-  body.admin .makeup-planner-control-group {
-    min-width: 0;
-    width: 100%;
-  }
-
-  body.admin .makeup-planner-control-group {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-
-  body.admin .makeup-export-btn {
-    flex: 1 1 92px;
-    height: 44px;
-    min-height: 44px;
-  }
-
-  body.admin .makeup-planner input[type="search"] {
-    width: 100%;
-    min-width: 0;
-    height: 44px;
-  }
-}
 
 body.admin .makeup-planner-list {
   display: grid;
@@ -1483,14 +1456,10 @@ body.admin .makeup-scheduled-badge {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  border: 1px solid var(--makeup-accent-line);
-  border-radius: 999px;
-  background: var(--makeup-accent-soft);
   color: var(--makeup-accent-ink);
-  font-size: 12px;
+  font-size: inherit;
   font-weight: 900;
-  line-height: 1;
-  padding: 4px 8px;
+  line-height: inherit;
 }
 
 body.admin .makeup-actions {
@@ -2072,6 +2041,31 @@ body.admin .modal-panel.tiny {
 body.admin .modal-panel.column {
   display: flex;
   flex-direction: column;
+}
+
+body.admin #schoolExamInfoPopup {
+  --card: #fff;
+  --ink: #172033;
+  --ink-soft: #667085;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --brand-soft: #f7f8fa;
+  color: var(--ink);
+  color-scheme: light;
+}
+
+body.admin #schoolExamInfoPopup .school-exam-info-panel {
+  background: var(--card);
+  color: var(--ink);
+}
+
+body.admin #schoolExamInfoPopup .muted {
+  color: var(--ink-soft);
+}
+
+body.admin #schoolExamInfoPopup .modal-close {
+  background: #f7f8fa;
+  color: #475467;
 }
 
 body.admin .modal-close {
@@ -6179,7 +6173,8 @@ body.admin.tests-page .summary-card:active {
     align-self: stretch;
     align-content: start;
     gap: 5px 8px;
-    overflow: visible;
+    overflow: auto;
+    scrollbar-gutter: stable;
   }
 
   body.admin .hero-panel > .announcement-section .announcement-field {
@@ -7271,7 +7266,9 @@ body.admin #missingLeaveWarning {
   grid-row: 1;
   min-height: 22px;
   padding: 0;
-  gap: 8px;
+  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -7280,8 +7277,72 @@ body.admin #missingLeaveWarning {
   font-size: 15px;
   font-weight: 700;
   line-height: 22px;
-  white-space: nowrap;
-  overflow-wrap: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+body.admin .missing-leave-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin .missing-leave-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+body.admin .missing-leave-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+}
+
+body.admin .missing-leave-list li > div {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+body.admin .missing-leave-student,
+body.admin .missing-leave-reason {
+  display: block;
+}
+
+body.admin .missing-leave-reason {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body.admin .missing-leave-open {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (min-width: 1501px) {
+  body.admin:not(.admin-simple) .hero-panel:has(#missingLeaveWarning:not([hidden])) {
+    height: auto;
+    min-height: var(--admin-hero-command-height);
+  }
+
+  body.admin:not(.admin-simple) .hero-panel:has(#missingLeaveWarning:not([hidden])) > .hero-actions {
+    grid-row: 2;
+    margin-top: 0;
+  }
 }
 
 body.admin #missingLeaveWarning .hero-warning-icon {
@@ -8261,180 +8322,6 @@ body.admin :where(
   border-radius: 8px !important;
 }
 
-body.admin #logModal .assistant-student-notes {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, .16);
-}
-
-body.admin #logModal .assistant-note-heading h3 {
-  margin: 0 0 8px;
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-body.admin #logModal .assistant-note-author-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-body.admin #logModal .assistant-note-author-label {
-  flex: 0 0 auto;
-  color: rgba(248, 250, 252, .72);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-body.admin #logModal .assistant-note-author-buttons {
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-}
-
-body.admin #logModal .assistant-note-author-buttons button {
-  --assistant-note-author-color: #f8fafc;
-  --assistant-note-author-rgb: 248, 250, 252;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid rgba(255, 255, 255, .18);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, .72);
-  color: var(--assistant-note-author-color);
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-body.admin #logModal .assistant-note-author-buttons button[data-note-author="귤"] {
-  --assistant-note-author-color: #fbbf24;
-  --assistant-note-author-rgb: 251, 191, 36;
-}
-
-body.admin #logModal .assistant-note-author-buttons button[data-note-author="세빈"] {
-  --assistant-note-author-color: #7dd3fc;
-  --assistant-note-author-rgb: 125, 211, 252;
-}
-
-body.admin #logModal .assistant-note-author-buttons button[data-note-author="동훈"] {
-  --assistant-note-author-color: #86efac;
-  --assistant-note-author-rgb: 134, 239, 172;
-}
-
-body.admin #logModal .assistant-note-author-buttons button[data-note-author="하영"] {
-  --assistant-note-author-color: #f9a8d4;
-  --assistant-note-author-rgb: 249, 168, 212;
-}
-
-body.admin #logModal .assistant-note-author-buttons button:hover {
-  border-color: rgba(var(--assistant-note-author-rgb), .68);
-  background: rgba(var(--assistant-note-author-rgb), .12);
-}
-
-body.admin #logModal .assistant-note-author-buttons button.is-selected {
-  border-color: var(--assistant-note-author-color);
-  background: rgba(var(--assistant-note-author-rgb), .20);
-  box-shadow: inset 0 0 0 1px rgba(var(--assistant-note-author-rgb), .30);
-}
-
-body.admin #logModal .assistant-note-meta {
-  min-height: 16px;
-  margin: -1px 0 7px;
-  color: #f8fafc;
-  font-size: 11.5px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-body.admin #logModal .assistant-note-input {
-  width: 100%;
-  min-height: 108px;
-  resize: vertical;
-  box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, .2);
-  border-radius: 8px;
-  padding: 8px 9px;
-  background: rgba(2, 6, 23, .5);
-  color: #f8fafc;
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-body.admin #logModal .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
-  color: #fbbf24;
-  caret-color: #fbbf24;
-}
-
-body.admin #logModal .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
-  color: #7dd3fc;
-  caret-color: #7dd3fc;
-}
-
-body.admin #logModal .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
-  color: #86efac;
-  caret-color: #86efac;
-}
-
-body.admin #logModal .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
-  color: #f9a8d4;
-  caret-color: #f9a8d4;
-}
-
-body.admin #logModal .assistant-note-input:focus {
-  outline: 2px solid rgba(96, 165, 250, .9);
-  outline-offset: 1px;
-}
-
-body.admin #logModal .assistant-note-compose-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-body.admin #logModal .assistant-note-save-info {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-
-body.admin #logModal .assistant-note-status {
-  min-height: 16px;
-  color: rgba(255, 255, 255, .62);
-  font-size: 9px;
-  line-height: 1.35;
-}
-
-body.admin #logModal .assistant-note-status.is-error {
-  color: #fca5a5;
-}
-
-body.admin #logModal .assistant-note-status.is-success {
-  color: #86efac;
-}
-
-body.admin #logModal .assistant-note-save {
-  min-height: 26px;
-  border: 1px solid rgba(96, 165, 250, .62);
-  border-radius: 7px;
-  padding: 4px 8px;
-  background: #2563eb;
-  color: #fff;
-  font: inherit;
-  font-size: 9px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-body.admin #logModal .assistant-note-save:disabled {
-  cursor: wait;
-  opacity: .55;
-}
 
 body.admin .student-accounts-panel {
   position: relative;
@@ -8914,40 +8801,6 @@ body.admin .announcement-video-field small {
   line-height: 1.45;
 }
 
-@media (max-width: 1024px) {
-  body.admin :where(
-    button,
-    a.btn,
-    input:not([type="checkbox"]):not([type="radio"]),
-    select
-  ) {
-    min-height: 44px !important;
-  }
-
-  body.admin button {
-    min-width: 44px !important;
-  }
-
-  body.admin .modal-close,
-  body.admin .ann-survey-icon-btn,
-  body.admin .ann-reply-expand-close,
-  body.admin #calendar .makeup-slot-close,
-  body.admin #logModal .hw-del-btn {
-    width: 44px !important;
-    min-width: 44px !important;
-    height: 44px !important;
-    min-height: 44px !important;
-  }
-
-  body.admin .global-links .btn,
-  body.admin #absentRecoverBtn,
-  body.admin #homeworkLeaveBtn,
-  body.admin #clearAllBtn,
-  body.admin.admin-simple .hero-actions .btn {
-    height: 44px !important;
-    min-height: 44px !important;
-  }
-}
 
 /* Selected legacy-safe overlays from the verified retry2 server export. */
 /* Excludes student-app accounts/focus, canonical-homework, student-log, and announcement-video styles. */

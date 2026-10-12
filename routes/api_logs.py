@@ -222,7 +222,10 @@ def api_logs_patch_batch():
             "error": "batch sqlite save failed",
         }), 409
 
-    return jsonify({"ok": True, "sqlite": True, "json": True, "count": len(seen)})
+    payload = {"ok": True, "sqlite": True, "json": result.json_ok, "count": len(seen)}
+    if not result.json_ok:
+        payload["warning"] = "SQLite save succeeded, but legacy JSON log storage is out of sync."
+    return jsonify(payload)
 
 
 __all__ = ("bp_api_logs",)

@@ -8,9 +8,6 @@ export const state = {
   schoolCal: {}, testsConfig: { categories: {} },
 };
 
-async function getCriticalJson(url, label) {
-  return await api.getStrict(url, label);
-}
 
 export async function bootstrap() {
   const today = todayLocalKey();
@@ -19,10 +16,10 @@ export async function bootstrap() {
   ] = await Promise.all([
     api.get('/api/students'),
     api.get('/api/videos'),
-    getCriticalJson('/api/updates', 'admin bootstrap /api/updates'),
-    getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
+    api.getStrict('/api/updates', 'admin bootstrap /api/updates'),
+    api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
     api.getOr('/api/absent', {}),
-    getCriticalJson(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
+    api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
     api.getOr('/api/school-calendar', {}),
   ]);
 

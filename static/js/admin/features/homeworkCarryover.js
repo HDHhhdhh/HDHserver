@@ -2,6 +2,10 @@ function cleanText(value) {
   return String(value ?? '').trim();
 }
 
+function displayHomeworkBookKey(value) {
+  return cleanText(value).replace(/\s+/g, '').toLocaleLowerCase('ko-KR');
+}
+
 function hasExplicitHomeworkValue(row) {
   return Boolean(
     cleanText(row?.this)
@@ -13,6 +17,29 @@ function hasExplicitHomeworkValue(row) {
 
 export function previousHomeworkText(row) {
   return cleanText(row?.next) || cleanText(row?.this);
+}
+
+/**
+ * 툴팁을 새로 열 때만 재운 교재를 아래로 모은다.
+ * 각 그룹 안의 사용자 지정 순서는 그대로 유지한다.
+ */
+export function placeSleepingHomeworkRowsLast(rows, sleepingBooks) {
+  if (!Array.isArray(rows)) return [];
+
+  const sleepingKeys = new Set(
+    (Array.isArray(sleepingBooks) ? sleepingBooks : [])
+      .map(displayHomeworkBookKey)
+      .filter(Boolean),
+  );
+  const awake = [];
+  const sleeping = [];
+
+  rows.forEach(row => {
+    const key = displayHomeworkBookKey(row?.book);
+    (key && sleepingKeys.has(key) ? sleeping : awake).push(row);
+  });
+
+  return [...awake, ...sleeping];
 }
 
 /**

@@ -4,7 +4,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import hashlib
-import json
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -17,7 +16,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import backup_runtime_data as backup
-from core.absence_transaction import absence_consistency_barrier, AbsenceRecoveryRequiredError
+from core.absence_transaction import absence_consistency_barrier
 from core.request_consistency import absence_barrier_mode
 
 

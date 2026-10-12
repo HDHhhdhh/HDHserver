@@ -305,11 +305,6 @@ def _normalize_survey(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     }, None
 
 
-def _survey_is_public(ann: dict[str, Any]) -> bool:
-    survey, _ = _normalize_survey(ann.get("survey"))
-    return bool(survey and survey.get("status") == "public")
-
-
 def _survey_requires_completion(ann: dict[str, Any]) -> bool:
     survey, _ = _normalize_survey(ann.get("survey"))
     return bool(survey and survey.get("status") == "public" and ann.get("requireCompletion", True))
@@ -457,14 +452,6 @@ def _normalize_snapshot(raw: Any, target_sids: set[str]) -> list[dict[str, str]]
             "level": str(item.get("level") or "").strip(),
         })
     return rows
-
-
-def _targeted(ann: dict[str, Any], sid: str) -> bool:
-    sid_s = str(sid)
-    target_sids = ann.get("targetSids")
-    if isinstance(target_sids, list):
-        return sid_s in {str(x) for x in target_sids}
-    return False
 
 
 def _safe_student_announcement(ann: dict[str, Any]) -> dict[str, Any]:

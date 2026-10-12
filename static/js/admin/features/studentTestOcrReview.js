@@ -45,11 +45,14 @@ export function initStudentTestOcrReview() {
   const list = document.getElementById('studentTestOcrReviewList');
   const detail = document.getElementById('studentTestOcrReviewDetail');
   if (!openButton || !modal || !closeButton || !refreshButton || !dateNode || !statusNode || !list || !detail) return;
+  if (modal.dataset.studentTestOcrReviewReady === '1') return;
+  modal.dataset.studentTestOcrReviewReady = '1';
 
   let frozenDate = '';
   let activeSubmissionId = '';
   let opener = null;
   let requestSequence = 0;
+  let reviewEnabled = false;
 
   function setBusy(busy) {
     modal.setAttribute('aria-busy', busy ? 'true' : 'false');
@@ -252,6 +255,7 @@ export function initStudentTestOcrReview() {
   }
 
   async function refreshBadge() {
+    if (!reviewEnabled) return;
     try {
       const payload = await api.getStrict(
         `${API_ROOT}/pending?date=${encodeURIComponent(getAdminDate())}`,
@@ -275,6 +279,7 @@ export function initStudentTestOcrReview() {
   function trap(event) {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       close();
       return;
     }
@@ -312,6 +317,7 @@ export function initStudentTestOcrReview() {
   void api.getStrict(`${API_ROOT}/capabilities`, 'student test OCR admin capabilities', { cache: 'no-store' })
     .then(payload => {
       if (payload?.enabled !== true || payload?.review !== true) return;
+      reviewEnabled = true;
       openButton.hidden = false;
       void refreshBadge();
     })

@@ -19,6 +19,7 @@ function focusAllStudentSearch() {
   input.dispatchEvent(new Event('input', { bubbles: true }));
   try { input.focus({ preventScroll: true }); }
   catch { input.focus(); }
+  input.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
   try { input.select(); } catch {}
 }
 

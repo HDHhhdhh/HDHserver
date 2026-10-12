@@ -6,14 +6,16 @@ const source = fs.readFileSync('static/js/admin/features/testAssignmentRules.js'
 const entry = fs.readFileSync('static/js/admin/features/testModal.js', 'utf8');
 const rules = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
-// Captured from the pre-extraction popup, not calculated from the new owner.
+// Reviewed 2026-09-07 ILSAN level contract snapshot. The literal cases below
+// independently require 중 → 중상 compatibility while preserving explicit 상.
+// Original pre-extraction snapshot: c15415e8192df20506221a1bcbdfac59d783cdff73de93d3f97fc9f329219d76.
 const normalizedBody = source.slice(source.indexOf('export const ILSAN_GRAPH_DIFFICULTY'))
   .replace(/^export /gm, '')
   .replace("function collectTestCatalog(cfg, fallbackSubject = '공수1') {", 'function collectCatalog(cfg) {')
   .replace('rawTest.course || fallbackSubject', 'rawTest.course || activeSubject').trim();
 assert.equal(crypto.createHash('sha256').update(normalizedBody).digest('hex'),
-  'c15415e8192df20506221a1bcbdfac59d783cdff73de93d3f97fc9f329219d76',
-  'extraction preserves the independently captured rule bodies');
+  '31fc0245dde181645a07a6dc16ecd331bc606730bb5742548dd7a196c8274048',
+  'assignment rule bodies match the reviewed ILSAN level contract');
 assert.doesNotMatch(source, /\b(?:window|document|localStorage|sessionStorage|fetch)\s*[.(]/);
 assert.doesNotMatch(source, /(?:\/api\/|editingSid|editingDate|activeStudent)/);
 assert.match(entry, /return collectTestCatalog\(cfg, activeSubject\);/);
@@ -37,6 +39,10 @@ assert.equal(rules.isInProgressTestStatus('interrupted'), true);
 
 assert.deepEqual(['공통 수학2', '미적분Ⅱ', '확률과통계'].map(rules.normalizeSubject), ['공수2', '미적분2', '확통']);
 assert.equal(rules.normalizeDifficulty('ILSAN_PAST', '삼각함수 그래프 포함'), '그래프 포함');
+assert.equal(rules.normalizeDifficulty('ILSAN_PAST', '중'), '중상');
+assert.equal(rules.normalizeDifficulty('ILSAN_PAST', '중상'), '중상');
+assert.equal(rules.normalizeDifficulty('ILSAN_PAST', '상'), '상');
+assert.equal(rules.normalizeDifficulty('ILSAN_PAST', '상', '그래프 포함 일산'), '상');
 assert.equal(rules.normalizeDifficulty('UNIT', '', '레벨 5'), 'Lv.5');
 assert.equal(rules.normalizeTerm('mid'), '중간고사');
 assert.equal(rules.normalizeTerm('unknown'), '기말고사');
@@ -57,10 +63,12 @@ assert.equal(projected[0].problems, 20);
 assert.equal(JSON.stringify(catalog), original, 'catalog projection does not mutate its input');
 assert.equal(rules.collectTestCatalog({categories:{UNIT:{tests:[{name:'fallback'}]}}}, '미적분2')[0].curriculum, '미적분2');
 
-const config = {unknown:9, categories:{UNIT:{label:'기존 이름',tests:[]}},autoAssignRules:{ILSAN_PAST:{대수:{상:['상']}}}};
+const config = {unknown:9, categories:{UNIT:{label:'기존 이름',tests:[]}},autoAssignRules:{ILSAN_PAST:{대수:{중:['중']}}}};
 assert.equal(rules.normalizeConfig(config), config, 'legacy configuration repair deliberately retains identity');
 assert.equal(config.unknown, 9);
 assert.equal(config.categories.UNIT.label, '기존 이름');
 assert.deepEqual(config.autoAssignRules.ILSAN_PAST.대수['그래프 포함'], ['하','중','중상','상']);
-assert.equal('상' in config.autoAssignRules.ILSAN_PAST.대수, false);
-console.log('test assignment rules: literal transitions/catalog oracle, pre-extraction hash, input and ownership contracts passed');
+assert.deepEqual(config.autoAssignRules.ILSAN_PAST.대수['중상'], ['하','중','중상','상']);
+assert.deepEqual(config.autoAssignRules.ILSAN_PAST.대수['상'], ['하','중','중상','상']);
+assert.equal('중' in config.autoAssignRules.ILSAN_PAST.대수, false);
+console.log('test assignment rules: literal transitions/catalog oracle, reviewed contract hash, input and ownership contracts passed');

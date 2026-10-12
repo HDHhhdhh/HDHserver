@@ -693,7 +693,7 @@ def run_file_manager_client_contract_checks() -> None:
         "legacy unversioned whole-map assignment writes must stay retired",
     )
     check(
-        "/js/file-manage.js?v=20260824a" in html,
+        "/js/file-manage.js?v=20261001-safe-refresh2" in html,
         "file-manager HTML must load the revision-aware client without a stale browser cache",
     )
 

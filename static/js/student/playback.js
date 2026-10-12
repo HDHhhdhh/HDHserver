@@ -6,6 +6,10 @@
   const BRIDGE_MAX_TRIES = 200;
   const PROGRESS_POLL_MS = 3000;
 
+  function isYouTube(mid) {
+    return /^(?:ytv_[A-Za-z0-9_-]{11}|ytp_[A-Za-z0-9_-]{10,100})(?:_r[0-9]{1,12})?$/.test(String(mid || ''));
+  }
+
   function requireFunction(value, name) {
     if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
     return value;
@@ -59,6 +63,7 @@
     const warn = typeof options.warn === 'function' ? options.warn : () => {};
     const reportError = typeof options.reportError === 'function' ? options.reportError : () => {};
     let activeMid = null;
+    let playGeneration = 0;
 
     function currentMid() {
       return activeMid;
@@ -70,10 +75,13 @@
 
     function attachKollusBridgeToIframe(frameEl, mid, resumeAtSec) {
       if (!frameEl) return;
+      if (isYouTube(mid)) return;
       if (frameEl.__vgAttached && frameEl.__vgAttached === mid) return;
+      const generation = playGeneration;
 
       let tries = 0;
       const intervalId = setIntervalImpl(() => {
+        if (generation !== playGeneration || isYouTube(activeMid)) { clearIntervalImpl(intervalId); return; }
         tries += 1;
         const available = !!(globalRef.VgControllerClient && frameEl.contentWindow);
         if (!available && tries < BRIDGE_MAX_TRIES) return;
@@ -89,14 +97,14 @@
 
           controller.on('ready', function () {
             repost('kollus.ready', mid, {});
-            if (typeof controller.seek === 'function' && Number(resumeAtSec) > 5) {
-              try { controller.seek(Math.floor(resumeAtSec)); } catch { }
+            if (typeof controller.set_current_time === 'function' && Number(resumeAtSec) > 5) {
+              try { controller.set_current_time(Math.floor(resumeAtSec)); } catch { }
             }
 
             const poll = async () => {
+              if (generation !== playGeneration || isYouTube(activeMid)) return;
               try {
-                const position = await controller.getPosition?.();
-                const duration = await controller.getDuration?.();
+                const { position, duration } = controller.get_progress();
                 if (Number.isFinite(position) && Number.isFinite(duration) && duration > 0) {
                   const percent = (position / duration) * 100;
                   const ended = percent >= 90 || position >= duration - 1;
@@ -127,32 +135,23 @@
             repost('kollus.progress', mid, { ended: true });
           });
 
+          function reportCurrentProgress() {
+            try {
+              const { position, duration } = controller.get_progress();
+              if (Number.isFinite(position) && Number.isFinite(duration)) {
+                repost('kollus.progress', mid, {
+                  currentTime: position,
+                  duration,
+                  ended: false,
+                });
+              }
+            } catch { }
+          }
           controller.on('play', async function () {
-            try {
-              const position = await controller.getPosition?.();
-              const duration = await controller.getDuration?.();
-              if (Number.isFinite(position) && Number.isFinite(duration)) {
-                repost('kollus.progress', mid, {
-                  currentTime: position,
-                  duration,
-                  ended: false,
-                });
-              }
-            } catch { }
+            reportCurrentProgress();
           });
-
           controller.on('pause', async function () {
-            try {
-              const position = await controller.getPosition?.();
-              const duration = await controller.getDuration?.();
-              if (Number.isFinite(position) && Number.isFinite(duration)) {
-                repost('kollus.progress', mid, {
-                  currentTime: position,
-                  duration,
-                  ended: false,
-                });
-              }
-            } catch { }
+            reportCurrentProgress();
           });
 
           frameEl.__vgAttached = mid;
@@ -170,6 +169,7 @@
       const mid = String(data.mid ?? '').trim();
       const current = String(activeMid ?? '').trim();
       if (!mid || !current || mid !== current) return;
+      if (isYouTube(current)) return;
 
       if (data.type === 'kollus.ready' && Number.isFinite(Number(data.duration))) {
         setProgress(mid, { dur: Number(data.duration) || undefined });
@@ -188,18 +188,17 @@
     }
 
     async function play(mid) {
-      if (!canPlay()) {
+      if (!canPlay(mid)) {
         showRestrictedNotice();
         return;
       }
-      if (activeMid && activeMid !== mid) flushWatch();
+      if (activeMid && activeMid !== mid && !isYouTube(activeMid)) flushWatch();
       activeMid = mid;
-      setLastMid(mid);
+      const generation = ++playGeneration;
+      if (!isYouTube(mid)) setLastMid(mid);
+      options.showYouTubeFallback?.('');
       const frame = getFrame();
-      if (frame) frame.src = '';
-
-      const progress = getProgress(mid);
-      const resumeAt = progress?.last || 0;
+      if (frame) { frame.onload = null; frame.__vgAttached = null; frame.src = ''; }
 
       try {
         const response = await request(`/api/get-url?mid=${encode(mid)}&sid=${encode(getSid())}`);
@@ -208,6 +207,20 @@
           throw new Error(response.status === 403 ? 'academy-network-required' : `get-url ${response.status}`);
         }
         let baseUrl = await response.text();
+        if (activeMid !== mid || generation !== playGeneration) return;
+        if (isYouTube(mid)) {
+          const parsed = new URLImpl(baseUrl);
+          if (response.headers?.get?.('X-Video-Provider') !== 'youtube'
+              || parsed.protocol !== 'https:' || parsed.hostname !== 'www.youtube-nocookie.com'
+              || !parsed.pathname.startsWith('/embed/')) throw new Error('invalid-youtube-playback-response');
+          parsed.searchParams.set('autoplay', '0');
+          options.showYouTubeFallback?.(response.headers?.get?.('X-Video-Open-Url') || '');
+          if (frame) frame.src = parsed.toString();
+          return; // No resume state, Kollus bridge, watch timers, or progress events.
+        }
+        const cycleState = response.headers?.get?.('X-Video-Watch-State');
+        if (cycleState && options.onWatchCycle?.(mid, JSON.parse(cycleState)) === false) return;
+        const resumeAt = getProgress(mid)?.last || 0;
         log('[play] baseUrl from server =', baseUrl);
 
         if (locationRef.protocol === 'https:' && /^http:\/\//i.test(baseUrl)) {
@@ -224,6 +237,7 @@
           frame.src = urlWithStart;
         }
       } catch (error) {
+        if (generation !== playGeneration) return;
         reportError(error);
         if (error?.message === 'academy-network-required') return;
         showLoadFailure();
@@ -241,6 +255,7 @@
 
   global.StudentPlayback = Object.freeze({
     createController,
+    isYouTube,
     withStartParam,
   });
 })(window);

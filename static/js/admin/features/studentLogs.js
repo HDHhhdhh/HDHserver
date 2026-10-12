@@ -14,6 +14,7 @@ const logState = {
   busy: false,
   deletingId: '',
   filter: 'today',
+  createdWhileLoading: [],
 };
 
 
@@ -30,18 +31,20 @@ function logName(log) {
 }
 
 
-function logSubject(log) {
+function logSubject(log, studentsById) {
   const explicit = String(log?.subject || log?.curriculum || log?.course || '').trim();
   if (explicit) return explicit;
   const sid = String(log?.sid || '').trim();
   if (!sid || !Array.isArray(state.students)) return '';
-  const student = state.students.find((item) => String(item?.id || '').trim() === sid);
+  const student = studentsById
+    ? studentsById.get(sid)
+    : state.students.find((item) => String(item?.id || '').trim() === sid);
   return String(student?.curriculum || student?.subject || student?.course || '').trim();
 }
 
 
-function logDisplayName(log) {
-  return [logName(log), logSubject(log)].filter(Boolean).join('-');
+function logDisplayName(log, studentsById) {
+  return [logName(log), logSubject(log, studentsById)].filter(Boolean).join('-');
 }
 
 
@@ -121,7 +124,6 @@ function visibleLogs() {
   const today = todayDateKey();
   return logState.logs
     .filter((log) => logState.filter !== 'today' || logDateKey(log) === today)
-    .slice()
     .sort((left, right) => logSortValue(right) - logSortValue(left));
 }
 
@@ -145,7 +147,7 @@ function syncControls(root) {
   syncFilterButtons(root);
 }
 
-function createStudentLogItem(log) {
+function createStudentLogItem(log, studentsById) {
   const logId = String(log?.id || '').trim();
   const item = document.createElement('li');
   item.className = 'student-log-item';
@@ -166,7 +168,8 @@ function createStudentLogItem(log) {
 
   const name = document.createElement('strong');
   name.className = 'student-log-student';
-  name.textContent = logDisplayName(log) || '이름 없음';
+  const displayName = logDisplayName(log, studentsById);
+  name.textContent = displayName || '이름 없음';
   identity.appendChild(name);
 
   const kind = document.createElement('span');
@@ -191,7 +194,7 @@ function createStudentLogItem(log) {
     deleteButton.className = 'student-log-delete';
     deleteButton.dataset.studentLogDelete = logId;
     deleteButton.textContent = '\uC0AD\uC81C';
-    deleteButton.setAttribute('aria-label', `${logDisplayName(log) || '\uD559\uC0DD \uB85C\uADF8'} \uC0AD\uC81C`);
+    deleteButton.setAttribute('aria-label', `${displayName || '\uD559\uC0DD \uB85C\uADF8'} \uC0AD\uC81C`);
     deleteButton.disabled = logState.loading || logState.busy || Boolean(logState.deletingId);
     meta.appendChild(deleteButton);
   }
@@ -214,6 +217,11 @@ function renderLogs(root) {
   list.replaceChildren();
 
   const logs = visibleLogs();
+  const studentsById = new Map();
+  for (const student of state.students || []) {
+    const sid = String(student?.id || '').trim();
+    if (!studentsById.has(sid)) studentsById.set(sid, student);
+  }
   root.dataset.studentLogVisibleCount = String(logs.length);
   const count = root.querySelector('#studentLogCount');
   if (count) count.textContent = `${logs.length}건`;
@@ -269,7 +277,7 @@ function renderLogs(root) {
 
     const groupList = document.createElement('ul');
     groupList.className = 'student-log-group-items';
-    group.logs.forEach((log) => groupList.appendChild(createStudentLogItem(log)));
+    group.logs.forEach((log) => groupList.appendChild(createStudentLogItem(log, studentsById)));
     groupItem.appendChild(groupList);
     list.appendChild(groupItem);
   });
@@ -279,6 +287,7 @@ function renderLogs(root) {
 
 async function loadLogs(root) {
   logState.loading = true;
+  logState.createdWhileLoading = [];
   syncControls(root);
   root.setAttribute('aria-busy', 'true');
   setStatus(root, '숙제 미흡 알림을 불러오는 중입니다.');
@@ -287,16 +296,20 @@ async function loadLogs(root) {
       cache: 'no-store',
       credentials: 'same-origin',
     });
-    logState.logs = Array.isArray(payload?.logs) ? payload.logs : [];
+    const received = Array.isArray(payload?.logs) ? payload.logs : [];
+    const createdIds = new Set(logState.createdWhileLoading.map(log => String(log?.id || '')).filter(Boolean));
+    logState.logs = [...logState.createdWhileLoading,
+      ...received.filter(log => !createdIds.has(String(log?.id || '')))];
     renderLogs(root);
     setStatus(root, '');
   } catch (error) {
     console.error('[student logs] load failed', error);
-    logState.logs = [];
+    logState.logs = logState.createdWhileLoading.slice();
     renderLogs(root);
     setStatus(root, '숙제 미흡 알림을 불러오지 못했습니다.', 'error');
   } finally {
     logState.loading = false;
+    logState.createdWhileLoading = [];
     syncControls(root);
     root.removeAttribute('aria-busy');
   }
@@ -307,6 +320,7 @@ function appendLog(root, log) {
   if (!log || typeof log !== 'object') return;
   const id = String(log.id || '');
   if (id && logState.logs.some(item => String(item?.id || '') === id)) return;
+  if (logState.loading) logState.createdWhileLoading.unshift(log);
   logState.logs = [log, ...logState.logs];
   renderLogs(root);
 }

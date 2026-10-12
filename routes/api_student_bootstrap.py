@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import datetime as dt
 import re
 from copy import deepcopy
 
 from flask import Blueprint, current_app, g, jsonify, request
+from core.date_rules import is_iso_date_key
+from core.isolated_kollus_qa import isolated_kollus_qa_allowed
 
 from core.network_access import (
     academy_network_allowed,
@@ -14,6 +15,7 @@ from core.network_access import (
 from core.paths import WATCH_PATH
 from core.progress_rules import normalize_watch_entry, watch_rank
 from core.storage import load, nocache_resp
+from core.video_watch_cycles import latest_watch_projection
 from core.update_assignment_rules import sid_keys
 from routes.student_bootstrap_projection import (
     StudentBootstrapProjectionDependencies,
@@ -60,30 +62,8 @@ def _student_request_academy_allowed() -> bool:
     return ip_allowed(client_ip) if isinstance(client_ip, str) else False
 
 
-def _latest_student_watch_payload(watch_all, sid: str) -> dict:
-    out: dict[str, dict] = {}
-    for by_date in (
-        watch_all.values() if isinstance(watch_all, dict) else []
-    ):
-        if not isinstance(by_date, dict):
-            continue
-        watched = next(
-            (
-                by_date.get(key)
-                for key in sid_keys(sid)
-                if isinstance(by_date.get(key), dict)
-            ),
-            None,
-        )
-        if not isinstance(watched, dict):
-            continue
-        for raw_mid, raw_entry in watched.items():
-            mid = str(raw_mid or "").strip()
-            if not mid:
-                continue
-            normalized = normalize_watch_entry(raw_entry)
-            if mid not in out or watch_rank(normalized) > watch_rank(out[mid]):
-                out[mid] = normalized
+def _latest_student_watch_payload(watch_all, sid: str, progress=None, date="9999-12-31") -> dict:
+    out = latest_watch_projection(watch_all, progress or {}, sid, date)
     return {"ok": True, "sid": sid, "date": "", "watch": out}
 
 
@@ -126,6 +106,7 @@ def _finalize_public_bootstrap(
     payload: dict,
     sid: str,
     academy_allowed: bool,
+    date: str,
 ) -> dict:
     if not _is_public_student_request():
         return payload
@@ -136,6 +117,8 @@ def _finalize_public_bootstrap(
     result["watch"] = _latest_student_watch_payload(
         load(WATCH_PATH) or {},
         sid,
+        _projection_dependencies().load_progress(),
+        date,
     )
     return result if academy_allowed else _strip_public_bootstrap_links(result)
 
@@ -152,9 +135,7 @@ def api_student_bootstrap():
     date = str(request.args.get("date") or dependencies.today_iso()).strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
-    try:
-        dt.date.fromisoformat(date)
-    except ValueError:
+    if not is_iso_date_key(date):
         return jsonify({"ok": False, "error": "bad date"}), 400
 
     payload, status = build_student_bootstrap_payload(
@@ -166,9 +147,21 @@ def api_student_bootstrap():
     )
     if status != 200:
         return jsonify(payload), status
+    payload = dict(payload)
+    for field in ("videos", "reviewVideos"):
+        if field not in payload:
+            continue
+        payload[field] = [dict(video) if isinstance(video, dict) else video for video in payload[field]]
+        for video in payload[field]:
+            if not isinstance(video, dict):
+                continue
+            video.pop("localPlaybackQaAllowed", None)
+            if field == "videos" and isolated_kollus_qa_allowed(sid, str(video.get("mid") or "").strip()):
+                video["localPlaybackQaAllowed"] = True
+                video["playbackRestricted"] = False
     academy_allowed = payload.get("academyAccessAllowed") is True
     return nocache_resp(
-        _finalize_public_bootstrap(payload, sid, academy_allowed)
+        _finalize_public_bootstrap(payload, sid, academy_allowed, date)
     )
 
 

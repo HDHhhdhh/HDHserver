@@ -46,7 +46,6 @@ const ROSTER_TEXT_DEFAULT = '📢도착 예정 시간 알려주세요!';
 const ROSTER_DAILY_TESTS_KEY = 'testAssignmentDailyTests';
 const ROSTER_TEST_CLEAR_KEY = '__testsClearedAt';
 const ROSTER_TEST_STATUS_EXPORT = new Set(['assigned']);
-const ROSTER_TEST_STATUS_ACTIVE = new Set(['assigned', 'interrupted']);
 const ROSTER_TEST_CATEGORY_ORDER = ['REVIEW', 'UNIT', 'SCHOOL_PAST', 'ILSAN_PAST'];
 const ROSTER_HISTORY_CACHE_SEP = '\u241f';
 
@@ -56,11 +55,9 @@ function resetRosterHistoryCache() {
   rosterHistoryCache = {
     progressRef: state.progress || null,
     logsRef: state.logs || null,
-    datesByTarget: new Map(),
     testRelevantDatesByTarget: new Map(),
     videoStatusesByTargetSid: new Map(),
     previousAssignedByKey: new Map(),
-    previousActiveByKey: new Map(),
   };
 }
 
@@ -482,24 +479,7 @@ function rosterVideoStatusesBeforeDate(dateStr, sid) {
   return statuses;
 }
 
-function rosterDateKeysBefore(dateStr, source) {
-  return Object.keys(source || {})
-    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) < String(dateStr))
-    .sort()
-    .reverse();
-}
 
-function rosterHistoryDateKeysBefore(dateStr) {
-  const cache = ensureRosterHistoryCache();
-  const target = String(dateStr || '');
-  if (cache.datesByTarget.has(target)) return cache.datesByTarget.get(target);
-  const dates = Array.from(new Set([
-    ...rosterDateKeysBefore(target, state.progress),
-    ...rosterDateKeysBefore(target, state.logs),
-  ])).sort().reverse();
-  cache.datesByTarget.set(target, dates);
-  return dates;
-}
 
 function rosterLogEntryHasTestMetadata(entry) {
   if (!entry || typeof entry !== 'object') return false;
@@ -623,10 +603,13 @@ function normalizeRosterDifficulty(categoryKey, difficulty, name = '') {
   const source = `${raw} ${name}`;
   const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (lv) return `Lv.${lv[1]}`;
+  if (categoryKey === 'ILSAN_PAST' && (raw === '중상' || raw === '상' || raw === '그래프 포함')) return raw;
   if (categoryKey === 'ILSAN_PAST' && source.includes('그래프')) return '그래프 포함';
   if (categoryKey === 'ILSAN_PAST' && source.includes('중상')) return '중상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('상')) return '중상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
+  if (categoryKey === 'ILSAN_PAST' && raw === '상') return '상';
+  if (categoryKey === 'ILSAN_PAST' && raw === '중') return '중상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('상')) return '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중상';
   if (source.includes('중상')) return '중상';
   if (source.includes('중')) return '중';
   if (source.includes('상')) return '상';
@@ -645,7 +628,7 @@ function parseRosterTestLabel(label, status = 'assigned', meta = {}) {
   const categoryLabel = normStr(meta.categoryLabel ?? meta.category ?? parts[0] ?? '');
   const categoryKey = rosterCategoryKey(meta.categoryKey, categoryLabel);
   const isPast = categoryKey === 'SCHOOL_PAST' || categoryKey === 'ILSAN_PAST';
-  const difficultyRaw = normStr(meta.difficulty ?? (isPast ? parts[2] : parts[2]) ?? '');
+  const difficultyRaw = normStr(meta.difficulty ?? parts[2] ?? '');
   const nameFromLabel = isPast ? parts.slice(5).join(' / ') : parts.slice(4).join(' / ');
   const name = normStr(meta.name ?? nameFromLabel);
   return {
@@ -724,20 +707,6 @@ function rosterTestsCleared(dateStr, sid) {
   return !!(progressEntry && typeof progressEntry === 'object' && progressEntry[ROSTER_TEST_CLEAR_KEY]);
 }
 
-function rosterHasStudentDayActivity(dateStr, sid) {
-  const progressEntry = lookupSidEntry(state.progress?.[dateStr] || {}, sid);
-  if (progressEntry && typeof progressEntry === 'object') {
-    const hasProgressContent = Object.keys(progressEntry).some(key =>
-      key !== 'tests' && !String(key).startsWith('__')
-    );
-    if (hasProgressContent || rosterHasProgressTests(dateStr, sid) || rosterTestsCleared(dateStr, sid)) {
-      return true;
-    }
-  }
-
-  const logEntry = lookupSidEntry(state.logs?.[dateStr] || {}, sid);
-  return !!(logEntry && typeof logEntry === 'object' && Object.keys(logEntry).length);
-}
 
 function rosterActiveTestsForDate(dateStr, sid, statusSet = ROSTER_TEST_STATUS_EXPORT) {
   const { items: logItems } = logTestSnapshotForRoster(dateStr, sid);
@@ -768,44 +737,6 @@ function rosterActiveTestsForDate(dateStr, sid, statusSet = ROSTER_TEST_STATUS_E
     );
 }
 
-function previousRosterActiveTests(dateStr, sid) {
-  const cache = ensureRosterHistoryCache();
-  const cacheKey = `${dateStr}${ROSTER_HISTORY_CACHE_SEP}${sid}`;
-  if (cache.previousActiveByKey.has(cacheKey)) {
-    return cache.previousActiveByKey.get(cacheKey).slice();
-  }
-
-  const dates = rosterHistoryDateKeysBefore(dateStr);
-  for (const date of dates) {
-    if (rosterTestsCleared(date, sid)) {
-      cache.previousActiveByKey.set(cacheKey, []);
-      return [];
-    }
-    const items = rosterActiveTestsForDate(date, sid, ROSTER_TEST_STATUS_ACTIVE);
-    if (items.length) {
-      cache.previousActiveByKey.set(cacheKey, items);
-      return items.slice();
-    }
-    if (rosterHasStudentDayActivity(date, sid)) {
-      cache.previousActiveByKey.set(cacheKey, []);
-      return [];
-    }
-  }
-  cache.previousActiveByKey.set(cacheKey, []);
-  return [];
-}
-
-function previousRosterActiveTestLabels(dateStr, sid) {
-  return new Set(previousRosterActiveTests(dateStr, sid).map(item => item.label).filter(Boolean));
-}
-
-function rosterAssignmentDeltaForDate(dateStr, sid) {
-  const active = rosterActiveTestsForDate(dateStr, sid);
-  if (!active.length) return [];
-  const previousLabels = previousRosterActiveTestLabels(dateStr, sid);
-  if (!previousLabels.size) return active;
-  return active.filter(item => item.label && !previousLabels.has(item.label));
-}
 
 function rosterNewProgressTestsForDate(dateStr, sid, logByLabel, excludeLabels = new Set()) {
   const progressTests = rosterProgressTestStatuses(dateStr, sid);

@@ -28,12 +28,13 @@
       dur: Math.floor(dur),
       completed,
       updatedAt: normalizeUpdatedAt(source.updatedAt),
+      ...(source.cycleToken ? { cycleToken: String(source.cycleToken) } : {}),
     };
   }
 
   function mergeRecords(base, patch, now = Date.now()) {
-    const current = normalizeRecord(base);
     const incoming = normalizeRecord(patch);
+    const current = normalizeRecord(incoming.cycleToken && incoming.cycleToken !== base?.cycleToken ? {} : base);
     const last = Math.max(current.last, incoming.last);
     const dur = Math.max(current.dur, incoming.dur);
     const completed = current.completed
@@ -45,6 +46,7 @@
       dur,
       completed,
       updatedAt: Math.max(current.updatedAt, incoming.updatedAt, now),
+      ...((incoming.cycleToken || current.cycleToken) ? { cycleToken: incoming.cycleToken || current.cycleToken } : {}),
     };
   }
 
@@ -86,7 +88,9 @@
       ? Math.max(0, Number(options.debounceMs))
       : DEFAULT_SYNC_DEBOUNCE_MS;
     const syncTimers = new Map();
+    const maxSyncTimers = new Map();
     const lastSent = new Map();
+    const blockedCycles = new Set();
 
     function getProgress(mid) {
       try {
@@ -103,13 +107,25 @@
       } catch { }
     }
 
+    function clearSyncTimers(mid) {
+      clearTimer(syncTimers.get(mid));
+      clearTimer(maxSyncTimers.get(mid));
+      syncTimers.delete(mid);
+      maxSyncTimers.delete(mid);
+    }
+
     function enqueueSync(mid) {
+      // Continuous one-second player events must not postpone saving forever.
+      if (!maxSyncTimers.has(mid)) {
+        maxSyncTimers.set(mid, setTimer(() => syncNow(mid), 10000));
+      }
       if (syncTimers.has(mid)) clearTimer(syncTimers.get(mid));
       const timer = setTimer(() => syncNow(mid), debounceMs);
       syncTimers.set(mid, timer);
     }
 
     function setProgress(mid, patch, setOptions = {}) {
+      if (blockedCycles.has(mid)) return getProgress(mid);
       const next = mergeRecords(getProgress(mid) || {}, patch, now());
       storeProgress(mid, next);
       try { onProgressChange(); } catch { }
@@ -131,13 +147,20 @@
       Object.entries(watchMap).forEach(([mid, record]) => {
         const key = String(mid || '').trim();
         if (!key) return;
-        const next = mergeRecords(getProgress(key), record, now());
+        const local = getProgress(key);
+        const changedCycle = (local?.cycleToken || '') !== (record?.cycleToken || '');
+        const next = mergeRecords(changedCycle ? {} : local, record, now());
+        if (changedCycle) {
+          clearSyncTimers(key);
+        }
+        blockedCycles.delete(key);
         storeProgress(key, next);
         lastSent.set(key, {
           last: next.last,
           dur: next.dur,
           completed: !!next.completed,
           updatedAt: normalizeUpdatedAt(next.updatedAt),
+          ...(next.cycleToken ? { cycleToken: next.cycleToken } : {}),
         });
       });
 
@@ -145,13 +168,32 @@
     }
 
     function clearProgress(mid) {
+      clearSyncTimers(mid);
       try { storage.removeItem(progressStorageKey(getSid(), mid)); } catch { }
       lastSent.delete(mid);
     }
 
+    function reloadForWatchCycle(mid, record) {
+      blockedCycles.add(mid);
+      clearSyncTimers(mid);
+      storeProgress(mid, normalizeRecord(record));
+      lastSent.delete(mid);
+      options.onCycleChanged?.(mid);
+    }
+
+    function acceptPlaybackWatch(mid, record) {
+      if ((record?.cycleToken || '') !== (getProgress(mid)?.cycleToken || '')) {
+        // Retire the old iframe/pollers before accepting any new-cycle events.
+        reloadForWatchCycle(mid, record);
+        return false;
+      }
+      mergeServerWatchIntoLocal({ [mid]: record });
+      return true;
+    }
+
     async function syncNow(mid, syncOptions = {}) {
-      if (!canSync()) return;
-      syncTimers.delete(mid);
+      clearSyncTimers(mid);
+      if (!canSync(mid) || blockedCycles.has(mid)) return;
       const progress = getProgress(mid);
       if (!progress) return;
       const currentTime = now();
@@ -160,12 +202,14 @@
         dur: wholeNonNegative(progress.dur),
         completed: !!progress.completed,
         updatedAt: normalizeUpdatedAt(progress.updatedAt, currentTime),
+        ...(progress.cycleToken ? { cycleToken: progress.cycleToken } : {}),
       };
       const previous = lastSent.get(mid);
       if (previous
         && previous.last === snapshot.last
         && previous.dur === snapshot.dur
-        && previous.completed === snapshot.completed) return;
+        && previous.completed === snapshot.completed
+        && previous.cycleToken === snapshot.cycleToken) return;
 
       const payload = {
         date: getDate(),
@@ -175,6 +219,7 @@
         dur: snapshot.dur,
         completed: snapshot.completed,
         updatedAt: snapshot.updatedAt,
+        ...(snapshot.cycleToken ? { cycleToken: snapshot.cycleToken } : {}),
       };
 
       try {
@@ -184,27 +229,34 @@
           body: JSON.stringify(payload),
           keepalive: !!syncOptions.keepalive,
         });
+        if ((getProgress(mid)?.cycleToken || '') !== (snapshot.cycleToken || '')) return;
         if (response.ok) lastSent.set(mid, snapshot);
+        else if (response.status === 409) {
+          const result = await response.json();
+          if (result?.code === 'watch_cycle_changed') {
+            reloadForWatchCycle(mid, result.watch);
+          }
+        }
       } catch (error) {
         try { onSyncError(error); } catch { }
       }
     }
 
     async function flushSyncQueue(syncOptions = {}) {
-      const mids = new Set(syncTimers.keys());
+      const mids = new Set([...syncTimers.keys(), ...maxSyncTimers.keys()]);
       const currentMid = getCurrentMid();
       if (currentMid) mids.add(currentMid);
       if (!mids.size) return;
 
       mids.forEach(mid => {
-        try { clearTimer(syncTimers.get(mid)); } catch { }
-        syncTimers.delete(mid);
+        clearSyncTimers(mid);
       });
 
       await Promise.allSettled([...mids].map(mid => syncNow(mid, syncOptions)));
     }
 
     return Object.freeze({
+      acceptPlaybackWatch,
       clearProgress,
       flushSyncQueue,
       getLastMid,

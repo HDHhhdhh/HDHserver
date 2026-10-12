@@ -89,8 +89,6 @@ def merge_update_assignment(current, incoming):
                 merged["videos"] = videos
             elif value is not None:
                 merged[str(key)] = value
-        if "videos" not in incoming and videos:
-            merged["videos"] = videos
         return merged if merged else (videos if videos else current)
 
     return current

@@ -1466,6 +1466,33 @@ html body.admin.student-popup-open #logModal.student-work-layout
   overflow-wrap: anywhere !important;
   white-space: pre-wrap !important;
 }
+
+@media (max-width: 900px) {
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-reminder-body.is-stacked {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-reminder-body.is-stacked > .assistant-note-item-author-group {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    flex-wrap: wrap !important;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    .assistant-note-reminder-body.is-stacked > .assistant-note-action-group {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+    justify-self: end;
+  }
+
+  html body.admin.student-popup-open #logModal.student-work-layout
+    :is(.assistant-note-reminder-info, .assistant-note-reminder-dates) {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
 /* Keep long regular memo text left of its date/action column. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item:not(.has-reminder) {
@@ -1697,39 +1724,6 @@ html body.admin.student-popup-open #logModal.student-work-layout
   outline: none !important;
 }
 
-html body.admin.student-popup-open #logModal.student-work-layout
-  #assistantStudentNotesHost .assistant-note-edit-input {
-  border: 1px solid #1e40af !important;
-  background: #1d4ed8 !important;
-  color: #fff !important;
-  caret-color: #fff !important;
-  box-shadow: 0 0 0 3px rgba(29, 78, 216, .28) !important;
-}
-
-html body.admin.student-popup-open #logModal.student-work-layout
-  #assistantStudentNotesHost .assistant-note-edit-input:focus {
-  border-color: #1e3a8a !important;
-  background: #1d4ed8 !important;
-  box-shadow: 0 0 0 4px rgba(29, 78, 216, .32) !important;
-  outline: none !important;
-}
-
-html body.admin.student-popup-open #logModal.student-work-layout
-  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save {
-  border: 1px solid #1d4ed8 !important;
-  background: #1d4ed8 !important;
-  color: #fff !important;
-  box-shadow: none !important;
-}
-
-html body.admin.student-popup-open #logModal.student-work-layout
-  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:hover:not(:disabled),
-html body.admin.student-popup-open #logModal.student-work-layout
-  #assistantStudentNotesHost .assistant-note-edit-actions .assistant-note-edit-save:focus-visible {
-  border-color: #1e40af !important;
-  background: #1e40af !important;
-  color: #fff !important;
-}
 /* Subtle text separator: distinguish author metadata from memo content without boxing the card. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item-content {
@@ -2038,14 +2032,12 @@ html body.admin.student-popup-open #logModal.student-work-layout
   stroke: currentColor !important;
 }
 
-/* Saved memo body copy stays compact while the composer keeps its larger input size. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item-content,
 html body.admin.student-popup-open #logModal.student-work-layout
   #assistantStudentNotesHost .assistant-note-edit-input {
   font-size: 18px !important;
 }
-/* Compact saved-note controls and author row. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item-author {
   min-height: 18px !important;
@@ -2158,7 +2150,6 @@ html body.admin.student-popup-open #adminSchoolTip.student-work-layout
   background: #fff1f0 !important;
   color: #912018 !important;
 }
-/* Compact reminder memo metadata without changing the memo body. */
 html body.admin.student-popup-open #logModal.student-work-layout
   .assistant-note-item.has-reminder {
   padding: 6px 8px 8px 12px !important;

@@ -99,11 +99,16 @@ def sqlite_entry(fixture: dict, date_key: str, sid: str) -> dict:
 
 
 @contextmanager
-def patched_attendance_route(fixture: dict, *, failure_phase: str | None = None):
+def patched_attendance_route(fixture: dict, *, failure_phase: str | None = None, students=None):
     paths = fixture["paths"]
+    students_path = paths["absent"].parent / "students.json"
+    write_json(students_path, students if students is not None else [
+        {"id": SID, "day1": "월1"}, {"id": KEEP_SID, "day1": "월1"},
+    ])
     originals = [
         (absent_store, "ABS_PATH", absent_store.ABS_PATH),
         (attend_route, "ABS_PATH", attend_route.ABS_PATH),
+        (attend_route, "STU_PATH", attend_route.STU_PATH),
         (attend_route, "UPD_PATH", attend_route.UPD_PATH),
         (attend_route, "PRG_PATH", attend_route.PRG_PATH),
         (attend_route, "MAKEUP_CARRYOVER_PATH", attend_route.MAKEUP_CARRYOVER_PATH),
@@ -113,6 +118,7 @@ def patched_attendance_route(fixture: dict, *, failure_phase: str | None = None)
     ]
     absent_store.ABS_PATH = paths["absent"]
     attend_route.ABS_PATH = paths["absent"]
+    attend_route.STU_PATH = students_path
     attend_route.UPD_PATH = paths["updates"]
     attend_route.PRG_PATH = paths["progress"]
     attend_route.MAKEUP_CARRYOVER_PATH = paths["carryover"]
@@ -501,6 +507,96 @@ def run_attendance_cases(matrix: Matrix) -> None:
             )
 
 
+def run_self_study_absence_cases(matrix: Matrix) -> None:
+    cases = [
+        ("manual-on", {"id": SID, "day1": "월1"}, True, True),
+        ("scheduled", {"id": SID, "day1": "월1", "selfStudyDays": ["day1"]}, None, True),
+        ("manual-off", {"id": SID, "day1": "월1", "selfStudyDays": ["day1"]}, False, False),
+        ("other-weekday", {"id": SID, "day1": "월1", "day2": "화1", "selfStudyDays": ["day2"]}, None, False),
+        ("regular", {"id": SID, "day1": "월1"}, None, False),
+    ]
+    for name, student, self_study, exempt in cases:
+        with tempfile.TemporaryDirectory(prefix=f"verify-self-study-{name}-") as raw:
+            fixture = build_fixture(Path(raw))
+            if self_study is not None:
+                fixture["repository_factory"]().transform_entries(
+                    {(DATE, SID)},
+                    lambda entry, _sid: ({**entry, "selfStudy": self_study}, True),
+                )
+            with patched_attendance_route(fixture, students=[student]) as (client, _notifications, _postcommit):
+                response = post_current_absence(client, fixture["absent_after"])
+                saved = fixture_snapshot(fixture)
+                marker = saved["carryover"]["by_absence"].get(DATE, {}).get(SID, {})
+                repeated = post_current_absence(client, fixture["absent_after"])
+            matrix.check(
+                f"S-{name}",
+                response.status_code == 200 and repeated.status_code == 200
+                and (marker.get("state") == "self-study") == exempt
+                and fixture_snapshot(fixture) == saved
+                and SID not in saved["updates"][DATE]
+                and saved["progress"][DATE][SID]["tests"][ASSIGNED_LABEL] == "interrupted"
+                and saved["carryover"]["by_absence"][OTHER_DATE] == fixture["initial"]["carryover"]["by_absence"][OTHER_DATE],
+                "self-study exemption uses the absence date, explicit log override, and unchanged assignment cleanup",
+            )
+            if exempt:
+                with patched_makeup_route(fixture, []) as (client, _notifications, _postcommit):
+                    snapshot = client.get("/api/makeup-carryover")
+                    payload = snapshot.get_json()
+                    payload["by_absence"][DATE][SID]["state"] = "open"
+                    saved_response = client.post(
+                        "/api/makeup-carryover", json=payload,
+                        headers={"If-Match": snapshot.headers["X-Makeup-Carryover-Revision"]},
+                    )
+                matrix.check(
+                    f"S-{name}-reload",
+                    saved_response.status_code == 200
+                    and saved_response.get_json()["by_absence"][DATE][SID]["state"] == "self-study",
+                    "cold route GET and older-client open write preserve the persisted self-study exemption",
+                )
+
+    for phase in ("updates", "progress", "logs", "absent", "carryover", "before_commit"):
+        with tempfile.TemporaryDirectory(prefix=f"verify-self-study-rollback-{phase}-") as raw:
+            fixture = build_fixture(Path(raw))
+            # Production progress uses compact JSON; don't mistake fixture indentation
+            # normalization for loss of a rollback before-image.
+            progress_path = fixture["paths"]["progress"]
+            progress_path.write_text(json.dumps(
+                read_json(progress_path), ensure_ascii=False, separators=(",", ":"),
+            ), "utf-8")
+            before = fixture_snapshot(fixture)
+            before_bytes = {key: fixture["paths"][key].read_bytes() for key in ("updates", "progress", "logs", "absent", "carryover")}
+            with patched_attendance_route(
+                fixture, failure_phase=phase,
+                students=[{"id": SID, "day1": "월1", "selfStudyDays": ["day1"]}],
+            ) as (client, notifications, _postcommit):
+                response = post_current_absence(client, fixture["absent_after"])
+            matrix.check(
+                f"S-rollback-{phase}",
+                response.status_code == 500 and fixture_snapshot(fixture) == before
+                and all(fixture["paths"][key].read_bytes() == content for key, content in before_bytes.items())
+                and notifications == [],
+                "failed self-study absence rolls back all five JSON stores and SQLite without notifications",
+            )
+
+    with tempfile.TemporaryDirectory(prefix="verify-self-study-recovery-") as raw:
+        fixture = build_fixture(Path(raw))
+        students = [{"id": SID, "day1": "월1", "selfStudyDays": ["day1"]}]
+        with patched_attendance_route(fixture, students=students) as (client, _notifications, _postcommit):
+            assert post_current_absence(client, fixture["absent_after"]).status_code == 200
+            fixture["repository_factory"]().transform_entries(
+                {(DATE, SID)}, lambda entry, _sid: ({**entry, "selfStudy": False}, True),
+            )
+            assert read_json(fixture["paths"]["carryover"])["by_absence"][DATE][SID]["state"] == "self-study"
+            recovered = client.post("/api/absent/recover", json={"date": DATE, "sids": [SID]})
+            reabsent = post_current_absence(client, fixture["absent_after"])
+        matrix.check(
+            "S-recover-regular",
+            recovered.status_code == 200 and reabsent.status_code == 200
+            and read_json(fixture["paths"]["carryover"])["by_absence"][DATE][SID]["state"] == "open",
+            "later setting changes alone do not rewrite history; recovery plus a new regular absence can reopen its demand",
+        )
+
+
 def run_makeup_rule_cases(matrix: Matrix) -> None:
     carryover = {"by_absence": {}, "manual": {}}
     absent = {"by_date": {}, "by_student": {}, "by_slot": {}}
@@ -875,6 +971,7 @@ def run_journal_cases(matrix: Matrix) -> None:
 def main() -> int:
     matrix = Matrix()
     run_attendance_cases(matrix)
+    run_self_study_absence_cases(matrix)
     run_makeup_rule_cases(matrix)
     run_makeup_route_cases(matrix)
     run_offline_cases(matrix)

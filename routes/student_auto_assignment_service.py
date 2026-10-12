@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core import log_rules
+from core.video_sources import GICHUL_OVERLAY_FIELD
 from core.student_schedule_rules import (
     effective_auto_video_assign_count,
     log_entry_for_date,
@@ -25,6 +26,9 @@ from core.student_video_projection import (
     date_indexed_history_through,
     student_completion_videos,
     student_current_curriculum_videos,
+    student_auto_assignment_videos,
+    student_assignment_preservation_videos,
+    student_review_curriculum_videos,
     student_eligible_review_video_mids,
 )
 from core.update_assignment_rules import (
@@ -146,7 +150,8 @@ def ensure_today_auto_assign(
         if not sid:
             continue
 
-        current_videos = student_current_curriculum_videos(student, videos)
+        current_videos = student_auto_assignment_videos(student, videos)
+        preservation_videos = student_assignment_preservation_videos(student, videos)
         current_videos.sort(
             key=lambda video: (
                 chapter_number(video),
@@ -167,7 +172,7 @@ def ensure_today_auto_assign(
         if not is_auto_target:
             scoped_assignment, scope_changed = append_auto_assignment_videos(
                 current,
-                current_videos,
+                preservation_videos,
                 set(),
                 len(normalize_video_assign_list(current)),
                 allow_expand=False,
@@ -196,6 +201,8 @@ def ensure_today_auto_assign(
         )
         completion_videos = student_completion_videos(student, videos)
         if self_study:
+            if student.get(GICHUL_OVERLAY_FIELD) is True:
+                completion_videos = sorted(student_review_curriculum_videos(student, videos), key=lambda video: (chapter_number(video), str(video.get("mid") or "")))
             current_videos = completion_videos
 
         auto_candidates: list[str] = []
@@ -238,7 +245,7 @@ def ensure_today_auto_assign(
 
         current_course_mids = {
             str(video.get("mid") or "").strip()
-            for video in current_videos
+            for video in preservation_videos
             if str(video.get("mid") or "").strip()
         }
         if current is not None and all(

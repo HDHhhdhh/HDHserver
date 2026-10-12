@@ -188,13 +188,13 @@ for (const retired of [
 }
 assert.ok(studentSource.includes('window.StudentAnnouncementState'));
 assert.ok(studentSource.includes('announcementState.replaceAnnouncements(anns, stat)'));
-assert.ok(studentSource.includes('announcementState.recordSurvey(active'));
-assert.ok(studentSource.includes('announcementState.recordReply(active'));
+assert.ok(studentSource.includes('announcementState.recordSurvey(item'));
+assert.ok(studentSource.includes('announcementState.recordReply(item'));
 
 const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
 const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.equal((htmlSource.match(/\/js\/student\/announcementState\.js/g) || []).length, 1);
 assert.ok(htmlSource.indexOf(reviewPlaylistScript) < htmlSource.indexOf(announcementStateScript));
 assert.ok(htmlSource.indexOf(announcementStateScript) < htmlSource.indexOf(testPresentationScript));

@@ -88,9 +88,8 @@ class FakeKollusClient {
   }
 
   on(type, callback) { this.handlers.set(type, callback); }
-  seek(seconds) { this.seekCalls.push(seconds); }
-  async getPosition() { return this.position; }
-  async getDuration() { return this.duration; }
+  set_current_time(seconds) { this.seekCalls.push(seconds); }
+  get_progress() { return { percent: this.position / this.duration * 100, position: this.position, duration: this.duration }; }
 }
 browserWindow.VgControllerClient = FakeKollusClient;
 
@@ -244,12 +243,12 @@ assert.equal(studentSource.includes('/api/get-url?'), false, 'student entrypoint
 assert.ok(studentSource.includes('studentPlayback.createController({'), 'student entrypoint must compose the playback controller');
 
 const bootstrapScript = '/js/student/bootstrapState.js?v=20260828-bootstrap-state-r1';
-const watchScript = '/js/student/watchState.js?v=20260828-watch-state-r1';
-const playbackScript = '/js/student/playback.js?v=20260828-playback-r1';
+const watchScript = '/js/student/watchState.js?v=20261002-native-watch1';
+const playbackScript = '/js/student/playback.js?v=20261002-native-watch1';
 const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
 const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.equal((htmlSource.match(/\/js\/student\/playback\.js/g) || []).length, 1);
 assert.ok(htmlSource.indexOf(bootstrapScript) < htmlSource.indexOf(watchScript));
 assert.ok(htmlSource.indexOf(watchScript) < htmlSource.indexOf(playbackScript));

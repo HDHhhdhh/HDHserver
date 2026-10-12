@@ -4,9 +4,11 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import pathlib
 from typing import Dict, List, Any
 
 from flask import Blueprint, abort, jsonify, request
+from core.date_rules import is_iso_date_key
 
 from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, ABS_PATH
 from core.student_schedule_projection import scheduled_makeup_student_ids
@@ -30,19 +32,15 @@ def _date_key_from_query(default: dt.date | None = None) -> str:
     if default is None:
         default = dt.date.today()
     date_str_full = request.args.get("date", default.isoformat())
-    date_str = (date_str_full or default.isoformat()).split("T")[0]
-    try:
-        dt.date.fromisoformat(date_str)
-    except ValueError:
+    date_str = str(date_str_full or default.isoformat()).strip()
+    if not is_iso_date_key(date_str):
         abort(400, description="Invalid date format")
     return date_str
 
 
 def _norm_date(date_key: str) -> str:
-    s = (str(date_key or "")).split("T")[0].strip()
-    try:
-        dt.date.fromisoformat(s)
-    except Exception:
+    s = str(date_key or "").strip()
+    if not is_iso_date_key(s):
         abort(400, description="Invalid date format")
     return s
 
@@ -63,15 +61,28 @@ def _absence_response(payload: dict, status: int = 200, *, revision_payload: dic
     return response
 
 
-def _load_flag_all(path) -> Dict[str, Dict[str, int]]:
+def _load_flag_all(path, *, for_write: bool = False) -> Dict[str, Dict[str, int]]:
     """
     schema:
       {
         "YYYY-MM-DD": { "sid": 1, ... }
       }
     """
+    if for_write:
+        try:
+            data = json.loads(pathlib.Path(path).read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            data = {}
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            abort(503, description="Attendance/contact store is unreadable")
+        if not isinstance(data, dict) or any(not isinstance(day, dict) for day in data.values()):
+            abort(503, description="Attendance/contact store is invalid")
+    else:
+        try:
+            data = load(path)
+        except Exception:
+            return {}
     try:
-        data = load(path)
         if isinstance(data, dict):
             out: Dict[str, Dict[str, int]] = {}
             for dk, mp in data.items():
@@ -92,7 +103,7 @@ def _save_flag_all(path, data: Dict[str, Dict[str, int]]) -> None:
 
 def _patch_flag(path, date_key: str, sid: str, checked: bool) -> None:
     with file_lock(path):
-        all_map = _load_flag_all(path)
+        all_map = _load_flag_all(path, for_write=True)
         day = all_map.get(date_key)
         if not isinstance(day, dict):
             day = {}
@@ -246,6 +257,9 @@ def api_absent_post():
             after_pairs = _absence_pairs(payload)
             new_pairs = after_pairs - before_pairs
             if new_pairs:
+                students = load(STU_PATH)
+                if not isinstance(students, list):
+                    raise ValueError("students must be readable before registering an absence")
                 commit_new_absences_locked(
                     new_pairs,
                     absent_after=normalize_absent(payload, existing=before),
@@ -254,6 +268,7 @@ def api_absent_post():
                     updates_path=UPD_PATH,
                     progress_path=PRG_PATH,
                     journal_dir=journal_dir,
+                    students=students,
                     kind="absence-api",
                 )
             else:

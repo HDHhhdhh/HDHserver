@@ -1,34 +1,16 @@
 import {
+  GRADE_PHASE_DELIM,
+  hasAnyScheduleValue,
+  parseGradeToken,
+  pickScheduleFields as normalizeScheduleFields,
   getActiveSchoolCalendarSemester,
   getActiveSchoolCalendarYear,
   isSchoolCalendarV2,
 } from '../shared/schoolCalendar.js';
 
 
-const SCHEDULE_KEYS = [
-  'textbook',
-  'semesterStart',
-  'midterm',
-  'midtermMath',
-  'midtermRange',
-  'midtermNote',
-  'final',
-  'finalMath',
-  'finalRange',
-  'finalNote',
-];
-const GRADE_PHASE_DELIM = '::';
-
 export function isSchoolCalendarRecord(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeScheduleFields(entry = {}) {
-  const out = {};
-  for (const key of SCHEDULE_KEYS) {
-    out[key] = String(entry?.[key] ?? '').trim();
-  }
-  return out;
 }
 
 export function normalizeSchoolCalendarCommon(entry = {}) {
@@ -52,28 +34,7 @@ export function normalizeSchoolCalendarGrade(entry = {}) {
 }
 
 export function hasSchoolCalendarScheduleValue(entry = {}) {
-  return SCHEDULE_KEYS.some((key) => String(entry?.[key] ?? '').trim());
-}
-
-function parseGradeToken(rawKey, gradeEntry = {}) {
-  const key = String(rawKey ?? '').trim();
-  const explicitGrade = String(gradeEntry?.__grade ?? '').trim();
-  const explicitPhase = String(gradeEntry?.__phase ?? '').trim();
-
-  if (explicitGrade || explicitPhase) {
-    return {
-      grade: explicitGrade || key,
-      phase: explicitPhase,
-    };
-  }
-
-  const idx = key.indexOf(GRADE_PHASE_DELIM);
-  if (idx < 0) return { grade: key, phase: '' };
-
-  return {
-    grade: key.slice(0, idx).trim(),
-    phase: key.slice(idx + GRADE_PHASE_DELIM.length).trim(),
-  };
+  return hasAnyScheduleValue(entry);
 }
 
 export function cloneSchoolCalendarRow(school, { nextGradeId } = {}) {
@@ -208,7 +169,6 @@ export function buildSchoolCalendarDocument({
       if (!grade) return;
 
       const key = phase ? `${grade}${GRADE_PHASE_DELIM}${phase}` : grade;
-      if (!key) return;
 
       grades[key] = {
         ...fields,

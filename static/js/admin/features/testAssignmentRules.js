@@ -7,7 +7,7 @@ export const CATEGORY_DEFS = [
   { key: 'REVIEW', label: '복습 테스트', short: '복습', difficulties: ['상', '중상'] },
   { key: 'UNIT', label: '단원평가', short: '단원', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', short: '학군지', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
+  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['중상', '상', ILSAN_GRAPH_DIFFICULTY] },
 ];
 export const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
 export const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
@@ -77,6 +77,7 @@ export function isIlsanGraphDifficultyText(source) {
 export function normalizeDifficulty(categoryKey, raw, name = '') {
   const text = String(raw || '').trim();
   const source = `${text} ${name}`;
+  if (categoryKey === 'ILSAN_PAST' && ['중상', '상', ILSAN_GRAPH_DIFFICULTY].includes(text)) return text;
   if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
   const def = CATEGORY_BY_KEY[categoryKey];
   if (def?.difficulties.includes(text)) return text;
@@ -84,8 +85,8 @@ export function normalizeDifficulty(categoryKey, raw, name = '') {
   const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (lv) return `Lv.${lv[1]}`;
   if (source.includes('중상')) return '중상';
-  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
+  if (source.includes('상')) return '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중상';
 
   return def?.difficulties?.[0] || '';
 }
@@ -200,7 +201,7 @@ export function normalizeConfig(cfg) {
         });
         subjectRules[target] = Array.from(new Set(next.map(String)));
       };
-      mergeLevels('중상', '상');
+      mergeLevels('중상', '중');
       mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
       CATEGORY_BY_KEY.ILSAN_PAST.difficulties.forEach(difficulty => {
         subjectRules[difficulty] = STUDENT_LEVELS.slice();

@@ -6,7 +6,7 @@ export const CATEGORY_DEFS = [
   { key: 'UNIT', label: '단원평가', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
   { key: 'TRAINING_PACK', label: '트레이닝팩', difficulties: ['트팩'] },
   { key: 'SCHOOL_PAST', label: '학군지 기출', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
+  { key: 'ILSAN_PAST', label: '일산 기출', difficulties: ['중상', '상', ILSAN_GRAPH_DIFFICULTY] },
 ];
 
 export const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(item => [item.key, item]));
@@ -75,6 +75,7 @@ export function isIlsanGraphDifficultyText(source) {
 export function normalizeDifficulty(categoryKey, raw, name = '') {
   const text = String(raw || '').trim();
   const source = `${text} ${name}`;
+  if (categoryKey === 'ILSAN_PAST' && ['중상', '상', ILSAN_GRAPH_DIFFICULTY].includes(text)) return text;
   if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
   const def = CATEGORY_BY_KEY[categoryKey];
   if (def?.difficulties.includes(text)) return text;
@@ -82,8 +83,8 @@ export function normalizeDifficulty(categoryKey, raw, name = '') {
   const level = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
   if (level) return `Lv.${level[1]}`;
   if (source.includes('중상')) return '중상';
-  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
+  if (source.includes('상')) return '상';
+  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중상';
   return def?.difficulties?.[0] || '';
 }
 
@@ -119,8 +120,8 @@ function defaultIlsanRules() {
   SUBJECTS.forEach(subject => {
     const allLevels = STUDENT_LEVELS.slice();
     out[subject] = {
-      '중': allLevels.slice(),
       '중상': allLevels.slice(),
+      '상': allLevels.slice(),
       [ILSAN_GRAPH_DIFFICULTY]: allLevels.slice(),
     };
   });
@@ -190,7 +191,7 @@ export function ensureConfig(raw) {
           });
           subjectRules[target] = Array.from(new Set(next.map(String)));
         };
-        mergeLevels('중상', '상');
+        mergeLevels('중상', '중');
         mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
       }
       const defaults = DEFAULT_RULES[def.key]?.[subject] || {};
@@ -287,12 +288,13 @@ export function visibleCatalogTests(tests, filters = {}, options = {}) {
     ? options.matchesSearchKey
     : (key, query) => canonText(key).toLowerCase().includes(canonText(query).toLowerCase());
   const categoryKey = String(filters.category || '');
+  const hasSearch = Boolean(String(filters.catalogSearch || '').trim());
   return (Array.isArray(tests) ? tests : [])
     .filter(test => normalizeSubject(test.curriculum) === filters.subject)
     .filter(test => !filters.difficulty || String(test.difficulty || '') === String(filters.difficulty))
     .filter(test => !isPastCategory(categoryKey) || !filters.term || String(test.term || '') === String(filters.term))
     .filter(test => !isUnitCategory(categoryKey) || !filters.round || String(test.round || '') === String(filters.round))
-    .filter(test => matchesSearchKey(catalogSearchText(test, options), filters.catalogSearch))
+    .filter(test => !hasSearch || matchesSearchKey(catalogSearchText(test, options), filters.catalogSearch))
     .sort((left, right) => compareCatalogTests(left, right, categoryKey));
 }
 

@@ -77,6 +77,7 @@ def commit_new_absences_locked(
     log_repository_factory: Callable[[], Any] | None = None,
     journal_dir: Any,
     carryover_after: dict | None = None,
+    students: list | None = None,
     kind: str = "absence",
     failure_injector: Callable[[str], None] | None = None,
 ) -> str:
@@ -84,6 +85,7 @@ def commit_new_absences_locked(
         pairs,
         absent_after=absent_after,
         carryover_after=carryover_after,
+        students=students,
         absent_path=absent_path,
         carryover_path=carryover_path,
         updates_path=updates_path,

@@ -30,6 +30,8 @@ from core.person_identity_store import (
     PersonIdentityUnavailableError,
     create_student_with_identity,
     identity_is_configured,
+    identity_state_lock,
+    load_identity_state_strict,
     mutate_identity_state,
     retire_student_identity,
     update_person_profile_field,
@@ -43,6 +45,7 @@ from core.student_auto_assignment_rules import (
     student_uses_able_curriculum,
 )
 from core.student_notification_hooks import enqueue_current_schedule_changes
+from core.video_sources import GICHUL_OVERLAY_FIELD
 
 
 bp_api_students = Blueprint("api_students", __name__)
@@ -130,12 +133,25 @@ def _updated_student_rows(
 
 @bp_api_students.get("/api/students")
 def api_students():
+    if _person_identity_configured():
+        if _person_identity_writes_degraded():
+            return _person_identity_error("person identity recovery is required", 503)
+        try:
+            with identity_state_lock(PERSONS_PATH, STU_PATH, PERSON_IDENTITY_JOURNAL_PATH):
+                if PERSON_IDENTITY_JOURNAL_PATH.exists():
+                    return _person_identity_error("person identity recovery is required", 503)
+                _, students = load_identity_state_strict(PERSONS_PATH, STU_PATH)
+            return jsonify(students)
+        except (PersonIdentityUnavailableError, OSError, TimeoutError) as error:
+            return _person_identity_error(str(error), 503)
     return jsonify(load(STU_PATH))
 
 
 @bp_api_students.post("/api/add-student")
 def api_add_student():
     data = dict(request.get_json(force=True) or {})
+    if GICHUL_OVERLAY_FIELD in data and type(data[GICHUL_OVERLAY_FIELD]) is not bool:
+        return jsonify({"ok": False, "error": f"field must be a JSON boolean: {GICHUL_OVERLAY_FIELD}"}), 400
     data.pop("id", None)
     data.pop("personId", None)
     data.pop("cloneFromSid", None)
@@ -249,11 +265,11 @@ def api_update_student_field():
     field = str(field)
     if field in {"id", "personId"}:
         return jsonify({"ok": False, "error": f"field is immutable: {field}"}), 400
-    if field == WHITE_REVIEW_PENDING_FIELD and type(value) is not bool:
+    if field in {WHITE_REVIEW_PENDING_FIELD, GICHUL_OVERLAY_FIELD} and type(value) is not bool:
         return jsonify(
             {
                 "ok": False,
-                "error": f"field must be a JSON boolean: {WHITE_REVIEW_PENDING_FIELD}",
+                "error": f"field must be a JSON boolean: {field}",
             }
         ), 400
 

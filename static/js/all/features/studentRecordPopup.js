@@ -1,7 +1,7 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js?v=20260905-save-context1';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260914-homework-open-stable1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007';
 import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
-import { initVideoModal } from '../../admin/features/videoModal.js?v=20260830-popup-load3';
+import { initVideoModal } from '../../admin/features/videoModal.js?v=20260912-watch-rearm1&youtube=20260913&hubSave=20261001&uiPerf=20261002&dragScroll=20261007';
 import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260821-note-body-row2';
 
 const ADMIN_POPUP_STYLESHEETS = [

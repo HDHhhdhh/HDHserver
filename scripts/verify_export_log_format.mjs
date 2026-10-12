@@ -213,8 +213,8 @@ ok(htmlSource.includes('설정은 현재 페이지에서만 유지됩니다.'), 
 ok(htmlSource.includes('CSV 열 구조는 기존 연동을 위해 고정됩니다.'), 'UI does not disclose stable CSV schema');
 ok(cssSource.includes('body.admin #exportLogsModal .export-logs-panel'), 'export modal styles are not narrowly scoped');
 ok(cssSource.includes('@media (max-width: 640px)'), 'export modal has no mobile breakpoint');
-ok(mainSource.includes("exportLogs.js?v=20260826-roster-current-content2"), 'admin entry lacks current roster-content cache bust');
-ok(htmlSource.includes("/js/admin/main.js?v=20260826-roster-current-content2"), 'admin shell lacks the current roster-content cache bust');
+ok(mainSource.includes("exportLogs.js?v=20260907-ilsan-level-r1"), 'admin entry lacks current roster-content cache bust');
+ok(htmlSource.includes("/js/admin/main.js?v=20260907-ilsan-level-r1"), 'admin shell lacks the current roster-content cache bust');
 ok(
   /import\s*\{[\s\S]*?\bcsvCell\b[\s\S]*?\}\s*from '\.\/exportLogFormat\.js\?[^']+';/u.test(exporterSource),
   'roster CSV exporter does not import the shared csvCell helper',

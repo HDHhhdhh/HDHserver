@@ -45,7 +45,7 @@ assert.match(
   deleteSource,
   /fetch\(`\/api\/students\/\$\{encodeURIComponent\(sid\)\}`, \{ method:'DELETE' \}\)/,
 );
-assert.match(authSource, /api\("\/api\/auth\/change"/);
+assert.match(authSource, /apiWithSpinner\("\/api\/auth\/change"/);
 
 const routeDir = path.join(root, 'routes');
 const routeFiles = (await fs.readdir(routeDir, { withFileTypes: true }))

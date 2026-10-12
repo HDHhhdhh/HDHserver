@@ -217,7 +217,6 @@ def merge_additive_sheet_absences(
                 date_key,
                 sid,
                 slot,
-                str(candidate.get("cell") or ""),
                 timestamp,
                 changes,
             )
@@ -433,7 +432,6 @@ def _additive_open_carryover(
     date_key: str,
     sid: str,
     slot: int,
-    cell: str,
     now: str,
     changes: list[dict[str, Any]],
 ) -> None:

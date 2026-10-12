@@ -236,8 +236,6 @@ def main(argv: list[str] | None = None) -> int:
     categories = ensure_category_scaffolding(cfg)
     school_category = categories["SCHOOL_PAST"]
     school_tests = school_category.get("tests", [])
-    if not isinstance(school_tests, list):
-        school_tests = []
 
     generated = build_generated_tests(args.csv)
     merged, added, updated, preserved = merge_tests(school_tests, generated)

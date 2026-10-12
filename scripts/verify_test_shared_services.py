@@ -43,7 +43,7 @@ def _resolver_fixture() -> tuple[dict, dict]:
                             "id": "ilsan-config",
                             "name": "Ilsan",
                             "round": "1",
-                            "difficulty": "\uc911\uc0c1",
+                            "difficulty": "\uc0c1",
                             "answerUrl": "https://config.example/ilsan",
                         },
                     ],

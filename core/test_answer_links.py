@@ -63,10 +63,10 @@ def _difficulty(category_key: str, value) -> str:
     if category_key == "ILSAN_PAST":
         if "\uadf8\ub798\ud504" in text:
             return "\uadf8\ub798\ud504 \ud3ec\ud568"
-        if text == "\uc0c1" or "\uc911\uc0c1" in text:
+        if text in {"\uc911\uc0c1", "\uc0c1"}:
+            return text
+        if text == "\uc911" or "\uc911" in text:
             return "\uc911\uc0c1"
-        if "\uc911" in text:
-            return "\uc911"
     return text
 
 

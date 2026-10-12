@@ -125,6 +125,43 @@ def _verify_signature_cached_legacy_reads() -> None:
             log_repository_module._LOG_JSON_READ_CACHE.clear()
 
 
+def _verify_sealed_entry_read_cost() -> None:
+    with tempfile.TemporaryDirectory(prefix="verify-sealed-log-entry-") as tmp:
+        root = Path(tmp)
+        logs_path = root / "logs.json"
+        logs_path.write_text(json.dumps({DATE: {SID_ONE: {
+            "notes": "구형 JSON", "legacyOnly": {"keep": "한글"},
+        }}}, ensure_ascii=False), "utf-8")
+        repository = LogRepository(logs_path=logs_path, db_path=str(root / "app.sqlite"))
+        for marker, expected_reads in ((True, 0), (False, 1), (1, 1), (None, 1)):
+            entry = {"notes": "", "sqliteOnly": {"keep": "원본"}}
+            if marker is not None:
+                entry["__logRepositoryCompleteV1"] = marker
+            con = repository._connect()
+            try:
+                repository._ensure_schema(con)
+                repository._sqlite_upsert_entry(con, DATE, SID_ONE, entry)
+            finally:
+                con.close()
+            with mock.patch.object(repository, "_json_entry", wraps=repository._json_entry) as reader:
+                result = repository.read_entry(DATE, SID_ONE)
+                assert reader.call_count == expected_reads, "sealed rows must not read unused JSON fallback"
+                assert result.source == "sqlite"
+                if marker is True:
+                    assert "__logRepositoryCompleteV1" not in result.entry
+                    assert result.entry == {"notes": "", "sqliteOnly": {"keep": "원본"}}
+                else:
+                    assert result.entry["notes"] == "구형 JSON"
+                    assert result.entry["legacyOnly"] == {"keep": "한글"}
+                result.entry["sqliteOnly"]["keep"] = "caller mutation"
+                assert repository.read_entry(DATE, SID_ONE).entry["sqliteOnly"]["keep"] == "원본"
+        with mock.patch.object(repository, "_connect", side_effect=RuntimeError("synthetic sqlite outage")), \
+             mock.patch.object(repository, "_json_entry", wraps=repository._json_entry) as reader:
+            fallback = repository.read_entry(DATE, SID_ONE)
+            assert fallback.source == "json" and reader.call_count == 1
+            assert fallback.entry == {"notes": "구형 JSON", "legacyOnly": {"keep": "한글"}}
+
+
 def _verify_missing_leave_summary() -> None:
     with tempfile.TemporaryDirectory(prefix="verify-missing-leave-summary-") as tmp:
         root = Path(tmp)
@@ -197,9 +234,72 @@ def _verify_missing_leave_summary() -> None:
         assert summary.get("byDate") == [{"date": date, "count": 2}]
 
 
+def _verify_missing_leave_legacy_merge() -> None:
+    cases = [
+        ("missing", {}, {"done": True}, False),
+        ("null", {"done": None}, {"done": True}, False),
+        ("blank", {"done": " "}, {"done": True}, False),
+        ("empty-array", {"done": []}, {"done": True}, False),
+        ("empty-object", {"done": {}}, {"done": True}, False),
+        ("false", {"done": False}, {"done": True}, True),
+        ("zero", {"done": 0}, {"done": True}, True),
+        ("false-string", {"done": "false"}, {"done": True}, True),
+        ("sealed-missing", {"__logRepositoryCompleteV1": True}, {"done": True}, True),
+        ("sealed-null", {"__logRepositoryCompleteV1": True, "done": None}, {"done": True}, True),
+        ("numeric-marker", {"__logRepositoryCompleteV1": 1}, {"done": True}, False),
+        ("done", {"done": True}, {"done": False}, False),
+    ]
+    with tempfile.TemporaryDirectory(prefix="verify-missing-leave-merge-") as tmp:
+        root = Path(tmp)
+        logs_path, db_path = root / "logs.json", root / "app.sqlite"
+        date = "2026-08-29"
+        logs_path.write_text(json.dumps({date: {sid: fallback for sid, _, fallback, _ in cases}}), "utf-8")
+        con = sqlite3.connect(db_path)
+        try:
+            con.execute("CREATE TABLE logs(date TEXT, sid TEXT, entry_json TEXT, updated_at TEXT, PRIMARY KEY(date,sid))")
+            con.executemany("INSERT INTO logs VALUES(?,?,?,?)", [
+                (date, sid, json.dumps(primary), "2026-08-29T18:00:00+09:00")
+                for sid, primary, _, _ in cases
+            ])
+            con.commit()
+        finally:
+            con.close()
+        repository = LogRepository(logs_path=logs_path, db_path=str(db_path), today_key=lambda: "2026-08-30")
+        summary = repository.summarize_missing_leave({date: {sid: "18:00" for sid, _, _, _ in cases}}, since_date=date)
+        expected = {sid for sid, _, _, missing in cases if missing}
+        assert summary["rowsAvailable"] is True
+        assert {row["sid"] for row in summary["rows"]} == expected
+        for sid, _, _, missing in cases:
+            assert (not repository.truthy(repository.read_entry(date, sid).entry.get("done"))) == missing, sid
+        assert summary["total"] == len(expected)
+        assert all(set(row) == {"date", "sid", "arriveTime"} for row in summary["rows"])
+
+
+def _verify_missing_leave_roster_tombstones() -> None:
+    from core.student_schedule_projection import effective_attendance_student_ids, project_student_schedule
+    date, sid = "2026-08-29", "makeup-only"
+    student = {"id": sid, "day1": "화1"}
+    active = {"studentId": sid, "makeupDate": date, "makeupTimes": [1], "status": "scheduled"}
+    for section in ("by_absence", "manual"):
+        for row, expected in [
+            ({"scheduledMakeup": None, "scheduled_makeup": active}, set()),
+            ({"scheduledMakeup": {}, "scheduled_makeup": active}, set()),
+            ({"scheduled_makeup": active}, {sid}),
+            ({"scheduledMakeup": active, "scheduled_makeup": None}, {sid}),
+        ]:
+            makeup = {section: {"2026-08-28": {sid: row}}}
+            result = effective_attendance_student_ids([student], date_key=date, makeup=makeup)
+            assert result == expected, (section, row, result)
+            projected = project_student_schedule(student, sid=sid, start_date=date, end_date=date, makeup=makeup)
+            assert bool(projected) == bool(expected), (section, projected)
+
+
 def main() -> int:
     _verify_signature_cached_legacy_reads()
+    _verify_sealed_entry_read_cost()
     _verify_missing_leave_summary()
+    _verify_missing_leave_legacy_merge()
+    _verify_missing_leave_roster_tombstones()
     route_source = (ROOT / "routes" / "api_logs.py").read_text("utf-8")
     arrive_route_source = (ROOT / "routes" / "api_arrive_time.py").read_text("utf-8")
     basic_source = (ROOT / "routes" / "api_basic.py").read_text("utf-8")
@@ -330,6 +430,8 @@ def main() -> int:
         original_students_path = log_repository_provider.STU_PATH
         log_repository_provider.LOGS_PATH = logs_path
         log_repository_provider.STU_PATH = students_path
+        database_environment = mock.patch.dict("os.environ", {"DB_PATH": str(database_path)})
+        database_environment.start()
         try:
             app = Flask("verify-log-routes")
             app.register_blueprint(api_logs.bp_api_logs)
@@ -572,6 +674,7 @@ def main() -> int:
             ]
             _assert_failure_is_no_write(root, before_failure, "validated route failures")
         finally:
+            database_environment.stop()
             log_repository_provider.LOGS_PATH = original_logs_path
             log_repository_provider.STU_PATH = original_students_path
 

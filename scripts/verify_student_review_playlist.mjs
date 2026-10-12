@@ -141,11 +141,11 @@ assert.ok(
   'student entrypoint must compose the injected review playlist controller',
 );
 
-const playbackScript = '/js/student/playback.js?v=20260828-playback-r1';
+const playbackScript = '/js/student/playback.js?v=20261002-native-watch1';
 const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
 const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.equal((htmlSource.match(/\/js\/student\/reviewPlaylist\.js/g) || []).length, 1);
 assert.ok(htmlSource.indexOf(playbackScript) < htmlSource.indexOf(reviewPlaylistScript));
 assert.ok(htmlSource.indexOf(reviewPlaylistScript) < htmlSource.indexOf(announcementStateScript));

@@ -32,7 +32,7 @@ def _verify_source_contract() -> None:
     deploy_source = (ROOT / "scripts" / "apply_student_app_production.ps1").read_text(encoding="utf-8")
     migration_source = (ROOT / "scripts" / "migrate_today_order_store.py").read_text(encoding="utf-8")
 
-    assert 'TODAY_ORDER_PATH = ensure_json(DATA_DIR / "today_order.json", {})' in paths_source
+    assert 'TODAY_ORDER_PATH = DATA_DIR / "today_order.json"' in paths_source
     assert 'TODAY_ORDER_PATH = ensure_json(BASE / "today_order.json", {})' not in paths_source
     assert "from core.paths import TODAY_ORDER_PATH" in route_source
     assert "p = TODAY_ORDER_PATH" in route_source

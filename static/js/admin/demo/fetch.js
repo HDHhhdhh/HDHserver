@@ -1,4 +1,4 @@
-import { cloneDemoValue, loadDemoStore, saveDemoStore } from './store.js';
+import { cloneDemoValue as clone, loadDemoStore, saveDemoStore } from './store.js';
 import { applyAssistantStudentNotesRequest } from './assistantStudentNotesContract.js';
 import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
@@ -24,9 +24,6 @@ function getResponseCtor(root) {
   return root?.Response || globalThis.Response;
 }
 
-function clone(value) {
-  return cloneDemoValue(value);
-}
 
 function nowIso() {
   return new Date().toISOString();
@@ -214,11 +211,6 @@ function ensureDateMap(store, key, date) {
   return store[key][date];
 }
 
-function ensureArrayDateMap(store, key, date) {
-  store[key] = store[key] && typeof store[key] === 'object' ? store[key] : {};
-  store[key][date] = Array.isArray(store[key][date]) ? store[key][date] : [];
-  return store[key][date];
-}
 
 function removeEmptyDateMap(store, key, date) {
   if (store[key]?.[date] && typeof store[key][date] === 'object' && !Array.isArray(store[key][date]) && Object.keys(store[key][date]).length === 0) {
@@ -317,10 +309,18 @@ function mergeLogPatchBatch(store, body) {
   return { count: normalized.length };
 }
 
-function mergeProgressPatch(store, body) {
+export function mergeProgressPatch(store, body) {
   const date = String(body?.date || '').trim();
   const sid = String(body?.sid || '').trim();
   if (!date || !sid) return { error: 'missing date or sid' };
+  const rearms = body.resumeAutoWatch || {};
+  if (!rearms || typeof rearms !== 'object' || Array.isArray(rearms)) return { error: 'bad resumeAutoWatch' };
+  for (const [mid, command] of Object.entries(rearms)) {
+    if (!mid || mid.startsWith('__') || mid === 'tests' || !command?.token || typeof command.baseToken !== 'string'
+      || (body.source && body.source !== 'manual') || (body.progress?.[mid] && body.progress[mid] !== 'none')) return { error: 'bad resumeAutoWatch' };
+    const token = store.progress?.[date]?.[sid]?.__videoWatchCycles?.[mid]?.token || '';
+    if (token !== command.token && token !== command.baseToken) return { error: 'watch cycle conflict', status: 409 };
+  }
   const bySid = ensureDateMap(store, 'progress', date);
   const previous = bySid[sid] && typeof bySid[sid] === 'object' ? bySid[sid] : {};
   const patch = body.progress && typeof body.progress === 'object' ? body.progress : {};
@@ -348,6 +348,7 @@ function mergeProgressPatch(store, body) {
   Object.entries(patch).forEach(([key, rawValue]) => {
     const mid = String(key || '').trim();
     if (!mid) return;
+    if (rearms[mid]) return;
 
     if (mid === '__testsClearedAt') {
       const marker = String(rawValue || '').trim();
@@ -400,6 +401,18 @@ function mergeProgressPatch(store, body) {
     }
   });
 
+  if (Object.keys(rearms).length) {
+    next.__videoWatchCycles = clone(next.__videoWatchCycles || {});
+    next.__autoWatchProgressMids = { ...(next.__autoWatchProgressMids || {}) };
+    for (const [mid, command] of Object.entries(rearms)) {
+      if (next.__videoWatchCycles[mid]?.token === command.token) continue;
+      const now = Date.now();
+      next.__videoWatchCycles[mid] = { token: command.token, startedAt: now, watch: { last: 0, dur: 0, completed: false, updatedAt: now } };
+      next[mid] = 'none';
+      next.__autoWatchProgressMids[mid] = 'none';
+      delete manualMeta[mid];
+    }
+  }
   if (Object.keys(manualMeta).length) next.__manualProgressMids = manualMeta;
   else delete next.__manualProgressMids;
   if (sawTestsPatch) {
@@ -582,7 +595,7 @@ function flatDemoTests(store) {
   return rows;
 }
 
-function statSeedForTest(test, index) {
+function statSeedForTest(index) {
   const count = 3 + (index % 5);
   const avg = 72 + ((index * 7) % 19);
   return {
@@ -612,7 +625,7 @@ function testsStatsResponse(root, store) {
   const byTest = {};
   const summaryBuckets = {};
   rows.forEach((test, index) => {
-    const stat = statSeedForTest(test, index);
+    const stat = statSeedForTest(index);
     if (test.id) byTestId[test.id] = stat;
     byTestSignature[testsSignature(test)] = stat;
     if (test.name) byTest[String(test.name).trim()] = stat;
@@ -642,7 +655,7 @@ function testsRecordsResponse(root, store, url) {
   const testId = String(url.searchParams.get('test_id') || '').trim();
   const tests = flatDemoTests(store);
   const index = Math.max(0, tests.findIndex(test => String(test.id || '') === testId));
-  const stat = statSeedForTest(tests[index] || {}, index);
+  const stat = statSeedForTest(index);
   const students = Array.isArray(store.students) ? store.students.slice(0, Math.min(6, store.students.length)) : [];
   const records = students.map((student, rowIndex) => {
     const pct = Math.max(45, Math.min(100, stat.avg_pct + (rowIndex - 2) * 4));
@@ -1082,7 +1095,7 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/logs') return responseJson(root, filterDateSidMap(store.logs, url));
   if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
-  if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url));
+  if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url), 200, { 'X-Video-Watch-Cycles': '1' });
   if (path === '/api/extra-attend') return extraAttendResponse(root, store, url);
   if (path === '/api/absent') return responseJson(root, clone(store.absent || { by_date: {}, by_student: {}, by_slot: {} }));
   if (path === '/api/attendance') return dayMapResponse(root, store, 'attendance', url);
@@ -1331,7 +1344,7 @@ async function handleWrite(root, ctx, store) {
 
   if (PATCH_METHODS.has(method) && path === '/api/progress/patch') {
     const result = mergeProgressPatch(store, body);
-    if (result.error) return badRequest(root, result.error);
+    if (result.error) return responseJson(root, { ok: false, error: result.error }, result.status || 400);
     saveDemoStore(store);
     return ok(root, { ok: true, progress: result.progress });
   }

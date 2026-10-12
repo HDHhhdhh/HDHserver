@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import re
-from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -33,7 +32,7 @@ CATEGORY_DIFFICULTIES = {
     "REVIEW": ("상", "중상"),
     "UNIT": ("Lv.3", "Lv.4", "Lv.5", "Lv.6"),
     "SCHOOL_PAST": ("상", "중상"),
-    "ILSAN_PAST": ("중", "중상", "그래프 포함"),
+    "ILSAN_PAST": ("중상", "상", "그래프 포함"),
 }
 SUBJECT_ALIASES = {
     "공통수학1": "공수1",
@@ -139,6 +138,8 @@ def canonical_category_key(key: Any, label: Any = "") -> str:
 def normalize_difficulty(category_key: str, value: Any, name: Any = "") -> str:
     raw = _text(value)
     source = f"{raw} {_text(name)}"
+    if category_key == "ILSAN_PAST" and raw in {"중상", "상", "그래프 포함"}:
+        return raw
     if category_key == "ILSAN_PAST" and (
         "그래프 포함" in source or "삼각함수 그래프 포함" in source or "그래프" in source
     ):
@@ -151,9 +152,9 @@ def normalize_difficulty(category_key: str, value: Any, name: Any = "") -> str:
     if "중상" in source:
         return "중상"
     if "상" in source:
-        return "중상" if category_key == "ILSAN_PAST" else "상"
+        return "상"
     if category_key == "ILSAN_PAST" and "중" in source:
-        return "중"
+        return "중상"
     difficulties = CATEGORY_DIFFICULTIES.get(category_key, ())
     return difficulties[0] if difficulties else raw
 

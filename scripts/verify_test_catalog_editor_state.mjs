@@ -45,6 +45,12 @@ function sha256(value) {
 assert.deepEqual(plain(api.parseAnswerSpec('1 3,5', 4)), ['1', '3', '5', '']);
 assert.deepEqual(plain(api.parseAnswerSpec('', 3)), ['', '', '']);
 assert.deepEqual(plain(api.parseAnswerSpec(['1', '2'], 4)), ['1', '2']);
+const compoundAnswers = ['1', '-1/7', 'M = 44, m = 3', '(9/7, 50/7)'];
+const compoundText = api.answerKeysToText({ problems: compoundAnswers.length, answerKey: compoundAnswers });
+assert.deepEqual(plain(api.parseAnswerSpec(compoundText, compoundAnswers.length)), compoundAnswers,
+  'compound answer values must round-trip through the CSV editor text format');
+assert.throws(() => api.parseAnswerSpec('["1",', 2), /JSON 배열 형식이 올바르지 않습니다/,
+  'malformed JSON answer arrays must not fall back to whitespace splitting');
 assert.deepEqual(
   plain(api.parseAnswerSpec('1342', 4)),
   ['1342', '', '', ''],
@@ -206,7 +212,7 @@ for (const retired of [
   assert.equal(entrySource.includes(retired), false, `tests entrypoint still owns editor primitive: ${retired}`);
 }
 for (const delegated of [
-  "from './tests/catalogEditorState.js?v=20260829-catalog-editor-state-r1'",
+  "from './tests/catalogEditorState.js?v=20260907-ilsan-answers-r1'",
   'answerModeSummary(modes).text',
   'buildTestCatalogCsvTemplate(ILSAN_GRAPH_DIFFICULTY)',
   'answerKeyFromCsvRow(row, round, problems, reportCsvParseWarning)',
@@ -216,7 +222,7 @@ for (const delegated of [
 }
 assert.match(
   htmlSource,
-  /<script src="\/js\/tests\.js\?v=20260829-catalog-statistics-state-r1" type="module"><\/script>/,
+  /<script src="\/js\/tests\.js\?v=20260907-ilsan-level-r1&hub=20261001-detail1" type="module"><\/script>/,
 );
 assert.match(
   htmlSource,

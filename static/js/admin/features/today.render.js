@@ -4,7 +4,6 @@
 // Notes:
 // - Keep imported `state` and `window.state` aligned.
 // - Use patch endpoints for attendance, contact, and arrive-time writes.
-// - Move rows into `doneWrap` immediately, then sync remote state.
 // - Avoid custom setters for absence maps; update plain objects directly.
 
 import { $, toast } from '../core/utils.js';
@@ -14,6 +13,7 @@ import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails
 import { ensureOk, sendJson } from '../../shared/api.js';
 
 const WHITE_REVIEW_PENDING_FIELD = 'whiteReviewPending';
+const whiteReviewSaves = new Set();
 
 import {
   yoilOf,
@@ -153,6 +153,60 @@ function setWhiteReviewPendingLocal(sid, pending) {
   return true;
 }
 
+function renderWhiteReviewPendingCell(sid, name, pending = whiteReviewPendingForSid(sid)) {
+  const knownStudent = (state.students || []).some(student => String(student?.id) === String(sid));
+  return `<td class="today-white-review-cell">
+    <div class="chk4" aria-label="백지리뷰 검사 대기">
+      <label class="c" data-kind="check" data-on="${pending ? '1' : '0'}" title="백지리뷰 검사 대기">
+        <input type="checkbox" class="whiteReviewPendingChk" data-id="${escapeAttr(sid)}"
+               aria-label="${escapeAttr(`${name || sid} 백지리뷰 검사 대기`)}" ${pending ? 'checked' : ''}
+               ${!knownStudent || whiteReviewSaves.has(String(sid)) ? 'disabled' : ''}>
+      </label>
+    </div>
+  </td>`;
+}
+
+function syncWhiteReviewCheckboxes(sid, pending, trigger) {
+  const controls = new Set([trigger, ...document.querySelectorAll('.whiteReviewPendingChk')]);
+  for (const input of controls) {
+    const tr = closestTodayRow(input);
+    if (rowSid(tr) !== sid) continue;
+    input.checked = pending;
+    input.disabled = whiteReviewSaves.has(sid);
+    tr.dataset.whiteReviewPending = pending ? '1' : '';
+    const pill = input.closest('.c');
+    if (pill) pill.dataset.on = pending ? '1' : '0';
+  }
+}
+
+async function saveWhiteReviewCheckbox(input, refresh) {
+  const sid = rowSid(closestTodayRow(input));
+  if (!sid) return;
+  const previous = whiteReviewPendingForSid(sid);
+  if (whiteReviewSaves.has(sid)) {
+    syncWhiteReviewCheckboxes(sid, previous, input);
+    return;
+  }
+  const checked = input.checked === true;
+  whiteReviewSaves.add(sid);
+  setWhiteReviewPendingLocal(sid, checked);
+  syncWhiteReviewCheckboxes(sid, checked, input);
+  try {
+    await patchWhiteReviewPendingRemote(sid, checked);
+    setWhiteReviewPendingLocal(sid, checked);
+  } catch (error) {
+    console.error(error);
+    setWhiteReviewPendingLocal(sid, previous);
+    syncWhiteReviewCheckboxes(sid, previous, input);
+    alert('백지리뷰 검사 대기 저장 실패');
+    if (refresh) await refresh({ force: true });
+    else document.dispatchEvent(new CustomEvent('admin:refresh'));
+  } finally {
+    whiteReviewSaves.delete(sid);
+    syncWhiteReviewCheckboxes(sid, whiteReviewPendingForSid(sid), input);
+  }
+}
+
 function normalizeLeaveIdentityPart(value) {
   const text = String(value ?? '');
   try { return text.normalize('NFKC').trim(); }
@@ -197,6 +251,7 @@ async function markMakeupDemandOpen(dateKey, sid, slots) {
   const next = latest && typeof latest === 'object' ? latest : {};
   const byAbsence = next.by_absence && typeof next.by_absence === 'object' ? next.by_absence : {};
   const dateRows = { ...(byAbsence[date] || {}) };
+  if (dateRows[studentId]?.state === 'self-study') return;
   const updatedAt = new Date().toISOString();
 
   (slotList.length ? slotList : ['']).forEach(slot => {
@@ -417,6 +472,8 @@ function attachSortable(dateKey, alphaSortOnly) {
     #doneWrap table.done-table{min-width:880px;table-layout:fixed;font-size:15px}
     .today-table th,.today-table td,.done-table th,.done-table td{overflow:hidden;text-overflow:ellipsis}
     .done-table th,.done-table td{text-align:center;vertical-align:middle}
+    body.admin #doneWrap .done-table .today-white-review-cell,
+    body.admin #doneWrap .done-table .done-white-review-head{padding-left:1px;padding-right:1px;white-space:nowrap}
     .today-table th{font-size:14px}
     .today-table td{font-size:15px}
     .today-table .stuName,.done-table .stuName{font-size:15.5px}
@@ -485,12 +542,9 @@ function attachSortable(dateKey, alphaSortOnly) {
 // - slot 1 => 13:00
 // - slot 2 => 18:00
 // - mixed slots use the earliest slot
-function _parseSlotNumsFromLabel(txt, dateKey = '') {
-  return parseSlotsFromText(txt, dateKey);
-}
 
 function _forcedArriveTimeBySlotLabel(dateKey, labelText) {
-  const nums = _parseSlotNumsFromLabel(labelText, dateKey);
+  const nums = parseSlotsFromText(labelText, dateKey);
   if (!nums.length) return '';
   const minSlot = Math.min(...nums);
   if (minSlot === 1) return '13:00';
@@ -499,7 +553,7 @@ function _forcedArriveTimeBySlotLabel(dateKey, labelText) {
 }
 
 function _slotGroupsFromLabelAndArrive(labelText, arriveTime, dateKey = '') {
-  let nums = _parseSlotNumsFromLabel(labelText, dateKey)
+  let nums = parseSlotsFromText(labelText, dateKey)
     .map(Number)
     .filter(n => n === 1 || n === 2 || n === 3);
 
@@ -614,9 +668,7 @@ function progressEntryForSid(day, sid) {
   const sidKey = String(sid || '');
   const direct = day[sidKey];
   if (direct && typeof direct === 'object') return direct;
-  const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
-  const entry = matchedSid ? day[matchedSid] : null;
-  return (entry && typeof entry === 'object') ? entry : {};
+  return {};
 }
 
 function normalizeTestAssignmentStatus(status) {
@@ -670,6 +722,8 @@ function escapeRegExp(value) {
 
 function isIlsanGraphAssignmentItem(item) {
   const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  const difficulty = String(item?.difficulty || '').trim();
+  if (categoryKey === 'ILSAN_PAST' && (difficulty === '중상' || difficulty === '상')) return false;
   const source = `${item?.difficulty || ''} ${item?.name || ''} ${item?.label || ''}`;
   return categoryKey === 'ILSAN_PAST' && (
     source.includes(TEST_ASSIGN_ILSAN_GRAPH_DIFFICULTY) ||
@@ -683,7 +737,10 @@ function testAssignmentRecordPrefix(item) {
   const categoryKey = String(item?.categoryKey || item?.category || '').trim();
   const prefix = String(item?.categoryLabel || testAssignmentCategoryLabel(categoryKey) || '')
     .replace(/\s+/g, '') || categoryKey;
-  const difficulty = String(item?.difficulty || '').trim();
+  const rawDifficulty = String(item?.difficulty || '').trim();
+  const difficulty = item?.categoryKey === 'ILSAN_PAST' && rawDifficulty === '중'
+    ? '중상'
+    : rawDifficulty;
   return prefix && difficulty ? `${prefix}(${difficulty})` : prefix;
 }
 
@@ -861,6 +918,7 @@ async function fetchProgressEntryForCleanup(dateKey, sid) {
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`/api/progress ${res.status}`);
+  state.youtubeRecordCleanupSupported = res.headers?.get?.('X-YouTube-Record-Cleanup') === '1';
 
   const data = await res.json().catch(() => null);
   const day = data?.[dateKey];
@@ -892,6 +950,7 @@ export async function preloadRecordCleanupEntries(targets) {
     ]);
     if (!logsRes.ok) throw new Error(`/api/logs ${logsRes.status}`);
     if (!progressRes.ok) throw new Error(`/api/progress ${progressRes.status}`);
+    state.youtubeRecordCleanupSupported = progressRes.headers?.get?.('X-YouTube-Record-Cleanup') === '1';
 
     const [logsData, progressData] = await Promise.all([
       logsRes.json().catch(() => null),
@@ -940,7 +999,11 @@ export async function completeAssignedTestsForRecordCleanup(dateKey, sid, preloa
     }
   });
 
-  if (Object.keys(progressTests).length) {
+  const completeYouTube = state.youtubeRecordCleanupSupported === true;
+  if (!completeYouTube && (state.videos || []).some(video => video?.provider === 'youtube')) {
+    throw new Error('YouTube 기록정리 기능의 서버 반영 후 다시 시도하세요.');
+  }
+  if (Object.keys(progressTests).length || completeYouTube) {
     const res = await fetch('/api/progress/patch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -948,6 +1011,7 @@ export async function completeAssignedTestsForRecordCleanup(dateKey, sid, preloa
         date: dateKey,
         sid,
         progress: { tests: progressTests },
+        ...(completeYouTube ? { completeAssignedYouTube: true } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -1098,37 +1162,6 @@ function buildProgressTestMarkerSet(dateKey, students) {
   return ready;
 }
 
-// Move completed rows into doneWrap immediately.
-function _ensureDoneTableIfMissing() {
-  const wrap = $('doneWrap');
-  if (!wrap) return null;
-
-  const tb = wrap.querySelector('tbody');
-  if (tb) return tb;
-
-  wrap.innerHTML = `
-    <table class="done-table">
-      <colgroup>
-        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
-        <col style="width:112px"><col style="width:268px"><col style="width:56px">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>날짜</th>
-          <th>구분</th>
-          <th title="등원시간">등원</th>
-          <th>이름</th>
-          <th>학교</th>
-          <th>커리큘럼</th>
-          <th>작업</th>
-          <th>문서</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  `;
-  return wrap.querySelector('tbody');
-}
 
 function _bindDoneWrapInlineEditOnce() {
   const wrap = $('doneWrap');
@@ -1136,6 +1169,11 @@ function _bindDoneWrapInlineEditOnce() {
 
   if (wrap._doneDelegated) return;
   wrap._doneDelegated = true;
+
+  wrap.addEventListener('change', async (ev) => {
+    const input = ev.target.closest?.('.whiteReviewPendingChk');
+    if (input) await saveWhiteReviewCheckbox(input);
+  });
 
   wrap.addEventListener('wheel', handleArriveWheel, { passive: false });
 
@@ -1275,88 +1313,6 @@ function _bindDoneWrapInlineEditOnce() {
   });
 }
 
-function _isInTodayWrap(tr) { return !!tr?.closest?.('#todayWrap'); }
-function _isInDoneWrap(tr) { return !!tr?.closest?.('#doneWrap'); }
-
-function _moveTodayRowToDoneWrap(tr, dateKey) {
-  // Only move rows that still belong to the today list.
-  if (!_isInTodayWrap(tr)) return;
-
-  const tbDone = _ensureDoneTableIfMissing();
-  if (!tbDone) return;
-
-  _bindDoneWrapInlineEditOnce();
-
-  const label = (tr.querySelector('.slotLabel')?.textContent || '').trim();
-  const arrive = (tr.querySelector('.arriveLabel')?.textContent || '').trim();
-
-  const nameLink = tr.querySelector('a.stuName');
-  const nameCellHtml = nameLink
-    ? nameLink.outerHTML
-    : `<span class="stuName">${escapeAttr((tr.querySelector('.stuName')?.textContent || '').trim())}</span>`;
-
-  const school = (tr.querySelector('.today-school-cell')?.textContent || '').trim();
-  const curLabel = (tr.querySelector('.today-curriculum-cell')?.textContent || '').trim();
-  const docBtn = tr.querySelector('.btn-doc');
-  const docUrl = docBtn?.dataset?.docUrl || '';
-
-  const sid = String(tr.dataset.sid || '');
-  const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive, dateKey);
-  const studentIdentity = tr.dataset.studentIdentity || studentLeaveIdentityKey({ id: sid });
-  const arriveTitle = (tr.dataset.att === '1' || isAttended(dateKey, sid)) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
-
-  const newRow = document.createElement('tr');
-  newRow.dataset.sid = sid;
-  newRow.dataset.date = dateKey;
-  if (studentIdentity) newRow.dataset.studentIdentity = studentIdentity;
-  if (tr.dataset.curriculum) newRow.dataset.curriculum = tr.dataset.curriculum;
-  if (tr.dataset.subcurriculum) newRow.dataset.subcurriculum = tr.dataset.subcurriculum;
-  if (slotGroup) newRow.dataset.slotGroup = slotGroup;
-  if (tr.dataset.hw === '1') newRow.dataset.hw = '1';
-  if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
-  newRow.innerHTML = `
-    <td class="done-date-cell">${escapeAttr(dateKey)}</td>
-    <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
-    <td class="att-time done-arrive-cell">
-      <span class="arriveLabel" contenteditable="true" spellcheck="false"
-            data-orig="${escapeAttr(arrive)}"
-            title="${arriveTitle}"
-            style="display:inline-block;min-width:44px;padding:2px 4px;border-radius:6px;border:1px solid transparent">
-        ${escapeAttr(arrive)}
-      </span>
-    </td>
-    <td class="today-name-cell">${nameCellHtml}</td>
-    <td class="today-school-cell">${escapeAttr(school || '')}</td>
-    <td class="today-curriculum-cell">${escapeAttr(curLabel || '')}</td>
-    <td class="done-action-cell">
-      <div class="today-actions">
-      <button class="openStudentPopups" title="학생 운영 팝업">🧾</button>
-      <button class="studentTestRecordBtn" data-test-result-sid="${escapeAttr(sid)}" title="테스트 기록 보기">기록</button>
-      <button class="markAbsent" title="결석">🚫</button>
-      <button class="markLeave" title="하원">🏠</button>
-      <button class="undoDone" title="하원 되돌리기" style="margin-left:6px">↩️</button>
-      <button class="clearDone" title="기록 정리" style="margin-left:6px">🧹</button>
-      </div>
-    </td>
-    <td class="today-doc-cell"><button class="btn-doc" data-doc-url="${escapeAttr(docUrl)}" title="문서 열기">📄</button></td>
-  `;
-
-  tbDone.prepend(newRow);
-
-  tr.remove();
-
-  const cnt = $('todayCount');
-  if (cnt && tr.dataset.selfStudy !== '1') {
-    const cur = parseInt(cnt.textContent || '0', 10);
-    cnt.textContent = String(Math.max(0, (Number.isFinite(cur) ? cur : 0) - 1));
-  }
-
-  const wrapToday = $('todayWrap');
-  if (wrapToday) {
-    const remain = wrapToday.querySelectorAll('tr[data-sid]').length;
-    if (!remain) wrapToday.innerHTML = '오늘 학생 없음';
-  }
-}
 
 function ensureSelfStudyHeader(host) {
   const headRow = host?.querySelector?.('thead tr');
@@ -1368,6 +1324,71 @@ function ensureSelfStudyHeader(host) {
 }
 
 // --- render ---
+function replaceStudentTable(host, markup, tableClass) {
+  const table = host.querySelector(`table.${tableClass}`);
+  const template = document.createElement('template');
+  if (!table || !template.content) { host.innerHTML = markup; return; }
+  template.innerHTML = markup;
+  const nextTable = template.content.querySelector(`table.${tableClass}`);
+  const body = table.tBodies?.[0];
+  const nextBody = nextTable?.tBodies?.[0];
+  if (!body || !nextBody) { host.innerHTML = markup; return; }
+
+  const syncAttributes = (current, next) => {
+    for (const attribute of Array.from(current.attributes)) {
+      if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+    }
+    for (const attribute of Array.from(next.attributes)) {
+      if (current.getAttribute(attribute.name) !== attribute.value) {
+        current.setAttribute(attribute.name, attribute.value);
+      }
+    }
+  };
+  syncAttributes(table, nextTable);
+  for (const selector of ['colgroup', 'thead']) {
+    const current = table.querySelector(selector);
+    const next = nextTable.querySelector(selector);
+    if (current && next && !current.isEqualNode(next)) current.replaceWith(next);
+  }
+  const rowsByKey = new Map();
+  const rowKey = row => JSON.stringify([row.dataset.date, row.dataset.sid]);
+  for (const row of Array.from(body.rows)) {
+    const key = rowKey(row);
+    if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+    rowsByKey.get(key).push(row);
+  }
+  const retained = new Set();
+  let cursor = body.firstElementChild;
+  for (const nextRow of Array.from(nextBody.rows)) {
+    const current = rowsByKey.get(rowKey(nextRow))?.shift();
+    let row = nextRow;
+    if (current && current.cells.length === nextRow.cells.length) {
+      row = current;
+      syncAttributes(row, nextRow);
+      const nextCells = Array.from(nextRow.cells);
+      for (let index = 0; index < row.cells.length; index += 1) {
+        const cell = row.cells[index], nextCell = nextCells[index];
+        if (!cell.isEqualNode(nextCell)) {
+          cell.replaceWith(nextCell);
+        } else {
+          // Checkbox properties can differ without changing their checked HTML attribute.
+          const inputs = cell.querySelectorAll('input');
+          const nextInputs = nextCell.querySelectorAll('input');
+          inputs.forEach((input, inputIndex) => {
+            if (input.checked !== nextInputs[inputIndex].checked) input.checked = nextInputs[inputIndex].checked;
+          });
+        }
+      }
+    }
+    retained.add(row);
+    if (row !== cursor) body.insertBefore(row, cursor);
+    cursor = row.nextElementSibling;
+  }
+  for (const row of Array.from(body.rows)) {
+    if (!retained.has(row)) row.remove();
+  }
+}
+
 export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   const host = $('todayWrap');
   const cnt = $('todayCount');
@@ -1469,14 +1490,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
         <td class="today-curriculum-cell">${curLabel}</td>
         <td class="today-progress-cell">${progressMarker}</td>
 
-        <td class="today-white-review-cell">
-          <div class="chk4" aria-label="백지리뷰 검사 대기">
-            <label class="c" data-kind="check" data-on="${whiteReviewPending ? '1' : '0'}" title="백지리뷰 검사 대기">
-              <input type="checkbox" class="whiteReviewPendingChk" data-id="${escapeAttr(s.id)}"
-                     aria-label="${escapeAttr(`${s.name || s.id} 백지리뷰 검사 대기`)}" ${whiteReviewPending ? 'checked' : ''}>
-            </label>
-          </div>
-        </td>
+        ${renderWhiteReviewPendingCell(s.id, s.name, whiteReviewPending)}
 
         <td class="today-action-cell">
           <div class="today-actions">
@@ -1495,7 +1509,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   }).join('');
 
   detachSortableIfAny();
-  host.innerHTML = list.length ? `
+  replaceStudentTable(host, list.length ? `
       <table class="today-table">
       <colgroup>
         <col style="width:32px"><col style="width:72px"><col style="width:120px"><col style="width:84px">
@@ -1521,7 +1535,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
       </thead>
       <tbody>${rows}</tbody>
     </table>
-  ` : '오늘 학생 없음';
+  ` : '오늘 학생 없음', 'today-table');
 
   ensureSelfStudyHeader(host);
 
@@ -1586,6 +1600,7 @@ export function renderDone(doneEntries) {
         </td>
         <td class="today-school-cell">${escapeAttr(school || '')}</td>
         <td class="today-curriculum-cell">${escapeAttr(curLabel)}</td>
+        ${renderWhiteReviewPendingCell(sidKey, name)}
         <td class="done-action-cell">
           <div class="today-actions">
           <button class="openStudentPopups" title="학생 운영 팝업">🧾</button>
@@ -1601,11 +1616,11 @@ export function renderDone(doneEntries) {
     `;
   }).join('');
 
-  wrap.innerHTML = `
+  replaceStudentTable(wrap, `
     <table class="done-table">
       <colgroup>
         <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
-        <col style="width:112px"><col style="width:268px"><col style="width:56px">
+        <col style="width:112px"><col style="width:36px"><col style="width:232px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
@@ -1615,13 +1630,14 @@ export function renderDone(doneEntries) {
           <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
+          <th class="done-white-review-head">백지</th>
           <th>작업</th>
           <th>문서</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-  `;
+  `, 'done-table');
 
   _bindDoneWrapInlineEditOnce();
   decorateStudentTestRecordButtons(wrap).catch(console.warn);
@@ -1789,31 +1805,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
     // This SID-scoped flag intentionally survives date changes, leave, and record cleanup.
     const whiteReview = ev.target.closest?.('.whiteReviewPendingChk');
     if (whiteReview) {
-      const tr = closestTodayRow(whiteReview); if (!tr) return;
-      const sid = rowSid(tr);
-      if (!sid) return;
-      const previous = whiteReviewPendingForSid(sid);
-      const checked = whiteReview.checked === true;
-      const pill = whiteReview.closest('.c');
-
-      whiteReview.disabled = true;
-      tr.dataset.whiteReviewPending = checked ? '1' : '';
-      if (pill) pill.dataset.on = checked ? '1' : '0';
-      setWhiteReviewPendingLocal(sid, checked);
-
-      try {
-        await patchWhiteReviewPendingRemote(sid, checked);
-      } catch (error) {
-        console.error(error);
-        whiteReview.checked = previous;
-        tr.dataset.whiteReviewPending = previous ? '1' : '';
-        if (pill) pill.dataset.on = previous ? '1' : '0';
-        setWhiteReviewPendingLocal(sid, previous);
-        alert('백지리뷰 검사 대기 저장 실패');
-        await loadTodayAndRender({ force: true });
-      } finally {
-        if (whiteReview.isConnected !== false) whiteReview.disabled = false;
-      }
+      await saveWhiteReviewCheckbox(whiteReview, loadTodayAndRender);
       return;
     }
 
@@ -2228,6 +2220,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
 
           if (!res.ok) throw new Error(`/api/absent ${res.status}`);
 
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
           // Prefer the server copy if it returns fresher absence maps.
           const byDate = data?.by_date || data?.absentByDate || (data?.ok ? data?.by_date : null);
           const byStu = data?.by_student || data?.absences || (data?.ok ? data?.by_student : null);
@@ -2241,6 +2234,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
             alert('결석은 저장됐지만 보강 잡기 명단 갱신에 실패했습니다.');
           }
 
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
           toast('결석 처리됨');
           await loadTodayAndRender({ force: true });
 

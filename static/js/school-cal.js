@@ -483,7 +483,14 @@ import {
 
     schoolsData.forEach((school, index) => {
       const schoolMatch = schoolMatchesQuery(school, query);
-      const gradeMatches = (school.grades || []).filter((gradeRow) => schoolMatch || gradeMatchesQuery(school, gradeRow, query));
+      const gradeMatchResults = new Map();
+      const matchesGrade = (gradeRow) => {
+        if (!gradeMatchResults.has(gradeRow)) {
+          gradeMatchResults.set(gradeRow, gradeMatchesQuery(school, gradeRow, query));
+        }
+        return gradeMatchResults.get(gradeRow);
+      };
+      const gradeMatches = (school.grades || []).filter((gradeRow) => schoolMatch || matchesGrade(gradeRow));
       const shouldShowSchool = !query || schoolMatch || gradeMatches.length > 0;
       if (!shouldShowSchool) return;
 
@@ -494,7 +501,7 @@ import {
       if (!showGrades) return;
 
       gradeMatches.forEach((gradeRow, rowIndex) => {
-        const matched = !!query && gradeMatchesQuery(school, gradeRow, query);
+        const matched = !!query && matchesGrade(gradeRow);
         visibleGrades += 1;
         chunks.push(buildGradeRow(school, gradeRow, {
           last: rowIndex === gradeMatches.length - 1,
@@ -588,10 +595,8 @@ import {
     });
 
     if (searchQuery) {
-      const updated = new Set(next.map((school) => String(school.id)));
       const ordered = schoolsData.map((school) => nextById.get(school.id) || cloneSchoolEntry(school));
       next.forEach((school) => {
-        if (!updated.has(String(school.id))) return;
         if (!ordered.some((row) => String(row.id) === String(school.id))) ordered.push(school);
       });
       schoolsData = ordered;
@@ -805,18 +810,17 @@ import {
     saveCalendar('manual');
   });
 
-  searchInput?.addEventListener('input', () => {
+  const updateSearch = () => {
+    syncFromView();
     searchQuery = searchInput.value || '';
     renderBody();
-  });
-
-  searchInput?.addEventListener('search', () => {
-    searchQuery = searchInput.value || '';
-    renderBody();
-  });
+  };
+  searchInput?.addEventListener('input', updateSearch);
+  searchInput?.addEventListener('search', updateSearch);
 
   searchInput?.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    syncFromView();
     searchInput.value = '';
     searchQuery = '';
     renderBody();

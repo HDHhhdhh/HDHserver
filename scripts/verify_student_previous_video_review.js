@@ -596,7 +596,7 @@ async function runStudentFixture(options = {}) {
   const date = '2026-08-03';
   const fixtureDate = options.fixtureDate || date;
   const FixtureDate = makeFixtureDateConstructor(fixtureDate);
-  const sid = '7';
+  const sid = options.sid || '7';
   const document = buildStudentFixtureDom();
   const requestLog = [];
   const alerts = [];
@@ -633,6 +633,7 @@ async function runStudentFixture(options = {}) {
       hash: '',
       origin: 'http://localhost',
       reload() { reloadCount += 1; },
+      ...options.location,
     },
     document,
     addEventListener(type, handler) {

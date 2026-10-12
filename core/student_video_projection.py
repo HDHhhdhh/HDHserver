@@ -15,6 +15,8 @@ from core.update_assignment_rules import (
     sid_keys,
 )
 from core.video_review_rules import resolve_video_review_states_before_date
+from core.video_watch_cycles import VIDEO_WATCH_CYCLES_KEY
+from core.video_sources import GICHUL_COURSE, GICHUL_OVERLAY_FIELD
 
 
 VIDEO_PROGRESS_FINISHED_STATUSES = {"done", "skip"}
@@ -41,6 +43,27 @@ def date_indexed_history_through(source: dict, date_key: str) -> dict:
     return projected
 
 
+def history_for_sid(source: dict, sid: str) -> dict:
+    """Limit a read-only projection to the requested SID and numeric aliases."""
+    if not isinstance(source, dict):
+        return {}
+    requested_keys = set(sid_keys(sid))
+    matching_keys: dict = {}
+    projected: dict = {}
+    for date_key, day in source.items():
+        if not isinstance(day, dict):
+            continue
+        selected: dict = {}
+        for raw_sid, entry in day.items():
+            if raw_sid not in matching_keys:
+                matching_keys[raw_sid] = bool(requested_keys.intersection(sid_keys(str(raw_sid))))
+            if matching_keys[raw_sid]:
+                selected[raw_sid] = entry
+        if selected:
+            projected[date_key] = selected
+    return projected
+
+
 def chapter_number(video: dict) -> float:
     chapter = video.get("chapter", 0)
     try:
@@ -57,6 +80,8 @@ def is_finished_video_progress_status(status) -> bool:
 def student_completion_videos(student: dict, videos: list) -> list[dict]:
     if not isinstance(student, dict):
         return []
+    if student.get(GICHUL_OVERLAY_FIELD) is True:
+        return sorted(student_auto_assignment_videos(student, videos), key=lambda video: (chapter_number(video), str(video.get("mid") or "")))
 
     curriculum = (student.get("curriculum") or "").strip()
     sub_curriculum = (student.get("subCurriculum") or "").strip()
@@ -167,7 +192,7 @@ def student_eligible_review_video_mids(
 ) -> set[str]:
     catalog_mids = {
         str(video.get("mid") or "").strip()
-        for video in student_current_curriculum_videos(student, videos)
+        for video in student_review_curriculum_videos(student, videos)
         if str(video.get("mid") or "").strip()
     }
     states = student_review_states_before_date(
@@ -233,7 +258,7 @@ def filter_auto_assignment_for_current_curriculum(
 
     allowed_mids = {
         str(video.get("mid") or "").strip()
-        for video in student_current_curriculum_videos(student, videos)
+        for video in student_assignment_preservation_videos(student, videos)
         if str(video.get("mid") or "").strip()
     }
     filtered_mids = [
@@ -267,6 +292,8 @@ def academy_restricted_student_videos(
         "stream_url",
         "embedUrl",
         "embed_url",
+        "youtubeId",
+        "youtubeStart",
     }
     out: list[dict] = []
     for item in items or []:
@@ -297,7 +324,7 @@ def student_review_video_projection(
     )
     primary_mids = student_primary_video_mids(student, videos_all)
     catalog_by_mid: dict[str, dict] = {}
-    for video in student_current_curriculum_videos(student, videos_all):
+    for video in student_review_curriculum_videos(student, videos_all):
         mid = str(video.get("mid") or "").strip()
         if not mid or mid in catalog_by_mid:
             continue
@@ -339,6 +366,25 @@ def student_primary_video_mids(student: dict, videos: list) -> set[str]:
     }
 
 
+def student_auto_assignment_videos(student: dict, videos: list) -> list[dict]:
+    if isinstance(student, dict) and student.get(GICHUL_OVERLAY_FIELD) is True:
+        return student_current_curriculum_videos({**student, "subCurriculum": GICHUL_COURSE}, videos)
+    return student_current_curriculum_videos(student, videos)
+
+
+def student_assignment_preservation_videos(student: dict, videos: list) -> list[dict]:
+    # Overlay toggles change only new picks, never an existing dated snapshot.
+    base = student_current_curriculum_videos(student, videos)
+    overlay = student_current_curriculum_videos({**student, "subCurriculum": GICHUL_COURSE}, videos) if isinstance(student, dict) else []
+    return base + [video for video in overlay if video not in base]
+
+
+def student_review_curriculum_videos(student: dict, videos: list) -> list[dict]:
+    if isinstance(student, dict) and student.get(GICHUL_OVERLAY_FIELD) is True:
+        return student_assignment_preservation_videos(student, videos)
+    return student_current_curriculum_videos(student, videos)
+
+
 def course_videos_completed(
     course_videos: list,
     sid: str,
@@ -371,6 +417,7 @@ def build_auto_assignment_blocked_by_sid(
 ) -> dict:
     blocked: dict[str, set[str]] = {}
     manual_reopened_at: dict[tuple[str, str], str] = {}
+    cycled_mids: set[tuple[str, str]] = set()
 
     if isinstance(progress, dict):
         for date_key in sorted(progress.keys()):
@@ -386,6 +433,9 @@ def build_auto_assignment_blocked_by_sid(
                 manual_meta = mids.get(PROGRESS_MANUAL_META_KEY)
                 if not isinstance(manual_meta, dict):
                     manual_meta = {}
+                cycles = mids.get(VIDEO_WATCH_CYCLES_KEY)
+                if isinstance(cycles, dict):
+                    cycled_mids.update((canonical_sid, mid) for mid in cycles)
                 for mid, status in mids.items():
                     mid_text = str(mid)
                     if mid_text.startswith("__") or mid_text == "tests":
@@ -395,7 +445,7 @@ def build_auto_assignment_blocked_by_sid(
                         blocked.setdefault(canonical_sid, set()).add(mid_text)
                     elif (
                         status_text in {"none", "interrupted"}
-                        and manual_meta.get(mid_text)
+                        and (manual_meta.get(mid_text) or (canonical_sid, mid_text) in cycled_mids)
                     ):
                         blocked.setdefault(canonical_sid, set()).discard(
                             mid_text
@@ -419,6 +469,8 @@ def build_auto_assignment_blocked_by_sid(
                     mid_text = str(mid or "").strip()
                     if not mid_text or watch_auto_status(entry) != "done":
                         continue
+                    if (canonical_sid, mid_text) in cycled_mids:
+                        continue  # Fresh-cycle progress, not the historical high-water mark.
                     reopened_at = manual_reopened_at.get(
                         (canonical_sid, mid_text),
                         "",
@@ -445,6 +497,7 @@ __all__ = (
     "chapter_number",
     "course_videos_completed",
     "date_indexed_history_through",
+    "history_for_sid",
     "filter_auto_assignment_for_current_curriculum",
     "filter_self_study_assignment_for_response",
     "student_completion_videos",

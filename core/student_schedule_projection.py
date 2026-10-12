@@ -129,7 +129,8 @@ def _iter_makeup_rows(makeup: object):
             for raw_key, raw_row in rows.items():
                 if not isinstance(raw_row, Mapping):
                     continue
-                schedule = raw_row.get("scheduledMakeup") or raw_row.get("scheduled_makeup")
+                schedule = (raw_row.get("scheduledMakeup") if "scheduledMakeup" in raw_row
+                            else raw_row.get("scheduled_makeup"))
                 if not isinstance(schedule, Mapping):
                     continue
                 fallback = _text(raw_row.get("sid")) or _text(raw_key).split("|", 1)[0]

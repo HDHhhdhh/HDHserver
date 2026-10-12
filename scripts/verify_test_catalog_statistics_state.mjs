@@ -199,7 +199,7 @@ for (const retired of [
   assert.equal(entrySource.includes(retired), false, `tests entrypoint still owns statistics primitive: ${retired}`);
 }
 for (const delegated of [
-  "from './tests/catalogStatisticsState.js?v=20260829-catalog-statistics-state-r1'",
+  "from './tests/catalogStatisticsState.js?v=20260907-ilsan-level-r1'",
   'projectStatsSummary({',
   'projectStatsRows({',
   'projectStatsDetail({',
@@ -207,6 +207,6 @@ for (const delegated of [
 ]) {
   assert.ok(entrySource.includes(delegated), `tests entrypoint is missing statistics-state delegation: ${delegated}`);
 }
-assert.match(htmlSource, /<script src="\/js\/tests\.js\?v=20260829-catalog-statistics-state-r1" type="module"><\/script>/);
+assert.match(htmlSource, /<script src="\/js\/tests\.js\?v=20260907-ilsan-level-r1&hub=20261001-detail1" type="module"><\/script>/);
 
 console.log('test catalog statistics checks passed: labels, lookup precedence, summary, search/sort, detail projection, answer-link restriction, isolation, and entrypoint delegation');

@@ -23,8 +23,6 @@ export function classifySaveConflict(payload, scope = '정보') {
   return {
     code: code || 'save_conflict',
     retryable,
-    message: rawMessage || (retryable
-      ? `${scope} 저장을 잠시 후 자동으로 다시 시도합니다.`
-      : `${scope}이 다른 화면에서 변경되었습니다. 다시 확인해 주세요.`),
+    message: rawMessage || `${scope}이 다른 화면에서 변경되었습니다. 다시 확인해 주세요.`,
   };
 }

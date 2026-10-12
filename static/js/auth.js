@@ -8,6 +8,9 @@ const LS_SID = "studentSid";
 
 // ✅ curris 캐시(서버가 가끔 일부만 줄 때 보완용)
 const LS_CURRIS = "studentCurrisCache"; // { aidOrSid: [{cur,sid}...] }
+let pendingAuthRequests = 0;
+let recommendationSequence = 0;
+let modalSequence = 0;
 
 function setMsg(text, type = "") {
   const el = $("msg");
@@ -43,6 +46,7 @@ function setLoggedInUI(on, whoText = "") {
 function openModal() {
   const back = $("modalBack");
   if (!back) return;
+  modalSequence += 1;
   setModalMsg("", "");
   if ($("curPw")) $("curPw").value = "";
   if ($("newId")) $("newId").value = "";
@@ -53,6 +57,7 @@ function openModal() {
 function closeModal() {
   const back = $("modalBack");
   if (!back) return;
+  modalSequence += 1;
   back.style.display = "none";
 }
 
@@ -143,15 +148,31 @@ async function api(path, body, token) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
 
-  const res = await fetch(path, {
+  let res;
+  try {
+    res = await fetch(path, {
     method: body ? "POST" : "GET",
     headers,
     body: body ? JSON.stringify(body) : undefined,
-  });
+    });
+  } catch {
+    return { ok: false, status: 0, data: null, networkError: true };
+  }
 
   let data = null;
   try { data = await res.json(); } catch {}
   return { ok: res.ok, status: res.status, data };
+}
+
+async function apiWithSpinner(path, body, token) {
+  pendingAuthRequests += 1;
+  setSpin(true);
+  try {
+    return await api(path, body, token);
+  } finally {
+    pendingAuthRequests -= 1;
+    setSpin(pendingAuthRequests > 0);
+  }
 }
 
 function goStudentPageBySid(sid) {
@@ -240,13 +261,12 @@ function renderCurris(curris, currentSid, cacheKey = "") {
    ========================= */
 
 async function switchAndGo(targetSid) {
+  if (pendingAuthRequests) return;
   const token = getActiveToken();
   if (!token) { setMsg("로그인이 먼저다", "err"); return; }
   if (!targetSid) { setMsg("커리 선택해.", "err"); return; }
 
-  setSpin(true);
-  const r = await api("/api/auth/switch", { sid: targetSid }, token);
-  setSpin(false);
+  const r = await apiWithSpinner("/api/auth/switch", { sid: targetSid }, token);
 
   if (r.ok && r.data?.ok) {
     // ✅ switch 토큰은 "현재 sid용"으로만 저장 (master는 유지)
@@ -320,9 +340,7 @@ function scheduleMatchesToday(scheduleStrs) {
     const w = norm(want);
     return scheduleStrs.some(s => {
       const n = norm(s);
-      if (n.includes(w)) return true;
-      if (n === w) return true;
-      return false;
+      return n.includes(w);
     });
   };
 
@@ -384,6 +402,8 @@ async function pickRecommendedSidFromServerData(curris, currentSid) {
 }
 
 async function showRecommendation(curris, currentSid) {
+  const sequence = ++recommendationSequence;
+  const token = getActiveToken();
   ensureCuriUI();
 
   const box = $("curiReco");
@@ -395,7 +415,19 @@ async function showRecommendation(curris, currentSid) {
     return;
   }
 
+  box.dataset.sid = '';
+  txt.textContent = '오늘 추천을 확인하는 중…';
+  box.style.display = 'block';
+  const go = $('curiRecoGoBtn');
+  if (go) go.disabled = true;
   const reco = await pickRecommendedSidFromServerData(curris, currentSid);
+  if (sequence !== recommendationSequence) return;
+  if (token !== getActiveToken() || String(currentSid) !== localStorage.getItem(LS_SID) ||
+      sessionStorage.getItem('hideCuriReco') === '1') {
+    box.style.display = 'none';
+    return;
+  }
+  if (go) go.disabled = false;
 
   if (!reco?.sid) {
     box.style.display = "none";
@@ -414,14 +446,17 @@ async function showRecommendation(curris, currentSid) {
    ========================= */
 
 async function autoLogin() {
+  if (pendingAuthRequests) return false;
   const master = getMasterToken();
   const active = getActiveToken();
   if (!master && !active) return;
 
-  setSpin(true);
   // ✅ me는 master로 (없으면 active)
-  const r = await api("/api/auth/me", null, master || active);
-  setSpin(false);
+  const r = await apiWithSpinner("/api/auth/me", null, master || active);
+  if (r.networkError || r.status >= 500 || (r.ok && !r.data)) {
+    setMsg("서버에 연결하지 못했습니다. 다시 시도해 주세요.", "err");
+    return false;
+  }
 
   if (r.ok && r.data?.ok && r.data?.sid) {
     const sidFromServer = String(r.data.sid || "");
@@ -456,6 +491,7 @@ async function autoLogin() {
     localStorage.removeItem(LS_SID);
     setLoggedInUI(false);
   }
+  return !!(r.ok && r.data?.ok && r.data?.sid);
 }
 
 /* =========================
@@ -463,6 +499,7 @@ async function autoLogin() {
    ========================= */
 
 async function login() {
+  if (pendingAuthRequests) return;
   const id = ($("sid")?.value || "").trim();
   const password = ($("pw")?.value || "").trim();
 
@@ -471,9 +508,7 @@ async function login() {
     return;
   }
 
-  setSpin(true);
-  const r = await api("/api/auth/login", { id, password });
-  setSpin(false);
+  const r = await apiWithSpinner("/api/auth/login", { id, password });
 
   if (r.ok && r.data?.ok && r.data?.token && r.data?.sid) {
     // ✅ 로그인 토큰은 master+active로 저장
@@ -496,8 +531,8 @@ async function login() {
       saveCurrisCacheMap(cacheMap);
 
       renderCurris(merged, currentSid, cacheKey);
-      await showRecommendation(merged, currentSid);
       setMsg("로그인됨. 아래에서 커리 선택하고 이동해.", "ok");
+      await showRecommendation(merged, currentSid);
     } else {
       setMsg("로그인됨. 커리 불러오는 중...", "ok");
       await autoLogin();
@@ -513,6 +548,9 @@ async function login() {
 }
 
 function logout() {
+  recommendationSequence += 1;
+  const recommendation = $('curiReco');
+  if (recommendation) recommendation.style.display = 'none';
   clearTokens();
   localStorage.removeItem(LS_SID);
   setLoggedInUI(false);
@@ -520,6 +558,8 @@ function logout() {
 }
 
 async function saveChange() {
+  if (pendingAuthRequests) return;
+  const saveModalSequence = modalSequence;
   const token = getActiveToken();
   if (!token) {
     setModalMsg("로그인 상태가 아님.", "err");
@@ -539,14 +579,13 @@ async function saveChange() {
     return;
   }
 
-  setSpin(true);
-  const r = await api("/api/auth/change", { curPw, newId, newPw }, token);
-  setSpin(false);
+  const r = await apiWithSpinner("/api/auth/change", { curPw, newId, newPw }, token);
 
   if (r.ok && r.data?.ok) {
     // change가 token을 주면 active 갱신 + master도 같이 갱신(보통 계정 토큰)
     if (r.data?.token) setTokensOnLogin(r.data.token);
 
+    let recommendation = null;
     const rr = await api("/api/auth/me", null, getMasterToken());
     if (rr.ok && rr.data?.ok) {
       const sid = String(rr.data.sid || "");
@@ -565,13 +604,18 @@ async function saveChange() {
         saveCurrisCacheMap(cacheMap);
 
         renderCurris(merged, currentSid, cacheKey);
-        await showRecommendation(merged, currentSid);
+        recommendation = showRecommendation(merged, currentSid);
       }
     }
 
-    setModalMsg("변경 완료.", "ok");
+    if (saveModalSequence === modalSequence) {
+      setModalMsg("변경 완료.", "ok");
+      setTimeout(() => {
+        if (saveModalSequence === modalSequence) closeModal();
+      }, 300);
+    }
     setMsg("아이디/비밀번호 변경됨.", "ok");
-    setTimeout(closeModal, 300);
+    await recommendation;
   } else {
     const m =
       r.data?.error === "bad password" ? "현재 비밀번호가 틀림." :
@@ -626,8 +670,7 @@ function initEvents() {
     }
 
     if (t.id === "curiReloadBtn") {
-      await autoLogin();
-      setMsg("커리 갱신됨", "ok");
+      if (await autoLogin()) setMsg("커리 갱신됨", "ok");
     }
 
     if (t.id === "curiRecoGoBtn") {

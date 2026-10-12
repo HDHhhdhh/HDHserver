@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import re
 from typing import Any, Callable
@@ -7,6 +8,7 @@ from typing import Any, Callable
 from core.progress_rules import advance_test_assignment_change_order
 from core.progress_store import load_progress_strict, save_progress_strict
 from core.storage import file_lock, load, save_atomic
+from core.student_schedule_rules import student_is_self_study_on_date
 
 
 ASSIGNMENT_LOG_CLEAR_FIELDS = (
@@ -19,6 +21,50 @@ ASSIGNMENT_NOTE_FIELDS = ("testAssignmentNote", "extraVideoAssignmentNote")
 TEST_ASSIGN_DAILY_ITEMS_KEY = "testAssignmentDailyTests"
 TEST_ASSIGN_ABSENCE_CARRYOVER_KEY = "testAssignmentAbsenceCarryover"
 KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def self_study_makeup_exemptions(
+    carryover: dict,
+    pairs: set[tuple[str, str]],
+    *,
+    students: list,
+    log_entries: dict,
+    updated_at: str,
+) -> tuple[dict, bool]:
+    """Freeze only newly registered self-study absences, not historical roster settings."""
+    if not isinstance(students, list):
+        raise ValueError("students must be a list for absence classification")
+    students_by_sid = {
+        str(student.get("id")): student for student in students if isinstance(student, dict)
+    }
+    result = copy.deepcopy(carryover)
+    legacy = "by_absence" not in result and any(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}", key) for key in result
+    )
+    rows_by_date = result if legacy else result.setdefault("by_absence", {})
+    if not isinstance(rows_by_date, dict):
+        raise ValueError("makeup by_absence must be an object")
+    changed = False
+    for date_key, sid in sorted(pairs):
+        student = _sid_lookup(students_by_sid, sid) or {}
+        entry = log_entries.get((date_key, sid), {})
+        self_study = student_is_self_study_on_date(
+            {date_key: {sid: entry}}, date_key, sid, student,
+        )
+        day = rows_by_date.get(date_key, {})
+        if not isinstance(day, dict):
+            raise ValueError("makeup date rows must be an object")
+        previous = day.get(sid)
+        previous = previous if isinstance(previous, dict) else {}
+        if not self_study and previous.get("state") != "self-study":
+            continue
+        rows_by_date.setdefault(date_key, {})[sid] = {
+            **previous,
+            "state": "self-study" if self_study else "open",
+            "updatedAt": updated_at,
+        }
+        changed = True
+    return result if changed else carryover, changed
 
 
 def _now_kst_iso() -> str:
@@ -459,5 +505,6 @@ __all__ = (
     "clear_assignments_for_new_absences",
     "cleared_assignment_log_entry",
     "collect_absence_test_carryovers_from_state",
+    "self_study_makeup_exemptions",
     "transition_absence_progress_tests_map",
 )

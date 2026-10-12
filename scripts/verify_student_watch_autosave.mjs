@@ -39,9 +39,9 @@ const controller = api.createController({
     return { ok: nextResponseOk };
   },
   headers: { 'Content-Type': 'application/json' },
-  setTimer(callback) {
+  setTimer(callback, delay) {
     const id = ++timerId;
-    timers.set(id, callback);
+    timers.set(id, { callback, delay });
     return id;
   },
   clearTimer(id) { timers.delete(id); },
@@ -50,9 +50,11 @@ const controller = api.createController({
 });
 
 const runPendingTimers = async () => {
-  const callbacks = [...timers.values()];
-  timers.clear();
-  await Promise.all(callbacks.map(callback => callback()));
+  while (timers.size) {
+    const [id, timer] = [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)[0];
+    timers.delete(id);
+    await timer.callback();
+  }
 };
 
 const originalServerMap = {
@@ -72,9 +74,9 @@ await controller.syncNow('mid-server');
 assert.equal(requests.length, 0, 'fresh server state must seed duplicate-send suppression');
 
 controller.setProgress('mid-a', { last: 5, dur: 100, completed: false });
-assert.equal(timers.size, 1, 'watch progress must schedule one debounced sync');
+assert.equal(timers.size, 2, 'watch progress must schedule a trailing sync and bounded deadline');
 controller.setProgress('mid-a', { last: 10, dur: 100, completed: false });
-assert.equal(timers.size, 1, 'new progress must replace the existing debounce timer');
+assert.equal(timers.size, 2, 'new progress must replace only the trailing timer');
 await runPendingTimers();
 assert.equal(requests.length, 1, 'debounced progress must emit one request');
 assert.equal(requests[0].url, '/api/watch', 'autosave must use the canonical watch endpoint');
@@ -121,6 +123,67 @@ assert.equal(controller.getProgress('mid-a'), null, 'explicit stale-watch cleari
 assert.ok(controller.getProgress('mid-server'), 'targeted clearing removed an unrelated MID');
 assert.ok(progressChangeCount >= 5, 'progress change callback did not observe local updates');
 
+// Independent clock oracle: uninterrupted one-second events never reach quiet time.
+const continuousStorage = new Map();
+const clockTimers = new Map();
+const continuousRequests = [];
+let elapsed = 0;
+let clockTimerId = 0;
+const continuous = api.createController({
+  storage: {
+    getItem: key => continuousStorage.get(key) || null,
+    setItem: (key, value) => continuousStorage.set(key, value),
+    removeItem: key => continuousStorage.delete(key),
+  },
+  getSid: () => 'continuous-sid', getCanonicalSid: () => 'continuous-sid',
+  getDate: () => '2026-10-02', getCurrentMid: () => 'continuous-mid',
+  canSync: () => true, now: () => nowMs + elapsed,
+  request: async (url, options) => {
+    continuousRequests.push({ url, payload: JSON.parse(options.body), keepalive: options.keepalive });
+    return { ok: true };
+  },
+  setTimer(callback, delay) {
+    const id = ++clockTimerId;
+    clockTimers.set(id, { callback, due: elapsed + delay });
+    return id;
+  },
+  clearTimer: id => clockTimers.delete(id),
+});
+async function advanceClock(target) {
+  while (true) {
+    const next = [...clockTimers.entries()].filter(([, timer]) => timer.due <= target)
+      .sort((a, b) => a[1].due - b[1].due)[0];
+    if (!next) break;
+    elapsed = next[1].due;
+    clockTimers.delete(next[0]);
+    await next[1].callback();
+  }
+  elapsed = target;
+}
+for (let second = 0; second < 10; second += 1) {
+  await advanceClock(second * 1000);
+  continuous.setProgress('continuous-mid', { last: second + 1, dur: 100 });
+}
+assert.equal(continuousRequests.length, 0, 'continuous events must retain trailing debounce');
+await advanceClock(10000);
+assert.equal(continuousRequests.length, 1, 'uninterrupted playback must save within ten seconds');
+assert.equal(continuousRequests[0].payload.last, 10, 'bounded save must use the latest actual observation');
+assert.equal(clockTimers.size, 0, 'bounded save must cancel the trailing callback');
+continuous.setProgress('continuous-mid', { last: 11, dur: 100 });
+await advanceClock(11499);
+assert.equal(continuousRequests.length, 1, 'quiet trailing save must wait 1500ms');
+await advanceClock(11500);
+assert.equal(continuousRequests.length, 2, 'quiet trailing save remains available');
+continuous.setProgress('continuous-mid', { last: 12, dur: 100 });
+await continuous.flushSyncQueue({ keepalive: true });
+assert.equal(continuousRequests.at(-1).keepalive, true);
+assert.equal(clockTimers.size, 0, 'pagehide flush must cancel both schedules');
+await advanceClock(30000);
+assert.equal(continuousRequests.length, 3, 'cancelled timers must never duplicate a flush');
+continuous.setProgress('continuous-mid', { last: 13, dur: 100 });
+continuous.clearProgress('continuous-mid');
+assert.equal(clockTimers.size, 0, 'target clearing must retire both pending schedules');
+
 const lifecycleStart = studentSource.indexOf('  function flushCurrentWatch()');
 const lifecycleEnd = studentSource.indexOf('  /* ───────────── 설정 패널 & 다크모드 ───────────── */', lifecycleStart);
 if (lifecycleStart < 0 || lifecycleEnd < 0) throw new Error('watch lifecycle wiring was not found');
@@ -152,12 +215,12 @@ for (const forbidden of ['document.', 'localStorage', 'addEventListener']) {
 assert.equal(studentSource.includes("studentAppRequest('/api/watch'"), false, 'student entrypoint duplicated watch transport');
 assert.ok(watchSource.includes("request('/api/watch'"), 'watch module must own the canonical watch transport');
 const bootstrapScript = '/js/student/bootstrapState.js?v=20260828-bootstrap-state-r1';
-const watchScript = '/js/student/watchState.js?v=20260828-watch-state-r1';
-const playbackScript = '/js/student/playback.js?v=20260828-playback-r1';
+const watchScript = '/js/student/watchState.js?v=20261002-native-watch1';
+const playbackScript = '/js/student/playback.js?v=20261002-native-watch1';
 const reviewPlaylistScript = '/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1';
 const announcementStateScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const testPresentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const testPresentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.ok(htmlSource.indexOf(bootstrapScript) < htmlSource.indexOf(watchScript), 'watch module must follow bootstrap state');
 assert.ok(htmlSource.indexOf(watchScript) < htmlSource.indexOf(playbackScript), 'watch module must precede playback');
 assert.ok(htmlSource.indexOf(playbackScript) < htmlSource.indexOf(reviewPlaylistScript), 'playback must precede review playlist');

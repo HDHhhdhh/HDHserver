@@ -197,9 +197,6 @@ def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool = True) -
             if mirror:
                 _mirror_copy(path)
             return
-        except PermissionError as e:
-            last_err = e
-            time.sleep(0.03)  # 30ms
         except OSError as e:
             last_err = e
             time.sleep(0.03)

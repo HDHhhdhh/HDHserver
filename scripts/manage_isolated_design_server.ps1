@@ -6,11 +6,14 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 8004,
     [string]$IsolatedRoot = "",
-    [switch]$Restart
+    [switch]$Restart,
+    [switch]$KollusVideoQa
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($KollusVideoQa -and $Port -ne 8004) { throw "Kollus video QA is restricted to port 8004." }
+if ($KollusVideoQa -and $Action -ne "Start") { throw "Kollus video QA requires Start (with -Restart for a running server)." }
 
 $sourceRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)).TrimEnd("\")
 $instanceParent = [IO.Path]::GetFullPath((Join-Path $sourceRoot "instance")).TrimEnd("\")
@@ -18,6 +21,9 @@ if ([string]::IsNullOrWhiteSpace($IsolatedRoot)) {
     $IsolatedRoot = Join-Path $instanceParent "isolated-design-server"
 }
 $isolatedBase = [IO.Path]::GetFullPath($IsolatedRoot).TrimEnd("\")
+if ($KollusVideoQa -and $isolatedBase -ne (Join-Path $instanceParent "isolated-design-server")) {
+    throw "Kollus video QA requires the canonical isolated-design-server root."
+}
 $allowedPrefix = $instanceParent + "\"
 if (-not $isolatedBase.StartsWith($allowedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "IsolatedRoot must stay below $instanceParent"
@@ -50,7 +56,9 @@ function Read-Receipt {
 
 function Get-Listeners {
     @(
-        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        # A failed ownership query must never be interpreted as an unused port.
+        Get-NetTCPConnection -State Listen -ErrorAction Stop |
+            Where-Object { $_.LocalPort -eq $Port } |
             Sort-Object LocalAddress, OwningProcess
     )
 }
@@ -98,15 +106,86 @@ function Test-SameStartTime {
     }
 }
 
+function Get-ManagerMutexName {
+    # Different snapshot roots must still serialize management of the same port.
+    return "Global\AcademyIsolatedDesignServerManager-$Port"
+}
+
+function Invoke-WithManagerLock {
+    param([scriptblock]$Operation, [int]$TimeoutMilliseconds = 60000)
+    $mutex = New-Object Threading.Mutex($false, (Get-ManagerMutexName))
+    $acquired = $false
+    try {
+        try { $acquired = $mutex.WaitOne($TimeoutMilliseconds) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) {
+            throw "Timed out waiting for isolated-server management on port $Port."
+        }
+        & $Operation
+    } finally {
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Test-LaunchedProcess {
+    param([int]$ProcessId, [int]$WrapperProcessId, [string]$WrapperStartTimeUtc)
+    if (-not (Test-SameStartTime -ProcessId $WrapperProcessId -ExpectedUtc $WrapperStartTimeUtc)) {
+        return $false
+    }
+    $wrapperStart = [DateTime]::Parse(
+        $WrapperStartTimeUtc, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).ToUniversalTime()
+    $currentPid = $ProcessId
+    $childStart = $null
+    for ($depth = 0; $depth -lt 16 -and $currentPid -gt 0; $depth++) {
+        if ($currentPid -eq $WrapperProcessId) {
+            return (Test-SameStartTime -ProcessId $WrapperProcessId -ExpectedUtc $WrapperStartTimeUtc)
+        }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction Stop
+        if (-not $process -or $null -eq $process.CreationDate) { return $false }
+        $created = ([DateTime]$process.CreationDate).ToUniversalTime()
+        # Parent PIDs can be reused; their chronology must fit this launch.
+        if ($created -lt $wrapperStart -or ($null -ne $childStart -and $created -gt $childStart)) {
+            return $false
+        }
+        $childStart = $created
+        $currentPid = [int]$process.ParentProcessId
+    }
+    return $false
+}
+
+function Stop-LaunchedServer {
+    param([object]$Wrapper, [string]$WrapperStartTimeUtc,
+          [int]$ListenerProcessId, [string]$ListenerStartTimeUtc)
+    if (-not $Wrapper -or -not $WrapperStartTimeUtc) { return }
+    if ($ListenerProcessId -gt 0 -and $ListenerProcessId -ne [int]$Wrapper.Id -and
+        (Test-SameStartTime -ProcessId $ListenerProcessId -ExpectedUtc $ListenerStartTimeUtc)) {
+        try {
+            if (Test-LaunchedProcess -ProcessId $ListenerProcessId -WrapperProcessId ([int]$Wrapper.Id) `
+                -WrapperStartTimeUtc $WrapperStartTimeUtc) {
+                Stop-Process -Id $ListenerProcessId -Force -ErrorAction Stop
+            }
+        } catch {
+            Write-Warning "Could not verify or stop the launch-owned listener: $($_.Exception.Message)"
+        }
+    }
+    if (Test-SameStartTime -ProcessId ([int]$Wrapper.Id) -ExpectedUtc $WrapperStartTimeUtc) {
+        Stop-Process -Id ([int]$Wrapper.Id) -Force -ErrorAction Stop
+    }
+}
+
 function Get-ManagedStatus {
     $receipt = Read-Receipt
     $listeners = @(Get-Listeners)
     $loopback = @($listeners | Where-Object { $_.LocalAddress -eq "127.0.0.1" })
     $managed = $false
-    if ($receipt -and $loopback.Count -eq 1) {
+    if ($receipt -and $listeners.Count -eq 1 -and $loopback.Count -eq 1) {
         $managed = (
             [int]$receipt.port -eq $Port -and
             [string]$receipt.codeRoot -eq $codeRoot -and
+            [string]$receipt.sourceRoot -eq $sourceRoot -and
             [int]$receipt.listenerProcessId -eq [int]$loopback[0].OwningProcess -and
             (Test-SameStartTime -ProcessId ([int]$receipt.listenerProcessId) -ExpectedUtc $receipt.listenerStartTimeUtc)
         )
@@ -114,7 +193,7 @@ function Get-ManagedStatus {
     [ordered]@{
         format = "academy-isolated-design-server-status/v1"
         action = $Action
-        running = ($loopback.Count -gt 0)
+        running = ($listeners.Count -gt 0)
         managed = $managed
         port = $Port
         listenerProcessId = if ($loopback.Count -eq 1) { [int]$loopback[0].OwningProcess } else { 0 }
@@ -124,6 +203,7 @@ function Get-ManagedStatus {
         codeRoot = $codeRoot
         runtimePersistent = $true
         liveRuntimeCopied = $false
+        kollusVideoQaEnabled = ($receipt -and $receipt.PSObject.Properties.Name -contains "kollusVideoQaEnabled" -and $receipt.kollusVideoQaEnabled -eq $true)
     }
 }
 
@@ -157,6 +237,8 @@ function Sync-CodeSnapshot {
         "student_test_formula_worker.py",
         "student_test_paddle_worker.py",
         "student_test_unimernet_worker.py",
+        "student_test_formula_inference.py",
+        "student_test_ocr_worker_server.py",
         "student_test_sheet_crop_worker.py"
     )) {
         $source = Join-Path (Join-Path $sourceRoot "scripts") $fileName
@@ -172,7 +254,7 @@ function Sync-CodeSnapshot {
         sourceRoot = $sourceRoot
         refreshedAtUtc = [DateTime]::UtcNow.ToString("o")
         liveRuntimeCopied = $false
-        copiedWorkerScripts = 5
+        copiedWorkerScripts = 7
     }
     Write-JsonFile -Path $markerPath -Value $marker
 }
@@ -188,6 +270,10 @@ function Stop-ManagedServer {
     }
     if (-not $receipt) {
         throw "Port $Port is occupied but no isolated-server receipt exists; refusing to stop it."
+    }
+    if ([int]$receipt.port -ne $Port -or [string]$receipt.codeRoot -ne $codeRoot -or
+        [string]$receipt.sourceRoot -ne $sourceRoot) {
+        throw "Isolated-server receipt belongs to another port or snapshot root; refusing to stop it."
     }
     if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne "127.0.0.1") {
         throw "Port $Port has an unexpected listener set; refusing to stop it."
@@ -239,6 +325,9 @@ function Start-ManagedServer {
     Sync-CodeSnapshot
     [IO.Directory]::CreateDirectory((Join-Path $codeRoot "instance")) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $codeRoot "data")) | Out-Null
+    if (@(Get-Listeners).Count -gt 0) {
+        throw "Port $Port became occupied before launch; refusing to start another server."
+    }
 
     $ocrEnabled = if ([string]$env:STUDENT_TEST_OCR_ENABLED -match '^(?i:1|true|yes|on)$') { "1" } else { "0" }
     $ocrAllowUnready = if ([string]$env:STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS -match '^(?i:1|true|yes|on)$') { "1" } else { "0" }
@@ -277,6 +366,7 @@ function Start-ManagedServer {
         STUDENT_TEST_OCR_ASSET_ROOT = (Join-Path $codeRoot "instance\student-test-ocr")
         STUDENT_TEST_OCR_SOLUTION_PDF_ROOT = (Join-Path $codeRoot ".codex_drive_download\unit_answer_pdfs")
         TRUST_PROXY_HEADERS = "0"
+        ACADEMY_ISOLATED_KOLLUS_QA = if ($KollusVideoQa) { "1" } else { "0" }
     }
     $clearEnvironment = @(
         "ANNOUNCEMENT_IMAGE_SOURCE_DIR",
@@ -322,66 +412,133 @@ function Start-ManagedServer {
         }
     }
 
-    $deadline = (Get-Date).AddSeconds(20)
-    $listener = $null
-    do {
-        Start-Sleep -Milliseconds 250
-        $wrapper.Refresh()
-        if ($wrapper.HasExited) { break }
-        $listener = Get-Listeners | Where-Object { $_.LocalAddress -eq "127.0.0.1" } | Select-Object -First 1
-    } while (-not $listener -and (Get-Date) -lt $deadline)
+    $wrapperStartTimeUtc = ""
+    $listenerPid = 0
+    $listenerStartTimeUtc = ""
+    $receiptWritten = $false
+    try {
+        $wrapperStartTimeUtc = $wrapper.StartTime.ToUniversalTime().ToString("o")
+        $deadline = (Get-Date).AddSeconds(20)
+        $listener = $null
+        do {
+            Start-Sleep -Milliseconds 250
+            $wrapper.Refresh()
+            if ($wrapper.HasExited) { break }
+            $startedListeners = @(Get-Listeners)
+            if ($startedListeners.Count -gt 0) {
+                $ownedListener = $null
+                foreach ($candidate in $startedListeners) {
+                    if ($candidate.LocalAddress -eq "127.0.0.1" -and
+                        (Test-LaunchedProcess -ProcessId ([int]$candidate.OwningProcess) `
+                            -WrapperProcessId ([int]$wrapper.Id) -WrapperStartTimeUtc $wrapperStartTimeUtc)) {
+                        $ownedListener = $candidate
+                        $listenerPid = [int]$candidate.OwningProcess
+                        $listenerStartTimeUtc = Get-ProcessStartUtc -ProcessId $listenerPid
+                        break
+                    }
+                }
+                if ($startedListeners.Count -ne 1 -or -not $ownedListener) {
+                    throw "Port $Port is not exclusively owned by the server launched by this invocation."
+                }
+                $listener = $ownedListener
+            }
+        } while (-not $listener -and (Get-Date) -lt $deadline)
 
-    if (-not $listener) {
-        if ($wrapper -and -not $wrapper.HasExited) {
-            Stop-Process -Id $wrapper.Id -Force -ErrorAction SilentlyContinue
+        if (-not $listener) {
+            $tail = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+                (Get-Content -LiteralPath $stderrPath -Tail 20 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+            } else { "" }
+            throw "Isolated Waitress did not start on port $Port. $tail"
         }
-        $tail = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-            (Get-Content -LiteralPath $stderrPath -Tail 20 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
-        } else { "" }
-        throw "Isolated Waitress did not start on port $Port. $tail"
-    }
 
-    $listenerPid = [int]$listener.OwningProcess
-    $receipt = [ordered]@{
-        format = "academy-isolated-design-server/v1"
-        startedAtUtc = [DateTime]::UtcNow.ToString("o")
-        sourceRoot = $sourceRoot
-        codeRoot = $codeRoot
-        port = $Port
-        wrapperProcessId = [int]$wrapper.Id
-        wrapperStartTimeUtc = Get-ProcessStartUtc -ProcessId ([int]$wrapper.Id)
-        listenerProcessId = $listenerPid
-        listenerStartTimeUtc = Get-ProcessStartUtc -ProcessId $listenerPid
-        liveRuntimeCopied = $false
-        studentTestOcrEnabled = ($ocrEnabled -eq "1")
-        studentTestOcrAllowUnreadyModels = ($ocrAllowUnready -eq "1")
-    }
-    Write-JsonFile -Path $receiptPath -Value $receipt
+        if (-not $listenerStartTimeUtc) { throw "Cannot verify the launched listener's start time." }
+        $httpStatus = Get-HttpStatus
+        if ($httpStatus -ne 200) {
+            throw "Isolated server started but /api/ping returned $httpStatus."
+        }
+        $confirmedListeners = @(Get-Listeners)
+        if ($confirmedListeners.Count -ne 1 -or $confirmedListeners[0].LocalAddress -ne "127.0.0.1" -or
+            [int]$confirmedListeners[0].OwningProcess -ne $listenerPid -or
+            -not (Test-SameStartTime -ProcessId $listenerPid -ExpectedUtc $listenerStartTimeUtc) -or
+            -not (Test-LaunchedProcess -ProcessId $listenerPid -WrapperProcessId ([int]$wrapper.Id) `
+                -WrapperStartTimeUtc $wrapperStartTimeUtc)) {
+            throw "Port $Port ownership changed before the isolated-server receipt could be recorded."
+        }
+        $receipt = [ordered]@{
+            format = "academy-isolated-design-server/v1"
+            startedAtUtc = [DateTime]::UtcNow.ToString("o")
+            sourceRoot = $sourceRoot
+            codeRoot = $codeRoot
+            port = $Port
+            wrapperProcessId = [int]$wrapper.Id
+            wrapperStartTimeUtc = $wrapperStartTimeUtc
+            listenerProcessId = $listenerPid
+            listenerStartTimeUtc = $listenerStartTimeUtc
+            liveRuntimeCopied = $false
+            kollusVideoQaEnabled = [bool]$KollusVideoQa
+            studentTestOcrEnabled = ($ocrEnabled -eq "1")
+            studentTestOcrAllowUnreadyModels = ($ocrAllowUnready -eq "1")
+        }
+        Write-JsonFile -Path $receiptPath -Value $receipt
+        $receiptWritten = $true
 
-    $status = Get-ManagedStatus
-    if ($status.httpStatus -ne 200) {
-        Stop-ManagedServer
-        throw "Isolated server started but /api/ping returned $($status.httpStatus)."
+        $status = Get-ManagedStatus
+        if (-not $status.managed -or $status.httpStatus -ne 200) {
+            throw "Isolated server ownership or health changed after startup."
+        }
+        return $status
+    } catch {
+        $startupError = $_
+        # Never use the current port owner as the target of startup cleanup.
+        try {
+            Stop-LaunchedServer -Wrapper $wrapper -WrapperStartTimeUtc $wrapperStartTimeUtc `
+                -ListenerProcessId $listenerPid -ListenerStartTimeUtc $listenerStartTimeUtc
+        } catch {
+            Write-Warning "Could not clean up the launch-owned wrapper: $($_.Exception.Message)"
+        }
+        if ($receiptWritten) {
+            try {
+                $writtenReceipt = Read-Receipt
+                $writtenWrapperStart = if (-not $writtenReceipt) { "" } elseif ($writtenReceipt.wrapperStartTimeUtc -is [DateTime]) {
+                    ([DateTime]$writtenReceipt.wrapperStartTimeUtc).ToUniversalTime().ToString("o")
+                } else { [string]$writtenReceipt.wrapperStartTimeUtc }
+                $writtenListenerStart = if (-not $writtenReceipt) { "" } elseif ($writtenReceipt.listenerStartTimeUtc -is [DateTime]) {
+                    ([DateTime]$writtenReceipt.listenerStartTimeUtc).ToUniversalTime().ToString("o")
+                } else { [string]$writtenReceipt.listenerStartTimeUtc }
+                if ($writtenReceipt -and [int]$writtenReceipt.port -eq $Port -and
+                    [string]$writtenReceipt.codeRoot -eq $codeRoot -and
+                    [int]$writtenReceipt.wrapperProcessId -eq [int]$wrapper.Id -and
+                    $writtenWrapperStart -eq $wrapperStartTimeUtc -and
+                    [int]$writtenReceipt.listenerProcessId -eq $listenerPid -and
+                    $writtenListenerStart -eq $listenerStartTimeUtc) {
+                    Remove-Item -LiteralPath $receiptPath -Force -ErrorAction Stop
+                }
+            } catch {
+                Write-Warning "Could not remove the failed launch's receipt: $($_.Exception.Message)"
+            }
+        }
+        throw $startupError
     }
-    return $status
 }
 
-switch ($Action) {
-    "Start" {
-        $result = Start-ManagedServer
-        $result | ConvertTo-Json -Depth 8
-    }
-    "Stop" {
-        Stop-ManagedServer
-        (Get-ManagedStatus) | ConvertTo-Json -Depth 8
-    }
-    "Status" {
-        (Get-ManagedStatus) | ConvertTo-Json -Depth 8
-    }
-    "Refresh" {
-        Sync-CodeSnapshot
-        $status = Get-ManagedStatus
-        $status["restartRequiredForPythonChanges"] = [bool]$status.running
-        $status | ConvertTo-Json -Depth 8
+Invoke-WithManagerLock {
+    switch ($Action) {
+        "Start" {
+            $result = Start-ManagedServer
+            $result | ConvertTo-Json -Depth 8
+        }
+        "Stop" {
+            Stop-ManagedServer
+            (Get-ManagedStatus) | ConvertTo-Json -Depth 8
+        }
+        "Status" {
+            (Get-ManagedStatus) | ConvertTo-Json -Depth 8
+        }
+        "Refresh" {
+            Sync-CodeSnapshot
+            $status = Get-ManagedStatus
+            $status["restartRequiredForPythonChanges"] = [bool]$status.running
+            $status | ConvertTo-Json -Depth 8
+        }
     }
 }

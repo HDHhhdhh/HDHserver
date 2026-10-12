@@ -21,13 +21,31 @@ assert.ok(
   'test-page stylesheet must load before the document body',
 );
 
+// Restore only the five superseded TH prefixes for the independent extraction baseline.
+const desktopCellWidths = ['18%', '9%', '12%', '45%', '16%'];
+const desktopHeaderWidths = ['22%', '15%', '16%', '31%', '16%'];
+let extractionCSS = css;
+for (let column = 1; column <= 5; column += 1) {
+  const prefix = `body.admin.tests-page .detail-student-table`;
+  const cell = `${prefix} td:nth-child(${column})`;
+  const header = `${prefix} th:nth-child(${column})`;
+  const anchor = `\n${cell} {`;
+  assert.equal(css.split(anchor).length - 1, 1, 'each allowed inverse has one unindented TD anchor');
+  assert.ok(css.includes(`${cell} {\n  width: ${desktopCellWidths[column - 1]};`));
+  assert.ok(css.includes(`${header} {\n  width: ${desktopHeaderWidths[column - 1]};`));
+  extractionCSS = extractionCSS.replace(anchor, `\n${header},${anchor}`);
+}
+assert.equal(css.split('\n').length - 1, 1724, 'actual CSS permits exactly five selector-line removals');
+assert.equal((css.match(/body\.admin\.tests-page/g) || []).length, 279, 'actual CSS scope delta is exactly five');
+assert.match(css, /@media \(max-width: 640px\)[\s\S]*?th:nth-child\(5\)[\s\S]*?td:nth-child\(5\)\s*\{\s*width: 100%;/);
+
 assert.equal(
-  sha256(css),
+  sha256(extractionCSS),
   '9438d2eb2dbc5a7b925becdbbaed2135acb654a1620c6f4db0380dd3b98f39f8',
   'tests.css differs from the normalized pre-extraction inline stylesheet',
 );
-assert.equal(css.split('\n').length - 1, 1729, 'tests.css line count drifted');
-assert.equal((css.match(/body\.admin\.tests-page/g) || []).length, 284, 'page scope count drifted');
+assert.equal(extractionCSS.split('\n').length - 1, 1729, 'tests.css line count drifted');
+assert.equal((extractionCSS.match(/body\.admin\.tests-page/g) || []).length, 284, 'page scope count drifted');
 assert.deepEqual(
   [...css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)/g)].map(match => Number(match[1])),
   [1024, 640, 640, 1080, 900, 760],
@@ -47,7 +65,11 @@ for (const requiredSelector of [
   assert.ok(css.includes(requiredSelector), `tests.css lost selector: ${requiredSelector}`);
 }
 
-const bodySource = html.slice(html.indexOf('<body'));
+assert.ok(html.includes('일산 기출은 중상·상·그래프 포함'));
+// Approved level text and cache busting must not weaken the remaining layout oracle.
+const bodySource = html.slice(html.indexOf('<body'))
+  .replace('일산 기출은 중상·상·그래프 포함', '일산 기출은 중·중상·그래프 포함')
+  .replace('/js/tests.js?v=20260907-ilsan-level-r1&hub=20261001-detail1', '/js/tests.js?v=20260829-catalog-statistics-state-r1');
 assert.equal(
   sha256(bodySource),
   '5b9d215033a321c2bd319f54c33520744b405bded334318c473e02e1a7842600',

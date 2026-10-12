@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, request
 
 from core.paths import VID_PATH
 from core.storage import file_lock, load, save_atomic
+from core.video_sources import is_youtube_mid, parse_youtube_url
 
 
 bp_api_videos = Blueprint("api_videos", __name__)
@@ -61,12 +62,27 @@ def _normalize_video_mid_fields(videos):
             continue
 
         video = dict(item)
+        youtube = parse_youtube_url(video.get("url"), catalog_id=video.get("id"))
+        if youtube:
+            video.update(youtube)
+            normalized_videos.append(video)
+            continue
+        if video.get("provider") == "youtube" or is_youtube_mid(video.get("mid")):
+            raise ValueError("YouTube 영상에는 유효한 YouTube 링크가 필요합니다.")
         parsed_mid = _extract_kollus_mid_from_url(video.get("url"))
         if parsed_mid:
             video["mid"] = parsed_mid
         elif video.get("mid") is not None:
             video["mid"] = str(video.get("mid") or "").strip()
         normalized_videos.append(video)
+    seen_youtube = set()
+    for video in normalized_videos:
+        if not isinstance(video, dict) or video.get("provider") != "youtube":
+            continue
+        key = tuple(str(video.get(field) or "").strip().casefold() for field in ("curriculum", "subCurriculum")) + (video["youtubeKind"], video["youtubeId"])
+        if key in seen_youtube:
+            raise ValueError("같은 커리큘럼에 이미 등록된 YouTube 영상/재생목록입니다.")
+        seen_youtube.add(key)
     return normalized_videos
 
 
@@ -106,10 +122,12 @@ def _video_catalog_identity_changes(previous_videos, next_videos) -> dict[str, l
 @bp_api_videos.route("/api/videos", methods=["GET", "POST"])
 def api_videos():
     if request.method == "GET":
-        return jsonify(load(VID_PATH))
+        response = jsonify(load(VID_PATH))
+        response.headers["X-Video-Providers"] = "kollus,youtube"
+        return response
 
-    next_videos = _normalize_video_mid_fields(request.get_json(force=True))
     try:
+        next_videos = _normalize_video_mid_fields(request.get_json(force=True))
         with file_lock(VID_PATH, timeout_sec=20.0, poll_sec=0.05):
             previous_videos = load(VID_PATH)
             changes = _video_catalog_identity_changes(previous_videos, next_videos)
@@ -124,3 +142,10 @@ def api_videos():
     except ValueError as exc:
         return jsonify({"ok": False, "error": "invalid_video_catalog", "message": str(exc)}), 400
     return "", 204
+
+
+@bp_api_videos.get("/api/video-capabilities")
+def video_capabilities():
+    response = jsonify({"youtube": True, "gichulOverlay": True, "youtubeRecordCleanup": True})
+    response.headers["Cache-Control"] = "no-store"
+    return response

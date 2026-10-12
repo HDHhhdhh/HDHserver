@@ -13,6 +13,7 @@ from core.absence_assignment_cleanup import (
     clear_absence_update_assignments_map,
     cleared_assignment_log_entry,
     collect_absence_test_carryovers_from_state,
+    self_study_makeup_exemptions,
     transition_absence_progress_tests_map,
 )
 from core.progress_store import load_progress_strict, save_progress_strict
@@ -138,7 +139,7 @@ def _restore_progress_dates(path: Any, snapshots: list[dict]) -> None:
 
 def _write_journal(path: pathlib.Path, journal: dict) -> None:
     journal["updatedAt"] = _utc_now()
-    save_atomic(path, journal, mirror=False)
+    save_atomic(path, journal, compact=True, mirror=False)
 
 
 def _read_journal(path: pathlib.Path) -> dict:
@@ -251,6 +252,7 @@ def apply_absence_transaction_locked(
     log_repository_factory: Callable[[], Any],
     journal_dir: Any,
     carryover_after: dict | None = None,
+    students: list | None = None,
     kind: str = "absence",
     failure_injector: Callable[[str], None] | None = None,
 ) -> str:
@@ -271,8 +273,6 @@ def apply_absence_transaction_locked(
 
     repository = log_repository_factory()
     transaction_id = uuid.uuid4().hex
-    journal: dict = {}
-    snapshot: dict = {}
 
     with ExitStack() as stack:
         stack.enter_context(file_lock(updates_path, timeout_sec=8.0))
@@ -290,6 +290,17 @@ def apply_absence_transaction_locked(
             progress=progress_before,
             log_entries=effective_log_entries,
         )
+        if students is not None:
+            makeup_before = (
+                carryover_after if carryover_after is not None
+                else _load_object_strict(carryover_path)
+            )
+            makeup_after, makeup_changed = self_study_makeup_exemptions(
+                makeup_before, normalized_pairs, students=students,
+                log_entries=effective_log_entries, updated_at=_utc_now(),
+            )
+            if makeup_changed:
+                carryover_after = makeup_after
         updates_after, updates_changed = clear_absence_update_assignments_map(
             updates_before,
             normalized_pairs,
@@ -331,17 +342,15 @@ def apply_absence_transaction_locked(
                 save_progress_strict(progress_path, progress_after)
             _record_phase(pending_path, journal, "progress", failure_injector)
 
-            for pair in sorted(normalized_pairs):
-                carryover = test_carryovers.get(pair)
-                repository.transform_entries(
-                    {pair},
-                    lambda entry, sid, carryover=carryover: cleared_assignment_log_entry(
-                        entry,
-                        sid,
-                        carryover,
-                    ),
-                    json_lock_held=True,
-                )
+            repository.transform_entries_by_pair(
+                normalized_pairs,
+                lambda entry, date, sid: cleared_assignment_log_entry(
+                    entry,
+                    sid,
+                    test_carryovers.get((date, sid)),
+                ),
+                json_lock_held=True,
+            )
             _record_phase(pending_path, journal, "logs", failure_injector)
 
             save_atomic(absent_path, absent_after)

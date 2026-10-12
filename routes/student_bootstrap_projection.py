@@ -6,6 +6,7 @@ from typing import Any, Callable
 from core import log_rules
 from core.ghost_student import GHOST_STUDENT_ID, is_ghost_student_sid
 from core.network_access import ACADEMY_ACCESS_MESSAGE
+from core.student_video_projection import history_for_sid
 from core.update_assignment_rules import (
     SELF_STUDY_VIDEO_ASSIGN_SOURCE,
     is_manual_video_assignment,
@@ -126,6 +127,23 @@ def build_ghost_student_bootstrap_payload(date: str) -> dict:
     }
 
 
+def _build_assigned_tests_payload(
+    dependencies: StudentBootstrapProjectionDependencies,
+    progress_all: dict,
+    logs: dict,
+    log_repo,
+    *,
+    date: str,
+    sid: str,
+    student: dict,
+    academy_allowed: bool,
+) -> list[dict]:
+    json_logs_for_assigned = log_repo.read_json_map()
+    items = dependencies.assigned_tests(progress_all, logs, date, sid, json_logs_for_assigned)
+    items = dependencies.filter_tests_for_curriculum(items, student)
+    return dependencies.academy_restricted_tests(items, academy_allowed)
+
+
 def build_student_bootstrap_payload(
     dependencies: StudentBootstrapProjectionDependencies,
     *,
@@ -186,7 +204,7 @@ def build_student_bootstrap_payload(
     if dashboard_enabled:
         videos_all = dependencies.load(dependencies.videos_path) or []
         progress_all = dependencies.load_progress()
-        latest_status_by_sid = dependencies.build_latest_status(progress_all)
+        latest_status_by_sid = dependencies.build_latest_status(history_for_sid(progress_all, sid))
 
     if (not registered_today and not self_study_day) or absent_today:
         redirect_sid = dependencies.active_alias_sid(
@@ -238,7 +256,7 @@ def build_student_bootstrap_payload(
     if progress_all is None:
         progress_all = dependencies.load_progress()
     if latest_status_by_sid is None:
-        latest_status_by_sid = dependencies.build_latest_status(progress_all)
+        latest_status_by_sid = dependencies.build_latest_status(history_for_sid(progress_all, sid))
     course_videos_completed = dependencies.course_videos_completed(
         dependencies.student_completion_videos(student, videos_all),
         sid,
@@ -255,9 +273,7 @@ def build_student_bootstrap_payload(
         updates = dependencies.load(dependencies.updates_path) or {}
     day_updates = updates.get(date) if isinstance(updates, dict) else {}
     assignment = sid_lookup(day_updates if isinstance(day_updates, dict) else {}, sid)
-    response_assignment = assignment
     watch_all = dependencies.load(dependencies.watch_path) or {}
-    assigned_videos = normalize_video_assign_list(response_assignment)
     progress_until_date = {
         raw_date: value
         for raw_date, value in progress_all.items()
@@ -271,8 +287,8 @@ def build_student_bootstrap_payload(
         if str(raw_date) <= str(date)
     }
     finished_by_sid = dependencies.build_auto_blocked(
-        progress_until_date,
-        watch_until_date,
+        history_for_sid(progress_until_date, sid),
+        history_for_sid(watch_until_date, sid),
     )
     finished_mids = dependencies.blocked_mids(finished_by_sid, sid)
     eligible_mids = dependencies.eligible_review_mids(
@@ -370,21 +386,9 @@ def build_student_bootstrap_payload(
         assigned_materials,
     )
 
-    json_logs_for_assigned = log_repo.read_json_map()
-    assigned_tests = dependencies.assigned_tests(
-        progress_all,
-        logs,
-        date,
-        sid,
-        json_logs_for_assigned,
-    )
-    assigned_tests = dependencies.filter_tests_for_curriculum(
-        assigned_tests,
-        student,
-    )
-    assigned_tests = dependencies.academy_restricted_tests(
-        assigned_tests,
-        academy_allowed,
+    assigned_tests = _build_assigned_tests_payload(
+        dependencies, progress_all, logs, log_repo,
+        date=date, sid=sid, student=student, academy_allowed=academy_allowed,
     )
     homework_books = dependencies.homework_books_from_log(log_entry)
 

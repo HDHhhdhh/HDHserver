@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.absent import load_absent, save_absent
+from core.absent import load_absent
 from core.makeup_sheet_sync import (
     SHEET_SYNC_MAX_ROW,
     merge_additive_sheet_absences,

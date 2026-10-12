@@ -1600,27 +1600,22 @@ body.admin.tests-page .detail-student-table td {
   vertical-align: middle;
 }
 
-body.admin.tests-page .detail-student-table th:nth-child(1),
 body.admin.tests-page .detail-student-table td:nth-child(1) {
   width: 18%;
 }
 
-body.admin.tests-page .detail-student-table th:nth-child(2),
 body.admin.tests-page .detail-student-table td:nth-child(2) {
   width: 9%;
 }
 
-body.admin.tests-page .detail-student-table th:nth-child(3),
 body.admin.tests-page .detail-student-table td:nth-child(3) {
   width: 12%;
 }
 
-body.admin.tests-page .detail-student-table th:nth-child(4),
 body.admin.tests-page .detail-student-table td:nth-child(4) {
   width: 45%;
 }
 
-body.admin.tests-page .detail-student-table th:nth-child(5),
 body.admin.tests-page .detail-student-table td:nth-child(5) {
   width: 16%;
 }

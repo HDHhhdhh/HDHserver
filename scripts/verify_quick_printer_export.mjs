@@ -51,7 +51,7 @@ assert.match(
   /<button id="exportQuickPrinterTests" class="btn secondary" type="button">테스트 인쇄<\/button>/,
   'test print button does not reuse the existing export button class',
 );
-assert.ok(html.includes('&amp;quickPrint=3'), 'admin entry cache key was not advanced');
+assert.ok(html.includes('&amp;quickPrint=4'), 'admin entry cache key was not advanced');
 
 for (const id of [
   'quickPrinterExportModal',
@@ -81,17 +81,21 @@ assert.ok(
   'explicit carryover reprint option is missing',
 );
 assert.ok(
-  !/<input id="quickPrinterIncludeReprints"[^>]*\schecked(?:\s|>)/.test(html),
-  'carryover reprint option must default off',
+  /<input id="quickPrinterIncludeReprints"[^>]*\schecked(?:\s|>)/.test(html),
+  'carryover reprint option must default on',
 );
 
 assert.ok(
-  main.includes("import { initQuickPrinterExport } from './features/quickPrinterExport.js?v=20260830-carryover-history1';"),
+  main.includes("import('./features/quickPrinterExport.js?v=20260920-reprint-default1').then(module => module.initQuickPrinterExport)"),
   'admin entry does not import the quick-printer feature',
 );
-assert.ok(main.includes('initExport();\ninitQuickPrinterExport();'), 'quick-printer init is not adjacent to existing exports');
 assert.ok(
-  main.includes('exportLogs.js?v=20260826-roster-current-content2&quickPrinter=1'),
+  exporter.includes('includeReprintsInput.checked = true;'),
+  'opening the quick-printer dialog must restore the reprint option to its checked default',
+);
+assert.match(main, /\.then\(module => module\.initExport\),\r?\n\s*import\([^\n]+\)\.then\(module => module\.initQuickPrinterExport\)/, 'quick-printer init is not adjacent to existing exports');
+assert.ok(
+  main.includes('exportLogs.js?v=20260907-ilsan-level-r1&quickPrinter=1'),
   'existing export module cache key was not advanced without replacing the module',
 );
 

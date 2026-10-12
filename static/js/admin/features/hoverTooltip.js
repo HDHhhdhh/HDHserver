@@ -12,7 +12,6 @@ export function initHoverTooltip() {
 
   let tipEl = null;
   let tipMode = 'hover';        // 'hover' | 'fixed'
-  let tipVariant = 'default';   // 'default' | 'log'  (log 모달용 축약 버전)
   let activeHoverAnchor = null;
   let pointerHoverAnchor = null;
   let focusHoverAnchor = null;
@@ -35,7 +34,6 @@ export function initHoverTooltip() {
     cache: 'no-store', credentials: 'same-origin',
   }));
 
-  const WCHR = '일월화수목금토';
   const LOG_TIP_POS_KEY = 'admin:logTipPos'; // 로그 모달 툴팁 위치 저장 키
   let dragState = null; // { pointerId, startX, startY, startLeft, startTop }
 
@@ -193,11 +191,6 @@ export function initHoverTooltip() {
     "'": '&#39;',
   }[m]));
 
-  const tipRow = (label, value) => `
-    <div style="display:grid; grid-template-columns:104px minmax(0,1fr); gap:12px; align-items:start;">
-      <div style="opacity:.78; font-weight:800">${escHtml(label)}</div>
-      <div style="font-weight:900; word-break:keep-all">${escHtml(value || '-')}</div>
-    </div>`;
 
 
   function todayInfoRow(icon, label, value, valueHtml = null) {
@@ -304,7 +297,7 @@ export function initHoverTooltip() {
   }
 
   // ───────────────────────────────────────────
-  // 학사일정: 기말(final) 우선, 없으면 중간(midterm) 폴백
+  // 선택 운영일에서 중간 시험이 끝났으면 기말로 전환한다.
   // ───────────────────────────────────────────
   function pickExam(sc, prefer = 'auto', referenceDate = null) {
     const get = (obj, k, altKeys = []) => {
@@ -340,6 +333,13 @@ export function initHoverTooltip() {
         : new Date();
       today.setHours(0, 0, 0, 0);
 
+      const midtermEnd = (classifySubjectExamTiming(packs.midterm.math) === 'date'
+        ? parseLastMonthDay(packs.midterm.math, today) : null)
+        || parseLastMonthDay(packs.midterm.date || packs.midterm.math, today);
+      if (midtermEnd) {
+        // 기말 정보가 비어 있어도 지난 중간 정보를 다시 표시하지 않는다.
+        return midtermEnd < today ? packs.final : packs.midterm;
+      }
       const score = (pack, order) => {
         if (!hasAny(pack)) return [9, order];
         const mathIsExactDate = classifySubjectExamTiming(pack.math) === 'date';
@@ -423,6 +423,34 @@ export function initHoverTooltip() {
     const fallback = new Date();
     fallback.setHours(0, 0, 0, 0);
     return fallback;
+  }
+
+  function parseLastMonthDay(str, referenceDate) {
+    const tokens = [...String(str || '').matchAll(
+      /(?:^|[^\d])(?:(\d{4})\s*[-./년]\s*)?(\d{1,2})\s*[-./월]\s*(\d{1,2})(?:\s*일)?/g,
+    )];
+    if (!tokens.length) return null;
+    let year = referenceDate.getFullYear();
+    const firstMonth = Number(tokens[0][2]);
+    const lastMonth = Number(tokens[tokens.length - 1][2]);
+    const crossesYear = firstMonth - lastMonth > 6;
+    if (!tokens[0][1]) {
+      if (crossesYear && referenceDate.getMonth() < 3) year -= 1;
+      else if (firstMonth <= 2 && referenceDate.getMonth() >= 8) year += 1;
+    }
+    let previousMonth = firstMonth;
+    let lastDate = null;
+    for (const token of tokens) {
+      const month = Number(token[2]);
+      const day = Number(token[3]);
+      if (token[1]) year = Number(token[1]);
+      else if (previousMonth - month > 6) year += 1;
+      const date = new Date(year, month - 1, day);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+      if (!lastDate || date > lastDate) lastDate = date;
+      previousMonth = month;
+    }
+    return lastDate;
   }
 
   function parseFirstMonthDay(str, referenceDate = null) {
@@ -797,20 +825,6 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // HTML 구성
   // ───────────────────────────────────────────
-  function nextRegularAttendanceDate(student) {
-    const days = regularAttendanceDaysForStudent(student);
-    if (!days.length) return '';
-    const weekdayChars = '\uC77C\uC6D4\uD654\uC218\uBAA9\uAE08\uD1A0';
-    const now = new Date();
-    const pad = (value) => String(value).padStart(2, '0');
-    for (let offset = 1; offset <= 7; offset += 1) {
-      const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-      const weekday = weekdayChars[candidate.getDay()];
-      if (!days.some((value) => String(value || '').includes(weekday))) continue;
-      return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}`;
-    }
-    return '';
-  }
   function buildTipHtml(stu, opts = {}) {
     const { includeVideo = true, includeTests = false, studentWorkLayout = false, attendanceSubject = "" } = opts;
 
@@ -1027,7 +1041,6 @@ export function initHoverTooltip() {
     if (!stu) return false;
 
     const variant = opts.variant || 'default';
-    tipVariant = variant;
     tipMode = opts.fixed ? 'fixed' : 'hover';
     const renderEpoch = ++placementEpoch;
 
@@ -1054,7 +1067,8 @@ export function initHoverTooltip() {
     }
     el.setAttribute('aria-hidden', 'false');
     const useStudentWorkLayout = opts.layout === 'student-work';
-    if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
+    if (useStudentWorkLayout) placeForStudentWorkLayout();
+    else resetStudentWorkTooltipPlacement();
     attendanceTargets = [];
     el.innerHTML = variant === 'today'
       ? buildTodayNameTipHtml(stu, { attendanceSubject })
@@ -1136,7 +1150,6 @@ export function initHoverTooltip() {
     tipEl.style.display = 'none';
     tipEl.setAttribute('aria-hidden', 'true');
     tipMode = 'hover';
-    tipVariant = 'default';
     tipEl.style.pointerEvents = 'none';
     tipEl.style.cursor = 'default';
     resetStudentWorkTooltipPlacement();
@@ -1273,7 +1286,7 @@ export function initHoverTooltip() {
       host.addEventListener('keydown', onKeyDown);
     });
   }
-  function onTodayRendered() {
+  function onRosterRendered() {
     focusTransitionEpoch += 1;
     if (tipMode === 'hover') {
       hideHoverPresentation();
@@ -1284,20 +1297,10 @@ export function initHoverTooltip() {
     lastPointerPoint = null;
     bindTooltipHosts();
   }
-  function onAllRendered() {
-    focusTransitionEpoch += 1;
-    if (tipMode === 'hover') {
-      hideHoverPresentation();
-    }
-    pointerHoverAnchor = null;
-    focusHoverAnchor = null;
-    focusTooltipDismissed = false;
-    lastPointerPoint = null;
-    bindTooltipHosts();
-  }
+
   bindTooltipHosts();
-  document.addEventListener('today:rendered', onTodayRendered);
-  document.addEventListener('all:rendered', onAllRendered);
+  document.addEventListener('today:rendered', onRosterRendered);
+  document.addEventListener('all:rendered', onRosterRendered);
   ['admin:refresh', 'attendance:updated', 'admin:date-change'].forEach(type => {
     document.addEventListener(type, () => {
       attendanceLoader.invalidate();

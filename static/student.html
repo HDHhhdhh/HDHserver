@@ -17,18 +17,17 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=Sora:wght@500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="/css/style.css">
-  <!-- Phase 2 keys student.css?v=20260809-homework-r1 and student.js?v=20260809-homework-r1 are superseded below. -->
-  <link rel="stylesheet" href="/css/student.css?v=20260809-focus-r1">
+  <link rel="stylesheet" href="/css/student.css?v=20260809-focus-r1&amp;youtube=20260913">
   <link rel="stylesheet" href="/css/student-test-ocr.css?v=20260828-1">
 
   <script defer src="/js/student-focus.js?v=20260809-focus-r1"></script>
   <script defer src="/js/student/bootstrapState.js?v=20260828-bootstrap-state-r1"></script>
-  <script defer src="/js/student/watchState.js?v=20260828-watch-state-r1"></script>
-  <script defer src="/js/student/playback.js?v=20260828-playback-r1"></script>
+  <script defer src="/js/student/watchState.js?v=20261002-native-watch1"></script>
+  <script defer src="/js/student/playback.js?v=20261002-native-watch1&amp;youtube=20260913"></script>
   <script defer src="/js/student/reviewPlaylist.js?v=20260828-review-playlist-r1"></script>
   <script defer src="/js/student/announcementState.js?v=20260828-announcement-state-r1"></script>
-  <script defer src="/js/student/testPresentation.js?v=20260828-test-presentation-r1"></script>
-  <script defer src="/js/student.js?v=20260828-test-presentation-r1"></script>
+  <script defer src="/js/student/testPresentation.js?v=20260907-ilsan-level-r1"></script>
+  <script defer src="/js/student.js?v=20260907-ilsan-level-r1&amp;watchRearm=20260912&amp;youtube=20260913&amp;uiPerf=20261002"></script>
   <script type="module" src="/js/student-test-ocr-launcher.js?v=20260828-1"></script>
 </head>
 <body class="student-page">
@@ -196,8 +195,9 @@
 
         <div id="playerBox">
           <article class="player-card">
-            <iframe id="player" title="학생 학습 영상" allow="autoplay; local-network-access" allowfullscreen webkitallowfullscreen
+            <iframe id="player" title="학생 학습 영상" allow="autoplay; local-network-access; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen webkitallowfullscreen
               mozallowfullscreen></iframe>
+            <a id="youtubeOpenLink" target="_blank" rel="noopener noreferrer" hidden>재생되지 않으면 YouTube에서 열기</a>
           </article>
 
           <aside class="playlist-wrap">

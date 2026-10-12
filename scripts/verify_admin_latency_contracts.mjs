@@ -71,6 +71,8 @@ async function verifyCalendarParallelPreload() {
      let WEEKEND = { old: 'weekend' };
      let CARRYOVER = { old: 'carryover' };
      let preloadExtraWeekendPromise = null;
+     let calendarMutationGeneration = 0;
+     let calendarReadGeneration = 0;
      const state = {};
      const window = {};
      const normalizeCarryoverPayload = value => value;
@@ -135,6 +137,137 @@ async function verifyCalendarParallelPreload() {
   assert.deepEqual(failed.CARRYOVER, {});
 
   return elapsed;
+}
+
+async function verifyCalendarRecalculation() {
+  const source = read('static/js/admin/features/calendar.js');
+  const recalcStart = source.indexOf('window.recalcCalendarCounts = function () {');
+  const recalcEnd = source.indexOf('\n  };', recalcStart) + '\n  };'.length;
+  assert.ok(recalcStart >= 0 && recalcEnd > recalcStart);
+  const calls = [];
+  let generation = 1;
+  let fail = false;
+  let release;
+  let block = null;
+  const day = '2026-10-02';
+  const load = async label => {
+    const snapshotGeneration = generation;
+    const rejectSnapshot = fail;
+    calls.push(label);
+    if (block) await block;
+    if (rejectSnapshot) throw new Error('synthetic failed read');
+    if (label === '/api/extra-attend') return { [day]: [snapshotGeneration === 1 ? 'extra' : 'new'] };
+    if (label === '/api/weekend-slots') return { [day]: { extra: [2], new: [1, 2] } };
+    if (label === 'carryover') return { payload: { generation: snapshotGeneration } };
+    return { [day]: snapshotGeneration === 1 ? ['regular'] : [] };
+  };
+  const listenerStart = source.indexOf('  let calendarMutationRefreshPromise = null;');
+  const listenerEnd = source.indexOf("  document.addEventListener('admin:date-change'", listenerStart);
+  assert.ok(listenerStart >= 0 && listenerEnd > listenerStart);
+  const runner = new Function('load', 'day', `
+    let EXTRA, WEEKEND, CARRYOVER, countMap;
+    let preloadExtraWeekendPromise = null;
+    let calendarMutationGeneration = 0;
+    let calendarReadGeneration = 0;
+    const state = { students: [{ id: 'regular' }], absentByDate: {} };
+    const window = {};
+    const listeners = {};
+    const document = {
+      addEventListener: (name, callback) => { listeners[name] = callback; },
+      dispatchEvent: event => listeners[event.type]?.(event),
+    };
+    function CustomEvent(type) { this.type = type; }
+    const rendered = [];
+    const calendar = { view: { activeStart: new Date(day), activeEnd: new Date('2026-10-03') } };
+    const fetch = url => { const payload = load(url); return Promise.resolve({ json: () => payload }); };
+    const fetchMakeupCarryoverSnapshot = () => load('carryover');
+    const fetchAbsentSnapshot = () => load('absent');
+    const applyAbsentPayload = value => { state.absentByDate = value; };
+    const normalizeCarryoverPayload = value => value;
+    const MAKEUP_SLOTS = [1, 2];
+    const ymd = date => date.toISOString().slice(0, 10);
+    const yoil = () => '금';
+    const hasWeekday = () => true;
+    const getCountSlots = () => [1];
+    const getMakeupSlots = (date, sid) => WEEKEND?.[date]?.[sid] || [1];
+    const parseSlotNumbers = value => value;
+    function refreshCountBadges() { rendered.push({ kind: 'counts', counts: structuredClone(countMap) }); }
+    function renderMakeupPlanner() { rendered.push({ kind: 'planner', counts: structuredClone(countMap), extra: structuredClone(EXTRA), carryover: structuredClone(CARRYOVER) }); }
+    function refreshMakeupConflictHints() {}
+    ${extractFunction(source, 'addSlotCounts')}
+    ${extractFunction(source, 'invalidateCalendarPreload')}
+    ${extractFunction(source, 'preloadExtraWeekend')}
+    ${extractFunction(source, 'fetchCountsForRange')}
+    ${extractFunction(source, 'refreshMakeupPlanner')}
+    ${extractFunction(source, 'refreshCalendarAfterMutation')}
+    ${source.slice(recalcStart, recalcEnd)}
+    ${source.slice(listenerStart, listenerEnd)}
+    return { recalc: window.recalcCalendarCounts, rendered, changed: () => listeners['attendance:updated'](),
+      committed: () => refreshCalendarAfterMutation({ attendance: true }) };
+  `)(load, day);
+  const bundle = ['/api/extra-attend', '/api/weekend-slots', 'carryover', 'absent'];
+  await runner.recalc();
+  assert.deepEqual(calls, bundle, 'one recalculation must read each input once');
+  assert.deepEqual(runner.rendered.slice(-2), [
+    { kind: 'counts', counts: { [day]: { 1: 0, 2: 1 } } },
+    { kind: 'planner', counts: { [day]: { 1: 0, 2: 1 } }, extra: { [day]: ['extra'] }, carryover: { generation: 1 } },
+  ]);
+  generation = 2;
+  calls.length = 0;
+  await runner.recalc();
+  assert.deepEqual(calls, bundle, 'a later recalculation must reload after mutation');
+  assert.deepEqual(runner.rendered.at(-1), {
+    kind: 'planner', counts: { [day]: { 1: 2, 2: 1 } }, extra: { [day]: ['new'] }, carryover: { generation: 2 },
+  });
+  fail = true;
+  calls.length = 0;
+  await runner.recalc();
+  assert.deepEqual(calls, bundle);
+  fail = false;
+  calls.length = 0;
+  block = new Promise(resolve => { release = resolve; });
+  const pending = [runner.recalc(), runner.recalc()];
+  assert.deepEqual(calls, bundle, 'overlapping recalculations must share only the pending read');
+  release();
+  await Promise.all(pending);
+  assert.deepEqual(calls, bundle, 'failed preload must remain retryable without a second serial bundle');
+  assert.equal(runner.rendered.at(-1).carryover.generation, 2);
+  generation = 1;
+  calls.length = 0;
+  block = new Promise(resolve => { release = resolve; });
+  const older = runner.recalc();
+  generation = 2;
+  const afterCommit = runner.changed();
+  const latest = runner.recalc();
+  block = null;
+  release();
+  await Promise.all([older, afterCommit, latest]);
+  assert.deepEqual(calls, [...bundle, ...bundle], 'a committed mutation must discard the old flight and share one fresh bundle');
+  assert.equal(runner.rendered.at(-1).carryover.generation, 2);
+  assert.deepEqual(runner.rendered.at(-1).counts, { [day]: { 1: 2, 2: 1 } });
+  calls.length = 0;
+  await runner.committed();
+  assert.deepEqual(calls, bundle, 'one committed absence action shares planner, counts and both events');
+  generation = 3;
+  calls.length = 0;
+  await runner.committed();
+  assert.deepEqual(calls, bundle, 'the next committed action must read a new authoritative snapshot');
+  assert.equal(runner.rendered.at(-1).carryover.generation, 3);
+  for (let depth = 0; depth <= 12; depth += 1) {
+    generation = 1;
+    calls.length = 0;
+    const previous = runner.recalc();
+    let turn = Promise.resolve();
+    for (let index = 0; index < depth; index += 1) turn = turn.then(() => {});
+    const committed = turn.then(() => {
+      generation = 2;
+      return Promise.all([runner.changed(), runner.recalc()]);
+    });
+    await Promise.all([previous, committed]);
+    assert.deepEqual(calls, [...bundle, ...bundle], `mutation at microtask depth ${depth} must share exactly one fresh read`);
+    assert.equal(runner.rendered.at(-1).carryover.generation, 2);
+    assert.deepEqual(runner.rendered.at(-1).counts, { [day]: { 1: 2, 2: 1 } });
+  }
 }
 
 async function verifyRosterInputsParallelLoad() {
@@ -222,8 +355,10 @@ function verifyBootstrapAndFeaturePrioritySource() {
 
   const doneSource = read('static/js/admin/features/done.js');
   const todaySource = read('static/js/admin/features/today.js');
-  assert.match(doneSource, /today\.render\.js\?v=20260824-linked-leave1/);
-  assert.match(todaySource, /today\.render\.js\?v=20260824-linked-leave1/);
+  const doneRendererUrl = doneSource.match(/from ['"]([^'"]*today\.render\.js\?v=[^'"]+)['"]/)?.[1];
+  const todayRendererUrl = todaySource.match(/from ['"]([^'"]*today\.render\.js\?v=[^'"]+)['"]/)?.[1];
+  assert.ok(doneRendererUrl, 'done must load a versioned renderer');
+  assert.equal(doneRendererUrl, todayRendererUrl, 'today/done must share one renderer and its per-SID save locks');
 }
 
 async function verifyPopupCacheFailureEviction() {
@@ -344,6 +479,7 @@ async function verifySaveConflictHandling() {
 }
 
 const calendarElapsed = await verifyCalendarParallelPreload();
+await verifyCalendarRecalculation();
 const rosterElapsed = await verifyRosterInputsParallelLoad();
 verifyTodayCriticalPathSource();
 verifyBootstrapAndFeaturePrioritySource();

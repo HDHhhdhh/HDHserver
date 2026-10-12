@@ -15,7 +15,7 @@ WATCH_DONE_RATIO = 0.90
 WATCH_UPDATED_AT_MIN_MS = 1_000_000_000_000
 
 VALID_VIDEO_PROGRESS_STATUSES = frozenset({"", "done", "interrupted", "none", "skip"})
-AUTO_OWNED_PROGRESS_STATUSES = frozenset({"done", "interrupted", "skip"})
+AUTO_OWNED_PROGRESS_STATUSES = frozenset({"done", "interrupted", "skip", "none"})
 AUTO_EMPTY_PRESERVED_STATUSES = frozenset({"done", "interrupted", "skip", "none"})
 
 
@@ -311,6 +311,7 @@ def merge_progress_day_sid(
             prev_s = str(out.get(mid_s) or "").strip()
             prev_auto = _is_watch_auto_owned_status(mid_s, prev_s, watch_auto_meta)
             manual_override = _has_manual_progress_override(mid_s, manual_meta)
+            prev_auto = prev_auto and not manual_override
 
             all_page_meta.pop(mid_s, None)
             if status_s in ("", "none"):

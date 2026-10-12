@@ -52,7 +52,7 @@ const source = originalSource
     'const regularAttendanceDaysForStudent = globalThis.__attendanceDays;',
   )
   .replace('export function initHoverTooltip()', 'function initHoverTooltip()')
-  .replace('  function attendanceHtml(entry, stu, referenceDate) {', '  globalThis.__attendanceMarkup = attendanceMarkup;\n  function attendanceHtml(entry, stu, referenceDate) {')
+  .replace('  function attendanceHtml(entry, stu, referenceDate) {', '  globalThis.__attendanceMarkup = attendanceMarkup;\n  globalThis.__pickExam = pickExam;\n  function attendanceHtml(entry, stu, referenceDate) {')
   .concat('\nglobalThis.__initHoverTooltip = initHoverTooltip;\n');
 
 class ElementStub {
@@ -237,6 +237,36 @@ assert.equal(context.__attendanceMarkup({regular:4}, null, true), '정규 4회 �
 assert.equal(context.__attendanceMarkup(null, {}), '-');
 assert.ok(!context.__attendanceMarkup({total:'<img>', pending:1}, {}).includes('<img>'), 'numeric projection output remains escaped');
 
+const rolloverCases = [
+  ['period start', '2026-10-07', { midterm: '10/7~10/9', final: '12/1' }, '중간'],
+  ['period ongoing', '2026-10-08', { midterm: '10/7~10/9', final: '12/1' }, '중간'],
+  ['period end', '2026-10-09', { midterm: '10/7~10/9', final: '12/1' }, '중간'],
+  ['period passed', '2026-10-10', { midterm: '10/7~10/9', final: '12/1' }, '기말'],
+  ['subject exam today', '2026-10-05', { midterm: '10/1~10/9', midtermMath: '10/5(월)', final: '12/1' }, '중간'],
+  ['subject exam passed', '2026-10-06', { midterm: '10/1~10/9', midtermMath: '10/5(월)', final: '12/1' }, '기말'],
+  ['subject range is not a fixed day', '2026-10-08', { midterm: '10/1~10/9', midtermMath: '10/5~10/7', final: '12/1' }, '중간'],
+  ['invalid subject date falls back', '2026-10-08', { midterm: '10/1~10/9', midtermMath: '10/32', final: '12/1' }, '중간'],
+  ['final scope only', '2026-10-10', { midterm: '10/7~10/9', finalRange: '적분', finalNote: '기말 안내' }, '기말'],
+  ['empty final', '2026-10-10', { midterm: '10/7~10/9' }, '기말'],
+  ['past operating date', '2026-09-30', { midterm: '10/1~10/9', final: '12/1' }, '중간'],
+  ['old midterm must not shift to next year', '2026-10-10', { midterm: '3/1~3/3' }, '기말'],
+  ['hyphen period', '2026-07-03', { midterm: '6/30-7/2', final: '12/1' }, '기말'],
+  ['Korean dates', '2026-10-10', { midterm: '10월 7일~10월 9일' }, '기말'],
+  ['explicit years', '2026-10-10', { midterm: '2026-10-07~2026-10-09' }, '기말'],
+  ['unordered multiple days', '2026-10-08', { midterm: '10/9, 10/7', final: '12/1' }, '중간'],
+  ['year crossing ongoing', '2027-01-01', { midterm: '12/31~1/2' }, '중간'],
+  ['year crossing passed', '2027-01-03', { midterm: '12/31~1/2' }, '기말'],
+  ['future January', '2026-12-20', { midterm: '1/2' }, '중간'],
+  ['final-only calendar', '2026-10-07', { final: '12/1' }, '기말'],
+];
+for (const [label, key, entry, expected] of rolloverCases) {
+  const [year, month, day] = key.split('-').map(Number);
+  const before = JSON.stringify(entry);
+  assert.equal(context.__pickExam(entry, 'auto', new FixedDate(year, month - 1, day)).label, expected, label);
+  assert.equal(JSON.stringify(entry), before, `${label}: calendar input was mutated`);
+}
+assert.equal(context.__pickExam({ midterm: '10/1~10/32' }, 'auto', new FixedDate(2026, 9, 10)).label, '중간', 'invalid end date must not confirm rollover');
+
 for (const host of Object.values(hosts)) {
   for (const type of ['pointerover', 'pointermove', 'pointerout', 'focusin', 'focusout', 'keydown']) {
     assert.equal(host.listeners(type).length, 1, `${host.id} ${type} listener duplicated`);
@@ -328,6 +358,8 @@ context.window.showStudentTooltipForElement(anchor, {
   variant: 'log',
   layout: 'student-work',
 });
+assert.equal(tip.classList.contains('student-work-layout'), true,
+  'unified tooltip must have its final layout before the first animation frame');
 assert.equal(progressOwnKeys, 0, 'video-disabled fixed tooltip still enumerated progress dates');
 context.window.hideStudentTooltip();
 
@@ -549,6 +581,54 @@ assert.match(
   'shared school exam period was not used when the academy subject had no exact calendar row',
 );
 context.window.hideStudentTooltip();
+resolvedScheduleEntries = [];
+
+resolvedScheduleEntries = [{ phase: '미적분1', midterm: '10/1~10/5', final: '12/1~12/4', finalMath: '12/3', finalRange: '기말 범위 검증', finalNote: '기말 안내 검증' }];
+context.__adminDate = '2026-10-06';
+context.window.showStudentTooltipForElement(selfStudyAnchor, { fixed: true, variant: 'log', subject: '미적분1' });
+flushFrames();
+assert.match(tip.innerHTML, /기말/);
+assert.match(tip.innerHTML, /12\/1~12\/4/);
+assert.match(tip.innerHTML, /12\/3/);
+assert.match(tip.innerHTML, /기말 범위 검증/);
+assert.match(tip.innerHTML, /기말 안내 검증/);
+assert.doesNotMatch(tip.innerHTML, /10\/1~10\/5/, 'passed midterm leaked into the final tooltip');
+context.window.hideStudentTooltip();
+resolvedScheduleEntries = [{ phase: '미적분1', midterm: '10/1~10/5' }];
+context.window.showStudentTooltipForElement(selfStudyAnchor, { fixed: true, variant: 'log', subject: '미적분1' });
+flushFrames();
+assert.match(tip.innerHTML, /기말/);
+assert.doesNotMatch(tip.innerHTML, /10\/1~10\/5|시험 전 출석 횟수/, 'empty final must not reuse passed midterm dates or attendance');
+context.window.hideStudentTooltip();
+resolvedScheduleEntries = [
+  { phase: '대수', midterm: '10/1~10/5', final: '12/1~12/4' },
+  { phase: '미적분1', midterm: '10/1~10/5', final: '12/1~12/4' },
+];
+context.window.showStudentTooltipForElement(sharedPeriodAnchor, { fixed: true, variant: 'log', subject: '확통' });
+flushFrames();
+assert.match(tip.innerHTML, /기말/);
+assert.match(tip.innerHTML, /12\/1~12\/4/, 'shared school period did not roll over to final');
+context.window.hideStudentTooltip();
+
+context.__adminDate = '2026-09-13';
+resolvedScheduleEntries = [{ phase: '미적분1', midterm: '10/5(월)' }];
+const doubleClassStudent = {
+  id: 'sid-double-class', name: '연강 검증 학생', school: '합성고', grade: '고2',
+  curriculum: '미적분1', day1: '일1', day2: '일2',
+};
+context.__state.students = [...context.__state.students, doubleClassStudent];
+const doubleClassAnchor = new ElementStub({ tagName: 'A', classes: ['stuName'], host });
+doubleClassAnchor.dataset.sid = doubleClassStudent.id;
+doubleClassAnchor.textContent = doubleClassStudent.name;
+for (const variant of ['today', 'log']) {
+  context.window.showStudentTooltipForElement(doubleClassAnchor, {
+    fixed: true, variant, subject: '미적분1',
+  });
+  flushFrames();
+  assert.match(tip.innerHTML, /일1\s*[·]\s*일2/, 'both regular slots remain visible');
+  assert.match(tip.innerHTML, /data-exam-attendance="0">정규 6회/, `${variant} popup must show six sessions across three double-class Sundays`);
+  context.window.hideStudentTooltip();
+}
 resolvedScheduleEntries = [];
 
 context.window.showStudentTooltipForElement(anchor, { fixed: true, variant: 'log' });

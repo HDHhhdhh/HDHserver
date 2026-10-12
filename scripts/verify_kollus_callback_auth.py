@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 import sys
+import tempfile
 from urllib.parse import parse_qs, urlparse
 
 from flask import Flask
@@ -38,7 +39,8 @@ def main() -> int:
         "known_sid": api_kollus._known_sid,
         "known_mid": api_kollus._known_mid,
         "save_watch": api_kollus.save_watch_entry,
-        "save_progress": api_kollus.save_progress_status,
+        "save_progress": api_kollus.save_watch_observation_progress,
+        "progress_path": api_kollus.PRG_PATH,
         "time": api_kollus.time.time,
     }
     saved: list[dict] = []
@@ -55,11 +57,12 @@ def main() -> int:
     api_kollus._known_sid = lambda sid: sid == "sid-1"
     api_kollus._known_mid = lambda mid: mid == "mid-1"
     api_kollus.save_watch_entry = lambda _path, date, sid, mid, incoming: saved.append(incoming) or incoming
-    api_kollus.save_progress_status = (
-        lambda progress_path, students_path, videos_path, date, sid, mid, status:
+    temp = tempfile.TemporaryDirectory(prefix="verify-kollus-auth-")
+    api_kollus.PRG_PATH = pathlib.Path(temp.name) / "progress.json"
+    def observe_progress(progress_path, students_path, videos_path, date, sid, mid, status, **kwargs):
         progress_saved.append((progress_path, students_path, videos_path, date, sid, mid, status))
-        or {mid: status}
-    )
+        return {mid: status}, None, False
+    api_kollus.save_watch_observation_progress = observe_progress
     app = Flask("verify-kollus-callback-auth")
     app.register_blueprint(api_kollus.bp_api_kollus)
     client = app.test_client()
@@ -120,7 +123,9 @@ def main() -> int:
         api_kollus._known_sid = original["known_sid"]
         api_kollus._known_mid = original["known_mid"]
         api_kollus.save_watch_entry = original["save_watch"]
-        api_kollus.save_progress_status = original["save_progress"]
+        api_kollus.save_watch_observation_progress = original["save_progress"]
+        api_kollus.PRG_PATH = original["progress_path"]
+        temp.cleanup()
         api_kollus.time.time = original["time"]
         if old_secret is None:
             os.environ.pop("KOLLUS_CALLBACK_SECRET", None)

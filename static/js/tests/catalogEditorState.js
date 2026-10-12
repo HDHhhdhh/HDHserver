@@ -100,7 +100,18 @@ export function parseAnswerSpec(text, problems) {
   const value = String(text ?? '').trim();
   if (!value) return new Array(problems).fill('');
   let answers;
-  if (/[\s,]/.test(value)) {
+  if (value.startsWith('[')) {
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch (error) {
+      throw new Error('정답 JSON 배열 형식이 올바르지 않습니다', { cause: error });
+    }
+    if (!Array.isArray(parsed) || parsed.some(item => item === null || (typeof item !== 'string' && typeof item !== 'number'))) {
+      throw new Error('정답 JSON 배열은 문자열 또는 숫자 토큰만 포함해야 합니다');
+    }
+    answers = parsed.map(item => String(item));
+  } else if (/[\s,]/.test(value)) {
     answers = value.split(/[\s,]+/).map(item => item.trim()).filter(Boolean);
   } else {
     answers = [value];
@@ -140,7 +151,10 @@ export function answerKeyForTest(test) {
 }
 
 export function answerKeysToText(test) {
-  return answerKeyForTest(test).join(' ');
+  const answers = answerKeyForTest(test);
+  return answers.some(answer => /[\s,]/.test(String(answer || '')))
+    ? JSON.stringify(answers)
+    : answers.join(' ');
 }
 
 export function normalizeAnswerMode(value) {
@@ -238,7 +252,7 @@ export function buildTestCatalogCsvTemplate(ilsanGraphDifficulty = '그래프 �
     ['단원평가', '공수1', 'Lv.4', '', '1', '원의 방정식 Lv.4', '20', '', '', mixedAnswers, mixedModes, mixedAnswers, mixedModes, mixedAnswers, mixedModes],
     ['트레이닝팩', '미적분1', '트팩', '', '1', '함수의 극한1', '20', '', '', choiceAnswers, choiceModes, choiceAnswers, choiceModes, '', ''],
     ['학군지 기출', '공수1', '상', '중간고사', '1', '학군지 기출 공수1 중간고사 상 1회차', '20', choiceAnswers, choiceModes, '', '', '', '', '', ''],
-    ['일산 기출', '대수', '중', '기말고사', '1', '일산 기출 대수 기말고사 중 1회차', '20', choiceAnswers, choiceModes, '', '', '', '', '', ''],
+    ['일산 기출', '대수', '중상', '기말고사', '1', '일산 기출 대수 기말고사 중상 1회차', '20', choiceAnswers, choiceModes, '', '', '', '', '', ''],
     ['일산 기출', '대수', ilsanGraphDifficulty, '기말고사', '2', '그래프 포함 일산 기출 대수 기말고사 2회차', '20', choiceAnswers, choiceModes, '', '', '', '', '', ''],
   ];
   return `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;

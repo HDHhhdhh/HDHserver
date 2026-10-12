@@ -11,6 +11,7 @@ from typing import Final
 
 from werkzeug.security import check_password_hash
 
+from core.admin_auth_cache import SuccessfulAuthCache
 from core.network_access import RequestLike, client_ip_from_request, ip_allowed
 
 
@@ -33,6 +34,8 @@ EXTERNAL_ADMIN_API_EXEMPT_PREFIXES: Final[tuple[str, ...]] = (
     "/api/auth/",
     "/api/mobile/",
 )
+
+_SUCCESS_CACHE = SuccessfulAuthCache()
 
 
 def _configured_value(values: Mapping[str, str] | None, name: str) -> str:
@@ -66,16 +69,29 @@ def verify_admin_authorization(
     """Verify one UTF-8 Basic header against environment-backed hash config."""
     expected_username = _configured_value(values, ADMIN_USERNAME_ENV)
     password_hash = _configured_value(values, ADMIN_PASSWORD_HASH_ENV)
+    generation = _SUCCESS_CACHE.observe_configuration(expected_username, password_hash)
     credentials = _basic_credentials(authorization)
     if not expected_username or not password_hash or credentials is None:
         return False
     username, password = credentials
-    username_matches = hmac.compare_digest(username.encode("utf-8"), expected_username.encode("utf-8"))
     try:
-        password_matches = check_password_hash(password_hash, password)
-    except (TypeError, ValueError):
-        password_matches = False
-    return username_matches and password_matches
+        username_matches = hmac.compare_digest(username.encode("utf-8"), expected_username.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    def check() -> bool:
+        try:
+            password_matches = check_password_hash(password_hash, password)
+        except (TypeError, ValueError):
+            password_matches = False
+        return username_matches and password_matches
+
+    verified = _SUCCESS_CACHE.verify(generation, username, password, check)
+    # A configuration change during a KDF or cache lookup revokes that result.
+    current_generation = _SUCCESS_CACHE.observe_configuration(
+        _configured_value(values, ADMIN_USERNAME_ENV),
+        _configured_value(values, ADMIN_PASSWORD_HASH_ENV),
+    )
+    return verified and generation == current_generation
 
 
 def admin_network_allowed(request_like: RequestLike | None = None) -> bool:

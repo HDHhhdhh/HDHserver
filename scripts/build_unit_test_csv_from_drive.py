@@ -12,7 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_unit_test_csv_from_link_map import extract_quick_answers as extract_quick_answers_robust
+from scripts.build_unit_test_csv_from_link_map import (
+    cell_answer,
+    extract_quick_answers as extract_quick_answers_robust,
+)
 
 
 SUBJECT_ALIASES = {
@@ -80,35 +83,6 @@ def clean_test_name(path: Path, level: str, round_no: str) -> str:
     if not re.search(r"Lv\.[3-6]", name):
         name = f"{name} {lv}".strip()
     return name
-
-
-def cell_answer(tokens: list[tuple[float, float, float, float, str]]) -> str:
-    cleaned = []
-    for x0, y0, x1, y1, text in tokens:
-        token = clean_token(text)
-        if not token:
-            continue
-        cleaned.append((x0, y0, x1, y1, token))
-
-    if not cleaned:
-        return ""
-
-    cleaned.sort(key=lambda item: (item[1], item[0]))
-
-    if len(cleaned) == 2:
-        a, b = cleaned
-        same_x = abs(((a[0] + a[2]) / 2) - ((b[0] + b[2]) / 2)) <= 6
-        separated_y = abs(((a[1] + a[3]) / 2) - ((b[1] + b[3]) / 2)) >= 7
-        simple = all(re.fullmatch(r"-?\d+", item[4]) for item in cleaned)
-        if same_x and separated_y and simple:
-            top, bottom = sorted(cleaned, key=lambda item: item[1])
-            return f"{top[4]}/{bottom[4]}"
-
-    same_line = max(item[3] for item in cleaned) - min(item[1] for item in cleaned) <= 18
-    if same_line:
-        return "".join(item[4] for item in sorted(cleaned, key=lambda item: item[0]))
-
-    return "/".join(item[4] for item in cleaned)
 
 
 def extract_quick_answers(pdf_path: Path) -> list[str]:

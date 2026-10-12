@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveSchoolCalendarEntries } from '../static/js/shared/schoolCalendar.js';
+import {
+  normalizeSchoolCalendarSubject,
+  resolveSchoolCalendarEntries,
+} from '../static/js/shared/schoolCalendar.js';
 
 import {
   buildSchoolCalendarDocument,
@@ -324,12 +327,27 @@ function verifyLiteralEditableClone() {
 
 function verifyPageStateBoundary() {
   const source = fs.readFileSync(path.join(ROOT, 'static/js/school-cal.js'), 'utf8');
+  const adminCalendarSource = fs.readFileSync(path.join(ROOT, 'static/js/admin/features/calendar.js'), 'utf8');
   assert.match(source, /from '\.\/school-calendar\/state\.js'/);
   assert.match(source, /loadSchoolCalendarRows\(/);
   assert.match(source, /buildSchoolCalendarDocument\(/);
   assert.doesNotMatch(source, /function normalizeScheduleFields\(/);
   assert.doesNotMatch(source, /function parseGradeToken\(/);
   assert.doesNotMatch(source, /const SCHEDULE_KEYS\s*=/);
+  assert.match(adminCalendarSource, /const subject = normalizeExamSubject\(rawSubject\) \|\| rawSubject;/);
+}
+
+function verifySubjectAliases() {
+  for (const value of ['공통수학2', '공통수학 2', '공통수학II', '공통수학Ⅱ']) {
+    assert.equal(normalizeSchoolCalendarSubject(value), '공수2');
+  }
+  for (const value of ['공통수학1', '공통수학 I', '공통수학Ⅰ']) {
+    assert.equal(normalizeSchoolCalendarSubject(value), '공수1');
+  }
+  assert.equal(normalizeSchoolCalendarSubject('미적분'), '미적분1');
+  assert.equal(normalizeSchoolCalendarSubject('미적분Ⅱ'), '미적분2');
+  assert.equal(normalizeSchoolCalendarSubject('확률과 통계'), '확통');
+  assert.equal(normalizeSchoolCalendarSubject('공통수학2 (백석고)'), '공수2');
 }
 
 verifyLiteralLoadProjection();
@@ -338,6 +356,7 @@ verifySemesterOneMirrorAndActivePage();
 verifySelectionCoercion();
 verifyLiteralEditableClone();
 verifyPageStateBoundary();
+verifySubjectAliases();
 
 {
   const saved = { activeYear: '2026', activeSemester: '2', activeExam: 'mid', years: {
@@ -377,6 +396,7 @@ console.log(JSON.stringify({
     'active-page update without unrelated-year replacement',
     'server-authoritative active selection despite stale browser preferences',
     'editable-row cloning without caller mutation',
+    'school exam subject aliases including 공통수학2 -> 공수2',
   ],
   supplementaryBoundaryGuards: [
     'the page entry delegates projection and does not retain the extracted state primitives',

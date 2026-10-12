@@ -135,3 +135,43 @@ console.log(JSON.stringify({
   restrictedDetailAnswerUrlFallbackHidden: true,
   apiDetailAnswerUrlWins: true,
 }, null, 2));
+
+async function verifyDetailRequestRaces() {
+  const deferred = [];
+  context.fetch = url => new Promise((resolve, reject) => deferred.push({ url, resolve, reject }));
+  context.console = { ...console, error() {} };
+  const select = id => vm.runInContext(`
+    TEST_CFG = { categories: { UNIT: { tests: [
+      {id:'race-a', name:'Detail A', categoryKey:'UNIT'},
+      {id:'race-b', name:'Detail B', categoryKey:'UNIT'}
+    ]}}};
+    ui.statsCategory='UNIT'; ui.statsTestId='${id}';
+    renderStatsDetail(TEST_CFG.categories.UNIT.tests.find(t=>t.id===ui.statsTestId), true);
+  `, context);
+  const settle = async () => { await new Promise(resolve => setImmediate(resolve)); };
+  const resolve = (index, studentName) => deferred[index].resolve({
+    ok:true, text:async()=>JSON.stringify({records:[{studentName,correct:1,total:1,pct:100}]}),
+  });
+  const html = () => getElement('statsDetailModalBody').innerHTML;
+  select('race-a');
+  if (!html().includes('role="status"')) throw new Error('Loading feedback is missing');
+  select('race-b');
+  if (deferred.length !== 2 || !deferred[0].url.includes('race-a') || !deferred[1].url.includes('race-b')) {
+    throw new Error('Actual selected test requests were not observed');
+  }
+  resolve(1,'Current B record'); await settle();
+  const current = html();
+  if (!current.includes('Current B record') || !current.includes('Detail B')) throw new Error('Current detail did not render');
+  resolve(0,'Stale A record'); await settle();
+  if (html() !== current) throw new Error('Stale request overwrote the current detail');
+  select('race-a');
+  vm.runInContext('closeStatsDetailModal()',context);
+  const closed = html();
+  resolve(2,'Closed response'); await settle();
+  if (html() !== closed) throw new Error('A response updated a closed modal');
+  select('race-b');
+  deferred[3].reject(new Error('injected read failure')); await settle();
+  if (!html().includes('role="alert"') || !html().includes('불러오지 못했습니다')) throw new Error('Current failure feedback is missing');
+  console.log('statistics detail async checks passed: out-of-order requests, close invalidation, loading and failure feedback');
+}
+verifyDetailRequestRaces().catch(err => { console.error(err); process.exitCode = 1; });
