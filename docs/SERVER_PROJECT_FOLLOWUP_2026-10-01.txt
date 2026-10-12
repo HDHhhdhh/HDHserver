@@ -1,0 +1,67 @@
+server HUB 후속 작업 기록 / 2026-10-01
+
+승인: 사용자가 검토 보고서의 우선순위대로 전부 처리하도록 승인했다.
+의미 또는 운영 방식의 실제 선택 분기만 사용자에게 질문한다.
+소스 수정과 temp/격리 검증을 진행하며 운영 runtime reset/seed copy/Git 등록을 임의로 하지 않는다.
+
+완료 기준: 후보 재현 또는 반증 → 최소 수정 → 독립 oracle/관련 회귀 → 실제 UI/운영 gate 구분.
+전체 기본 suite는 focused 검사로 대체하지 않는다. 운영 반영은 검증 뒤 별도 기록한다.
+
+우선순위와 상태
+01 계정 전체-map 저장 경합: temp 3-race before/after·실패 무쓰기·기존 auth 98 assertions 통과. 이전 아이디 JWT의 계정 재생성/prune를 재현했다. 사용자 D-16 선택 후 nonce/lease 수정안을 실제 작업 트리에 적용했고 정책129·모바일auth98·저장소3-race·독립116 검사를 통과했다. 최신 통합/격리/운영 gate는 뒤 단계다.
+02 watch 손상 fallback: strict root/대상 branch·unknown 보존·503·compat catch 제거 완료. 독립 temp 126-case·수동 소유권·timestamp·signed callback·before/after 통과, 기본 suite 편입.
+03 로그 batch SQLite commit 뒤 JSON mirror 실패 응답: 부분 성공/재시도·clear/unknown/reload/restart/export·SQL rollback·손상 무쓰기 temp 검사 통과, 기본 suite 편입.
+04 날짜 판정과 absence barrier 순서 / bootstrap canonical date: 실제 route 24-case·barrier/I/O 0·academy 인증 우선·force JSON·D-04 보존 before/after 통과, 기본 suite 편입.
+05 tests-config 전체 POST metadata 보존: root/category/test unknown/source ID 보존·해설 링크·명시적 교체/move/delete·revision 실패 무쓰기 before/after 통과, 독립 route 검토 통과.
+06 관리자 공지 발행 경합: actual init/listener 16-case PASS 및 기본 suite 편입. 격리 UI 발행·목록·대상 선택 확인, 버튼 잠금11.7ms/완료170ms. 고정 높이 버튼 가림은 항목26에서 수정.
+07 학생 공지 reply/survey/ack session 경합: allowMultiple draft·이전 timer ownership 포함 실제 closure21-case 및 기존 state/board/access 회귀 PASS. 격리 답장 POST22.1ms, 저장·읽음·reload 유지 확인. 설문 경합은 VM gate이며 모든 survey 입력을 실제 브라우저로 전수 측정하지 않았다.
+08 날짜 출결 팝업 역전: source 및 역순/close/503 action-lock VM PASS. 격리 2026-10-01의 정확한 SID 목록·보강/결석 버튼 준비와 닫기 확인. 실제 실패 주입은 temp/VM 증거다.
+09 로그인 fetch 실패 spinner: 4-flow offline/503 token 보존·401 종료·중복 요청 VM PASS. 실제 Chrome의 /api/auth/login net::ERR_INTERNET_DISCONNECTED 뒤 spinner none·로그인 버튼 복구 확인. 임시 네트워크 설정 복원.
+10 전체학생 optimistic rollback/person 표시: 실패/부분 commit 권위 조회·공유 프로필·다른 draft 보존 VM PASS. 격리 QA HUB 1001 학교 저장 후 /students reload 및 /admin 표시 유지 확인.
+11 initializer 재호출: calendar/accounts/focus/OCR preflight·DOM/library/constructor/render retry51-case PASS. 실제 calendar·계정67그룹 팝업·default-OFF 집중 기록 안내 확인. OCR 등 기능 활성화 없음.
+12 파일 filesystem/material journal crash gap: 모호한 ownership에서 전체 preflight·무변경 rollback 방어 완료. ownership6/crash50/route41/version1·coherent·unknown PASS, 기본 suite PASS. 실제 격리 파일 업로드200 및 파일 관리자 표시 확인. 충돌/crash는 temp 검증.
+13 manager Start 경합: 포트 OS mutex·launch ancestry·시작시각·own-child cleanup·legacy receipt199-check PASS. 실제 Start -Restart 후8004 PID30940/managed true/200/loopback listener1, 운영8003 PID27408 및 local/public app200 유지.
+14 today in-flight 공유: 같은 date/force/source-only 조회 공유 및 mutation/date-boundary 순서 보존. 실제 module VM 초기30→10/전체38→16 GET·렌더1회·midnight2→1·manual snapshot 유지 PASS. 실제 격리 today 표 정상 준비. 요청 감소 수치는 VM이며 poll/hover를 포함한 전체 HTTP 합계가 아니다.
+15 popup pending/완료 TTL: pending2→1·완료TTL2.5초·표준SID prefetch18→9·epoch취소/late none/unknown PASS. 시험 required4GET/hydration9-case PASS. Chrome 실제3회 통합팝업 표시27.1~55.5ms, 영상/시험/숙제 ready32.7~191.6ms. 수동 green→white 저장·reload 및 두 log endpoint200 확인.
+16 실제 지연: Chrome 정상7페이지+레거시 로그인과 주요 팝업 계측/QA 완료. /all의404를 기준표에서 제외하고 /students로 정정. 보호 페이지 warm document6~18ms, expiry/cold약630~660ms; 소수 참고 sample이며 운영 p50/p95가 아니다. 상세는 SERVER_BROWSER_LATENCY_2026-10-01.txt.
+17 core.paths 선언/초기화 분리: import 생성0·explicit legacy 초기화·기존 bytes·configured identity missing 방어·guard/today-order/full default suite PASS.
+18 정적 계약 gate: 앱/runtime import 없이 문서 링크·shell/module asset·route/method owner 검사 및 기본 suite PASS. 최신 수치는 최종 gate stdout에 기록.
+19 시험 record/statistics pure 경계: 전담 후보5개·37 pure/12 protected body·payload6/body2 oracle를 Hub 통합, literal21/기존 backend·student/statistics UI·독립 handler 비교·full suite PASS. 실제 통계 상세 GET52ms/빈 기록 표시·닫기 확인.
+20 makeup pure 경계: 서버8개함수·보호route13개 body 유지. 서버103/브라우저15·matrix44 PASS/1 KNOWN/0 FAIL, notification verifier 연결 및 full suite PASS. 기존 서버/브라우저 legacy 정규화 차이는 의미 변경 없이 보존.
+21 assigned-test pure/loader 경계: core/student_test_projection과 실제 api_basic bridge 통합. progress 권위·top-level assignedTests·답지 precedence·config→map per-item·빈 배정0회·academy stripping·과거 기록 동일, payload/body/관련 회귀/full suite PASS.
+22 root AGENTS 반복을 scoped owner 참조로 정리: 중복 boundary 설명을 scoped/canonical 참조로 축약, 32,645→21,826 bytes. 앞부분 runtime/격리/Git/완료 규칙 보존, 참조/anchor 정합성 검사 통과.
+23 통합 gate: compileall·최종 post-CSS full non-smoke suite exit0(105 unit group PASS/0 failure)·JS syntax·diff check PASS. Chrome/IAB 주요 UI 및2560/1280/390 폭 확인, 임시 observer/DOM/offline/viewport 복원. 운영 backend rollout과 아래 인증 정책 두 선택은 별도 대기.
+24 관리자 Basic 지연: 성공만 secret HMAC/generation/absolute5초TTL/64entries/8inflight 공유. 독립 reviewer가 owner>TTL 중복KDF를 재현해 대기를 TTL과 분리했다. root335·독립 검사·full suite PASS, 인증 우회 finding 없음. 실제 warm200/4.09ms, wrong401/649.35ms+Basic challenge/no-store, valid-after-wrong200/3.37ms.
+25 log automatic-watch UI scope: 마지막 actual IIFE의 SID/date/openSeq·rAF/retry guard8-case PASS, reviewer/full suite PASS. 실제 팝업 manual none 저장·reload·정상 watch GET 뒤 유지 확인. 다른 SID late-response 주입은 VM 증거이고 저장소 오염을 주장하지 않는다.
+26 실제 desktop 공지 버튼 가림: fixed-height compose가 summary 아래로 overflow하여 click을 가로챘다. desktop compose overflow auto/stable scrollbar 최소CSS 수정, actual 발행·대상 메뉴·두 브라우저/3폭·CSS consumers3·최종 full suite PASS. 새 framework/높이/표폭 변경 없음.
+
+현재 수정 목록과 증거는 최초 1차 보고서와 구분한다.
+후속 시작 Git: staged 0 / unstaged 128 / untracked 22.
+후속 source baseline: OS Temp의 server-hub-priority-20261001-eqkq2vbu, 627개 파일.
+하위 검토: GPT-6.1 sol/max reviewer. 2026-10-01 새 지시에 따라 Hub는 맥락·우선순위·범위·통합 검증을 관리했고, 여섯 전담 쓰레드의 범위를 분리했다. 직접 적용한 변경과 후보로 인계된 변경을 baseline/hash로 구분해 통합했다.
+
+소유권: Hub는 app.py, auth/watch/log/date/tests backend 패치와 현재 announcement/student/calendar/all frontend 패치, verify_refactor_safety.py 및 기존 규칙 문서의 통합을 소유한다.
+파일 거래 쓰레드는 api_fs/material_state 및 전용 회귀/보고서만, manager 쓰레드는 격리 manager 및 전용 회귀/보고서만 수정한다. 운영 8003/shared8004 lifecycle과 runtime 데이터는 두 쓰레드가 변경하지 않는다.
+선택 대기 가지를 제외한 통합 소스와 격리 검증은 완료했다. 이 기록의 'source 수정' 또는 temp/VM PASS는 전체 suite·실제 UI·운영 rollout 완료를 뜻하지 않는다.
+
+D-16 확정/작업 트리 적용: MASTER_PW는 학생 이름·변경 ID 로그인·계정 변경 모두 허용한다. §3·결정 원장·규칙 색인을 실제 범위와 맞췄다. 인증 회귀는 합성 환경과 temp 경로를 사용한다.
+
+최종 Hub 기록
+후속 source baseline627개 대비59개 기존 파일 변경+새 소스/검사/보고서36개. 기존 dirty와 같은 파일에 함께 있을 수 있으므로 전체 git diff를 이번 변경으로 간주하지 않는다.
+최종 Git staged0 / unstaged152 / untracked58. 추적된 runtime/local 데이터 변경0. staging/commit/push 없음.
+운영 runtime 수동 수정·reset·migration·snapshot seed copy·live smoke·QA 데이터 자동 병합 없음. 격리에는 QA 학교/공지/답장/읽음/manual progress 및 검증 screenshot file이 남는다.
+capture generated/server-hub-review-20261001/popups-final.jpg는 QA output으로 Git에 등록하지 않았다.
+6개 새 visible 전담 쓰레드(GPT6.1sol/max): 파일 transaction, manager, today/cache, 시험 projection, makeup, admin Basic. 모두 결과 반환/idle 확인. 독립 reviewer도 결과 반환/활성 작업 없음.
+Hub가 source baseline/hash 확인·통합·최종 full suite/브라우저/운영 health·문서/범위를 관리했다.
+최종 full suite log: Hub OS Temp server-hub-priority-20261001-eqkq2vbu/full-refactor-safety-post-css.log. unit group105 PASS/0 failure/exit0. 후속 changed/new JS28개 node --check PASS, static navigation145/assets270/route-method143 PASS. tempfile 증거는 정리 시 사라질 수 있다.
+운영8003 Python 프로세스는 기존 PID27408이다. live checkout의 정적 파일은 reload로 보일 수 있으나 새 Python backend rollout과 생산 전체 UI 검증 완료를 뜻하지 않는다.
+manager8004 PID30940을 유지한다. shared/사용 여부가 불확실한 QA 서버를 임의로 종료하지 않는다.
+
+확정된 인증 선택과 후속 계획
+1) 실제 ID 변경 후 이전 JWT 종료/재로그인 확정. ID 재사용/되돌리기/공유 계정 재활성화에서도 무쓰기401로 차단하는 소스를 작업 트리에 적용했다.
+2) MASTER_PW 세 경로 모두 허용 확정. 문서와 source를 맞췄으며 관리자 Basic/공개 학생 앱으로 확대하지 않는다.
+3) 사용자 진행 순서 1 실제 인증 적용 → 3 UI 전수 성능 점검/개선 → 2 최종 통합·격리 검증 → 4 운영 반영. 실제 학원망 Kollus 자동 watch QA와 서버·브라우저 보강 정규화 계약을 계획에 포함한다. 최신 실행 상태는 SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt를 따른다.
+추가 제안: 실제 학원망 synthetic QA에서 native player/Kollus 자동 watch까지 확인하는 별도 배포, 민감정보 없는 endpoint/UI latency 예산과 반복 p50/p95 계측, legacy 서버/브라우저 makeup 정규화 차이의 명시적 호환 계약을 차례로 확장한다. 현재 loopback guard/기능 flag/운영 데이터는 이 제안을 위해 변경하지 않았다.
+모든 페이지의 모든 버튼을 실제 브라우저로 전수 계측한 것으로 주장하지 않는다. 주요7페이지·login·통합/공지/계정/집중/날짜출결/통계/파일 QA와 지속 regression gate가 확인한 범위를 구분한다.
+
+2026-10-01 재개: 실행 권한 변경 후 auth 3개 소스·지속회귀·정본/지침을 실제 적용. AUTH_SECRET verifier의 신규 account-read 조건에 맞춰 temp account/roster fixture와 path guard를 보강해 기존 signature gate를 유지했다. 기존 Python backend는 아직 재시작하지 않았다. 최신 단계2 전체 gate와 운영 결과는 아직 미완료.

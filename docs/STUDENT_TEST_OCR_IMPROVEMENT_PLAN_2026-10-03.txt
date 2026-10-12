@@ -1,0 +1,252 @@
+학생 시험 OCR 개선 계획 · 2026-10-03
+
+목표: 손글씨 20문항 촬영 → 인식 → 보완 → 자동 채점 저장의 안정화.
+객관식 1~5 공용 모델과 시험 과목별 주관식 두 프로필을 유지한다.
+
+1단계 [소스 구현·회귀 검증 완료]: 입력·추론·정규화 통일
+- 평가와 실제 worker가 같은 64-token/EOS/상한 실패 규칙을 사용한다.
+- 미종료·종료 정보 누락 출력은 높은 confidence여도 자동 확정하지 않는다.
+- 지원 LaTeX 표기와 모호한 숫자 공백의 처리 기준을 통일한다.
+- 문항 촬영과 화질 검사는 안내틀에 대응하는 실제 영상 영역을 사용한다.
+- 영구 HTTP 오류는 polling을 끝내고 복구 안내를 표시한다.
+- 완료 조건: 독립 고정값 회귀, 기존 OCR 검사, 서버 기본 회귀 통과.
+
+2단계 [소스·복구 검증 완료 / 수식 지연 검증 대기]: 제출 충돌·작업 수명·속도
+- 제출에 해당 시험·회차의 인식·채점 버전을 고정한다. 이후 정답 변경 시 새 키로 자동 채점하지 않는다.
+- 여기서 고정하는 것은 시험 계약이다. checkpoint·실행 코드의 제출별 snapshot을 저장한다는 뜻은 아니다.
+- 상주 worker, 비동기 문항 촬영, queue/lease/재시작/채점 실패 검증.
+- 완료 조건: 임시 DB 실패 주입과 실제 처리 지연 측정. 숫자 부분은 측정했으며 수식·혼합 20문항은 남아 있다.
+
+3단계 [유지보수 소스·격리 검증 완료 / checkpoint 수신 차단]: 운영 절차·모델 수신
+- 7일 삭제 정기 실행과 이전 날짜 미처리 보류 점검 연결.
+- 미수신 GPU checkpoint part 확보와 바이트/SHA/inventory 검증.
+- 완료 조건: 삭제/보류 검사와 네 후보 바이너리 검증. 수신과 운영 채택은 구분.
+- 네 후보의 목록·전달 링크·기준 해시는 STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.manifest.json을 따른다.
+- 이 단계는 소스 구현·격리 검증·새 수신 경로의 파일 검증이다. 운영 정기 삭제 실행과 모델 채택은 별도 승인 대상이다.
+
+4단계 [수집·증강 도구 준비 / 실제 촬영·GPU 비교 대기]: 촬영 자료·GPU 실험
+- 초기 진단: 작성자 20~30명 × 20문항 × 같은 종이 2회 촬영.
+- 작성자·종이·변형별 분할. 실제 필기 전사 확인. 정답키로 라벨을 만들지 않는다.
+- 기존 AI Hub 목표 답안·촬영 증강·focused·대체 모델을 한 요인씩 비교.
+- 이용 조건/provenance 확인. 공개 Test와 최종 holdout은 학습에서 제외.
+- 완료 조건: 고정 분모의 표현/학년/작성자별 품질·오수락·coverage·지연 기록.
+- 실제 수집·저장 예측 검토 사용법은 STUDENT_TEST_OCR_CAMERA_DATA_2026-10-04.txt를 따른다.
+
+5단계 [출시 사전심사 구현·회귀 완료 / 독립 촬영 검증·운영 적용 대기]: 독립 검증·운영 적용
+- 별도 촬영 holdout에서 문항 오류·한 장 성공률·재촬영·보류·속도 gate 검증.
+- 실제 촬영 frontend·영역 변환·스타일·서버 추론의 현재 해시를 출시 증거에 함께 묶는다.
+- 검증 후 운영 migration·모델 채택·기능 활성화를 별도 적용 단계로 수행.
+- 품질·속도 gate는 PROJECT_FUNCTIONS_AND_LOGIC.md §21과 STUDENT_TEST_OCR_PUBLIC_DATA.md의 출시 gate를 따른다.
+- 안전한 사전심사와 승인 후 적용 순서는 STUDENT_TEST_OCR_RELEASE_PREP_2026-10-04.txt를 따른다.
+
+현재 경계: 소스·임시 검사만 수정. 유료/외부 OCR 호출 0.
+이 계획과 파일명만 쓴 참조는 C:/server/docs/에 있다. ../generated/는 C:/server/generated/를 뜻한다.
+운영 DB·원천 자료·checkpoint 보존. 운영 서버 중지·재시작 없음.
+새 GPU 학습·실카메라 정확도 향상은 구현 검증과 별도로 보고한다.
+
+1단계 구현 기록 · 2026-10-04
+- 공통 생성 함수의 정상 종료·상한·score 유효성을 worker와 평가에 연결했다.
+- 길이 초과 출력과 모호한 숫자 공백을 자르거나 합쳐 수락하지 않는다.
+- 원본 영상의 문항 영역을 화질 검사와 JPEG 전송 양쪽에 적용했다.
+- 독립 검토에서 찾은 흰 종이 촬영 차단과 POST 충돌 재시도를 수정했다.
+- 순수 회귀: 생성 18, worker 계약 58, engine 38, 문법 41, config 39,
+  frontend 66, API routes 25 assertions 통과. 실제 모델 추론은 실행하지 않았다.
+- 서비스 34, job runner 18, 로컬 평가 계약 19, 실험 계약 11 assertions와
+  확대 데이터 계약 6 tests도 통과했다. 공개 validation 점수를 새로 계산하지 않았다.
+- Python compileall, 변경 JS node --check, 전체 verify_refactor_safety.py 통과.
+  전체 로그: ../generated/ocr_phase1_verification_20261004_01.log (로컬 ignored).
+- 첫 전체 실행은 exit 1이며 큰 출력이 절단돼 실패 항목을 확정하지 못했다.
+  전체 로그를 저장한 동일 검사 재실행은 exit 0이다. 순수 검사는 OS 임시 fixture를 사용했다.
+- 직접 apply_patch와 기본 compileall은 쓰기 권한으로 실패했다.
+  승인된 native apply_patch와 동일 compileall 재실행으로 소스 수정·구문 검증을 완료했다.
+- 실브라우저·실카메라 촬영, GPU 학습, 지연 측정, 운영 반영은 미실행이다.
+- 기존 공유 격리 서버 8004는 확인만 했으며 Refresh/재시작/중지를 하지 않았다.
+- 유료/외부 OCR 호출 0, providerCallCount:0, deploymentReady:false.
+- 당시 다음 착수 범위는 2단계였다. 현재 상태는 아래 2단계 기록을 따른다.
+
+2단계 구현 기록 · 2026-10-04
+- 새 제출은 해당 시험·회차의 category, 유형, 정답, 수식 프로필을 test-v1 digest로 고정한다.
+  다른 시험·회차·제목·링크 변경은 진행 중 제출을 막지 않는다. 해당 계약 변경은 인식/보완/채점 시 차단한다.
+  기존 전체 카탈로그 digest 제출은 원래 비교를 유지한다. 과거 정답을 추정해 새 digest로 바꾸지 않는다.
+- 문항 재촬영은 이미지와 작업을 한 트랜잭션으로 등록하고 processing을 즉시 반환한다.
+  전체 촬영과 문항 촬영 모두 durable queue에서 실행한다. 정답키는 OCR worker에 보내지 않는다.
+- 네 인식 엔진(choice_digit, UniMERNet, PaddleOCR, PP-FormulaNet-S)을 요청 시 지연 로딩하고 같은 child process에서 모델을 재사용한다.
+  UniMERNet은 두 과목 프로필을 동시에 적재하지 않는다. 프로필/모델/코드 변경 시 해당 child를 교체한다.
+  timeout·EOF·잘못된 응답은 해당 작업을 실패 처리한다. 같은 요청을 자동 재추론하지 않는다.
+- 실행 중 lease를 갱신하고 만료 token의 결과 저장을 거부한다. 비정상 종료 뒤 만료 작업은 다시 실행한다.
+  인식 commit 후 채점 실패는 인식/학생 crop을 보존하고 채점만 재시도한다.
+  5초 복구 점검은 준비된 OCR runtime 안에서만 실행한다. 기능 OFF에서 DB를 생성하거나 migration하지 않는다.
+- 채점은 카탈로그 저장과 같은 lock 안에서 계약 확인·결과 commit을 수행한다.
+  shutdown은 진행 중 작업만 마치고 미착수 작업을 DB에 남긴다. 7일 만료 촬영은 추론하지 않는다.
+- 수식 1차는 기본 원본 단일 pass다. 명시적 REQUIRE_SECOND_PASS 또는 불확실 1~3문항의 기존 보강 경로는 유지한다.
+  이 설정은 품질 검증 완료를 뜻하지 않는다. 바뀐 코드/정책 해시는 기존 출시 증거를 재사용하지 못하게 한다.
+- 실패 주입 검증: lifecycle 19 tests, resident worker pool 58 assertions 통과.
+  기존 service 34, job runner 18, repository 49, engine 38, foundation 41,
+  config 40, worker 계약 58, routes 25, frontend 66 assertions도 통과.
+- 독립 worker 검토에서 찾은 실패 채점 100건 뒤의 작업 누락과 shutdown 뒤 추가 lease를 수정했다.
+  독립 검토자가 임시 DB/가짜 인식기로 두 수정 결과를 재확인했다. 실제 OCR 품질 검증은 아니다.
+- Python compileall과 전체 verify_refactor_safety.py 통과(exit 0).
+  전체 로그: ../generated/ocr_phase2_verification_20261004_01.log (로컬 ignored).
+- 실제 설치된 숫자 v3의 합성 인쇄 20 crop 두 요청: cold 5.4498초 / warm 0.1731초.
+  같은 합성 이미지 경로를 20개 문항에 반복한 CPU 진단이며 서로 다른 필체 20개가 아니다.
+  최종 기록: ../generated/ocr_phase2_choice_latency_20261004_02/report.json (입력·모델·코드 SHA 포함).
+  첫 진단 사본 ../generated/ocr_phase2_choice_latency_20261004_01/report.json도 보존했다.
+  cold는 새 worker 로딩 포함, warm은 동일 worker 재사용이다. 촬영·crop 생성·채점은 포함하지 않는다.
+  손글씨 정확도, 실카메라, sheet p90, 통계적 속도 향상 검증으로 해석하지 않는다.
+- 수식 모델과 혼합 20문항 속도는 미측정이다. 당시 여유 RAM 약 2.35 GiB로,
+  진단 스크립트의 UniMERNet 여유 RAM 보호선 6 GiB를 충족하지 않아 실행하지 않았다.
+  보호선은 이 진단의 보수적 실행 조건이며 모델의 실제 최소 메모리 측정값은 아니다.
+- 남은 2단계 확인: 충분한 여유 RAM에서 수식 cold/warm을 측정한다. NVIDIA 측정은 별도 장치 결과로 구분한다.
+  촬영 자료가 생기면 혼합 20문항 전체 처리 지연을 별도로 측정한다. 순수 복구 검증과 이 항목은 구분한다.
+- 운영 DB·schema·모델·기능 플래그를 변경하지 않았다. 운영/격리 서버 재시작·Refresh도 하지 않았다.
+  추가 학습·새 정확도 평가·외부 OCR 호출 없음. providerCallCount:0, deploymentReady:false.
+- 다음 독립 구현 범위는 3단계 운영 절차·모델 수신이다. 남은 2단계 측정은 완료로 표시하지 않는다.
+
+3단계 구현 기록 · 2026-10-04
+- OCR 모델과 별개인 StudentTestOcrMaintenance를 연결했다. 별도 MAINTENANCE_ENABLED는 기본 OFF다.
+  명시 활성화와 기존 schema가 있어야 server guard 뒤 startup에서 시작한다. migration은 자동 적용하지 않는다.
+- 기본 300초 점검과 시작 즉시 catch-up, 멱등 시작, 종료 대기, 이전 runner 종료 후 재설정을 구현했다.
+  실제 운영에서는 설정 변경과 승인된 적용이 필요하다. 이번에는 운영 scheduler나 삭제를 실행하지 않았다.
+- 삭제 직전 SQLite 쓰기 트랜잭션 안에서 현재 행·만료·실행 lease를 확인한다.
+  안전한 등록 파일만 지우고 deleted_at을 저장한다. 폴더/미등록 orphan/공식 PDF/학습 자료는 삭제하지 않는다.
+  실행 중 lease는 지연하고, 파일삭제 후 DB 실패는 missing-file 재시도로 복구한다.
+  링크·junction/reparse·ADS·절대/상위경로를 거부하며 손상된 만료 시각은 삭제 없이 실패로 보고한다.
+- 만료 접근 시각은 UTC/KST offset과 무관하게 비교한다. 물리 삭제는 다음 성공한 tick에서 수행한다.
+  첫 100 실패 행 뒤의 정상 행과 한 tick의 페이지 한도를 넘은 다음 행도 keyset cursor로 처리한다.
+  제출·문항·최초 인식/채점·수정 이력은 보존한다.
+- 지난 KST 날짜의 pending_teacher 및 실제 pending 문항만 관리자에게 요약한다.
+  당일·미래·확정 제출은 제외하고 자정 자동 판정을 하지 않는다. 제한된 집계에는 partial/returnedCount를 표시한다.
+- Basic-auth/no-store GET /api/student-test-ocr/admin/maintenance와 읽기전용 check_student_test_ocr_maintenance.py를 추가했다.
+  조회는 삭제·migration·scheduler를 실행하지 않는다. 첫 tick 전에는 현재 보류를 읽기 전용으로 점검한다.
+- 독립 하위 에이전트가 runner/임시 verifier를 구현하고 main의 삭제·startup·HTTP 경계를 검토했다.
+  첫 tick 전 미점검 0건 응답과 손상 expiry의 점검 누락을 수정했고 영향 검사를 재실행했다.
+- 최종 격리 검사: retention 16 tests 중 15 통과/1 skip, maintenance 18 tests 통과, wiring 9 tests 통과.
+  skip은 Windows symlink 생성 권한이다. 실제 Windows junction 거부와 reparse 속성 검사, lease/삭제 동시성,
+  두 임시 DB 사이의 runner 재설정 경쟁, 삭제 후 DB 오류 재시도, 조회의 DB/파일 불변은 통과했다.
+- 기존 assets 9, config 44, service 34, repository 49, routes 25 assertions와 lifecycle 19 tests도 통과했다.
+  Python compileall, 전체 verify_refactor_safety.py exit 0. 로그: ../generated/ocr_phase3_verification_20261004_01.log.
+- 원본 GPU part001 metadata의 ID·이름·83,886,080 bytes·부모는 일치했다.
+  Chrome은 파일이 휴지통에 있다고 표시했고 다운로드 메뉴가 없었다. 복원·공유 변경·대체·우회를 하지 않았다.
+  체크포인트 추가 수신 기록: STUDENT_TEST_FORMULA_CHECKPOINT_RECEIVE_2026-10-04.md 및 같은 이름의 manifest.json.
+- 기존 parts manifest, part048, checkpoint receipt, helper, evidence ZIP, 공통 model 네 파일의 bytes/SHA가 재확인됐다.
+  새 다운로드는 0이다. 1~47 parts가 없어 재조립·안전 추출·9개 파일 inventory·네 checkpoint 바이너리 검증은 미실행이다.
+  기존 evidence 전체 inventory나 평가를 반복 실행한 것은 아니다. part048 확인을 모델 검증으로 표시하지 않는다.
+- 운영 DB·schema·모델·촬영을 변경/삭제하지 않았고 기능·유지보수 플래그를 활성화하지 않았다.
+  운영/격리 서버 재시작·Refresh, 추가 학습·새 추론 평가·유료/외부 OCR 호출 없음.
+  providerCallCount:0, deploymentReady:false. 기존 Git 변경을 보존했고 staging/commit을 하지 않았다.
+- 남은 3단계: 사용자가 원본 48 parts를 복원하거나 로컬 폴더를 제공하면 새 경로에서 수신 검증을 완료한다.
+  운영 유지보수 적용은 별도 승인 범위다. 수식·혼합 20문항 지연과 촬영 자료·출시 gate는 계속 남아 있다.
+
+4단계 구현 기록 · 2026-10-04
+- 새 수집 키트는 ../generated/ocr_phase4_collection_20261004_02/다. 기존 v4 양식은 재설계하지 않고
+  PDF/좌표/기준 이미지 SHA를 원본과 비교해 복사했다. 32개 manifest 항목과 총 33개 일반 파일을 재대조했다.
+  최초 초안 _01은 보존했다. 영어 과목 ID가 든 그 초안 대신 _02를 사용한다.
+- 24명/24종이/48촬영/960 photo-slot의 초기 진단을 제안했다. 독립 작성자는 24명이고 실제 필기는 480칸이다.
+  development 16명/calibration 8명이며 출시 holdout은 포함하지 않는다. 아직 학생 사진/실제 전사는 없다.
+  객관식 숫자 5칸과 주관식 값 15칸을 섞고, 주관식 1·3·5/음수/분수/루트/두 항을 포함한다.
+  작성자마다 안내 순서를 섞는다. 작성 안내 값은 실제 필기 정답이 아니며 전사 템플릿은 비워 두었다.
+- student_test_camera_dataset.py는 실제 20칸 모두와 global writer/종이/두 촬영의 같은 split을 요구한다.
+  원본/template/crop/변환 receipt를 바이트로 연결하고 새 snapshot을 만든다. 정답키/모델출력/안내 값은 intake에 금지했다.
+  새 모델입력에는 전사/표현 종류/학생 학년/안내 값을 포함하지 않는다. 시험 과목의 기존 순수 라우팅 함수를 쓴다.
+  초기 freeze는 release holdout export를 거부한다. 사용 권한·비식별화·blind 전사는 확인 기록이지 독립 법률/신원 인증이 아니다.
+- 저장 JSONL 검토는 한 split의 모든 문항을 한 번씩 요구한다. 누락/중복/바뀐 crop·모델 binding을 거부한다.
+  numeric/text/전체 숫자 실패/생성 실패/오수락/coverage, 학년·작성자·표현·유형·프로필을 구분한다.
+  64-token 상한·EOS 규칙은 기존 상수를 쓴다. 문자열이 같아도 지원 외 숫자 답을 안전 수락으로 세지 않는다.
+  첫 촬영의 재촬영/보완 분기만 집계한다. 실제 보완 trace 없이 최종 보류율을 추정하지 않는다.
+  crop 추론 지연과 촬영→채점 저장 지연을 구분한다. 실제 예측/지연 입력은 아직 없다.
+- 공개 Training 증강기는 원래 focused source·전사·이미지·provenance·selection audit의 고정 SHA만 허용한다.
+  공통 967개/상위 1,757개를 control과 camera_aug 각각 한 장씩 생성했다. 전사 바이트/개수/순서를 유지했다.
+  실제 각 arm dataset signature·provenance·manifest SHA를 다시 계산해 receipt와 대조했다.
+  파일은 ../generated/ocr_phase4_augmentation_20261004_01/에 있다. source/license의 기존 reference를 유지했다.
+  기존 selection audit를 다시 수행하거나 새 법률 이용조건 검증을 완료했다는 뜻은 아니다.
+- 증강은 여백·작은 원근/회전·밝기/대비/흐림이다. 일부 사본의 원본/변형을 육안 점검했지만 전체 라벨 보존은 미검증이다.
+  trainingAllowed:false와 visual audit pending을 유지한다. 실제카메라 calibration/출시 데이터라고 부르지 않는다.
+  다음 GPU 대비는 같은 focused pool의 증강 OFF/ON이다. 초기 checkpoint/공통 model/예산/LR/선택 규칙을 동일하게 고정해야 한다.
+- 독립 하위 에이전트가 증강 도구·13개 fixture를 구현하고 main의 수집 도구를 읽기 전용으로 검토했다.
+  시간대 문자열 비교, 초기 holdout 공개, freeze 전후 crop 변경, template 사본 변경을 재현해 수정했다.
+  마지막 재확인에서 추가 확정 blocker가 없었다. main은 이후 문자열 일치/숫자 지원 분리 검사를 추가했다.
+- 새 수집 계약은 19 tests 통과. 증강은 13 tests 중 12 통과/1 skip이다. skip은 OS symlink 생성 권한이다.
+  새 계약을 기본 safety suite에 연결했다. Pillow 기반 증강 fixture는 별도 로컬 검사이며 기본 dependency를 늘리지 않았다.
+- Python compileall과 최종 전체 verify_refactor_safety.py가 exit 0으로 통과했다.
+  최종 로그: ../generated/ocr_phase4_verification_20261004_02.log. 첫 전체 실행 _01도 exit 0이며 보존했다.
+  첫 전체 실행에는 당시 18개 수집 fixture가 포함됐다. 마지막 문자열/숫자 분리 fixture를 추가한 뒤
+  19개 focused 검사와 최종 전체 검사를 다시 통과했다. live smoke/실브라우저/카메라 QA는 실행하지 않았다.
+- 기본 수집 키트 폴더 생성은 sandbox ACL로 거부됐다. 같은 새 경로의 허용된 생성 작업을 승인 후 실행했다.
+  source 수정도 승인된 native apply_patch로 수행했다. 도구의 거부 경로를 다른 저장소로 우회하지 않았다.
+- GPU 학습/추론 평가/학생 촬영/운영 모델 채택은 미실행이다. 새 checkpoint는 생성하지 않았다.
+  운영 DB·schema·촬영·모델·기능/유지보수 플래그를 바꾸지 않았다. 서버 restart/Refresh도 하지 않았다.
+  로컬 generated 준비물만 추가했다. 기존 Git 변경을 보존했고 staging/commit은 하지 않았다.
+  providerCallCount:0, deploymentReady:false. 학습 준비를 정확도 개선이나 운영 GO로 표시하지 않는다.
+- 남은 4단계: 실제 촬영 수집과 독립 전사, 증강 가독성 감사, 동일 초기값/예산 고정 후 NVIDIA 비교와 고정분모 보고.
+  남은 3단계 checkpoint parts 수신과 2단계 수식/혼합 지연 gate도 완료로 표시하지 않는다.
+
+5단계 구현 기록 · 2026-10-04
+- 기존 설치·품질 gate를 보존하고 deployment_artifacts()를 출시 파일 범위의 공용 기준으로 사용한다.
+  기존 모델/tokenizer/template/worker와 core에 촬영 HTML/JS/영역변환/CSS/shared API/launcher/학생 페이지,
+  app/route/cropper/eligibility/solution 경계를 포함했다. 코드 파일 범위는 25개다.
+  frontend가 없는 과거 artifact map과 범위 안 코드 변조는 출시 증거를 무효화한다.
+- frozen sample에 captureOrdinal, 저장 검토에 by.ocrRoute를 추가했다. 객관식을 먼저 나눠 두 수식 프로필과 구분한다.
+  by.formulaProfile 또는 두 사진 전체의 firstPassPhotos를 실제 첫 촬영/주관식 출시 분모로 복사하지 않는다.
+- check_student_test_ocr_release.py는 NO_GO 전용이다. 새 추론/학습/제출 API/DB/migration/모델 교체를 실행하지 않는다.
+  현재 코드/정책 및 도구/scorer SHA를 기록하고, 제공된 raw frozen/predictions/run과 snapshot을 다시 검토한다.
+  실제 20칸 전체/문항 ID/같은 종이 두 사진·순서·작성자·split·현재 파일 SHA를 요구한다.
+  순서가 없는 과거 두 사진은 첫 촬영 미검증을 유지한다. 처음부터 두 사진을 모두 첫 사진으로 세지 않는다.
+- 첫 사진의 자동 수락/불확실 분기는 저장 결과 diagnostic이다. 실제 요청된 재촬영·두 차례 문항 보완·보류·
+  최초/최종 채점과 queue/crop/인식/채점 저장 지연은 trace 없이는 미검증이다. crop-only를 end-to-end로 쓰지 않는다.
+- 현재 생성 결과는 ../generated/ocr_phase5_release_preflight_20261004_01/RELEASE_PREFLIGHT.json이다.
+  파일/폴더 존재 점검 installed:true, deploymentReady:false, cameraReview:not_supplied다.
+  현재 계약 사유는 choice_training_gate_not_met, deployment_evidence_missing_or_unreadable이다.
+  이것은 현재 CLI 환경 점검이며 실제 운영 프로세스의 설정을 관측한 것이 아니다. 모델 바이너리를 새로 검증하지 않았다.
+- 기존 v1 readiness는 검토된 자기선언 계약이며 실제 독립성/원본 사진/전사/실행/속도 사실의 인증은 아니다.
+  새 사전심사도 이 한계를 명시하며 deployment evidence v1 또는 GO 파일을 생성하지 않는다.
+  stdout/exit 0은 준비 보고서 생성 성공일 뿐 운영 출시 승인이나 OCR 정확도 성공이 아니다.
+- 하위 에이전트가 기존 gate와 누락을 읽기 전용으로 감사하고 artifact verifier를 구현했다.
+  독립 임시 byte/함수 입력 관측으로 frontend/cropper/route/model 변조 차단과 실제 config 연결을 확인했다.
+  main 도구의 잘못된 두 사진 순서/반쪽 종이 분모를 재현했고 main이 수정했다. 마지막 읽기 검토에서 추가 확정 blocker는 없었다.
+- 새 artifact 9 tests, preflight 11 tests가 통과했다. 기존 camera 19 tests/config 44 assertions도 통과했다.
+  Python compileall과 전체 verify_refactor_safety.py exit 0. 로그: ../generated/ocr_phase5_verification_20261004_01.log.
+  모든 새 fixture는 OS 임시 자료다. 실제 독립 학생 필기·정확도·속도·운영 채점 검증이 아니다.
+- 운영 DB/schema·원천·checkpoint·이미지·모델·플래그를 변경/삭제하지 않았고 서버 restart/Refresh도 하지 않았다.
+  새 로컬 generated 사전심사 보고서만 추가했다. 기존 Git 변경은 보존했고 staging/commit을 하지 않았다.
+  providerCallCount:0, deploymentReady:false. 유료/외부 OCR 호출·새 GPU 학습·새 모델 추론은 0이다.
+- 남은 5단계: 새로운 독립 자연 필체 holdout, 독립 실제 전사/작성자 군집 검토, 실제 보완/보류/최초·최종 채점 trace,
+  실제 전체 처리 지연·현재 frontend 카메라 QA, 검증된 후보 수신/선택, 승인 후 운영 백업/migration/채택/활성화/복구 점검.
+  2단계 수식/혼합 지연, 3단계 네 후보 수신, 4단계 실제 촬영/GPU 비교도 여전히 미완료다. 다섯 단계 전체 완료로 표시하지 않는다.
+
+
+마무리 점검 · 2026-10-04 04:23 KST
+- 회귀와 준비 자료의 무결성 확인을 마쳤다. 새로운 확정 코드 결함은 없어 추가 소스 수정은 하지 않았다.
+  실제 촬영 품질/속도·증강 가독성 감사·모델 수신·GPU 비교·운영 적용은 완료로 표시하지 않는다.
+- 최신 사전심사: ../generated/ocr_completion_preflight_20261004_01/RELEASE_PREFLIGHT.json.
+  NO_GO_PREPARATION_ONLY, choice_training_gate_not_met, deployment_evidence_missing_or_unreadable,
+  cameraReview:not_supplied다. installed:true는 파일/폴더 존재일 뿐 모델 추론 성공이 아니다.
+- 이번 바이트 점검 기록: 같은 폴더의 COMPLETION_AUDIT.json.
+  유효 수집 키트 32개 manifest 항목/총 33개 파일, 대조군·증강본 네 arm의 inventory/signature,
+  모든 이미지/provenance 연결, 전사 바이트와 원본 순서가 일치했다.
+  공통 967쌍 + 상위 1,757쌍 = 프로필 합계 2,724쌍이다. 서로 다른 원본 이미지 SHA는 1,757개다.
+  이는 독립 작성자 수가 아니다. 가독성/원래 AI Hub 전사의 정확도/새 OCR 정확도를 검증한 것이 아니다.
+- 기존 수신 자료 9개 파일의 bytes/SHA도 재대조했다. local part048만 있으며 part001~047는 없다.
+  네 checkpoint 바이너리 검증은 0개다. 이번에 Drive 휴지통/접근 상태를 다시 관측하지 않았다.
+- 현재 여유 RAM 1.799 GiB(04:11 KST 읽기 전용 관측)는 수식 진단 보호선 6 GiB 미충족이다.
+  보호선을 낮추거나 다른 프로세스를 종료하지 않았고 수식 추론을 시작하지 않았다.
+- Python compileall과 전체 verify_refactor_safety.py는 exit 0이다.
+  전체 로그: ../generated/ocr_completion_verification_20261004_01.log.
+  별도 증강 도구 fixture는 13개 중 12 통과/1 skip(OS symlink 생성 권한)이다.
+  임시 검사와 바이트 일치를 필기 품질·카메라 QA·실제 채점 성공으로 바꾸어 보고하지 않는다.
+- 첫 로그/보고서 생성은 sandbox ACL로 거부됐다. 같은 새 대상 경로의 기록을 승인 후 수행했다.
+  거부된 메모리 조회는 폐기했고 승인된 읽기 전용 조회만 기록했다. 우회/설치/공유 변경은 하지 않았다.
+- 하위 에이전트는 미완료 항목과 의존관계를 읽기 전용으로 재검토했다. 추가 확정 코드 결함은 없었다.
+  mandela는 내부 검사와 실제 전사/필체 독립성을 분리했고 ssotize는 기존 기준과 상태를 읽기 전용 대조했다.
+  외부 기술 사실을 새로 주장하지 않았으므로 외부 factchk 연구는 하지 않았다.
+- 남은 로컬 준비: 증강 가독성·라벨 보존 감사와 검증된 GPU 초기값/예산 고정이다.
+  원래 receipt의 pending/trainingAllowed:false를 과거 사실과 다른 값으로 덮어쓰지 않는다.
+- 가장 먼저 필요한 입력: 유효 키트 W001~W024의 학생 사진 48장(각 20문항, 같은 종이 2회).
+  두 촬영 사이 답안을 바꾸지 않고 가명/권한을 확인한다. 사용자가 crop/960행 JSON을 만들 필요는 없다.
+  작성 안내는 학습 라벨이 아니다. 수신 뒤 실제 보이는 값을 독립 전사한다. 상세는 CAMERA_DATA 문서를 따른다.
+- 별도로 원본 part001~047 또는 완전한 로컬 반환 묶음이 필요하다. 전달 기준은 3단계 수신 manifest를 따른다.
+  수식 속도는 충분한 RAM의 대상 추론 환경에서 측정한다. 외부 GPU 수치를 현 CPU 서버의 전체 p90로 대체하지 않는다.
+- 다음 흐름: 실제 촬영 개발/calibration 진단 → 필요한 보강/GPU 비교 → 새 작성자의 미사용 자연 필체 출시 검증
+  → 대상 서버의 실제 보완/보류/최초·최종 채점/전체 속도 확인 → 별도 승인 후 운영 적용.
+  초기 24명 자료를 출시 holdout으로 재명명하지 않는다. 숫자 metrics GO 조건도 별도로 남아 있다.
+- 운영 DB/schema·원천·checkpoint·모델·플래그·서버를 변경하지 않았다. 유료/외부 OCR 호출·새 추론·학습은 0이다.
+  generated의 새 보고서/로그만 추가하고 기존 Git 변경은 보존했다. staging/commit은 하지 않았다.

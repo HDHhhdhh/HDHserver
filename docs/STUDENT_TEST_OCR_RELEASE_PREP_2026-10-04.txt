@@ -1,0 +1,95 @@
+5단계 출시 검증·운영 적용 준비 · 2026-10-04
+
+결론
+- 출시 사전심사 도구와 파일 변경 차단을 구현했다. 실제 독립 촬영 검증과 운영 적용은 미완료다.
+- 이번 준비 보고서: ../generated/ocr_phase5_release_preflight_20261004_01/RELEASE_PREFLIGHT.json
+  schema: student_test_ocr_release_preflight_v1, status: NO_GO_PREPARATION_ONLY
+  providerCallCount:0, deploymentReady:false, rolloutAuthorized:false.
+- 현재 CLI 환경의 설치 점검은 installed:true이며 필요한 파일/폴더의 존재를 뜻한다.
+  새 모델 추론·모델 바이너리 전체 해시 검증·실카메라 정확도 검증을 뜻하지 않는다.
+- 현재 readiness 계약의 미충족 사유는 choice_training_gate_not_met와
+  deployment_evidence_missing_or_unreadable이다. cameraReview는 not_supplied이다.
+- CLI가 읽은 환경은 실행 중 운영 서버의 설정을 관측한 것이 아니다. 운영 설정·모델·DB·서버는 변경하지 않았다.
+
+기준과 소유자
+- 출시 수치와 독립성 조건은 STUDENT_TEST_OCR_PUBLIC_DATA.md의 품질 gate 및
+  PROJECT_FUNCTIONS_AND_LOGIC.md §21을 따른다. 이번에는 조건을 낮추거나 파일럿 기준으로 대체하지 않았다.
+- 실행 시 심사 계약은 core/student_test_ocr_readiness.py가 소유한다.
+  RELEASE_CODE_FILES와 deployment_artifacts()를 config 및 오프라인 점검이 함께 사용한다.
+- 단계 진행 상태는 STUDENT_TEST_OCR_IMPROVEMENT_PLAN_2026-10-03.txt를 따른다.
+- 수집 절차·전사 분리·snapshot은 STUDENT_TEST_OCR_CAMERA_DATA_2026-10-04.txt를 따른다.
+  같은 작성자의 두 사진을 독립 표본으로 세지 않는다. 개발/calibration 자료를 출시 holdout으로 재명명하지 않는다.
+
+이번에 보강한 경계
+- 기존 모델/tokenizer/worker/template와 core 파일 연결을 보존하고 현재 촬영 HTML/JS/영역변환/CSS,
+  shared API·학생 launcher/페이지·서버 route·cropper 등 25개 코드 파일을 출시 범위에 포함했다.
+- 이 목록에 없던 frontend를 빠뜨린 과거 artifact map은 불완전한 증거로 거부한다.
+  해당 코드가 바뀌면 이전 검증을 재사용하지 않는다. 파일 해시는 실제 화면·카메라 QA를 대신하지 않는다.
+- 기존 v1은 사람이 검토한 선언의 계약이다. holdout manifest 문자열만으로 실제 사진/전사/예측/trace를
+  인증하지 않는다. 이 제한을 숨기지 않았고 새 준비 도구를 GO 증거 생성기로 만들지 않았다.
+- frozen sample에 captureOrdinal을 보존했다. by.ocrRoute는 문항 유형을 먼저 나눠 객관식/수식 프로필을 집계한다.
+  by.formulaProfile에는 객관식도 들어갈 수 있으므로 이를 주관식 출시 경로로 복사하지 않는다.
+- 새 도구는 저장 예측을 다시 점검하고 모든 사진의 20칸·문항 ID·snapshot 바인딩을 확인한다.
+  같은 종이는 두 사진과 {1,2} 순서를 요구한다. 두 순서 모두 모르는 과거 자료는 첫 촬영 지표를 미검증으로 둔다.
+- 첫 촬영 diagnostic은 ordinal1만 집계한다. 두 번째 진단 사진은 실제 요청된 전체 재촬영이라고 추정하지 않는다.
+  보고된 autoAccepted를 실제 정답 판정 또는 첫 촬영 성공의 증명으로 사용하지 않는다.
+- 숫자/분수/루트 종류는 사람 전사에서 집계한다. OCR 출력에 맞춰 종류나 전사를 고치지 않는다.
+  분수와 루트 표본은 겹칠 수 있다. 객관식 reject 범위도 모델 출력이 아니라 미리 고정한 자료를 사용한다.
+- 각 경로의 전체 분모와 지원 범위/reject 진단을 별도로 남긴다. 기존 98% gate의 분모를 조용히 바꿔 적용하지 않는다.
+- 보류·두 차례 문항 재촬영·최초/최종 채점·대기열 포함 저장 지연은 실제 trace 없이는 미검증이다.
+  crop_inference_only를 전체 촬영→채점 저장 지연으로 쓰지 않는다.
+- 도구 자체와 scorer SHA, 현재 25개 코드 SHA, 정책 SHA, 제공된 raw frozen/예측/run SHA를 기록한다.
+  보고된 모델/추론/정책 metadata의 연결은 실제 실행 사실을 독립 인증하지 않는다.
+
+현재 안전한 점검 명령 (프로젝트 루트에서)
+  python -B -m scripts.check_student_test_ocr_release --project-root C:/server --output <존재하지 않는 새 결과 폴더>
+실제 학생 자료나 새 추론 없이 파일/환경과 기존 readiness를 읽는다. 출력은 RELEASE_PREFLIGHT.json뿐이다.
+exit 0은 준비 보고서 생성 성공이다. GO나 문제가 없다는 뜻이 아니다. 항상 NO_GO_PREPARATION_ONLY다.
+같은 결과 폴더는 덮어쓰지 않는다. 다음 실행은 새 suffix를 사용한다.
+
+저장된 촬영 예측이 있을 때
+  python -B -m scripts.check_student_test_ocr_release --project-root C:/server --output <새 결과 폴더> --camera-frozen <FROZEN_LABELS.json> --camera-predictions <predictions.jsonl> --camera-run <RUN.json>
+세 입력은 함께 제공한다. snapshot·고정 분모·모델/정책 metadata·64-token 종료 계약을 다시 확인한다.
+새 OCR 추론·학습·채점 API 요청을 시작하지 않는다. 과거 파일을 검토해도 운영 GO를 출력하지 않는다.
+현재 Phase4 freeze는 초기 진단용 release export를 계속 거부한다. 새 독립 release 수집은 별도 승인된 흐름이 필요하다.
+
+운영 적용 순서 (계획만이며 이번에 실행하지 않음)
+  독립 품질·실제 전체 속도 확인 → 검토된 모델/증거/적용·복구 계획
+  → 명시적 유지보수 승인 → 정지 상태의 검증된 백업 → 검토된 migration/모델 경로 적용
+  → 승인된 재시작·점검 → 명시적 기능/유지보수 활성화 → 운영 관측
+
+1. 새로운 자연 필체 학생 holdout을 승인된 용도로 수집한다. 이전 학습·튜닝 작성자와 종이·변형을 제외한다.
+   별도 실제 전사 검토와 평가 전 고정, 작성자 군집·운영 분포 검토를 기록한다.
+2. 같은 후보/모델 설정/코드/정책으로 세 경로와 실제 20문항 흐름을 검증한다.
+   실제 첫 촬영·전체 재촬영·객관식 보완·수식 최대2회 재촬영·보류·당일 확정·최초/최종 채점 trace를 확보한다.
+   실제 정답을 오답으로 확정한 오류는 OCR 전사 오류와 별도로 검토한다.
+3. 대상 서버에서 cold/warm·대기열·crop·추론·채점 저장 범위를 구분해 측정한다.
+   실제 카메라 안내틀 변환과 렌더링을 검증된 frontend 바이트에 묶는다. source fixture는 이 검증을 대신하지 않는다.
+4. 반환 모델의 실제 checkpoint/공통 architecture/tokenizer SHA와 원래 receipt를 검증한다.
+   3단계의 미수신 parts와 후보 검증은 계속 남아 있다. receipt 경로를 현재 서버 경로로 추정하지 않는다.
+5. 품질/속도 gate와 검토 증거를 통과한 뒤 적용·중지/재시작 횟수·복구 계획을 별도로 승인받는다.
+   8004는 관리자로 운영하는 loopback 격리 서버만 사용하며 운영 데이터를 테스트 seed로 복사하지 않는다.
+6. 승인된 정지 유지보수 창에서 python scripts/backup_runtime_data.py로 백업을 만들고 검증한다.
+   현재 SQL은 scripts/migrations/20260828_create_student_test_ocr.sql이다. 존재 확인은 적용 승인이나
+   현재 schema와의 호환 확인을 뜻하지 않는다. 검토한 일방향 migration을 적용하고 별도로 검증한다.
+7. 모델은 검증된 새 경로로 배치하고 기존 모델/자료는 보존한다. 새 경로·정책·코드의 실제 증거를 확인한다.
+   승인된 횟수만 운영 서버를 재시작하고 서버/학생 공개 페이지/새 기능을 확인한다.
+8. 기능과 별도 보관 scheduler 활성화는 승인된 적용 단계에서만 한다. 실패 시 승인된 복구 계획을 사용한다.
+   student crop 7일 삭제·당일 보류 처리를 실제 운영에서 확인한다. 학습 corpus를 삭제 대상으로 혼동하지 않는다.
+
+점검 기록과 한계
+- 하위 에이전트가 기존 gate/누락을 읽기 전용으로 감사하고 artifact verifier를 구현했다.
+  임시 파일의 frontend 변경 차단과 실제 config 함수 입력을 외부 관측했다.
+- main의 preflight 검토에서 두 사진을 모두 첫 사진으로 표시하거나 반쪽 종이를 제출하는 문제를 재현했다.
+  두 사진/순서/소유자 검사를 추가했고 부정 fixture를 통과했다. 마지막 바이트 검토에서 추가 확정 blocker는 없었다.
+- mandela: 개발/calibration의 재명명·동일 작성자 반복 사진·모델 기반 전사는 독립성 누출이다.
+  새 holdout과 별도 실제 전사/trace를 요구한다. 임시 GO-shaped parser fixture를 실제 품질 증거로 쓰지 않는다.
+  자체 #3~#5 점검: 프로그램 계약의 자기 검사와 실제 독립 정답 판정을 분리했다. 새 정확도 수치는 없다.
+- ssotize는 읽기 전용으로 기준/상태/해시 소유자를 점검했다. 기존 과거 문서의 통합·삭제·재명명은 하지 않았다.
+- 외부 기술·의학·법률 사실이나 정확도 개선을 주장하지 않아 별도 외부 factchk 연구는 실행하지 않았다.
+  실제 이용 권한·신원·독립성·실행 사실을 이 도구가 인증했다고 표현하지 않는다.
+- 유료/외부 OCR 호출·새 학습·새 모델 추론·운영 DB/schema·모델 교체·플래그 변경·서버 restart/Refresh 없음.
+  현재 보고서는 준비물이다. 5단계의 실촬영 검증과 운영 적용은 미완료다.
+- 새 artifact verifier 9 tests, preflight 11 tests 및 기존 camera 19 tests/config 44 assertions 통과.
+  Python compileall, 전체 verify_refactor_safety.py exit 0.
+  전체 로그: ../generated/ocr_phase5_verification_20261004_01.log. live smoke/실브라우저/실카메라 검증은 미실행이다.

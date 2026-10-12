@@ -2,6 +2,8 @@
 
 Status: experimental, validated first on `/demo/rh3123` only.
 
+The geometry and typography lock below applies to the `admin-design-test.css` palette layer, not every experiment loaded by the demo. The separate thread preview changes demo-only avatar DOM, spacing, and type; its historical evidence is in `design-qa.md`. Neither document authorizes production changes. `?design=off` disables only the palette layer, not the thread preview.
+
 ## Direction
 
 The visual language is an ink-and-mineral operations surface: calm warm neutrals, mineral teal actions, and restrained semantic accents. It improves hierarchy through paint and state feedback while keeping the established product geometry untouched.

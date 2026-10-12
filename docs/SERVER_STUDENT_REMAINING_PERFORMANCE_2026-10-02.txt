@@ -1,0 +1,196 @@
+학생·로그인·시험·파일·영상 성능/QA 최종 인계 / 2026-10-02 Asia/Seoul
+
+현재 application 상태: Hub가 학생 공지함의 local loading 최소 패치를 적용했다.
+현재 student.js SHA256은 eb7f77277d9ba96eab44191d3c13e2e338812ebcf4a029779c0d420d955ca8f7.
+독립 current-source5그룹+negative1, 실제 Chrome의 GET대기/닫기/재개방/저장상태 검증이
+통과했다. 상시 announcement async gate 실제 출력은26case PASS이다(앞선27 표현 정정).
+매트릭스 원 ID141개 중70개에 부분 실제 UI/파일 증거가 있다. 각 기능군의 모든 분기
+PASS70 또는392전수완료를 뜻하지 않는다. 처음 인계의55부분/미적용/dfc06a71 hash는
+적용 전 시점 기록이다. 이번 전담의 application edits는0이고 지정 보고서만 편집했다.
+
+인벤토리: docs/SERVER_STUDENT_MANAGEMENT_UI_PERFORMANCE_SCOPE_2026-10-01.txt
+범위/소유권: docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt 최신본
+증거 폴더: C:\Users\주인님\AppData\Local\Temp\server-student-remain-20261002-ca9f9b5d
+매트릭스: C:\Users\주인님\AppData\Local\Temp\server-student-remain-20261002-ca9f9b5d\remaining-ui-matrix.json
+실제 case 기록: C:\Users\주인님\AppData\Local\Temp\server-student-remain-20261002-ca9f9b5d\browser-action-evidence.json
+schema: action_selectors/state/precondition/expected/storage/restore/
+external_or_disabled_reason/source/prior_evidence/this_run.
+R13+S41+T33+F35+V19=141. 원 ID 유지. S07은 current public-only로 local eligible140,
+local R/S/T/F122 중 public-only를 뺀121. 원래 X12 경계는 활성 inventory 밖에 별도 보존.
+현재 상태 수: {"partial_verified": 70, "credential_handoff_required": 11, "not_run": 34, "local_excluded_public_only_observed_hidden": 1, "outside_authorized_browser_scope": 6, "hub_owned_browser_not_run": 19}.
+전체 기능군 browser PASS0, 부분 증거 연결70. 정확한 ID:
+R: R01, R02
+S: S01, S03, S04, S05, S06, S19, S21, S22, S23, S24, S25, S26, S27, S30, S31, S32, S33, S34, S35, S36, S39, S40
+T: T01, T03, T04, T05, T07, T08, T09, T10, T11, T13, T16, T17, T18, T19, T20, T22, T23, T26, T28, T29, T30, T31, T32, T33
+F: F01, F02, F03, F04, F05, F06, F07, F08, F10, F11, F12, F13, F14, F15, F16, F19, F23, F24, F27, F28, F29, F33
+
+권한/실행 경계
+후속 명시 위임의 관리형8004 및 독립 QASTUDENTPERF1002 학생/시험/파일만 정상 UI/API로
+사용했다. Hub가 source/lifecycle/admin/video/학교/전체학생/통합/운영을 소유한다.
+이 전담의 app import·standalone server·server lifecycle·production 요청·provider/push/
+callback/OCR 활성화·credential 변경·영구삭제·Git stage/commit/push·하위 agent는 모두0.
+루트/scoped 지침과 computer-use skill을 읽었으며 CUA의 현재 documented API를 우선했다.
+Root의 Refresh/두port·public app200/loopback1 확인 전달 후 후속 실제 QA를 실행했다.
+마지막 full non-smoke105그룹/21개 source-QA SHA PASS는 Hub가 보고한 통합 증거이며,
+이 전담이 직접 실행한 Node/UI 결과와 분리한다. 운영 rollout/392전체 완료를 주장하지 않는다.
+
+실제 학생 공지함, 현재 적용본
+결과: history-refresh-Chrome-results.json / verify-history-browser-chrome.mjs.
+served student.js 응답 bytes의 SHA가 application eb7f772...와 일치했다. 정상 native click
+후 해당 SID의 announcements/status GET2개를 실제 browser route에서 대기시켰다.
+로딩: display=flex/aria-hidden=false/한글“공지를 불러오는 중…”/row0/shell inert.
+대기 중 close: none/aria=true/inert 해제/focus noticeBtn. GET2개를 continue한 뒤 own3행이
+hidden DOM에 준비돼도 다시 열리지 않았다. 재개방 후 새 GET2개 대기→정상 continue→
+MULTI/SURVEY/NOTICE3개, “설문 완료”와 저장된 응답 summary를 확인했다.
+once-survey 실제 history item을 열어 모든6입력 disabled/short·long 저장값을 조작 전 API
+snapshot과 대조했다. Escape/정상 재개방도 확인했다. status 전체 payload와 자료4는 동일,
+업무쓰기 시도0/pageError0. 의도한 GET gate는 운영 latency benchmark가 아니다.
+현재 Node oracle: verify-current-history-loading.mjs/current-history-loading-results.json.
+즉시 shell·대기중 close·반복 single flight·503기존 오류·public 원순서 literal5그룹 PASS.
+listener만 옛 순서로 역변환한 negative1개 확인. Source unchanged/real network·writes0.
+상시 scripts/verify_student_announcement_async_scope.mjs 직접 실행26case PASS.
+
+IAB 제한 및 fallback/CDN 사실
+Refresh 뒤 새 own IAB에서도 patched listener/own3공지/숙제·시험2/자료4를 관측했다.
+DOM click, 기본 AX click, native Return 모두 capture click0/모달 상태 변경0이었다.
+재바인딩/새 탭/기본 제어를 확인한 실제 capability gap으로 AGENTS.md의 허용 fallback을
+사용했다. 정책 거부를 다른 경로로 우회한 것은 아니다. IAB action PASS로 확대하지 않는다.
+history-refresh-IAB.json에 실제 상태/무이벤트/console warn-error0를 보관했다.
+IAB 원시 Fetch에서는 explicit non-Document resourceType가 필요했고, 종료는
+Fetch.enable patterns=[]가 지원된다. 처방된 API로 정정했고 paused2를 재개·patterns를
+비운 뒤 own 탭6을 닫았다. 자체 문서의 observers도 함께 제거됐다.
+fallback은 app이 제공한 공식 bundled Playwright+설치된 Chrome의 새 headless context다.
+기존 QA Basic fixture를 origin127.0.0.1:8004에만 사용했다. auth/설치/방화벽/서버 guard
+변경0. app/student.html은 외부 Google Fonts stylesheet/preconnect를 선언한다.
+Chrome fallback은 외부 font HTTP를 route에서 abort해 app요청을8004에 한정했고 screenshot은
+system fallback font다. 이때 ERR_FAILED console resource 메시지와 pageError0를 구분한다.
+IAB 최초 CDN 통신은 전부 수집하지 않았으므로 전 작업의 외부 CDN 통신0이라고 하지 않는다.
+provider·push·callback 실행0과 일반 font 자원 선언을 혼동하지 않는다.
+
+한 개 파일의 실제 정상 수정/복원
+결과: owned-file-flow-Chrome-results.json / verify-owned-file-flow-chrome.mjs.
+대상은 QASTUDENTPERF1002/함수문제.txt 하나. 실제 checkbox로 Set/class/checked를 정확히1개
+대조한 뒤 native prompt 취소(POST0), 임시 제목 변경→학생 자료 reload/search→원제목 복원.
+새 own 하위폴더 QASTUDENTPERF1002_MOVE_QA 생성. Move cancel 버튼과 Escape는 POST0.
+정상 move→하위폴더 tree/list 및 배정 자료 reload/search→원위치 복원을 확인했다.
+정상 POST는 rename2+folder1+move2=5회. refresh 후 선택 Set/class/ck는 모두0으로 일치.
+네 단계의 실제 학생 reload/search에서 URI·한글 제목·검색 결과·자료4를 확인했다.
+모든 단계의 /api/mat-assign 전체 payload는 own URI 한 개의 의도한 치환만 달랐다.
+다른 SID/unknown fields와 /api/materials payload는 같았고 최종 두 payload는 원본과 완전히
+동일했다. before/after 전체 API snapshot과10단계 기록은 OS-temp에 보관한다.
+MAT catalog에 이 파일의 별도 등록 참조가 없음을 전제로 했다. retired page-folder HTTP를
+되살리거나 runtime file을 직접 읽어 내부 모든 필드를 검증했다고 주장하지 않는다.
+실제 student anchor download event/saveAs30bytes는 최초 업로드용 OS-temp 원문 bytes와
+정확히 일치했다. 원래4파일은 삭제하지 않았고 추가한 빈 own 하위폴더는 보관했다.
+restorationVerified=true/pageError0/범위 밖 write 시도0. source/lifecycle/production0.
+read-only 별도 owned-file-view-Chrome-results.json: 목록 folder double-click으로 빈 own
+하위폴더0행→parent4파일, 실제 target=_blank viewer의 정확한 UTF-8 원문을 확인했다.
+assignment payload 동일/쓰기0/pageError0, viewer와 새 context/browser 모두 닫았다.
+
+추가 정상 read-only 버튼
+readonly-student-tests-Chrome-results.json / verify-readonly-student-tests-chrome.mjs.
+settings open/닫기 버튼/Escape/outside close 및 return focus, dark 저장→실제 reload 유지→
+ephemeral context의 light 복원, local skip-link Enter→#studentMain을 확인했다.
+restricted answer의 실제 academy 안내 alert와 missing-answer disabled도 확인했다.
+feedback은 empty validation alert만 확인했으며 정상 전송/notification은 실행하지 않았다.
+공지 history의 ShiftTab 마지막행 wrap, Tab4개 전체 cycle, inert, Escape return focus PASS.
+이는3행 history dialog의 proof이며 모든 announcement/survey form의 focus cycle로 확대하지 않는다.
+tests 초기 catalog visible과 CSV template의 실제 native download/saveAs3583B를 확인했다.
+UTF-8 BOM/7lines와 독립 고정 digest
+7adca0146e17c516397ed28e3c20714a1236748ca5ce26f333079d2c17fef835 일치.
+tests-csv-template-native-Chrome.csv가 실제 파일이다. 기존 IAB10초 download event timeout과
+19:19 named file 상관 증거는 과거 tool gap으로 보존하며 현재 Chrome actual PASS와 분리한다.
+추가 fixture/업무쓰기0/pageError0. 불필요한 source 편집/통합 suite 재실행은 하지 않았다.
+
+앞선 실제 정상 QA와 그 한계
+own UNIT 기하/Lv3/99회차 A/B 실제 Save 및 검색/선택, 네 category/subject/difficulty/회차
+필터, 좁힌 회차 reorder 잠금, own B up→down 순서 복원, 로컬 answer slot/type draft discard,
+실제 CSV picker/import own2개/POST200 정확히1/config·stats200/picker reset/alert dismiss 확인.
+stats own4개/7sort/90→30/empty-record metrics/answer link0/close·Escape 확인.
+historical score/wrong-answer/모바일 academy 답안·conflict/error/native catalog drag는 gap이다.
+own text4개 actual picker upload 및 exact own A target 배정→alert→chip0 확인.
+기하/APEX filter5에는 별개 QA2명이 있어 own 전체로 가정하지 않았고 level상으로 own A만
+제한했다. 당시 material-before/after의 다른 SID 전체가 동일했다. drop/box modifiers/
+zero-target global cancel/영구삭제/충돌·재시도는 실제 정상 버튼 PASS가 아니다.
+day1=금1, own logs/progress로 숙제1권/assigned A/interrupted B 준비. 초기 classDay없는
+course-blocked/카드0를 fixture 문제로 진단해 스케줄만 정상 API로 준비했다. guard 변경0.
+bootstrap assignedTests top-level2, restricted A enabled/B disabled, URL둘 다 hidden 확인.
+네 자료 folder/flat/mpath/mmode reload, 영타 gkatn2/AND2/초성ㅎㅅ3(합성 제목 포함) 확인.
+required four-type 설문 empty-focus/Escape 제한/한글 multiline/정상 제출/once field lock,
+ordinary NOTICE ack→badge0/modal none도 실제 확인했다. incomplete annRead는 enabled이므로
+disabled라고 하지 않는다. 당시 incomplete handler 직접 click/allowMultiple 재제출/reply/
+carousel/broken image/late retry는 gap이다. native IME 자체는 검증하지 않았다.
+login은 empty required-input/click/Enter만 실제 확인. R03~13은 기존 login credential handoff
+가 없어 미실행이며 계정 credential 쓰기를 하지 않았다. S07 summary는 public-only이고
+summary test data 값은 tests(복수); notice shortcut은 data-student-notice-shortcut이다.
+
+Hub 최소 source 보강 독립 검증
+file-manage.js SHA256 07111cfb33be0a0c520114b605b5de079a102f98dcd91cfec7ea69afc2f54591.
+verify-current-sort.mjs/current-sort-results.json: lazy sort-local Map current vs baseline/
+independent scalar order8비교 +name양방향/deep·동명·missing/null/tie/tree freshness/
+selection/row identity5흐름 PASS. persistent cache/tree/event 전면 재작성은 필요하지 않았다.
+verify-current-file-selection.mjs/current-file-selection-results.json: actual renderList
+listener5그룹 PASS. 새 target Set/.sel/.ck 동기화/기존 multi 유지/box-select drag 차단.
+옛 source negative2개는 ck3/selected1로 실패; 옛 실제 IAB ck2/selected1 finding도 보관.
+Hub Refresh 뒤 native 우클릭 및 name/size/mtime6상태에서 같은 한 경로 선택을 보존했다.
+auth.js SHA256 7cb1b20ac9bcbbc6a3cc0425276017968d087581d41410606cc289c24bcb0d7d.
+verify-current-auth-feedback.mjs/current-auth-feedback-results.json actual deferred10그룹 PASS.
+auth/curris commit 뒤 추천 완료 전에 success/기존 close timer, 재개방 popup의 옛 timer 배제,
+logout/hide/SID/token/reversed-request late completion 배제. SID/token change는 loading을
+숨긴다. 초기 stale-loading 주의 정정. loading-only 옛안은 gate 전 success가 없어 negative.
+real credential writes0이고 실제 browser login success와 다르다. 기존 tests render
+projection normalize5/search4, material URL6/search4/helper교체2 gates도 직접 재실행 PASS.
+
+계측·성능 주장의 정정
+Chrome nativeTiming.feedback는 document capture listener의 queueMicrotask여서 target handler
+이전 DOM을 읽는다.0/0.1ms를 loading feedback/ready/paint latency로 인용하지 않는다.
+기존 catalog14/category4 capture-microtask9.6/13.7·105.6/138.2ms도 target completion을
+입증하지 못한다. raw값은 보존하되 invalid timing으로 명시했다.2rAF도 paint 시각이 아니다.
+앞선 적용 전 history3의 first-visible78.2/84ms만 small-N mutation observation으로 남긴다.
+요청350ms emulation은 실측74–84ms와 맞지 않아 적용 증거라고 하지 않는다; 복원0 완료.
+current Chrome PASS는 실제 held GET/정확한 DOM 및 저장 snapshot에만 근거한다.
+sort-auth-oracle.mjs의 synthetic5000 size lookup100625→4736, predicates256913050→11847368;
+mtime lookup105494→5000, predicates269602503→12507500, output SHA 동일.
+계측 VM 단일 CPU size41652.7→1865.2/mtime42366.3→2178.3ms는 counter/시스템 비용을
+포함해 브라우저·운영 속도 수치가 아니다. actual current video VM n50/1000 blur text8/
+rowSync1, warm broad n1000 p50=17.0604/p95=22.6462ms(n7)/draw7/listeners49000.
+full autosave8000 text reads는 unblurred 최신 draft 보존 계약이며 payload/single POST PASS.
+logical IME7draw를 native IME로 세지 않는다. 이미 완료한 test projection/selection/CSV
+index, material lazy key/단일 초기 render, video WeakMap/row blur, file box read/write 분리를
+새 작업으로 다시 세지 않는다. 잔여 DOM 비용은 실제 trace/IME 후속 후보이며 이번 결과가
+큰 partialDOM/event/batch/framework rewrite를 필수 완료조건으로 만들지 않는다.
+
+Hub video native 완료 보고와 tool gap
+Hub가 보고한 실제 Chrome/official-bundled-Playwright confirm2→9010000 title draft edit→
+194974B export→cancel 정상 모드 복원→server catalog307rows전체동일/쓰기시도0/pageError0는
+Hub actual PASS다. 이 전담이 video UI를 직접 실행하지 않았다. 원래 IAB/Chrome CUA
+native confirm focus failure는 도구 gap으로 별도 남겼으며 functional 면제로 쓰지 않는다.
+prior D18 exact-pair native/watch90%/manual none/reload/OFF는 이전 범위 증거로만 연결한다.
+모든 학원망/다른 SID·MID/callback/academy 답안으로 확대하거나 flag를 다시 켜지 않았다.
+
+보관 데이터·정리·Git
+own SID A784/B672/C364, own NOTICE/SURVEY/MULTI3개와 own시험
+t_unit_1790935230253_vytyt/t_unit_1790935481435_r799g/QASTUDENTPERF1002CSV_A/B4개 유지.
+초기 준비 시 학생129→132/시험1601→1605이며 이후 총수는 다른 Hub 작업과 구분한다.
+원4파일·own A 자료4/숙제·시험2/day1/설문·ack QA 상태, 새 빈 child폴더는 보관했다.
+production seed/copy/merge0. own IAB1~6만 닫았고 shared8004와 다른 task탭은 유지했다.
+Chrome history3회/file-flow2회(실패 포함)/file-view1회/readonly1회 모두 finally에서 context/
+browser를 닫았다. 최초 file-flow 실패는 oracle가 pathbar의 leading slash를 빠뜨린
+expectation timeout으로 업무쓰기0/restore 확인; owned-file-first-attempt.json에 보관했다.
+history의 두 초기 중단은 잘못 적은 saved text/click6 기대였고 API pre-action scalar 및
+명시5native action sequence로 oracle를 고쳐 전체 통과했다. app failure로 만들지 않았다.
+shared CUA theme light 복원/latency0/viewport override0/observers 제거 완료. 후속 Chrome
+theme는 ephemeral context에서만 변경됐고 폐기했다. 소스 추가 편집·추가 fixture는 끝냈다.
+스크린샷: student-history-loading-Chrome.jpg/student-history-ready-Chrome.jpg/
+owned-file-renamed-Chrome.jpg/owned-file-moved-student-Chrome.jpg/
+owned-file-restored-Chrome.jpg/owned-file-viewer-Chrome.jpg; 모두 OS-temp 실제 JPEG다.
+최종 Git: staged0/unstaged157/untracked80.
+root tracked runtime status0개. ignored QA runtime은 위 fixture와
+별도이며 production 전체 fingerprint 검증을 수행했다고 주장하지 않는다.
+이 전담 repo edit은 이 보고서 하나, 나머지는 OS-temp matrix/harness/evidence.
+기존 공유 source/dirty 보존, application edits0, staging/commit/push0, 하위 agent0.
+최종 검사: final-followup-validation.json PASS.141 ID/부분70/전체분기PASS0 합계, current
+source hash와 symbol line, case index 연결, API payload 복원, native30B/CSV3583B, invalid
+capture timing 표시, browser cleanup을 검증했다. Python AST4/Node syntax5/UTF-8·실제
+trailing-whitespace/diff 명령 PASS. untracked 보고서는 직접 whitespace 검사로 확인했다.
+마지막 literal git status --short도 staged0/unstaged157/untracked80으로 일치했다.

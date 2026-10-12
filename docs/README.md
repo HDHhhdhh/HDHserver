@@ -1,13 +1,13 @@
 # 프로젝트 문서 안내
 
 이 폴더는 `C:/server`의 장기 규칙과 역사 기록을 분리해 보관한다.
-기능을 고치거나 점검할 때는 다음 순서로 읽는다.
+먼저 저장소 루트 `AGENTS.md`를 읽고 작업 상태를 확인한다. 이후 기능을 고치거나 점검할 때는 다음 순서로 읽는다.
 
 1. [SERVER_RULES_INDEX.md](SERVER_RULES_INDEX.md) — 규칙 ID, 정본, 코드, 결정, 검증의 연결
 2. [PROJECT_FUNCTIONS_AND_LOGIC.md](PROJECT_FUNCTIONS_AND_LOGIC.md) — 현재 기능, 데이터 원본, 상태 전이
 3. [CODE_FLOW_MAP.md](CODE_FLOW_MAP.md) — 화면·API·순수 규칙·저장소의 구현 연결
 4. [LOGIC_DECISION_LEDGER.md](LOGIC_DECISION_LEDGER.md) — 사용자 결정, 충돌 판정, 미완료 상태
-5. 저장소 루트와 대상 폴더의 `AGENTS.md` — 작업 안전과 검증 규칙
+5. 대상 폴더의 `AGENTS.md` — 작업 안전과 검증 규칙 (편집 전 필수)
 6. [ADMIN_CSS_INVENTORY.md](ADMIN_CSS_INVENTORY.md) — 관리자 CSS 소비 표면, 도메인 소유권, 분리·결정 queue
 7. [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md), [isolated-design-server.md](isolated-design-server.md) — 전문 runbook
 8. [history/](history/README.md)와 세션 감사 — 역사 기록; 현재 규칙으로 재사용하지 않음

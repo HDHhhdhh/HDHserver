@@ -1,0 +1,22 @@
+server 시험 조회 책임 분리 / 2026-10-01
+
+Hub 통합 완료. 전담 쓰레드 01a0f5a6-3f56-7aa1-bbd0-bca145d23ac3은 저장소/Temp 파일 접근 제약으로 코드 내용을 대화로 인계했다. ACL이나 권한을 변경하지 않았다. Hub가 원본 SHA-256을 확인하고 동일 후보 5개 및 api_basic의 최소 bridge를 적용했다.
+
+core/test_record_projection.py: 역사 기록 정규화/중복 제거/metadata/상세 표현.
+core/test_statistics_projection.py: 통계 집계와 순수 출력.
+core/student_test_projection.py: progress-authoritative 학생 배정 표현과 주입형 답지 해석.
+routes/api_tests.py: 실제 storage 조회 순서, 인증, 날짜 정책, clock, 답지 접근 gate, 응답/쓰기 유지.
+routes/api_basic.py: 기존 config/map cache loader, 이전 날짜 status, 호환 alias와 dependency factory 유지. 각 항목마다 config→map loader 호출, 빈 배정은 0회.
+routes/student_bootstrap_projection.py: 동일 assignedTests 집계 흐름을 이름 있는 helper로 이동.
+
+Root 검증:
+python -B scripts/verify_test_projection_boundaries.py --before : PASS.
+python -B scripts/verify_test_projection_boundaries.py --require-bootstrap-wiring --baseline-root <Hub OS Temp>/test-projection-before : PASS.
+6개 fixed payload 및 key 정렬을 끈 HTTP body 2개 SHA-256 전후 동일.
+37 pure function / 12 protected route/auth/cache body 동일; 21 independent literal PASS.
+학생 assignedTests top-level, progress 권위, 답지 precedence, 학원망 stripping, historical reads, retired submission 상태 보존.
+verify_test_shared_services.py / verify_admin_tests_record_details.py : PASS.
+compileall : PASS. 기본 suite에 verifier 편입. 전체 suite/실제 격리 QA는 Hub 후속 결과에 기록.
+
+전담 검증: 기존 cache13/학생배정9/UNIT답지5 assertion 및 관련 backend6개·student/statistics/detail UI 회귀 PASS. 이는 Root 전체 suite 결과와 구분한다.
+새 framework/endpoint/payload/production runtime 변경 없음. Git staging/commit/push 없음.

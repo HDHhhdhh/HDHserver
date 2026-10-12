@@ -1,0 +1,309 @@
+server 프로젝트 전체 검토 및 1차 수정 보고서
+작성일: 2026-10-01 / 관제: server HUB (동훈)
+이전 Hub: 01a04677-fc55-74d3-82dc-556673498093
+작업 위치: C:/server
+
+결과와 범위
+프로젝트 구조·문서·주요 서버 경계·11개 HTML shell과 주요 페이지 기능을 조사했다.
+확인된 데이터 유실 및 비동기 UI 경합 경로를 우선 수정하고, 비용이 큰 목록/학생 투영을 최적화했다.
+현재 변경분의 전체 기본 회귀 검사와 문법 검사는 통과했다.
+이 보고서는 1차 검토와 수정 결과다. 모든 화면의 모든 버튼에 대한 실제 지연 측정 완료, 모든 오류 후보 수정 완료, 운영 배포 완료를 뜻하지 않는다.
+
+1. 구조와 규칙 문서 정합성
+
+실제 구조
+- app.py: 앱 생성, guard 순서, public service 주입, Blueprint 등록.
+- routes/: HTTP 인증·요청 검증·transport. api_basic.py에는 일부 서비스 조립/호환 경계가 남아 있다.
+- core/: 순수 규칙, strict 저장소, 잠금·트랜잭션·복구, projection.
+- static/: HTML shell, CSS, native ES modules와 학생 classic-script controller.
+- scripts/: bespoke 안전 검사, 격리 서버 manager, 운영 도구.
+- docs/: SERVER_RULES_INDEX가 규칙 소유권의 시작점, PROJECT_FUNCTIONS_AND_LOGIC이 의미 정본, CODE_FLOW_MAP이 구현 경로, LOGIC_DECISION_LEDGER가 승인 결정.
+- JSON/SQLite 및 instance/files 등은 별도 runtime/local state다. 소스와 Git 등록 대상으로 합치지 않는다.
+- 프런트엔드 패키지 runner 또는 새 프레임워크를 도입하지 않았다.
+
+읽기 전용 정적 조사
+- 정본 5개 + AGENTS 14개: 로컬 링크·앵커 130개, 파일 참조 1,181개 대조.
+- Python 150개 AST, route/method 선언 170개: 조사한 소유권 중복 및 지정된 retired surface 복원 없음.
+- 루트 HTML 11개, 로컬 script/CSS 참조 44개, 상대 JS import 236개: 대상 누락 없음.
+- 이 수치는 조사 범위이며 운영 활성 설정·외부 소비자·외부 링크까지 검증했다는 뜻은 아니다.
+
+수정한 문서
+- 오늘 source:auto 완료 영상의 표시·복습 예외를 현재 승인된 구현과 맞춤.
+- 전체학생 페이지의 실제 lazy 통합 팝업과 dormant 미니 편집기를 구분.
+- quick-printer SQL 열을 assignment_date로 정정.
+- OCR worker 고정 개수 설명을 manager의 실제 복사 목록과 맞춤. OCR 활성화 없음.
+- 역사적 D-01 네트워크 제한을 현재 정책으로 읽지 않도록 표현 정리.
+- quick-printer API 옵션 생략값과 팝업 최초 체크 상태를 구분.
+- configured identity strict 조회, attendance/contact 쓰기 실패 계약, 팝업 경합 방어, 파일 관리 새로고침/저장 규칙과 새 회귀 검사를 기록.
+- QA Basic 인증은 격리 프로세스 환경에만 적용하고 부모 환경을 복원하는 runbook 추가.
+
+남은 문서 개선
+루트 AGENTS.md는 32,645 bytes로 32 KiB 제한까지 123 bytes만 남는다. 필수 안전 규칙을 유지하며 상세 반복을 기존 scoped owner 링크로 줄일 별도 소규모 작업을 권한다.
+학교 일정 등 과거 rollout 상태는 운영 재시작 기록만으로 현재 실행 코드와 일치한다고 확정하지 않았다.
+이 작업에서 운영 rollout 상태를 임의로 완료 처리하지 않았다.
+
+2. 수정 완료한 오류 경로
+
+A. configured identity
+core/paths.py, routes/api_students.py
+- identity가 설정된 상태에서 학생 파일이 없어도 빈 students.json을 만들던 초기화 경로를 차단.
+- 두 identity store를 잠금 안에서 strict/coherent하게 읽고 누락·손상·pending journal·degraded 상태를 503으로 처리.
+- legacy 최초 초기화와 정상 응답 형태를 보존.
+- 임시 root/route 검증에서 원본 바이트와 누락 상태 보존 확인.
+
+B. 출결·연락 PATCH
+routes/api_attend.py
+- 쓰기용 읽기는 파일 부재만 빈 저장소로 허용.
+- 구문 오류·UTF-8 오류·잘못된 최상위/날짜별 형태·읽기 실패는 503으로 종료.
+- 기존 파일 bytes/mtime/hash를 보존하고 정상 narrow PATCH는 다른 날짜/SID/unknown 값을 유지.
+- 읽기용 legacy fallback 계약은 별도로 보존.
+
+C. 격리 서버 manager
+scripts/manage_isolated_design_server.ps1
+- 리스너 조회 실패를 “포트가 비어 있음”으로 해석하지 않도록 변경.
+- 정확히 하나의 loopback listener와 receipt 소유권 일치를 managed 조건으로 사용.
+- AccessDenied fixture에서 Status/Start/Restart/Stop이 launch·kill·receipt 삭제로 진행하지 않음을 확인.
+- 정상적인 리스너 없음 상태는 별도 검사.
+- 동시 Start의 더 넓은 프로세스 경합까지 해결했다고 주장하지 않는다.
+
+D. 파일 관리
+static/js/file-manage.js
+- 독립적인 트리·명단·배정 GET을 동시에 시작.
+- 성공한 coherent 명단/배정 snapshot 전에는 배정 실행 차단. 학생 조회 실패가 전체 배정 취소로 이어지지 않음.
+- 늦은 이전 refresh 결과를 버리고, 진행 중 저장이 끝나기 전 refresh가 이전 상태로 덮지 않음.
+- 저장 대상 SID·자료를 await 전에 고정. 저장 중 새로 추가한 draft는 보존.
+- duplicate 실행 차단, 반복 렌더의 박스 선택 listener를 한 번만 설치.
+- 전체 취소는 정상 준비 상태에서 기존 의도된 계약을 유지.
+
+E. 관리자/전체학생 통합 팝업
+static/js/admin/features/logModal.js, videoModal.js, escClose.js 및 lazy launcher
+- 로그/통합 저장 중 재열기·닫기·공통 Escape가 저장 대상 문맥을 바꾸지 않도록 owner 경계를 적용.
+- SID/date/open sequence를 고정하고 await 뒤 단계별로 현재 문맥 확인.
+- log/carry → test 최종 저장 순서 보존.
+- 영상 추가 항목을 첫 await 전에 고정하고 A의 늦은 저장 응답이 B의 draft·진도·dirty/feedback을 초기화하지 않도록 적용 범위를 제한.
+- 전체학생 페이지의 lazy import를 보존하고 수정 모듈 cache key 연결을 갱신.
+- 여러 API에 걸친 저장 전체를 하나의 서버 transaction으로 만든 것은 아니다. 후반 단계 실패의 부분 성공은 별도 구조 개선 대상이다.
+
+F. 보강·결석 등록
+static/js/admin/features/extraModal.js, absentRegister.js
+- 열기/닫기 순번과 ready/saving 상태를 도입.
+- A 날짜의 늦은 응답이 B 목록·baseline·global state를 덮지 않음.
+- 조회 중 loading/저장 비활성, 두 저장 버튼을 함께 잠금, duplicate 요청 차단.
+- 공통 Escape가 owner close를 호출하도록 수정. 조회 뒤 닫힌 팝업을 늦게 다시 열지 않음.
+
+G. 학교 일정
+static/js/school-cal.js
+- 검색 입력·검색 실행·Escape 재렌더 전 syncFromView.
+- 800ms 저장 대기 중 DOM 초안을 검색으로 잃지 않음.
+- revision/If-Match와 공유 저장 queue 및 stale merge 금지 유지.
+
+H. 시험 통계 상세
+static/js/tests.js
+- 요청 순번·시험 ID/분류/기간과 modal 상태 확인.
+- A의 늦은 성공/실패가 B 상세나 닫힌 modal을 덮지 않음.
+- loading과 실패를 빈 기록 상태와 구분.
+- 응답 상세에서만 답지 링크를 얻는 기존 계약 보존.
+
+3. 남은 잠재 오류 목록
+
+아래는 운영 발생 기록이 아니라 소스에서 확인된 후보다. 새 결정적 실패 주입 및 운영 영향 검증 여부를 따로 표시한다.
+
+P1 / legacy 계정 저장 경합
+근거: routes/api_auth.py의 로그인/SID refresh/credential 변경 전체-map read-modify-write와 고정 .tmp; core/student_app_auth_store.py는 같은 저장소에 lock 사용.
+조건: legacy writer가 읽은 뒤 다른 writer가 비밀번호/계정을 변경하면 오래된 map이 최신 값을 지울 수 있음.
+후속: 모든 writer가 동일 canonical lock 안에서 read→검증→merge→save_atomic 수행. 저장 함수만 잠그면 stale map 문제가 남음.
+새 결정적 두-thread 재현: 미완료. 이 작업에서 계정/운영 credential 변경 없음.
+
+P1 / watch 손상 저장소 fallback
+근거: core/watch_progress_writer.py의 비-object 빈 맵 정규화 및 shared storage load의 일부 읽기 fallback.
+조건: 손상된 저장소가 정상 빈 상태로 해석되어 후속 쓰기에 덮일 가능성.
+후속: 파일 부재와 손상을 구분하는 strict watch read + no-write fixture. 기존 manual white/skip/interrupted, millisecond timestamp, Kollus callback/auth 계약 유지.
+새 실패 주입: 미완료. 이 작업에서는 watch 파일 형식/운영 데이터 수리 없음.
+
+P2 / batch 로그 mirror 실패 응답
+근거: core/log_repository.py batch SQLite commit 후 JSON mirror save 예외와 routes/api_logs.py 응답.
+조건: SQLite에는 저장됐는데 JSON 실패로 500이 전달될 가능성. 단건의 부분 성공 계약과 차이.
+후속: commit 뒤 mirror failure를 명시한 결과, reload/restart/clear/unknown 필드 검증.
+새 mirror 실패 주입: 미완료.
+
+P2 / invalid date 검증 순서와 bootstrap 날짜
+근거: app.py 전역 absence barrier가 route 검증 전에 실행; bootstrap의 date.fromisoformat.
+조건: 잘못된 날짜도 먼저 barrier/복구 경계 진입, compact/week date 허용 가능성.
+후속: 인증 순서 유지하며 canonical date 판정을 관련 barrier 앞에 배치, middleware 포함한 임시 fixture로 lock/hook/write 호출 0 확인.
+D-04 whole-map absent의 승인된 500+무쓰기 제한은 별도이며 자동 수정 대상 아님.
+
+P2 / tests-config 전체 POST metadata 보존
+근거: core/test_config_safety.py의 incoming 기반 merge와 선택적 metadata 복원.
+조건: sourceId/unknown/category/top-level metadata가 payload에서 빠지면 사라질 가능성.
+후속: 기존 ID 기반 merge 및 명시적 삭제/clear-field 의미 보존. 428/409·answer metadata·generated map·PATCH 회귀.
+정상 UI가 현재 모든 값을 보내는 흐름과 API 보존 계약 갭을 구분한다.
+
+P2 / 관리자 공지 발행 경합
+근거: static/js/admin/features/announcements.js의 발행 잠금 부재와 성공 뒤 현재 draft 초기화.
+조건: 중복 POST, 이전 성공이 새 draft 제거, POST 성공+목록 GET 실패가 등록 실패로 보임.
+후속: 발행 command/session 고정, 중앙 in-flight 제어, 발행과 후속 refresh 결과 구분.
+새 지연 응답 VM/브라우저 재현: 미완료.
+
+P2 / 학생 공지 답장·설문 경합
+근거: static/js/student.js의 await 뒤 active/익명/폼 상태 재사용.
+조건: A 전송 중 B를 열면 A 응답이 B draft/상태를 바꿀 가능성.
+후속: 대상·입력·익명·session 고정, 원래 공지 상태 갱신, 같은 열린 session에만 화면 피드백.
+서버 전송 대상 변경 여부까지 확정하지 않았다.
+
+추가 조사 후보
+- 날짜 출결 팝업의 응답 역전 방어.
+- 로그인 fetch 실패 시 spinner 복구.
+- 전체학생 낙관적 편집의 실패 rollback 및 공유 person 필드의 다른 SID 표시 동기화.
+- initializer 재호출 안전성.
+- 파일 rename/move의 filesystem 변경과 material journal 생성 사이 crash gap.
+- manager 동시 Start/unknown owner 경합.
+마지막 두 개는 crash/경합 재현 전에는 확정 결함으로 취급하지 않는다.
+
+4. 리팩토링과 반응속도 개선
+
+원칙
+큰 모듈을 재작성하지 않고 기존 owner 경계 안에서 실패 은폐, 중복 listener, 오래된 응답의 DOM 적용, 불필요한 전체 SID/목록 처리를 줄였다.
+static/js/video-manage.js의 생성 citation 주석 잔재를 제거했다.
+호환 alias, fallback router, dormant 기능, 직접 URL로 제공될 수 있는 asset은 소비자 증거 없이 삭제하지 않았다.
+새 프레임워크·endpoint/payload 변경·runtime migration은 없다.
+
+성능 수정
+- 학생 bootstrap의 응답용 progress/watch 이력을 요청 SID/숫자 별칭으로 좁힘.
+  real-today 전체학생 자동 배정 서비스는 기존 범위를 유지.
+- 영상 목록: 빈 검색에서 검색키 정규화 생략, duplicate ID의 첫 원본 인덱스를 보존하는 Map.
+- 시험 목록: 빈 검색에서 검색키 조합 생략. 출력 순서/이름/필터 의미 유지.
+- 파일 관리: 독립 GET 3개 동시 시작, listener 누적 제거.
+- 팝업: loading/저장 상태를 분명히 하고 불필요한 중복 요청·늦은 재렌더 방지.
+
+Hub의 실제 수정 전/후 합성 측정
+항목                            입력                  warmup/sample   중앙값 전→후(ms)      p95 전→후(ms)
+학생 영상 이력 projection       90일×400 SID          3 / 15          349.8 → 8.4          459.4 → 11.2
+영상 목록 drawVid               3,000행               5 / 30           92.1 → 3.1          106.3 → 5.0
+시험 catalog projection         1,000행               5 / 30          102.9 → 9.5          127.0 → 10.9
+
+측정 해석
+- 위 값은 운영 HTTP/클릭→화면 완료 지연이 아니다.
+- bootstrap: SID 축소+aggregation 포함, JSON I/O·다른 projection·HTTP 제외. 입력 12,386,884 bytes. 출력 동등/입력 hash 불변 확인.
+- 영상: 실제 drawVid를 synthetic DOM에서 실행, 3,000행 HTML 동등 확인. 브라우저 layout/paint 제외.
+- 시험: 실제 pure catalog/helper 실행, 결과 동등 확인. network/DOM/layout/paint 제외.
+- 파일 병렬 조회 및 반복 20회 listener 1개는 behavior VM으로 검증. 실제 네트워크 지연 개선 수치를 별도로 주장하지 않는다.
+- 독립 조사 thread의 메모리 비교안 수치와 최종 패치의 Hub 측정 수치는 혼합하지 않았다.
+
+페이지/기능 범위
+admin.html: 첫 표, 통합 로그/영상/시험, 보강/결석, calendar, 공지, 인쇄, 툴팁의 주요 흐름 조사.
+  이번 수정: 통합 저장 문맥, 보강/결석, Escape. 실제 격리 admin의 manual white 저장→reload 확인.
+all.html: 명단 편집/필터, lazy 통합 팝업, 진도/숙제 주요 흐름 조사.
+  이번 수정: 통합 launcher/import/cache 연결. 별도 전체 버튼 실제 지연 전수 측정 없음.
+file-manage.html: 파일 tree/list, 대상 선택/자료 배정, refresh, box select 조사 및 실제 화면 로딩 확인.
+  이번 수정: 병렬 조회/실패 차단/저장 draft/refresh/listener. rename/upload 등 모든 작업의 실제 실행은 수행하지 않음.
+video-manage.html: 목록 검색/편집, 원본 인덱스, 교정 draft 경계 조사.
+  이번 수정: 목록 계산 비용. 교정 apply/운영 catalog mutation 없음.
+tests.html: catalog/editor/search/statistics/detail 조사.
+  이번 수정: 빈 검색/상세 경합. Chrome+IAB 격리 통계 상세 loading→빈 기록 화면 확인.
+school-cal.html: 조회/revision queue/편집/검색 조사.
+  이번 수정: 검색 전 draft 수집. Chrome+IAB 격리 화면에서 저장 대기 중 검색 초안 보존 확인.
+student.html: bootstrap/watch 병렬, playlist/announcement/test presentation 주요 흐름 조사.
+  이번 수정: backend SID projection. 실제 academy watch 성공은 아래 제한 때문에 미검증.
+index.html: 로그인/자동 로그인/추천 커리/credential 주요 흐름 소스 조사. 실제 auth 변경·모든 버튼 지연 측정 없음.
+student-app.html: 연결 서비스와 default-OFF 기능/배포 계약 대조. 모든 App 기능 실제 활성화 없음.
+student-test-capture.html: 소스 경계 및 default-OFF/OCR gate 보존. OCR provider/worker 품질 시험 없음.
+offline.html: static shell/asset 대조. 별도 offline 지연 실측 없음.
+
+기존 개선 보존
+admin 첫 표 우선 로딩/후속 패널 초기화, calendar single-flight, popup failure cache 제거/저장 무효화,
+전체학생 lazy import/숙제 비차단 로딩, 학생 bootstrap/watch 병렬,
+tooltip SID index/frame batching을 유지했다. 관련 회귀도 통과.
+
+5. 추가 개선 제안과 우선순위
+
+1순위: runtime 손상/경합 방어
+legacy auth와 watch strict store를 먼저 결정적 fixture로 재현한 뒤 각 canonical 저장 경계로 수정.
+순수 검사와 isolated fixture로 먼저 완료하고 운영 데이터 repair와 분리한다.
+
+2순위: modal 저장 command와 화면 session 분리
+공지·학생 공지·날짜 출결에 이번 epoch/owner pattern을 적용.
+통합 로그/진도/이월/시험의 여러 API 저장은 partial-success 의미를 명시하고 향후 서버 command 경계로 묶을지 검토.
+묶는 변경은 기존 쓰기 순서·base 충돌·revision·clear-field·unknown 보존 oracle이 있어야 한다.
+
+3순위: 실제 화면 지연 기준
+각 페이지에 첫 표 표시, popup loading 표시, 내용 ready, 저장 버튼 feedback, 서버 commit 확인, close 완료를 따로 측정.
+대표 데이터 크기와 동일한 반복/브라우저/네트워크 조건으로 p50/p95와 요청 수를 남긴다.
+합성 helper 개선 수치를 사용자 체감 지연으로 환산하지 않는다.
+
+4순위: 중복 조회 합치기
+today refresh의 진행 중 요청 공유를 날짜·force 의미별로 검토.
+popup cache의 pending promise는 완료 전까지 공유하고 TTL은 완료 결과에만 적용하는 방안 검토.
+실패 cache 제거·저장 무효화·날짜 전환·ready 상태 회귀가 선행 조건.
+
+5순위: 구조와 검사 정리
+core.paths 경로 선언과 store 초기화를 분리하여 import의 파일 생성 부작용 축소.
+app import 없는 링크/asset/route owner 검사 편입.
+api_tests historical projection, makeup payload 규칙, bootstrap assigned-test 표현을 책임별 pure module로 점진 분리.
+루트 AGENTS 반복을 child owner 참조로 축소. 현재 안전 규칙을 제거할 근거로 사용하지 않는다.
+
+검증 및 격리 환경
+
+통과
+- python scripts/verify_refactor_safety.py: 전체 기본 suite exit 0.
+  실제 실행은 UTF-8/unbuffered 옵션을 붙였으며 smoke 옵션 없음.
+- python -m compileall -q app.py routes core scripts: exit 0.
+  최초 sandbox 실행은 기존 __pycache__ 접근 오류, 동일 검사 권한 실행으로 통과.
+- 이번 변경/추가 JS/MJS 23개 node --check: 실패 0.
+- 새 7개 verifier 및 기존 identity/file/test 통계 등의 회귀를 default suite에 연결.
+- source baseline과 최종 source의 SHA 비교로 기존 dirty work와 이번 변경을 분리.
+- 독립 reviewer가 수정 전 취약/수정 후 guarded 비동기 재현, video A→B draft 경합과 source guard를 확인.
+  완전 무맥락 reviewer가 아니므로 shower 검사로 표현하지 않는다.
+- 기존 영상 auto-assignment/watch/review/material/test/log/calendar/identity oracle은 default suite 결과에 포함.
+  focused mode만 실행한 결과를 전체 통과로 대체하지 않았다.
+
+새 회귀
+scripts/verify_runtime_path_initialization.py
+scripts/verify_isolated_design_server_manager.ps1
+scripts/verify_attendance_flag_storage.py
+scripts/verify_student_bootstrap_projection_scope.py
+scripts/verify_file_manager_state.mjs
+scripts/verify_video_catalog_render.mjs
+scripts/verify_admin_popup_async_scope.mjs
+
+브라우저/API 증거
+- 격리 127.0.0.1:8004에 QA용 Basic 인증으로 Chrome과 IAB 연결 성공.
+- production credential 복사/사용, Basic gate 제거, public/LAN 노출 없음.
+- 실제 admin manual white 저장 후 /api/progress none 및 __manualProgressMids 확인, reload 후 유지.
+- 격리 /api/logs와 /api/logs/entry 각각 200 확인.
+- 실제 /api/watch POST는 academy_network_required 403.
+  따라서 “실제 automatic watch 후 white 유지”를 브라우저 성공으로 세지 않았다.
+  자동 watch 보존은 임시 route/default 회귀 증거이며 실제 학원망/Kollus 연동은 별도 승인된 QA deployment 범위.
+- 학교 일정 draft/search와 시험 통계 상세를 두 브라우저에서 확인.
+- IAB screenshot으로 한글 및 팝업 layout을 시각 확인. 현재 도구의 screenshot 파일 export/download 경로는 성공하지 않아 저장된 스크린샷 파일 증거는 제공하지 못함.
+- Chrome admin console error 목록은 확인 시 비어 있었음. 모든 페이지의 console 전수 결과를 뜻하지 않음.
+
+최종 서버 상태
+- manager managed:true, HTTP 200.
+- 8004 listener 정확히 1개: 127.0.0.1, PID 37348.
+- isolated codeRoot: C:/server/instance/isolated-design-server/app.
+- runtimePersistent:true, liveRuntimeCopied:false.
+- 8003 /api/ping ok, /app 200, https://app.5a-math.com/app 200.
+- 사용 중인 격리 서버를 유지. 운영 server stop/restart 없음.
+- QA Basic 설정은 해당 프로세스 환경이다. 새 manager restart 때 재주입이 필요하며 소스/runbook에 비밀번호를 저장하지 않았다.
+
+데이터/Git/운영 반영
+- 운영 데이터의 수동 수정·bulk repair·migration·runtime copy·live smoke·테스트 데이터 병합 없음.
+- 격리 runtime만 QA 학생 QAHUB1001329/QA 영상 진도와 학교 일정 QA 입력 검증 행 등 시험 상태가 남음.
+  저장소 초기화/운영 반영 없이 유지. 자동 병합 없음.
+- 시작 Git 상태: staged 0 / unstaged 114 / untracked 14.
+- baseline 대비 기존 44개 파일 수정 + verifier 7개 추가 + 이 보고서 추가.
+  기존 변경과 이번 변경이 같은 파일에 함께 있을 수 있다. 전체 git diff를 이번 작업으로 간주하지 않는다.
+- 최종 Git 상태의 정확한 수치는 아래 최종 기록 및 temp audit의 git-status-after.txt 참조.
+- stage/commit/push 없음. 운영 backend 반영에는 승인된 maintenance/rollout이 남아 있음.
+  격리 실행 코드와 운영 이미-import된 Python 코드는 구분한다.
+
+업무 분담 및 증거 위치
+- GPT-6.1 sol/max 읽기 전용 thread 4개: 문서, backend, frontend, performance 조사.
+- 동일 모델 독립 reviewer 1개: patch/비동기 failure 재현 검토. source 편집은 Hub에서 수행.
+- 조사 thread와 reviewer는 결과를 반환했고 동작 중인 하위 작업을 남기지 않음.
+- 초기 source 602개 baseline, task-source-changes.json, 원 조사 보고서, benchmark JSON, safety-last.log:
+  C:/Users/주인님/AppData/Local/Temp/server-hub-20261001-6z7_fe_e
+- temp 증거는 환경 정리 시 삭제될 수 있다. 이 보고서는 프로젝트 docs에 보존한다.
+
+최종 Git 기록: {"staged": 0, "unstaged": 128, "untracked": 22}
+정적 파일 반영 주의: 운영은 live checkout의 정적 파일을 제공하므로 새 cache key로 reload하면 프런트엔드 변경이 보일 수 있다. 백엔드 프로세스의 변경 반영과 운영 전체 검증 완료는 별도다.

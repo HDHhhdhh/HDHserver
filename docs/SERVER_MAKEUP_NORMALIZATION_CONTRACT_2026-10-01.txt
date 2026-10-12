@@ -1,0 +1,269 @@
+서버 HUB 후속: 보강 서버·브라우저 정규화 호환 계약
+작성일: 2026-10-01 (Asia/Seoul)
+작업 위치: C:/server
+위임 원본 Hub: 01a0f4ec-c498-74a3-ab13-f6ad24d415d2
+보고서: docs/SERVER_MAKEUP_NORMALIZATION_CONTRACT_2026-10-01.txt
+
+입력군 60개(N01–N52, H01–H08)를 대조했다. 차이는 18군으로 묶었으며
+새 의미 선택이 필요한 해석 분기는 7개다. case 수는 표의 입력군 수이며
+assertion 수나 운영 기록 수가 아니다. 저장 투영과 조회 계산은 목적이 달라
+모든 차이를 버그로 판정하지 않는다. 명시적 삭제가 서버 투영 뒤 사라져
+승인 메모로 예약이 다시 계산되는 조합은 실제 순수 소스 실행에서 확인했다.
+그 조합의 운영 존재·발생은 이번 조사에서 확인하지 않았다.
+
+root/core/routes/static/static JS/admin/features/scripts AGENTS,
+canonical PROJECT_FUNCTIONS_AND_LOGIC.md §7(118–137)·§15(406–442),
+LOGIC_DECISION_LEDGER.md D-04(86–91)·D-15(233–237), SERVER_RULES_INDEX.md,
+SERVER_MAKEUP_PROJECTION_FOLLOWUP_2026-10-01.txt를 읽었다.
+의미 정본과 전체 검증 통합은 Hub 소유다. 새 의미의 승인 문서가 아니다.
+
+app/core.paths/실제 route를 import하지 않았다. 운영 JSON/SQLite/CSV/시트 설정을
+읽지 않았고 HTTP·외부 CSV·push·8003/8004 lifecycle·Git 등록도 하지 않았다.
+이번 쓰기는 이 새 보고서 한 파일뿐이다. source/runtime은 변경하지 않았다.
+기존 dirty/staged/untracked는 그대로 두었고 하위 subagent는 사용하지 않았다.
+
+| 표기 | actual owner | 용도 |
+|---|---|---|
+| P | core/makeup_payload_rules.py:17–185, normalize_makeup_date/sid/slots/schedule/manual/payload | 저장·응답 문서의 알려진 필드 투영, 입력 객체 불변 |
+| R | routes/api_makeup_carryover.py:91–103,142–176 | GET, revision, 전체 POST, self-study 재개방 방어, post-save SID 알림 |
+| B | static/js/admin/features/makeupPending.js:5–7,151–181,183–503,513–597 | demand/활성 예약/SID 대기 수 계산 |
+| C | static/js/admin/features/calendar.js:37,499–541,855–894,1531–1540,1792–1822 | outer shape/transport, 1·2타임 편집, 출석 사전 검사·ownership 해제 |
+| Q | core/student_schedule_projection.py:23–46,108–154,186–204 | 별도 public schedule/유효 출석 명단 투영 |
+| H | static/js/admin/features/homeworkCarryover.js:1–65 | 숙검 폼 빈 행 이월/표시/정렬, 결석 보강과 다른 문서 |
+| G | core/log_rules.py:22–65,68–119 | log merge 및 숙제 비교용 투영, H 자동 이월의 서버 counterpart는 없음 |
+
+정상 GET 뒤에는 보통 B(P(x))를 읽는다. B(x)는 raw legacy/캐시/합성 입력을
+직접 넣은 결과다. 표는 두 경우를 구분한다. R은 유효한 revision으로 받은
+문서를 P(x)로 저장하므로 P가 제거한 unknown/null은 저장 결과에서 사라진다.
+GET의 투영 자체가 원본 파일을 재정규화하여 저장하는 동작은 아니다.
+
+‘직’은 기존 literal이 해당 입력/효과를 직접 확인함, ‘근’은 인접 fixture 또는
+구조 hash만 연결됨을 뜻한다. ‘직접 없음’은 해당 조합을 기존 fixture가
+검사하지 않음이다. S는 이번 인메모리 관찰이며 지속형 regression gate가 아니다.
+
+| Oracle | 위치·기대값 |
+|---|---|
+| OP | scripts/verify_makeup_payload_rules.py:58–94,97–173; AST hash 8개, pure import, 독립 literal payload/revision/입력 hash/idempotence |
+| OR | 같은 파일:176–257 route_oracle; OS-temp 실제 Flask route, 400/428/409 무쓰기, 헤더/self-study/post-save SID. 이번 실행 없음 |
+| OB | scripts/verify_makeup_projection_oracle.mjs:17–119; 실제 B VM literal pending/order/slot/SID/self-study/manual/예약/peer note/tombstone/export/hash |
+| OL | scripts/verify_makeup_schedule_links.mjs:55–251,314–445,448–577; B/calendar action VM, alias/tombstone/note 부정 사례, self-study/D-15 기록 보존·읽기 실패 무쓰기 |
+| OE | scripts/verify_exam_attendance.mjs:21–106; 시험 전 날짜·타임·SID·중복/결석/예약/pending literal |
+| OH | scripts/student_mobile_app_checks/homework-admin.mjs:38–77,79–86,471–488; 실제 H, 빈 행 이월/unknown/next 우선/자는 교재 안정 partition |
+| OG | scripts/verify_refactor_safety.py:1699–1741 run_log_rules_unit_checks; 빈 값 보호/clear/sleeping book trim·dedupe·conflict |
+| OQ | scripts/student_mobile_app_checks/dashboard.py:103–166; public 3타임·취소·SID·명단·불가능 날짜. 이번 실행 없음 |
+| OA | scripts/verify_absence_makeup_matrix.py A12; D-04 impossible-date 500+무쓰기+무알림 KNOWN. 이번 실행 없음 |
+| S | source-only Python/Node stdin; 합성 payload20/date7/slot7 관찰, 핵심16 literal 대조 PASS. 파일/route/network 호출 없음 |
+
+날짜·SID 입력 계약
+
+| Case | 입력군 | 서버 P/R | 브라우저 B/C | Existing oracle / 보충 |
+|---|---|---|---|---|
+| N01 | 실제 YYYY-MM-DD, null/빈 날짜 | 실제 날짜 유지, null/빈 값 '' | 앞10자리 모양만 검사, null/빈 값 '' | OP 직99–104; B null 직접 없음 |
+| N02 | 윤일 및 2026-02-29/30 | 유효 윤일만 유지, 불가능 날짜 '' | 불가능 날짜도 모양이 맞으면 유지. formatMakeupDate의 JS Date는 달력을 넘겨 표시 가능 | OP 직100; OB 날짜 근; S 직 |
+| N03 | 선행 공백 있는 T timestamp | T 앞부분 trim하여 날짜 유지 | slice 전에 trim 안 하므로 '' | OP 직101; B 직접 없음; S 직 |
+| N04 | 2026-10-01 09:00:00 | T 분리만 하므로 parser 거부 | 첫10자리 날짜 유지 | OP 직102; B 직접 없음; S 직 |
+| N05 | compact ISO 20261001 | Python3.13 parser 허용, 원 문자열 유지 | 모양 불일치로 '' | OP 직101; B 직접 없음; S 직 |
+| N06 | week ISO 2026-W40-4 | parser 허용, canonical 변환 없이 원 문자열 유지 | 모양 불일치로 '' | OP 직102; B 직접 없음; S 직 |
+| N07 | 2026-10-01junk | parser 거부 '' | 앞10자리 날짜 유지 | OP 날짜 근; 직접 없음; S 직 |
+| N08 | SID7/' 7 ', 0/null/false | str(value or '').strip(): 양수/문자열 '7', falsy '' | demand/manual SID의 String(value \|\| '').trim()은 같은 scalar 결과. roster Map key는 별도 String(stu.id) | OP 직107–108; OB SID 근 |
+| N09 | 같은 personId, 다른 SID | collector는 SID set, personId 통합 없음 | pending/count SID별. export는 별도 학교·학년·이름 grouping | OP 직163; OB 직26–28,56,117; OE 다른 SID 직 |
+| N10 | 공백 있는 key ' s\|2 ' | 전체 key trim, fallback SID는 pipe 앞 trim | 예약 iteration은 trim; carried lookup은 원 rows[sid]/rows[sid+slot] 조회여서 raw 공백 key를 못 찾을 수 있음 | OP 직114–141; raw lookup 직접 없음 |
+| N11 | 예약 originalAbsenceId/studentId 누락 | wrapper가 absence/date/key 또는 manual/date/key·SID를 주입. 단독 helper는 fallback 없으면 null. ID 형식은 nonempty만 검사 | normalizeSchedule은 자체 fallback 없이 raw ID 둘 다 필요 | OP 직138–155,170–173; 기존 verify_makeup_schedule_links.py:65–69 근; B 직접 없음; S 직 |
+| N12 | 결석 key SID와 예약 studentId 다름 | 원 absence ID fallback 보존, collector는 두 SID 수집 | 명시적 예약 item.sid는 linked SID, originalAbsenceId는 보존. note peer SID는 N49 별도 경로 | OP 직138–141,163; OB 예약/peer 근; explicit cross-SID 직접 없음 |
+
+타임·예약·수동 행 계약
+
+| Case | 입력군 | 서버 P/R | 브라우저 B/C | Existing oracle / 보충 |
+|---|---|---|---|---|
+| N13 | [2,1,2], 숫자 문자열1/2 | int 문자열 해석, dedupe+[1,2] 정렬 | 숫자 token, dedupe+[1,2] 정렬 | OP 직105; OB 직62 근 |
+| N14 | slot3/[3,2] | 3 제거; 전부 제거되면 wrapper [1] 기본값 가능 | B는3 허용; C MAKEUP_SLOTS=[1,2]라3 제거 | OP 직105,118; OB 직62,69–95; OE 직44 |
+| N15 | '토2', '1,2' | int 해석 실패 [] | B [2]/[1,2]; C 같은 label 방식이나1·2만 허용 | OP 직105–106; OB 직62; S 직 |
+| N16 | JSON1.0,1.5,-1,true | str(float)가 소수점 포함하여 제거, -1/True도 제거 | JS1.0은1; 1.5/-1의 token도1이라 [1]. true는[] | OP 직105의1.0/True; 나머지 직접 없음; S 직. JSON1.0의 Python float/JS number 차이 관찰 |
+| N17 | times 없이 ownedSlots:[2]만 | times alias chain에 ownedSlots 포함하여 [2] | B times chain에는 ownership 없음: times[1], ownedSlots[2] | OP cancelled 근132–155; active 직접 없음; S 직 |
+| N18 | times:[]+snake[2], ownedSlots:[]+snake[2] | Python 빈 list falsy라 snake fallback | JS 빈 array truthy라 camel[] 선택; times[1], ownership[] | OP/OB aliases/empty 근; 충돌 직접 없음; S times 직 |
+| N19 | 정상 camel/snake 예약 aliases | camel→snake truthy, ID/date/times/created/updated/by 수용 | 정상 scalar alias 같은 우선. outer key 선택은 N20 | OP 직116–141; OL 직182–191 |
+| N20 | scheduledMakeup:null+유효 snake 예약 | camel or snake라 snake 살아남음 | own camel 존재가 우선, null이 snake/note 막음 | OL 직168–180; OB 직110–111; P 충돌 직접 없음; S 직 |
+| N21 | camel {} 또는 []+유효 snake | 빈 dict/list falsy라 snake 선택 | own camel 존재 우선, 빈 예약이 실패해도 snake/note 우회 없음 | OL tombstone 근; container 직접 없음; S {} 직 |
+| N22 | status 누락/null/'', 정상 ' SCHEDULED ' | 기본scheduled, trim+lower | 기본scheduled, trim+lower, 정상 ID/date면 활성 | OP/OB 정상 예약 근; empty 개별 직접 없음 |
+| N23 | status unknown 또는 공백만 | 허용 세 상태 밖이면 scheduled 재분류 | trim+lower 뒤 정확한scheduled 아니면 null | OP body hash 근; literal 직접 없음; S 직 |
+| N24 | completed/cancelled, date 누락 | ID 있으면 date=''여도 메타데이터 유지 | scheduled-only 목록이라 제외 | OP 직124,144–155,171–173; OB 직71–74,98; OL 취소 직314–340 |
+| N25 | 빈 createdBy/ownedSlots/timestamp | timestamps '' 키 유지, createdBy/ownedSlots 비면 생략 | createdBy:''/ownedSlots:[] 키 항상 포함 | OP 직144–147,171–173; OB 직69,92; key 대조 source 근 |
+| N26 | ownedExtra:'false'/1, camel false+snake true | bool(camel or snake): 문자열/1도true, stale snake true도true | ===true만 인정. camel false+snake true는 둘 모두true라 strictness만으로 충돌 해결 안 됨 | OP 직119–141의'false'; OB ownership 근; B raw coercion 직접 없음; S 직 |
+| N27 | manual dateOnly/date_only/slotless 'false'/1/true | truthy OR→bool라 문자열'false'/1도true, slots[] | stricttrue만 dateOnly, 아니면 slots/정규 fallback | OP 직130–151; OB 직37,50; nonboolean 직접 없음; S 직 |
+| N28 | manual state:' carried '/'CARRIED', carried:true | state trim만: 첫 값 carried, 대문자 유지, 별도 flag 제외 | raw exactcarried 또는 carried===true. 공백/대문자는 대기로 남을 수 있음 | OP manual 근; OB carried 직38; trim 차이 직접 없음; S 직 |
+| N29 | manual slots 누락/[]/null+slot2, 정규slot2 | get('slots',get('slot'))라 null/[]가 alias 막음, 비면[1] | slots??slot: null이면slot2, []/누락이면정규slot2, 없으면[1] | OP 직131–152의[]; OB 정규/manual 근; null/정규2 직접 없음; S 직 |
+
+
+
+결석 상태·shape·preservation·순서 계약
+
+| Case | 입력군 | 서버 P/R | 브라우저 B/C | Existing oracle / 보충 |
+|---|---|---|---|---|
+| N30 | by_absence row true/false/null | true는 기본 carried row, false/null은 제거 | true는 carried. false/null은 marker가 없어 원 결석 demand가 pending/supply 판단으로 진행. payload row 제거는 결석 원본 제거가 아님 | OP 직125,148; OB/OL legacy 근; S false 직 |
+| N31 | row 0/' '/[]/{} | 정확한 False/None만 skip; 비-dict는 빈 row가 되어 carried, {}도 기본 carried | carried marker가 없어 pending/supply 진행 | OP root malformed 근/body hash; row scalar 직접 없음; S 0 직 |
+| N32 | state 누락/빈 값/unknown | absence state open/carried/self-study 밖이면 carried | exact state나 별도 flag가 있어야 처리; 그 외 supply/pending | OP legacy/default 직; OB open/supply 근; S unknown 직 |
+| N33 | absence state ' OPEN '/' SELF-STUDY ' | trim+lower하여 open/self-study | exact 비교라 raw 공백/대문자가 강제 대기·자습 제외를 보장하지 않음. OPEN이 무공급 때 같은 pending이어도 공급 있으면 차이 가능 | OP 직115–143; OB self-study 직33,55; casing 직접 없음; S OPEN 무공급 관찰 |
+| N34 | state와 carried/open/pending flags 충돌 | absence state만 읽고 flags 제외 | self-study → carried(state/true flag) → open(state/open/pending true) → supply 순. state:open+carried:true면 carried 우선 | OP state 근; OB55 우선순위 근; 충돌 직접 없음 |
+| N35 | exact self-study, 이후 일반 결석과 supply | state 보존, pending/공급 계산은 안 함 | 제외하면서 supply는 소모하지 않음. 뒤 일반 결석이 공급 사용 가능 | OP 직123,143; OB 직55; OL 직386–404 |
+| N36 | 기존 self-study row에 POST open | P 단독은 open. R은 같은 date/key의 요청 row가 open일 때만 self-study 복원. 삭제/다른 상태 전부를 막는 guard는 아님 | 실제 today/calendar action도 재개방 방지. 독립 manual demand는 허용 | OR 직242–251; OL 직405–445; OB 직50 |
+| N37 | base SID와 SID-slot row 공존 | 두 key 독립 보존, collector는 base SID | truthy base SID row 먼저라 모든 slot 가림. base self-study가 낡은 slot open도 가림 | OP key/collector 근; OL 직444–445; S 직 |
+| N38 | state:open+유효 scheduledMakeup | 두 필드 모두 보존, 일관성 validation 없음 | 예약 목록과 open pending 양쪽에 나타남. pending은 예약 객체를 별도로 차감하지 않음 | OB 정상 carried 예약 근; 모순 조합 직접 없음; S 직 |
+| N39 | legacy root {date:{SID:row}} | by_absence가 dict 아니면 root를 absence map으로 wrapper화 | pending lookup은 legacy root 수용; scheduled/C outer는 by_absence만 읽어 raw legacy 예약 누락 | OP 직166; OL 정상 wrapper 근; legacy 예약 직접 없음; S 직 |
+| N40 | non-object root/by_absence:[]/manual:[] | P는 빈 projection, R POST non-object 400. dict nested 불량은 제거 | C/B의 typeof object는 array를 완전히 reject하지 않음. 빈 결과가 나와도 strict validation 증거가 아님 | OP 직167–168; OR 직231–241; B nested array 직접 없음 |
+| N41 | carryover.manual만 주고 manualMakeups 생략 | manual이 문서 일부 | pending은 별도 manualMakeups, scheduled는 carryover.manual. C는 manual을 명시 주입 | OB 직35–39,55; C1531–1540 source; 생략 직접 없음 |
+| N42 | unknown root/absence/manual/schedule | P whitelist 출력 외 제거, R 성공 저장도 제거. 입력 불변과 출력 보존은 별개 | C는 nested map 참조 유지로 unknown을 일단 보존. B 계산 행/예약은 known field 위주, student 참조 유지. H row spread와 다름 | OP 직111,115,120,160–162; OB61/99는 입력 불변만 |
+| N43 | 입력 객체/unknown nested | 원 입력 수정 없음 | 입력 hash 불변. 출력 student 참조가 원 roster 객체일 수 있어 deep clone 계약은 아님 | OP 직161; OB 직61,99; OH row 참조 직72 |
+| N44 | key 순서/unknown만 다른 revision | normalized whitelist를 sort_keys+compact UTF-8 JSON SHA-256. 제거/기본화된 차이는 revision에 안 남음 | C는 서버 헤더 revision 저장·If-Match 전달, 독립 revision 계산 없음 | OP 직164–165; OR 직218–240; C876–894 source |
+| N45 | 날짜/SID trim·T 분리 후 key 충돌 | 뒤에 처리한 normalized key가 덮음. 날짜 충돌은 row map 전체 교체, merge 아님 | demand/예약은 seen으로 먼저 추가한 표시 key를 보존하는 별도 규칙 | OP/OB 불변 근; 충돌 직접 없음; P149–180/B288–297,433–436 source |
+| N46 | map 삽입 순서/화면 순서 | pure map 처리 순서. HTTP JSON object 순서는 업무 순서 계약 아님, revision은 key 정렬 | pending: absenceDate→한국어 numeric name→SID→slot. scheduled: makeupDate→absenceDate→name→slot. export는 별도 정렬 | OB 직49–59,90–98,117; P order 개별 직접 없음 |
+| N47 | 별도 s-slot1/s-slot01 key가 같은 표시 ID | 두 key/명시 originalAbsenceId 모두 보존; ID 중복·형식 validator 아님 | seen은 item에서 재구성한 makeupOriginalAbsenceId, raw schedule original ID 자체가 아님. 첫 행만 표시 가능 | OB provenance 근; 충돌 직접 없음; S 직 |
+| N48 | operatingDate/minAbsenceDate/활성 기간 | 지난 예약 삭제 없음, calendar 활성화 날짜를 저장 문서에 넣지 않음 | active는 makeupDate>=운영일. pending minDate는 표시만 제한, count/이월은 minDate 무시. localStorage helper는 별도 경계 | OB 직57–60,96–98; OL 직110–123 |
+| N49 | 승인 직보 note만 있고 schedule key 없음 | note trim 보존, 예약 생성 없음 | carried·단일 같은 줄 승인·바로 앞 결석 날짜/타임 provenance 일치 시 활성 예약. peer SID는 creditedStudentId, 원 SID ownership false/[] | OB 직100–109; OL 직125–145,192–251 |
+| N50 | 승인 note+scheduledMakeup:null 왕복 | null 출력 생략, note/state 보존: GET/성공 POST에서 tombstone 존재 여부 손실 | B(raw) 0건, B(P(raw))는 key가 없어 note-derived 1건. stale snake면 N20처럼 직접 예약 부활 | OB/OL raw tombstone 직; OP null 출력 근; 왕복 기존 oracle 직접 없음; S 직 |
+| N51 | D-15 ownedExtra:false/ownedSlots:[]·실제 출석/로그 | false 보존, 빈 ownedSlots 생략 | B는 ownedSlots:[] 재구성. C key 누락 시 planner+ownedExtra===true일 때만 times 추론, false면 해제 없음. 최신 출석 true/1/nonempty log면 출석 관련 저장 생략. 동시 쓰기 원자 보장은 없음 | OP 직171–173; OB 직69,92; OL 직529–576 특히550 |
+| N52 | 하나의 ‘slot 3 지원’ 정책으로 묶는 주장 | P 저장 1·2, Q 별도 parser 3 허용·18:00 기본 | B 조회/시험 집계 3, C 편집 1·2, exportSlotLabel도 1·2만 표시 | OP/OB N14 직; OE44 직; OQ107,125 직; C37/B605–607 source. 공통 지원 변경 근거 없음 |
+
+숙제 이월은 별도 의미다. 아래 서버는 G의 비교·merge 경계이며 G 비교를
+실제 저장 payload로 쓰거나 H를 P로 대체해서는 안 된다. 실제 H 호출부는
+logModal.js:2057–2075에서 DOM deleted/sleeping 문자열을 boolean으로 주입한다.
+raw helper alias 차이가 현재 폼의 재현 버그라는 뜻은 아니다.
+
+| Case | 입력군 | 서버 G/보강 P와의 경계 | 브라우저 H | Existing oracle |
+|---|---|---|---|---|
+| H01 | next/this null·공백·0·false | G this/next는 or 기반 falsy 제거, pct 0 유지. P 텍스트도 or이나 다른 문서 | String(value??'').trim()이라 0→'0', false→'false'; previousHomeworkText는 next→this | OH 직56,61; 0/false 개별 직접 없음; G78–89 source |
+| H02 | deleted/sleeping true,'true',1,_deleted/_del | G compare는 _deleted/_del/deleted truthy OR, H 이월 정책 아님 | strict true만 이월 제외. 문자열/숫자/_deleted만으로 helper를 막지 못함. 실제 폼은 DOM flag boolean화 | OH sleeping true 직42–58; nonboolean/deleted alias 직접 없음 |
+| H03 | 현재 네 필드 blank+의미 있는 previousThis | G/P에 자동 이월 없음, G merge는 빈 값으로 기존 log 필드 제거 금지 | this=trim(previous), pct='0', carriedFromPrevious:true. 일반 저장 아닌 숙검 action에서 호출 | OH 직38–56; OG 직1712–1718; logModal2057–2092 source |
+| H04 | this/pct/comment/next 하나라도 값, pct 숫자0 | 빈 값 merge 보호와 다른 입력 조건 | cleanText 하나라도 있으면 이월 금지. pct 0도 명시 입력. 값 유지+carried:false | OH this 값 직46–60; pct0/comment/next 개별 직접 없음 |
+| H05 | previousThis 누락/null/빈/'숙제 없음' | G compare는 previousThis 안 읽음 | 이월 없음, trim한 sentinel exact match. 낡은 carried true도 false로 덮음 | OH 빈/수동 근; sentinel/marker 직접 없음 |
+| H06 | legacy name/unit/rem 행 | modern book/this/comment/next key 없으면 G compare aliases 수용 | modern field와 previousThis만, legacy rem은 명시 입력으로 인정 안 함 | G77–92 source; OH modern 근; legacy 직접 없음 |
+| H07 | 교재 공백·대소문자/sleeping 목록/사용자 순서 | G 목록은 공백 없는 lower key dedupe, 첫 표시 문자열·순서 유지 | 같은 계열 key로 비교, awake→sleeping 안정 partition, 그룹 안 순서/원 row 참조 유지 | OH 직63–77; OG 직1724–1741 |
+| H08 | unknown nested/invalid rows/root | G compare는 known 6 field/non-dict skip, merge는 log unknown 유지. compare는 저장 삭제 정책 아님 | {...row,...} shallow clone으로 unknown 유지·nested 참조 공유. non-array root는 [], null/scalar 원소는 {carriedFromPrevious:false}. partition은 row clone 없음 | OH vendorMeta 직39–55/참조72; malformed/shallow identity 직접 없음 |
+
+차이 목록 18군은 원인별 묶음이며 버그 18건이나 새 정책 승인을 뜻하지 않는다.
+
+| 차이군 | Cases | 현재 호환 계약 |
+|---|---|---|
+| D01 | N02–N07 | 실재 날짜 parser/앞 10자리 모양 parser/compact·week 원문 |
+| D02 | N14–N16,N52 | 저장 정수 1·2/label 조회/public 3/편집·export 범위 분리 |
+| D03 | N11–N12 | 서버 context ID 보충/브라우저 raw ID·linked SID 투영 |
+| D04 | N17–N18 | times·ownership fallback/빈 container truthiness |
+| D05 | N20–N21 | outer truthy alias/own-property tombstone 우선 |
+| D06 | N23 | unknown status scheduled 기본화/활성 조회 제외 |
+| D07 | N24,N48 | 완료·취소·과거 연결 보존/활성 화면·기간 filter |
+| D08 | N25 | optional key 생략/항상 빈 key 포함 |
+| D09 | N26 | ownedExtra truthy coercion/strict true/alias 충돌은 별도 |
+| D10 | N27 | manual dateOnly truthy/strict true |
+| D11 | N29 | manual nullish alias·정규 fallback/저장 [1] 기본 |
+| D12 | N28,N33 | manual trim/absence trim+lower/raw exact state |
+| D13 | N30–N34 | carried 기본·false/null 제거/raw flags·supply |
+| D14 | N39–N41 | legacy root/nested shape/별도 manualMakeups 인자 |
+| D15 | N42–N44,H08 | 입력 불변/unknown 출력 제거·보존/비교 투영 구분 |
+| D16 | N45–N47,H07 | 저장 key 충돌/표시 dedupe·sort/안정 partition |
+| D17 | N49–N50 | note-derived 예약/tombstone 왕복 손실 |
+| D18 | H01–H06 | 숙제 nullish text/strict flags/modern aliases/sentinel·자동 이월 |
+
+
+
+새 의미 선택이 필요한 해석 분기 7개
+
+어느 후보도 이번 작업에서 적용하지 않았다. D-04와 D-15의 이미 승인된
+의미는 새 선택 대상이 아니다. 최신 선택과 canonical 통합은 Hub가 맡는다.
+
+| 분기 | 후보 | 영향·승인 경계 |
+|---|---|---|
+| I01 날짜 | 현재 coercion 명시 / 신규 carryover HTTP만 strict real YYYY-MM-DD / compact·week canonical 변환 | 키 충돌·조회 누락·삭제·revision에 영향. D-04 예외는 whole-map absent뿐이며 P의 날짜 호환 확대 근거가 아님. source patch/운영 재정규화는 별도 범위 |
+| I02 타임 | P1·2/B조회3/Q3/C편집1·2 유지 / 저장·편집을3까지 확대 | 새 타임 의미·default time·시험 전 횟수·export label·revision 연동. helper 공유만으로 지원 범위를 확대하지 않음 |
+| I03 삭제·alias | 기존 P truthy 명시 / 명시 camel tombstone을 서버 출력에도 유지 / 전용 clear로 stale alias·승인 note를 함께 좁게 교정 | raw browser tombstone 의미는 고정돼 있지만 왕복 불변은 기존 oracle에 없음. S에서 재등장 확인. null output·alias 우선·revision·구형 소비자가 바뀔 수 있어 extraction에 합치지 않음. 실제 운영 교정 승인 없음 |
+| I04 boolean | legacy coercion 유지 / 신규 HTTP exact boolean reject / 정의된 legacy 값만 변환 | ownedExtra/dateOnly의 문자열'false'/1, ownership 해제, 수동 dateOnly 회차에 영향. H의 deleted/sleeping까지 통일할 근거 없음. D-15 기록 보존은 계속 필수 |
+| I05 state·default | unknown/default carried 유지 / raw legacy flags를 서버에서도 해석 / 불명 상태 reject·격리 | 대기/supply 소비·self-study 방어·manual 독립성에 영향. completed/cancelled 저장과 scheduled-only 조회는 목적에 따른 분리라 강제 일치가 필요하지 않음 |
+| I06 unknown·shape | whitelist/revision 명시 / 알려진 확장 필드만 보존 / row merge와 explicit clear 별도 설계 | R은 revisioned 전체 문서 교체, unknown 출력 보존 계약 없음. 확대는 ETag/If-Match·full-map writer 검토 필요. G 비교/H shallow 보존을 보강 저장 규칙으로 복사하지 않음 |
+| I07 조합 불변 | 정상 writer의 carried+schedule 약속 문서화 / 신규 저장 open+scheduled·ID 충돌 validation / 원자 예약·출석 트랜잭션 별도 설계 | N38 pending+scheduled, N45–47 key/dedupe, raw Q fallback을 검토. D-15 preflight 뒤 동시 출석 쓰기 공백은 별도 서버 과제. 근거 없는 운영 일괄 repair로 해결하지 않음 |
+
+직접 oracle가 없는 가장 구체적인 왕복 사례
+
+{"by_absence":{"2026-09-25":{"s|2":{"state":"carried","scheduledMakeup":null,"note":"예정 정규수업 결석: 2026-09-25 2타임 / 직보 추가등원 예약으로 1회 차감: 2026-09-27 2타임 교재실 (s). 실제 이행 완료 표시는 아님. [approved-fixture-20260923]"}}},"manual":{}}
+
+P(raw)의 s|2에는 state:carried, updatedAt:'', 위 note만 남고 schedule key가 없다.
+실제 B 소스에 students:[{id:'s'}]와 raw를 넣으면 예약0건, P(raw)를 넣으면
+2026-09-27 slot2 예약1건이며 note-derived ownership은 true/[2]다.
+실제 HTTP/저장소에 넣지는 않았다. R의 정상 GET/POST가 P를 호출하는 연결은
+source에서 확인한 사실이다. OB/OL은 raw null suppression을 직접 확인하지만,
+OP에는 이 정확한 왕복 literal이 없다. 다음 검증 작업은 기대값을 literal로
+고정한 cross-boundary fixture부터 시작할 수 있으며 의미 선택은 Hub에 남긴다.
+
+기존 보고서의 integration seam을 현재 actual에 다시 대조했다.
+notifications.py:375–376은 public makeup_student_ids import/collector를 이미
+사용한다. verify_refactor_safety.py:786에는 독립 Python verifier, 1131에는
+browser oracle가 등록돼 있다. 과거 ‘미연결’을 현재 미완료로 재보고하지 않는다.
+전체 default/notifications suite 통과 여부는 실행·판정하지 않았고 Hub 소유다.
+
+검증 기록
+
+Python3.13.15, Node v24.15.0에서 아래를 실행했다.
+
+- Python stdin에 verifier를 __main__ 아닌 namespace로 읽고 load_rules(False)와
+  payload_oracle만 호출: 40 assertions PASS. app/core.paths가 sys.modules에
+  없음을 추가 확인했다. route_oracle/related_gates 호출·임시파일 저장도 없다.
+- node scripts/verify_makeup_projection_oracle.mjs: 15 assertions PASS.
+- node scripts/verify_makeup_schedule_links.mjs: PASS. 실제 소스 VM action,
+  self-study/D-15 기록 보존·읽기 실패 무쓰기; HTTP는 fixture stub이다.
+- node scripts/verify_exam_attendance.mjs: 45 checks PASS.
+- node scripts/student_mobile_app_checks/homework-admin.mjs: 19 assertions PASS.
+  실제 H와 합성 demo/fake DOM/in-memory sessionStorage, live fetch0을 확인한다.
+- 추가 source-only Python/Node stdin 관찰: payload20/date7/slot7, 핵심16개
+  literal 비교 PASS. 최초 manual fixture에 관계없는 slot-absence demand가
+  섞여 관찰 검사가 실패했고 fixture 입력만 분리하여 재실행했다. 소스는
+  수정하지 않았다. 기존 oracle119 assertions 및 OL PASS와 별도 증거다.
+
+OR/OA/OQ·full default suite·live smoke·실제 브라우저/스크린샷은 실행하지 않았다.
+단일 문서 작업이며 app/core.paths import·운영 read가 금지된 범위라 pure/VM에
+한정했다. 실행하지 않은 gate를 PASS로 표기하지 않는다.
+
+작업 기준 Git 상태는 staged0 / unstaged155 / untracked59였다. 아래 파일은
+기존 dirty/untracked였다: routes/api_makeup_carryover.py, calendar.js,
+makeupPending.js, homeworkCarryover.js, verify_makeup_schedule_links.mjs는
+기존 unstaged; core/makeup_payload_rules.py와 새 payload/browser oracle는
+기존 untracked였다. 이 보고서만 이번 신규 파일이다.
+조사 중 상태는 staged0 / unstaged155 / untracked64였으며 증가5개 중 이
+보고서 외4개는 Hub/다른 task의 새 보고서다. source/runtime/Git 등록을
+이 task가 바꾼 것은 없다. 운영 파일 fingerprint를 위해 운영 read도 하지 않았다.
+
+주요 소스 raw SHA-256
+
+core/makeup_payload_rules.py
+6ae0297561f55d11eb2ba11d353a2bde6909c509ee6b499842772414ae5b6830
+routes/api_makeup_carryover.py
+4df5e25f6c7182d9ebf0545552aa2d45368467c6533aa1528964c35da5098bfc
+static/js/admin/features/makeupPending.js
+45e3140daca0e7b28f76e50f63d4714ff4386de701983fcbf302366875fa48a9
+static/js/admin/features/homeworkCarryover.js
+961ada4ad8346369423e296a440dca11b0c5613648499876c01fb0829d6d8c7e
+core/student_schedule_projection.py
+74a9338d669db0ec3fabcac1e7e87cf7ca0c1c04272704d281bc954cf75cab30
+
+보호 대상12개 core/routes/browser/oracle 소스 중11개의 hash가 조사 전후 같았다.
+calendar.js는 공유 Hub 작업 중 raw hash가 아래처럼 바뀌었다. 이 task의 편집은
+아니며, 표에서 인용한 slot/outer shape/pending/history/ownership 함수의 현재
+위치를 다시 읽었다. 관련 OL을 현재 파일에서 재실행한 결과는 마지막 검증
+기록에 추가한다. 전역 dirty 변화 전체를 이번 작업으로 해석하지 않는다.
+
+calendar.js 조사 기준 raw hash:
+9bf728abc9268db1e8b98ce4a49a6087d152edf99a13d162eeba089c5dd524a5
+calendar.js 후속 관찰 raw hash:
+17cc5437cb00719444a1e3042770b9ca944e3e2592c9894a868d3c4dee3f6413
+
+apply_patch의 일반 파일쓰기 오류 두 번 뒤, 허용된 같은 보고서 경로에 normal
+UTF-8 file I/O로 저장했다. 명시적 권한 거절·자동 승인 거절은 없었으며 경로,
+ACL, sandbox policy를 바꾸거나 별도 위치로 우회하지 않았다.
+
+Hub 다음 경계는 canonical §7/§15에 현재 호환 계약을 연결하고, 필요하면 I03
+왕복 literal과 직접 oracle 없는 coercion/충돌 사례의 검증을 별도 scope로
+추가하는 것이다. 이번 보고서는 의미 통일·운영 재정규화·CSV 동기화·추가
+운영 재시작·출석 이력 변경 권한을 만들지 않는다.
+
+
+최종 현재 calendar 검증: node scripts/verify_makeup_schedule_links.mjs 재실행 PASS.
+
+
+Hub 승인 후속: 사용자 선택 보존(2026-10-01) / D-17
+I03 scheduledMakeup:null 왕복 손실 분기는 명시적 삭제 표식 보존으로 수정한다. 결석·수동 row 및 camelCase 누락 시 legacy alias null을 보존하며, 키가 없는 메모·다른 정규화 차이는 유지한다. 운영 데이터 일괄 정규화는 하지 않는다. 순수 literal/alias/멱등/revision 및 임시 실제 POST→GET→브라우저 projection 검증153+21 assertions PASS. 관리형 QA·전체 검증·운영 반영 상태는 Hub 실행 계획에서 별도 관리한다. 위 조사 당시 소스 hash와 미확정 분기는 과거 기준 기록이다.

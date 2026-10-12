@@ -1,0 +1,167 @@
+server 관리자 Basic 인증 지연 개선 인계 / 2026-10-01
+
+상태: 원본 소스 미수정. OS Temp의 검토 가능한 제안 소스와 패치 준비 완료.
+Hub: 01a0f4ec-c498-74a3-ab13-f6ad24d415d2
+편집기 실제 오류: Failed to write file C:\server\core\admin_auth_cache.py
+오류 발생 뒤 원본 대상에 다른 쓰기 경로, 권한 승격 또는 ACL 변경을 시도하지 않았다.
+오류 메시지만으로 자동 승인 review 거부 또는 ACL 원인을 확정하지 않았다.
+
+정확한 적용 후보 4개
+core/admin_basic_auth.py (변경)
+core/admin_auth_cache.py (작은 신규 helper)
+scripts/verify_admin_auth_latency.py (신규 standalone verifier)
+docs/SERVER_ADMIN_AUTH_LATENCY_2026-10-01.txt (이 보고서)
+
+Temp 위치
+C:\Users\주인님\AppData\Local\Temp\server-admin-auth-20261001-vm3cagod
+후보 소스: proposed/ 아래 위 4개 상대 경로.
+원본 캡처: before/core/admin_basic_auth.py; baseline.json에 캡처 당시 SHA-256과 기존 Git 상태.
+적용 파일: admin-auth-latency.patch, admin-auth-latency.apply_patch.txt.
+파일별 정확한 SHA-256과 보호 함수 hash: handoff-manifest.json, SHA256SUMS.txt.
+허가된 편집기에서 검토 후 적용할 자료이며, 이 쓰레드에서 적용한 결과가 아니다.
+
+원인과 반증
+원본 verify_admin_authorization은 요청마다 환경-backed username/hash를 읽고 Basic 해석 뒤
+check_password_hash(password_hash, password)를 실행한다. 성공한 같은 자격증명도 요청마다 KDF를 반복한다.
+캡처한 실제 원본을 합성 입력으로 실행한 초기 측정은 scrypt 중앙값 135.9185ms,
+PBKDF2 100만 회 중앙값 622.8571ms였다. KDF만 제거한 합성 대조군은 각각 0.0029ms, 0.0039ms.
+반복 12건 + 동시 4건 모두 원본 KDF 16회였음은 benchmark-before.json에 기록했다.
+원본을 신규 verifier에 넣으면 'two successes must perform exactly one real KDF'에서 exit 1.
+negative-control-before.log는 측정기가 원래의 반복 검사를 실제로 구분함을 증명한다.
+
+Hub 전달 UI 관찰은 8004 Chrome navigation responseEnd /admin 620.8ms, /tests 699.5ms, /all 8.8ms.
+이 쓰레드는 운영 또는 실제 8004 자격증명과 hash를 읽지 않았다.
+따라서 실제 8004 hash가 PBKDF2인지, 전체 HTTP/화면 지연에서 인증이 차지하는 비율이 얼마인지는 미확정이다.
+소스 경로의 반복 KDF 비용은 재현했지만, 실제 UI 개선 수치로 환산하지 않는다.
+
+제안 동작
+- 환경-backed username/hash를 모든 요청에서 새로 읽는다.
+- 원래 _configured_value와 _basic_credentials를 수정하지 않았다.
+- username 비교식과 check_password_hash 호출/기존 TypeError·ValueError 실패 처리는 그대로다.
+- 완료한 성공만 5초의 고정 TTL로 재사용한다. hit는 TTL을 연장하지 않는다.
+- 성공은 최대 64개, 진행 중 record는 최대 8개. 저장하는 자격증명 키와 설정 식별자는
+  process-local 256-bit 난수 secret의 HMAC-SHA256 digest이다.
+- 캐시에 평문 비밀번호, 원래 Authorization, username 문자열, password hash 원문을 보관하지 않는다.
+  성공 map은 digest→expiry, 진행 map은 digest→Event, 설정은 digest만 보관한다.
+- 같은 성공의 cold concurrent 요청은 KDF 한 번을 공유한다.
+- 실패는 캐시하지 않는다. 대기 뒤 성공 cache가 없으면 각 요청은 자기 KDF를 병렬 실행한다.
+  진행 중 검사 대기는 성공 TTL과 독립적이다. 소유 검사의 finally 또는 설정 무효화가
+  대기자를 깨우며, 포화 시에는 자기 전체 KDF 검사를 실행한다.
+- username/hash가 바뀌거나 누락되면 기존 성공과 진행 record를 무효화하고 대기자를 깨운다.
+- KDF 또는 hit 전후에 환경-backed 설정을 재관찰한다. 진행 중 설정이 바뀐 결과도 거부한다.
+- 설정의 unpaired surrogate는 fingerprint/HMAC와 username 비교에서 안전하게 False로 처리하며
+  기존 성공을 무효화한다. 새로운 인증 허용 범위를 추가하지 않는다.
+- 실패·최초 요청·TTL 만료·설정 변경은 전체 KDF를 유지한다. hash method/params는 바꾸지 않았다.
+- 보호 경로, 네트워크 해석, API exemptions, challenge/no-store headers, 계정 비밀번호는 변경하지 않는다.
+- cache는 process-local이고 디스크 저장은 없다. 프로세스 재시작/다른 프로세스에는 성공이 공유되지 않는다.
+  TTL 만료 항목의 정리는 다음 조회에서 수행되며, 만료된 항목은 인증을 허용하지 않는다.
+
+최종 합성 전후 benchmark (동일 캡처 원본, 같은 fixture/hash params)
+Python 3.13.15 / Werkzeug 3.1.3 / Flask 3.1.2.
+warmup 1, 반복 sample 12, 실제 cold concurrent worker 4.
+p95는 nearest-rank이며 12개 sample에서는 최댓값이다.
+
+method                     반복 중앙값 전→후(ms)             p95 전→후(ms)
+scrypt:32768:8:1            122.5308 → 0.0212           129.4921 → 0.048
+pbkdf2:sha256:1000000       629.6224 → 0.0211           645.8472 → 0.049
+
+첫 요청 scrypt 124.2708 → 124.1918ms;
+PBKDF2 630.9315 → 670.8762ms.
+첫 KDF 자체를 빠르게 하거나 강도를 낮추는 변경이 아니다.
+반복 warm 12건 KDF는 12 → 0, cold 동시 4건 KDF는 4 → 1.
+cold 동시 batch: scrypt 141.4416 → 123.7545ms,
+PBKDF2 953.8848 → 713.8653ms.
+모든 숫자는 합성 source/KDF 측정이다. HTTP, runtime JSON/SQLite I/O, 브라우저 layout/paint를 제외한다.
+최종 benchmark-before-after.json은 측정한 before/after/cache 소스 SHA-256과 개별 sample을 포함한다.
+
+독립 literal / 실제 경합 검증
+standalone 331 assertions 통과; benchmark 포함 최종 387 assertions, exit 0.
+verify-final-benchmark.log와 verification-final.json에 최종 source/cache hash, protected hash, 측정이 기록됨.
+성공/틀린 암호/틀린 사용자/colon·한국어/대소문자 Basic scheme/기존 whitespace 및 엄격 Base64·UTF-8
+해석의 literal oracle을 실제 check_password_hash로 실행한다.
+실패는 매회 독립 KDF, 정상 config의 wrong username도 이전처럼 KDF를 실행함을 관찰한다.
+환경 dict는 synthetic fixture로만 교체한다. 실제 환경 credential을 조회/복사하지 않는다.
+username/hash rotate, 동일 password 재hash, 누락/non-string/형식 오류, 복구 후 새 KDF,
+KDF 중 회수와 Unicode 손상, 완료 후 고정 TTL/경계 시각/hit 비연장, 64-entry eviction을 검증했다.
+Event/Barrier/ThreadPoolExecutor로 실제 스레드를 동시에 진입시켜 성공 한 번 공유,
+실패 대기자의 병렬 독립 KDF, 설정 변경 시 old owner/waiter 모두 거부,
+8 inflight cap과 9번째 독립 체크 병렬 진행, 예외 후 정상 재시도를 관찰한다.
+cache 내부 inspection은 보관 형식·용량·평문 부재 확인에만 사용한다.
+경합 증거는 외부 checker/event/clock 관찰과 결과 literal이며 private queue 상태를 증거로 대체하지 않았다.
+
+기존 auth 회귀
+scripts/verify_admin_access_and_student_logs.py의 run_admin_basic_auth_checks와
+scripts/student_mobile_app_checks/admin_auth_contract.py의 run_admin_auth_contract를 그대로 호출했다.
+이 두 auth 부분을 실행했으며 operation-log 전체 verifier나 student-mobile 전체 suite 통과로 표현하지 않는다.
+실제 routes.pages hook을 임시 HTML과 주입된 제안 verifier로 실행해 warm success 뒤 wrong header도 401,
+기존 challenge 및 Cache-Control: no-store, protected aliases와 기본 auth policy를 확인했다.
+app 또는 core.paths import가 없음을 마지막에 assert한다. HTTP listener나 live GET을 실행하지 않았다.
+
+Unicode reviewer 추가 지적
+Hub가 제공한 reviewer의 unpaired surrogate 설정 username 지적을 반영했다.
+캡처 원본은 UnicodeEncodeError, 제안은 False: unicode-before-after.json.
+양쪽 surrogate와 prefix/suffix 조합을 username/hash에 넣어 총 8개 fixture를 확인했다.
+설정 손상 후 복구는 캐시를 살리는 대신 새 KDF를 수행하며, 검사 중 손상도 성공을 폐기한다.
+
+보호 소스 hash (원본과 제안 모두 동일)
+ADMIN_USERNAME_ENV: 33fb035459772130f1ad003686e61080a98f4d88f0be4b8e0974832fbcce2469
+ADMIN_PASSWORD_HASH_ENV: f0bdcb2fb4885f2459aa83fefba456dbb30a70948a9e2db6c15e22528606a682
+ADMIN_AUTH_CHALLENGE: c41fe8aed4656377e869429f3ed1e322aa0f8f284d925bb97092904c4e2cb33a
+EXTERNAL_ADMIN_API_EXEMPT_PATHS: e516636e134a57cd27e3232de4f0a491c8f39bc3438228c19f7e2a399cd5cc94
+EXTERNAL_ADMIN_API_EXEMPT_PREFIXES: 8153aaf0075349ae5390fa7497680eda48670d65ce3595c279e99536f7d83d20
+_configured_value: 461f94d1c075298412d9bb2b9983c8e7bfe211a8b2d8046b7c20bac0e6ff7638
+_basic_credentials: f43635f5fb553935d56a1b8f86f8853fa23e2387d0a594496124d108e4cf6e20
+admin_network_allowed: bbdc62c72b278e0c2dec57c92c359944571df2177254e3e3bcddb6bf08dc3312
+external_admin_api_auth_required: 2f2c589a2370112e3c9b0790fb146f9d852daf110c4ba365b9b8bb0e2a91c207
+__all__: 1f1d25f2826ed197ced29c6830e4c786a4af25af7ecaf991c57647f61ecf4819
+username 비교식: 3e6ab1f07a4b47adcd147c1d53c0b516b8e9ab670ba3a324fc11aa05f4a22d36
+password verifier 호출: eae04f173888bdf927ecdbd72bd301544b726d591c731d1221cce72d21541e7f
+
+원본 auth 전체 SHA-256: 810afd7efb29c65312dfd7c2448f005ebdf95078d0ae6bec61d35f03046f8cc9
+제안 auth 전체 SHA-256: 75de4eafff56a6a0a24a764ef99afb19e490131a7ff2b5fffe4770bd59b913e0
+제안 cache SHA-256: 6c7eec4449ceb42b34e09225e376c94264c7ae7ade56e2cdf9747e7168d3e1e0
+verifier/report/patch를 포함한 정확한 전체 파일별 SHA-256은 handoff-manifest.json과 SHA256SUMS.txt 참조.
+
+인계 전 검토
+sip: 완료 범위의 소스/회귀/benchmark를 검토했고 실패 대기자의 불필요한 직렬 재공유를 제거했다.
+mandela: 측정 recipe 공개, 실제 원본 캡처, 원본 negative control, 실행 KDF 카운트와 외부 시간 측정,
+독립 literal·기존 auth oracle을 사용했다. 보조 wrapper는 실제 Werkzeug KDF를 호출한다.
+factchk: 측정 수치는 JSON 원자료, KDF 계약은 설치된 Werkzeug security.py 원문에 대조했다.
+SSOT read-only: 정본 PROJECT_FUNCTIONS_AND_LOGIC §3과 현행 auth owner/기존 회귀를 두 검색으로 대조.
+history의 과거 학원망 한정 설명은 역사 자료로 구분했고 현재 보호 정책을 바꾸거나 규칙 문서를 수정하지 않았다.
+새로운 정본·auth 설정·운영 절차를 이 보고서로 제정하지 않는다.
+이 쓰레드에서 하위 agent는 사용하지 않았다. Hub reviewer 지적 외에 전체 patch 독립 agent 검토는 수행하지 않았다.
+같은 세션의 직접 검토를 독립 reviewer PASS로 표시하지 않는다.
+detool/별도 prose rewrite와 무맥락 agent 검토는 이 source/운영 증거 인계 범위에 적용하지 않았다.
+
+전담 인계 당시 Git / 운영 / 미완료 gate (최신 Hub 상태는 아래)
+시작 staged 0 / unstaged 146 / untracked 42.
+마지막 snapshot staged 0 / unstaged 147 / untracked 49.
+다른 Hub/위임 작업이 동시에 진행 중이며 이 쓰레드의 원본 source edit는 0개다.
+대상 auth 파일은 캡처 SHA와 동일; 원본 신규 helper/verifier/report는 아직 없다.
+Git stage/commit/push, runtime 내용 조회/변경/repair/reset, 설정 또는 계정 변경은 하지 않았다.
+운영 8003과 공유 8004 lifecycle은 실행하지 않았다.
+소스 적용·freeze·전체 verify_refactor_safety suite·실제 8004 restart 및 Chrome/UI gate는 Hub 소유로 미완료다.
+실제 UI에서는 정상 cache warm 반복 요청, wrong credentials 401/headers, 설정 회수, 페이지 reachable을
+Hub의 승인된 8004 lifecycle 뒤 확인해야 한다. 이 Temp PASS를 실제 UI/운영 rollout PASS로 대체하지 않는다.
+
+재현 (실행 원본 repo root C:/server; python -B로 __pycache__ 쓰기 없음)
+python -B -X utf8 "C:\Users\주인님\AppData\Local\Temp\server-admin-auth-20261001-vm3cagod\proposed\scripts\verify_admin_auth_latency.py" --source-root "C:\Users\주인님\AppData\Local\Temp\server-admin-auth-20261001-vm3cagod\proposed" --support-root C:/server --baseline "C:\Users\주인님\AppData\Local\Temp\server-admin-auth-20261001-vm3cagod\before\core\admin_basic_auth.py"
+benchmark를 함께 재현하려면 --benchmark --benchmark-output "C:\Users\주인님\AppData\Local\Temp\server-admin-auth-20261001-vm3cagod\benchmark-before-after.json" 추가.
+OS Temp 자료는 정리 시 사라질 수 있으므로 Hub는 인계 완료 시 필요한 source/evidence를 보존해야 한다.
+
+Hub 최종 통합 / 2026-10-01
+원본 source baseline과 인계된 SHA를 확인해 core/admin_basic_auth.py, core/admin_auth_cache.py,
+standalone verifier를 통합했다. 독립 reviewer가 성공 TTL보다 owner 검사 시간이 긴 경우
+중복 KDF를 재현했고 pending.wait()로 owner 대기와 positive TTL을 분리했다.
+설정 무효화 또는 owner finally가 대기자를 깨우고 기존 실패/포화 처리와 캐시 한계를 유지한다.
+TTL .025초보다 오래 차단한 owner에 KDF1·성공2의 추가 독립 oracle을 포함해 root 335 assertions PASS.
+현재 helper SHA256: 1baccbd00513cc20bdfa0002147496dae412d5bc4a3b5ddb36b2ff919f1dbf56.
+이 수정 전 전담 benchmark의 원본 hash와 수치는 역사적 측정 자료로 보존한다.
+독립 reviewer가 실제 설정 변경/제거·실패·동시성·페이지 gate를 확인했고 인증 우회 finding 없음.
+최종 전체 non-smoke suite exit0, managed8004 PID30940 재시작 및 Chrome/IAB 실제 UI 확인.
+실제 Chrome 보호 페이지 warm document 6~18ms, cache expiry/cold 약630~660ms.
+별도 실제 HTTP: valid cold963.77ms(클라이언트 첫 호출 비용 포함), warm4.09ms,
+wrong password401/649.35ms, valid-after-wrong3.37ms. 401의 Basic challenge와 no-store 확인.
+실제 환경 설정 회수는 하지 않았다. 회수/변경 증거는 합성 환경 독립 검증이다.
+운영8003 PID27408 유지, backend rollout/인증 정책 두 선택은 별도 대기.

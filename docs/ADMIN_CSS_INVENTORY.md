@@ -12,9 +12,9 @@
 |---|---|---|---|
 | `/admin` | `static/admin.html` 직접 로드 | `main.css` → `admin.css` → `admin-export-logs.css` → `student-work-light.css` → `student-test-ocr-admin.css` | 전체 관리자 운영판. 내보내기 CSS만 여기서 추가 로드하며 마지막 OCR 파일은 이번 범위 밖이다. |
 | `/tests` | `static/tests.html` 직접 로드 | `main.css` → `admin.css` → `tests.css` | `tests.css`가 시험 화면 전용 override를 소유한다. |
-| `/all` 학생기록 팝업 | `static/js/all/features/studentRecordPopup.js` 동적 로드 | `main.css` → `admin.css` → `student-work-light.css` | 팝업이 열린 동안 `body.admin`을 임시 적용한다. |
+| `/students` 학생기록 팝업 | `static/js/all/features/studentRecordPopup.js` 동적 로드 | `main.css` → `admin.css` → `student-work-light.css` | 팝업이 열린 동안 `body.admin`을 임시 적용한다. |
 
-따라서 `body.admin`이라는 scope만으로는 `/admin` 전용이라고 판정할 수 없다. `/tests`와 `/all` 팝업의 실제 DOM·동적 class 소비까지 확인해야 한다.
+따라서 `body.admin`이라는 scope만으로는 `/admin` 전용이라고 판정할 수 없다. `/tests`와 `/students` 팝업의 실제 DOM·동적 class 소비까지 확인해야 한다.
 
 ## 2026-08-29 분리 전 기준선
 
@@ -39,7 +39,7 @@
 | simple mode | 111 / 63 | 5,454–9,953 | shell·hero·table·action을 함께 변경 | 독립 책임이 아니므로 보류. |
 | 공지·답장 | 606 / 447 | 2,196–9,101 | hero, modal, desktop/mobile override가 반복 | 대형 결합 도메인. 먼저 내부 소유권을 더 나눠야 한다. |
 | 보강 planner | 68 / 53 | 1,013–9,101 | calendar와 late mobile override에 분산 | 단일 연속 블록이 아니므로 보류. |
-| 조교 메모 | 166 / 107 | 8,119–10,138 | `/admin`과 `/all` 팝업이 함께 소비 | 관리자 전용 파일로 이동하면 안 된다. |
+| 조교 메모 | 166 / 107 | 8,119–10,138 | `/admin`과 `/students` 팝업이 함께 소비 | 관리자 전용 파일로 이동하면 안 된다. |
 | 관리자 메모 | 29 / 25 | 7,324–9,968 | 학생 로그 rail의 최종 layout과 결합 | rail 경계 결정 전 보류. |
 | 학생 로그 rail | 39 / 35 | 9,682–9,968 | 관리자 메모와 같은 `hero-note-rail` 사용 | 두 패널 layout 계약을 함께 다뤄야 한다. |
 | 수업 기록 내보내기 modal | 37 / 31 | 7,122–7,321 | `/admin` DOM과 `exportLogs.js`만 소비 | **`admin-export-logs.css`로 분리 완료.** |
@@ -56,7 +56,7 @@
 - 분리 전 정규화 CSS SHA-256: `fe4830147c7a4ee1d25b107a698aeceb7f42a059158e5511278b63f1a6d343ef`
 - 독립 DOM 기준선: `#exportLogsModal` 블록 72줄, SHA-256 `cb46713d6f4c68c6c9d6fd7a783e1c327085144a641dbacdee21c8d1c675aa8f`
 - 적용 load 위치: `/admin`에서 `admin.css` 뒤, `student-work-light.css` 앞
-- 금지된 소비자: `/tests`와 `/all` 학생기록 팝업은 새 파일을 로드하지 않는다.
+- 금지된 소비자: `/tests`와 `/students` 학생기록 팝업은 새 파일을 로드하지 않는다.
 
 기능 의미와 focus/Escape/중복 제출/내보내기 결과는 기존 `scripts/verify_export_log_format.mjs`가 새 파일을 직접 읽어 별도로 검증한다. 인앱 Browser와 Chrome에서 light/dark, desktop/mobile modal의 계산 스타일은 각 브라우저의 분리 전 기준선과 일치했고, 초점 이동과 Escape 종료·opener 복귀도 같았다. 두 브라우저 모두 새 stylesheet 29개 rule을 로드했고 console warning/error와 framework overlay는 없었다. 관리형 격리 runtime 30개 파일의 길이·SHA-256도 전후 동일했다.
 
@@ -67,7 +67,7 @@
 - `admin.css`에 남은 35개 시험 화면 selector와 `tests.css`의 13개 동일 selector 중 어느 쪽이 공통 기본값인지
 - 공용 token, table, `.modal-*`, `.btn`의 의미를 관리자와 시험 화면에서 통합할지 분리할지
 - `hero-note-rail`을 layout 파일로 볼지 관리자 메모·학생 로그 기능 파일 중 하나가 소유할지
-- `/all` 팝업까지 소비하는 조교 메모·학생 작업 modal CSS를 별도 공유 파일로 만들지
+- `/students` 팝업까지 소비하는 조교 메모·학생 작업 modal CSS를 별도 공유 파일로 만들지
 
 이 항목은 코드 이동 중 자동으로 해석하지 않고, 사용자 결정이 필요한 모순으로 올린다.
 

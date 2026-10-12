@@ -10,11 +10,13 @@ All-students feature modules render the roster, inline-edit student fields, muta
 | Add student bar | `addStudent.js` | Builds `/api/add-student` payload from the new-student form. |
 | Clone student | `cloneButtons.js` | Copies identity fields only, clears curriculum/schedule/book fields. |
 | Delete student | `deleteButtons.js` | Uses canonical `DELETE /api/students/:sid` once and removes the row locally only after success. |
-| Legacy progress modal | `progressModal.js` | Listens for dormant `.showProg`; current UI uses the mini editor inside `table.js`. |
+| Legacy progress modal | `progressModal.js` | Listens for dormant `.showProg`; current UI uses the unified launcher in `table.js`. |
 | Roster export/chat | `chatRosterExport.js` | Builds exportable roster context. |
 | Search/sort/tooltips/stats | `sortHelpers.js`, `hoverTooltip.js`, `yoilStats.js` | Table support behavior. |
 
 ## Conventions
+
+- The SID-only 기출엄선 toggle uses the existing field-update boundary and [canonical §9](../../../../docs/PROJECT_FUNCTIONS_AND_LOGIC.md#youtube-gichul-overlay). Preserve the base-course selectors, guard old-server capability, lock the control while saving, and roll back its checkbox on failure.
 - Keep all-page behavior separate from admin selected-date flows.
 - Use all-page `core/api.js` for new JSON helpers unless an existing endpoint fallback requires direct `fetch()`.
 - Preserve unknown student fields for field-scoped edits. Clone deliberately clears curriculum, schedule, and book fields.
@@ -22,7 +24,7 @@ All-students feature modules render the roster, inline-edit student fields, muta
 - Table search should keep `shared/search.js` Korean initials and keyboard-layout behavior.
 - The `.miniProgBtn` uses the admin unified launcher to open the fixed student tooltip plus log, video-assignment, and test-assignment modals together, with the row's real local date and `all-students-readonly` log access.
 - Keep the admin popup module graph behind the first `.miniProgBtn` interaction. Do not statically import `studentRecordPopup.js` from `all/main.js` or mount admin modal DOM during roster startup.
-- On mobile, the shared `영상 / 상담 / 테스트 / 학생정보` switcher must keep all four surfaces reachable without horizontal clipping.
+- On mobile, the shared `영상 / 조교 메모 / 숙제·정보 / 테스트` switcher must keep all four surfaces reachable without horizontal clipping.
 - In that mode class-log notes/homework must never be patched; the separate assistant-note thread may list and create only, while existing-note actions stay locked. Only right-click progress changes may reach `/api/progress/patch`.
 - Delete uses only `DELETE /api/students/:sid`; success and failure must issue exactly one request.
 
@@ -38,3 +40,4 @@ All-students feature modules render the roster, inline-edit student fields, muta
 - After add/clone/delete changes, use a safe test path or mocked API before touching real student data.
 - After unified-popup changes, verify all four admin surfaces open, real-local-date semantics hold, notes/homework stay read-only, left-click progress stays blocked, and right-click-only progress saves.
 - After delete/export changes, verify the same-page CSV and counts no longer include a deleted student.
+- Inline field saves serialize linked person rows, apply confirmed values, and reload authoritative roster data after partial failures. Preserve other inputs' drafts and synchronize shared school/grade/doc fields across same-person SID rows, `state.students`, compatibility globals, search and counts. Run `verify_roster_auth_attendance_async.mjs` before isolated `/students` QA.

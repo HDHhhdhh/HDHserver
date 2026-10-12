@@ -9,7 +9,7 @@ The all-students page is a standalone static frontend with its own core wrapper 
 | Entry point | `main.js` | Calls `loadAll()`, renders, then mounts features. |
 | API wrapper | `core/api.js` | Same-origin/no-store wrapper around `../../shared/api.js`. |
 | Shared state | `core/state.js` | Students, videos, progress, calendar, and linked homework-book runtime maps. |
-| Table controller | `features/table.js` | Roster DOM, inline edits, search, and active mini progress editor. |
+| Table controller | `features/table.js` | Roster DOM, inline edits, search, and the lazy unified student-popup launcher. |
 | Add/delete/clone | `features/addStudent.js`, `deleteButtons.js`, `cloneButtons.js` | Mutating student actions. |
 | Roster export | `features/chatRosterExport.js` | Chat/export helper. |
 

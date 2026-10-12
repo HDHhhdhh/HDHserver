@@ -1,0 +1,299 @@
+실제 학원망 Kollus 자동 watch QA 실행안
+작성일: 2026-10-01, Asia/Seoul
+현재 상태(2026-10-02): 별도 학원망 QA 실행안 준비 완료. D-18의 관리형8004 exact synthetic pair는 실제 Chrome 재생·자동watch200·90%done·수동none/reload·OFF403까지 완료했다. 별도 학원망 QA 배포·실제 외부망 차단·genuine provider callback은 미실행이며 QA 접속 대상/HTTPS 주소를 기다린다. 아래 초기 조사·관찰은 해당 시점의 이력이다.
+
+1. 목적과 권한
+
+기존 격리 QA의 watch 403 미검증을 해소하려면 실제 학원망 브라우저가 사용하는 별도 QA 배포와 실제 Kollus 테스트 영상이 필요하다. native 재생 → 브라우저 자동 POST → watch/progress 저장 → 관리자 및 학생 reload 상태까지 이어지는 증거와 provider가 직접 보낸 callback의 독립 증거로 합격을 판단한다.
+
+이번 작업은 소스·문서만 읽고 이 보고서 한 파일만 작성한다. 운영 JSON/SQLite/sidecar/instance, secret, credential, 실제 영상 URL은 읽지 않는다. app import, 테스트 실행, network/browser/server 작업, source 수정, Git 변경 명령, 타 chat 메시지를 수행하지 않는다. 이 문서는 정본 규칙이나 배포 승인서가 아니다.
+
+시작 Git 상태: staged 0개, unstaged tracked 155개, untracked 59개. 관련 watch/Kollus/controller에도 기존 변경이 있다. 아래 소스 분석은 HEAD가 아니라 현재 작업 트리 기준이다. 향후 실행 시 QA snapshot의 파일 SHA-256과 backend/frontend 동일 버전을 기록한다.
+
+2. 기존 증거와 공백
+
+- docs/SERVER_PROJECT_REVIEW_2026-10-01.txt:268-278:
+  Chrome/IAB 격리 접속, 수동 none + __manualProgressMids, reload 유지, 두 log GET은 확인했다. 실제 POST /api/watch는 academy_network_required 403이었다. 실제 automatic watch 후 white 유지의 브라우저 성공 증거는 없다.
+- docs/SERVER_BROWSER_LATENCY_2026-10-01.txt:69-72:
+  done → none 저장과 정상 watch GET 뒤 유지까지의 증거다. 실제 academy playback/Kollus 성공으로 세지 않으며 자동 writer는 temp/default 회귀 증거다.
+- D-10, docs/LOGIC_DECISION_LEDGER.md:187-193; canonical §18:577-579:
+  2026-08-29 배포에서만 native 프레임 시작을 승인 gate에서 제외했다. vjs-agent-checking / readyState=0은 재생 통과가 아니다. get-url, SID/MID·네트워크 gate, iframe 전달, watch/progress, 배정 불변, DOM/console은 제외되지 않았다. 이번 계획의 native 성공을 과거 예외로 대체하지 않는다.
+- canonical §9:234-255, §10:261-297:
+  날짜별 snapshot 고정, manual 진도 우선, Kollus 전용 watch, ms timestamp와 새 watch 세대가 합격 기준의 정본이다.
+
+3. 현재 소스: gate와 소유권
+
+G1 GET /api/get-url
+routes/api_kollus.py:108-151, 289-321.
+학원망 검사 후 public 요청이면 active SID 일치를 요구한다. MID는 [A-Za-z0-9_-] 4~128자이며 catalog에 있어야 한다. 제공한 SID는 students에 있어야 한다.
+기대값: 외부망403, public SID mismatch403, 잘못된 MID400, unknown MID/SID404, 정상200.
+비공개 Kollus 경로는 빈 SID도 허용한다. callback QA는 항상 명시적 QA SID를 보낸다. uservalue0 HMAC은 callback 인증용이며 DRM/license 또는 실제 재생 가능성의 증거가 아니다. 현행 URL builder의 client_ip 인자는 URL query에 들어가지 않는다.
+
+G2 browser watch
+routes/api_watch.py:38-120; core/admin_basic_auth.py:120-131.
+POST /api/watch는 학원망, public active SID, 필수 date/SID/MID, 실제 달력 날짜, YouTube 제외, ghost SID를 검사한다. 비공개 POST는 admin Basic 예외지만 academy gate가 남는다. GET /api/watch는 public 요청에서404다. 현재 웹은 /api/watch를 쓰며 /api/watch-status를 새 소비자로 사용하지 않는다.
+주의: 이 route 자체에는 get-url/callback의 _known_sid/_known_mid 검사나 MID 정규식 검사가 없다. public 세션 바인딩과 비공개 roster/catalog 존재 검사를 혼동하지 않는다. unknown SID/MID의 비공개 watch 거절을 이미 구현된 계약으로 주장하지 않는다. temp 특성화 후 강화가 필요하면 별도 source 변경 범위로 HUB에 반환한다.
+
+G3 public 학생 앱
+core/student_public_surface_adapter.py:130-203; core/student_app_config.py:86-99.
+exact public host, HTTPS, 신뢰 proxy, 등록 path/method, 세션, active SID, 쓰기의 same-origin 및 X-CSRF-Token을 먼저 검사한다. /api/kollus/lms-callback은 public allowlist에 없다. 유효 secret도 public-host404를 통과시키지 못한다.
+QA web/callback FQDN을 QA STUDENT_APP_LEGACY_HOST와 정확히 맞추고 callback을 그 host의 같은 QA instance로 보낸다. 임의 DNS alias도 자동 허용되지 않는다. legacy host의 app-only 경로 제한은 유지한다.
+
+G4 외부 callback
+routes/api_kollus.py:38-84, 154-166, 195-285, 325-390.
+GET/POST 지원. KOLLUS_CALLBACK_SECRET이 비면403. browser academy gate는 적용하지 않는다.
+설정 secret과 일치하는 X-Kollus-Secret 또는 query/form token, 혹은 검증된 uservalue0 signed token 중 하나가 필요하다. JSON body의 단순 token이나 callbackTokenValid=true는 인증 근거가 아니다.
+v1: SID/MID/issued_at에 HMAC-SHA256. v2: cycle token도 포함. 발행 후24시간, 미래 skew5분 허용.
+정적 secret과 signed token은 OR 관계다. 변조/만료 negative에는 유효 정적 secret을 같이 보내지 않는다.
+인증 후 missing SID/MID400, bad MID400, unknown SID/MID404, YouTube400. 진도 필드가 전부0이면200 ignored:true/무쓰기.
+callback 날짜는 start_at epoch seconds의 KST 날짜다. 잘못되거나 없는 값은 현재 KST 날짜로 fallback하므로 실제 시험은 seconds와 날짜 일치를 확인한다.
+done은 pct>=90 또는 last/dur>=0.9다. dur>0일 때 interrupted는 pct>=5를 사용한다. last/dur만5%이고 pct가 없으면 현재 route는 interrupted를 만들지 않는다. canonical §10의 일반5% 설명과 실제 provider payload를 대조해야 한다. 실제 pct 누락은 계약 차이로 반환하며 값을 주입해 통과시키지 않는다.
+
+O1 native iframe → browser watch
+static/js/student/playback.js:76-172, 175-198, 200-247.
+VgControllerClient가 iframe contentWindow에 붙고 ready/progress/play/pause/done 및3초 poll을 부모 window의 자체 message로 전달한다. handler는 event.source === 현재 window, active MID 일치를 요구한다. iframe의 직접 message를 그대로 저장하는 구조가 아니다.
+attach는100ms 간격 최대200회. timeout 경고는 native/bridge 미성공 증거다. 90% 또는 ended로 completed를 만든다. MID 전환은 이전 flush 후 새 generation을 연다. 오래된 poll/get-url 응답이 새 MID를 덮으면 실패다.
+static/js/student/watchState.js:183-245; student.js:930-1027.
+watchState: SID별 local resume/watch, monotonic merge,1500ms debounce, 실패 후 재시도 가능한 snapshot, duplicate-send 억제, ms updatedAt, /api/watch transport.
+student.js: DOM badge, active SID, local date, academy access, pagehide/visibilitychange/beforeunload keepalive flush 주입.
+get-url200만으로 automatic watch 성공을 선언하지 않는다. browser local date와 KST를 맞춘다.
+
+O2 서버 저장
+core/watch_progress_writer.py:40-84, 100-195; core/progress_rules.py:13-32, 310-374.
+browser/callback은 같은 path-injected writer를 쓴다. last/dur/updatedAt은 큰 값, completed는 OR이며 unknown MID metadata를 보존한다. seconds/32비트 timestamp는 현재 server ms로 교정하고 유효 ms는 보존한다.
+__manualProgressMids와 수동 none/skip/interrupted가 자동 진도보다 우선한다. 자동 interrupted는 done으로 승격한다.
+UI assigned는 updates membership의 초록이다. 정상 영상 progress 값 목록에는 assigned가 없다. literal progress에 assigned를 넣어 fixture를 만들지 않는다.
+watch와 progress는 별도 저장 경계다. stale cycle browser 요청은 raw watch 이력을 저장한 뒤 progress를 보존하며409 watch_cycle_changed를 반환할 수 있다. 오래된/세대 없는 callback은 과거 watch를 보존하지만 새 cycle을 완료시키지 않는다. 전체 저장의 동시 원자성을 이미 구현된 것으로 주장하지 않는다.
+유효 callback 재전송은 updatedAt이 증가할 수 있다. 멱등성은 상태·배정이 반복 완료/재배정되지 않는 의미이며 모든 성공 뒤 파일 mtime/hash 불변을 뜻하지 않는다.
+
+4. 실행 전 QA 배포 계약
+
+추천: 운영 Windows 호스트와 분리된 전용 QA VM/컴퓨터.
+현재 C:\server의 동시 test server는 manager의 loopback8004뿐이다. 8005 등을 새로 열거나8004를 LAN/public에 노출하는 방식은 포함하지 않는다.
+
+아래 manifest가 정확한 값과 소유자 승인으로 채워지기 전에는 배포·실재생·callback을 시작하지 않는다. 소스만으로 승인된 QA 머신/FQDN/주소/real MID를 확정할 수 없다. 기호와 예시는 승인이나 실재 환경을 뜻하지 않는다.
+
+- run ID, QA_MACHINE_ID, 소유자, 시작/종료 시각, 허용 QA 재시작 횟수.
+- QA_CODE_ROOT/QA_RUNTIME_ROOT의 resolved absolute path. 전용 머신 D:\AcademyKollusQA\app은 제안 예시다. production share/junction/symlink/mapped drive로 C:\server에 연결하지 않는다.
+- QA_LEGACY_FQDN, exact HTTPS origin, DNS/tunnel/proxy ID, 인증서, upstream. 권장: 전용 QA 머신127.0.0.1:8003의 QA process 하나와 별도 QA HTTPS443 ingress. 현재 운영 머신8003과는 다른 호스트다.
+- callback: https://QA_LEGACY_FQDN/api/kollus/lms-callback. QA STUDENT_APP_LEGACY_HOST도 그 FQDN. production의 두 host로 rewrite/forward하지 않는다.
+- 공개 세션 실표면 범위이면 다른 QA_PUBLIC_FQDN을 STUDENT_APP_PUBLIC_HOST로 지정하고 QA에서만 PUBLIC_ENABLED를 켠다. 이 범위가 없으면 public 앱OFF, SID/session/CSRF 결과는 temp 계약 증거다.
+- 실제 학원 Wi-Fi/LAN, endpoint에서 판정한 client IP, upstream peer, 승인 proxy CIDR. 외부망 negative는 실제 별도 외부망 클라이언트. VPN/WARP 경유 여부도 기록한다.
+- QA-only admin 계정, QA_CALLBACK_SECRET의 secret-manager 참조/version, QA tunnel/service identity. 값·credential hash·cookie·CSRF·token·signed URL은 보고서에 넣지 않는다. production 파일/값을 읽어 복제하지 않는다.
+- provider QA account/channel, real QA video 식별자 참조, callback 변경 범위와 복원 담당자. 생산 channel의 전역 callback 설정에 영향이 없어야 한다.
+- synthetic SID/person 범위·로드 방식·baseline·증거 저장소·QA 종료/폐기 범위. production 승격/자동 병합 권한은 없다.
+
+네트워크:
+실제 학원 browser → QA HTTPS web/public origin → QA ingress → 전용 QA process.
+실제 Kollus provider → QA HTTPS legacy callback path → 같은 QA process.
+QA browser → provider player/CDN/license.
+callback을 academy-only 방화벽으로 막지 않는다. 일반 경로의 인증/academy gate는 유지한다. browser watch는 QA origin과 실제 session/CSRF를 쓴다. callback의 실제 Origin/Referer와 app.py:285-300 cross-origin guard도 확인한다.
+client-IP header는 승인 proxy가 생성/정규화한 것만 사용한다. client의 CF-Connecting-IP/X-Forwarded-For로 학원망을 가장하지 않는다. academy CIDR/TRUSTED_PROXY_CIDRS를 임의로 넓히지 않는다. 합성 header 시험은 OS-temp Flask test_client 안에서만 허용한다.
+
+데이터/프로세스:
+core.paths는 JSON/files 중 여러 경로를 코드 BASE에 묶는다. DB_PATH/DATA_DIR만 바꾸고 live code root를 실행하는 것을 격리로 보지 않는다.
+모든 QA source/runtime을 별도 머신의 QA root에 둔다. DB_PATH/STUDENT_APP_DB_PATH는 같은 QA app.sqlite, DATA_DIR는 QA data, mirror와 student-app account/runtime/student/log/absence/extra/weekend/makeup도 QA다. sidecar/files/instance/journal/backup/generated/cache/download도 경계 안이다.
+production store를 seed로 읽지 않는다. configured identity는 일관된 synthetic persons/students를 사용한다. partial identity를 빈 파일로 덮지 않는다. push/reminder/homework/focus/OCR 등 불필요한 기능은OFF.
+운영 listener/task/tunnel/환경값을 바꾸지 않는다. 향후 승인된 실행의 운영 확인은 ping/public app 가용성으로 따로 기록하며 production store를 fingerprint하지 않는다.
+QA 초기 생성 뒤 bulk reset/repair/migrate가 필요하면 QA만 quiescent하게 하고 QA root에서 backup_runtime_data.py native snapshot 계약을 따른다. 운영을 멈춰 QA backup을 만들지 않는다.
+
+8004:
+manager:323-365는 loopback, 별도 runtime, PUBLIC_ENABLED=0, TRUST_PROXY_HEADERS=0을 지정하고 KOLLUS_CALLBACK_SECRET을 제거한다. callback fail-closed가 정상이다.
+academy header spoof/secret 재주입/marker 또는 guard 변경으로 성공을 만들지 않는다.
+향후 local UI QA는 Status → Start/Refresh/Start -Restart와 managed:true/HTTP200/listener 하나/운영 ping 및 public app gate를 따른다. 이번 source-only 작업은 Status조차 호출하지 않았다.
+
+5. real provider QA video 필요조건
+
+- 서비스 소유자가 허가한 전용 Kollus QA video/channel. fake MID나 get-url200으로 실재 영상을 가정하지 않는다.
+- 실제 MID가 현행 정규식에 맞고 QA catalog에 등록돼야 한다. 운영자는 production URL 조회 없이 QA-only 허가 URL을 QA runtime에 준비한다.
+- 권장: 실제 길이60~120초인 영상 두 개 이상. duration 조회와5%/90%/끝 이벤트 관찰 가능. 허가 영상이 없으면 기존 실제 수업 영상으로 대체하지 않는다.
+- QA origin iframe embed, HTTPS player/CDN/license, VgControllerClient API 사용 가능. Chrome 지원 native agent/DRM 설치·버전·권한은 provider 소유자가 확인한다. 이번 작업은 설치·로그인·인증 변경을 하지 않았다.
+- QA video/channel에서만 callback을 설정하고 uservalue0를 변형 없이 echo. media_content_key/start_at(seconds)/last_play_at(seconds)/duration(seconds)/playtime_percent 및 실제 GET/form/json_data 형식을 관찰 가능.
+- 생산 설정에 영향 없는 독립 설정이어야 한다. 정적 secret 전달 또는 signed uservalue0 echo 지원과 delivery/재전송 주기는 운영자가 확인한다. 소스는 provider 기능/주기를 보장하지 않는다.
+- callback-only run은 web student /api/watch가0건이어야 한다. 사전 합의된 delivery 관찰 한도 내 콜백이 없으면 미검증/실패 원인으로 기록한다.
+
+6. 소스로 준비 가능한 synthetic fixture 명세
+
+아래는 보고서 안의 literal 명세다. 별도 fixture 파일을 만들거나 실행하지 않았다.
+direct-blueprint/temp 최소 store이며 full-app roster/identity/auth는 승인 QA의 정상 등록 절차로 따로 준비한다.
+D="2026-10-01", M=1790812800123(epoch ms), start_at=1790812800(epoch seconds, D KST 오전9시).
+실제 실행일이 다르면 새 D와 실제 seconds를 쓴다. 기대값은 production helper로 만들지 않고 literal/독립 stdlib 기준을 사용한다.
+
+학생: qa_sid_a/qa_sid_b, QA 학생 A/B, curriculum 대수, subCurriculum QA과정.
+catalog: id1/2/3/4, mid qa_auto_001/qa_white_001/qa_next_001/qa_spare_001, 같은 과정, chapter1/2/3/4.
+fake MID이며 real playback용이 아니다. provider real MID와 역할 매핑은 별도 QA runtime에만 둔다.
+
+updates:
+{
+  "2026-10-01": {
+    "qa_sid_a": {
+      "videos": ["qa_auto_001", "qa_white_001", "qa_next_001"],
+      "source": "auto",
+      "qaUnknown": {"keep": true}
+    }
+  },
+  "2026-09-30": {"qa_sid_b": {"videos": ["qa_spare_001"], "source": "manual"}}
+}
+progress 최초: A의 qa_auto_001 키 없음. white를 관리자 PATCH로 none 처리한 뒤 target 기대값:
+{"qa_white_001":"none","__manualProgressMids":{"qa_white_001":true},"qaUnknown":{"keep":true}}
+watch 최초: A target 없음. 다른 SID/date의 unknown metadata 포함 sentinel은 불변.
+
+browser observation:
+{"date":"2026-10-01","sid":"qa_sid_a","mid":"qa_auto_001","last":5,"dur":100,"completed":false,"updatedAt":1790812800123}
+callback(TOKEN_QA는 signed-only/정적 secret 케이스별 fixture 값):
+{
+  "json_data": {
+    "uservalues": {"uservalue0": "TOKEN_QA"},
+    "content_info": {
+      "media_content_key": "qa_auto_001",
+      "start_at": 1790812800,
+      "last_play_at": 5,
+      "duration": 100,
+      "playtime_percent": 5
+    }
+  }
+}
+signed oracle는 private _encode_callback_token을 사용하지 않고 literal SID/MID/time/cycle + stdlib hmac/hashlib/base64로 독립 구성한다. test secret은 fixture에서만 정의하며 QA/production secret을 읽지 않는다.
+
+S01 임계값:
+dur100,last0/4/5/89/90 → 미완료/미완료/interrupted/interrupted/done. completed:true도done. dur0,last>0 → interrupted. browser/callback을 별도 요청으로 검사하고 callback pct도 명시한다.
+S02 단조 병합:
+done 뒤 last10,dur50,completed:false,낮은 timestamp → 기존 last90,dur100,completed:true/큰ms 보존. unknown metadata/다른SID/date 보존.
+S03 manual:
+PATCH none/skip/manual interrupted 뒤 실제 /api/watch 완료와 인증 callback 완료 → 수동 값/manual metadata 유지. reload 읽기 및 done-only review도 되살아나지 않는다. 키 삭제/빈 문자열을 manual white로 대체하지 않는다.
+S04 자동 초록→완료:
+초기초록은 updates membership/progress 누락.5%/90%에서 interrupted/done + __autoWatchProgressMids 생성. updates bytes/SHA-256, 원래3MID 순서/count/source/unknown 불변. spare 미보충.
+S05 timestamp:
+M/M+200 그대로 보존. legacy667934656 또는 seconds는 주입 server ms로 교정. payload/저장값 >=10^12; bitwise 절단 없음.
+S06 pre-write negative:
+academy denied/public wrongSID/ghost-outside-test/2026-02-30/corrupt watch root 또는target →403/403/403/400/503. temp bytes,size,mtime_ns,SHA-256 불변, notification0. full adapter와 direct blueprint 결과 구분.
+S07 get-url:
+academy+knownSID/MID200, badMID400, unknownSID/MID404. uservalue0에 secret 원문 없음. iframe와 응답 targetMID/cycle 일치. 빈SID legacy 허용은 별도 특성화.
+S08 callback auth:
+secret미설정/서명없음/변조/타MID재사용/24h초과/미래301초 → signed-only403/무쓰기/notification0.
+유효v1/v2 및 정적secret header/query/form 각200. JSON callbackTokenValid:true만은403. wrong static secret + valid signed는 현행OR상200.
+S09 callback shape:
+인증 뒤 missing/bad/unknownSID/MID·YouTube를400/404로 닫고 불변. 진도0 ignored:true/무쓰기. pct없는 dur100,last5는 현행 interrupted미생성 특성화이며 일반5% PASS로 세지 않는다.
+S10 재배정:
+fresh rearm → __videoWatchCycles/manual해제/none+auto metadata/latest resume0. 동일명령 재시도reset없음. old browser token409/current progress불변, raw history증가는 허용. old v1/v2 callback은 새cycle완료금지, current v2만5%/90%승격. 다른MID/date/SID보존.
+S11 browser composition:
+actual student.js/controller VM에서 wrong window/MID/generation 무시, ready/seek/poll3초, switchflush, debounce1500ms, keepalive, 실패후 다음관찰재시도, duplicate억제, academyfalse시 get-url/watch없음. literal입력hash와 외부request/DOM관찰.
+S12 bootstrap/review:
+today source:auto done은 playlist의 todayAutoAssignmentStatus:done으로 유지하고 chooser에중복없음. manual none/skip/interrupted는done-only review에서제외. 외부망은제목/제한만, 재생/watch금지.
+
+기존 source 계약 명령(향후 승인된 별도 QA code root에서 실행):
+python scripts/verify_updates_routes.py
+python scripts/verify_student_auto_assignment_service.py
+python scripts/verify_student_bootstrap_routes.py
+python scripts/verify_video_progress_matrix.py
+python scripts/verify_watch_storage_safety.py
+python scripts/verify_watch_timestamp_guard.py
+python scripts/verify_kollus_callback_auth.py
+python scripts/verify_video_watch_rearm.py
+node scripts/verify_student_watch_timestamp.mjs
+node scripts/verify_student_watch_autosave.mjs
+node scripts/verify_student_playback.mjs
+node scripts/verify_video_watch_rearm.mjs
+node scripts/verify_student_bootstrap_state.mjs
+node scripts/verify_student_review_playlist.mjs
+node scripts/verify_student_previous_video_review.js
+node scripts/verify_student_material_access_scope.js
+node scripts/verify_log_auto_watch_scope.mjs
+python scripts/verify_refactor_safety.py
+targeted는 full default를 대체하지 않는다. live --smoke/--smoke-log-gets는 기본 포함하지 않는다.
+기존 progress matrix의 X-Academy/X-Public은 monkeypatch된 test_client 전용이다. callback_auth는 known checks/writers를 mock한 wiring 증거이며 일부 rearm callback은 static secret도 사용한다. 이들의 PASS로 실제IP/adapter/저장/provider signed-only/native 성공을 주장하지 않는다. 추가 독립 S07~S09와 deployment 증거가 필요하다.
+
+7. 승인 후 실제 실행 순서
+
+P0. manifest와 source baseline
+승인된 머신/경로/host/network/provider 범위와 QA-only credential 참조를 대조하고 S 케이스를 임시 경로에서 검증한다. 필요한 fixture/harness 작성은 이번 report 권한 밖이며 후속 QA edit scope에서만 수행한다. 생산 환경변수를 상속한 app/test import를 하지 않는다.
+
+P1. 별도 QA 배포와 synthetic 등록
+승인된 runner/ingress로 QA만 배포한다. startup recovery/default 생성도 QA 경계인지 paths를 먼저 확인한다.
+synthetic 학생/과정/영상 역할을 정상 QA 절차로 등록한다. A는 현재 KST 수업 대상/auto count3, B는 callback-only 학생이다.
+A의 오늘 snapshot을 한 번 생성하고 세 MID 순서/source:auto를 확인한다. baseline 뒤 count/과정/일정/결석을 변경하지 않는다. 다음 후보 spare를 catalog에 남긴다. 관찰용 updates 요청은 ?readOnly=1이다. 자정 경계를 피하고 browser local date를 KST와 맞춘다.
+QA listener/HTTP/ingress, JSON/DB/sidecar 경계와 생산 ping/public app 가용성을 별도로 기록한다.
+
+P2. 실제 네트워크 gate
+실제 학원 Wi-Fi/LAN의 정상 요청으로 get-url200과 academy 분류를 확인한다. 실제 외부망에서 get-url/watch403과 제한 DOM을 확인한다. header spoof/route interception으로 academy=true를 만들지 않는다.
+public 실표면 범위이면 실제 QA 학생 session/CSRF로 자기 SID 성공, 다른 SID403, session 없음401, CSRF 없음403과 실패 store 불변을 확인한다. 관리자 Basic은 유지하고 Chrome 정상 로그인으로 검증한다.
+
+P3. browser-only native 자동 watch
+provider QA callback delivery를 아직 등록하지 않은 단계에서 QA secret은 설정해 둔다. browser와 callback의 진도 원인을 섞지 않는다. 단계별 provider 설정은 QA channel/video 범위에만 승인된 소유자가 수행한다.
+Chrome 학생 페이지를 reload하고 actual script 순서와 #player 하나를 확인한다. 첫 영상의 iframe/native 준비, 시간의 실제 증가, duration, bridge ready/event/poll을 관찰한다. manual postMessage/completed:true fetch/90% seek로 실제 시청을 대체하지 않는다.
+5% 뒤 debounce 자동 POST /api/watch200, stored interrupted/auto metadata, 관리자 주황/학생 badge를 확인한다. 90%와 끝까지 실제 시청한 뒤 completed:true/progress done, 관리자 파랑/reload 유지, today auto 완료행 유지, snapshot 불변/spare 미보충을 확인한다.
+MID 전환 flush와 active MID 한정 반영, pause/숨김/pagehide/재접속 POST/resume도 관찰한다. 실패 재시도는 허용된 QA watch 요청만 대상으로 하며 전역 network/운영 연결을 변경하지 않는다.
+
+P4. browser-only 실제 manual white 보존
+white 영상을 5~10% 실제 재생하여 새 observation을 만든다. Chrome 관리자 log/unified popup의 exact SID/date 진도 셀을 흰색으로 저장한다. 응답과 GET /api/progress에서 none과 __manualProgressMids[mid]=true를 확인한다. assignment 삭제를 manual none 대신 사용하지 않는다.
+계속 재생하여 last/completed가 달라진 자동 POST200을 발생시킨다. 90%/done 뒤에도 none/manual marker/관리자 흰색이 유지돼야 한다. 관리자 reload/open, 학생 reload, automatic watch refresh 뒤에도 확인한다. 수동 action 직후 baseline으로 intentional admin write와 후속 automatic write를 구분한다.
+QA에서 /api/logs 및 /api/logs/entry, Korean notes/unknown fields/다른 SID·date/frozen date를 확인한다. 다른 SID/date popup을 연 뒤 늦은 이전 watch가 새 셀을 바꾸지 않는 회귀 gate도 유지한다.
+
+P5. genuine provider callback-only
+승인된 소유자가 QA video/channel에만 exact legacy callback URL을 설정한다.
+B의 get-url로 발행한 uservalue0를 쓴 QA provider 재생을 Chrome 별도 provider 탭에서 실행한다. 그 탭에 student.js/watchState가 없고 B의 browser /api/watch가 0건인지 관찰한다.
+provider genuine delivery ID/시각 + ingress path/peer + callback200 + B의 저장 변화를 연결한다. 운영자의 synthetic POST를 외부 provider 성공으로 세지 않는다.
+실제 5%/90%/done payload의 pct/last/dur/start_at/uservalue0 echo를 redaction 후 검증한다. B의 interrupted→done, ms, snapshot 불변을 확인한다. 별도 역할 영상에서 B의 manual none/skip/interrupted 뒤 genuine callback에도 수동 상태가 유지되는지 확인한다.
+재전송/늦은 callback은 실제 delivery와 monotonic으로 평가한다. 변조/만료/MID mismatch는 별도 synthetic/temp이며 genuine provider로 표시하지 않는다.
+
+P6. 두 경로 결합과 새 watch cycle
+fresh synthetic SID/role baseline에서 browser watch와 provider callback을 함께 켠다. 양 route의 순서/중복 뒤 상태 후퇴 없음과 배정 미보충을 확인한다.
+관리자의 explicit assigned 재배정으로 fresh cycle을 만든다. get-url v2/X-Video-Watch-State/latest resume0/browser cycleToken을 확인한다. 과거 완료 raw watch가 새 세대에 합쳐지면 실패다. 실제 새 재생의 5%/90%와 current v2 callback만 승격해야 한다.
+old session/stale 요청의 synthetic 증거와 실제 delayed delivery 증거는 구분한다.
+
+P7. 브라우저 결과와 QA 종료
+Chrome의 실제 native 성공은 필수다. 학생 DOM/한글/제한/playlist/manual 상태는 Chrome/IAB 각각 남긴다. IAB native 실패는 미검증/실패로 기록하며 Chrome 성공을 복사하지 않는다. 기존 manager8004의 두 브라우저 회귀 gate도 유지한다.
+console errors, API 실패, player/bridge timeout, native 상태를 분리한다. provider 오류를 숨기지 않는다. 지원 native 브라우저 범위 축소는 HUB의 별도 결정이며 D-10을 자동 재사용하지 않는다.
+QA callback 등록/ingress/secret 폐기는 승인된 소유자가 허용된 한도 안에서 수행한다. QA data의 생산 승격은 없다. 공유8004는 소유권/사용 확인 없이 Stop하지 않는다. production restart는 이 QA의 완료 단계가 아니다.
+
+8. 필수 합격 증거와 판정
+
+E0 환경: 승인 manifest, source hash, resolved paths, listener/ingress, 실제 학원 안/밖망 분류, QA-only identity/secret version 참조.
+E1 native: Chrome 실제 시간 증가, duration, iframe MID 역할, bridge event/poll. get-url200/iframe 표시만으로는 부족하다.
+E2 browser writer: 사람이 fetch하지 않은 actual POST의 SID/date/MID 역할, last/dur/completed/ms/cycleToken/initiator/응답200, stored progress와 양 UI/reload.
+E3 manual: none/manual marker → 새 actual observation/POST200 → completed watch에도 none 유지 → refresh/reload 유지. skip/manual interrupted도 각각 증거가 필요하다.
+E4 callback writer: B의 browser watch0, provider genuine delivery/callback200, auth 모드, payload echo/단위, stored interrupted/done/수동 보존.
+E5 snapshot: QA updates의 baseline/after bytes,length,SHA-256, list 순서/count/source/unknown, spare 미보충, 다른 SID/date/catalog/student sentinel 보존.
+E6 ms/cycle: wire와 저장 updatedAt 정수>=10^12, clock 구간, 독립 legacy repair, v2/current/stale 분기, resume/progress.
+E7 UI/auth: Chrome/IAB 각각의 API/DOM/screenshot, 한글 replacement 부재, 두 QA log GET, frozen SID/date, public 범위의 session/CSRF/외부망 negative, Basic 유지.
+E8 regressions: focused/full 명령별 QA code snapshot/stdout/exit code, S 추가 케이스 표. source inspection을 test PASS로 적지 않는다.
+
+checkpoint별 run ID, 경로(browser/callback), 시각, SID/MID QA 역할, 기대/실제값을 연결한다. 수동 mutation/자동 observation/reload는 서로 다른 checkpoint다.
+artifact는 승인된 QA generated/evidence 아래에만 저장하고 Git에 추가하지 않는다. cross-origin frame DOM 접근이 없으면 실제 screenshot/visible 시간/controller/network/server를 연결하고 없는 접근을 성공으로 적지 않는다.
+현재 playback은 base URL을 console.log한다(playback.js:234, student.js:995). raw console/HAR/screenshot의 URL query/uservalue0/secret header/token/cookie/Authorization/CSRF/real video URL을 보고서·커밋에 남기지 않는다. 수집 시 redaction하고 오류 종류/개수/sanitized event만 저장한다.
+pre-write auth/date/corrupt negative는 bytes,size,mtime_ns,SHA-256 불변/notification0을 요구한다. 정상 재전송/stale cycle history에는 그 불변을 일괄 요구하지 않고 raw monotonic/current progress ownership/updates 불변/unrelated 보존을 각각 검사한다.
+
+통과: 선택된 실제 native/browser/provider 경로의 E0~E8과 필수 회귀 모두 충족, 증거 누락 없음.
+부분 완료: source/temp/get-url/iframe/수동 저장까지만 확인했거나 genuine callback/native 누락. 실제 학원망 자동 watch 완료로 보고하지 않는다.
+실패: gate 우회, 생산 data/credential 혼입, 잘못된 callback host, manual 덮어쓰기, ms 절단, stale cycle 승격, snapshot 변경/미승인 보충, native timeout 등 불일치.
+실행 불가: approved exact QA host/network/runtime 또는 real provider video/callback 설정 미준비.8004 우회로 전환하지 않는다.
+
+9. HUB 편입과 결정 경계
+
+기존 인증/UI 성능/최종 통합·격리/운영 반영과 별도 완료 상태로 관리한다. production restart 권한/횟수에서 QA deployment/provider 설정 권한을 추론하지 않는다.
+실행대상 추천은 별도 QA 머신 + exact legacy/public origin 계약이다. 환경이 없으면 source/temp 준비까지만 가능하다. 운영 직접 watch 또는 생산 provider channel 대체는 새 data-write 권한이 필요하며 추천 대상이 아니다.
+추천 증거정책은 Chrome 실제 native + genuine callback 필수의 완전 QA다. 사용자가 native 시작을 다시 제외하면 부분 gate만 닫고 native/automatic playback 항목은 미검증으로 남긴다. public-session 실표면 범위와 지원 native browser 범위를 manifest에 명시한다.
+unknown legacy watch SID/MID와 callback pct 누락은 소스 관찰 사항이다. 이 계획이 endpoint/정책 수정을 승인하지 않는다. 실제 요구와 다르면 재현 증거를 확보하여 HUB의 새 범위 결정으로 반환한다.
+
+10. 이번 산출물 검증
+
+읽은 근거: 루트/core/routes/scripts/static/JS/admin/features guides, SERVER_RULES_INDEX, canonical §9/§10/§18, D-10, 기존 QA 보고서, 관련 routes/core/controllers/fixtures.
+보고서 검증: source 행·endpoint·metadata·명령 파일 존재 대조, UTF-8/구조/금지값, 최종 Git status.
+미수행: app import/compileall/focused·default suite/runtime fingerprint/server lifecycle/HTTP/browser/native/provider 설정·전달. report 권한 밖의 파일/runtime을 생성하지 않기 위해 실행하지 않았다.
+subagent/타 chat 메시지는 사용하지 않았다. 새 report 외 기존 staged/unstaged/untracked 작업을 편집·정리·stage하지 않았다.
+
+Hub 실제 후속 관찰(2026-10-01): 사용자 기존 환경/영상 요청을 적용한다. 별도 QA 배포 제안은 필수 조건이 아니다. 기존 운영 LAN에서 MID3FWqGfJP/SID미지정 get-url200; 학생 watch writer 없는 provider탭에서 KollusAgent 미설치 안내, time0/readyState0 확인. native 재생 성공·자동watch·provider callback은 미완료. 자동watch용 기존 미완료 학생/영상과 플레이어 실행환경 선택만 대기한다. 과거 D-10의2026-08-29 native 제외를 현재 통과로 재사용하지 않는다. 서버/인증/격리/provider 설정 변경0.
+
+Hub 실제 후속 관찰(2026-10-02): 사용자 요청으로 공식 Windows 플레이어3.1.2.6.r2 설치 완료. 공식 링크 https://v.kr.kollus.com/pc_player_install/agent 및 Catenoid,Inc. 서명 Valid를 확인했고 등록 버전3.1.2.5→3.1.2.6.r2, Agent/Svr 실행·loopback listener를 확인했다. 설치 완료는 실제 영상 시간 증가·duration·자동 watch의 증거를 대신하지 않는다.
+설치 후 provider 문서에서 양의 시간·duration을 얻지 못했고 Chrome local-network-access/local-network/loopback-network 권한은 prompt였다. 실제 student.html의 iframe에는 local-network-access 허용 옵션이 이미 있다. HTTP LAN 문서의 임시 SID 없는 iframe/SDK도 ready 증거를 얻지 못했으며 해당 문서는 secure context가 아니었다. 앱 결함이나 원인을 확정하지 않고 임시 요소를 reload로 제거한 뒤 검증 탭을 닫았다.
+Chrome 사이트 설정 열기는 도구 URL 보안 정책에 의해 차단됐다. 설정을 다른 경로로 바꾸지 않고 사용자에게 provider 사이트의 기기 앱 접근을 직접 허용하도록 요청했다. 이 권한 단계와 실제 재생 검증은 대기 중이다.
+기존 검증학생 이민용626은 현재 미적분1/APEX이고 오늘 snapshot이 없다. 최신 기존 manual 배정23개는 모두 done, 새 시청 세대 없음. MID3FWqGfJP는 기존 완료2143/2143초여서 SID 없는 native 확인에는 재사용할 수 있지만 신규 자동 watch 검증 대상은 아니다. 현재 대상의 완료 기록을 초기화하거나 다른 실제 학생을 임의 선택하지 않는다. 사용자가 기록을 허용할 기존 미완료 SID/MID를 지정하면 정상 학생 화면에서 E1→E2→E5/E6을 검증하며 provider callback은 별도 E4로 남긴다.
+이번 설치 작업의 서버 재시작·앱 source/인증/provider 설정 변경·학생 watch 쓰기0. 설치 증거: OS Temp server-kollus-install-20261002-7527a701/installation-record.json. 현재 판정은 설치 완료 / native·자동 watch·genuine callback 미완료다.
+
+Hub 범위 수정(2026-10-02): 사용자 요청으로 자동 watch의 데이터 대상은 테스트 전용 합성 학생으로 정한다. 앞선 운영SID/MID 지정 요청은 철회했다. 현재8004의 정상 loopback GET /api/get-url·POST /api/watch는 실제403/academy_network_required이며, 이를 실제 학원망이나watch200 성공으로 기록하지 않는다. 공개·push·callback 격리는 유지하고 XFF 위장/academy 조건 변경은 하지 않는다.
+가능한 독립 gate는 즉시 재검증했다: 실제 watchState autosave/merge/retry/flush/access, playback resume/active-MID/switch/errors, ms wire, log 늦은SID/date/frame/retry/ABA/close8회귀PASS. OS-temp 합성 저장126case 및 수동 상태·5%/90%·signed-token·배정 불변PASS. 관련source9개는 root/현재QA SHA가 같다. QA source-root를instance 경로로 직접 지정한 추가 시도는 verifier 경로 guard의pyc 분류에서 실패했고 미수정이다. 기본 source-root의공식 temp gate는 guard를 유지한 채 통과했다. 코드/임시 fixture 통과와 실제 native 자동POST/callback은 구분한다.
+실제 native→합성학생watch200까지 연결하려면 학원망 접근이 가능한 격리QA 배포 범위가 필요하다. 현재8004를운영망으로 노출하거나 기존격리guard를완화하는 것으로 대체하지 않는다. 공식플레이어 설치는완료했고 provider사이트권한의사용자직접설정은대기중이다.
+
+사용자 허용 후 추가 관찰(2026-10-02): provider사이트팝업을사용자가허용한뒤실제영상재생확인완료. 자연재생0.160128→44.128159→113.463947초,duration2143.966667초,readyState4/pausedfalse/error없음,화면전체35:43. 신규SID/uservalue0/학생watchwriter없이provider단독확인했고seek/가짜event는사용하지않았다. 검증탭은닫아재생을종료했다. 일시정지버튼의실효와screenshot로컬파일저장은확인되지않았으므로성공으로세지않는다.
+현재8004의임시native-onlyiframe/VG SDK는부모secureContexttrue/SDKloadedtrue,iframe네트워크위임true이나localhost의사용자네트워크권한prompt/SDKready0으로별도대기다. provider사이트단독재생성공을학생iframe/자동watch/callback의통과로확대하지않는다.
+실제합성학생watch200의다음검토안은Hub의'8004 영상 전용 QA 예외'에정의했다. default-OFF+verifiedcopiedroot+receipt8004/PID/시각+loopback+비public+고정SID/MID를모두요구하며video-only권한으로시험·자료academy제한을보존한다. provider에는QA SID/callbacktoken을발행하지않고public/push/callback은OFF다. 현재예외는미승인·미구현이며선택후에만활성화한다. 대안은별도학원망격리QA배포다.

@@ -1,3 +1,5 @@
+비정본 과거 컨텍스트(작성 시점 미상). 현재 규칙·결정·미완료 상태는 docs/SERVER_RULES_INDEX.md, docs/LOGIC_DECISION_LEDGER.md와 docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt를 따른다. 아래 원문은 역사 기록으로 보존한다.
+
 [프로젝트] 수학 학원 관리/학습 웹앱
 
 [핵심 구조]

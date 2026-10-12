@@ -150,10 +150,10 @@ All modal spacing should stay on the existing 4px rhythm.
 ### Admin record popup reuse
 
 - **Structure**: the all-students row action uses the same unified launcher as the admin board, opening the fixed student tooltip, counseling/log card, video-assignment card, and test-assignment card together; no parallel popup skin or screenshot substitute is allowed.
-- **Visual parity**: while the unified popup is open on the all-students page, suspend the roster stylesheet and use the administrator page's `main.css` → `admin.css` stack and `body.admin` scope. Restore the roster stylesheet and `body.all-page` immediately after every popup closes so the shared popup is pixel-identical without adding admin CSS to the initial page load.
-- **All-students state**: counseling notes, homework fields, and video/test assignment controls are read-only; completion/add/delete controls are hidden, and the primary action is labeled `영상 진도 저장`.
+- **Visual parity**: while the unified popup is open on the all-students page, suspend the roster stylesheet and use the administrator page's `main.css` → `admin.css` → `student-work-light.css` stack and `body.admin` scope. Restore the roster stylesheet and `body.all-page` immediately after every popup closes; no separate popup skin is introduced at initial page load.
+- **All-students state**: class-log notes, homework, and video/test assignments are read-only. Video save permits only right-click skip changes. The separate assistant-note thread supports list/create, but existing-note edit/delete/pin actions are locked; hidden log-save controls must not be described as active primary actions.
 - **Progress state**: left click and left drag do not mutate cells; right click retains the admin `skip` behavior and only changed progress values may be saved.
-- **Compact and tablet screens**: at `900px` and below, a fixed four-tab switcher (`영상`, `상담`, `테스트`, `학생정보`) keeps every unified surface reachable one at a time; the active card fills the usable viewport, Korean labels stay intact, and no card may be stranded off-screen.
+- **Compact and tablet screens**: at `900px` and below, a fixed four-tab switcher (`영상`, `조교 메모`, `숙제·정보`, `테스트`) keeps every unified surface reachable one at a time; the active card fills the usable viewport, Korean labels stay intact, and no card may be stranded off-screen.
 
 ### All-students roster table
 
@@ -172,9 +172,10 @@ All modal spacing should stay on the existing 4px rhythm.
 
 ### Assistant student memo author state
 
-- **Dated entry marker**: the first author-button press for a new draft appends a compact `M.D [작성자]` marker before the new memo text.
-- **Persisted color**: the memo text color follows the last successfully saved author, not the currently pressed draft-author button. Reopening the popup restores that saved author and color.
-- **Selection state**: author buttons remain real buttons with `aria-pressed`; choosing a different draft author may change the selected button, but must not recolor previously saved content until the new draft is saved.
+- **Metadata**: author and dates are structured student-scoped fields, not an automatically inserted `M.D [작성자]` text prefix. Meaning and sort priority are owned by canonical §12.
+- **Persisted appearance**: light-theme body text is dark neutral; each note retains its own author's rail/dot/tag colors. Pin emphasis uses that author's top-to-bottom tint, not a shared orange fill.
+- **Selection state**: author buttons remain real buttons with `aria-pressed`. Choosing a draft author changes the composer border/focus color without recoloring saved notes or adding text.
+- **Layout**: author/pin and reminder status/dates share the header, compact edit/delete actions align right, and the body starts on the next row with wrapping before the date/action column. No completion control is added.
 
 ### Admin operation memo panel
 
@@ -239,9 +240,9 @@ The previous-video review surface is a deliberately opened study utility within 
 - **Disclosure**: `.previous-videos` contains a native `영상 복습` button with a count. It controls one hidden panel, starts disabled when no fresh server-authorized rows exist, and exposes `aria-expanded`/`aria-controls`.
 - **Chooser/list**: `.previous-videos-panel` contains a native `영상 등록` button and `.previous-videos-list`. Every eligible `reviewVideosCache` row is a semantic label containing exactly one native checkbox followed by one visible title node, `${chapter}. ${title}`. The chooser keeps the server order and title-only copy; `reviewStatus` never renders as status/meta text.
 - **Authorization state**: `reviewStatus: "done"` remains internal server-authorized membership metadata. `interrupted` is not eligible. The status must not create a visible badge, `완료` row copy, or `차시 N` metadata.
-- **Registered state**: checked registered rows remain in the chooser, stay checked and disabled, and expose `등록됨` through the checkbox accessible name. Registration never removes or rewrites the fresh server review set.
-- **Local registration**: the browser stores only an ordered, deduped SID/date-scoped MID list. On load it parses storage and intersects it with the current server review set, so storage-only MIDs cannot enter the playlist. Clicking `영상 등록` only updates this local list and rerenders the playlist; it never writes/fetches a server assignment. Repeated registration is idempotent and issues no network request.
-- **Playlist**: registered review items append after today's existing assignment rows, deduped by MID. Registration rerenders with `autoPlay: false`; it never changes the current player. Only the existing delegated `#vidList li[data-mid]` handler can play an appended row.
+- **Registered state**: registered rows remain checked and can be unchecked to remove the local selection; `등록됨` is an accessible label, not a permanent disabled state. Registration never rewrites the fresh server review set.
+- **Local registration**: the browser stores only an ordered, deduped SID/date-scoped MID list and intersects it with current server review membership on load. A newly registered selection triggers one page reload as approved in canonical §9; it does not write server assignments, logs, counseling history, progress, or watch. Do not describe the reload as network-free.
+- **Playlist**: registered review items append after today's assignment rows, deduped by MID. Registration does not directly auto-play; the existing delegated playlist handler owns playback. A page reload may reinitialize the existing player, so current-player identity is not an invariant of registration.
 - **Restrictions**: regular and self-study students share the chooser and registration flow. Course-blocked, absent, archived, ghost, malformed, empty, and outside-academy states expose no actionable registration or unauthorized playlist row; disabled metadata remains title-only where the existing access contract permits it.
 - **Motion/responsive**: chooser opening, row/title clicks, selection, and registration use no layout animation or direct playback; playback remains owned by the existing playlist rows. Keep 44px minimum targets, visible `:focus-visible` rings, light/dark tokens, and readable Korean wrapping at narrow, tablet, and desktop widths.
 

@@ -1,0 +1,41 @@
+오늘 표·팝업 조회 후속 통합 / 2026-10-01
+
+전담 쓰레드: 01a0f5a5-45c6-7532-91be-3e3b7fc9131d, GPT-6.1 sol/max.
+후보는 메모리에서 검증 후 diff·verifier tool output으로 인계됐다.
+Hub는 허용된 source baseline에 git apply --check를 통과한 좁은 4파일 hunk만 통합했다.
+이미 보완한 testModal hydration/open/save의 준비 상태 변경은 보존했다.
+
+source: today.js, logModal.js, videoModal.js, testModal.js.
+today.state.js는 변경하지 않았다. DOM/endpoint/payload/source 규칙은 유지한다.
+날짜·force·forceDatePayloads·실제 오늘 경계가 같은 진행 중 조회만 공유한다.
+저장 이벤트와 row 저장 callback은 별도 새 조회를 순서대로 시작한다.
+popup cache는 pending의 수명과 성공 결과의 2.5초 TTL을 구분한다.
+저장 invalidation은 세대를 증가시켜 기존 응답을 거부하며 실패는 retry할 수 있다.
+video 열기의 기존 완료 cache eviction은 generation mutation과 구분해 유지한다.
+
+actual source를 실행한 VM의 외부 관찰 (합성 transport·clock, HTTP·paint 아님)
+오늘 동시3회 초기GET30→10, 총GET38→16, table render1회·결과동일.
+동일 popup pending GET2→1, TTL완료부터 계산, expiry 뒤새GET.
+표준SID prefetch18→9, 고유URL9개.
+늦은 prefetch가 done으로 덮던 manual none·소유권·unknown이 새저장그대로 유지된다.
+date switch, force 차이, 실패retry, sid/date/url 구분, 자정경계, 저장뒤 manual배정 보존 PASS.
+
+Hub 추가 보완: testModal의 필수4개 GET 실패를 빈 data로 삼지 않는다.
+조회중/실패 상태 저장을 막고 재열기를 안내한다. 닫힌/다른SID의 응답은 global
+catalog/로그/진도 projection을 바꾸지 않는다.
+독립 actual 전체module의 failure/invalidshape/pending/retry/close/reversal 9-case PASS.
+
+지속 gate:
+node scripts/verify_today_refresh_flights.mjs
+node scripts/verify_popup_pending_cache.mjs
+node scripts/verify_test_popup_hydration.mjs
+node scripts/verify_admin_latency_contracts.mjs
+node scripts/verify_test_assignment_rules.mjs
+node scripts/verify_student_mobile_app.mjs --only homework
+현재 모두 PASS, 기본 suite 등록 완료. 전체 suite·실제 두-browser UI/계측은 별도다.
+
+negative control: 전담 Temp 원본5개를 --source-dir 및 --expect baseline으로 실행.
+기존 요청 중복·shared state역전·manual오염·실패뒤시험save활성화를 재현했다.
+학생숙제 verifier의 retired assignedTestAnswerUrl 범위와 로그 close() 문자열은
+현행 read-only 표현 owner/명시적 saveCompleted close에 맞춰 수정했고 기존32개 assertion PASS.
+source/runtime/8003/8004/Git 권한 거부를 우회하거나 실운영data를 seed하지 않았다.

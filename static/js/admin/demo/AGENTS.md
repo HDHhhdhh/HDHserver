@@ -10,7 +10,7 @@ This directory virtualizes admin-family pages for `/demo/rh3123*`. It is a secur
 | Primary synthetic API | `fetch.js` | Emulates supported endpoints and mutations; unsupported API requests return synthetic errors. |
 | Session store | `store.js` | `academy.adminDemo.v1`, schema validation, clone/load/save/reset helpers. |
 | Initial fixtures | `data.js` | Fixed synthetic time, students, logs, progress, tests, announcements, and calendar data. |
-| Quick-printer sandbox | `quickPrinterContract.js` | Synthetic preview/export, automatic exclusion counts, default-off reprint behavior, and session-only export receipts. |
+| Quick-printer sandbox | `quickPrinterContract.js` | Synthetic preview/export, automatic exclusion counts, the omitted-API reprint default, and session-only export receipts; the popup initial selection follows canonical §11. |
 | Tutorial controller | `tutorial.js` | Idempotent feature-help mounting and popover/center orchestration. |
 | Tutorial metadata | `tutorial.features.js`, `tutorial.targets.js` | Page routing, selectors, target ranking, and feature descriptions. |
 | Tutorial UI/state | `tutorial.render.js`, `tutorial.styles.js`, `tutorial.state.js` | DOM, injected styles, and a separate session key. |

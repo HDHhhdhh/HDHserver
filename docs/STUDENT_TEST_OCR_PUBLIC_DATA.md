@@ -2,6 +2,16 @@
 
 **현재 상태(2026-09-06):** AI Hub 이미지 변환과 외부 NVIDIA 수식 학습은 완료했고 두 반환 체크포인트가 설치되어 있다. 그러나 새 v4 답안지의 실제 학생 촬영 holdout은 없고 운영은 **OFF / NO_GO**다. 기본 객관식은 v3를 유지한다. 이 문서가 OCR 학습·평가·출시 준비 상태의 정본이며, [전면 검토 기록](STUDENT_TEST_OCR_REVIEW_2026-09-06.md)은 이번 판단의 근거와 수정 범위를 보존한다.
 
+**후속 증거 안내(2026-09-07):** 무료 확대 실험의 원격 학습·평가 기록 및 반환 evidence 검증은 [수신 검토](STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.md)와 [추적 manifest](STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.manifest.json)를 따른다. checkpoint 바이너리 재조립·검증과 운영 채택은 미완료이며 OFF / NO_GO를 유지한다. 아래 2026-09-06 결과는 당시 기록으로 보존한다.
+
+**처리 구조 개선(2026-10-04):** 1단계의 생성·문항 crop·인식값 문법·오류 종료와 2단계의 시험/회차 계약·비동기 재촬영·상주 worker·lease/채점 복구를 구현하고 순수 회귀를 통과했다. 구현·회귀 및 숫자 부분 지연 진단은 [개선 계획](STUDENT_TEST_OCR_IMPROVEMENT_PLAN_2026-10-03.txt), 처리 계약은 [기준서 §21](PROJECT_FUNCTIONS_AND_LOGIC.md#21-학생-시험-ocr-제출과-카탈로그-유형-계약)이 소유한다. 수식·혼합 실촬영 지연은 미검증이다. 학습이나 정확도 재평가는 수행하지 않았고 기존 모델·반환 산출물과 OFF / NO_GO를 유지한다.
+
+**3단계 후속(2026-10-04):** 별도 기본-OFF의 7일 보관 scheduler와 지난 날짜 보류 점검을 구현·격리 검증했다. 운영 삭제는 실행하지 않았다. checkpoint 추가 수신은 원본 part001의 휴지통 상태로 차단됐다. [이번 수신 점검](STUDENT_TEST_FORMULA_CHECKPOINT_RECEIVE_2026-10-04.md)과 [추적 manifest](STUDENT_TEST_FORMULA_CHECKPOINT_RECEIVE_2026-10-04.manifest.json)를 따른다. 새 학습·추론 평가·운영 모델 채택은 없으며 OFF / NO_GO를 유지한다.
+
+**4단계 준비(2026-10-04):** v4 수집 키트·혼합 20문항 snapshot/저장 예측 검토 도구와 공개 focused Training의 대조군/촬영 증강본을 준비했다. 실제 촬영·독립 전사·증강 가독성 감사·새 GPU 비교는 남아 있다. [진행 기록](STUDENT_TEST_OCR_IMPROVEMENT_PLAN_2026-10-03.txt)과 [수집·검토 사용법](STUDENT_TEST_OCR_CAMERA_DATA_2026-10-04.txt)을 따른다. 준비물을 실제 촬영 정확도나 운영 GO의 근거로 사용하지 않으며 OFF / NO_GO를 유지한다.
+
+**5단계 준비(2026-10-04):** 현재 촬영 frontend·영역변환·스타일·서버 경계를 출시 artifact 범위에 포함하고 NO_GO 전용 사전심사 도구를 구현·격리 검증했다. 실제 독립 촬영·보완/채점 trace·전체 지연·운영 적용은 미완료다. [진행 기록](STUDENT_TEST_OCR_IMPROVEMENT_PLAN_2026-10-03.txt)과 [사전심사·승인 후 적용 순서](STUDENT_TEST_OCR_RELEASE_PREP_2026-10-04.txt)를 따른다. 운영 활성화·모델 교체·서버 재시작은 수행하지 않았다.
+
 **무료 개선 후속:** 사용자는 유료 전환 대신 무료 개선 전체 진행을 승인했다. 원본/기존/테두리 제거 후보를 동일 입력으로 비교했고, 수식은 원본 crop이 유리하여 유형별 입력 경로를 분리했다. 실제 비교 수치·공개 파생 데이터·검증한 GPU 전달 패키지는 [무료 OCR 실행 결과](STUDENT_TEST_FREE_OCR_RESULTS_2026-09-06.md)에 기록했다. 추가 GPU 학습 자체는 미실행이며, 현재 컴퓨터에서 할 수 있는 데이터 준비·실행 코드·패키지 검증을 완료했다. 운영 OFF는 유지한다.
 
 ## 이번 검토의 정정
@@ -162,7 +172,7 @@ C:\server-ocr\.venv-unimernet\Scripts\python.exe -B -m scripts.train_student_tes
 3. 공식 Validation에서 `--exclude-writers-from <TRAIN_PROFILE>`로 Training 작성자를 뺀 평가 프로필을 만든다. 이 배제는 기존 `grade:writer` 기반 `writerHash` 범위이며 학년 간 동일 인물까지 증명하지 않는다. 두 프로필의 학년 구성은 사용자 결정대로 고정한다. 학년·표현 종류별 숫자값 동치율/전사 일치율/실패율을 별도로 기록한다.
 4. 전처리 3종 비교는 후속 실험에서 완료했다. 수식은 원본, 객관식은 기존 보정 경로를 채택하고 테두리 제거 후보는 기각했다. 근거와 제한은 [무료 OCR 실행 결과](STUDENT_TEST_FREE_OCR_RESULTS_2026-09-06.md)에 둔다. 학습량·전처리·confidence를 동시에 바꾸지 않으며 실제 20문항 지연시간은 별도로 확인한다.
 5. 공공 데이터에서 후보가 개선된 뒤 v4 실카메라 calibration과 별도 최종 holdout을 수집한다. threshold를 그 holdout으로 고르지 않는다. 토큰 score 0.995를 99.5% 정답 확률로 해석하지 않는다.
-6. 출시 전 20문항 end-to-end/대기열/재시작 복구, 7일 만료 삭제의 정기 실행, 당일 보류 처리 절차를 격리 환경에서 확인한다. 현재 만료 삭제 함수만 있고 정기 호출 연결은 없으므로 **7일 자동 삭제 운영은 미완료**다. 운영 migration·유지보수·기능 활성화는 별도 승인 단계다.
+6. 출시 전 20문항 end-to-end/대기열/재시작 복구와 실제 당일 보류 처리 절차를 확인한다. 7일 보관·지난 보류의 정기 호출 소스와 격리 실패 검증은 3단계에서 구현했지만 **7일 자동 삭제 운영은 미적용**이다. 모델 수신·전체 촬영 지연·독립 품질 gate와 운영 migration·유지보수·기능 활성화는 별도로 완료해야 한다.
 
 ## 재현 경계
 

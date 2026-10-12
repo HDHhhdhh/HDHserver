@@ -47,7 +47,7 @@
 | 영역 | 요청 경계 | 순수 규칙/서비스 | 저장 원본 | 주요 소비 화면 |
 |---|---|---|---|---|
 | 사람·학생 명단 | `api_students`, `api_auth`, `api_student_accounts` | `person_identity`, `person_identity_store`, `student_auto_assignment_rules`, app-injected 배정 hook, 계정 규칙 | `persons.json`, `students.json`, identity journal, `auth_accounts.json` | 로그인, 관리자, 전체 학생 |
-| 백지리뷰 검사 대기 | `api_students`의 `/api/update` | identity journal 또는 legacy roster lock의 SID 단일 필드 갱신 | `students.json.whiteReviewPending` | 관리자 오늘 학생 표 |
+| 백지리뷰 검사 대기 | `api_students`의 `/api/update` | identity journal 또는 legacy roster lock의 SID 단일 필드 갱신 | `students.json.whiteReviewPending` | 관리자 오늘 학생 표·하원 명단 |
 | 날짜·출결 | `api_attend`, `api_arrive_time`, `api_todaymeta`, `api_schedule_overrides`, `api_makeup_carryover` | `date_rules`, `absent`, `absence_assignment_cleanup`, `absence_transaction`, schedule projection, app-injected auto-assignment hooks, makeup sync | 출결 JSON군, `updates.json`, `progress.json`, class logs, `data/today_order.json`, `makeup_carryover.json`, transient journal | 관리자 오늘표·캘린더 |
 | 수업 로그 | `api_logs`의 `/api/logs*`·`/api/homework-books` | `log_repository_provider`, `log_rules`, `LogRepository` | `app.sqlite.logs` 우선 + `logs.json` 호환 | 관리자 로그, 학생 숙제, 내보내기 |
 | 학생 숙제 v2 | 조건부 `api_student_homework` | homework service/repository | 명시적 migration의 SQLite 숙제 테이블 | 관리자 로그 팝업, 학생 앱 |
@@ -58,7 +58,7 @@
 | 공지·게시판 | `api_announcements`, 조건부 `api_student_board` | board projection, notification event ID | `announcements.json`, `announce_status.json`, 첨부 파일 | 관리자 공지, 학생/학생 앱 |
 | 학교 일정 | `api_school_calendar` | `school_calendar_store` | `school_calendar.json` | 학교 일정 편집, 관리자·전체 학생 일정 조회 |
 | 자료·파일 | `api_materials`, `api_fs` | `material_state_provider` + material_reference_rules + material_state journal + 경로/파일-tree 잠금 | materials.json, mat_assign.json, page_folders.json, files/ | 관리자·학생 자료 |
-| 조교/운영 메모 | 전용 notes/logs API | 서로 다른 repository | `app.sqlite`의 분리 테이블 | 관리자만 |
+| 조교/운영 메모 | 전용 notes/logs API | 서로 다른 repository | `app.sqlite`의 분리 테이블 | 관리자; 전체학생은 조교 메모 조회·신규 등록만 |
 | 학생 앱 인증 | 조건부 `api_student_app_auth`, 관리자 계정 API | account/session/activation/throttle 서비스 | `auth_accounts.json`, SQLite 세션·감사·활성화·throttle | `/app`, 관리자 계정 |
 | 학생 앱 푸시 | 조건부 `api_student_push` | push/notification repository와 sender | SQLite push/outbox/notification 테이블 | 학생 앱 설정, 백그라운드 발송 |
 | 집중 모드 | 조건부 공개 API + 상시 관리자 요약 | focus rules/repository, schedule projection | 명시적 migration의 focus 테이블 | 학생 focus UI, 관리자 요약 |
@@ -81,7 +81,7 @@ admin shell
 
 서버의 일반 날짜 키는 `core/date_rules.py`가 실제 정규 `YYYY-MM-DD`인지 판정한다. 진도·로그·updates/self-study·watch/watch-status·schedule override는 불가능 날짜를 repository·lock·hook·알림·저장 전에 400으로 닫는다. 결석 전체-map은 사용자 결정 D-04의 500·무쓰기 알려진 제한을 그대로 유지한다.
 
-`백지`는 선택 날짜에 속한 행에서 편집하지만 날짜별 상태가 아니다. `today.render.js`가 현재 SID의 `whiteReviewPending`을 렌더하고 exact boolean을 `/api/update`로 보내며, `api_students`가 identity journal 또는 legacy 명단 잠금 안에서 `students.json`의 그 SID만 갱신한다. 하원·기록 정리는 로그만 변경하므로 이 필드에 닿지 않는다.
+`백지`는 오늘 학생 표와 하원 명단의 행에서 편집하지만 날짜별 상태가 아니다. `today.render.js`의 공용 셀과 저장 처리가 현재 SID의 `whiteReviewPending`을 렌더하고 exact boolean을 `/api/update`로 보내며, `api_students`가 identity journal 또는 legacy 명단 잠금 안에서 `students.json`의 그 SID만 갱신한다. 두 명단의 같은 SID 체크·저장 중 잠금·실패 복원을 함께 반영한다. 하원·기록 정리는 로그만 변경하므로 이 필드에 닿지 않는다. 의미 정본은 [기능·로직 기준서 §6](PROJECT_FUNCTIONS_AND_LOGIC.md#백지리뷰-검사-대기)이다.
 
 ### 5.2 학생 bootstrap
 
@@ -100,10 +100,14 @@ legacy JWT 또는 public app cookie session
 
 ### 5.3 영상 재생과 진도
 
+YouTube/기출엄선의 의미 정본은 [§9](PROJECT_FUNCTIONS_AND_LOGIC.md#youtube-gichul-overlay)다. `core/video_sources.py`와 `shared/videoSources.js`가 URL·provider별 안정 MID를 투영하고 `api_videos`가 카탈로그 저장과 capability를 제공한다. `api_students`의 SID boolean 변경은 배정 hook을 호출하지 않는다. `student_video_projection`은 새 자동 후보·기존 snapshot 보존·복습 범위를 분리하며 `student_auto_assignment_service`가 이를 조합한다. YouTube `/api/get-url → playback.js iframe`은 아래 Kollus watch 경로로 내려가지 않는다. 기록정리는 기존 개별/일괄 helper의 `completeAssignedYouTube` 명령 → `api_progress` 최신 로그/결석/updates 확인 → 잠금 후 순수 완료 patch → 기존 로그 보관 순서다.
+
+명시적 Kollus 초록 재배정은 `videoModal.js → /api/progress/patch(resumeAutoWatch) → core/video_watch_cycles.py`로 새 시청 세대를 만든다. 날짜/SID/MID 세대는 progress metadata에만 저장하며 기존 watch 이력은 보존한다. `watch_progress_writer.py`가 현재 세대와 관측값을 같은 progress 잠금 아래 확인하고, 학생 bootstrap·watch/latest·복습/자동 후보 투영이 같은 새 기준을 사용한다. 의미 정본은 [§10](PROJECT_FUNCTIONS_AND_LOGIC.md#10-시청-기록과-진도-상태), 회귀는 `verify_video_watch_rearm.py`/`.mjs`다.
+
 ```text
 student.js playlist/board action → student/playback.js play(mid)
   → /api/get-url: 네트워크 + session SID + known SID/MID 검증
-  → playback.js가 resume URL·iframe Kollus attach/poll·same-window active-MID progress 판정
+  → playback.js가 resume URL·공식 get_progress()/set_current_time()·iframe Kollus attach/poll·same-window active-MID progress 판정
   → student/watchState.js가 local monotonic merge·debounce·keepalive /api/watch 저장
   → 또는 Kollus LMS callback
   → core/watch_progress_writer의 monotonic watch merge·자동 progress write
@@ -136,9 +140,11 @@ tests-config revision GET
   → bootstrap이 답지 우선순위와 네트워크 제한을 투영
 ```
 
-빠른 인쇄기 흐름은 선택 타임 SID와 선택일 progress의 현재 과목 `assigned` 시험을 `test.id`·영구 `materialId`로 해석한다. `LogRepository.read_export_history()`의 결석 이월 출처를 따라 최초 배정일을 복원하고 출처 당시 `assigned`였던 정확한 이월 재배정을 기본 제외한다. 이 제외는 이력 기능 이전 출력분도 첫 재배정 CSV부터 막기 위해 과거 키 존재를 요구하지 않는다. 별도 `quick_printer_export_history` SQLite repository는 실제 성공 CSV 키를 감사 기록으로 조회·원자 기록한다. preview는 집계만 반환하며 실제 export는 이력 저장까지 성공해야 BOM CSV를 응답한다.
+빠른 인쇄기 흐름은 선택 타임 SID와 선택일 progress의 현재 과목 `assigned` 시험을 `test.id`·영구 `materialId`로 해석한다. `LogRepository.read_export_history()`의 결석 이월 출처를 따라 최초 배정일을 복원하고 출처 당시 `assigned`였던 정확한 이월 재배정의 API 옵션 생략 시 제외 집합을 만든다. 팝업 최초 재인쇄 선택은 [기능·로직 기준서 §11](PROJECT_FUNCTIONS_AND_LOGIC.md#11-시험-배정답지과거-기록)을 따른다. 이 제외는 이력 기능 이전 출력분도 첫 재배정 CSV부터 막기 위해 과거 키 존재를 요구하지 않는다. 별도 `quick_printer_export_history` SQLite repository는 실제 성공 CSV 키를 감사 기록으로 조회·원자 기록한다. preview는 집계만 반환하며 실제 export는 이력 저장까지 성공해야 BOM CSV를 응답한다.
 
 `tests.json`과 legacy 로그는 과거 기록 읽기용이다. 과거 학생 제출·OCR 표면은 등록하지 않으며 새 흐름은 아래 전용 경계로 분리한다.
+
+과거 기록의 정규화·상세 표현은 `core/test_record_projection.py`, 통계 집계는 `core/test_statistics_projection.py`가 소유한다. `api_tests.py`는 durable → legacy 조회 순서, 날짜 정책, 인증, clock 및 응답을 유지한다. 학생 배정 표현은 `core/student_test_projection.py`가 계산하고, `api_basic.py`의 bridge는 항목마다 config → answer-map loader/cache 순서를 보존한다. 빈 배정은 이 loader를 호출하지 않는다. Bootstrap은 기존 curriculum filter → academy stripping 순서로 `assignedTests`를 조립한다. 고정 payload/body hash와 실제 bridge 검증은 `scripts/verify_test_projection_boundaries.py --require-bootstrap-wiring`이 소유한다.
 
 ### 5.5A 학생 시험 OCR
 
@@ -161,7 +167,7 @@ tests-config revision GET
      · 없거나 손상되면 기대값 + Drive 원문 링크로 fallback
 ```
 
-`student_test_ocr_repository`가 submission/question/job/asset/history를 revision으로 묶는다. 서버 router만 `answerModes`로 crop을 분기하며 OCR worker payload에는 `questionNo`와 `imagePath`만 들어간다. 정답키는 채점 서비스가 카탈로그 revision을 다시 확인한 뒤 사용한다. `student_test_ocr_job_runner`의 recognition commit callback → service `complete_recognition`이 학생 조회 없이 채점하며 worker 실패는 submission에도 반영한다. 학생 파일은 7일 뒤 삭제 대상이며 정기 purge 연결은 아직 출시 전 작업이다. 공식 PDF crop은 `STUDENT_TEST_OCR_SOLUTION_PDF_ROOT` 아래 UNIT PDF를 읽기만 하고 no-store로 응답한다.
+`student_test_ocr_repository`가 submission/question/job/asset/history를 revision으로 묶는다. 서버 router만 `answerModes`로 crop을 분기하며 OCR worker payload에는 `questionNo`와 `imagePath`만 들어간다. 정답키는 채점 서비스가 해당 시험/회차 context를 다시 확인한 뒤 사용한다. `student_test_ocr_job_runner`의 recognition commit callback → service `complete_recognition`이 학생 조회 없이 채점하며 worker 실패는 submission에도 반영한다. `app.create_app` → `configure_student_test_ocr_maintenance`는 별도 기본-OFF 보관 runtime을 구성한다. `StudentTestOcrMaintenance` → asset page → repository의 재확인/단일 삭제/tombstone 및 지난 날짜 보류 요약을 수행한다. 운영 보관 활성화는 미실행이며 상세 계약은 [§21](PROJECT_FUNCTIONS_AND_LOGIC.md#21-학생-시험-ocr-제출과-카탈로그-유형-계약)을 따른다. 공식 PDF crop은 `STUDENT_TEST_OCR_SOLUTION_PDF_ROOT` 아래 UNIT PDF를 읽기만 하고 no-store로 응답한다.
 
 `student_test_ocr_config.readiness_report`는 설치 파일 확인을, `student_test_ocr_readiness`는 현재 artifact/정책과 묶인 독립 촬영 출시 증거 계약을 소유한다. 숫자 `metrics.json:GO`와 파일 존재만으로 일반 runtime을 열지 않는다. `scripts/student_test_ocr_evidence.py`는 진단 입력 identity, `scripts/student_test_formula_dataset_contract.py`는 학습 이미지/annotation identity 경계다. 학습·평가 상태는 [OCR 정본](STUDENT_TEST_OCR_PUBLIC_DATA.md)을 참조한다. 운영 migration과 기능 활성화는 별도 승인 단계다.
 
@@ -202,7 +208,7 @@ reminders가 꺼져 있으면 일정·진도 hook은 repository를 열지 않고
 | 공지 | `announcements.json`, `announce_status.json`, 첨부 파일 | 공지와 학생별 상태 분리 |
 | 오늘 순서 | `data/today_order.json` | GET/PATCH/DELETE, 단일 canonical 경로 |
 
-`core.paths`를 가져오면 누락된 canonical JSON과 `files/`를 생성한다. `AUTH_PATH`(`auth.json`)와 `CLINIC_PATH`(`clinic.json`)는 현재 생산 코드 소비자가 확인되지 않았지만 import 시 생성 대상이므로, 외부 사용 확인 없이 바로 제거하지 않는다.
+`core.paths`는 경로만 선언한다. `app.create_app()`가 서버 guard 뒤 `initialize_runtime_paths()`를 호출해 legacy 기본 JSON과 `files/`를 생성한 다음 recovery를 수행한다. `AUTH_PATH`(`auth.json`)와 `CLINIC_PATH`(`clinic.json`)는 현재 생산 코드 소비자가 확인되지 않았지만 명시적 시작 초기화 대상이므로, 외부 사용 확인 없이 제거하지 않는다.
 
 ### 6.2 `app.sqlite` 테이블
 
@@ -262,6 +268,8 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 | `routes/api_students.py` | 학생 명단 GET, add/clone, 단일 필드 update, `whiteReviewPending` exact-boolean gate, retire와 app-injected 배정 후처리 |
 | `routes/api_logs.py` / `routes/log_repository_provider.py` | 수업 로그 HTTP·숙제 교재 조회 / placeholder repair·공용 repository wiring |
 | `routes/api_materials.py` / `routes/material_state_provider.py` | 자료·배정 HTTP / bootstrap과 공유하는 coherent·degraded material-state 읽기 |
+| `core/material_state.py` / `core/file_material_transaction.py` | file-tree·3-store 잠금과 versioned journal / identity 검증·private staging·prepared undo·committing forward 파일 계획 |
+| `core/makeup_payload_rules.py` / `routes/api_makeup_carryover.py` | 기존 schedule/manual/revision 순수 projection / HTTP·잠금·저장·post-commit 알림 및 sheet I/O |
 | `routes/api_schedule_overrides.py` | 보강출석·주말 slot HTTP, 잠금 merge, 알림, app-injected 배정 후처리와 오늘 extra no-op 재시도 |
 | `routes/api_videos.py` | 영상 카탈로그 GET/POST, Kollus MID 정규화, 정상 저장 identity guard |
 | `routes/api_progress.py` | 진도 GET 필터와 잠금 PATCH merge·milestone 알림 경계 |
@@ -278,7 +286,6 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 | `static/js/school-calendar/persistence.js` | no-store GET, revision 초기화, auto/switch/flush/metadata 저장 queue 조합 |
 
 큰 파일 자체를 결함으로 보지 않는다. 먼저 데이터 권위와 상태 전이를 테스트로 고정한 뒤 책임 단위로 분리한다.
-D-08의 school-calendar 두 seam과 `api_basic.py`의 영상 카탈로그·진도·수업 로그·자료 배정·schedule override·학생 identity·updates·학생 bootstrap HTTP seam은 완료됐다. 일정 HTTP 경계는 `routes/api_school_calendar.py`, client transport는 `static/js/school-calendar/persistence.js`, 순수 문서 state는 `static/js/school-calendar/state.js`가 소유하며 `school-cal.js`에는 DOM·이벤트 orchestration이 남는다. 영상 카탈로그는 `routes/api_videos.py`, 진도 GET·PATCH는 `routes/api_progress.py`, 수업 로그와 숙제 교재 조회는 `routes/api_logs.py`, route-side placeholder repair와 공용 factory는 `routes/log_repository_provider.py`가 소유한다. 자료 GET과 revisioned 배정 저장은 `routes/api_materials.py`, bootstrap과 공유하는 coherent·degraded 읽기는 `routes/material_state_provider.py`가 소유한다. 보강출석과 주말 slot HTTP는 `routes/api_schedule_overrides.py`, 학생 roster/identity HTTP는 `routes/api_students.py`, updates GET/PATCH/self-study HTTP는 `routes/api_updates.py`가 소유하고 `app.py`가 public assignment hook을 주입한다. 학생 bootstrap/watch/playback/review-local/announcement/test-presentation은 각각 `static/js/student/bootstrapState.js`, `static/js/student/watchState.js`, `static/js/student/playback.js`, `static/js/student/reviewPlaylist.js`, `static/js/student/announcementState.js`, `static/js/student/testPresentation.js`로 분리되어 이 순서로 `student.js`보다 먼저 로드된다. playback 모듈은 active MID, resume URL, `/api/get-url`, iframe Kollus bridge와 progress message를, review 모듈은 fresh-authority 안의 SID/날짜별 선택·등록·취소를, announcement 모듈은 strict 정규화·미확인/완료·ack/survey/reply 전이·필터·페이지 병합을, test-presentation 모듈은 assignedTests 정규화·라벨·답지 접근·card metadata·pending/mobile-nav를 소유한다. 관리자 시험 카탈로그의 정규화·검색/정렬·그룹·순서 gate·revision request projection은 `static/js/tests/catalogState.js`, 답안 parser·mode·회차 merge·CSV projection은 `static/js/tests/catalogEditorState.js`, 통계 lookup·summary·검색/정렬·상세 presentation은 `static/js/tests/catalogStatisticsState.js`로 분리됐고 `tests.js`에는 fetch/file/table/modal DOM/mutation orchestration이 남는다. SID/merge/source 규칙과 updates 잠금은 core 모듈로 공유하고, A:Ble 기본 배정 수 규칙은 `core/student_auto_assignment_rules.py`가 자동 배정과 roster update에 함께 제공한다. 자동배정의 일정 해석·영상 projection·배정 변환은 각각 `core/student_schedule_rules.py`, `core/student_video_projection.py`, `core/student_video_assignment_rules.py`가 소유하고, 주입형 runtime read·lock·save·자습 reconcile은 `routes/student_auto_assignment_service.py`가 소유한다. `api_basic.py`에는 dependency factory·호환 hook과 bootstrap 조립만 남는다. 후속 분할도 독립 oracle·실제 임시 route/store gate 아래 한 도메인씩 이동한다. `/tests`의 page-only cascade는 `static/css/tests.css`로 분리됐다. `admin.css`의 소비자·도메인 소유권·결정 queue는 [관리자 CSS 소유권 인벤토리](ADMIN_CSS_INVENTORY.md)가 정본이다. 첫 후보인 `/admin` 수업 기록 내보내기 modal은 `static/css/admin-export-logs.css`로 분리됐다.
 
 ## 8. 현재 cross-module seam과 호환 표면
 
@@ -323,7 +330,8 @@ D-08의 school-calendar 두 seam과 `api_basic.py`의 영상 카탈로그·진�
 |---|---|---|
 | 순수 `core` rule 호출 | 무변경 | 파일·Flask 의존 없음 |
 | 정적 소스/JSON 직접 읽기 | 원칙상 무변경 | 앱 import를 피할 때 |
-| `core.paths`/`app` import | 생성 가능 | 누락 JSON·`files/` 생성 |
+| `core.paths` import | 경로 선언만 | JSON·directory 생성 없음 |
+| `app` import / `create_app()` | 생성·복구 가능 | 서버 guard 뒤 명시적 기본 JSON·`files/` 생성 및 journal recovery |
 | 로그/조교 메모 repository 읽기 | SQLite 변경 가능 | schema 보장, WAL, backfill |
 | bare `GET /api/updates` | 운영 쓰기 가능 | 실제 오늘 자동 snapshot 생성/rebase |
 | 비공개 real-today bootstrap | 운영 쓰기 가능 | 누락 자동 배정 생성 가능 |
