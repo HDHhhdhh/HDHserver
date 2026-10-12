@@ -8,7 +8,7 @@ import random
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Iterable, Mapping, Sequence
+from typing import Final, Mapping, Sequence
 
 from scripts.import_aihub_education_choice_dataset import CHOICE_LABELS, REJECT_LABEL, normalized_boxes
 from scripts.import_aihub_education_formula_dataset import dataset_grade_code

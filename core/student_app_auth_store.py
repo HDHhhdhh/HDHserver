@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import secrets
 from pathlib import Path
 from typing import Mapping, Sequence, TypeAlias, TypedDict
 
@@ -125,6 +126,7 @@ def create_account(path: Path, identifier: str, sids: Sequence[str]) -> str:
             "created_at": now,
             "updated_at": now,
             "credentials_updated_at": now,
+            "legacy_session_id": secrets.token_urlsafe(32),
         }
         save_atomic(path, accounts)
     return normalized
@@ -152,6 +154,7 @@ def change_credentials(path: Path, current_id: str, new_id: str, password_hash: 
             accounts[current_key] = record
         else:
             accounts.pop(current_key, None)
+            record["legacy_session_id"] = secrets.token_urlsafe(32)
             accounts[target] = record
         save_atomic(path, accounts)
     return target if target_key != current_key else current_key

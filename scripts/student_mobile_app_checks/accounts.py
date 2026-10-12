@@ -58,21 +58,6 @@ def _check(state: list[int], condition: bool, label: str) -> None:
     state[0] += 1
 
 
-def _shape(path: Path) -> dict[str, FixtureValue]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise AssertionError("fixture root is not a map")
-    result: dict[str, FixtureValue] = {"top_level_map_entries": 0, "accounts": []}
-    entries: list[FixtureValue] = []
-    for value in data.values():
-        if not isinstance(value, dict):
-            continue
-        fields = sorted(value)
-        sids = value.get("sids")
-        entries.append({"field_names": fields, "sids_count": len(sids) if isinstance(sids, list) else 0})
-    result["top_level_map_entries"] = len(data)
-    result["accounts"] = entries
-    return result
 
 
 def _rules_checks(state: list[int]) -> None:
@@ -105,7 +90,7 @@ def _rules_checks(state: list[int]) -> None:
     _check(state, validate_password("safe-password", "Alice") == "safe-password", "valid password")
 
 
-def _repository_checks(state: list[int]) -> dict[str, FixtureValue]:
+def _repository_checks(state: list[int]) -> None:
     """Exercise lifecycle, read purity, refusal, and unknown-field preservation."""
 
     students = [
@@ -118,7 +103,6 @@ def _repository_checks(state: list[int]) -> dict[str, FixtureValue]:
     initial = {"_meta": {"version": 7}, "Alice": {"sids": ["u-1"], "pw_hash": generate_password_hash("1234"), "custom": "keep"}}
     with fixture(students, initial) as (accounts_path, students_path):
         repo = StudentAccountRepository(accounts_path, students_path)
-        before = _shape(accounts_path)
         before_read = accounts_path.read_bytes()
         _check(state, repo.get("Alice") is not None, "existing account read")
         _check(state, accounts_path.read_bytes() == before_read, "no write on read")
@@ -139,7 +123,6 @@ def _repository_checks(state: list[int]) -> dict[str, FixtureValue]:
         _check(state, isinstance(alice, dict) and alice.get("must_change_credentials") is True, "must change true")
         _check(state, raw.get("_meta") == {"version": 7}, "unknown top-level preserved")
         _check(state, isinstance(raw.get("Alice"), dict) and raw["Alice"].get("custom") == "keep", "unknown account field preserved")
-        after_unique = _shape(accounts_path)
         duplicate_before = accounts_path.read_bytes()
         try:
             repo.public_login("Bob", "1234")
@@ -155,7 +138,6 @@ def _repository_checks(state: list[int]) -> dict[str, FixtureValue]:
         _check(state, accounts_path.read_bytes() != legacy_before, "explicit lazy transition writes")
         custom = repo.load()["Alice"]
         _check(state, isinstance(custom, dict) and custom.get("custom") == "keep", "lazy merge preserves field")
-        after_lazy = _shape(accounts_path)
         reset = repo.admin_reset("Alice", "1234")
         _check(state, reset.account_id == "Alice" and reset.must_change_credentials and reset.revoke_sessions, "admin reset result")
         reset_accounts = repo.load()
@@ -186,8 +168,6 @@ def _repository_checks(state: list[int]) -> dict[str, FixtureValue]:
         else:
             raise AssertionError("invalid reset password was accepted")
         _check(state, accounts_path.read_bytes() == rejected_bytes, "password rejection byte stable")
-        lifecycle = {"before": before, "after_unique": after_unique, "after_lazy": after_lazy, "after_reset": _shape(accounts_path)}
-        return lifecycle
 
 
 def _legacy_transition_checks(state: list[int]) -> None:
@@ -267,7 +247,7 @@ def _atomic_failure_check(state: list[int]) -> None:
 
 
 def run_checks() -> dict[str, str | int | bool]:
-    """Run all temporary account checks and return redacted lifecycle evidence."""
+    """Run all temporary account checks and return their assertion summary."""
 
     state = [0]
     _rules_checks(state)

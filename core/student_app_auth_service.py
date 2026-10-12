@@ -161,8 +161,8 @@ class StudentAuthService:
             raise StudentAuthFailure("unauthenticated", 401)
         students = self._students()
         allowed = narrow_sids(tuple(view["allowed_sids"]), students)
-        allowed = narrow_sids(allowed, students) if account_sids(record) else ()
-        allowed = tuple(sid for sid in allowed if sid in set(account_sids(record)))
+        stored = set(account_sids(record))
+        allowed = tuple(sid for sid in allowed if sid in stored)
         self._available(allowed)
         if not allowed:
             self.dependencies.sessions.revoke(token)

@@ -243,6 +243,14 @@ def run() -> dict:
             revision=action_status["revision"],
             content=jpeg,
         )
+        assert action_status["status"] == "processing"
+        queued_runner = StudentTestOcrJobRunner(repository=repository, asset_root=root / "assets",
+            cropper=cropper, recognizer=recognizer, recapture_recognizer=answer_value_recognizer,
+            clock=lambda: now + dt.timedelta(seconds=2), before_recognition=service.require_job_context,
+            on_recognition_committed=service.complete_recognition)
+        assert queued_runner.run_one()["state"] == "succeeded"
+        queued_runner.shutdown()
+        action_status = service.status(submission_id=action_submission_id, sid="student-2")
         assert action_status["status"] == "finalized" and action_status["result"]["score"] == 20
         assert len(repository.list_assets_for_submission(action_submission_id)) == 22
         assertions += 4
@@ -354,6 +362,14 @@ def run() -> dict:
                 revision=pending_status["revision"],
                 content=jpeg,
             )
+            assert pending_status["status"] == "processing"
+            queued_runner = StudentTestOcrJobRunner(repository=repository, asset_root=root / "assets",
+                cropper=cropper, recognizer=recognizer, recapture_recognizer=answer_value_recognizer,
+                clock=lambda: now + dt.timedelta(seconds=4), before_recognition=service.require_job_context,
+                on_recognition_committed=service.complete_recognition)
+            assert queued_runner.run_one()["state"] == "succeeded"
+            queued_runner.shutdown()
+            pending_status = service.status(submission_id=pending_submission_id, sid="student-4")
         assert pending_status["status"] == "pending_teacher" and pending_status["result"]["score"] is None
         assert pending_status["studentActions"] == [] and pending_status["pendingMessage"]
         assertions += 3

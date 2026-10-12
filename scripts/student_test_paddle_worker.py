@@ -14,6 +14,7 @@ ENGINE: Final = "paddle"
 DEFAULT_MODEL_NAME: Final = "korean_PP-OCRv5_mobile_rec"
 DEFAULT_MODEL_DIR: Final = Path(r"C:\server-ocr\paddlex-cache\official_models\korean_PP-OCRv5_mobile_rec")
 DEFAULT_CACHE_DIR: Final = Path(r"C:\server-ocr\paddlex-cache")
+_RUNTIME = None
 
 
 class WorkerInputError(ValueError):
@@ -55,9 +56,7 @@ def extract_recognition(result: object) -> tuple[str, float | None]:
     return text[:80], score
 
 
-def run(items: list[tuple[int, Path]]) -> list[dict]:
-    from PIL import Image, ImageFilter, ImageOps
-
+def load_runtime():
     cache_dir = Path(os.environ.get("STUDENT_TEST_OCR_PADDLE_CACHE_DIR", str(DEFAULT_CACHE_DIR))).resolve()
     model_dir = Path(os.environ.get("STUDENT_TEST_OCR_PADDLE_MODEL_DIR", str(DEFAULT_MODEL_DIR))).resolve()
     model_name = os.environ.get("STUDENT_TEST_OCR_PADDLE_MODEL_NAME", DEFAULT_MODEL_NAME).strip()
@@ -69,7 +68,29 @@ def run(items: list[tuple[int, Path]]) -> list[dict]:
     with redirect_stdout(sys.stderr):
         from paddleocr import TextRecognition
 
-        predictor = TextRecognition(model_name=model_name, model_dir=str(model_dir), device=device)
+        return TextRecognition(model_name=model_name, model_dir=str(model_dir), device=device)
+
+
+def cached_runtime():
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = load_runtime()
+    return _RUNTIME
+
+
+def close_runtime() -> None:
+    global _RUNTIME
+    predictor, _RUNTIME = _RUNTIME, None
+    if predictor is not None:
+        with redirect_stdout(sys.stderr):
+            predictor.close()
+
+
+def run(items: list[tuple[int, Path]]) -> list[dict]:
+    from PIL import Image, ImageFilter, ImageOps
+
+    predictor = cached_runtime()
+    with redirect_stdout(sys.stderr):
         with tempfile.TemporaryDirectory(prefix="student-test-paddle-") as temp_dir:
             paths: list[str] = []
             for index, (_number, path) in enumerate(items):
@@ -79,10 +100,7 @@ def run(items: list[tuple[int, Path]]) -> list[dict]:
                     variant_path = Path(temp_dir) / f"variant-{index:03d}.png"
                     variant.save(variant_path)
                 paths.append(str(variant_path))
-            try:
-                results = predictor.predict(paths, batch_size=min(20, len(paths)))
-            finally:
-                predictor.close()
+            results = predictor.predict(paths, batch_size=min(20, len(paths)))
     if not isinstance(results, list) or len(results) != len(items) * 2:
         raise RuntimeError("Paddle worker result count mismatch")
     output: list[dict] = []
@@ -108,6 +126,13 @@ def emit(payload: Mapping[str, object]) -> None:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--serve-jsonl"]:
+        if __package__:
+            from .student_test_ocr_worker_server import serve
+        else:
+            from student_test_ocr_worker_server import serve
+        return serve(engine=ENGINE, parse_request=parse_request,
+                     run=lambda items, options: run(items), close_runtime=close_runtime)
     try:
         payload = json.load(sys.stdin)
         items = parse_request(payload)
@@ -116,6 +141,8 @@ def main() -> int:
         emit({"ok": False, "engine": ENGINE, "error": type(error).__name__})
         print(f"{ENGINE} worker failed: {error}", file=sys.stderr)
         return 1
+    finally:
+        close_runtime()
     emit({"ok": True, "engine": ENGINE, "items": result})
     return 0
 

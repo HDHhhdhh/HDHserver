@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import stat
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Final, Protocol
 
 
@@ -26,9 +27,9 @@ class OcrAssetError(ValueError):
 class AssetRepository(Protocol):
     def register_asset(self, **kwargs) -> dict: ...
 
-    def expired_assets(self, *, now: str, limit: int = 100) -> list[dict]: ...
+    def expired_assets(self, *, now: str, limit: int = 100, after_id: str = "") -> list[dict]: ...
 
-    def mark_asset_deleted(self, asset_id: str, *, deleted_at: str) -> bool: ...
+    def purge_expired_asset(self, asset_id: str, *, now: str, unlink) -> str: ...
 
 
 def _fail(code: str, message: str) -> None:
@@ -171,19 +172,67 @@ def purge_expired_assets(
     now: dt.datetime,
     limit: int = 100,
 ) -> dict:
+    page = purge_expired_asset_page(repository, root=root, now=now, limit=limit)
+    return {key: page[key] for key in ("examined", "deleted", "failed")}
+
+
+def _unlink_registered_asset(root: Path, relative_path: str) -> None:
+    relative = str(relative_path).replace("\\", "/")
+    pieces = relative.split("/")
+    if (not relative or relative.startswith("/") or PureWindowsPath(relative).drive
+            or ":" in relative or any(piece in {"", ".", ".."} for piece in pieces)):
+        _fail("invalid_asset_path", "OCR deletion path must be a contained relative file")
+    lexical_root = root.absolute()
+    if lexical_root.parent == lexical_root:
+        _fail("invalid_asset_path", "OCR deletion root cannot be a drive root")
+    target = lexical_root.joinpath(*pieces)
+    # Never resolve a link and then unlink its target, even inside this root.
+    chain = [*reversed(lexical_root.parents), lexical_root]
+    for piece in pieces:
+        chain.append(chain[-1] / piece)
+    for path in chain:
+        try:
+            attributes = path.lstat()
+        except FileNotFoundError:
+            continue
+        if (stat.S_ISLNK(attributes.st_mode)
+                or getattr(attributes, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024)):
+            _fail("invalid_asset_path", "OCR deletion refuses links and reparse points")
+        if path == target and not stat.S_ISREG(attributes.st_mode):
+            _fail("invalid_asset_path", "OCR deletion accepts ordinary files only")
+    if target.resolve() != target:
+        _fail("invalid_asset_path", "OCR deletion path changed during validation")
+    target.unlink(missing_ok=True)
+
+
+def purge_expired_asset_page(
+    repository: AssetRepository,
+    *,
+    root: Path,
+    now: dt.datetime,
+    limit: int = 100,
+    after_id: str = "",
+) -> dict:
     if now.tzinfo is None or now.utcoffset() is None:
         _fail("invalid_asset_timestamp", "OCR retention timestamp must include a timezone")
-    now_text = now.isoformat(timespec="seconds")
-    rows = repository.expired_assets(now=now_text, limit=limit)
+    now_text = now.astimezone(dt.timezone(dt.timedelta(hours=9))).isoformat(timespec="seconds")
+    rows = repository.expired_assets(now=now_text, limit=limit, after_id=after_id)
     deleted: list[str] = []
     failed: list[str] = []
+    busy: list[str] = []
     for row in rows:
         asset_id = str(row.get("id") or "")
         try:
-            path = _resolved_asset_path(root, str(row.get("relative_path") or ""))
-            path.unlink(missing_ok=True)
-            if repository.mark_asset_deleted(asset_id, deleted_at=now_text):
+            outcome = repository.purge_expired_asset(
+                asset_id, now=now_text,
+                unlink=lambda current: _unlink_registered_asset(root, current["relative_path"]),
+            )
+            if outcome == "deleted":
                 deleted.append(asset_id)
-        except (OSError, OcrAssetError):
+            elif outcome == "busy":
+                busy.append(asset_id)
+        except Exception:
+            # Leave the row retryable after filesystem or transaction failures.
             failed.append(asset_id)
-    return {"examined": len(rows), "deleted": tuple(deleted), "failed": tuple(failed)}
+    return {"examined": len(rows), "deleted": tuple(deleted), "failed": tuple(failed),
+            "busy": tuple(busy), "lastId": rows[-1]["id"] if rows else None}

@@ -4,16 +4,6 @@
 # dependencies = []
 # ///
 
-# ---------------------------------------------------------------------------
-# How to run
-# 1. Install uv (if not installed):
-#      curl -LsSf https://astral.sh/uv/install.sh | sh
-# 2. Run directly (no venv, no pip install needed):
-#      uv run generate_student_vapid_key.py --private-path instance/student-app-vapid-private.pem --public-output instance/student-app-vapid-public.txt
-# 3. Or make executable and run:
-#      chmod +x generate_student_vapid_key.py && ./generate_student_vapid_key.py --private-path instance/student-app-vapid-private.pem --public-output instance/student-app-vapid-public.txt
-# ---------------------------------------------------------------------------
-
 """Generate VAPID P-256 files through the installed cryptography provider."""
 
 from __future__ import annotations

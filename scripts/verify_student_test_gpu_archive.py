@@ -1,5 +1,4 @@
 """Temporary-only archive adversarial fixtures."""
-import json
 from pathlib import Path
 import stat
 import tempfile

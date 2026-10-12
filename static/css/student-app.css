@@ -127,7 +127,6 @@ body.student-app-page {
   overflow-wrap: break-word;
   text-wrap: pretty;
 }
-.student-app-brand span { word-break: keep-all; overflow-wrap: break-word; text-wrap: pretty; }
 .student-app-header-note { min-inline-size: 0; color: var(--app-muted); font-size: 12px; }
 .student-app-header-actions {
   display: flex;

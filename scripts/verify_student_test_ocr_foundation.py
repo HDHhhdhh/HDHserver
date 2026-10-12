@@ -19,6 +19,8 @@ from core.student_test_ocr_rules import (
     STATUS_STUDENT_ACTION_REQUIRED,
     answer_value_recapture_decision,
     answer_values_equivalent,
+    canonicalize_answer_text,
+    normalize_recognized_answer,
     apply_wrong_to_correct,
     classify_sheet_recognition,
     grade_submission,
@@ -93,6 +95,18 @@ def run() -> dict:
     assert answer_values_equivalent("ab^2/7", "ab^2/7")
     assert not answer_values_equivalent("ab^2/7", "a*b^2/7")
     assertions += 6
+    for expression, target in ((r"2\times3", "6"), (r"2\cdot3", "6"), (r"6\div2", "3"),
+                               (r"\sqrt[2]{9}", "3"), (r"\dfrac{1}{2}", "0.5")):
+        assert answer_values_equivalent(expression, target)
+        assertions += 1
+    for ambiguous in ("1 2", "1\n2", "1\t2"):
+        assert canonicalize_answer_text(ambiguous) == "" and not answer_values_equivalent(ambiguous, "12")
+        assertions += 1
+    assert normalize_recognized_answer(ANSWER_VALUE, "1" * 81) == ""
+    malformed = _candidates()
+    malformed[1]["rawAnswer"] = "1 2"
+    assert classify_sheet_recognition([CHOICE_NUMBER, ANSWER_VALUE] * 10, malformed)["uncertainQuestionNos"] == (2,)
+    assertions += 2
 
     modes = [CHOICE_NUMBER, ANSWER_VALUE] * 10
     ready = classify_sheet_recognition(modes, _candidates())

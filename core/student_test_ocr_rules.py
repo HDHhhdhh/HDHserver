@@ -127,7 +127,12 @@ def validate_test_answer_contract(
 
 def canonicalize_answer_text(value: object) -> str:
     text = str(value or "").strip().translate(_CIRCLED_DIGITS).translate(_UNICODE_REPLACEMENTS)
+    if re.search(r"\d\s+\d", text):
+        return ""
     text = text.replace("\\left", "").replace("\\right", "").replace("$", "")
+    text = re.sub(r"\\(?:times|cdot)(?![A-Za-z])", "*", text)
+    text = re.sub(r"\\div(?![A-Za-z])", "/", text)
+    text = re.sub(r"\\sqrt\s*\[\s*2\s*\]", r"\\sqrt", text)
     text = _WHITESPACE_RE.sub("", text)
     for _ in range(8):
         changed = _SIMPLE_SQRT_RE.sub(r"sqrt(\1)", text)
@@ -148,7 +153,7 @@ def normalize_recognized_answer(answer_mode: str, value: object) -> str:
     if answer_mode == CHOICE_NUMBER:
         return text if text in {"1", "2", "3", "4", "5"} else ""
     if answer_mode == ANSWER_VALUE:
-        return text[:80]
+        return text if len(text) <= 80 else ""
     _fail("unsupported_answer_mode", f"unsupported answer mode: {answer_mode}")
 
 

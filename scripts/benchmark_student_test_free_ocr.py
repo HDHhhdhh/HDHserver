@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.benchmark_student_test_local_ocr_accuracy import (
-    case_manifest, cases, choice_targets, formula_targets, benchmark_formula_kind,
+    case_manifest, cases, formula_targets, benchmark_formula_kind,
     _safe_numeric_equivalent, evaluate_choice_model,
 )
 from scripts.student_test_ocr_evidence import validate_eval_inputs

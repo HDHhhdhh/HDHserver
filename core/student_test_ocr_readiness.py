@@ -10,6 +10,28 @@ from typing import Mapping
 
 READINESS_SCHEMA = "student_test_ocr_deployment_evidence_v1"
 UNIMERNET_ASSETS = ("config.json", "preprocessor_config.json", "tokenizer_config.json", "tokenizer.json")
+RELEASE_CODE_FILES = (
+    "app.py", "routes/api_student_test_ocr.py", "routes/pages.py",
+    "core/student_test_ocr_config.py", "core/student_test_ocr_engine.py",
+    "core/student_test_ocr_rules.py", "core/student_test_formula_profiles.py",
+    "core/student_test_ocr_readiness.py", "core/student_test_ocr_job_runner.py",
+    "core/student_test_ocr_context.py", "core/student_test_ocr_service.py",
+    "core/student_test_ocr_repository.py", "core/student_test_ocr_worker_pool.py",
+    "core/student_test_ocr_assets.py", "core/student_test_ocr_maintenance.py",
+    "core/student_test_sheet_cropper.py", "core/student_test_ocr_eligibility.py",
+    "core/student_test_solution_crop.py",
+    "static/student-test-capture.html", "static/js/student-test-capture.js",
+    "static/js/student-test-capture-geometry.js", "static/css/student-test-ocr.css",
+    "static/js/shared/api.js", "static/js/student-test-ocr-launcher.js", "static/student.html",
+)
+
+
+def deployment_artifacts(*, required_files, code_root: Path, model_directories=()) -> dict[str, Path]:
+    """One artifact scope for runtime readiness and the offline release inspector."""
+    paths = [*required_files, *(code_root / name for name in RELEASE_CODE_FILES)]
+    for directory in model_directories:
+        paths.extend(path for path in directory.rglob("*") if path.is_file())
+    return {str(path.resolve()): path for path in paths}
 
 
 @lru_cache(maxsize=128)

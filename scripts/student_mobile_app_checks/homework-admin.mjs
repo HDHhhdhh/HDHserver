@@ -60,6 +60,21 @@ function runtimeScript() {
     assert.equal(projectedCarryover[2].carriedFromPrevious, false);
     assert.equal(carryover.previousHomeworkText({ this: '이번', next: '다음' }), '다음');
 
+    const firstRow = { book: '센', marker: 1 };
+    const sleepingRow = { book: ' APEX ', marker: 2 };
+    const blankRow = { book: '', marker: 3 };
+    const lastRow = { book: '라이트 센', marker: 4 };
+    const orderedRows = carryover.placeSleepingHomeworkRowsLast(
+      [firstRow, sleepingRow, blankRow, lastRow],
+      ['apex'],
+    );
+    assert.deepEqual(orderedRows.map(row => row.marker), [1, 3, 4, 2]);
+    assert.equal(orderedRows[3], sleepingRow);
+    assert.deepEqual(
+      carryover.placeSleepingHomeworkRowsLast([sleepingRow, firstRow], []),
+      [sleepingRow, firstRow],
+    );
+
     const merged = contract.mergeHomeworkLogRow(
       { book: '기존 교재', vendorMeta: { keep: true }, _ph: { next: '복제 금지' } },
       { book: '수정 교재', this: '10쪽', pct: '', comment: '', next: '', _deleted: false },
@@ -232,7 +247,9 @@ export async function runChecks() {
     const saveHandler = sources.logModal.slice(sources.logModal.indexOf("logSave.addEventListener"));
     assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') >= 0);
     assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < saveHandler.indexOf('toast('));
-    assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < saveHandler.indexOf('close()'));
+    const committedClose = saveHandler.indexOf('close(null, { saveCompleted: true })');
+    assert.ok(committedClose >= 0);
+    assert.ok(saveHandler.indexOf('await saveRecordPopupForCurrent()') < committedClose);
   });
 
   check('save-and-close persists every unified student popup before closing', () => {
@@ -243,8 +260,8 @@ export async function runChecks() {
     const videoSave = saveAllHandler.indexOf('await window.saveVideoAssignmentPopup');
     const testSave = saveAllHandler.indexOf('await window.saveTestAssignmentPopup');
     const recordSave = saveAllHandler.indexOf('await saveRecordPopupForCurrent()');
-    const carriedTestReapply = saveAllHandler.indexOf('await reapplyCarriedTestAssignmentForCurrent()');
-    const close = saveAllHandler.indexOf('close()');
+    const carriedTestReapply = saveAllHandler.indexOf('await reapplyCarriedTestAssignmentForCurrent(');
+    const close = saveAllHandler.indexOf('close(null, { saveCompleted: true })');
     assert.ok(videoSave >= 0 && testSave >= 0 && recordSave >= 0 && carriedTestReapply >= 0 && close >= 0);
     assert.ok(videoSave < close);
     assert.ok(testSave < close);
@@ -273,7 +290,7 @@ export async function runChecks() {
     }
 
     const completeStart = sources.logModal.indexOf("logComplete.addEventListener('click'");
-    const completeEnd = sources.logModal.indexOf('\n  });\n}', completeStart);
+    const completeEnd = sources.logModal.indexOf('/* 자동 판정 애드온 */', completeStart);
     const completeHandler = sources.logModal.slice(completeStart, completeEnd);
     assert.ok(completeStart >= 0 && completeEnd > completeStart);
     assert.match(completeHandler, /saveRecordPopupForCurrent\(\{ homeworkChecked: true \}\)/);
@@ -332,10 +349,10 @@ export async function runChecks() {
     assert.ok(authoritativeRender > criticalWait);
     assert.ok(progressWait > authoritativeRender);
 
-    assert.match(openFlow, /const historyLoaded = await hydrateLogHistoryForSid\(sid\)/);
-    assert.match(openFlow, /if \(historyLoaded\) return true;[\s\S]*hydrateTodayLogFromServer\(today, sid\)/);
+    assert.match(openFlow, /const historyLoaded = await hydrateLogHistoryForSid\(sid, isCurrentOpen\)/);
+    assert.match(openFlow, /if \(historyLoaded\) return true;[\s\S]*hydrateTodayLogFromServer\(today, sid, isCurrentOpen\)/);
     assert.match(openFlow, /fetchCanonicalHomeworkForLogCached\(today, sid\)/);
-    assert.doesNotMatch(openFlow, /Promise\.allSettled\(\[[\s\S]*hydrateTodayLogFromServer\(today, sid\),[\s\S]*hydrateLogHistoryForSid\(sid\),[\s\S]*hydrateProgressHistoryForSid\(sid\)/);
+    assert.doesNotMatch(openFlow, /Promise\.allSettled\(\[[\s\S]*hydrateTodayLogFromServer\(today, sid, isCurrentOpen\),[\s\S]*hydrateLogHistoryForSid\(sid, isCurrentOpen\),[\s\S]*hydrateProgressHistoryForSid\(sid, isCurrentOpen\)/);
     assert.equal((sources.logModal.match(/\['loading', 'error', 'conflict'\]\.includes\(canonicalHomework\.mode\)/g) || []).length, 3);
 
     assert.match(sources.logModal, /function prefetchLogModalDataForRow\(row\)/);
@@ -352,14 +369,14 @@ export async function runChecks() {
     const videoHydrate = sources.videoModal.slice(videoHydrateStart, videoHydrateEnd);
     assert.ok(videoHydrateStart >= 0 && videoHydrateEnd > videoHydrateStart);
     assert.match(videoHydrate, /Promise\.allSettled\(\[/);
-    assert.match(videoHydrate, /hydrateProgressMaybe\(today, sid\)/);
-    assert.match(videoHydrate, /fetchLatestWatchForSid\(sid\)/);
+    assert.match(videoHydrate, /hydrateProgressMaybe\(today, sid, isCurrent\)/);
+    assert.match(videoHydrate, /fetchLatestWatchForSid\(sid, \{ strict: true \}\)/);
     assert.match(videoHydrate, /return results\[4\]/);
 
     const videoOpenStart = sources.videoModal.indexOf('async function openVideoModalForRow');
     const videoOpenEnd = sources.videoModal.indexOf('window.openVideoAssignmentPopupForRow', videoOpenStart);
     const videoOpen = sources.videoModal.slice(videoOpenStart, videoOpenEnd);
-    assert.match(videoOpen, /const watchByMid = await hydrateForVideoModal\(today, editingSid\)/);
+    assert.match(videoOpen, /watchByMid = await hydrateForVideoModal\(today, sid, isCurrentOpen\)/);
     assert.doesNotMatch(videoOpen, /await fetchLatestWatchForSid/);
     assert.match(sources.videoModal, /function prefetchVideoModalDataForRow\(row\)/);
     assert.match(sources.videoModal, /window\.prefetchVideoAssignmentPopupForRow = prefetchVideoModalDataForRow/);
@@ -403,6 +420,34 @@ export async function runChecks() {
     assert.match(sources.lightCss, /\.hwPctRange\s*\{[\s\S]*?margin:\s*0\s*!important[\s\S]*?padding:\s*0\s*!important[\s\S]*?border:\s*0\s*!important[\s\S]*?background:\s*transparent\s*!important/);
     assert.match(sources.lightCss, /#hwBody \.hwItem\.is-sleeping\s*\{[\s\S]*?width:\s*100%\s*!important[\s\S]*?margin-inline:\s*0\s*!important[\s\S]*?background:\s*#f2f4f7\s*!important/);
     assert.match(sources.lightCss, /input:not\(\[type="range"\]\):disabled[\s\S]*?background-color:\s*transparent\s*!important[\s\S]*?background-image:\s*none\s*!important/);
+  });
+
+  check('sleeping books move last only when the homework rows render', () => {
+    assert.match(sources.logModal, /const rows = placeSleepingHomeworkRowsLast\(mergedRows, sleepingBooks\);/);
+    const sleepClickStart = sources.logModal.indexOf("if (btn.classList.contains('hw-book-sleep-toggle'))");
+    const sleepClickEnd = sources.logModal.indexOf("if (btn.classList.contains('hw-order-btn'))", sleepClickStart);
+    const sleepClick = sources.logModal.slice(sleepClickStart, sleepClickEnd);
+    assert.ok(sleepClickStart >= 0 && sleepClickEnd > sleepClickStart);
+    assert.match(sleepClick, /setHomeworkItemSleeping/);
+    assert.doesNotMatch(sleepClick, /renderHwTable|placeSleepingHomeworkRowsLast/);
+  });
+
+  check('homework hydration does not repaint identical grey input rows', () => {
+    const renderStart = sources.logModal.indexOf('function renderHwTable');
+    const renderEnd = sources.logModal.indexOf('function addHwRow', renderStart);
+    const renderSource = sources.logModal.slice(renderStart, renderEnd);
+    assert.ok(renderStart >= 0 && renderEnd > renderStart);
+    assert.match(renderSource, /host\.__homeworkRenderKey === renderKey/);
+    assert.ok(renderSource.indexOf('host.__homeworkRenderKey === renderKey') < renderSource.indexOf('host.innerHTML ='));
+    assert.match(renderSource, /syncHomeworkRemovalControls\(\);[\s\S]*syncHomeworkSleepingControls\(\);[\s\S]*return;/);
+
+    const openStart = sources.logModal.indexOf('async function openLogModalForRow');
+    const openEnd = sources.logModal.indexOf('window.openRecordPopupForRow', openStart);
+    const openSource = sources.logModal.slice(openStart, openEnd);
+    assert.match(openSource, /homeworkBody\.classList\.add\('is-hydrating'\)/);
+    assert.match(openSource, /homeworkBody\.setAttribute\('aria-busy', 'true'\)/);
+    assert.match(openSource, /homeworkBody\.classList\.remove\('is-hydrating'\)/);
+    assert.match(sources.logModal, /#hwBody\.is-hydrating :is\(\.hwItem,input,select,button\)[\s\S]*transition:none !important/);
   });
 
   check('demo primary and bootstrap fallback share one session-only contract', () => {

@@ -27,7 +27,7 @@ const fixture = [
     categoryKey: 'ILSAN_PAST',
     categoryLabel: '일산 기출',
     curriculum: '대수',
-    difficulty: '상',
+    difficulty: '중',
     round: '2',
     status: 'interrupted',
     answer_url: 'https://answers.example/ilsan-upper.pdf',
@@ -69,6 +69,8 @@ assert.equal(normalized[0].difficulty, '중상');
 assert.equal(normalized[0].statusLabel, '배부');
 assert.equal(normalized[0].untouched.keep, true, 'unknown fields must survive normalization');
 assert.equal(normalized[1].difficulty, '그래프 포함');
+assert.equal(api.difficultyLabel({ categoryKey: 'ILSAN_PAST', difficulty: '상' }), '상');
+assert.equal(api.difficultyLabel({ categoryKey: 'ILSAN_PAST', difficulty: '상', name: '그래프 포함 일산' }), '상');
 assert.equal(normalized[1].round, '3회차');
 assert.equal(normalized[2].status, 'assigned');
 assert.equal(normalized[2].statusLabel, '배정');
@@ -137,8 +139,8 @@ for (const delegated of [
 }
 
 const announcementScript = '/js/student/announcementState.js?v=20260828-announcement-state-r1';
-const presentationScript = '/js/student/testPresentation.js?v=20260828-test-presentation-r1';
-const studentScript = '/js/student.js?v=20260828-test-presentation-r1';
+const presentationScript = '/js/student/testPresentation.js?v=20260907-ilsan-level-r1';
+const studentScript = '/js/student.js?v=20260907-ilsan-level-r1';
 assert.equal((htmlSource.match(/\/js\/student\/testPresentation\.js/g) || []).length, 1);
 assert.ok(htmlSource.indexOf(announcementScript) < htmlSource.indexOf(presentationScript));
 assert.ok(htmlSource.indexOf(presentationScript) < htmlSource.indexOf(studentScript));

@@ -6,11 +6,12 @@ import json
 import secrets
 import uuid
 from dataclasses import dataclass
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Mapping
 
 from core.student_test_ocr_assets import store_capture_file
-from core.student_test_formula_profiles import FormulaProfileError, formula_profile_for_test
+from core.student_test_ocr_context import CONTEXT_PREFIX, test_context
 from core.student_test_ocr_eligibility import (
     OcrEligibilityError,
     find_test_definition,
@@ -69,6 +70,8 @@ class StudentTestOcrService:
         answer_value_recognizer: Callable[..., Mapping[str, object]] | None = None,
         solution_crop_provider: object | None = None,
         token_ttl_seconds: int = 600,
+        on_shutdown: Callable[[], None] | None = None,
+        catalog_guard: Callable | None = None,
     ):
         self.repository = repository
         self.job_runner = job_runner
@@ -82,6 +85,15 @@ class StudentTestOcrService:
         self.answer_value_recognizer = answer_value_recognizer
         self.solution_crop_provider = solution_crop_provider
         self.token_ttl_seconds = token_ttl_seconds
+        self.on_shutdown = on_shutdown
+        self.catalog_guard = catalog_guard or nullcontext
+        self.job_runner.recapture_recognizer = answer_value_recognizer
+        self.job_runner.before_recognition = self.require_job_context
+
+    def shutdown(self) -> None:
+        self.job_runner.shutdown()
+        if self.on_shutdown is not None:
+            self.on_shutdown()
 
     def _now(self) -> dt.datetime:
         value = self.clock()
@@ -112,7 +124,8 @@ class StudentTestOcrService:
             )
         except OcrEligibilityError as error:
             raise StudentTestOcrServiceError(error.code, error.message, 409) from error
-        return eligibility, tests_config, self.catalog_revision(tests_config)
+        context = test_context(tests_config, test_id, eligibility["round"])
+        return eligibility, tests_config, context["revision"]
 
     def start_capture_session(
         self,
@@ -258,21 +271,14 @@ class StudentTestOcrService:
     def _grade_if_ready(self, submission: dict) -> dict:
         if submission.get("status") != STATUS_READY_TO_GRADE:
             return submission
+        with self.catalog_guard():
+            return self._grade_ready_locked(submission)
+
+    def _grade_ready_locked(self, submission: dict) -> dict:
         job = self.repository.get_job_for_submission(submission["id"])
         if not isinstance(job, dict) or not isinstance(job.get("payload"), dict):
             _fail("grading_context_unavailable", "OCR grading context is unavailable", 503)
-        tests_config = self.tests_config_loader()
-        if str(job["payload"].get("catalogRevision") or "") != self.catalog_revision(tests_config):
-            _fail("test_catalog_changed", "test catalog changed during OCR processing", 409)
-        try:
-            definition = find_test_definition(tests_config, submission["test_id"])
-            contract = validate_test_answer_contract(
-                category=definition["categoryKey"],
-                test=definition["test"],
-                round_no=submission["round_no"],
-            )
-        except (OcrEligibilityError, ValueError) as error:
-            _fail("grading_context_unavailable", str(error), 409)
+        contract = self.require_job_context(submission, job["payload"])
         questions = submission["questions"]
         modes = tuple(question["answer_mode"] for question in questions)
         if modes != tuple(contract["answerModes"]):
@@ -297,6 +303,10 @@ class StudentTestOcrService:
                 now=self._now().isoformat(timespec="seconds"),
             )
         except StudentTestOcrConflictError as error:
+            if error.code == "revision_conflict":
+                fresh = self.repository.get(submission["id"])
+                if fresh is not None and fresh["status"] != STATUS_READY_TO_GRADE:
+                    return fresh
             raise StudentTestOcrServiceError(error.code, str(error), 409) from error
 
     def complete_recognition(self, submission: dict) -> dict:
@@ -305,6 +315,21 @@ class StudentTestOcrService:
         if fresh is None:
             _fail("submission_not_found", "OCR submission was not found", 404)
         return self._grade_if_ready(fresh)
+
+    def require_job_context(self, submission: dict, payload: Mapping[str, object]) -> dict:
+        config = self.tests_config_loader()
+        try:
+            context = test_context(config, submission["test_id"], submission["round_no"])
+        except (OcrEligibilityError, ValueError) as error:
+            _fail("test_catalog_changed", str(error), 409)
+        recorded = str(payload.get("catalogRevision") or "")
+        # Legacy jobs lack a scoped snapshot. Never silently rebind their grading keys.
+        current = context["revision"] if recorded.startswith(CONTEXT_PREFIX) else self.catalog_revision(config)
+        if recorded != current or payload.get("formulaProfile") != context["formulaProfile"]:
+            _fail("test_catalog_changed", "test grading contract changed during OCR processing", 409)
+        if tuple(payload.get("answerModes") or ()) != tuple(context["answerModes"]):
+            _fail("test_catalog_changed", "answer modes changed during OCR processing", 409)
+        return context
 
     def status(self, *, submission_id: str, sid: str) -> dict:
         submission = self.repository.get(submission_id, sid=sid)
@@ -366,8 +391,13 @@ class StudentTestOcrService:
         choice: object,
         revision: int,
     ) -> dict:
-        if self.repository.get(submission_id, sid=sid) is None:
+        existing = self.repository.get(submission_id, sid=sid)
+        if existing is None:
             _fail("submission_not_found", "OCR submission was not found", 404)
+        job = self.repository.get_job_for_submission(submission_id)
+        if not isinstance(job, dict) or not isinstance(job.get("payload"), dict):
+            _fail("grading_context_unavailable", "OCR grading context is unavailable", 503)
+        self.require_job_context(existing, job["payload"])
         try:
             submission = self.repository.record_student_choice(
                 submission_id,
@@ -430,49 +460,38 @@ class StudentTestOcrService:
         )
         target = Path(stored["absolute_path"])
         try:
-            tests_config = self.tests_config_loader()
             job = self.repository.get_job_for_submission(submission_id)
             if not isinstance(job, dict) or not isinstance(job.get("payload"), dict):
                 _fail("grading_context_unavailable", "OCR grading context is unavailable", 503)
-            if str(job["payload"].get("catalogRevision") or "") != self.catalog_revision(tests_config):
-                _fail("test_catalog_changed", "test catalog changed during OCR processing", 409)
+            context = self.require_job_context(submission, job["payload"])
+            formula_profile = context["formulaProfile"]
+            payload = {
+                "schema": "student_test_ocr_question_job_v1",
+                "submissionRevision": revision + 1,
+                "catalogRevision": job["payload"]["catalogRevision"],
+                "answerModes": list(context["answerModes"]),
+                "formulaProfile": formula_profile,
+                "captureRelativePath": stored["relative_path"],
+                "cropOutputRelativeDir": f"{submission_id}/crops",
+                "cropExpiresAt": stored["expires_at"],
+                "questionNo": question_no,
+                "captureAssetId": asset_id,
+                "cropCreatedAt": stored["created_at"],
+            }
             try:
-                definition = find_test_definition(tests_config, submission["test_id"])
-                formula_profile = formula_profile_for_test(definition["test"], (ANSWER_VALUE,))
-            except (OcrEligibilityError, FormulaProfileError) as error:
-                _fail("grading_context_unavailable", str(error), 409)
-            if formula_profile != job["payload"].get("formulaProfile"):
-                _fail("test_catalog_changed", "subjective OCR profile changed during processing", 409)
-            recognized = self.answer_value_recognizer(
-                question_no=question_no,
-                image_path=target,
-                asset_root=self.asset_root,
-                formula_profile=formula_profile,
-            )
-            if not isinstance(recognized, Mapping) or recognized.get("questionNo") != question_no:
-                _fail("invalid_worker_response", "question recapture OCR response is invalid", 503)
-            confidence = recognized.get("confidence")
-            try:
-                updated = self.repository.record_answer_value_recapture(
-                    submission_id,
-                    question_no=question_no,
-                    raw_answer=recognized.get("rawAnswer"),
-                    confident=recognized.get("confident") is True,
-                    confidence=confidence,
-                    asset_id=asset_id,
-                    crop_relpath=stored["relative_path"],
-                    crop_expires_at=stored["expires_at"],
-                    asset_created_at=stored["created_at"],
-                    expected_revision=revision,
-                    now=now_text,
+                updated = self.repository.register_question_recapture(
+                    submission_id, question_no=question_no, job_payload=payload,
+                    student_crop={"id": asset_id, "relativePath": stored["relative_path"],
+                                  "expiresAt": stored["expires_at"], "createdAt": stored["created_at"]},
+                    expected_revision=revision, now=now_text,
                 )
             except StudentTestOcrConflictError as error:
                 raise StudentTestOcrServiceError(error.code, str(error), 409) from error
         except Exception:
             target.unlink(missing_ok=True)
             raise
-        self._grade_if_ready(updated)
-        return self.status(submission_id=submission_id, sid=sid)
+        self.job_runner.wake()
+        return {"submissionId": submission_id, "status": updated["status"], "revision": updated["revision"]}
 
     def submit_full_retake(
         self,
@@ -497,24 +516,14 @@ class StudentTestOcrService:
         if submission["status"] != STATUS_RETAKE_REQUIRED:
             _fail("state_conflict", "submission is not waiting for a full-sheet retake", 409)
         job = self.repository.get_job_for_submission(submission_id)
-        tests_config = self.tests_config_loader()
-        catalog_revision = self.catalog_revision(tests_config)
         if (
             not isinstance(job, dict)
             or not isinstance(job.get("payload"), dict)
-            or str(job["payload"].get("catalogRevision") or "") != catalog_revision
         ):
             _fail("test_catalog_changed", "test catalog changed before the full-sheet retake", 409)
-        try:
-            definition = find_test_definition(tests_config, submission["test_id"])
-            formula_profile = formula_profile_for_test(
-                definition["test"],
-                tuple(question["answer_mode"] for question in submission["questions"]),
-            )
-        except (OcrEligibilityError, FormulaProfileError) as error:
-            _fail("grading_context_unavailable", str(error), 409)
-        if formula_profile != job["payload"].get("formulaProfile"):
-            _fail("test_catalog_changed", "subjective OCR profile changed before the full-sheet retake", 409)
+        context = self.require_job_context(submission, job["payload"])
+        catalog_revision = str(job["payload"]["catalogRevision"])
+        formula_profile = context["formulaProfile"]
 
         asset_id = uuid.uuid4().hex
         stored = store_capture_file(
@@ -742,10 +751,16 @@ class StudentTestOcrService:
 
     def admin_asset_path(self, *, asset_id: str) -> Path:
         asset = self.repository.get_asset(asset_id)
+        try:
+            expiry = dt.datetime.fromisoformat(str(asset.get("expires_at") or "")) if asset else None
+            expired = (expiry is None or expiry.tzinfo is None or expiry.utcoffset() is None
+                       or expiry <= self._now())
+        except (TypeError, ValueError):
+            expired = True
         if (
             asset is None
             or asset.get("deleted_at") is not None
-            or str(asset.get("expires_at") or "") <= self._now().isoformat(timespec="seconds")
+            or expired
         ):
             _fail("asset_not_found", "OCR review asset was not found", 404)
         path = (self.asset_root / str(asset["relative_path"])).resolve()

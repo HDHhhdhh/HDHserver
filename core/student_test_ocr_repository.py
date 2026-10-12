@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
 import os
 import sqlite3
 from contextlib import closing
@@ -557,7 +558,7 @@ class StudentTestOcrRepository:
             mode = str(item.get("answerMode") or "")
             if mode != question["answer_mode"]:
                 raise StudentTestOcrConflictError("invalid_recognition", "recognition answer mode changed")
-            raw = str(item.get("rawAnswer") or "").strip()[:80]
+            raw = str(item.get("rawAnswer") or "").strip()
             normalized = normalize_recognized_answer(mode, item.get("normalizedAnswer") or raw)
             recognition_state = str(item.get("recognitionState") or "")
             if recognition_state not in {"confident", "uncertain"}:
@@ -699,8 +700,10 @@ class StudentTestOcrRepository:
         asset_created_at: str,
         expected_revision: int,
         now: str,
+        job_id: str | None = None,
+        lease_token: str = "",
     ) -> dict:
-        raw = str(raw_answer or "").strip()[:80]
+        raw = str(raw_answer or "").strip()
         normalized = normalize_recognized_answer(ANSWER_VALUE, raw)
         if confident and not normalized:
             raise StudentTestOcrConflictError("invalid_recognition", "confident recapture must contain an answer")
@@ -717,7 +720,19 @@ class StudentTestOcrRepository:
 
         def action(connection: sqlite3.Connection):
             row = self._require_revision(self._load_submission_row(connection, submission_id), expected_revision)
-            if row["status"] != STATUS_STUDENT_ACTION_REQUIRED:
+            if job_id is not None:
+                job = connection.execute(
+                    "SELECT state,lease_token,lease_expires_at,payload_json FROM student_test_ocr_jobs "
+                    "WHERE id=? AND submission_id=?", (job_id, submission_id),
+                ).fetchone()
+                if (job is None or job["state"] != "running" or job["lease_token"] != lease_token
+                        or job["lease_expires_at"] <= now):
+                    raise StudentTestOcrConflictError("lease_conflict", "OCR job lease changed")
+                payload = json.loads(job["payload_json"])
+                if payload.get("schema") != "student_test_ocr_question_job_v1" or payload.get("questionNo") != question_no:
+                    raise StudentTestOcrConflictError("invalid_job", "question job context is invalid")
+            expected_status = "processing" if job_id is not None else STATUS_STUDENT_ACTION_REQUIRED
+            if row["status"] != expected_status:
                 raise StudentTestOcrConflictError("state_conflict", "submission is not waiting for a question recapture")
             question = connection.execute(
                 f"SELECT {','.join(QUESTION_FIELDS)} FROM student_test_ocr_questions "
@@ -731,12 +746,21 @@ class StudentTestOcrRepository:
                 raise StudentTestOcrConflictError("recapture_limit", "question recapture limit was reached")
             next_action = answer_value_recapture_decision(attempts_used=attempts, confident=confident)
             recognition_state = "confident" if confident else ("pending_teacher" if next_action == ACTION_PENDING_TEACHER else "uncertain")
-            connection.execute(
-                "INSERT INTO student_test_ocr_assets("
-                "id,submission_id,question_no,kind,relative_path,expires_at,deleted_at,created_at"
-                ") VALUES(?,?,?,'student_crop',?,?,NULL,?)",
-                (asset_id_text, submission_id, question_no, crop_relative, crop_expiry, asset_created),
-            )
+            if job_id is None:
+                connection.execute(
+                    "INSERT INTO student_test_ocr_assets("
+                    "id,submission_id,question_no,kind,relative_path,expires_at,deleted_at,created_at"
+                    ") VALUES(?,?,?,'student_crop',?,?,NULL,?)",
+                    (asset_id_text, submission_id, question_no, crop_relative, crop_expiry, asset_created),
+                )
+            else:
+                asset = connection.execute(
+                    "SELECT id FROM student_test_ocr_assets WHERE id=? AND submission_id=? AND question_no=? "
+                    "AND relative_path=? AND expires_at=? AND deleted_at IS NULL",
+                    (asset_id_text, submission_id, question_no, crop_relative, crop_expiry),
+                ).fetchone()
+                if asset is None:
+                    raise StudentTestOcrConflictError("invalid_asset", "queued question asset changed")
             connection.execute(
                 "UPDATE student_test_ocr_questions SET recognition_state=?,current_raw_answer=?,"
                 "current_normalized_answer=?,submitted_answer=?,answer_source=?,confidence=?,student_action=?,"
@@ -763,6 +787,12 @@ class StudentTestOcrRepository:
                 "UPDATE student_test_ocr_submissions SET status=?,revision=revision+1,updated_at=? WHERE id=?",
                 (status, now, submission_id),
             )
+            if job_id is not None:
+                connection.execute(
+                    "UPDATE student_test_ocr_jobs SET state='succeeded',result_json=?,lease_token='',"
+                    "lease_expires_at='',error_code='',updated_at=? WHERE id=?",
+                    (json.dumps({"questionNo": question_no, "confident": bool(confident)}, separators=(",", ":")), now, job_id),
+                )
             return self._hydrate(connection, self._load_submission_row(connection, submission_id))
 
         return self._write(action)
@@ -824,6 +854,58 @@ class StudentTestOcrRepository:
                 "job": {"id": job["id"], "state": "queued"},
             }
 
+        return self._write(action)
+
+    def register_question_recapture(
+        self, submission_id: str, *, question_no: int, student_crop: Mapping[str, object],
+        job_payload: Mapping[str, object], expected_revision: int, now: str,
+    ) -> dict:
+        self._reject_answer_key_fields(job_payload)
+        if (type(question_no) is not int or not 1 <= question_no <= PROBLEM_COUNT
+                or job_payload.get("schema") != "student_test_ocr_question_job_v1"
+                or job_payload.get("questionNo") != question_no
+                or type(job_payload.get("submissionRevision")) is not int
+                or job_payload["submissionRevision"] != expected_revision + 1):
+            raise StudentTestOcrConflictError("invalid_job", "question recapture job is invalid")
+        asset_id = self._validate_text(student_crop.get("id"), "asset id")
+        relative = self._validate_text(student_crop.get("relativePath"), "crop path", maximum=1000)
+        expiry = self._validate_text(student_crop.get("expiresAt"), "crop expiry")
+        created = self._validate_text(student_crop.get("createdAt"), "crop creation")
+        if (".." in relative.replace("\\", "/").split("/") or relative != job_payload.get("captureRelativePath")
+                or asset_id != job_payload.get("captureAssetId") or expiry != job_payload.get("cropExpiresAt")
+                or created != job_payload.get("cropCreatedAt")):
+            raise StudentTestOcrConflictError("invalid_asset", "question crop context is invalid")
+        encoded = json.dumps(job_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        if len(encoded) > 100_000:
+            raise StudentTestOcrConflictError("invalid_job", "question job is too large")
+
+        def action(connection: sqlite3.Connection):
+            row = self._require_revision(self._load_submission_row(connection, submission_id), expected_revision)
+            question = connection.execute(
+                "SELECT answer_mode,student_action,recapture_attempts FROM student_test_ocr_questions "
+                "WHERE submission_id=? AND question_no=?", (submission_id, question_no),
+            ).fetchone()
+            job = connection.execute(
+                "SELECT id,state FROM student_test_ocr_jobs WHERE submission_id=?", (submission_id,),
+            ).fetchone()
+            if (row["status"] != STATUS_STUDENT_ACTION_REQUIRED or question is None
+                    or question["answer_mode"] != ANSWER_VALUE or question["student_action"] != ACTION_QUESTION_RECAPTURE
+                    or question["recapture_attempts"] >= MAX_ANSWER_VALUE_RECAPTURES
+                    or job is None or job["state"] != "succeeded"):
+                raise StudentTestOcrConflictError("state_conflict", "question is not ready for recapture")
+            connection.execute(
+                "INSERT INTO student_test_ocr_assets(id,submission_id,question_no,kind,relative_path,expires_at,deleted_at,created_at) "
+                "VALUES(?,?,?,'student_crop',?,?,NULL,?)", (asset_id, submission_id, question_no, relative, expiry, created),
+            )
+            connection.execute(
+                "UPDATE student_test_ocr_submissions SET status='processing',revision=revision+1,updated_at=? WHERE id=?",
+                (now, submission_id),
+            )
+            connection.execute(
+                "UPDATE student_test_ocr_jobs SET state='queued',payload_json=?,result_json='',lease_token='',"
+                "lease_expires_at='',error_code='',updated_at=? WHERE id=?", (encoded, now, job["id"]),
+            )
+            return self._hydrate(connection, self._load_submission_row(connection, submission_id))
         return self._write(action)
 
     def record_grading(
@@ -958,6 +1040,48 @@ class StudentTestOcrRepository:
             ).fetchall()
             return [self._hydrate(connection, row) for row in rows]
 
+    def list_overdue_pending(
+        self, *, before_date: str, now: str, limit: int = 100, after_id: str = "",
+    ) -> list[dict]:
+        day = dt.date.fromisoformat(before_date)
+        if day.isoformat() != before_date:
+            raise ValueError("invalid overdue date")
+        instant = self._retention_instant(now)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("invalid overdue limit")
+        with closing(self._connect(readonly=True)) as connection:
+            rows = connection.execute(
+                "SELECT s.id,s.sid,s.test_id,s.round_no,s.assignment_date "
+                "FROM student_test_ocr_submissions s WHERE s.assignment_date<? AND s.id>? "
+                "AND s.assignment_date>='0001-01-01' AND date(s.assignment_date)=s.assignment_date "
+                "AND s.status='pending_teacher' AND EXISTS("
+                "SELECT 1 FROM student_test_ocr_questions q WHERE q.submission_id=s.id "
+                "AND q.effective_grade='pending') ORDER BY s.id LIMIT ?",
+                (before_date, after_id, limit),
+            ).fetchall()
+            summaries = []
+            for row in rows:
+                try:
+                    if dt.date.fromisoformat(row["assignment_date"]).isoformat() != row["assignment_date"]:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                questions = connection.execute(
+                    "SELECT question_no,crop_expires_at FROM student_test_ocr_questions "
+                    "WHERE submission_id=? AND effective_grade='pending' ORDER BY question_no",
+                    (row["id"],),
+                ).fetchall()
+                expired = 0
+                for question in questions:
+                    try:
+                        expired += self._retention_instant(question["crop_expires_at"]) <= instant
+                    except StudentTestOcrConflictError:
+                        # Missing/invalid expiry is not proof that a file can be deleted.
+                        pass
+                summaries.append({**dict(row), "pendingQuestionNos": [q["question_no"] for q in questions],
+                                  "expiredCropCount": expired})
+            return summaries
+
     @staticmethod
     def _reject_answer_key_fields(value: object) -> None:
         forbidden = {
@@ -1028,6 +1152,32 @@ class StudentTestOcrRepository:
 
         return self._write(action)
 
+    def list_ready_to_grade(self, *, limit: int = 100, after_id: str = "") -> list[dict]:
+        with closing(self._connect(readonly=True)) as connection:
+            rows = connection.execute(
+                f"SELECT {','.join(SUBMISSION_FIELDS)} FROM student_test_ocr_submissions "
+                "WHERE status='ready_to_grade' AND id>? ORDER BY id LIMIT ?", (after_id, limit),
+            ).fetchall()
+            return [self._hydrate(connection, row) for row in rows]
+
+    def has_recovery_work(self, *, now: str) -> bool:
+        with closing(self._connect(readonly=True)) as connection:
+            return connection.execute(
+                "SELECT 1 FROM student_test_ocr_jobs WHERE state='queued' "
+                "OR (state='running' AND lease_expires_at<>'' AND lease_expires_at<=?) LIMIT 1", (now,),
+            ).fetchone() is not None or connection.execute(
+                "SELECT 1 FROM student_test_ocr_submissions WHERE status='ready_to_grade' LIMIT 1",
+            ).fetchone() is not None
+
+    def renew_job_lease(self, job_id: str, *, lease_token: str, now: str, lease_expires_at: str) -> bool:
+        def action(connection: sqlite3.Connection):
+            changed = connection.execute(
+                "UPDATE student_test_ocr_jobs SET lease_expires_at=?,updated_at=? WHERE id=? AND state='running' "
+                "AND lease_token=? AND lease_expires_at>?", (lease_expires_at, now, job_id, lease_token, now),
+            )
+            return changed.rowcount == 1
+        return bool(self._write(action))
+
     def lease_next_job(self, *, lease_token: str, now: str, lease_expires_at: str) -> dict | None:
         def action(connection: sqlite3.Connection):
             row = connection.execute(
@@ -1074,10 +1224,10 @@ class StudentTestOcrRepository:
 
         def action(connection: sqlite3.Connection):
             row = connection.execute(
-                "SELECT state,lease_token,submission_id FROM student_test_ocr_jobs WHERE id=?",
+                "SELECT state,lease_token,lease_expires_at,submission_id FROM student_test_ocr_jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
-            if row is None or row["state"] != "running" or row["lease_token"] != lease_token:
+            if row is None or row["state"] != "running" or row["lease_token"] != lease_token or row["lease_expires_at"] <= now:
                 raise StudentTestOcrConflictError("lease_conflict", "OCR job lease changed")
             state = "succeeded" if succeeded else "failed"
             connection.execute(
@@ -1143,13 +1293,14 @@ class StudentTestOcrRepository:
 
         def action(connection: sqlite3.Connection):
             job = connection.execute(
-                "SELECT state,lease_token,submission_id FROM student_test_ocr_jobs WHERE id=?",
+                "SELECT state,lease_token,lease_expires_at,submission_id FROM student_test_ocr_jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
             if (
                 job is None
                 or job["state"] != "running"
                 or job["lease_token"] != lease_token
+                or job["lease_expires_at"] <= now
                 or job["submission_id"] != submission_id
             ):
                 raise StudentTestOcrConflictError("lease_conflict", "OCR job lease changed")
@@ -1238,16 +1389,60 @@ class StudentTestOcrRepository:
 
         return self._write(action)
 
-    def expired_assets(self, *, now: str, limit: int = 100) -> list[dict]:
+    @staticmethod
+    def _retention_instant(value: str) -> dt.datetime:
+        try:
+            result = dt.datetime.fromisoformat(value)
+            if result.tzinfo is None or result.utcoffset() is None:
+                raise ValueError()
+            return result.astimezone(dt.timezone.utc)
+        except (TypeError, ValueError):
+            raise StudentTestOcrConflictError("invalid_asset_timestamp", "OCR retention timestamp is invalid")
+
+    def expired_assets(self, *, now: str, limit: int = 100, after_id: str = "") -> list[dict]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
             raise ValueError("invalid asset retention limit")
+        self._retention_instant(now)
         with closing(self._connect(readonly=True)) as connection:
             rows = connection.execute(
                 "SELECT id,submission_id,question_no,kind,relative_path,expires_at,deleted_at,created_at "
-                "FROM student_test_ocr_assets WHERE deleted_at IS NULL AND expires_at<=? ORDER BY expires_at,id LIMIT ?",
-                (now, limit),
+                "FROM student_test_ocr_assets WHERE deleted_at IS NULL AND id>? "
+                "AND (julianday(expires_at)<=julianday(?) OR julianday(expires_at) IS NULL) ORDER BY id LIMIT ?",
+                (after_id, now, limit),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def purge_expired_asset(self, asset_id: str, *, now: str, unlink: Callable[[dict], None]) -> str:
+        instant = self._retention_instant(now)
+
+        def action(connection: sqlite3.Connection):
+            row = connection.execute(
+                "SELECT id,submission_id,relative_path,expires_at,deleted_at "
+                "FROM student_test_ocr_assets WHERE id=?", (asset_id,),
+            ).fetchone()
+            if row is None or row["deleted_at"] is not None:
+                return "not_due"
+            if self._retention_instant(row["expires_at"]) > instant:
+                return "not_due"
+            job = connection.execute(
+                "SELECT state,lease_expires_at FROM student_test_ocr_jobs WHERE submission_id=?",
+                (row["submission_id"],),
+            ).fetchone()
+            if job is not None and job["state"] == "running":
+                try:
+                    if self._retention_instant(job["lease_expires_at"]) > instant:
+                        return "busy"
+                except StudentTestOcrConflictError:
+                    return "busy"
+            # BEGIN IMMEDIATE excludes lease acquisition/renewal until this single-file deletion commits.
+            unlink(dict(row))
+            connection.execute(
+                "UPDATE student_test_ocr_assets SET deleted_at=? WHERE id=? AND deleted_at IS NULL",
+                (now, asset_id),
+            )
+            return "deleted"
+
+        return self._write(action)
 
     def list_assets_for_submission(self, submission_id: str, *, include_deleted: bool = False) -> list[dict]:
         where = "submission_id=?" if include_deleted else "submission_id=? AND deleted_at IS NULL"

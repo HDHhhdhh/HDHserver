@@ -13,6 +13,7 @@ DEFAULT_MODEL_PATH: Final = Path(r"C:\server-ocr\choice_digit_classifier_v3\choi
 V3_LABELS: Final = ("1", "2", "3", "4", "5")
 REJECT_LABEL: Final = "__reject__"
 V4_LABELS: Final = (*V3_LABELS, REJECT_LABEL)
+_RUNTIME = None
 
 
 class WorkerInputError(ValueError):
@@ -187,8 +188,15 @@ def load_runtime():
     return cv2, np, torch, model, labels, input_size, checkpoint
 
 
+def cached_runtime():
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = load_runtime()
+    return _RUNTIME
+
+
 def run(items: list[tuple[int, Path]]) -> list[dict]:
-    cv2, np, torch, model, labels, input_size, checkpoint = load_runtime()
+    cv2, np, torch, model, labels, input_size, checkpoint = cached_runtime()
     minimum = float(checkpoint.get("confidence_threshold") or 0.995)
     margin_minimum = float(checkpoint.get("margin_threshold") or 0.9)
     output: list[dict] = []
@@ -237,6 +245,12 @@ def emit(payload: Mapping[str, object]) -> None:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--serve-jsonl"]:
+        if __package__:
+            from .student_test_ocr_worker_server import serve
+        else:
+            from student_test_ocr_worker_server import serve
+        return serve(engine=ENGINE, parse_request=parse_request, run=lambda items, options: run(items))
     try:
         payload = json.load(sys.stdin)
         items = parse_request(payload)

@@ -14,7 +14,7 @@ from core.student_test_formula_profiles import (
 from core.student_test_ocr_engine import ConfidencePolicy, WorkerSpec
 from core.student_test_sheet_cropper import CropWorkerSpec
 from core.runtime_server_guard import is_verified_isolated_server_root
-from core.student_test_ocr_readiness import UNIMERNET_ASSETS, deployment_evidence_reasons
+from core.student_test_ocr_readiness import UNIMERNET_ASSETS, deployment_artifacts, deployment_evidence_reasons
 
 
 TRUTHY: Final = frozenset({"1", "true", "yes", "on"})
@@ -36,6 +36,8 @@ class StudentTestOcrConfig:
     token_ttl_seconds: int = 600
     allow_unready_models: bool = False
     deployment_evidence_path: Path | None = None
+    maintenance_enabled: bool = False
+    maintenance_interval_seconds: float = 300.0
 
     def unimernet_worker_for_profile(self, profile: object) -> WorkerSpec:
         normalized = str(profile or "").strip()
@@ -85,6 +87,8 @@ class StudentTestOcrConfig:
             self.formula_worker.script_path,
             self.unimernet_worker.python_path,
             self.unimernet_worker.script_path,
+            self.unimernet_worker.script_path.with_name("student_test_formula_inference.py"),
+            self.unimernet_worker.script_path.with_name("student_test_ocr_worker_server.py"),
             choice_model_path,
             unimernet_model_dir / unimernet_weight,
         ) + profile_model_files + tuple(unimernet_model_dir / name for name in UNIMERNET_ASSETS)
@@ -117,16 +121,10 @@ class StudentTestOcrConfig:
             and checkpoint == choice_model_path.resolve()
         ):
             reasons.append("choice_training_gate_not_met")
-        artifacts = {str(path.resolve()): path for path in required_files}
-        core_root = Path(__file__).resolve().parent
-        for name in ("student_test_ocr_config.py", "student_test_ocr_engine.py", "student_test_ocr_rules.py",
-                     "student_test_formula_profiles.py", "student_test_ocr_readiness.py", "student_test_ocr_job_runner.py"):
-            path = core_root / name
-            artifacts[str(path.resolve())] = path
-        for directory in (paddle_model_dir, formula_model_dir):
-            for path in directory.rglob("*"):
-                if path.is_file():
-                    artifacts[str(path.resolve())] = path
+        artifacts = deployment_artifacts(
+            required_files=required_files, code_root=Path(__file__).resolve().parents[1],
+            model_directories=(paddle_model_dir, formula_model_dir),
+        )
         if self.deployment_evidence_path is None:
             reasons.append("deployment_evidence_missing_or_unreadable")
         else:
@@ -191,7 +189,7 @@ def load_student_test_ocr_config(*, project_root: Path | None = None) -> Student
         "STUDENT_TEST_OCR_DEVICE": device,
         "STUDENT_TEST_OCR_UNIMERNET_MODEL_DIR": str(runtime_root / "models" / "unimernet_tiny"),
         "STUDENT_TEST_OCR_UNIMERNET_WEIGHT": "unimernet_tiny.pth",
-        "STUDENT_TEST_OCR_UNIMERNET_VARIANT_PASS": "1",
+        "STUDENT_TEST_OCR_UNIMERNET_VARIANT_PASS": "1" if _truthy("STUDENT_TEST_OCR_REQUIRE_SECOND_PASS") else "0",
     }
     common_unimernet_environment = {
         **unimernet_environment,
@@ -230,7 +228,7 @@ def load_student_test_ocr_config(*, project_root: Path | None = None) -> Student
         db_path=Path(os.environ.get("DB_PATH", str(root / "app.sqlite"))).resolve(),
         asset_root=Path(
             os.environ.get("STUDENT_TEST_OCR_ASSET_ROOT", str(root / "instance" / "student-test-ocr"))
-        ).resolve(),
+        ).absolute(),
         solution_pdf_root=Path(
             os.environ.get(
                 "STUDENT_TEST_OCR_SOLUTION_PDF_ROOT",
@@ -306,4 +304,6 @@ def load_student_test_ocr_config(*, project_root: Path | None = None) -> Student
         deployment_evidence_path=Path(os.environ.get(
             "STUDENT_TEST_OCR_DEPLOYMENT_EVIDENCE", str(runtime_root / "deployment_evidence.json")
         )).resolve(),
+        maintenance_enabled=_truthy("STUDENT_TEST_OCR_MAINTENANCE_ENABLED"),
+        maintenance_interval_seconds=_float("STUDENT_TEST_OCR_MAINTENANCE_INTERVAL", 300.0, 60.0, 3600.0),
     )

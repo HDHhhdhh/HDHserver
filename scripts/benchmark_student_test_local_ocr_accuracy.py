@@ -7,12 +7,11 @@ import os
 import re
 import tempfile
 import time
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final, Iterable, Mapping, Sequence
+from typing import Final, Mapping, Sequence
 
 from core.student_test_ocr_config import load_student_test_ocr_config
 from core.student_test_ocr_engine import (
@@ -36,7 +35,7 @@ from scripts.student_test_choice_worker import (
     worker_decision,
 )
 from scripts.student_test_unimernet_worker import (
-    infer_image,
+    infer_prediction,
     load_runtime,
     normalized_formula,
 )
@@ -380,17 +379,21 @@ def evaluate_formula(
                 with Image.open(path) as opened:
                     original = opened.convert("RGB")
                     enhanced = ImageOps.autocontrast(ImageOps.grayscale(opened)).convert("RGB")
-                primary, token_confidence, minimum_confidence = infer_image(torch, model, processor, device, original)
-                variant, variant_confidence, variant_minimum = infer_image(torch, model, processor, device, enhanced)
+                primary_prediction = infer_prediction(torch, model, processor, device, original)
+                variant_prediction = infer_prediction(torch, model, processor, device, enhanced)
+                primary = primary_prediction["text"]
+                variant = variant_prediction["text"]
+                token_confidence = primary_prediction["tokenConfidence"]
+                minimum_confidence = primary_prediction["minTokenConfidence"]
+                variant_confidence = variant_prediction["tokenConfidence"]
+                variant_minimum = variant_prediction["minTokenConfidence"]
                 variant_agreed = bool(
-                    normalized_formula(primary)
+                    primary_prediction["terminated"] and variant_prediction["terminated"] and normalized_formula(primary)
                     and normalized_formula(primary) == normalized_formula(variant)
                 )
                 unimernet_item = {
                     "questionNo": number,
-                    "text": primary,
-                    "tokenConfidence": token_confidence,
-                    "minTokenConfidence": minimum_confidence,
+                    **primary_prediction,
                     "variantText": variant,
                     "variantAgreed": variant_agreed,
                 }
@@ -409,8 +412,10 @@ def evaluate_formula(
                     "human": human,
                     "recognized": primary,
                     "variant": variant,
-                    "rawCorrect": _safe_numeric_equivalent(primary, human),
-                    "transcriptionExact": normalized_formula(primary) == normalized_formula(human),
+                    "terminated": primary_prediction["terminated"],
+                    "tokenCount": primary_prediction["tokenCount"],
+                    "rawCorrect": bool(primary_prediction["terminated"] and _safe_numeric_equivalent(primary, human)),
+                    "transcriptionExact": bool(primary_prediction["terminated"] and normalized_formula(primary) == normalized_formula(human)),
                     "variantAgreed": variant_agreed,
                     "tokenConfidence": token_confidence,
                     "minTokenConfidence": minimum_confidence,

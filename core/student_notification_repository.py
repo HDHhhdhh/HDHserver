@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType

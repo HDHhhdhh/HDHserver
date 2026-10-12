@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Final, Mapping, Sequence
+from typing import Callable, Final, Mapping, Sequence
 
 from core.student_test_ocr_rules import (
     ANSWER_VALUE,
@@ -200,6 +200,11 @@ def _valid_numeric_answer(value: object) -> bool:
         return False
 
 
+def _formula_completed(item: Mapping[str, object]) -> bool:
+    count = item.get("tokenCount")
+    return item.get("terminated") is True and type(count) is int and 0 < count < 64
+
+
 def _build_legacy_candidate(
     crop: OcrCrop,
     paddle: Mapping[str, object],
@@ -207,26 +212,18 @@ def _build_legacy_candidate(
     policy: ConfidencePolicy,
 ) -> dict:
     paddle_text = str(paddle.get("text") or "")
-    paddle_score = paddle.get("score")
-    if isinstance(paddle_score, bool) or not isinstance(paddle_score, (int, float)):
-        paddle_score = None
-    else:
-        paddle_score = float(paddle_score)
+    paddle_score = _number(paddle.get("score"))
     unimernet_text = str(unimernet.get("text") or "")
     variant_text = str(unimernet.get("variantText") or "")
     variant_agreed = unimernet.get("variantAgreed") is True
-    token_confidence = unimernet.get("tokenConfidence")
-    if isinstance(token_confidence, bool) or not isinstance(token_confidence, (int, float)):
-        token_confidence = None
-    else:
-        token_confidence = float(token_confidence)
+    token_confidence = _number(unimernet.get("tokenConfidence"))
 
     if crop.answer_mode == CHOICE_NUMBER:
         primary = normalize_recognized_answer(CHOICE_NUMBER, paddle_text)
         cross = normalize_recognized_answer(CHOICE_NUMBER, unimernet_text)
         confident = bool(primary and paddle_score is not None and paddle_score >= policy.choice_paddle_minimum)
         if policy.require_choice_cross_engine_agreement:
-            confident = confident and primary == cross and token_confidence is not None and (
+            confident = confident and _formula_completed(unimernet) and primary == cross and token_confidence is not None and (
                 token_confidence >= policy.unimernet_token_minimum
             ) and (
                 variant_agreed or not policy.require_unimernet_variant_agreement
@@ -237,7 +234,8 @@ def _build_legacy_candidate(
         primary = canonicalize_answer_text(unimernet_text)
         variant = canonicalize_answer_text(variant_text)
         confident = bool(
-            primary
+            _formula_completed(unimernet)
+            and primary
             and _valid_numeric_answer(primary)
             and token_confidence is not None
             and token_confidence >= policy.unimernet_token_minimum
@@ -326,7 +324,8 @@ def _build_answer_candidate(
     variant = canonicalize_answer_text(unimernet.get("variantText"))
     variant_agreed = unimernet.get("variantAgreed") is True
     confident = bool(
-        primary
+        _formula_completed(unimernet)
+        and primary
         and _valid_numeric_answer(primary)
         and token_confidence is not None
         and token_confidence >= policy.unimernet_token_minimum
@@ -367,15 +366,17 @@ def recognize_sheet(
     choice_worker: WorkerSpec | None = None,
     formula_worker: WorkerSpec | None = None,
     policy: ConfidencePolicy | None = None,
+    worker_runner: Callable[[WorkerSpec, Sequence[OcrCrop]], dict] | None = None,
 ) -> dict:
+    run_worker = worker_runner or run_json_worker
     validated = _validated_crops(crops, asset_root)
     selected_policy = policy or ConfidencePolicy()
     started = time.perf_counter()
     second_response: dict | None = None
     if choice_worker is None or formula_worker is None:
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="student-test-ocr-engine") as pool:
-            paddle_future = pool.submit(run_json_worker, paddle_worker, validated)
-            unimernet_future = pool.submit(run_json_worker, unimernet_worker, validated)
+            paddle_future = pool.submit(run_worker, paddle_worker, validated)
+            unimernet_future = pool.submit(run_worker, unimernet_worker, validated)
             paddle_response = paddle_future.result()
             unimernet_response = unimernet_future.result()
         paddle_items = _index_worker_items(paddle_response, "paddle")
@@ -397,7 +398,7 @@ def recognize_sheet(
         choice_crops = tuple(crop for crop in validated if crop.answer_mode == CHOICE_NUMBER)
         answer_crops = tuple(crop for crop in validated if crop.answer_mode == ANSWER_VALUE)
         if not answer_crops and not selected_policy.require_choice_cross_engine_agreement:
-            response = run_json_worker(choice_worker, choice_crops)
+            response = run_worker(choice_worker, choice_crops)
             items = _index_worker_items(response, "choice_digit", [crop.question_no for crop in choice_crops])
             candidates = [_build_choice_candidate(crop, {}, items[crop.question_no], selected_policy) for crop in choice_crops]
             return {
@@ -407,10 +408,10 @@ def recognize_sheet(
             }
         maximum_workers = 2 + int(bool(choice_crops)) + int(bool(answer_crops))
         with ThreadPoolExecutor(max_workers=maximum_workers, thread_name_prefix="student-test-ocr-engine") as pool:
-            paddle_future = pool.submit(run_json_worker, paddle_worker, validated)
-            choice_future = pool.submit(run_json_worker, choice_worker, choice_crops) if choice_crops else None
-            formula_future = pool.submit(run_json_worker, formula_worker, answer_crops) if answer_crops else None
-            unimernet_future = pool.submit(run_json_worker, unimernet_worker, answer_crops) if answer_crops else None
+            paddle_future = pool.submit(run_worker, paddle_worker, validated)
+            choice_future = pool.submit(run_worker, choice_worker, choice_crops) if choice_crops else None
+            formula_future = pool.submit(run_worker, formula_worker, answer_crops) if answer_crops else None
+            unimernet_future = pool.submit(run_worker, unimernet_worker, answer_crops) if answer_crops else None
             paddle_response = paddle_future.result()
             choice_response = choice_future.result() if choice_future else None
             formula_response = formula_future.result() if formula_future else None
@@ -468,7 +469,7 @@ def recognize_sheet(
             selected_policy.enable_adaptive_formula_second_pass
             and 1 <= len(uncertain_answer_crops) <= selected_policy.maximum_adaptive_formula_crops
         ):
-            second_response = run_json_worker(_second_pass_worker(unimernet_worker), uncertain_answer_crops)
+            second_response = run_worker(_second_pass_worker(unimernet_worker), uncertain_answer_crops)
             second_items = _index_worker_items(
                 second_response,
                 "unimernet",
@@ -501,7 +502,9 @@ def recognize_answer_value_crop(
     unimernet_worker: WorkerSpec,
     formula_worker: WorkerSpec | None = None,
     policy: ConfidencePolicy | None = None,
+    worker_runner: Callable[[WorkerSpec, Sequence[OcrCrop]], dict] | None = None,
 ) -> dict:
+    run_worker = worker_runner or run_json_worker
     crop = OcrCrop(question_no, ANSWER_VALUE, image_path)
     root = asset_root.resolve()
     path = image_path.resolve()
@@ -515,9 +518,9 @@ def recognize_answer_value_crop(
     started = time.perf_counter()
     second_response: dict | None = None
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="student-test-ocr-recapture") as pool:
-        paddle_future = pool.submit(run_json_worker, paddle_worker, (crop,))
-        unimernet_future = pool.submit(run_json_worker, unimernet_worker, (crop,))
-        formula_future = pool.submit(run_json_worker, formula_worker, (crop,)) if formula_worker else None
+        paddle_future = pool.submit(run_worker, paddle_worker, (crop,))
+        unimernet_future = pool.submit(run_worker, unimernet_worker, (crop,))
+        formula_future = pool.submit(run_worker, formula_worker, (crop,)) if formula_worker else None
         paddle_response = paddle_future.result()
         unimernet_response = unimernet_future.result()
         formula_response = formula_future.result() if formula_future else None
@@ -553,7 +556,7 @@ def recognize_answer_value_crop(
             selected_policy,
         )
         if selected_policy.enable_adaptive_formula_second_pass and candidate.get("confident") is not True:
-            second_response = run_json_worker(_second_pass_worker(unimernet_worker), (crop,))
+            second_response = run_worker(_second_pass_worker(unimernet_worker), (crop,))
             second_items = _index_worker_items(second_response, "unimernet", (question_no,))
             candidate = _build_answer_candidate(
                 crop,

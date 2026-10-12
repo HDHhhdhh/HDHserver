@@ -9,6 +9,7 @@ const files = Object.freeze({
   html: path.join(root, 'static', 'student.html'),
   css: path.join(root, 'static', 'css', 'student.css'),
   js: path.join(root, 'static', 'js', 'student.js'),
+  bootstrap: path.join(root, 'static', 'js', 'student', 'bootstrapState.js'),
 });
 
 function extract(source, startMarker, endMarker, label) {
@@ -107,7 +108,7 @@ function dashboardFixture(overrides = {}) {
 }
 
 export async function runChecks() {
-  const [html, css, js] = await Promise.all(Object.values(files).map(filename => fs.readFile(filename, 'utf8')));
+  const [html, css, js, bootstrap] = await Promise.all(Object.values(files).map(filename => fs.readFile(filename, 'utf8')));
   const { contract, normalizeStudentDashboard, studentDashboardViewModel } = loadDashboardContract(js);
   const passed = [];
   const check = (name, callback) => { callback(); passed.push(name); };
@@ -296,10 +297,22 @@ export async function runChecks() {
     assert.doesNotMatch(contract, /new\s+Date\s*\(/);
   });
 
-  check('bootstrap projection is additive and local fallback stays transparent', () => {
-    assert.match(js, /dashboard:\s*b\.dashboard\s*&&\s*typeof b\.dashboard === ['"]object['"]\s*\?\s*b\.dashboard\s*:\s*null/);
+  check('bootstrap projection is additive and the entrypoint delegates to its owner', () => {
     assert.match(js, /studentDashboardCache\s*=\s*bootstrapMeta\?\.dashboard\s*\|\|\s*null/);
-    assert.match(js, /reviewVideosMalformed:\s*false,[\s\S]{0,160}dashboard:\s*null/);
+    assert.match(js, /await window\.StudentBootstrapState\.loadInitialData\(/);
+    const context = { window: {} };
+    vm.runInNewContext(bootstrap, context, { filename: files.bootstrap });
+    const project = context.window.StudentBootstrapState.projectBootstrapInitialData;
+    for (const dashboard of [undefined, null, '', 0, { version: 1 }]) {
+      const raw = { reviewVideos: [], assignedTests: [{ id: 't' }], dashboard };
+      const watch = { sid: { position: 3 } };
+      const projected = project(raw, watch, { resolveAcademyAccess: () => false });
+      assert.equal(projected.length, 9);
+      assert.equal(projected[7], watch);
+      assert.equal(projected[8].dashboard, dashboard && typeof dashboard === 'object' ? dashboard : null);
+      assert.equal(projected[8].assignedTests, raw.assignedTests);
+      assert.equal(projected[8].reviewVideosMalformed, false);
+    }
     const renderStart = js.indexOf('function renderStudentTodayOverview()');
     const renderEnd = js.indexOf("document.addEventListener('student-app:announcement-summary'", renderStart);
     assert.ok(renderStart >= 0 && renderEnd > renderStart);

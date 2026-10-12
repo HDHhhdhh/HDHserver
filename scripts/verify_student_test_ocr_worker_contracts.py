@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts import student_test_choice_worker as choice
 from scripts import student_test_formula_worker as formula
 from scripts import student_test_paddle_worker as paddle
 from scripts import student_test_unimernet_worker as unimernet
+from scripts.verify_student_test_formula_generation import run as verify_generation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,7 +65,13 @@ def run() -> dict:
 
         config = unimernet.runtime_config_text(Path("C:/models/unimernet"), "weights.pth")
         assert "device: cpu" in config and "do_sample: false" in config
+        assert "max_seq_len: 64" in config
         assert "answer" not in config.lower()
+        assertions += 3
+        direct = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/student_test_unimernet_worker.py")],
+                                input="{}", text=True, capture_output=True, cwd=root, timeout=15)
+        assert direct.returncode == 1 and '"error":"WorkerInputError"' in direct.stdout
+        assert "ModuleNotFoundError" not in direct.stderr
         assertions += 2
 
         v3 = {"model_version": "choice_digit_v3", "labels": ("1", "2", "3", "4", "5")}
@@ -99,15 +108,19 @@ def run() -> dict:
             "student_test_formula_worker.py",
             "student_test_paddle_worker.py",
             "student_test_unimernet_worker.py",
+            "student_test_formula_inference.py",
+            "student_test_ocr_worker_server.py",
             "student_test_sheet_crop_worker.py",
         ):
             assert worker_name in manager_source
-        assert "copiedWorkerScripts = 5" in manager_source
+        assert "copiedWorkerScripts = 7" in manager_source
         assert "STUDENT_TEST_OCR_ASSET_ROOT" in manager_source
         assert "STUDENT_TEST_OCR_ALLOW_UNREADY_MODELS" in manager_source
         assert "studentTestOcrEnabled" in manager_source
         assert "studentTestOcrAllowUnreadyModels" in manager_source
-        assertions += 10
+        assertions += 11
+
+    assertions += verify_generation()["assertions"]
 
     return {"name": "student-test-ocr-worker-contracts", "assertions": assertions, "passed": True}
 

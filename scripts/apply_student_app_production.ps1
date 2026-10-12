@@ -630,7 +630,6 @@ $receipt = [ordered]@{
 }
 
 $task = $null
-$taskStopped = $false
 $taskWasRunning = $false
 $waitressStopIssued = $false
 $codeMutationStarted = $false
@@ -744,7 +743,6 @@ try {
 
     $waitressStopIssued = $true
     Stop-WaitressTask $task $OriginPort
-    $taskStopped = $true
     $runtimeBefore = Get-RuntimeFingerprints $ServerRoot
     $fullRuntimeBefore = Get-FullRuntimeInventory $ServerRoot
     $receipt.runtimeIntegrity.protectedBefore = $runtimeBefore
@@ -831,7 +829,6 @@ try {
     $receipt.code.applied = $confirmedAppliedCount
 
     Start-WaitressTask $task $OriginPort
-    $taskStopped = $false
     $receipt.task.restarted = $true
     $receipt.task.stateAfter = (Get-ExactTask $WaitressTaskName).State.ToString()
 
@@ -872,11 +869,9 @@ try {
         $receipt.rollback.attempted = $true
         try {
             Ensure-WaitressStoppedForRollback $task $OriginPort
-            $taskStopped = $true
             Restore-Code $ServerRoot $deploymentRoot @($appliedPaths) @($originalPaths) @($movedRemovedPaths)
             if ($taskWasRunning) {
                 Start-WaitressTask $task $OriginPort
-                $taskStopped = $false
                 $receipt.task.restarted = $true
             }
             $rollbackProbes = @(Invoke-DisabledPublicHealthProbes $OriginPort)
@@ -901,7 +896,6 @@ try {
                 $restoreProbes = @(Invoke-DisabledPublicHealthProbes $OriginPort)
                 $receipt.rollback.healthProbes = $restoreProbes
                 Assert-DisabledPublicHealthProbes $restoreProbes 'Restored Waitress task'
-                $taskStopped = $false
                 $receipt.result = 'failed_before_code_task_restored'
             } catch {
                 $receipt.rollback.error = $_.Exception.Message

@@ -1,4 +1,5 @@
 import { fetchJsonChecked, sendJson } from './shared/api.js';
+import { questionSourceRegion } from './student-test-capture-geometry.js';
 
 const API_ROOT = '/api/student-test-ocr';
 const STORAGE_PREFIX = 'student-test-ocr-launch:';
@@ -186,6 +187,15 @@ function stopCamera() {
   if (elements.capture) elements.capture.disabled = true;
 }
 
+function cameraSourceRegion() {
+  const video = elements.preview;
+  if (captureMode?.kind !== 'question') {
+    return { x: 0, y: 0, width: video.videoWidth, height: video.videoHeight };
+  }
+  return questionSourceRegion(video.videoWidth, video.videoHeight,
+    video.getBoundingClientRect(), elements.guide.getBoundingClientRect());
+}
+
 function qualitySnapshot() {
   const video = elements.preview;
   if (!video?.videoWidth || !video?.videoHeight) return null;
@@ -193,7 +203,9 @@ function qualitySnapshot() {
   canvas.width = 96;
   canvas.height = 72;
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  let region;
+  try { region = cameraSourceRegion(); } catch { return null; }
+  context.drawImage(video, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height);
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
   const gray = new Uint8Array(canvas.width * canvas.height);
   let brightness = 0;
@@ -222,13 +234,17 @@ function qualitySnapshot() {
 
 function updateQuality() {
   const sample = qualitySnapshot();
-  if (!sample) return;
+  if (!sample) {
+    stableQualityFrames = 0;
+    elements.capture.disabled = true;
+    return;
+  }
   let message = '촬영 가능';
   let ready = true;
   if (sample.brightness < 55) {
     message = '조금 더 밝은 곳에서 촬영해 주세요';
     ready = false;
-  } else if (sample.brightness > 238) {
+  } else if (sample.brightness > 238 && sample.edge < 8) {
     message = '빛 반사를 피해 주세요';
     ready = false;
   } else if (sample.movement > 15) {
@@ -305,11 +321,13 @@ async function cameraFrameBlob() {
   const video = elements.preview;
   if (!video?.videoWidth || !video?.videoHeight) throw new Error('카메라 화면이 준비되지 않았습니다.');
   const maximum = 2400;
-  const scale = Math.min(1, maximum / Math.max(video.videoWidth, video.videoHeight));
-  elements.canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-  elements.canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  const region = cameraSourceRegion();
+  const scale = Math.min(1, maximum / Math.max(region.width, region.height));
+  elements.canvas.width = Math.max(1, Math.round(region.width * scale));
+  elements.canvas.height = Math.max(1, Math.round(region.height * scale));
   const context = elements.canvas.getContext('2d');
-  context.drawImage(video, 0, 0, elements.canvas.width, elements.canvas.height);
+  context.drawImage(video, region.x, region.y, region.width, region.height,
+    0, 0, elements.canvas.width, elements.canvas.height);
   return new Promise((resolve, reject) => {
     elements.canvas.toBlob(blob => {
       if (blob) resolve(blob);
@@ -340,6 +358,7 @@ function showProcessing(message = '') {
 function showError(title, message, code = '', retry = null) {
   stopCamera();
   if (pollTimer) window.clearTimeout(pollTimer);
+  pollTimer = 0;
   showView(elements.error);
   elements.errorTitle.textContent = title;
   elements.errorMessage.textContent = message;
@@ -393,12 +412,30 @@ async function captureAndSubmit() {
 }
 
 function showRequestError(error, retry = null) {
+  if (requestErrorCode(error) === 'test_catalog_changed') {
+    showTerminalRequestError(error);
+    return;
+  }
   showError(
     '처리를 완료하지 못했습니다',
     error?.message || '잠시 후 다시 시도해 주세요.',
     error?.code || '',
     retry,
   );
+}
+
+function requestErrorCode(error) {
+  let code = String(error?.code || 'request_failed');
+  try { code = String(JSON.parse(error.body)?.code || code); } catch {}
+  return code;
+}
+
+function showTerminalRequestError(error) {
+  const code = requestErrorCode(error);
+  const changed = code === 'test_catalog_changed';
+  showError(changed ? '시험 정보가 변경되었습니다' : '제출 상태를 확인할 수 없습니다',
+    changed ? '선생님께 제출 상태를 확인받아 주세요. 촬영한 답안은 보존됩니다.'
+      : '학생 페이지로 돌아가 제출 상태를 확인해 주세요.', code);
 }
 
 async function submitChoice(questionNo, choice, button) {
@@ -512,6 +549,10 @@ async function refreshStatus() {
     );
     renderStatus(status);
   } catch (error) {
+    if ([400, 401, 403, 404, 409, 410, 422].includes(error?.status)) {
+      showTerminalRequestError(error);
+      return;
+    }
     pollTimer = window.setTimeout(() => void refreshStatus(), 2000);
     elements.processingMessage.textContent = '서버 연결을 다시 확인하고 있습니다. 이 화면을 닫지 말아 주세요.';
     showProcessing(elements.processingMessage.textContent);

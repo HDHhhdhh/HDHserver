@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -31,6 +30,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--engine", required=True)
 parser.add_argument("--mismatch", type=int, default=0)
 parser.add_argument("--mismatch-count", type=int, default=0)
+parser.add_argument("--incomplete-count", type=int, default=0)
 args = parser.parse_args()
 payload = json.load(sys.stdin)
 assert payload["schema"] == "student_test_ocr_worker_v1"
@@ -55,7 +55,10 @@ for item in payload["items"]:
         if should_mismatch and not second_pass:
             text = "4"
         variant = text if second_pass else ""
-        items.append({"questionNo": number, "text": text, "tokenConfidence": 0.9999, "variantText": variant, "variantAgreed": bool(variant)})
+        completed = not (number % 2 == 0 and number <= args.incomplete_count * 2)
+        items.append({"questionNo": number, "text": text, "tokenConfidence": 0.9999,
+                      "terminated": completed, "tokenCount": 3 if completed else 64,
+                      "variantText": variant, "variantAgreed": bool(variant)})
 print(json.dumps({"ok": True, "engine": args.engine, "items": items}, separators=(",", ":")))
 '''
 
@@ -112,11 +115,27 @@ def run() -> dict:
         assert set(routed["workers"]) == {"choice_digit", "paddle", "formula", "unimernet"}
         assertions += 2
 
-        primary = {"text": "1/2", "tokenConfidence": 0.9999, "variantText": "1/2", "variantAgreed": True}
+        primary = {"text": "1/2", "tokenConfidence": 0.9999, "variantText": "1/2", "variantAgreed": True,
+                   "terminated": True, "tokenCount": 3}
         assert _build_answer_candidate(crops[1], {}, primary, {}, ConfidencePolicy())["confident"] is False
         assert _build_answer_candidate(crops[1], {"text": "0.5"}, primary, {}, ConfidencePolicy())["confident"] is True
         assert _build_answer_candidate(crops[1], {"text": "0.6"}, primary, {}, ConfidencePolicy())["confident"] is False
         assertions += 3
+        for invalid in ({"terminated": False}, {"tokenCount": 64}, {"tokenCount": True}, {"tokenCount": 0},
+                        {"tokenConfidence": float("nan")}, {"tokenConfidence": float("inf")}, {"text": "1 2"}):
+            assert not _build_answer_candidate(crops[1], {"text": "0.5"}, {**primary, **invalid}, {}, ConfidencePolicy())["confident"]
+            assertions += 1
+        missing = {key: value for key, value in primary.items() if key not in {"terminated", "tokenCount"}}
+        assert not _build_answer_candidate(crops[1], {"text": "0.5"}, missing, {}, ConfidencePolicy())["confident"]
+        assertions += 1
+        for incomplete_count, status in ((3, STATUS_STUDENT_ACTION_REQUIRED), (4, STATUS_RETAKE_REQUIRED)):
+            incomplete_worker = WorkerSpec("unimernet", Path(sys.executable), worker,
+                arguments=("--engine", "unimernet", "--incomplete-count", str(incomplete_count)))
+            incomplete = recognize_sheet(crops=crops, asset_root=asset_root, paddle_worker=paddle,
+                unimernet_worker=incomplete_worker, choice_worker=choice, formula_worker=formula,
+                policy=ConfidencePolicy(require_choice_cross_engine_agreement=False, enable_adaptive_formula_second_pass=False))
+            assert incomplete["status"] == status and incomplete["uncertainCount"] == incomplete_count
+            assertions += 1
         all_choice = [OcrCrop(c.question_no, CHOICE_NUMBER, c.image_path) for c in crops]
         absent_worker = WorkerSpec("paddle", root / "missing.exe", root / "missing.py")
         only_choice = recognize_sheet(crops=all_choice, asset_root=asset_root, paddle_worker=absent_worker,

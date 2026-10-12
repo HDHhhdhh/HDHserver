@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import atexit
 import io
 import threading
 from pathlib import Path
@@ -12,17 +13,19 @@ from core.network_access import academy_network_allowed, ip_allowed
 from core.paths import BASE, PRG_PATH, TESTS_CFG_PATH
 from core.progress_store import load_progress_strict
 from core.runtime_server_guard import is_verified_isolated_server_root
-from core.storage import load, nocache_resp
+from core.storage import file_lock, load, nocache_resp
 from core.student_test_ocr_assets import MAX_CAPTURE_BYTES, OcrAssetError
 from core.student_test_ocr_config import StudentTestOcrConfig, load_student_test_ocr_config
 from core.student_test_ocr_engine import OcrEngineError, recognize_answer_value_crop, recognize_sheet
 from core.student_test_ocr_job_runner import StudentTestOcrJobRunner
+from core.student_test_ocr_maintenance import StudentTestOcrMaintenance
 from core.student_test_ocr_repository import (
     StudentTestOcrNotInitializedError,
     StudentTestOcrRepository,
     StudentTestOcrRepositoryError,
 )
 from core.student_test_ocr_service import StudentTestOcrService, StudentTestOcrServiceError
+from core.student_test_ocr_worker_pool import ResidentWorkerPool
 from core.student_test_solution_crop import UnitSolutionCropProvider
 from core.student_test_sheet_cropper import crop_answer_sheet
 from core.test_answer_links import resolve_test_assignment_answer_url
@@ -35,6 +38,8 @@ KST = dt.timezone(dt.timedelta(hours=9))
 ANSWER_LINK_MAP_PATH = BASE / "static" / "js" / "test_answer_link_map.json"
 _RUNTIME_LOCK = threading.Lock()
 _RUNTIME: tuple[StudentTestOcrConfig, StudentTestOcrService] | None = None
+_MAINTENANCE_LOCK = threading.Lock()
+_MAINTENANCE: tuple[tuple, StudentTestOcrMaintenance] | None = None
 
 
 def _now() -> dt.datetime:
@@ -95,6 +100,7 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
     if not repository.schema_ready():
         raise StudentTestOcrNotInitializedError()
     recognition_lock = threading.Lock()
+    workers = ResidentWorkerPool()
 
     def cropper(*, asset_root, image_path, output_dir):
         return crop_answer_sheet(
@@ -119,6 +125,7 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
                 formula_worker=config.formula_worker,
                 unimernet_worker=unimernet_worker,
                 policy=config.confidence_policy,
+                worker_runner=workers.run,
             )
 
     def answer_value_recognizer(*, question_no, image_path, asset_root, formula_profile):
@@ -132,6 +139,7 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
                 formula_worker=config.formula_worker,
                 unimernet_worker=unimernet_worker,
                 policy=config.confidence_policy,
+                worker_runner=workers.run,
             )
 
     runner = StudentTestOcrJobRunner(
@@ -140,6 +148,7 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
         cropper=cropper,
         recognizer=recognizer,
         clock=_now,
+        recapture_recognizer=answer_value_recognizer,
     )
 
     def log_entry_loader(date_key: str, sid: str):
@@ -161,9 +170,62 @@ def _build_runtime(config: StudentTestOcrConfig) -> StudentTestOcrService:
         answer_value_recognizer=answer_value_recognizer,
         solution_crop_provider=UnitSolutionCropProvider(config.solution_pdf_root),
         token_ttl_seconds=config.token_ttl_seconds,
+        on_shutdown=workers.shutdown,
+        catalog_guard=lambda: file_lock(TESTS_CFG_PATH),
     )
     runner.on_recognition_committed = service.complete_recognition
+    runner.start_recovery()
     return service
+
+
+def close_student_test_ocr_runtime() -> None:
+    global _RUNTIME
+    with _RUNTIME_LOCK:
+        prior = _RUNTIME
+        _RUNTIME = None
+        if prior is not None:
+            prior[1].shutdown()
+
+
+atexit.register(close_student_test_ocr_runtime)
+
+
+def close_student_test_ocr_maintenance() -> None:
+    global _MAINTENANCE
+    with _MAINTENANCE_LOCK:
+        prior = _MAINTENANCE
+        _MAINTENANCE = None
+        if prior is not None:
+            prior[1].shutdown()
+
+
+atexit.register(close_student_test_ocr_maintenance)
+
+
+def configure_student_test_ocr_maintenance() -> bool:
+    """Explicit startup wiring, independent of OCR models and default OFF."""
+    global _MAINTENANCE
+    config = load_student_test_ocr_config()
+    if not config.maintenance_enabled:
+        close_student_test_ocr_maintenance()
+        return False
+    signature = (config.db_path, config.asset_root, config.maintenance_interval_seconds)
+    with _MAINTENANCE_LOCK:
+        if _MAINTENANCE is not None and _MAINTENANCE[0] == signature:
+            return True
+        if _MAINTENANCE is not None:
+            _MAINTENANCE[1].shutdown()
+            _MAINTENANCE = None
+        repository = StudentTestOcrRepository(config.db_path)
+        if not repository.schema_ready():
+            return False
+        maintenance = StudentTestOcrMaintenance(
+            repository=repository, asset_root=config.asset_root, clock=_now,
+            interval_seconds=config.maintenance_interval_seconds,
+        )
+        maintenance.start()
+        _MAINTENANCE = (signature, maintenance)
+        return True
 
 
 def _service() -> StudentTestOcrService:
@@ -174,12 +236,17 @@ def _service() -> StudentTestOcrService:
         return injected
     config = load_student_test_ocr_config()
     if not config.enabled:
+        close_student_test_ocr_runtime()
         raise StudentTestOcrServiceError("feature_disabled", "student test OCR is disabled", 404)
     if not config.runtime_available():
+        close_student_test_ocr_runtime()
         raise StudentTestOcrServiceError("ocr_runtime_unavailable", "local OCR runtime is unavailable", 503)
     global _RUNTIME
     with _RUNTIME_LOCK:
         if _RUNTIME is None or _RUNTIME[0] != config:
+            if _RUNTIME is not None:
+                _RUNTIME[1].shutdown()
+                _RUNTIME = None
             _RUNTIME = (config, _build_runtime(config))
         return _RUNTIME[1]
 
@@ -377,6 +444,30 @@ def student_test_ocr_admin_pending():
         _require_admin()
         result = _service().admin_pending(assignment_date=str(request.args.get("date") or "").strip())
         return _response({"ok": True, **result})
+    except Exception as error:
+        return _error(error)
+
+
+@bp_api_student_test_ocr.get("/api/student-test-ocr/admin/maintenance")
+def student_test_ocr_admin_maintenance():
+    try:
+        _require_admin()
+        injected = current_app.config.get("STUDENT_TEST_OCR_MAINTENANCE")
+        if injected is not None:
+            return _response({"ok": True, "enabled": False, **injected.inspect()})
+        with _MAINTENANCE_LOCK:
+            if _MAINTENANCE is not None:
+                report = _MAINTENANCE[1].snapshot()
+                if report.get("status") == "not_started":
+                    report = _MAINTENANCE[1].inspect()
+                return _response({"ok": True, "enabled": True, **report})
+        config = load_student_test_ocr_config()
+        repository = StudentTestOcrRepository(config.db_path)
+        if not repository.schema_ready():
+            raise StudentTestOcrNotInitializedError()
+        inspector = StudentTestOcrMaintenance(repository=repository, asset_root=config.asset_root, clock=_now)
+        # This GET never creates a scheduler, applies a migration, or deletes an image.
+        return _response({"ok": True, "enabled": False, **inspector.inspect()})
     except Exception as error:
         return _error(error)
 

@@ -10,7 +10,6 @@ export const STATES = Object.freeze([
 
 const ANNOUNCEMENT_ID = /[A-Za-z0-9][A-Za-z0-9._:-]{0,127}/;
 const NOTIFICATION_EVENT_ID = /evt_[A-Za-z0-9_-]{32}/;
-const HOMEWORK_EVENT_ID = NOTIFICATION_EVENT_ID;
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -30,8 +29,7 @@ export function safeAnnouncementId(value) {
 
 export function safeNotificationEventId(value, view = '') {
   const id = typeof value === 'string' ? value : '';
-  const matcher = view === 'homework' ? HOMEWORK_EVENT_ID : NOTIFICATION_EVENT_ID;
-  const match = matcher.exec(id);
+  const match = NOTIFICATION_EVENT_ID.exec(id);
   return match?.index === 0 && match[0] === id ? id : '';
 }
 
