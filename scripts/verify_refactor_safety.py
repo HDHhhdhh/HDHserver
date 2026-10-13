@@ -38,6 +38,10 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_api_error_format.py",
     ROOT / "scripts/verify_auth_startup_safety.py",
     ROOT / "scripts/verify_auth_schedule_scope.py",
+    ROOT / "scripts/verify_json_store_safety.py",
+    ROOT / "scripts/verify_admin_api_body_validation.py",
+    ROOT / "scripts/verify_schedule_store_safety.py",
+    ROOT / "scripts/report_duplicate_student_ids.py",
 ]
 
 PYTHON_311_FILES = [
@@ -1205,6 +1209,16 @@ def run_stability_auth_boundary_checks() -> None:
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, "stability authentication/error boundary failed")
+
+
+def run_stability_storage_boundary_checks() -> None:
+    for script in ("verify_json_store_safety.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
+        proc = _run_captured([sys.executable, "scripts/" + script])
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "stability storage/body boundary failed")
 
 
 def run_admin_today_action_reachability_checks() -> None:
@@ -11336,6 +11350,7 @@ ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig upd
 def run_unit_checks() -> bool:
     checks = [
         run_stability_auth_boundary_checks,
+        run_stability_storage_boundary_checks,
         run_smoke_sqlite_observation_unit_checks,
         run_admin_date_session_storage_checks,
         run_test_catalog_search_sort_checks,
