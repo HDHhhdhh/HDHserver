@@ -1,3 +1,9 @@
+"""Atomic file persistence; callers own read-modify-write serialization.
+
+Hold the canonical <path>.lock across load, merge and save. Multi-store writers
+must keep their domain coordinator and lock order from core/AGENTS.md; a generic
+file lock cannot replace identity, material or absence journal transactions.
+"""
 from __future__ import annotations
 
 import datetime as dt
@@ -62,7 +68,7 @@ def load(path) -> Any:
         raise
     except Exception:
         log.exception("JSON load failed for %s", path)
-        return {} if str(path).endswith(".json") else None
+        raise
 
 
 def _resolve_mirror_root(path) -> pathlib.Path | None:
