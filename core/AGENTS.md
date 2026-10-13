@@ -23,6 +23,7 @@ this file owns core-module edit and verification constraints.
 | Log merge/conflict rules | `log_rules.py` | Pure functions only. No Flask, SQLite, JSON file reads, or runtime-data repair. |
 | Progress/watch merge rules | `progress_rules.py` | Manual white/skip/none states stay authoritative over automatic watch updates. |
 | Progress JSON persistence | `progress_store.py` | Strict object reads, process-local signature cache, compact atomic saves, and the canonical progress file lock. |
+| Administrator read aggregation | `admin_bootstrap_service.py`, `admin_revisions.py` | Injected canonical readers, critical-shape validation and content revisions; [execution contract](../docs/STABILITY_SPEED_EXECUTION.md#p6-관리자-첫-로드폴링저장-후-갱신). |
 | Progress milestone bridge | `progress_notifications.py` | Best-effort, default-off notification snapshots and commits around successful progress writes. |
 | Watch/progress writer | `watch_progress_writer.py` | Path-injected monotonic watch persistence and automatic progress writes shared by browser and Kollus routes. |
 | Watch storage reads | `watch_store.py` | Strict root/target-branch validation with typed failure; missing storage alone is empty. |
@@ -36,7 +37,7 @@ this file owns core-module edit and verification constraints.
 | School calendar persistence | `school_calendar_store.py` | Strict object reads, canonical SHA-256 revision, file-locked compare-and-replace, and unreadable-store failure. |
 | Video review projection | `video_review_rules.py` | Pure strict-before-date resolver; progress presence and manual overrides outrank watch fallback. |
 | Video catalog correction | `video_catalog_correction.py` | Pure draft validation, impact counts, and simultaneous MID remap across updates/progress/watch values. |
-| Log persistence | `log_repository.py` | SQLite plus signature-stable, defensively copied `logs.json` dual-read/dual-write contract. |
+| Log persistence | `log_repository.py` | Dual default, gated SQLite primary, strict probes and bounded content-revision cache; transition gates live in canonical §8. |
 | Assistant notes | `assistant_student_notes.py` | Student-scoped SQLite repository; separate from class logs despite sharing `app.sqlite`. |
 | Runtime paths | `paths.py` | Canonical JSON/SQLite path constants. |
 | Runtime server guard | `runtime_server_guard.py` | Refuses a second Waitress/Flask network server against the live repository runtime while production port 8003 is listening. A marker-verified copied code root is allowed; test-client imports remain allowed. |
@@ -53,7 +54,6 @@ this file owns core-module edit and verification constraints.
 | Announcement image access | `announcement_image_access.py` | Pure path/membership/visibility rules plus a path-injected locked store reader for public student files. |
 | Ghost student guards | `ghost_student.py` | Blocks writes for synthetic/placeholder students. |
 | Non-student OCR cache | `non_student_ocr_cache.py` | Internal captured-cache adapter only; it is not connected to student test submission. |
-| Legacy SQLite reader | `logs_sqlite.py` | No indexed consumers; do not revive it as a `LogRepository` bypass. |
 
 ## Conventions
 - Keep `person_identity.py`, `student_auto_assignment_rules.py`, `student_schedule_rules.py`, `student_video_projection.py`, `student_video_assignment_rules.py`, `update_assignment_rules.py`, `log_rules.py`, `progress_rules.py`, `video_review_rules.py`, and `video_catalog_correction.py` deterministic and side-effect free. `student_auto_assignment_rules.py` owns the approved 1-6 count clamp; values above 6 are interpreted as 6 without mutating the input student row.
@@ -94,7 +94,7 @@ this file owns core-module edit and verification constraints.
 - Do not bypass `LogRepository` for class-log writes.
 - Class-log mode defaults to `dual`. `sqlite` is a gated opt-in requiring an existing DB/schema, strict no-JSON-fallback repository reads, content revisions, and DB/WAL/SHM plus roster-aware cache invalidation. Preserve honest sqlite/json commit flags, original log leases, latest-row async exports, and raw absence journal rollback. Explicit legacy test-history/homework readers retain their historical JSON scope; see canonical §8.
 - Follow `RULE-LOG-001` for complete snapshots. Keep the internal row marker out of public entry/map/export projections, hydrate unknown legacy fields before sealing a row, and prove clear/reload/restart after a JSON mirror failure. Absence raw snapshots must preserve the marker byte-for-byte for rollback.
-- Do not use `logs_sqlite.py` for new reads or writes.
+- The unused direct SQLite reader was retired. Class-log reads remain on `LogRepository`.
 - Do not merge the assistant-note repository with `LogRepository` merely because both resolve to `app.sqlite`.
 - Do not add broad data cleanup inside pure helpers. The absence cleanup service is an explicit path-injected mutation boundary and must never widen beyond the supplied date/SID pairs.
 

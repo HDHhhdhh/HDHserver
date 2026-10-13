@@ -223,7 +223,7 @@ function Sync-CodeSnapshot {
         }
     }
 
-    foreach ($fileName in @("app.py", "models.py")) {
+    foreach ($fileName in @("app.py")) {
         $source = Join-Path $sourceRoot $fileName
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $codeRoot $fileName) -Force

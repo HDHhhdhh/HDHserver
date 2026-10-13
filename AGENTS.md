@@ -101,7 +101,7 @@ Live `--smoke` is opt-in under Runtime Data Safety, not a routine documentation 
 - Add comments only for non-obvious data-safety or merge behavior.
 
 ## Known Risk Areas
-- `logs.json` and `app.sqlite` are dual-write/dual-read stores. Keep their merge behavior compatible.
+- `LOG_STORE_MODE=dual` remains the default for `logs.json` plus `app.sqlite`. The opt-in SQLite mode requires the parity and compatibility gates in canonical §8; preserve the dual rollback path and legacy history scope.
 - `progress.json` is large and date/sid keyed. Avoid full replacement writes from the frontend.
 - Normal `POST /api/videos` rejects removal of an existing video ID or a URL-derived MID change with 409 before writing. Same-MID signed URL/metadata edits and new rows remain allowed. Do not add a request bypass. The supported correction path is the browser-only draft in `video-manage.js`, dry-run/apply through `scripts/apply_video_catalog_correction.ps1`, a stopped Waitress listener, a fresh verified runtime backup, and the pure four-store transform in `core/video_catalog_correction.py`. Referenced deletion fails closed; correction drafts contain full URLs and must not be committed.
 - Watch `updatedAt` is epoch milliseconds. `static/js/student/watchState.js` must normalize it without bitwise coercion, and the server must preserve valid millisecond values while repairing legacy 32-bit values; keep both wire regression checks when changing serialization or merge logic.

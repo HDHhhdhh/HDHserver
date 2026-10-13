@@ -65,13 +65,6 @@ def _isolated_routes(root: Path):
         pages = importlib.import_module("routes.pages")
         basic = types.ModuleType("routes.api_basic")
 
-        class Lock:
-            def __init__(self, *_args, **_kwargs): pass
-            def __enter__(self): return self
-            def __exit__(self, *_args): return False
-
-
-        basic._InterProcessFileLock = Lock
         basic._progress_lock = nullcontext
         basic._load_progress_strict = lambda path=paths.PRG_PATH: json.loads(Path(path).read_text("utf-8"))
         basic._save_progress_strict = lambda data, path=paths.PRG_PATH: _write(Path(path), data)

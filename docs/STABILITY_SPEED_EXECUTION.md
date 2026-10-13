@@ -103,6 +103,45 @@ JsonStore와 lazy bounded registry를 실제 owner에 연결했다. 학생/영�
 
 관리형 PID 41432의 SQLite+export ON 합성 QA에서 Chrome 숙제 통합 저장·닫힘·reload 후 다음 숙제 값과 활성 입력을 확인했다. 날짜/SID log GET은 200이며 JSON export가 따라잡았고 흰색 영상의 manual watch hold도 유지됐다. 4개 backend snapshot hash, 단일 loopback, 운영 ping·공개 app200을 확인했다. 검증 뒤 manager로 기본 dual 모드를 복원한 PID 12580에서도 저장 값·두 log GET·격리·운영 가용성을 확인했다. 운영 소스 배포와 실제 운영일 관찰은 별도다.
 
+## P6 관리자 첫 로드·폴링·저장 후 갱신
+
+현재 첫 로드에서 필요한 자료는 7개다. 별도 today 초기화 POST를 유지하고 storage-only bootstrap GET으로 자료를 모으므로, 첫 핵심 요청은 7개에서 2개가 된다. 자료·시험 등 기존 지연 로딩은 유지한다. 개별 API의 public reader를 재사용하며, 중요 자료의 손상은 503으로 거부한다. 기존 선택 자료의 빈 fallback과 404인 구형 backend의 개별 GET 호환은 유지한다. 인증·충돌·서버 오류에는 호환 fallback을 실행하지 않는다.
+
+```mermaid
+sequenceDiagram
+    participant F as 관리자 화면
+    participant A as 관리자 API
+    participant S as 기존 저장소
+    F->>A: ensure-today POST
+    A->>S: 기존 초기화 규칙
+    A-->>F: 확정된 updates
+    F->>A: bootstrap GET
+    A->>S: 날짜 범위 읽기
+    A-->>F: 자료와 revision
+```
+
+초기화와 읽기를 분리한다. 7개 자료는 students, videos, updates, logs, absent, progress, schoolCal이다. 17개 revision의 정확한 키와 날짜 범위는 [서버 소유자](../routes/api_admin_state.py)에 둔다. 저장 후 두 요약은 미정리 done 기록과 과거 하원 기록 확인이다.
+
+폴링은 17개 내용 revision을 비교한다. 유휴 today 폴링은 revision 요청만 보내며, 변경 자료만 재조회한다. 같은 초 수정·삭제·복원도 반영하고 MAX(updated_at)를 쓰지 않는다. 실패하거나 로컬 fallback으로 읽은 자료는 새 revision으로 인정하지 않는다. 날짜 전환·편집·팝업·겹친 요청의 기존 보호와 10분 전체 갱신을 유지한다. 과거 done·progress·등원 변경도 별도 revision으로 추적한다.
+
+팝업 저장의 기존 응답 기반 state 반영은 유지한다. 저장 후 today 갱신은 두 과거 기록 요약으로 좁힌다. 요약 실패 시 관련 revision을 보류해 다음 폴링에서 다시 읽는다. 다른 기능의 배경 요청까지 모두 없앴다는 뜻은 아니다. 결석 처리의 배정·진도 정리와 충돌 검사는 유지한다.
+
+progress GET은 date 또는 sid/sids 필터가 없으면 400 filter_required로 거부한다. since는 실제 날짜로 검증한다. JSON 캐시에서 요청 날짜/SID만 방어적으로 복사하고, 이력 삭제 시 해당 SID의 낡은 브라우저 자료를 제거한다. 숫자 별칭·빈 값·unknown fields·공통 결석 lease 계약은 유지한다. 브라우저의 무필터 전체 조회는 제거했다.
+
+실제 임시 HTTP 계약 20개, bootstrap transport 9개, revision poller 10개, 실제 today 모듈 9개 검증이 통과했다. 단일 literal comma-SID의 lease 누락을 독립 검토로 재현하고 수정했다. 드래그 순서 fixture의 성공 HTTP 응답 형태도 새 검증에 맞췄으며 기존 지연 read/save/clear 42개 단언을 유지했다. 최종 전체 하네스는 exit 0, 109개 그룹 통과, 실패 0이며 JS syntax 94개를 통과했다. 로컬 audit의 p6-p7-final-full.log에 원문을 보존한다.
+
+이번 8004 backend 재시작은 자동 승인 검토가 정책상 차단했다. 지원 manager Refresh는 성공했으며 PID 12580의 P5 backend와 새 frontend를 유지했다. Chrome에서 bootstrap 404 호환, 합성 숙제 저장·닫힘·reload 후 같은 값과 활성 입력을 확인했다. 정적 JS의 ETag·Last-Modified·조건부 304도 확인했다. 운영 ping과 공개 app은 HTTP 200이었다. 새 backend의 실제 첫 렌더·유휴 폴링·전후 체감 측정은 보류한다. 한 번의 기존 backend 시간 측정을 개선 수치로 쓰지 않는다. 학생 첫 렌더의 추가 지연이 측정되지 않아 조건부 동적 import와 새로운 캐시 정책은 도입하지 않았다.
+
+IAB 데모는 두 핵심 bootstrap 요청이 합성 handler에서 처리됨을 확인했다. 합성 보강 학생을 저장하고 reload 후 선택과 활성 입력이 유지됐다. 실제 API 전달은 0건이었다. Chrome은 날짜/SID 두 log GET 200과 저장한 한국어 값을 확인했다. 스크린샷과 fetch/측정 원문은 로컬 audit에만 보존한다. 이 검증은 데이터 유지·호환 근거이며 새 backend의 성능 보장이 아니다.
+
+정책 차단이 해소되거나 사용자가 지원 manager로 QA backend를 재시작하면, manager·단일 loopback·운영 ping·공개 app부터 확인하고 새 backend의 두 브라우저 회귀와 전후 측정을 진행한다. 이번 작업은 운영 checkout과 8003 실행 소스를 바꾸지 않았다. Git push도 운영 배포를 뜻하지 않는다. P1 log 배포·2~3 운영일 관찰, P5 전환 gate와 실제 백업은 여전히 필요하다.
+
+## P7 미사용 코드·규칙 문서 정리
+
+OCR 제외 범위에서 importer가 없는 models.py와 core/logs_sqlite.py를 제거했다. 코드 배포·격리 snapshot 복사 목록도 맞췄다. 미사용 AUTH_PATH 상수는 제거했지만 auth.json의 초기화 순서와 기본값은 유지했다. api_basic의 잠금 별칭은 canonical updates lock factory로 교체했으며 파일 경로·timeout·poll·stale 설정은 유지했다.
+
+GET 초기화 호환 예외, dual 기본과 gated SQLite 모드, 신규 관리자 읽기·폴링 소유자를 scoped guidance와 flow map에 반영한다. 원본 계획은 수정하지 않는다. 운영 관찰이 필요한 호환 스위치는 제거하지 않는다. runtime 자료와 직접 제공 가능한 static 파일은 삭제하지 않았다. 독립 검토에서 P7 추가 finding은 없었다.
+
 ## 단계 상태
 
 | 단계 | 구현 | 합성 검증 | 운영 적용·관찰 |
@@ -113,5 +152,5 @@ JsonStore와 lazy bounded registry를 실제 owner에 연결했다. 학생/영�
 | P3 | 충돌·delta·strict preload·GET 분리·저장 owner 구현 | 전체 109그룹·실제 2화면 보강/영상 충돌·FullCalendar·IAB 저장 통과 | P1 관찰 뒤 반영 대기 |
 | P4 | 공통 transport·async mirror 실제 통합 | 전체109그룹·transport28·owner12·mirror14·실제 흰색 저장/reload·IAB 보강 저장 통과 | 배포·운영일 soak 대기 |
 | P5 | dual 기본·gated SQL·export·오프라인 정합 구현 | 전체109그룹·정합12·모드22·전체/scoped889·실제 Chrome 저장/reload 통과 | 새 정지 백업·전환 gate·운영 관찰 대기 |
-| P6 | 대기 | 대기 | 전후 측정 필요 |
-| P7 | 대기 | 대기 | 관찰 뒤 호환 스위치 정리 |
+| P6 | bootstrap·revision·선택 재조회·progress 범위 구현 | 전체109그룹·임시 HTTP20·transport9·poller10·실제 모듈9·Chrome 구형 backend 호환·IAB 합성 보강 저장 통과 | 새 backend 실제 QA·전후 측정·배포 대기 |
+| P7 | 미사용 코드·잠금 별칭·문서 정리 | 전체109그룹·syntax94·독립 검토 통과 | 호환 스위치 제거는 관찰 뒤 판단 |

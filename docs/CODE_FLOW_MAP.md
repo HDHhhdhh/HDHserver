@@ -17,6 +17,8 @@
 
 수업 로그는 `core/log_repository.py`가 dual 기본과 gated SQLite 모드, strict SQL 읽기, content revision, bounded projection cache를 소유한다. `core/log_json_export.py`는 기존 로그 lease 뒤 최신 SQL 행을 읽는 비동기 호환 export다. `core/log_reconcile.py`와 명시적 백업 입력의 `scripts/verify_log_store_parity.py`가 OS-temp 정합·전체/scoped 비교·정확한 롤백을 검증한다. 시험 기록/legacy homework의 JSON-only 자료 범위와 전환 조건은 canonical §8을 따른다.
 
+관리자 초기 읽기는 `admin/core/bootstrapTransport.js` → 별도 ensure POST → `api_admin_state.py` → canonical public readers로 이어진다. `todayPolling.js`는 내용 revision과 실제 성공한 자료 갱신을 연결한다. 실패·구형 backend 호환·과거 이력 범위 및 검증 상태는 [P6 실행 계약](STABILITY_SPEED_EXECUTION.md#p6-관리자-첫-로드폴링저장-후-갱신)에 둔다.
+
 ## 2. 앱 조립 모드
 
 `create_app()`은 학생 앱 기능 플래그에 따라 Blueprint와 URL 표면을 조건부
@@ -212,7 +214,7 @@ reminders가 꺼져 있으면 일정·진도 hook은 repository를 열지 않고
 | 공지 | `announcements.json`, `announce_status.json`, 첨부 파일 | 공지와 학생별 상태 분리 |
 | 오늘 순서 | `data/today_order.json` | GET/PATCH/DELETE, 단일 canonical 경로 |
 
-`core.paths`는 경로만 선언한다. `app.create_app()`가 서버 guard 뒤 `initialize_runtime_paths()`를 호출해 legacy 기본 JSON과 `files/`를 생성한 다음 recovery를 수행한다. `AUTH_PATH`(`auth.json`)와 `CLINIC_PATH`(`clinic.json`)는 현재 생산 코드 소비자가 확인되지 않았지만 명시적 시작 초기화 대상이므로, 외부 사용 확인 없이 제거하지 않는다.
+`core.paths`는 경로만 선언한다. `app.create_app()`가 서버 guard 뒤 `initialize_runtime_paths()`를 호출해 legacy 기본 JSON과 `files/`를 생성한 다음 recovery를 수행한다. 미사용 `AUTH_PATH` 상수는 제거했지만 `auth.json`의 기존 초기화는 유지한다. `auth.json`과 `CLINIC_PATH`(`clinic.json`)의 운영 파일은 외부 사용 확인 없이 제거하지 않는다.
 
 ### 6.2 `app.sqlite` 테이블
 
@@ -337,7 +339,7 @@ SQLite schema는 적용된 migration과 기능 플래그에 따라 달라지는 
 | `core.paths` import | 경로 선언만 | JSON·directory 생성 없음 |
 | `app` import / `create_app()` | 생성·복구 가능 | 서버 guard 뒤 명시적 기본 JSON·`files/` 생성 및 journal recovery |
 | 로그/조교 메모 repository 읽기 | SQLite 변경 가능 | schema 보장, WAL, backfill |
-| bare `GET /api/updates` | 운영 쓰기 가능 | 실제 오늘 자동 snapshot 생성/rebase |
+| bare `GET /api/updates` | 기본 storage-only | `ensure=1` 또는 `UPDATES_GET_ENSURE=1` 호환 경로만 실제 오늘 초기화 |
 | 비공개 real-today bootstrap | 운영 쓰기 가능 | 누락 자동 배정 생성 가능 |
 | `GET /api/updates?readOnly=1`, 비오늘/public bootstrap | storage-only 계약 | 자동 배정 생성 금지 |
 

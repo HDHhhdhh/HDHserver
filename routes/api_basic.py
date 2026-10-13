@@ -98,7 +98,7 @@ from core.student_test_projection import (
     project_student_assigned_tests,
     resolve_student_assigned_tests,
 )
-from core.storage import InterProcessFileLock, file_lock, load, save_atomic
+from core.storage import file_lock, load, save_atomic
 from core.absent import load_absent, save_absent
 from core.date_rules import is_iso_date_key
 from routes.log_repository_provider import (
@@ -159,15 +159,8 @@ def _student_is_registered_on_date(student: dict, sid: str, date_key: str, extra
     return str(sid) in {str(x) for x in (extra_ids or [])}
 
 
-# ─────────────────────────────────────────────
-# ✅ 프로세스 간 파일 락 (JSON 저장 보호용)
-# ─────────────────────────────────────────────
-class _InterProcessFileLock(InterProcessFileLock):
-    """Backward-compatible alias for modules importing the old route-local lock."""
-
-
 def _updates_lock():
-    return _make_updates_lock(UPD_PATH, lock_factory=_InterProcessFileLock)
+    return _make_updates_lock(UPD_PATH)
 
 
 def _auto_assignment_absence_barrier():

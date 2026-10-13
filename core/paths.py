@@ -48,9 +48,6 @@ TESTS_CFG_PATH = BASE / "tests-config.json"
 
 PAGE_FOLDERS_PATH = BASE / "page_folders.json"
 
-AUTH_PATH = BASE / "auth.json"
-
-
 def initialize_runtime_paths() -> None:
     """Create legacy defaults explicitly at guarded application startup."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,7 +60,8 @@ def initialize_runtime_paths() -> None:
             PRG_PATH, MAT_PATH, ASN_PATH, UPD_PATH, TODAY_ORDER_PATH, EXTRA_PATH,
             LOGS_PATH, TESTS_PATH, ABS_PATH, CLINIC_PATH, CAL_PATH, ANN_STATUS_PATH,
             WEEKEND_SLOTS_PATH, WATCH_PATH, ATTENDANCE_PATH, CONTACT_PATH,
-            ARRIVE_TIME_PATH, PAGE_FOLDERS_PATH, AUTH_PATH,
+            ARRIVE_TIME_PATH, PAGE_FOLDERS_PATH,
         )),
+        (BASE / "auth.json", {}),
     ):
         ensure_json(path, default)

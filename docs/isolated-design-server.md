@@ -30,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\manage_isolated_de
 
 ## 격리 계약
 
-- 복사 대상은 `app.py`, `models.py`, `core/`, `routes/`, `static/`와 학생 시험 OCR 실행에 필요한 worker다. worker 목록은 관리 스크립트의 `Sync-CodeSnapshot`이 소유한다. migration·운영 데이터·Drive cache는 복사하지 않는다.
+- 복사 대상은 `app.py`, `core/`, `routes/`, `static/`와 학생 시험 OCR 실행에 필요한 worker다. worker 목록은 관리 스크립트의 `Sync-CodeSnapshot`이 소유한다. migration·운영 데이터·Drive cache는 복사하지 않는다.
 - 루트 JSON, SQLite, `data/`, `files/`, `instance/`, 백업과 미러는 운영에서 복사하지 않는다.
 - 테스트 runtime은 테스트 서버를 재시작해도 유지된다.
 - OCR flag·runtime 경로는 시작 명령의 환경에서만 전달하며 asset·답지 cache 경로는 격리 app 아래로 강제한다. 운영 migration이나 Drive cache를 자동 복사하지 않는다.

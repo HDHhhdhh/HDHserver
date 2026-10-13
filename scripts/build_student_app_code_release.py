@@ -16,7 +16,6 @@ ALLOWED_ROOT_FILES = {
     ".gitignore",
     "AGENTS.md",
     "app.py",
-    "models.py",
     "requirements-student-app.txt",
 }
 ALLOWED_EXTENSIONS = {
