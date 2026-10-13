@@ -42,6 +42,10 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_json_store_transport.py",
     ROOT / "scripts/verify_json_store_owners.py",
     ROOT / "scripts/verify_async_mirror.py",
+    ROOT / "scripts/verify_log_reconcile.py",
+    ROOT / "scripts/verify_log_sqlite_mode.py",
+    ROOT / "scripts/verify_log_store_parity.py",
+    ROOT / "scripts/export_logs_sqlite_to_json.py",
     ROOT / "scripts/verify_admin_api_body_validation.py",
     ROOT / "scripts/verify_schedule_store_safety.py",
     ROOT / "scripts/report_duplicate_student_ids.py",
@@ -1223,7 +1227,7 @@ def run_stability_auth_boundary_checks() -> None:
 
 
 def run_stability_storage_boundary_checks() -> None:
-    for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
+    for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_log_reconcile.py", "verify_log_sqlite_mode.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
         proc = _run_captured([sys.executable, "scripts/" + script])
         if proc.stdout:
             print(proc.stdout, end="")

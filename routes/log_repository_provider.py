@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from pathlib import Path
 from typing import Dict, List
 
 from flask import g, has_request_context
@@ -209,6 +210,14 @@ def _today_kst_iso() -> str:
     return dt.datetime.now(KST).date().isoformat()
 
 
+def _roster_signature():
+    try:
+        stat = Path(STU_PATH).stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
+
+
 def get_log_repository() -> LogRepository:
     return LogRepository(
         logs_path=LOGS_PATH,
@@ -218,6 +227,7 @@ def get_log_repository() -> LogRepository:
         lock_factory=_logs_lock,
         truthy=log_rules.truthy,
         today_key=_today_kst_iso,
+        projection_signature=_roster_signature,
     )
 
 

@@ -3,16 +3,20 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import logging
 import os
 import pathlib
 import sqlite3
 import threading
 from contextlib import nullcontext
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
 from core.date_rules import is_iso_date_key
 from core.log_rules import is_empty_value, truthy as default_truthy
+from core.json_store import StoreCorrupt
+from core.json_revision import json_revision
 from core.paths import LOGS_PATH
 from core.storage import load, save_atomic
 
@@ -45,6 +49,8 @@ _LOG_JSON_READ_CACHE: dict[
     tuple[tuple[int, int, int, int] | None, dict, str],
 ] = {}
 _LOG_JSON_READ_CACHE_MAX_PATHS = 16
+_LOG_PROJECTION_CACHE_LOCK = threading.Lock()
+_LOG_PROJECTION_CACHE = OrderedDict()
 
 
 def _log_json_signature(path: pathlib.Path) -> tuple[int, int, int, int] | None:
@@ -117,6 +123,7 @@ class LogPostResult:
     sqlite_error: Exception | None = None
     json_ok: bool = False
     json_error: Exception | None = None
+    export_pending: bool = False
 
 
 @dataclass
@@ -129,6 +136,7 @@ class LogPatchResult:
     json_ok: bool = False
     json_error: Exception | None = None
     json_conflict_entry: dict | None = None
+    export_pending: bool = False
 
 
 def _identity_entry(entry: dict, _sid: str) -> dict:
@@ -157,6 +165,9 @@ class LogRepository:
         truthy: TruthyFn = default_truthy,
         today_key: Callable[[], str] | None = None,
         db_path: str | None = None,
+        store_mode: str | None = None,
+        json_export: bool | None = None,
+        projection_signature: Callable[[], Any] | None = None,
     ):
         self.logs_path = logs_path
         self.repair_entry = repair_entry
@@ -166,6 +177,14 @@ class LogRepository:
         self.truthy = truthy
         self.today_key = today_key or (lambda: dt.datetime.now(KST).date().isoformat())
         self.db_path = db_path
+        self.store_mode = (store_mode or os.environ.get("LOG_STORE_MODE", "dual")).strip().lower()
+        if self.store_mode not in {"dual", "sqlite"}:
+            raise StoreCorrupt("Invalid class-log storage mode")
+        export_setting = os.environ.get("LOG_JSON_EXPORT", "1")
+        if json_export is None and export_setting not in {"0", "1"}:
+            raise StoreCorrupt("Invalid class-log export setting")
+        self.json_export = export_setting == "1" if json_export is None else bool(json_export)
+        self.projection_signature = projection_signature
 
     def _default_db_path(self) -> str:
         if self.db_path:
@@ -179,21 +198,35 @@ class LogRepository:
 
     def _connect(self) -> sqlite3.Connection:
         db_path = self._default_db_path()
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        if self.store_mode == "sqlite" and not pathlib.Path(db_path).is_file():
+            raise StoreCorrupt("Class-log database is unavailable")
+        if self.store_mode != "sqlite":
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
 
         con = sqlite3.connect(
-            db_path,
+            pathlib.Path(db_path).resolve().as_uri() + "?mode=rw" if self.store_mode == "sqlite" else db_path,
+            uri=self.store_mode == "sqlite",
             timeout=30.0,
             isolation_level=None,
             check_same_thread=False,
         )
         con.row_factory = sqlite3.Row
-        con.execute("PRAGMA busy_timeout=30000;")
-        con.execute("PRAGMA journal_mode=WAL;")
-        con.execute("PRAGMA synchronous=NORMAL;")
+        try:
+            if self.store_mode == "sqlite":
+                con.execute("SELECT date,sid,entry_json,updated_at FROM logs LIMIT 0")
+            con.execute("PRAGMA busy_timeout=30000;")
+            con.execute("PRAGMA journal_mode=WAL;")
+            con.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            con.close()
+            raise
         return con
 
     def _ensure_schema(self, con: sqlite3.Connection) -> None:
+        if self.store_mode == "sqlite":
+            if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='logs'").fetchone() is None:
+                raise StoreCorrupt("Class-log schema is unavailable")
+            return
         con.execute("""
         CREATE TABLE IF NOT EXISTS logs (
           date TEXT NOT NULL,
@@ -208,15 +241,163 @@ class LogRepository:
     def _now_kst_iso(self) -> str:
         return dt.datetime.now(KST).isoformat(timespec="seconds")
 
+    def _validate_sqlite_objects(self, con) -> None:
+        if self.store_mode == "sqlite" and con.execute(
+            "SELECT 1 FROM logs WHERE json_type(entry_json) IS NULL OR json_type(entry_json)<>'object' LIMIT 1"
+        ).fetchone() is not None:
+            raise StoreCorrupt("Class-log entry is unavailable")
+
+    def _decode_sqlite_entry(self, raw: str, sid: str) -> dict:
+        try:
+            if self.store_mode == "sqlite" and not raw:
+                raise ValueError("missing class-log entry")
+            entry = json.loads(raw) if raw else {}
+            if not isinstance(entry, dict):
+                raise ValueError("invalid class-log entry")
+        except (TypeError, ValueError) as exc:
+            if self.store_mode == "sqlite":
+                raise StoreCorrupt("Class-log entry is unavailable") from exc
+            entry = {}
+        return self.repair_entry(entry, sid)
+
+    def _sqlite_mode_map(self, con, date="", sid="", sids=None) -> dict:
+        wanted = self._normalize_sid_filters(sids or ([sid] if sid else []))
+        clauses, args = [], []
+        if date:
+            clauses.append("date=?")
+            args.append(date)
+        if wanted:
+            slots = ",".join("?" for _ in wanted)
+            clause = f"sid IN ({slots})"
+            args.extend(wanted)
+            clauses.append("(" + clause + ")")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = con.execute("SELECT date,sid,entry_json FROM logs" + where, args).fetchall()
+        out = {date: {}} if date else {}
+        for row in rows:
+            row_date, row_sid = str(row["date"]), str(row["sid"])
+            entry = self._decode_sqlite_entry(row["entry_json"], row_sid)
+            if wanted and not entry:
+                continue
+            out.setdefault(row_date, {})[row_sid] = entry
+        if sids:
+            out = self._filter_json_map_sids(out, wanted, date)
+        elif sid:
+            out = self._filter_json_map(out, date, sid)
+        return out
+
+    def _queue_exports(self, pairs) -> bool:
+        if not self.json_export or not pairs:
+            return False
+        try:
+            from core.log_json_export import enqueue_log_export
+            return enqueue_log_export(self.logs_path, self._default_db_path(), pairs, self.lock_factory)
+        except Exception:
+            logging.getLogger(__name__).exception("Class-log export could not be initialized")
+            return False
+
+    def _sqlite_current_entry(self, con, date: str, sid: str) -> dict:
+        keys = [sid]
+        if sid.isdigit() and str(int(sid)) != sid:
+            keys.append(str(int(sid)))
+        for key in keys:
+            row = con.execute("SELECT entry_json FROM logs WHERE date=? AND sid=?", (date, key)).fetchone()
+            if row is not None:
+                return _public_entry(self._decode_sqlite_entry(row[0], sid))
+        return self.repair_entry({}, sid)
+
+    def _sqlite_patch(self, date, sid, entry, base) -> LogPatchResult:
+        result = LogPatchResult(merged={}, sqlite_ok=False)
+        with self.mutation_lock():
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE")
+                current = self._sqlite_current_entry(con, date, sid)
+                if self.entry_conflicts(current, base):
+                    con.rollback()
+                    result.sqlite_base_conflict = True
+                    result.sqlite_conflict_entry = current
+                    return result
+                merged = self.repair_entry(self.merge_entry(current, entry), sid)
+                self._sqlite_upsert_entry(con, date, sid, {**merged, _COMPLETE_ENTRY: True})
+                con.commit()
+                result.sqlite_ok = True
+                result.merged = _public_entry(merged)
+            except Exception as exc:
+                result.sqlite_error = exc
+                if con is not None and con.in_transaction:
+                    con.rollback()
+                return result
+            finally:
+                if con is not None:
+                    con.close()
+            result.export_pending = self._queue_exports({(date, sid)})
+        return result
+
+    def _sqlite_post(self, incoming) -> LogPostResult:
+        result = LogPostResult(sqlite_ok=False)
+        pairs = set()
+        with self.mutation_lock():
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE")
+                for date, day in incoming.items():
+                    if not isinstance(day, dict) or not is_iso_date_key(str(date)):
+                        continue
+                    for sid, entry in day.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        date, sid = str(date), str(sid)
+                        current = self._sqlite_current_entry(con, date, sid)
+                        merged = self.merge_entry(current, self.repair_entry(_public_entry(entry), sid))
+                        self._sqlite_upsert_entry(con, date, sid, {**merged, _COMPLETE_ENTRY: True})
+                        pairs.add((date, sid))
+                con.commit()
+                result.sqlite_ok = True
+            except Exception as exc:
+                result.sqlite_error = exc
+                if con is not None and con.in_transaction:
+                    con.rollback()
+                return result
+            finally:
+                if con is not None:
+                    con.close()
+            result.export_pending = self._queue_exports(pairs)
+        return result
+
+    def revision(self, date_filter: str = "", sid_filters=None) -> str:
+        return json_revision(self.read_logs(date_filter, sid_filters=sid_filters))
+
+    def cache_signature(self) -> tuple:
+        database = pathlib.Path(self._default_db_path())
+        db_signature = tuple(_log_json_signature(pathlib.Path(str(database) + suffix))
+                             for suffix in ("", "-wal", "-shm"))
+        json_signature = _log_json_signature(pathlib.Path(self.logs_path)) if self.store_mode == "dual" else None
+        projection = self.projection_signature() if self.projection_signature else None
+        return self.store_mode, db_signature, json_signature, projection
+
+    def verify_available(self) -> None:
+        con = None
+        try:
+            con = self._connect()
+            self._ensure_schema(con)
+        except Exception as exc:
+            if isinstance(exc, StoreCorrupt):
+                raise
+            raise StoreCorrupt("Class-log storage is unavailable") from exc
+        finally:
+            if con is not None:
+                con.close()
+
     def _sqlite_get_entry(self, con: sqlite3.Connection, date: str, sid: str) -> dict:
         row = con.execute("SELECT entry_json FROM logs WHERE date=? AND sid=?;", (date, sid)).fetchone()
         if not row:
             return {}
-        try:
-            entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
-        except Exception:
-            entry = {}
-        return self.repair_entry(entry, sid)
+        return self._decode_sqlite_entry(row["entry_json"], sid)
 
     def _sqlite_upsert_entry(self, con: sqlite3.Connection, date: str, sid: str, entry: dict) -> None:
         safe_entry = self.repair_entry(entry or {}, sid)
@@ -228,7 +409,7 @@ class LogRepository:
               entry_json=excluded.entry_json,
               updated_at=excluded.updated_at;
             """,
-            (date, sid, json.dumps(safe_entry, ensure_ascii=False), self._now_kst_iso()),
+            (date, sid, json.dumps(safe_entry, ensure_ascii=False, allow_nan=self.store_mode != "sqlite"), self._now_kst_iso()),
         )
 
     def _sqlite_dump_all(self, con: sqlite3.Connection) -> dict:
@@ -475,6 +656,9 @@ class LogRepository:
         return out
 
     def read_entry(self, date: str, sid: str) -> LogEntryResult:
+        if self.store_mode == "sqlite":
+            rows = self.read_logs(date, sid)
+            return LogEntryResult("sqlite", rows.get(date, {}).get(sid, {}))
         con = None
         try:
             con = self._connect()
@@ -500,6 +684,53 @@ class LogRepository:
         sid_filter: str = "",
         sid_filters: list[str] | None = None,
     ) -> dict:
+        if self.repair_entry is not _identity_entry and self.projection_signature is None:
+            return self._read_logs_uncached(date_filter, sid_filter, sid_filters)
+        key = (os.path.normcase(os.path.abspath(self._default_db_path())),
+               os.path.normcase(os.path.abspath(os.fspath(self.logs_path))),
+               self.repair_entry, date_filter, sid_filter, tuple(sid_filters or []))
+        before = self.cache_signature()
+        if before[1][0] is not None:
+            with _LOG_PROJECTION_CACHE_LOCK:
+                cached = _LOG_PROJECTION_CACHE.get(key)
+                if cached is not None and cached[0] == before:
+                    _LOG_PROJECTION_CACHE.move_to_end(key)
+                    data = copy.deepcopy(cached[1])
+                else:
+                    data = None
+            if data is not None:
+                if self.store_mode == "sqlite":
+                    self.verify_available()
+                return data
+        data = self._read_logs_uncached(date_filter, sid_filter, sid_filters)
+        after = self.cache_signature()
+        if before == after and after[1][0] is not None:
+            with _LOG_PROJECTION_CACHE_LOCK:
+                _LOG_PROJECTION_CACHE[key] = (after, copy.deepcopy(data))
+                _LOG_PROJECTION_CACHE.move_to_end(key)
+                while len(_LOG_PROJECTION_CACHE) > 64:
+                    _LOG_PROJECTION_CACHE.popitem(last=False)
+        return data
+
+    def _read_logs_uncached(
+        self,
+        date_filter: str = "",
+        sid_filter: str = "",
+        sid_filters: list[str] | None = None,
+    ) -> dict:
+        if self.store_mode == "sqlite":
+            con = None
+            try:
+                con = self._connect()
+                self._ensure_schema(con)
+                return _public_map(self._sqlite_mode_map(con, date_filter, sid_filter, sid_filters))
+            except Exception as exc:
+                if isinstance(exc, StoreCorrupt):
+                    raise
+                raise StoreCorrupt("Class-log storage is unavailable") from exc
+            finally:
+                if con is not None:
+                    con.close()
         requested_sids = self._normalize_sid_filters(sid_filters)
         sqlite_map = {}
         sqlite_ok = False
@@ -592,16 +823,15 @@ class LogRepository:
                 target_date = normalized_targets.get(sid)
                 if not target_date or date > target_date:
                     continue
-                try:
-                    entry = json.loads(row["entry_json"]) if row["entry_json"] else {}
-                except Exception:
-                    entry = {}
+                entry = self._decode_sqlite_entry(row["entry_json"], sid)
                 projected = self._export_history_entry(entry, sid, full=date == target_date)
                 if projected:
                     sqlite_map.setdefault(date, {})[sid] = projected
             sqlite_ok = True
         except Exception as exc:
             print("[logs.export-history] sqlite GET failed:", exc, flush=True)
+            if self.store_mode == "sqlite":
+                raise StoreCorrupt("Class-log storage is unavailable") from exc
         finally:
             try:
                 if con is not None:
@@ -609,6 +839,8 @@ class LogRepository:
             except Exception:
                 pass
 
+        if self.store_mode == "sqlite":
+            return _public_map(sqlite_map)
         json_projected: Dict[str, Dict[str, dict]] = {}
         json_map, _json_status = _cached_log_json_for_read(self.logs_path)
         for date, by_sid in (json_map.items() if isinstance(json_map, dict) else []):
@@ -651,6 +883,8 @@ class LogRepository:
         return _public_map(out)
 
     def legacy_post(self, incoming: dict) -> LogPostResult:
+        if self.store_mode == "sqlite":
+            return self._sqlite_post(incoming)
         result = LogPostResult(sqlite_ok=False)
         with self.mutation_lock():
             current, status = self._read_json_map_with_status()
@@ -699,6 +933,8 @@ class LogRepository:
     def patch_entry(self, date: str, sid: str, entry: dict, base: dict) -> LogPatchResult:
         entry = self.repair_entry(_public_entry(entry), sid)
         base = self.repair_entry(base, sid)
+        if self.store_mode == "sqlite":
+            return self._sqlite_patch(date, sid, entry, base)
         result = LogPatchResult(merged={}, sqlite_ok=False)
         # One canonical lock order and one conflict decision, before either write.
         # JSON-only legacy fields are hydrated once, then the complete SQLite row
@@ -814,7 +1050,9 @@ class LogRepository:
                         fallback = {}
                     fallback = self.repair_entry(fallback, sid)
 
-                    if sqlite_entry:
+                    if self.store_mode == "sqlite":
+                        effective[(date, sid)] = _public_entry(sqlite_entry)
+                    elif sqlite_entry:
                         effective[(date, sid)] = self._merge_json_fallback_fields(
                             sqlite_entry,
                             fallback,
@@ -947,6 +1185,8 @@ class LogRepository:
                 entry = self.repair_entry(self._sqlite_get_entry(con, date, sid), sid)
                 next_entry, changed = transform_fn(entry, date, sid)
                 if changed:
+                    if self.store_mode == "sqlite":
+                        next_entry = {**next_entry, _COMPLETE_ENTRY: True}
                     self._sqlite_upsert_entry(con, date, sid, next_entry)
             con.execute("COMMIT;")
         except Exception:
@@ -963,6 +1203,9 @@ class LogRepository:
             except Exception:
                 pass
 
+        if self.store_mode == "sqlite":
+            self._queue_exports(pairs)
+            return
         changed_json = False
         context = nullcontext() if json_lock_held else self.mutation_lock()
         with context:
@@ -1045,6 +1288,7 @@ class LogRepository:
         try:
             con = self._connect()
             self._ensure_schema(con)
+            self._validate_sqlite_objects(con)
             rows = con.execute(
                 """
                 SELECT date, sid, json_extract(entry_json, '$.done') AS done,
@@ -1072,6 +1316,8 @@ class LogRepository:
             sqlite_available = True
         except Exception as exc:
             print("[logs.missing-leave-summary] sqlite failed:", exc, flush=True)
+            if self.store_mode == "sqlite":
+                raise StoreCorrupt("Class-log storage is unavailable") from exc
         finally:
             try:
                 if con is not None:
@@ -1079,7 +1325,13 @@ class LogRepository:
             except Exception:
                 pass
 
-        json_map, json_status = _cached_log_json_for_read(self.logs_path)
+        if self.store_mode == "sqlite":
+            json_map, json_status = {}, "missing"
+            numeric_candidates = [(date, sid) for date, sid in candidate_keys if sid.isdigit()]
+            for date, sid in numeric_candidates:
+                sqlite_entries[(date, sid)] = self.read_entry(date, sid).entry
+        else:
+            json_map, json_status = _cached_log_json_for_read(self.logs_path)
         for date, sid in candidate_keys:
             day = json_map.get(date) if isinstance(json_map, dict) else None
             entry = self._sid_lookup(day, sid) if isinstance(day, dict) else None
@@ -1145,6 +1397,7 @@ class LogRepository:
         try:
             con = self._connect()
             self._ensure_schema(con)
+            self._validate_sqlite_objects(con)
             candidate_keys: set[tuple[str, str]] = set()
             for row in con.execute("SELECT date, sid FROM logs ORDER BY date, sid;").fetchall():
                 date = valid_date(row["date"])
@@ -1181,6 +1434,8 @@ class LogRepository:
             sqlite_available = True
         except Exception as exc:
             print("[logs.unarchived-summary] sqlite failed:", exc, flush=True)
+            if self.store_mode == "sqlite":
+                raise StoreCorrupt("Class-log storage is unavailable") from exc
         finally:
             try:
                 if con is not None:
@@ -1188,7 +1443,7 @@ class LogRepository:
             except Exception:
                 pass
 
-        json_map, json_status = _cached_log_json_for_read(self.logs_path)
+        json_map, json_status = ({}, "missing") if self.store_mode == "sqlite" else _cached_log_json_for_read(self.logs_path)
         for date, by_sid in json_map.items():
             if not isinstance(by_sid, dict):
                 continue

@@ -163,12 +163,14 @@ def api_logs_patch():
         }), 409
 
     if not result.json_ok:
+        warning = ("SQLite save succeeded; legacy JSON export is pending." if getattr(result, "export_pending", False)
+                   else "SQLite save succeeded, but legacy JSON log storage is out of sync.")
         return jsonify({
             "ok": True,
             "sqlite": True,
             "json": False,
             "entry": result.merged,
-            "warning": "SQLite save succeeded, but legacy JSON log storage is out of sync.",
+            "warning": warning,
         })
 
     return jsonify({"ok": True, "sqlite": True, "json": True, "entry": result.merged})
@@ -224,7 +226,8 @@ def api_logs_patch_batch():
 
     payload = {"ok": True, "sqlite": True, "json": result.json_ok, "count": len(seen)}
     if not result.json_ok:
-        payload["warning"] = "SQLite save succeeded, but legacy JSON log storage is out of sync."
+        payload["warning"] = ("SQLite save succeeded; legacy JSON export is pending." if getattr(result, "export_pending", False)
+                              else "SQLite save succeeded, but legacy JSON log storage is out of sync.")
     return jsonify(payload)
 
 

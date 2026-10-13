@@ -157,10 +157,20 @@
 - 단일·batch 로그 저장 모두 SQLite commit 뒤 JSON mirror 실패를 `ok: true`, `sqlite: true`, `json: false`와 warning으로 알린다. 이 응답은 저장 실패로 간주해 중복 command를 만들 이유가 아니며, 재시도와 재조회에서도 확정된 SQLite 상태가 기준이다.
 - 저장은 `routes/log_repository_provider.py`의 `get_log_repository()`를 통하고, 순수 병합·충돌 규칙은 `core/log_rules.py`에 둔다. 기존 `routes.api_basic` import 경로는 호환 재노출이다.
 - 큰 `logs.json` 호환 병합은 파일 identity·mtime·size signature가 읽기 전후 안정된 경우에만 process-local cache를 재사용한다. 교체 중 signature가 계속 바뀌면 그 snapshot을 cache하지 않고 다음 호출에서 다시 읽으며, 경로 수는 16개로 제한한다. 호출자에게 반환하는 로그 entry/map은 방어 복사해 cache 원본을 오염시킬 수 없게 한다.
-- `LogRepository`의 호환 JSON 저장은 공백을 줄인 compact 형식을 사용한다. 데이터 값·미지 필드·잠금·원자 교체·동기 미러·복구 순서는 유지한다. 공용 `save_atomic`의 기본 형식이나 다른 저장소의 계약은 바꾸지 않는다.
+- `LogRepository`의 호환 JSON 저장은 compact 형식을 사용한다. 데이터 값·미지 필드·잠금·원자 교체·복구 순서는 유지하며, 공용 `save_atomic`의 미러 정책은 §14를 따른다.
 - 빈 값은 명시적 clear/delete 계약이 없으면 기존 교재, 숙제표, 메모를 지우지 않는다.
 - 알 수 없는 필드와 legacy 숙제 행 메타데이터도 보존한다.
 - 일부 GET은 SQLite 스키마/WAL을 보장할 수 있으므로 운영 데이터 관점에서 완전한 무변경 읽기로 간주하지 않는다.
+
+### 로그 저장 모드와 전환 게이트
+
+`LOG_STORE_MODE=dual|sqlite`의 기본은 `dual`이다. SQLite 단독 전환은 새 정지 백업, 전체 유효 공개 맵과 날짜·SID·batch·요약·export-history 비교, 복원 검증 및 운영 관찰 후에 판단한다. `scripts/verify_log_store_parity.py`는 명시적으로 받은 standalone native 백업만 읽으며, 기본은 정합 계획과 전체 비교다. `--exercise-copy`도 새 OS-temp 복사본에만 적용·롤백한다. 원본에 쓰는 production migration 명령은 제공하지 않는다. complete marker·unknown fields·false/0·SQL 우선 값을 보존하며, 빈 JSON 날짜나 기존 별칭의 조회 차이도 전환을 차단하는 결과로 취급한다.
+
+`sqlite` 모드의 repository 조회는 JSON fallback을 읽지 않는다. 기존 DB와 logs schema를 요구하며, `mode=rw`로 열어 연결 직전 삭제도 빈 DB 생성으로 숨기지 않는다. malformed SQL object와 연결 실패는 typed 오류로 닫는다. cache는 DB/WAL/SHM과 교재 repair용 명단 signature를 포함하며, SQLite cache hit에서도 primary 연결을 확인한다. revision은 공개 내용 SHA-256이므로 같은 초 수정·삭제·복원도 반영한다. 로그 projection cache는 64개 항목을 넘기지 않고 방어 복사본을 반환한다.
+
+단독 모드의 PATCH/batch/transform 성공은 SQLite transaction commit으로 확정한다. `LOG_JSON_EXPORT=1`(기본)은 원래 로그 lease를 획득한 worker가 최신 SQL 행을 읽어 날짜/SID만 JSON에 반영하는 best-effort queue다. 응답의 `sqlite/json` booleans는 유지하며 대기 중인 export를 `json:true`로 표현하지 않는다. queue 초기화·enqueue·export 오류가 확정된 commit을 실패로 바꾸지 않는다. raw absence snapshot/restore는 두 저장소의 기존 journal 경계를 유지하며, 지연된 worker도 lease 뒤 최신 행을 읽어 rollback을 되살리지 않는다. queue는 durable하지 않으며 drain/shutdown은 기본 5초다. worker의 JSON 작업은 다음 로그 writer의 lease 대기를 늘릴 수 있다. `LOG_JSON_EXPORT=0`은 명시적 옵션이고 기본값으로 전환하지 않는다.
+
+시험 기록의 기존 JSON-only 역사 후보와 학생 앱의 one-time legacy homework 조회는 기존 자료 범위를 유지하는 명시적 호환 소비자다. 이들을 전체 SQL 행으로 바꾸거나 full SQL export를 `logs.json`에 덮으면 과거에 보이지 않던 기록이 나타날 수 있다. `scripts/export_logs_sqlite_to_json.py`는 standalone 백업을 새 파일에만 내보내며 storage marker를 보존한다. 이 결과를 서비스의 호환 JSON으로 자동 승격하지 않는다.
 
 ### 화면 의미
 

@@ -15,6 +15,8 @@
 
 단일 JSON transport는 `core/json_store.py`, 지연 경로 registry는 `core/stores.py`, 순수 revision은 `core/json_revision.py`가 소유한다. `core/storage.py`의 primary replace 뒤 captured bytes를 `core/mirror_queue.py`에 넘긴다. HTTP/도메인 소유자는 기존 coordinator·lease·journal·response를 유지하고 cached projection과 fresh authoritative read를 구분한다. 구체적인 일관성·미러 한계는 canonical §14를 따른다.
 
+수업 로그는 `core/log_repository.py`가 dual 기본과 gated SQLite 모드, strict SQL 읽기, content revision, bounded projection cache를 소유한다. `core/log_json_export.py`는 기존 로그 lease 뒤 최신 SQL 행을 읽는 비동기 호환 export다. `core/log_reconcile.py`와 명시적 백업 입력의 `scripts/verify_log_store_parity.py`가 OS-temp 정합·전체/scoped 비교·정확한 롤백을 검증한다. 시험 기록/legacy homework의 JSON-only 자료 범위와 전환 조건은 canonical §8을 따른다.
+
 ## 2. 앱 조립 모드
 
 `create_app()`은 학생 앱 기능 플래그에 따라 Blueprint와 URL 표면을 조건부

@@ -92,6 +92,7 @@ this file owns core-module edit and verification constraints.
 - Do not collapse watch/progress auto-status rules into log rules.
 - Do not make `video_review_rules.py` read the video catalog or infer current curriculum; catalog scoping and response sanitization belong in `student_video_projection.py`, while runtime file loads and writes remain outside both modules.
 - Do not bypass `LogRepository` for class-log writes.
+- Class-log mode defaults to `dual`. `sqlite` is a gated opt-in requiring an existing DB/schema, strict no-JSON-fallback repository reads, content revisions, and DB/WAL/SHM plus roster-aware cache invalidation. Preserve honest sqlite/json commit flags, original log leases, latest-row async exports, and raw absence journal rollback. Explicit legacy test-history/homework readers retain their historical JSON scope; see canonical §8.
 - Follow `RULE-LOG-001` for complete snapshots. Keep the internal row marker out of public entry/map/export projections, hydrate unknown legacy fields before sealing a row, and prove clear/reload/restart after a JSON mirror failure. Absence raw snapshots must preserve the marker byte-for-byte for rollback.
 - Do not use `logs_sqlite.py` for new reads or writes.
 - Do not merge the assistant-note repository with `LogRepository` merely because both resolve to `app.sqlite`.

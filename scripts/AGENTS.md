@@ -1,5 +1,7 @@
 # SCRIPTS KNOWLEDGE BASE
 
+- Class-log reconciliation and SQLite mode are covered by `verify_log_reconcile.py` and `verify_log_sqlite_mode.py` using actual temp-only modules and native transactions. `verify_log_store_parity.py` accepts explicit standalone backup inputs; default is dry-run, and `--exercise-copy` mutates only a new OS-temp native copy before exact rollback. Full SQL exports are new files only and are never automatically promoted to the service compatibility JSON; see canonical §8.
+
 ## Overview
 Scripts cover verification, runtime backups, generated test catalog files, answer-link maps, and import utilities.
 Business meaning is owned by [the Server Rules Index](../docs/SERVER_RULES_INDEX.md);

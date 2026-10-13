@@ -89,6 +89,20 @@ JsonStore와 lazy bounded registry를 실제 owner에 연결했다. 학생/영�
 
 200회 순차 HTTP의 첫 before/after는 동시 full-suite 부하 속에서 mean 21.677→27.676ms, p95 26.541→33.859ms로 개선되지 않았다. 이 결과를 개선 수치로 사용하지 않는다. 최종 코드의 같은 synthetic dated assignment에서 각 200회 순차 HTTP를 비교했다. sync/async mean은 37.851→23.945ms(36.7% 감소), p50은 35.893→22.368ms, p95는 40.624→28.886ms(28.9% 감소)였다. 이는 loopback의 해당 저장 응답 측정이며 전체 팝업·운영망 속도를 보장하는 수치는 아니다. 최종 PID 11548에서 19개 backend source hash 일치와 동일 흰색 저장 상태를 다시 확인했다. IAB 데모에서도 보강 저장·닫힘·학생 추가와 forwardedApiCalls/API resource 0을 확인했다. manager의 snapshots=0 설정은 유지했고 최신 primary/mirror byte 일치는 2초 안에 확인했다. snapshot 정책 자체는 OS-temp fixture로 검증했다. 운영 배포와 실제 운영일 soak는 별도이며 아직 수행하지 않았다.
 
+## P5 로그 저장·정합·호환 범위
+
+`LOG_STORE_MODE`의 기본 dual을 유지하고 opt-in SQLite repository를 구현했다. 기존 DB/schema preflight와 no-create URI, malformed SQL object·nonfinite write 거부, SHA-256 공개 내용 revision, DB/WAL/SHM·명단 signature cache와 primary probe를 적용했다. SQLite transaction이 성공 기준이며 `sqlite/json` flags는 유지한다. optional export는 원래 lease 뒤 최신 행을 읽고, queue 생성 오류도 commit을 실패로 바꾸지 않는다. absence의 raw 두 저장소 snapshot/rollback은 유지한다. delayed export가 rollback을 되살리지 않는 실제 fixture도 통과했다.
+
+정합 fixture 12개와 SQLite 모드 fixture 22개가 통과했다. 16 동시 writer의 64회 저장 후 16개 필드의 최종 값과 unknown fields가 모두 유지됐다. 독립 검토의 scalar summary 누락·삭제 직전 DB 재생성·commit 뒤 queue 초기화 오류를 재현하고 고쳤다. 전체 기본 하네스는 exit 0, 109개 그룹 통과, 실패 0이다.
+
+승인된 백업은 새 native OS-temp 복사본에서 비교했다. 전체 280개 날짜/9,646행과 날짜·SID·batch·export-history·요약의 889개 비교가 동일했다. insert/fill은 0이며 source bytes/mtime/hash와 정확한 행 롤백을 확인했다. 16개 SQL 우선 충돌 필드와 sealed updatedAt 차이 11개는 덮어쓰지 않았다. raw JSON 빈 행과 일부 숫자 별칭의 provenance 차이는 계속 전환 차단 fixture로 둔다. 실제 production migration은 실행하지 않았고 원본에 적용하는 명령도 만들지 않았다.
+
+기존 JSON-only 시험 기록 후보는 33개, 전체 SQL 후보는 773개로 740개가 추가됐다. 공통 key 값 차이는 없었다. 전체 로그 parity만으로 시험 기록 의미가 같다고 판단하지 않았다. 기능 유지 지시에 따라 시험 기록과 one-time legacy homework는 원래 JSON 자료 범위를 보존했다. full SQL export는 새 파일로만 생성하고 서비스 JSON에 승격하지 않는다.
+
+16,717,073byte 백업의 새 native temp 복사본에서 각 30회 저장을 측정했다. dual mean/p50/p95/max는 460.364/459.412/481.637/485.139ms였다. SQLite+export ON은 22.982/4.956/109.295/439.348ms였다. export OFF는 mean 4.967ms지만 기본값으로 바꾸지 않는다. 이는 storage-only 측정이며 실제 브라우저·운영 HTTP 수치가 아니다. export worker의 lease가 뒤의 writer를 지연시킬 수 있고 최댓값은 여전히 439ms였다.
+
+관리형 PID 41432의 SQLite+export ON 합성 QA에서 Chrome 숙제 통합 저장·닫힘·reload 후 다음 숙제 값과 활성 입력을 확인했다. 날짜/SID log GET은 200이며 JSON export가 따라잡았고 흰색 영상의 manual watch hold도 유지됐다. 4개 backend snapshot hash, 단일 loopback, 운영 ping·공개 app200을 확인했다. 검증 뒤 manager로 기본 dual 모드를 복원한 PID 12580에서도 저장 값·두 log GET·격리·운영 가용성을 확인했다. 운영 소스 배포와 실제 운영일 관찰은 별도다.
+
 ## 단계 상태
 
 | 단계 | 구현 | 합성 검증 | 운영 적용·관찰 |
@@ -98,6 +112,6 @@ JsonStore와 lazy bounded registry를 실제 owner에 연결했다. 학생/영�
 | P2 | 잠금·입력·SID·strict read 구현 | 전체 109그룹·8004 상태/객체 저장·400 무변경·두 브라우저 팝업 통과 | P1 관찰 뒤 반영 대기 |
 | P3 | 충돌·delta·strict preload·GET 분리·저장 owner 구현 | 전체 109그룹·실제 2화면 보강/영상 충돌·FullCalendar·IAB 저장 통과 | P1 관찰 뒤 반영 대기 |
 | P4 | 공통 transport·async mirror 실제 통합 | 전체109그룹·transport28·owner12·mirror14·실제 흰색 저장/reload·IAB 보강 저장 통과 | 배포·운영일 soak 대기 |
-| P5 | 대기 | 대기 | 정합 충돌·parity 게이트 필요 |
+| P5 | dual 기본·gated SQL·export·오프라인 정합 구현 | 전체109그룹·정합12·모드22·전체/scoped889·실제 Chrome 저장/reload 통과 | 새 정지 백업·전환 gate·운영 관찰 대기 |
 | P6 | 대기 | 대기 | 전후 측정 필요 |
 | P7 | 대기 | 대기 | 관찰 뒤 호환 스위치 정리 |
