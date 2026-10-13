@@ -14,6 +14,25 @@ from core.student_notification_hooks import enqueue_current_schedule_changes
 
 bp_api_schedule_overrides = Blueprint("api_schedule_overrides", __name__)
 
+class ScheduleStoreError(RuntimeError):
+    pass
+
+
+@bp_api_schedule_overrides.errorhandler(ScheduleStoreError)
+def _schedule_store_unavailable(_error):
+    return jsonify({"ok": False, "error": "schedule_store_unavailable"}), 503
+
+
+def _read_schedule_map(path) -> dict:
+    try:
+        value = load(path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ScheduleStoreError("unreadable_schedule") from exc
+    if not isinstance(value, dict):
+        raise ScheduleStoreError("malformed_schedule")
+    return value
+
+
 KST = dt.timezone(dt.timedelta(hours=9))
 _ASSIGNMENT_HOOKS_EXTENSION = "schedule_override_assignment_hooks"
 
@@ -101,7 +120,7 @@ def _extra_attend_sids(value) -> set[str]:
 @bp_api_schedule_overrides.route("/api/extra-attend", methods=["GET", "PATCH"])
 def api_extra_attend():
     if request.method == "GET":
-        return jsonify(load(EXTRA_PATH))
+        return jsonify(_read_schedule_map(EXTRA_PATH))
 
     try:
         date_patch = _normalize_extra_attend_patch(request.get_json(silent=True))
@@ -114,11 +133,12 @@ def api_extra_attend():
     affected_sids: set[str] = set()
     changed_dates: set[str] = set()
     with file_lock(EXTRA_PATH):
-        previous = load(EXTRA_PATH) or {}
-        previous_map = previous if isinstance(previous, dict) else {}
+        previous_map = _read_schedule_map(EXTRA_PATH)
         next_map = dict(previous_map)
         for date_key, sids in date_patch.items():
             previous_sids = previous_map.get(date_key)
+            if previous_sids is not None and not isinstance(previous_sids, list):
+                raise ScheduleStoreError("malformed_extra_day")
             if _json_stable(previous_sids or []) == _json_stable(sids):
                 continue
             changed_dates.add(date_key)
@@ -186,8 +206,11 @@ def _normalize_weekend_slots_patch(payload) -> dict[str, dict[str, object]]:
 def _validate_weekend_slot_students(
     patch: dict[str, dict[str, object]],
 ) -> None:
-    students = load(STU_PATH)
-    if not isinstance(students, list):
+    try:
+        students = load(STU_PATH)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("student roster unavailable") from exc
+    if not isinstance(students, list) or any(not isinstance(row, dict) for row in students):
         raise RuntimeError("student roster unavailable")
     known_sids = {
         str(student.get("id") or "").strip()
@@ -203,7 +226,7 @@ def _validate_weekend_slot_students(
 @bp_api_schedule_overrides.route("/api/weekend-slots", methods=["GET", "POST"])
 def api_weekend_slots():
     if request.method == "GET":
-        return jsonify(load(WEEKEND_SLOTS_PATH))
+        return jsonify(_read_schedule_map(WEEKEND_SLOTS_PATH))
 
     try:
         body = _normalize_weekend_slots_patch(request.get_json(silent=True))
@@ -219,11 +242,11 @@ def api_weekend_slots():
 
     initialize_today, reconcile = _assignment_hooks()
     with file_lock(WEEKEND_SLOTS_PATH):
-        current = load(WEEKEND_SLOTS_PATH)
-        if not isinstance(current, dict):
-            current = {}
+        current = _read_schedule_map(WEEKEND_SLOTS_PATH)
         for date_key, mapping in body.items():
             day = current.setdefault(date_key, {})
+            if not isinstance(day, dict):
+                raise ScheduleStoreError("malformed_weekend_day")
             for sid, value in mapping.items():
                 if value is None or value is False or value == []:
                     day.pop(sid, None)

@@ -16,13 +16,13 @@ import jwt
 from flask import Blueprint, current_app, has_request_context, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from core.paths import STU_PATH
 from core.person_identity import is_valid_person_id, normalized_text, same_person
 from core.storage import file_lock, save_atomic
 
 bp_api_auth = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
 BASE = pathlib.Path(__file__).resolve().parents[1]  # project root (routes/..)
-STU_PATH = BASE / "students.json"
 
 # ✅ 계정 맵 (로그인ID -> pw_hash + sids[])
 ACCT_PATH = BASE / "auth_accounts.json"
@@ -69,15 +69,17 @@ def _account_transaction(f):
     return wrapper
 
 
-def _load_json(path: pathlib.Path, default: Any):
-    try:
-        return json.loads(path.read_text("utf-8"))
-    except Exception:
-        return default
-
-
 class AuthAccountStoreError(RuntimeError):
     pass
+
+
+class AuthStudentStoreError(RuntimeError):
+    pass
+
+
+@bp_api_auth.errorhandler(AuthStudentStoreError)
+def _student_store_unavailable(_error):
+    return jsonify({"ok": False, "error": "student_store_unavailable"}), 503
 
 
 @bp_api_auth.errorhandler(AuthAccountStoreError)
@@ -101,8 +103,18 @@ def _json_or_form() -> dict:
 
 
 def _students_list() -> List[dict]:
-    arr = _load_json(STU_PATH, [])
-    return arr if isinstance(arr, list) else []
+    if has_request_context() and hasattr(request, "_legacy_auth_students_snapshot"):
+        return request._legacy_auth_students_snapshot
+    try:
+        arr = json.loads(STU_PATH.read_text("utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AuthStudentStoreError("unreadable_students") from exc
+    if not isinstance(arr, list) or any(not isinstance(row, dict) for row in arr):
+        raise AuthStudentStoreError("malformed_students")
+    # Finish account changes and their response from the same validated roster.
+    if has_request_context():
+        request._legacy_auth_students_snapshot = arr
+    return arr
 
 
 def _find_student_by_sid(sid: str) -> Optional[dict]:

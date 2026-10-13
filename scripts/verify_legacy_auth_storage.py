@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import json
@@ -34,6 +35,7 @@ def fixture(source_root):
         source = (source_root / "routes/api_auth.py").read_text(encoding="utf-8")
         with patch.dict("os.environ", {"AUTH_SECRET": "qa-only-test-secret-" + "x" * 48, "MASTER_PW": ""}):
             exec(compile(source, module.__file__, "exec"), module.__dict__)
+        module.STU_PATH = directory / "students.json"
         assert module.ACCT_PATH == directory / "auth_accounts.json"
         students = [
             {"id": "a1", "name": "Alice", "school": "S", "grade": "1", "curriculum": "Math"},
@@ -179,6 +181,106 @@ def error_contracts(source_root):
     print("strict errors/failed save/bad password preserve bytes; normal rename/missing initialization preserve legacy contract")
 
 
+def student_error_contracts(source_root):
+    for broken in (None, b"{broken", b"{}", b"null", b"[1]", b"\xff"):
+        with fixture(source_root) as (legacy, app):
+            token = legacy._issue_token(sid="a1", aid="Alice", sids=["a1"])
+            if broken is None:
+                legacy.STU_PATH.unlink()
+            else:
+                legacy.STU_PATH.write_bytes(broken)
+            before_account = fingerprint(legacy.ACCT_PATH)
+            before_students = fingerprint(legacy.STU_PATH) if legacy.STU_PATH.exists() else None
+            with app.test_client() as client:
+                responses = (
+                    client.post("/api/auth/login", json={"id": "Alice", "password": "old-password"}),
+                    client.get("/api/auth/me", headers={"Authorization": "Bearer " + token}),
+                    client.get("/api/auth/schedules", headers={"Authorization": "Bearer " + token}),
+                    client.post("/api/auth/change", json={"curPw": "old-password", "newPw": "changed"}, headers={"Authorization": "Bearer " + token}),
+                )
+            assert all(response.status_code == 503 and response.json == {"ok": False, "error": "student_store_unavailable"} for response in responses)
+            assert fingerprint(legacy.ACCT_PATH) == before_account
+            assert (fingerprint(legacy.STU_PATH) if legacy.STU_PATH.exists() else None) == before_students
+    with fixture(source_root) as (legacy, app):
+        token = legacy._issue_token(sid="a1", aid="Alice", sids=["a1"])
+        before = fingerprint(legacy.ACCT_PATH)
+        original = Path.read_text
+
+        def denied_roster(path, *args, **kwargs):
+            if path == legacy.STU_PATH:
+                raise PermissionError("fixture roster denied")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", denied_roster), app.test_client() as client:
+            assert client.get("/api/auth/schedules", headers={"Authorization": "Bearer " + token}).status_code == 503
+        assert fingerprint(legacy.ACCT_PATH) == before
+    print("strict roster faults preserve account sessions/passwords and never recreate missing students")
+
+
+def request_roster_snapshot_contracts(source_root):
+    for action in ("login", "me", "switch", "change"):
+        with fixture(source_root) as (legacy, app):
+            original = Path.read_text
+            reads = []
+            token = legacy._issue_token(sid="a1", aid="Alice", sids=["a1"])
+
+            def first_roster_only(path, *args, **kwargs):
+                if path == legacy.STU_PATH:
+                    reads.append(path)
+                    if len(reads) > 1:
+                        raise PermissionError("fixture late roster failure")
+                return original(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", first_roster_only), app.test_client() as client:
+                if action == "login":
+                    response = client.post("/api/auth/login", json={"id": "Alice", "password": "old-password"})
+                elif action == "me":
+                    response = client.get("/api/auth/me", headers={"Authorization": "Bearer " + token})
+                else:
+                    body = {"sid": "a2"} if action == "switch" else {"curPw": "old-password", "newPw": "changed"}
+                    response = client.post("/api/auth/" + action, json=body, headers={"Authorization": "Bearer " + token})
+            assert response.status_code == 200, (action, response.get_json())
+            assert len(reads) == 1, (action, reads)
+            if action in {"login", "me"}:
+                assert response.json["curris"] == [{"cur": "Math", "sid": "a1"}, {"cur": "Science", "sid": "a2"}]
+            if action == "switch":
+                assert response.json["sid"] == "a2"
+            account = json.loads(legacy.ACCT_PATH.read_text("utf-8"))["Alice"]
+            assert set(account["sids"]) == {"a1", "a2"} and account["unknown"] == {"keep": 7}
+            assert check_password_hash(account["pw_hash"], "changed" if action == "change" else "old-password")
+
+    with fixture(source_root) as (legacy, app), app.app_context():
+        token = legacy._issue_token(sid="a1", aid="Alice", sids=["a1"])
+        headers = {"Authorization": "Bearer " + token}
+        client = app.test_client()
+        assert client.get("/api/auth/schedules", headers=headers).json == [{"id": "a1"}]
+        legacy.STU_PATH.write_text('[{"id":"a1","name":"Alice","day1":"화2"}]', "utf-8")
+        assert client.get("/api/auth/schedules", headers=headers).json == [{"id": "a1", "day1": "화2"}]
+        assert legacy._students_list() == [{"id": "a1", "name": "Alice", "day1": "화2"}]
+    print("one strict roster snapshot per request survives late IO failure; subsequent requests and direct helpers see changes")
+
+
+def simultaneous_login_contract(source_root):
+    with fixture(source_root) as (legacy, app):
+        barrier = threading.Barrier(16)
+
+        def login(_number):
+            barrier.wait(timeout=10)
+            with app.test_client() as client:
+                response = client.post("/api/auth/login", json={"id": "Alice", "password": "old-password"})
+            assert response.status_code == 200
+            assert response.json["curris"] == [{"cur": "Math", "sid": "a1"}, {"cur": "Science", "sid": "a2"}]
+            assert legacy._decode_token(response.json["token"])["sids"] == ["a1", "a2"]
+
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            list(executor.map(login, range(16)))
+        accounts = json.loads(legacy.ACCT_PATH.read_text("utf-8"))
+        assert accounts["Alice"]["unknown"] == {"keep": 7} and accounts["_meta"] == {"version": 9}
+        assert accounts["Alice"]["sids"] == ["a1", "a2"]
+        assert check_password_hash(accounts["Alice"]["pw_hash"], "old-password")
+    print("sixteen simultaneous logins preserve account metadata/passwords and complete SID links")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, default=ROOT)
@@ -188,4 +290,7 @@ if __name__ == "__main__":
         account_race(args.source_root, name, args.expect == "guarded")
     if args.expect == "guarded":
         error_contracts(args.source_root)
+        student_error_contracts(args.source_root)
+        request_roster_snapshot_contracts(args.source_root)
+        simultaneous_login_contract(args.source_root)
     print("legacy account storage checks passed; all account/roster writes stayed in OS temporary fixtures")
