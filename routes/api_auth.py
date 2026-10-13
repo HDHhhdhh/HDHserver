@@ -13,7 +13,7 @@ from threading import get_ident
 from typing import Any, List, Optional
 
 import jwt
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, has_request_context, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from core.person_identity import is_valid_person_id, normalized_text, same_person
@@ -28,13 +28,19 @@ STU_PATH = BASE / "students.json"
 ACCT_PATH = BASE / "auth_accounts.json"
 
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "").strip()
-if not AUTH_SECRET or AUTH_SECRET == "CHANGE_ME_AUTH_SECRET":
+AUTH_SECRET_IS_EPHEMERAL = not AUTH_SECRET or AUTH_SECRET == "CHANGE_ME_AUTH_SECRET"
+if AUTH_SECRET_IS_EPHEMERAL:
     AUTH_SECRET = secrets.token_urlsafe(32)
 TOKEN_EXPIRE_SEC = 60 * 60 * 24 * 30  # 30일
 
 # 알려진 학생/계정 로그인과 계정 변경에서 허용하는 서버 환경변수.
 MASTER_PW = os.environ.get("MASTER_PW", "").strip()
 _ACCOUNT_LEASE = ContextVar("legacy_auth_account_lease", default=None)
+
+
+def validate_auth_startup() -> None:
+    if AUTH_SECRET_IS_EPHEMERAL and os.environ.get("ALLOW_EPHEMERAL_AUTH_SECRET") != "1":
+        raise RuntimeError("AUTH_SECRET is not set; refusing to start")
 
 
 @contextmanager
@@ -388,7 +394,15 @@ def _prune_duplicate_accounts(m: dict, keep_aid: str, sids: List[str]) -> None:
 
 def _master_pw_ok(pw: str) -> bool:
     pw = _normalize_id(pw)
-    return bool(MASTER_PW) and pw == MASTER_PW
+    accepted = bool(MASTER_PW) and pw == MASTER_PW
+    if accepted and has_request_context():
+        data = _json_or_form()
+        current_app.logger.warning(
+            "[legacy-auth] master password used endpoint=%r account=%r",
+            request.endpoint,
+            _normalize_id(data.get("id") or data.get("sid") or getattr(request, "_aid", "")),
+        )
+    return accepted
 
 
 def _refresh_and_persist_account_sids(aid: str, base_sid: str) -> List[str]:
@@ -614,6 +628,37 @@ def me():
         "aid": aid,
         "curris": _curris_payload_from_sids(sids),
     })
+
+
+@bp_api_auth.get("/schedules")
+@require_auth
+def schedules():
+    aid = getattr(request, "_aid", "")
+    current = _load_acct_map().get(aid) or {}
+    allowed = {
+        str(value).strip()
+        for value in current.get("sids", [])
+        if str(value).strip()
+    }
+    schedule_keys = {
+        "day", "days", "schedule", "schedules", "slots", "slot", "time",
+        "times", "week", "weekday", "yoil", "yoils",
+    }
+    out = []
+    for student in _students_list():
+        if not isinstance(student, dict):
+            continue
+        sid = str(student.get("id") or "").strip()
+        if sid not in allowed:
+            continue
+        row = {"id": sid}
+        for key, value in student.items():
+            if key in schedule_keys or str(key).lower().startswith(
+                ("day", "yoil", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+            ):
+                row[key] = value
+        out.append(row)
+    return jsonify(out)
 
 
 @bp_api_auth.post("/switch")

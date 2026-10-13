@@ -29,7 +29,7 @@ def configure_app(app):
 def main() -> int:
     global _ACTIVE_RUNTIME
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("import-app", "academy-proxy"))
+    parser.add_argument("mode", choices=("import-app", "academy-proxy", "auth-startup"))
     mode = parser.parse_args().mode
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(ROOT))
@@ -51,7 +51,7 @@ def main() -> int:
                 os.environ.pop(key)
         os.environ["DATA_DIR"] = str(runtime / "data")
         os.environ["DB_PATH"] = str(runtime / "app.sqlite")
-        os.environ["AUTH_SECRET"] = "synthetic-app-verification-only"
+        os.environ["AUTH_SECRET"] = "" if mode == "auth-startup" else "synthetic-app-verification-only"
 
         def resolve_path(value) -> Path | None:
             if not isinstance(value, (str, bytes, os.PathLike)):
@@ -103,6 +103,19 @@ def main() -> int:
         auth.ACCT_PATH = runtime / "auth_accounts.json"
         _ACTIVE_RUNTIME = runtime
         try:
+            if mode == "auth-startup":
+                assert auth.AUTH_SECRET_IS_EPHEMERAL is True
+                os.environ.pop("ALLOW_EPHEMERAL_AUTH_SECRET", None)
+                before = {path.relative_to(runtime): path.read_bytes() for path in runtime.rglob("*") if path.is_file()}
+                try:
+                    importlib.import_module("app")
+                except RuntimeError as error:
+                    assert "AUTH_SECRET is not set; refusing to start" in str(error)
+                else:
+                    raise AssertionError("actual app import accepted an ephemeral secret")
+                after = {path.relative_to(runtime): path.read_bytes() for path in runtime.rglob("*") if path.is_file()}
+                assert before == after, "startup refusal must precede runtime initialization"
+                os.environ["ALLOW_EPHEMERAL_AUTH_SECRET"] = "1"
             module = importlib.import_module("app")
             assert Path(module.__file__).resolve() == ROOT / "app.py", "app must come from the reviewed source"
             assert callable(module.create_app), "app import must expose create_app"

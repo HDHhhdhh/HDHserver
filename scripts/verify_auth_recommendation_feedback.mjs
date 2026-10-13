@@ -31,7 +31,10 @@ function fixture() {
     setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
     fetch: (url, options = {}) => {
       requests.push({ url, method: options.method || 'GET' });
-      if (url === '/api/students') return new Promise((resolve, reject) => recommendations.push({ resolve, reject }));
+      if (url === '/api/auth/schedules') {
+        assert.match(options.headers?.Authorization || '', /^Bearer synthetic-token-/);
+        return new Promise((resolve, reject) => recommendations.push({ resolve, reject }));
+      }
       assert.ok(['/api/auth/login', '/api/auth/change', '/api/auth/me'].includes(url));
       return Promise.resolve(response(data()));
     } });

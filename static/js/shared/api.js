@@ -39,6 +39,7 @@ export async function ensureOk(response, label = 'request') {
 
 export async function fetchJson(url, init = {}) {
   const response = await fetch(url, init);
+  await ensureOk(response, url);
   return await response.json();
 }
 
@@ -51,7 +52,8 @@ export async function fetchJsonChecked(url, label = 'request', init = {}) {
 export async function fetchJsonOr(url, fallback, init = {}) {
   try {
     return await fetchJson(url, init);
-  } catch {
+  } catch (error) {
+    console.warn('[api] fallback', url, error);
     return fallback;
   }
 }

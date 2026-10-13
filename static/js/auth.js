@@ -356,8 +356,12 @@ async function pickRecommendedSidFromServerData(curris, currentSid) {
 
   let students = [];
   try {
-    // ✅ 여기 학생목록이 권한 필요하면 서버에서 공개/제한된 목록을 주는지 확인 필요
-    students = await fetch("/api/students", { cache: "no-store" }).then(r => r.json());
+    const response = await fetch("/api/auth/schedules", {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${getActiveToken()}` },
+    });
+    if (!response.ok) throw new Error(`schedule load failed ${response.status}`);
+    students = await response.json();
   } catch {
     students = [];
   }

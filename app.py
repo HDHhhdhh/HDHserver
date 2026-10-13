@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 from flask import Flask, g, request, abort, jsonify, make_response, render_template_string
 from werkzeug.middleware.proxy_fix import ProxyFix
+from core.api_errors import http_error_response, install_api_error_handlers, wants_json_error
+from core.admin_api_guard import install_admin_api_guard
 
 from core.admin_basic_auth import (
     ADMIN_AUTH_CHALLENGE,
@@ -92,7 +94,7 @@ from routes.api_tests import bp_api_tests
 from routes.api_watch import bp_api_watch
 from routes.api_fs import bp_api_fs
 from routes.api_kollus import bp_api_kollus
-from routes.api_auth import bp_api_auth
+from routes.api_auth import bp_api_auth, validate_auth_startup
 from routes.api_todaymeta import bp_api_todaymeta
 from routes.api_makeup_carryover import bp_api_makeup_carryover
 from routes.api_student_app_auth import bp_api_student_app_auth
@@ -115,6 +117,7 @@ from routes.absence_assignment_cleanup import (
 
 def create_app() -> Flask:
     refuse_concurrent_live_server()
+    validate_auth_startup()
     # Older isolated app fixtures inject a constants-only paths module.
     initialize_paths = getattr(runtime_paths, "initialize_runtime_paths", None)
     if initialize_paths is not None:
@@ -200,6 +203,7 @@ def create_app() -> Flask:
         create_student_bootstrap_projection_dependencies(),
     )
     app.json.ensure_ascii = False
+    install_api_error_handlers(app)
     app.config["MATERIAL_STATE_WRITES_DEGRADED"] = bool(material_state_recovery_error)
     app.config["PERSON_IDENTITY_WRITES_DEGRADED"] = bool(person_identity_recovery_error)
     student_app_config = load_student_app_config()
@@ -244,6 +248,11 @@ def create_app() -> Flask:
         response = make_response(jsonify({"ok": False, "code": "admin_auth_required"}), 401)
         response.headers.update({"WWW-Authenticate": ADMIN_AUTH_CHALLENGE, "Cache-Control": "no-store"})
         return response
+
+    install_admin_api_guard(
+        app,
+        excluded_blueprints=(bp_api_non_student_ocr.name, bp_api_student_test_ocr.name),
+    )
 
     def needs_absence_consistency_barrier() -> bool:
         return absence_barrier_mode(request.path, request.method, request.args) is not None
@@ -350,7 +359,9 @@ def create_app() -> Flask:
     """
 
     @app.errorhandler(403)
-    def forbidden(_):
+    def forbidden(error):
+        if wants_json_error():
+            return http_error_response(error)
         return render_template_string(BLOCK_HTML), 403
 
     # Blueprints

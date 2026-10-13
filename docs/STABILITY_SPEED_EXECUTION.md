@@ -39,13 +39,35 @@ Chrome의 기존 127.0.0.1:8004 서비스 워커가 인증 탐색을 오프라�
 
 P0 준비·통합의 기본 및 Chrome 합성 저장 게이트가 통과했다. P1부터 코드 구현을 진행하며 운영일 관찰과 배포는 별도로 기록한다.
 
+## P1 인증·시크릿·오류 처리
+
+새 관리자 API 가드는 실제로 등록된 관리자 API에 적용한다. 기존 공개 학생 adapter와 외부 Basic 가드를 먼저 실행한다. 공개 adapter가 검증한 요청, 정확한 native 학생 경로·method, adapter가 등록한 mobile 경로만 학생 예외로 인정한다. 기존 원격 Basic 관리자 접근과 Kollus callback의 자체 인증을 유지한다. `off`는 신규 가드만 해제하고, `log`는 인증 없는 GET을 기록하되 관리자 쓰기는 차단한다. HEAD는 native handler의 쓰기 분기 위험 때문에 관찰 통과 대상에 넣지 않았다.
+
+OCR의 두 기존 blueprint는 사용자 지시에 따라 이번 신규 가드의 대상에서 제외한다. 이름을 설치 시 고정하며 기존 외부 가드와 각 handler의 인증은 유지한다. OCR 소스·자료는 조사하거나 수정하지 않았다. 합성 fixture에서 제외 범위가 뒤늦게 늘어나지 않음과 기존 원격 인증 유지도 확인했다.
+
+기존 영구 AUTH_SECRET을 유지하고 임의 secret 상태에서는 runtime 초기화 전에 시작을 거부한다. OS 임시 디렉터리의 실제 app import에서 거부와 무쓰기, 명시적인 임시 허용 후 시작을 확인했다. MASTER_PW 길이 제한은 승인된 예외에 따라 추가하지 않았다. 사용 기록에는 endpoint와 계정만 남기고 비밀번호·token은 남기지 않는다.
+
+기본 HTTP 오류는 API/files/JSON Accept 요청에서 JSON으로 응답한다. 401 challenge와 405 Allow를 보존하고 일반 페이지 HTML도 유지한다. 각 endpoint의 기존 JSON 오류 계약은 바꾸지 않는다. shared `fetchJson`은 HTTP 실패를 먼저 검사하고 `fetchJsonOr`는 fallback 사용을 기록한다. 레거시 로그인 추천은 JWT와 현재 계정의 SID 연결을 검증하는 `/api/auth/schedules`에서 시간표만 읽는다. 전체 명단 및 연락처·메모는 반환하지 않는다.
+
+개별 fixture에서 새 가드 19개 테스트, 오류 포맷, 시작 전 무쓰기, 계정별 시간표 범위, shared helper 및 기존 인증·추천·공개 surface 검사를 통과했다. 전체 기본 하네스는 exit 0, 108개 그룹 통과, 실패 0이다. 시작 거부의 실제 app-import fixture를 보강한 뒤 해당 개별 게이트와 compileall도 다시 통과했다.
+
+사용자가 process-only QA 인증 절차로 backend를 재시작했다. Windows PowerShell 5.1이 BOM 없는 UTF-8의 한글 경로를 잘못 읽던 handoff 스크립트는 USERPROFILE 기반 ASCII 경로 조합으로 고쳤고 실제 5.1 파서에서 검증했다. 새 PID 33148의 manager managed/HTTP 200, 단일 loopback listener, 운영 ping/공개 app 200과 P1 파일의 snapshot hash 일치를 확인했다. 실제 미인증 관리자 GET은 JSON 401과 Basic challenge로 거부됐고 계정별 schedules는 token 누락 401을 반환했다. Chrome의 합성 학생 운영 팝업에서 숙제 통합 저장·저장 완료·닫힘·새로고침 후 동일 값 유지와 활성 저장 버튼을 확인했다. IAB 데모에서는 하원 탐색과 학생 팝업 열기를 확인했다. 스크린샷은 로컬 audit에만 보존한다. 기존 정책 차단을 우회하지 않았다. 운영 반영과 2~3 운영일 관찰은 아직 시작하지 않았다.
+
+## 다음 단계의 독립 준비
+
+현재 backend 소스를 고정한 상태에서 P2 변경안은 로컬 audit 디렉터리에만 준비했다. 공통 load의 read 오류 발생, 학생 본문·객체 필드 검증, SID의 무작위 시도 뒤 결정적인 빈 번호 탐색, 인증 명단의 strict read, 잘못된 일정 저장소의 무쓰기 검사를 준비했다. 일부 미연결 pure helper·검증 스크립트는 별도 untracked 준비 파일이며 P1 stage에 넣지 않는다. 수정한 레거시 인증 fixture는 학생 경로를 명시적으로 OS-temp에 주입한다.
+
+초안 fixture에서 JSON 오류·무쓰기 3개 테스트, 학생 본문·객체·식별자·16동시 작업자 100명 20회 저장 4개 테스트, 잘못된 보강 저장소 2개 테스트가 통과했다. 인증 명단의 손상·누락·PermissionError에서도 계정 primary/session/password 불변을 확인했다. 운영 백업의 오프라인 학생 103명은 중복·빈 SID 0건이었다. 이 결과는 P2의 실제 소스 적용·전체 하네스·화면 게이트를 대체하지 않는다.
+
+subagent는 P1 가드의 독립 검증과 경계 조사에 사용했고, 이어서 P4 JsonStore와 미러 race 설계 초안을 준비한다. P4 초안은 local audit에만 두며 도메인 journal, 기존 잠금 순서, auth mirror=False, 운영 자료를 변경하지 않는다.
+
 ## 단계 상태
 
 | 단계 | 구현 | 합성 검증 | 운영 적용·관찰 |
 |---|---|---|---|
 | P0 | 준비·통합 완료 | 전체 107그룹·Chrome 합성 저장 통과, IAB 렌더 확인 | 백업·서비스 복구 완료, 운영 소스 배포는 대기 |
-| P1 | 대기 | 대기 | 대기 |
-| P2 | 대기 | 대기 | 대기 |
+| P1 | 인증·오류·계정 범위 구현 | 전체 108그룹·8004 실제 인증/Chrome 저장·IAB 탐색/팝업 통과 | log 첫 배포·2~3 운영일 관찰 대기 |
+| P2 | 미연결 초안 준비 | 초안 개별 게이트 통과, 실제 통합·전체·화면 대기 | 대기 |
 | P3 | 대기 | 대기 | 대기 |
 | P4 | 대기 | 대기 | 대기 |
 | P5 | 대기 | 대기 | 정합 충돌·parity 게이트 필요 |

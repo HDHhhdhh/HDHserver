@@ -34,6 +34,10 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_admin_tests_record_details.py",
     ROOT / "scripts/verify_retired_test_submission.py",
     ROOT / "scripts/verify_assistant_student_notes.py",
+    ROOT / "scripts/verify_admin_api_guard.py",
+    ROOT / "scripts/verify_api_error_format.py",
+    ROOT / "scripts/verify_auth_startup_safety.py",
+    ROOT / "scripts/verify_auth_schedule_scope.py",
 ]
 
 PYTHON_311_FILES = [
@@ -87,6 +91,8 @@ JS_CHECK_FILES = [
     ROOT / "static/js/tests/catalogStatisticsState.js",
     ROOT / "static/js/file-manage.js",
     ROOT / "static/js/shared/api.js",
+    ROOT / "static/js/auth.js",
+    ROOT / "scripts/verify_shared_api_errors.mjs",
     ROOT / "static/js/shared/testRecordData.js",
     ROOT / "static/js/shared/testRecordDetails.js",
     ROOT / "scripts/verify_student_material_access_scope.js",
@@ -1182,6 +1188,23 @@ print("updates GET-only base route checks passed")
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_stability_auth_boundary_checks() -> None:
+    commands = (
+        [sys.executable, "scripts/verify_admin_api_guard.py"],
+        [sys.executable, "scripts/verify_api_error_format.py"],
+        [sys.executable, "scripts/verify_auth_startup_safety.py"],
+        [sys.executable, "scripts/verify_auth_schedule_scope.py"],
+        ["node", "scripts/verify_shared_api_errors.mjs"],
+    )
+    for command in commands:
+        proc = _run_captured(command)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "stability authentication/error boundary failed")
 
 
 def run_admin_today_action_reachability_checks() -> None:
@@ -11312,6 +11335,7 @@ ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig upd
 
 def run_unit_checks() -> bool:
     checks = [
+        run_stability_auth_boundary_checks,
         run_smoke_sqlite_observation_unit_checks,
         run_admin_date_session_storage_checks,
         run_test_catalog_search_sort_checks,

@@ -17,7 +17,7 @@ Cross-page browser helpers live here. Admin, all-students, student, and utility 
 ## Conventions
 - Keep helpers framework-free ES modules.
 - Preserve exported names; page modules import them directly.
-- `fetchJson` parses JSON without checking HTTP status; `fetchJsonChecked` calls `ensureOk`. `fetchJsonOr` falls back only on fetch/parse exceptions, not valid JSON from a non-2xx response.
+- `fetchJson` and `fetchJsonChecked` reject non-2xx responses through `ensureOk` before projecting JSON. `fetchJsonOr` logs an observable warning before returning its explicit fallback on HTTP, fetch, or parse failure.
 - `sendJson` defaults only the method, JSON headers, and body. Callers own credentials/cache options.
 - Search helpers must keep Korean initials, composed Hangul, Latin keyboard variants, and multi-term AND behavior aligned.
 - Calendar helpers should merge only nonblank override values so common school schedule fields survive sparse grade entries.
@@ -28,7 +28,7 @@ Cross-page browser helpers live here. Admin, all-students, student, and utility 
 ## Anti-Patterns
 - Do not add page-specific DOM or state dependencies here.
 - Do not replace Korean search normalization with plain lowercase matching.
-- Do not assume `fetchJson` rejects non-2xx responses; callers needing that contract must use the checked helper.
+- Use raw `fetch` when a caller must inspect a conflict response. Do not turn an HTTP error object into store data.
 - Do not make calendar normalization drop unknown payload fields unless every caller is updated.
 - Do not retry a calendar conflict without a new authoritative GET, and do not compute test expectations with the queue's own private revision state.
 
