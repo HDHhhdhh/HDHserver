@@ -16,12 +16,23 @@ export async function bootstrap() {
   ] = await Promise.all([
     api.get('/api/students'),
     api.get('/api/videos'),
-    api.getStrict('/api/updates', 'admin bootstrap /api/updates'),
+    api.postStrict('/api/updates/ensure-today', {}, 'admin bootstrap assignments', { cache: 'no-store' }),
     api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
     api.getOr('/api/absent', {}),
     api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
     api.getOr('/api/school-calendar', {}),
   ]);
+
+  for (const [name, rows] of Object.entries({ students, videos })) {
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+      throw new Error(`${name} 초기 데이터 형식이 올바르지 않습니다.`);
+    }
+  }
+  for (const [name, value] of Object.entries({ updates, logs, progress })) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${name} 초기 데이터 형식이 올바르지 않습니다.`);
+    }
+  }
 
   state.students = students;
   state.videos = videos;

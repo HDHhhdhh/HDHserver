@@ -27,7 +27,7 @@ Business-rule ownership starts at [docs/SERVER_RULES_INDEX.md](docs/SERVER_RULES
 - Prefer PATCH-style updates over full-file rewrites.
 - Preserve existing keys and unknown fields when merging log/progress records.
 - Keep JSON as UTF-8. Do not introduce mojibake or replacement text such as `????`.
-- Be careful with "read-only" checks: log and assistant-note GETs can ensure/migrate SQLite schema or WAL state; `GET /api/updates` may auto-write `updates.json`; today's student bootstrap can do both.
+- Be careful with "read-only" checks: log and assistant-note GETs can ensure/migrate SQLite schema or WAL state; `GET /api/updates` defaults to storage-only; compatibility `?ensure=1` or `UPDATES_GET_ENSURE=1` can still write `updates.json`; today's student bootstrap can do both.
 - Log-GET smoke is opt-in only: run `python scripts/verify_refactor_safety.py --smoke --smoke-log-gets` after `python scripts/backup_runtime_data.py`. The verifier compares `mtime_ns`, size, and SHA-256 for main databases and sidecars; any main-database change, including an mtime-only change, fails. `--smoke-log-gets` without `--smoke` is invalid.
 
 ## 테스트 서버 활용 규칙

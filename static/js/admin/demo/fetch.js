@@ -6,6 +6,8 @@ import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
 import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
 import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
+import { patchDemoExtraAttendance } from './extraAttendContract.js';
+import { demoVideoRevision, validateDemoVideoWrite } from './videoCatalogContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -1088,7 +1090,10 @@ async function handleGet(root, ctx, store) {
     }));
   }
   if (path === '/api/students') return responseJson(root, clone(store.students || []));
-  if (path === '/api/videos') return responseJson(root, clone(store.videos || []));
+  if (path === '/api/videos') return responseJson(root, clone(store.videos || []), 200, {
+    'X-Store-Revision': demoVideoRevision(store.videos || []),
+    'X-Video-Providers': 'kollus,youtube',
+  });
   if (path === '/api/materials') return responseJson(root, clone(store.materials || {}));
   if (path === '/api/mat-assign') return responseJson(root, clone(store.matAssign || {}));
   if (path === '/api/updates') return responseJson(root, clone(store.updates || {}));
@@ -1096,7 +1101,11 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
   if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url), 200, { 'X-Video-Watch-Cycles': '1' });
-  if (path === '/api/extra-attend') return extraAttendResponse(root, store, url);
+  if (path === '/api/extra-attend') {
+    const response = extraAttendResponse(root, store, url);
+    response.headers.set('X-Extra-Attend-Patch-Modes', 'replace,delta');
+    return response;
+  }
   if (path === '/api/absent') return responseJson(root, clone(store.absent || { by_date: {}, by_student: {}, by_slot: {} }));
   if (path === '/api/attendance') return dayMapResponse(root, store, 'attendance', url);
   if (path === '/api/contact') return dayMapResponse(root, store, 'contact', url);
@@ -1150,6 +1159,9 @@ async function handleGet(root, ctx, store) {
 
 async function handleWrite(root, ctx, store) {
   const { path, method } = ctx;
+  if (method === 'POST' && path === '/api/updates/ensure-today') {
+    return responseJson(root, clone(store.updates || {}));
+  }
   let body = {};
   if (path !== '/api/announcements/image') {
     try {
@@ -1258,9 +1270,12 @@ async function handleWrite(root, ctx, store) {
   }
 
   if (method === 'POST' && path === '/api/videos') {
-    const videos = setVideos(store, body);
-    saveDemoStore(store);
-    return ok(root, videos);
+    const latest = loadDemoStore();
+    const error = validateDemoVideoWrite(latest.videos || [], body, requestHeader(ctx.headers, 'If-Match') || requestHeader(ctx.headers, 'X-Store-Revision'));
+    if (error) return responseJson(root, { ok: false, error: error.error }, error.status, { 'X-Store-Revision': demoVideoRevision(latest.videos || []) });
+    const videos = setVideos(latest, body);
+    saveDemoStore(latest);
+    return new (getResponseCtor(root))(null, { status: 204, headers: { 'X-Store-Revision': demoVideoRevision(videos) } });
   }
 
   if (method === 'POST' && path === '/api/school-calendar') {
@@ -1378,25 +1393,11 @@ async function handleWrite(root, ctx, store) {
   }
 
   if (method === 'PATCH' && path === '/api/extra-attend') {
-    const rawDates = body?.dates && typeof body.dates === 'object'
-      ? body.dates
-      : { [body?.date]: body?.sids };
-    const dates = {};
-    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
-      const date = canonicalDate(rawDate);
-      if (!date || !Array.isArray(rawSids)) return badRequest(root, 'invalid date or sids');
-      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
-    }
-    if (!Object.keys(dates).length) return badRequest(root, 'date patch is required');
-
     const latest = loadDemoStore();
-    latest.extraAttend = latest.extraAttend && typeof latest.extraAttend === 'object' ? latest.extraAttend : {};
-    Object.entries(dates).forEach(([date, sids]) => {
-      if (sids.length) latest.extraAttend[date] = sids;
-      else delete latest.extraAttend[date];
-    });
-    saveDemoStore(latest);
-    return ok(root, { ok: true, dates: clone(dates), changedDates: Object.keys(dates) });
+    const result = patchDemoExtraAttendance(latest, body);
+    if (result.error) return responseJson(root, { ok: false, error: result.error }, 400);
+    if (result.changed) saveDemoStore(latest);
+    return ok(root, { ok: true, dates: clone(result.dates), changedDates: result.changedDates });
   }
 
   if (method === 'POST' && path === '/api/weekend-slots') {

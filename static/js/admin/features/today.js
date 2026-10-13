@@ -895,13 +895,16 @@ function renderDoneSummaryWhenIdle(entries, seq, dateKey) {
 
 async function refreshUpdatesAtAssignmentBoundary(reason = '') {
   const realDate = todayLocalKey();
-  const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;
+  const initialize = realDate !== lastAutoAssignmentBoundaryDate;
+  const boundary = reason === 'date' || initialize;
   if (!boundary) return;
   if (assignmentBoundaryFlight?.realDate === realDate) return assignmentBoundaryFlight.promise;
   const flight = { realDate, promise: null };
   flight.promise = (async () => {
     try {
-      const updates = await api.get('/api/updates', { cache: 'no-store' });
+      const updates = initialize
+        ? await api.postStrict('/api/updates/ensure-today', {}, 'today assignment boundary', { cache: 'no-store' })
+        : await api.getStrict('/api/updates', 'selected date assignment refresh', { cache: 'no-store' });
       if (assignmentBoundaryFlight !== flight || todayLocalKey() !== realDate) return;
       if (updates && typeof updates === 'object') state.updates = updates;
       lastAutoAssignmentBoundaryDate = realDate;

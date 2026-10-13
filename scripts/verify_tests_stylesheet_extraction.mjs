@@ -67,7 +67,9 @@ for (const requiredSelector of [
 
 assert.ok(html.includes('일산 기출은 중상·상·그래프 포함'));
 // Approved level text and cache busting must not weaken the remaining layout oracle.
+assert.match(html, /admin\/demo\/bootstrap\.js\?v=20260828-calendar-revision1&amp;storeSafety=20261013/);
 const bodySource = html.slice(html.indexOf('<body'))
+  .replace('/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1&amp;storeSafety=20261013', '/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1')
   .replace('일산 기출은 중상·상·그래프 포함', '일산 기출은 중·중상·그래프 포함')
   .replace('/js/tests.js?v=20260907-ilsan-level-r1&hub=20261001-detail1', '/js/tests.js?v=20260829-catalog-statistics-state-r1');
 assert.equal(

@@ -21,7 +21,7 @@ import {
   makeupOriginalAbsenceId,
 } from './makeupPending.js';
 import { saveScheduleOverridesFailClosed } from './scheduleOverrideSave.js?v=20260927-orphan-extra1';
-import { legacyExtraAttendanceIds } from './extraAttendanceMerge.js?v=20260821-safe-merge1';
+import { legacyExtraAttendanceIds, mergeExtraAttendanceSelection } from './extraAttendanceMerge.js?v=20260821-safe-merge1';
 
 export function initCalendar() {
   const calendarEl = $('calendar'); if (!calendarEl) return;
@@ -489,6 +489,11 @@ export function initCalendar() {
   let WEEKEND = {};   // {"YYYY-MM-DD": {sid: 1|2|3 | [1,2,3]}}
   let CARRYOVER = {}; // {"by_absence":{"YYYY-MM-DD":{"sid":{state:"carried"}}}}
   let preloadExtraWeekendPromise = null;
+  let calendarPreloadError = null;
+  let selectionBaselineExtraIds = [];
+  let selectionBaselineExtraDate = "";
+  let selectionOpenSequence = 0;
+  let selectionSaving = false;
   let calendarMutationGeneration = 0;
   let calendarReadGeneration = 0;
   let calendarProjectionGeneration = 0;
@@ -762,21 +767,25 @@ export function initCalendar() {
     calendarMutationGeneration += 1;
   }
 
-  async function preloadExtraWeekend() {
+  async function preloadExtraWeekend({ forWrite = false } = {}) {
+    const requireMap = (value, label) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} 형식이 올바르지 않습니다.`);
+      return value;
+    };
     while (true) {
       if (!preloadExtraWeekendPromise) {
         const generation = calendarMutationGeneration;
         calendarReadGeneration = generation;
         preloadExtraWeekendPromise = (async () => {
           const [extraResult, weekendResult, carryoverResult, absentResult] = await Promise.allSettled([
-            fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
-            fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()),
-            fetchMakeupCarryoverSnapshot(),
-            fetchAbsentSnapshot(),
+            fetchJsonChecked('/api/extra-attend', '보강 명단 불러오기', { cache: 'no-store' }).then(value => requireMap(value, '보강 명단')),
+            fetchJsonChecked('/api/weekend-slots', '보강 슬롯 불러오기', { cache: 'no-store' }).then(value => requireMap(value, '보강 슬롯')),
+            fetchMakeupCarryoverSnapshot().then(value => ({ ...value, payload: requireMap(value.payload, '보강 이월') })),
+            fetchAbsentSnapshot().then(value => requireMap(value, '결석 정보')),
           ]);
-
-          // A committed mutation makes a previously started snapshot stale.
           if (generation !== calendarMutationGeneration) return;
+          const results = [extraResult, weekendResult, carryoverResult, absentResult];
+          calendarPreloadError = results.find(result => result.status === 'rejected')?.reason || null;
           EXTRA = extraResult.status === 'fulfilled' ? extraResult.value : {};
           WEEKEND = weekendResult.status === 'fulfilled' ? weekendResult.value : {};
           CARRYOVER = carryoverResult.status === 'fulfilled' ? carryoverResult.value.payload : {};
@@ -788,12 +797,11 @@ export function initCalendar() {
       }
       const request = preloadExtraWeekendPromise;
       const generation = calendarReadGeneration;
-      try {
-        await request;
-      } finally {
-        if (preloadExtraWeekendPromise === request) preloadExtraWeekendPromise = null;
-      }
-      if (generation === calendarMutationGeneration) return;
+      try { await request; }
+      finally { if (preloadExtraWeekendPromise === request) preloadExtraWeekendPromise = null; }
+      if (generation !== calendarMutationGeneration) continue;
+      if (forWrite && calendarPreloadError) throw new Error('보강 정보를 불러오지 못했습니다. 새로고침 후 다시 저장해 주세요.');
+      return !calendarPreloadError;
     }
   }
 
@@ -907,7 +915,9 @@ export function initCalendar() {
   async function fetchMakeupCarryoverSnapshot() {
     const response = await fetch('/api/makeup-carryover', { cache: 'no-store' });
     await ensureOk(response, '보강 이월 불러오기');
-    const payload = normalizeCarryoverPayload(await response.json());
+    const rawPayload = await response.json();
+    if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) throw new Error("보강 이월 형식이 올바르지 않습니다.");
+    const payload = normalizeCarryoverPayload(rawPayload);
     const revision = String(response.headers.get('X-Makeup-Carryover-Revision') || '').trim();
     return { payload, revision };
   }
@@ -926,21 +936,29 @@ export function initCalendar() {
     return await response.json();
   }
 
-  async function patchExtraAttendDates(extraMap, dateKeys) {
-    const dates = {};
+  async function patchExtraAttendDates(extraMap, dateKeys, baselineMap) {
+    if (!baselineMap || typeof baselineMap !== 'object' || Array.isArray(baselineMap)) throw new Error('보강 변경 전 명단이 필요합니다.');
+    const deltas = {};
     Array.from(new Set(dateKeys || [])).forEach(rawDate => {
       const date = String(rawDate || '').trim();
       if (!DATE_RE.test(date)) return;
-      dates[date] = Array.isArray(extraMap?.[date])
-        ? Array.from(new Set(extraMap[date].map(sid => String(sid || '').trim()).filter(Boolean)))
-        : [];
+      const changed = mergeExtraAttendanceSelection([], baselineMap[date] || [], extraMap?.[date] || []);
+      deltas[date] = Object.fromEntries([
+        ...changed.addedIds.map(sid => [sid, true]),
+        ...changed.removedIds.map(sid => [sid, false]),
+      ]);
     });
-    if (!Object.keys(dates).length) return { ok: true, dates: {} };
-
-    const response = await sendJson('/api/extra-attend', { dates }, { method: 'PATCH' });
+    if (!Object.keys(deltas).length) return { ok: true, dates: {} };
+    const response = await sendJson('/api/extra-attend', { deltas }, { method: 'PATCH' });
     await ensureOk(response, '보강 명단 저장');
     invalidateCalendarPreload();
-    return await response.json();
+    const result = await response.json();
+    for (const date of Object.keys(deltas)) {
+      if (!Array.isArray(result?.dates?.[date])) throw new Error('보강 명단의 저장 결과를 확인하지 못했습니다. 새로고침해 주세요.');
+      if (result.dates[date].length) extraMap[date] = result.dates[date].slice();
+      else delete extraMap[date];
+    }
+    return result;
   }
 
   function getScheduledMakeups(carryover = CARRYOVER) {
@@ -1313,7 +1331,7 @@ export function initCalendar() {
 
     if (btn) btn.disabled = true;
     try {
-      await preloadExtraWeekend();
+      await preloadExtraWeekend({ forWrite: true });
       const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
       const next = normalizeCarryoverPayload(latest);
       const now = new Date().toISOString();
@@ -1951,7 +1969,8 @@ export function initCalendar() {
 
   async function carryoverScheduledMakeup(item) {
     if (!item) return;
-    await preloadExtraWeekend();
+    await preloadExtraWeekend({ forWrite: true });
+    const extraBeforeSave = clonePlainMap(EXTRA);
     const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const previousSchedule = getScheduledMakeupForItem(item, next);
@@ -1989,11 +2008,11 @@ export function initCalendar() {
 
     const data = await postMakeupCarryoverSnapshot(next, revision);
     const nextCarryover = normalizeCarryoverPayload(data || next);
-    const nextExtra = clonePlainMap(EXTRA);
+    const nextExtra = clonePlainMap(extraBeforeSave);
     const nextWeekend = clonePlainMap(WEEKEND);
     const weekendPatch = releaseScheduledAttendance(nextExtra, nextWeekend, item, previousSchedule, nextCarryover, recordedDates);
     if (!recordedDates.has(previousSchedule.makeupDate)) {
-      await patchExtraAttendDates(nextExtra, [previousSchedule.makeupDate]);
+      await patchExtraAttendDates(nextExtra, [previousSchedule.makeupDate], extraBeforeSave);
     }
     await postWeekendPatch(weekendPatch);
 
@@ -2264,7 +2283,8 @@ export function initCalendar() {
     if (!MAKEUP_SLOTS.includes(slot)) return;
     const selectedDemand = makeupSelection;
 
-    await preloadExtraWeekend();
+    await preloadExtraWeekend({ forWrite: true });
+    const extraBeforeSave = clonePlainMap(EXTRA);
 
     const sid = String(selectedDemand.sid);
     const carryoverSnapshot = await fetchMakeupCarryoverSnapshot();
@@ -2272,7 +2292,7 @@ export function initCalendar() {
     const previousSchedule = getScheduledMakeupForItem(selectedDemand, latestCarryover);
     const recordedDates = await loadRecordedMakeupDates(sid, [dateStr, previousSchedule?.makeupDate]);
     const carryoverBeforeSave = CARRYOVER;
-    const nextExtra = clonePlainMap(EXTRA);
+    const nextExtra = clonePlainMap(extraBeforeSave);
     const nextWeekend = clonePlainMap(WEEKEND);
     let nextCarryover = null;
     try {
@@ -2294,7 +2314,7 @@ export function initCalendar() {
       if (changedDates.length) await saveScheduleOverridesFailClosed({
         extraMap: nextExtra,
         weekendPatch: mergedWeekendPatch,
-        saveExtra: () => patchExtraAttendDates(nextExtra, changedDates),
+        saveExtra: () => patchExtraAttendDates(nextExtra, changedDates, extraBeforeSave),
         saveWeekend: postWeekendPatch,
       });
       if (!recordedDates.has(dateStr)) {
@@ -2946,13 +2966,19 @@ export function initCalendar() {
   }
 
   function openSelectionUI(mode) {
+    if (selectionSaving) return;
     const dateStr = $('attendDateTitle').textContent.split(' ')[0]; // "YYYY-MM-DD (요일)" → 날짜만
     const searchInput = ensureSelectionSearchUI();
+    const sequence = ++selectionOpenSequence;
+    selectionBaselineExtraDate = '';
+    if (selectionSaveBtn) selectionSaveBtn.disabled = true;
     Promise.all([
-      fetch(`/api/attend?date=${dateStr}`, { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
+      fetchJsonChecked(`/api/attend?date=${dateStr}`, '출결 명단 불러오기', { cache: 'no-store' }),
+      fetchJsonChecked('/api/extra-attend', '보강 명단 불러오기', { cache: 'no-store' }),
+      fetchJsonChecked('/api/weekend-slots', '보강 슬롯 불러오기', { cache: 'no-store' })
     ]).then(([todayAtt, extraMap, weekendMap]) => {
+      if (sequence !== selectionOpenSequence) return;
+      if (!Array.isArray(todayAtt) || !extraMap || typeof extraMap !== 'object' || Array.isArray(extraMap) || !weekendMap || typeof weekendMap !== 'object' || Array.isArray(weekendMap)) throw new Error('보강 명단과 슬롯을 불러오지 못했습니다.');
       const localExtra = extraMap || {};
       const localWeekend = weekendMap || {};
 
@@ -2971,6 +2997,8 @@ export function initCalendar() {
           .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }));
 
       const localExtraIds = (localExtra[dateStr] || []).map(String);
+      selectionBaselineExtraIds = localExtraIds.slice();
+      selectionBaselineExtraDate = dateStr;
       const pre = new Set(localExtraIds);
       const perDateSlot = localWeekend[dateStr] || {};
       const showSlots = mode === 'extra' || mode === 'absent';
@@ -3014,6 +3042,12 @@ export function initCalendar() {
       selectionModal.dataset.date = dateStr;
       $('selectionTitle').textContent = mode === 'extra' ? `${dateStr} 보강 추가` : `${dateStr} 결석 처리`;
       selectionModal.style.display = 'flex';
+      if (selectionSaveBtn) selectionSaveBtn.disabled = false;
+    }).catch(error => {
+      if (sequence !== selectionOpenSequence) return;
+      selectionBaselineExtraDate = '';
+      console.error(error);
+      alert('보강 명단과 슬롯을 불러오지 못했습니다. 닫은 뒤 다시 열어 주세요.');
     });
   }
 
@@ -3032,12 +3066,7 @@ export function initCalendar() {
   }
 
   // 저장(보강: 체크된 학생만 남기고, 선택 타임은 배열로 저장 가능)
-  selectionSaveBtn?.addEventListener('click', async () => {
-    const mode = selectionModal.dataset.mode, dateStr = selectionModal.dataset.date;
-
-    const items = [...selectionListEl.querySelectorAll('li[data-id]')];
-    const selectedIds = items.filter(li => li.querySelector('.chk-sid')?.checked)
-      .map(li => String(li.dataset.id));
+  async function saveCalendarSelectionSnapshot(mode, dateStr, openingExtraIds, items, selectedIds, selectedSlotsByRow) {
 
     // ── 결석 처리 ──
     if (mode === 'absent') {
@@ -3059,10 +3088,7 @@ export function initCalendar() {
       for (const li of items.filter(row => selectedIds.includes(String(row.dataset.id)))) {
         const sid = String(li.dataset.id);
         const allSlots = parseSlotNumbers(li.dataset.allSlots || []);
-        const selectedSlots = Array.from(li.querySelectorAll('.slot-btn.on:not([disabled])'))
-          .map(btn => parseInt(btn.dataset.slot, 10))
-          .filter(slot => MAKEUP_SLOTS.includes(slot))
-          .sort((a, b) => a - b);
+        const selectedSlots = selectedSlotsByRow.get(li) || [];
         const targetSlots = selectedSlots.length ? selectedSlots : allSlots;
         const previousSlots = parseSlotNumbers(slotDay[sid]);
         const nextSlots = Array.from(new Set([...(previousSlots || []), ...targetSlots])).sort((a, b) => a - b);
@@ -3108,32 +3134,30 @@ export function initCalendar() {
     }
 
     // ── 보강 추가/해제 ──
-    await preloadExtraWeekend(); // 최신화
-    const previousExtraSet = new Set((EXTRA[dateStr] || []).map(String));
-    // 선택 UI에는 현행 학생만 있으므로 퇴원 SID는 기존 보강 기록에 그대로 둔다.
-    const nextSet = new Set([
-      ...selectedIds,
-      ...legacyExtraAttendanceIds(state.students, [...previousExtraSet]),
+    try { await preloadExtraWeekend({ forWrite: true }); }
+    catch (error) { console.error(error); alert(error.message); return; }
+    const extraBeforeSave = clonePlainMap(EXTRA);
+    const selection = mergeExtraAttendanceSelection(EXTRA[dateStr] || [], openingExtraIds, [
+      ...selectedIds, ...legacyExtraAttendanceIds(state.students, openingExtraIds),
     ]);
-    const nextExtra = clonePlainMap(EXTRA);
-    nextExtra[dateStr] = Array.from(nextSet); // 체크 해제된 학생은 제거
-    const newlyAddedExtraIds = selectedIds.filter(sid => !previousExtraSet.has(String(sid)));
+    const nextSet = new Set(selection.selectedIds);
+    const uiSelectedSet = new Set(selectedIds);
+    const nextExtra = clonePlainMap(extraBeforeSave);
+    nextExtra[dateStr] = Array.from(nextSet);
+    const latestExtraIds = new Set((extraBeforeSave[dateStr] || []).map(String));
+    const newlyAddedExtraIds = selection.addedIds.filter(sid => !latestExtraIds.has(sid));
 
     const nextWeekend = clonePlainMap(WEEKEND);
     const perDate = { ...(nextWeekend[dateStr] || {}) };
     const weekendPatch = {};
-    for (const sid of previousExtraSet) {
-      if (nextSet.has(String(sid))) continue;
+    for (const sid of selection.removedIds) {
       delete perDate[sid];
       weekendPatch[sid] = [];
     }
     for (const li of items) {
       const sid = String(li.dataset.id);
-      if (!nextSet.has(sid)) continue;
-      const sel = [...li.querySelectorAll('.slot-btn.on')]
-        .map(b => parseInt(b.dataset.slot, 10))
-        .filter(slot => MAKEUP_SLOTS.includes(slot))
-        .sort((a, b) => a - b);
+      if (!uiSelectedSet.has(sid)) continue;
+      const sel = selectedSlotsByRow.get(li) || [];
       const stu = (state.students || []).find(row => String(row?.id || '') === sid) || {};
       const value = serializeSlots(combinedSlotsForStudent(stu, dateStr, sel.length ? sel : [1]));
       perDate[sid] = value;
@@ -3147,7 +3171,7 @@ export function initCalendar() {
       await saveScheduleOverridesFailClosed({
         extraMap: nextExtra,
         weekendPatch: { [dateStr]: weekendPatch },
-        saveExtra: () => patchExtraAttendDates(nextExtra, [dateStr]),
+        saveExtra: () => patchExtraAttendDates(nextExtra, [dateStr], extraBeforeSave),
         saveWeekend: postWeekendPatch,
       });
       const arrivePatch = {};
@@ -3178,9 +3202,52 @@ export function initCalendar() {
       await preloadExtraWeekend().catch(() => {});
       alert(e?.message || '요청에 실패했습니다.');
     }
+  }
+
+  selectionSaveBtn?.addEventListener('click', async () => {
+    if (selectionSaving || selectionSaveBtn.disabled) return;
+    const mode = selectionModal.dataset.mode, dateStr = selectionModal.dataset.date;
+    if (!['extra', 'absent'].includes(mode) || selectionBaselineExtraDate !== dateStr) return;
+    const openingExtraIds = selectionBaselineExtraIds.slice();
+    const items = [...selectionListEl.querySelectorAll('li[data-id]')];
+    const selectedIds = items.filter(li => li.querySelector('.chk-sid')?.checked)
+      .map(li => String(li.dataset.id));
+    // Capture enabled slots before the save lock changes disabled attributes.
+    const selectedSlotsByRow = new Map(items.map(li => [li,
+      [...li.querySelectorAll('.slot-btn.on:not([disabled])')]
+        .map(button => parseInt(button.dataset.slot, 10))
+        .filter(slot => MAKEUP_SLOTS.includes(slot))
+        .sort((a, b) => a - b),
+    ]));
+    const controlStates = [...selectionModal.querySelectorAll('button, input, select')]
+      .map(control => [control, control.disabled]);
+    const saveLabel = selectionSaveBtn.textContent;
+    selectionSaving = true;
+    selectionSaveBtn.textContent = '저장 중…';
+    selectionSaveBtn.setAttribute('aria-busy', 'true');
+    controlStates.forEach(([control]) => { control.disabled = true; });
+    try {
+      await saveCalendarSelectionSnapshot(mode, dateStr, openingExtraIds, items, selectedIds, selectedSlotsByRow);
+    } finally {
+      selectionSaving = false;
+      selectionSaveBtn.textContent = saveLabel;
+      selectionSaveBtn.removeAttribute('aria-busy');
+      controlStates.forEach(([control, disabled]) => { control.disabled = disabled; });
+      if (selectionModal.style.display === 'none') {
+        selectionOpenSequence += 1;
+        selectionBaselineExtraDate = '';
+      }
+    }
   });
 
-  selectionClose?.addEventListener('click', () => selectionModal.style.display = 'none');
+  function closeCalendarSelectionPopup() {
+    if (selectionSaving) return;
+    selectionOpenSequence += 1;
+    selectionBaselineExtraDate = '';
+    selectionModal.style.display = 'none';
+  }
+  window.closeCalendarSelectionPopup = closeCalendarSelectionPopup;
+  selectionClose?.addEventListener('click', closeCalendarSelectionPopup);
   let calendarMutationRefreshPromise = null;
   const refreshAfterMutation = () => {
     invalidateCalendarPreload();
@@ -3199,4 +3266,3 @@ export function initCalendar() {
     setCalendarFocusDate(event?.detail?.dateStr);
   });
 }
-

@@ -111,6 +111,8 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - Do not bypass 409/base-entry conflict handling in log saves.
 - Do not assume a row belongs to the real local today.
 
+- Calendar mutation paths require successful extra/weekend/carryover/absence preload before their first write. Read-only projections may retain fallback behavior. Selection saves use the opening baseline plus final read and SID deltas; apply the server returned dates and preserve untouched remote students and slots. Video catalog conflict stops queued saves until reload.
+
 ## Verification
 - For log-affecting work, open a known student/date with Korean notes, homework rows, and progress; verify no `???` text.
 - Toggle one green progress cell to white, save, reload, and confirm it remains white after automatic watch updates.

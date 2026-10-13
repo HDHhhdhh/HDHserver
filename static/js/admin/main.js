@@ -1,8 +1,8 @@
 import { bootstrap, state } from './core/state.js';
 import { initDarkmode } from './core/darkmode.js';
 import { initAdminViewMode } from './core/viewMode.js';
-import { initEscClose } from './features/escClose.js?v=20260929-search-visibility1&hubSave=20261001&escScope=20261009';
-import { loadTodayAndRender } from './features/today.js?v=20260830-warning-visual1&leaveLabel=20260905b&ilsanLevel=20260907&doneWhiteReview=20260912&youtube=20260913&missingLeaveRefresh=20260927&schoolSearch=20260929&manualOrder=20261002&adminSpeed=20261003&leaveDetails=20261011&stabilityBase=20261013';
+import { initEscClose } from './features/escClose.js?v=20260929-search-visibility1&hubSave=20261001&escScope=20261009&storeSafety=20261013';
+import { loadTodayAndRender } from './features/today.js?v=20260830-warning-visual1&leaveLabel=20260905b&ilsanLevel=20260907&doneWhiteReview=20260912&youtube=20260913&missingLeaveRefresh=20260927&schoolSearch=20260929&manualOrder=20261002&adminSpeed=20261003&leaveDetails=20261011&stabilityBase=20261013&storeSafety=20261013';
 import { initAdminDateBar } from './core/adminDate.js';
 
 async function loadCriticalAdminFeatures() {
@@ -11,7 +11,7 @@ async function loadCriticalAdminFeatures() {
     import('./features/assistantStudentNotes.js?v=20260821-note-body-row2').then(module => module.initAssistantStudentNotes),
     import('./features/videoModal.js?v=20260912-watch-rearm1&youtube=20260913&hubSave=20261001&uiPerf=20261002&dragScroll=20261007').then(module => module.initVideoModal),
     import('./features/logModal.js?v=20260914-homework-open-stable1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007').then(module => module.initLogModal),
-    import('./features/extraModal.js?v=20260929-retired-extra1&hubSave=20261001&adminSpeed=20261003').then(module => module.initExtraModal),
+    import('./features/extraModal.js?v=20260929-retired-extra1&hubSave=20261001&adminSpeed=20261003&storeSafety=20261013').then(module => module.initExtraModal),
     import('./features/absentRegister.js?hubSave=20261001').then(module => module.initAbsentRegister),
     import('./features/exportLogs.js?v=20260907-ilsan-level-r1&quickPrinter=1&latency=1').then(module => module.initExport),
     import('./features/quickPrinterExport.js?v=20260920-reprint-default1').then(module => module.initQuickPrinterExport),
@@ -50,7 +50,7 @@ window.state = state;
 // 기능은 모두 그대로 초기화하되 F5 직후의 연결 대기열에서 오늘 명단을 우선한다.
 async function initDeferredAdminFeatures() {
   const jobs = [
-    ['calendar', () => import('./features/calendar.js?v=20260929-retired-extra1&uiPerf=20261002&adminSpeed=20261003&examTextbook=20261012b').then(module => module.initCalendar())],
+    ['calendar', () => import('./features/calendar.js?v=20260929-retired-extra1&uiPerf=20261002&adminSpeed=20261003&examTextbook=20261012b&storeSafety=20261013').then(module => module.initCalendar())],
     ['admin operation notes', () => import('./features/adminOperationNotes.js').then(module => module.initAdminOperationNotes())],
     ['student logs', () => import('./features/studentLogs.js?v=20260816-student-log-restore2').then(module => module.initStudentLogs())],
     ['student accounts', () => import('./features/studentAccounts.js').then(module => module.initStudentAccounts())],

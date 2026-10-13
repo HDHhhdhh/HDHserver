@@ -374,7 +374,10 @@ async function runSelectionOpen(kind, {closeDuringLoad = false} = {}) {
     saveWeekendSlotsPatch: async (date, map) => writes.push({step: 'slots', date, map: clone(map)}),
     sendJson: async (url, body) => {
       writes.push({step: url, body: clone(body)});
-      return response(url === '/api/extra-attend' ? {dates: {[body.date]: body.sids}} : {});
+      const dates = body.deltas
+        ? Object.fromEntries(Object.entries(body.deltas).map(([date, mapping]) => [date, Object.entries(mapping).filter(([_sid, present]) => present).map(([sid]) => sid)]))
+        : { [body.date]: body.sids };
+      return response(url === '/api/extra-attend' ? { dates } : {});
     },
     fetch: async (url, init = {}) => {
       if (init.method === 'POST') {

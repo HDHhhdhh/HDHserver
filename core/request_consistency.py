@@ -1,6 +1,7 @@
 """Pure classification of request-level absence snapshot ownership."""
 
 import json
+import os
 
 from core.date_rules import is_iso_date_key
 
@@ -55,6 +56,13 @@ def request_has_invalid_scoped_date(path: str, method: str, query, body) -> bool
     return False
 
 
+def updates_get_initializes(query=None) -> bool:
+    query = query if query is not None else {}
+    if str(query.get("readOnly") or "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    return str(query.get("ensure") or "").strip() == "1" or os.environ.get("UPDATES_GET_ENSURE") == "1"
+
+
 def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
     path = str(path or "").rstrip("/") or "/"
     if method == "POST" and path in {"/api/absent", "/api/makeup-sheet-sync"}:
@@ -70,13 +78,10 @@ def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
                 "/api/progress", "/api/updates", "/api/student-test-ocr")
     if path not in exact and not path.startswith(prefixes):
         return None
-    # Explicit storage-only GETs can share a lease. Bootstrap and bare updates
-    # can initialize assignments, so must never acquire an upgradable read lease.
+    # Compatibility GET initialization and bootstrap need an exclusive lease.
     shared = {"/api/absent", "/api/homework-books", "/api/tests-records", "/api/tests-stats",
               "/api/arrive-time/missing-leave-summary", "/api/makeup-carryover"}
-    read_only_updates = path == "/api/updates" and query is not None and (
-        str(query.get("readOnly") or "").strip().lower() in {"1", "true", "yes"}
-    )
+    read_only_updates = path == "/api/updates" and not updates_get_initializes(query)
     if method in {"GET", "HEAD"} and (path in shared or read_only_updates
                                      or path.startswith(("/api/logs", "/api/progress"))):
         return "shared"

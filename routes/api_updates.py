@@ -10,6 +10,7 @@ from core.ghost_student import (
     is_ghost_student_sid,
 )
 from core.paths import UPD_PATH
+from core.request_consistency import updates_get_initializes
 from core.storage import nocache_resp
 from core.update_assignment_rules import (
     StudentAssignmentNotFoundError,
@@ -68,12 +69,18 @@ def _updates_lock():
 @bp_api_updates.get("/api/updates")
 def api_updates():
     try:
-        if str(request.args.get("readOnly") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }:
+        if not updates_get_initializes(request.args):
             return nocache_resp(load_updates_strict(UPD_PATH))
+        current_app.logger.warning("[updates] compatibility GET initialization requested")
+        initialize_today, _reconcile_self_study = _assignment_hooks()
+        return nocache_resp(initialize_today())
+    except UpdateAssignmentStoreError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+
+
+@bp_api_updates.post("/api/updates/ensure-today")
+def api_updates_ensure_today():
+    try:
         initialize_today, _reconcile_self_study = _assignment_hooks()
         return nocache_resp(initialize_today())
     except UpdateAssignmentStoreError as exc:

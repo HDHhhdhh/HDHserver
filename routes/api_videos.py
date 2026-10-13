@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
 from urllib.parse import parse_qs, urlparse
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, make_response, request
 
 from core.paths import VID_PATH
 from core.storage import file_lock, load, save_atomic
@@ -17,6 +20,56 @@ VIDEO_CATALOG_IDENTITY_CHANGE_MESSAGE = (
     "일반 모드에서는 기존 영상의 MID 변경 또는 삭제를 저장할 수 없습니다. "
     "기존 데이터는 변경되지 않았으며, 필요한 경우 별도 수정 모드에서 처리해야 합니다."
 )
+
+
+class VideoCatalogStoreError(RuntimeError):
+    pass
+
+
+@bp_api_videos.errorhandler(VideoCatalogStoreError)
+def _video_catalog_store_error(exc):
+    return jsonify({"ok": False, "error": "video_catalog_unavailable"}), 503
+
+
+def _read_video_catalog():
+    try:
+        rows = load(VID_PATH)
+        _video_catalog_rows_by_id(rows, "current video catalog")
+        return rows
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise VideoCatalogStoreError("video catalog unavailable") from exc
+
+
+def _video_catalog_revision(rows) -> str:
+    encoded = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _video_revision_response(payload, revision: str, status: int = 200):
+    response = make_response("", 204) if status == 204 else make_response(jsonify(payload), status)
+    response.headers["X-Store-Revision"] = revision
+    response.headers["ETag"] = f'"{revision}"'
+    return response
+
+
+def _video_revision_precondition(current_revision: str):
+    raw = request.headers.get("If-Match")
+    if raw is None:
+        raw = request.headers.get("X-Store-Revision")
+    revision = str(raw or "").strip()
+    mode = os.environ.get("JSON_STORE_REVISION_MODE", "soft").strip().lower()
+    if not revision:
+        if mode == "soft":
+            current_app.logger.warning("[video-catalog] unrevisioned save accepted in soft mode")
+            return None
+        return _video_revision_response({"ok": False, "error": "video_catalog_revision_required"}, current_revision, 428)
+    if revision.startswith('"') and revision.endswith('"'):
+        revision = revision[1:-1]
+    if re.fullmatch(r"[0-9a-fA-F]{64}", revision) is None:
+        return _video_revision_response({"ok": False, "error": "video_catalog_revision_required"}, current_revision, 428)
+    if revision.lower() != current_revision:
+        return _video_revision_response({"ok": False, "error": "video_catalog_revision_conflict", "message": "다른 화면에서 영상 목록이 변경됐습니다. 새로고침 후 다시 저장해 주세요."}, current_revision, 409)
+    return None
 
 
 def _extract_kollus_mid_from_url(url) -> str:
@@ -122,14 +175,15 @@ def _video_catalog_identity_changes(previous_videos, next_videos) -> dict[str, l
 @bp_api_videos.route("/api/videos", methods=["GET", "POST"])
 def api_videos():
     if request.method == "GET":
-        response = jsonify(load(VID_PATH))
+        current_videos = _read_video_catalog()
+        response = _video_revision_response(current_videos, _video_catalog_revision(current_videos))
         response.headers["X-Video-Providers"] = "kollus,youtube"
         return response
 
     try:
         next_videos = _normalize_video_mid_fields(request.get_json(force=True))
         with file_lock(VID_PATH, timeout_sec=20.0, poll_sec=0.05):
-            previous_videos = load(VID_PATH)
+            previous_videos = _read_video_catalog()
             changes = _video_catalog_identity_changes(previous_videos, next_videos)
             if changes["removedIds"] or changes["midChanges"]:
                 return jsonify({
@@ -138,10 +192,13 @@ def api_videos():
                     "message": VIDEO_CATALOG_IDENTITY_CHANGE_MESSAGE,
                     **changes,
                 }), 409
+            revision_error = _video_revision_precondition(_video_catalog_revision(previous_videos))
+            if revision_error is not None:
+                return revision_error
             save_atomic(VID_PATH, next_videos)
     except ValueError as exc:
         return jsonify({"ok": False, "error": "invalid_video_catalog", "message": str(exc)}), 400
-    return "", 204
+    return _video_revision_response(None, _video_catalog_revision(next_videos), 204)
 
 
 @bp_api_videos.get("/api/video-capabilities")

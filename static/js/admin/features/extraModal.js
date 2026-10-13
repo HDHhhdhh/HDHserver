@@ -554,18 +554,22 @@ export function initExtraModal() {
         saveExtra: async () => {
           const extraResponse = await sendJson(
             '/api/extra-attend',
-            { date: today, sids: selectedIds },
+            { deltas: { [today]: Object.fromEntries([
+              ...selection.addedIds.map(sid => [sid, true]),
+              ...selection.removedIds.map(sid => [sid, false]),
+            ]) } },
             { method: 'PATCH' },
           );
           await ensureOk(extraResponse, '보강 명단 저장');
-          extraResult = await extraResponse.json().catch(() => ({}));
           extraSaved = true;
+          extraResult = await extraResponse.json();
+          if (!Array.isArray(extraResult?.dates?.[today])) {
+            throw new Error('보강 명단의 저장 결과를 확인하지 못했습니다. 새로고침해 주세요.');
+          }
         },
       });
       state.extra = nextExtra;
-      state.extra[today] = Array.isArray(extraResult?.dates?.[today])
-        ? extraResult.dates[today].map(String)
-        : selectedIds;
+      state.extra[today] = extraResult.dates[today].map(String);
       if (!state.extra[today].length) delete state.extra[today];
       window.extra = state.extra;
 

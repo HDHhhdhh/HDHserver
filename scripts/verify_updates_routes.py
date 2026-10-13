@@ -144,6 +144,7 @@ def main() -> int:
             )
             assert route_rows == [
                 ("/api/updates", "api_updates.api_updates", ["GET"]),
+                ("/api/updates/ensure-today", "api_updates.api_updates_ensure_today", ["POST"]),
                 (
                     "/api/updates/patch",
                     "api_updates.api_updates_patch",
@@ -165,6 +166,12 @@ def main() -> int:
             _assert_unchanged(updates_path, read_before, "read-only GET")
 
             response = client.get("/api/updates")
+            assert response.status_code == 200
+            assert response.get_json() == _fixture()
+            assert initialize_calls == []
+            _assert_unchanged(updates_path, read_before, "default read-only GET")
+
+            response = client.get("/api/updates?ensure=1")
             assert response.status_code == 200
             assert response.get_json() == {
                 "2026-06-08": {

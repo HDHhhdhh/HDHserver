@@ -5,7 +5,7 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1';
+import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1&storeSafety=20261013';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -16,6 +16,8 @@ import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
 import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
 import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
+import { patchDemoExtraAttendance } from './extraAttendContract.js';
+import { demoVideoRevision, validateDemoVideoWrite } from './videoCatalogContract.js';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -235,6 +237,11 @@ function normalizeFetchRequest(input, init = {}) {
 async function handleDemoApiRequest(request, input, init, demo) {
   const { method, url } = request;
   const path = normalizePath(url.pathname);
+  if (method === 'POST' && path === '/api/updates/ensure-today') {
+    return demoJson(cloneDemoValue(loadDemoStore().updates || {}), {
+      handler: 'bootstrap-fallback',
+    });
+  }
 
   const homeworkBody = method === 'GET' ? {} : await readJsonBody(input, init);
   const homeworkStore = loadDemoStore();
@@ -304,30 +311,11 @@ async function handleDemoApiRequest(request, input, init, demo) {
   }
 
   if (method === 'PATCH' && path === '/api/extra-attend') {
-    const rawDates = homeworkBody?.dates && typeof homeworkBody.dates === 'object'
-      ? homeworkBody.dates
-      : { [homeworkBody?.date]: homeworkBody?.sids };
-    const dates = {};
-    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
-      const date = canonicalDate(rawDate);
-      if (!date || !Array.isArray(rawSids)) {
-        return demoJson({ ok: false, error: 'invalid date or sids' }, {
-          status: 400,
-          handler: 'bootstrap-fallback',
-        });
-      }
-      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
-    }
-    const store = loadDemoStore();
-    store.extraAttend = store.extraAttend && typeof store.extraAttend === 'object' ? store.extraAttend : {};
-    Object.entries(dates).forEach(([date, sids]) => {
-      if (sids.length) store.extraAttend[date] = sids;
-      else delete store.extraAttend[date];
-    });
-    saveDemoStore(store);
-    return demoJson({ ok: true, dates, changedDates: Object.keys(dates) }, {
-      handler: 'bootstrap-fallback',
-    });
+    const latest = loadDemoStore();
+    const result = patchDemoExtraAttendance(latest, homeworkBody);
+    if (result.error) return demoJson({ ok: false, error: result.error }, { status: 400, handler: 'bootstrap-fallback' });
+    if (result.changed) saveDemoStore(latest);
+    return demoJson({ ok: true, dates: cloneDemoValue(result.dates), changedDates: result.changedDates }, { handler: 'bootstrap-fallback' });
   }
 
   if (method === 'POST' && path === '/api/makeup-carryover') {
@@ -396,6 +384,15 @@ async function handleDemoApiRequest(request, input, init, demo) {
     });
   }
 
+  if (method === 'POST' && path === '/api/videos') {
+    const store = loadDemoStore();
+    const error = validateDemoVideoWrite(store.videos || [], homeworkBody, requestHeader(request.headers, 'If-Match') || requestHeader(request.headers, 'X-Store-Revision'));
+    if (error) return demoJson({ ok: false, error: error.error }, { status: error.status, handler: 'bootstrap-fallback', headers: { 'X-Store-Revision': demoVideoRevision(store.videos || []) } });
+    store.videos = cloneDemoValue(homeworkBody);
+    saveDemoStore(store);
+    return new Response(null, { status: 204, headers: { 'X-Store-Revision': demoVideoRevision(store.videos), 'X-Admin-Demo-Handler': 'bootstrap-fallback' } });
+  }
+
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
     const responseStatus = Number(mutation?.__demoStatus) || (mutation?.ok === false ? 400 : 200);
@@ -412,6 +409,11 @@ async function handleDemoApiRequest(request, input, init, demo) {
   const responseHeaders = {};
   if (path === '/api/progress') {
     responseHeaders['X-Video-Watch-Cycles'] = '1';
+  } else if (path === '/api/extra-attend') {
+    responseHeaders['X-Extra-Attend-Patch-Modes'] = 'replace,delta';
+  } else if (path === '/api/videos') {
+    responseHeaders['X-Store-Revision'] = demoVideoRevision(payload);
+    responseHeaders['X-Video-Providers'] = 'kollus,youtube';
   } else if (path === '/api/makeup-carryover') {
     responseHeaders['X-Makeup-Carryover-Revision'] = demoRevision(payload);
   } else if (path === '/api/school-calendar') {

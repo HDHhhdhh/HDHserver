@@ -27,6 +27,9 @@ const $ = id => document.getElementById(id);
     Object.values(SUB).forEach(courses => courses.push(GICHUL_COURSE));
 
     let videos = [];
+    let videoCatalogRevision = "";
+    let videoCatalogLoaded = false;
+    let videoSaveBlocked = false;
     let youtubeSupported = false;
     const CT = { "Content-Type": "application/json" };
     const vidTable = $('vidTable');
@@ -151,11 +154,11 @@ const $ = id => document.getElementById(id);
     function updateCorrectionControls() {
         if (correctionModeBtn) {
             correctionModeBtn.hidden = correctionMode;
-            correctionModeBtn.disabled = !lastSavedVideoBody;
+            correctionModeBtn.disabled = !lastSavedVideoBody || videoSaveBlocked;
         }
         if (correctionDownloadBtn) correctionDownloadBtn.hidden = !correctionMode;
         if (correctionCancelBtn) correctionCancelBtn.hidden = !correctionMode;
-        if (saveVidBtn) saveVidBtn.disabled = correctionMode;
+        if (saveVidBtn) saveVidBtn.disabled = correctionMode || !videoCatalogLoaded || videoSaveBlocked;
         if (!correctionMode && correctionStatus) {
             correctionStatus.textContent = '수정 모드는 운영 데이터를 즉시 바꾸지 않고 별도 파일만 만듭니다.';
         }
@@ -175,6 +178,7 @@ const $ = id => document.getElementById(id);
             alert('일반 저장이 끝난 뒤 다시 시도하세요.');
             return;
         }
+        if (!videoCatalogLoaded || videoSaveBlocked) return;
         const confirmed = window.confirm(
             '수정 모드를 켜면 화면을 마지막 저장 상태로 되돌리고 시작합니다.\n' +
             '이후 편집은 서버에 저장되지 않으며, 수정안 파일로만 내려받습니다.'
@@ -383,14 +387,22 @@ const $ = id => document.getElementById(id);
     // 공통 초기 로드
     Promise.all([
         fetch('/api/videos', { cache: 'no-store' }).then(r => {
+            if (!r.ok) throw new Error(`영상 목록 불러오기 실패 (${r.status})`);
+            videoCatalogRevision = String(r.headers.get('X-Store-Revision') || '').trim();
             youtubeSupported = String(r.headers.get('X-Video-Providers') || '').split(',').includes('youtube');
             return r.json();
         })
     ]).then(([vids]) => {
+        if (!Array.isArray(vids)) throw new Error("영상 목록 형식이 올바르지 않습니다.");
         videos = vids;
+        videoCatalogLoaded = true;
         lastSavedVideoBody = JSON.stringify(videos);
         drawVid();
         updateCorrectionControls();
+    }).catch(error => {
+        videoSaveBlocked = true;
+        updateCorrectionControls();
+        setVideoSafetyNotice(error.message || "영상 목록을 불러오지 못했습니다. 새로고침해 주세요.", true);
     });
 
     /***** ───── 영상 관리 테이블 ───── */
@@ -625,6 +637,10 @@ const $ = id => document.getElementById(id);
             clearTimeout(autoSaveTimer);
             autoSaveTimer = null;
         }
+        if (!videoCatalogLoaded || videoSaveBlocked) {
+            toast("영상 목록을 새로고침한 뒤 저장해 주세요.");
+            return;
+        }
         syncVisibleVideoRowsFromTable();
         if (correctionMode) {
             updateCorrectionStatus('', false);
@@ -656,7 +672,7 @@ const $ = id => document.getElementById(id);
         saveInFlight = true;
         fetch('/api/videos', {
             method: 'POST',
-            headers: CT,
+            headers: { ...CT, ...(videoCatalogRevision ? { "If-Match": videoCatalogRevision } : {}) },
             body
         })
             .then(async res => {
@@ -667,13 +683,31 @@ const $ = id => document.getElementById(id);
                     error.payload = payload;
                     throw error;
                 }
+                const nextRevision = String(res.headers?.get?.("X-Store-Revision") || "").trim();
+                const lostRevision = Boolean(videoCatalogRevision && !nextRevision);
+                videoCatalogRevision = nextRevision;
                 lastSavedVideoBody = body;
-                setVideoSafetyNotice();
+                if (lostRevision) {
+                    videoSaveBlocked = true;
+                    queuedSaveMode = null;
+                    updateCorrectionControls();
+                    setVideoSafetyNotice("영상은 저장됐지만 저장 버전을 확인하지 못했습니다. 새로고침해 주세요.", true);
+                } else setVideoSafetyNotice();
                 toast(isAutoSave ? '영상 자동 저장 완료' : '영상 저장 완료');
             })
             .catch(err => {
                 if (err?.status === 409 && err?.payload?.error === VIDEO_IDENTITY_CHANGE_ERROR) {
                     showVideoIdentityBlocked(err.payload, err.payload.message);
+                    return;
+                }
+                if (err?.status === 428 || (err?.status === 409 && err?.payload?.error === "video_catalog_revision_conflict")) {
+                    videoSaveBlocked = true;
+                    queuedSaveMode = null;
+                    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+                    autoSaveTimer = null;
+                    updateCorrectionControls();
+                    setVideoSafetyNotice(err.message || "다른 화면에서 영상 목록이 변경됐습니다. 새로고침 후 다시 저장해 주세요.", true);
+                    toast("영상 목록이 변경됐습니다. 새로고침해 주세요.");
                     return;
                 }
                 console.error('[video-manage] save failed', err);
@@ -682,7 +716,7 @@ const $ = id => document.getElementById(id);
             })
             .finally(() => {
                 saveInFlight = false;
-                if (!queuedSaveMode) return;
+                if (videoSaveBlocked || !queuedSaveMode) return;
                 const mode = queuedSaveMode;
                 queuedSaveMode = null;
                 autoSaveClick = mode === 'auto';

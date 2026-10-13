@@ -156,10 +156,10 @@ def verify(source_root, guarded=True):
         ("/api/makeup-carryover", "GET", {}, "shared"),
         ("/api/makeup-carryover", "HEAD", {}, "shared"),
         ("/api/makeup-carryover", "POST", {}, "exclusive"),
-        ("/api/updates", "GET", {}, "exclusive"),
-        ("/api/updates", "GET", {"readOnly": "0"}, "exclusive"),
-        ("/api/updates", "GET", {"readOnly": "false"}, "exclusive"),
-        ("/api/updates", "GET", {"date": "2026-01-01"}, "exclusive"),
+        ("/api/updates", "GET", {}, "shared"),
+        ("/api/updates", "GET", {"readOnly": "0"}, "shared"),
+        ("/api/updates", "GET", {"readOnly": "false"}, "shared"),
+        ("/api/updates", "GET", {"date": "2026-01-01"}, "shared"),
         ("/api/updates", "GET", {"readOnly": "1"}, "shared"),
         ("/api/updates/", "GET", {"readOnly": " TRUE "}, "shared"),
         ("/api/updates", "HEAD", {"readOnly": "yes"}, "shared"),
@@ -168,7 +168,10 @@ def verify(source_root, guarded=True):
         ("/api/student/bootstrap", "GET", {"readOnly": "1"}, "exclusive"),
     ):
         assert absence_barrier_mode(path, method, query) == expected, (path, method, query)
-    assert absence_barrier_mode("/api/updates", "GET") == "exclusive", "legacy callers stay fail-closed"
+    assert absence_barrier_mode("/api/updates", "GET") == "shared", "default GET is storage-only"
+    assert absence_barrier_mode("/api/updates", "GET", {"ensure": "1"}) == "exclusive"
+    assert absence_barrier_mode("/api/updates", "GET", {"ensure": "1", "readOnly": "yes"}) == "shared"
+    assert absence_barrier_mode("/api/updates/ensure-today", "POST") == "exclusive"
     print(f"date boundary checks passed: {cases} actual route cases; invalid inputs avoid lease/I/O; academy precedence, JSON parser, valid lease and D-04 preserved")
 
 

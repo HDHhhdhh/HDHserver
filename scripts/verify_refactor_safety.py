@@ -813,6 +813,14 @@ def run_hub_projection_render_checks() -> None:
         [sys.executable, "scripts/verify_student_bootstrap_projection_scope.py"],
         ["node", "scripts/verify_video_catalog_render.mjs"],
         ["node", "scripts/verify_video_catalog_interactions.mjs", "--expect-optimized"],
+        [sys.executable, "scripts/verify_store_revision_guard.py"],
+        [sys.executable, "scripts/verify_updates_read_ensure.py"],
+        ["node", "scripts/verify_admin_post_strict.mjs"],
+        ["node", "scripts/verify_updates_ensure_demo.mjs"],
+        ["node", "scripts/verify_p3_demo_contracts.mjs"],
+        ["node", "scripts/verify_video_catalog_revision_ui.mjs"],
+        ["node", "scripts/verify_extra_modal_write_guards.mjs"],
+        ["node", "scripts/verify_calendar_write_guards.mjs"],
         ["node", "scripts/verify_test_catalog_render_projection.mjs"],
         ["node", "scripts/verify_test_catalog_selection_save.mjs"],
         ["node", "scripts/verify_test_catalog_csv_index.mjs"],
@@ -3590,7 +3598,12 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         _assert_unit(response.status_code == 200 and response.get_json() == store["updates"], "read-only updates fetch returns the stable snapshot")
         _assert_unit(not init_calls, "read-only updates fetch never invokes automatic assignment")
         response = client.get("/api/updates")
-        _assert_unit(response.status_code == 200 and init_calls, "the normal updates fetch keeps the date-boundary initializer")
+        _assert_unit(response.status_code == 200 and not init_calls, "default updates GET keeps the stored snapshot without initialization")
+        response = client.post("/api/updates/ensure-today", json={})
+        _assert_unit(response.status_code == 200 and init_calls, "the explicit POST keeps the real-today initializer")
+        init_calls.clear()
+        response = client.get("/api/updates?ensure=1")
+        _assert_unit(response.status_code == 200 and init_calls, "compatibility GET preserves the old initializer")
         init_calls.clear()
 
         _assert_unit(client.get("/api/students").status_code == 200, "student collection GET remains available")
@@ -4094,12 +4107,14 @@ def run_video_assignment_boundary_source_checks() -> None:
         "today refresh must centralize date-boundary assignment hydration",
     )
     _assert_unit(
-        "const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;" in today_js,
-        "today refresh must initialize assignments only for a real/date-change boundary",
+        "const initialize = realDate !== lastAutoAssignmentBoundaryDate;" in today_js
+        and "const boundary = reason === 'date' || initialize;" in today_js,
+        "today refresh must distinguish selected-date reads from real-today initialization",
     )
     _assert_unit(
-        "const updates = await api.get('/api/updates', { cache: 'no-store' });" in today_js,
-        "date-boundary refresh must use the normal initializing updates endpoint",
+        "await api.postStrict('/api/updates/ensure-today', {}, 'today assignment boundary', { cache: 'no-store' })" in today_js
+        and "await api.getStrict('/api/updates', 'selected date assignment refresh', { cache: 'no-store' })" in today_js,
+        "assignment boundary uses checked POST for real-today and storage-only GET for selected dates",
     )
     _assert_unit(
         "document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));" in today_js,
@@ -7870,7 +7885,7 @@ def run_admin_wave_b_source_checks() -> None:
 
     _assert_unit(
         all(snippet in state_js for snippet in (
-            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.postStrict('/api/updates/ensure-today', {}, 'admin bootstrap assignments', { cache: 'no-store' })",
             "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
             "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
         )),
@@ -7921,7 +7936,7 @@ def run_admin_wave_b_source_checks() -> None:
             f"deferred bootstrap state must retain its compatibility default: {compatibility_default}",
         )
     for critical_call in [
-        "api.getStrict('/api/updates'",
+        "api.postStrict('/api/updates/ensure-today'",
         "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`",
         "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`",
     ]:
@@ -7995,7 +8010,7 @@ def run_admin_api_wrapper_usage_source_checks() -> None:
         "strict shared JSON helper must preserve ensureOk error labels",
     )
     _assert_unit(
-        "import { fetchJson, fetchJsonChecked, fetchJsonOr, sendJson } from '../../shared/api.js';" in admin_api_js,
+        "import { ensureOk, fetchJson, fetchJsonChecked, fetchJsonOr, sendJson } from '../../shared/api.js';" in admin_api_js,
         "admin API wrapper must import the strict JSON helper",
     )
     _assert_unit(
@@ -8012,7 +8027,7 @@ def run_admin_api_wrapper_usage_source_checks() -> None:
     )
     _assert_unit(
         all(snippet in state_js for snippet in (
-            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.postStrict('/api/updates/ensure-today', {}, 'admin bootstrap assignments', { cache: 'no-store' })",
             "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
             "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
         )),
@@ -8134,7 +8149,7 @@ const payloadFor = (url) => {
   if (value === '/api/students') return [];
   if (value === '/api/videos') return [];
   if (value === '/api/materials') return { optional: 'materials' };
-  if (value === '/api/updates') return { strict: 'updates' };
+  if (value === '/api/updates/ensure-today') return { strict: 'updates' };
   if (value === '/api/mat-assign') return {};
   if (value === '/api/extra-attend') return {};
   if (value.startsWith('/api/logs?date=')) return { strict: 'logs' };
@@ -8169,7 +8184,7 @@ const stateModule = await import(moduleUrl('static/js/admin/core/state.js', 'boo
 let calls = [];
 globalThis.fetch = async (url) => {
   calls.push(String(url));
-  if (String(url) === '/api/updates') return response('updates down', 503);
+  if (String(url) === '/api/updates/ensure-today') return response('updates down', 503);
   return response(payloadFor(url));
 };
 let strictFailed = false;
@@ -8177,10 +8192,10 @@ try {
   await stateModule.bootstrap();
 } catch (err) {
   strictFailed = true;
-  ok(String(err?.message || '').includes('admin bootstrap /api/updates'), 'strict bootstrap error keeps label');
+  ok(String(err?.message || '').includes('admin bootstrap assignments'), 'strict bootstrap error keeps label');
 }
 ok(strictFailed, 'critical bootstrap failure must reject');
-ok(calls.includes('/api/updates'), 'critical updates endpoint was requested');
+ok(calls.includes('/api/updates/ensure-today'), 'critical updates endpoint was requested');
 
 globalThis.fetch = async (url) => {
   if (String(url) === '/api/materials') throw new Error('materials offline');
@@ -10891,7 +10906,7 @@ def run_admin_weekend_slot_behavior_checks() -> None:
         "admin demo mirrors the live nested weekend-slot patch contract",
     )
     _assert_unit(
-        "{ date: today, sids: selectedIds }" in extra_source
+        "{ deltas: { [today]: Object.fromEntries([" in extra_source
         and "{ method: 'PATCH' }" in extra_source
         and "JSON.stringify(state.extra)" not in extra_source,
         "extra-attendance modal saves only its frozen date",
@@ -10905,7 +10920,7 @@ def run_admin_weekend_slot_behavior_checks() -> None:
     )
     _assert_unit(
         "method === 'PATCH'" in demo_source
-        and "const rawDates = body?.dates" in demo_source
+        and "patchDemoExtraAttendance(latest, body)" in demo_source
         and "makeup_revision_conflict" in demo_source,
         "admin demo mirrors extra-attend patches and makeup revision conflicts",
     )

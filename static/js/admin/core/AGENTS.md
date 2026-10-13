@@ -31,6 +31,8 @@ Admin core modules own the selected date, bootstrap state, shared API wrapper, t
 - Do not replace whole runtime maps from core after a row-scoped refresh.
 - Do not remove compatibility globals until every dependent feature module is migrated.
 
+- Bootstrap initializes real-today assignments through checked `api.postStrict`; selected-date reads use storage-only GET. Reject invalid critical root shapes before publishing state or mounting save controls.
+
 ## Verification
 - After selected-date changes, reload `/admin` and confirm the date bar updates plus `admin:date-change` listeners refresh.
 - After `state.js` changes, verify bootstrap loads logs and progress for the intended date scope.

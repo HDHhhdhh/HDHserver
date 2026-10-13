@@ -71,6 +71,8 @@ async function verifyCalendarParallelPreload() {
      let WEEKEND = { old: 'weekend' };
      let CARRYOVER = { old: 'carryover' };
      let preloadExtraWeekendPromise = null;
+     let calendarPreloadError = null;
+     const fetchJsonChecked = async (url) => { const response = await fetch(url); if (!response.ok) throw new Error('fixture HTTP failure'); return response.json(); };
      let calendarMutationGeneration = 0;
      let calendarReadGeneration = 0;
      const state = {};
@@ -92,7 +94,7 @@ async function verifyCalendarParallelPreload() {
   const run = buildRunner(
     url => {
       calls[url] = (calls[url] || 0) + 1;
-      return delayResult(starts, url, startedAt, { [url]: true }).then(payload => ({ json: () => payload }));
+      return delayResult(starts, url, startedAt, { [url]: true }).then(payload => ({ ok: true, status: 200, json: () => payload }));
     },
     () => {
       calls.carryover = (calls.carryover || 0) + 1;
@@ -169,6 +171,8 @@ async function verifyCalendarRecalculation() {
   const runner = new Function('load', 'day', `
     let EXTRA, WEEKEND, CARRYOVER, countMap;
     let preloadExtraWeekendPromise = null;
+     let calendarPreloadError = null;
+     const fetchJsonChecked = async (url) => { const response = await fetch(url); if (!response.ok) throw new Error('fixture HTTP failure'); return response.json(); };
     let calendarMutationGeneration = 0;
     let calendarReadGeneration = 0;
     ${projectionState}
@@ -182,7 +186,7 @@ async function verifyCalendarRecalculation() {
     function CustomEvent(type) { this.type = type; }
     const rendered = [];
     const calendar = { view: { activeStart: new Date(day), activeEnd: new Date('2026-10-03') } };
-    const fetch = url => { const payload = load(url); return Promise.resolve({ json: () => payload }); };
+    const fetch = url => { const payload = load(url); return Promise.resolve({ ok: true, status: 200, json: () => payload }); };
     const fetchMakeupCarryoverSnapshot = () => load('carryover');
     const fetchAbsentSnapshot = () => load('absent');
     const applyAbsentPayload = value => { state.absentByDate = value; };

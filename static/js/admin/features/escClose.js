@@ -48,6 +48,7 @@ export function initEscClose() {
     if (!el || getComputedStyle(el).display === 'none') return;
     const closeOwner = {
       extraModal: window.closeExtraAttendancePopup,
+      selectionModal: window.closeCalendarSelectionPopup,
       attendModal: window.closeDateAttendancePopup,
       absentRegisterModal: window.closeAbsentRegistrationPopup,
       logModal: window.closeStudentWorkPopups,

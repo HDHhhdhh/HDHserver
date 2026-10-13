@@ -103,7 +103,9 @@ def consistency_checks():
     for url in ("/api/tests/quick-printer-export", "/api/tests/quick-printer-export/preview"):
         assert absence_barrier_mode(url, "POST") == "exclusive"
     assert absence_barrier_mode("/api/arrive-time/missing-leave-summary", "GET") == "shared"
-    assert absence_barrier_mode("/api/updates", "GET") == "exclusive"
+    assert absence_barrier_mode("/api/updates", "GET") == "shared"
+    assert absence_barrier_mode("/api/updates", "GET", {"ensure": "1"}) == "exclusive"
+    assert absence_barrier_mode("/api/updates/ensure-today", "POST") == "exclusive"
     assert absence_barrier_mode("/api/student/bootstrap", "GET") == "exclusive"
     assert absence_barrier_mode("/api/absent", "POST") is None
     with tempfile.TemporaryDirectory(prefix="verify-read-cohort-") as tmp:

@@ -90,7 +90,7 @@
 2. 선택 날짜가 바뀌면 그 날짜의 출결, 순서, 로그, 영상/시험 상태를 다시 hydrate한 뒤 렌더링한다.
 3. 출석·결석·보강·도착·연락·오늘 순서는 각 전용 PATCH/POST 흐름으로 부분 갱신한다.
 4. 학생별 로그와 숙제는 의미 있는 기존 값을 빈 문자열로 지우지 않는 merge-safe 규칙으로 저장한다.
-5. 영상 자동 배정은 실제 KST 오늘 날짜가 시작된 뒤 bare `GET /api/updates`, 관리자 날짜 경계 감지, 비공개 오늘 bootstrap, 오늘 일정 사건이 누락된 오늘 snapshot을 최초 생성할 때만 일어난다. 미래 날짜는 자동 snapshot을 미리 저장하지 않으며, 관리자 모달은 read-only updates 조회를 사용한다.
+5. 영상 자동 배정은 실제 KST 오늘 날짜가 시작된 뒤 관리자 `POST /api/updates/ensure-today`, 실제 오늘 날짜 경계 감지, 비공개 오늘 bootstrap, 오늘 일정 사건이 누락된 오늘 snapshot을 최초 생성할 때만 일어난다. 미래 날짜는 자동 snapshot을 미리 저장하지 않으며, 관리자 모달은 read-only updates 조회를 사용한다.
 6. 학생 시청은 `watch.json`에 위치·길이·완료·시각을 저장하고 자동 상태를 `progress.json`에 투영한다.
 7. 시험 배정·답지 링크·과거 기록 조회는 유지하지만 학생 시험 제출은 제공하지 않는다.
 8. 완료·하원·숙검하원은 서로 다른 정책이다. 상태 변경이 없는 버튼을 상태 완료와 혼동하지 않는다.
@@ -217,6 +217,7 @@
 - 영상 관리 화면은 Kollus 또는 YouTube URL을 해석하며 `routes/api_videos.py`의 `/api/videos` POST는 잠금 안에서 카탈로그 전체를 저장한다. 일반 모드에서는 새 행 추가와 제목·챕터·과정·같은 MID의 URL 보정만 허용한다.
 - 기존 안정 ID가 사라지거나 같은 ID의 URL-derived MID가 달라지면 서버는 쓰기 전에 409를 반환하고 화면은 마지막 저장 상태로 복구한다. 일반 POST에 우회 flag는 없다. 수정 모드는 마지막 저장본을 기준으로 브라우저에서 별도 JSON 초안만 만들며 서버 POST를 하지 않는다. 실제 적용은 `apply_video_catalog_correction.ps1`의 dry-run → Waitress 정지 → 런타임 백업/hash 확인 → 4개 store 일관 변환 → 재시작 절차로만 수행한다.
 - 실제 사용 순서는 [VIDEO_CATALOG_CORRECTION_MODE.md](VIDEO_CATALOG_CORRECTION_MODE.md)를 따른다.
+- 영상 목록 GET과 성공 204 저장은 `X-Store-Revision`/ETag를 반환한다. 일반 저장의 identity 검사 뒤 같은 VID 잠금 안에서 `If-Match`를 비교한다. 오래된 버전은 409, 잘못된 버전은 428이며 저장하지 않는다. `JSON_STORE_REVISION_MODE=soft`는 버전 없는 옛 호출만 경고 후 허용한다. strict는 버전 없는 호출도 428이다. 초기 로드 실패나 충돌 뒤 화면은 저장 대기를 중단하고 새로고침을 요구한다.
 
 <a id="youtube-gichul-overlay"></a>
 ### YouTube와 기출엄선 병행 (2026-09-13 승인)
@@ -246,7 +247,8 @@
 
 ### 자동 배정 불변식
 
-- 서버 자동 배정의 최초 생성 진입점은 실제 오늘을 대상으로 한 bare `GET /api/updates`, 관리자 30초 날짜 경계 감지, 비공개 real-today 학생 bootstrap, 오늘 보강·weekend slot 변경이다. 서버가 자정에 실행 중인 관리자 화면을 만나면 30초 이내 생성하고, 화면이 닫혀 있으면 첫 오늘 관리자/학생 접근이 같은 멱등 함수를 실행한다. 미래 보강·일정 변경과 미래 날짜 조회는 storage-only이며 `source: "auto"`를 만들지 않는다. 관리자 영상 모달은 반드시 `/api/updates?readOnly=1`로 연다.
+- 서버 자동 배정의 최초 생성 진입점은 실제 오늘을 대상으로 한 관리자 `POST /api/updates/ensure-today`, 관리자 30초 실제 오늘 경계 감지, 비공개 real-today 학생 bootstrap, 오늘 보강·weekend slot 변경이다. 서버가 자정에 실행 중인 관리자 화면을 만나면 30초 이내 생성하고, 화면이 닫혀 있으면 첫 오늘 관리자/학생 접근이 같은 멱등 함수를 실행한다. 미래 보강·일정 변경과 미래 날짜 조회는 storage-only이며 `source: "auto"`를 만들지 않는다. 관리자 영상 모달은 반드시 `/api/updates?readOnly=1`로 연다.
+- `/api/extra-attend` PATCH는 기존 날짜 명단 교체와 `deltas:{date:{sid:true|false}}`를 지원한다. delta는 EXTRA 잠금 안에서 요청한 SID만 추가·제거하고 다른 SID, 순서, 날짜를 유지한다. 응답 `dates`는 실제 저장 결과이며 후속 슬롯·등원 처리에 사용한다. 캘린더는 열 때의 선택 기준과 저장 직전 명단을 합쳐 원격 추가와 퇴원 SID를 보존한다. 필요한 조회 실패 시 첫 저장부터 차단한다.
 - 실제 오늘을 명시한 `/api/extra-attend` PATCH는 저장 내용이 이미 같아 `changedDates`가 비어도 멱등 자동 초기화를 다시 실행한다. 앞선 동일 요청이 `extra_attend.json` 저장 뒤 후처리에서 실패했을 수 있기 때문이다. 첫 실패는 성공으로 숨기지 않고 오류 응답을 유지하며, 동일 payload 재시도는 저장소를 다시 바꾸지 않은 채 후처리를 복구한다. Weekend slot과 학생 일정·과정 수정은 원래부터 요청/필드 기준으로 동일 후처리를 다시 실행한다. 정상 성공 status·body는 바꾸지 않는다.
 - `updates.json`은 파일이 없을 때만 빈 object `{}`로 해석한다. 파일이 존재하지만 읽을 수 없거나 최상위 값이 object가 아니면 조회·PATCH·자동 초기화·자습 reconcile을 503으로 닫고 원본 바이트를 그대로 보존한다. 손상 상태를 빈 배정으로 바꾸어 저장해서는 안 된다.
 - 대상은 정규 수업 또는 보강 등록 학생이며 결석과 `done` 로그는 제외한다. 자습은 일반 대상 판정과 분리된 명시적 일일 모드다.
@@ -412,7 +414,7 @@
 
 ### 결석 조회 snapshot 경계
 
-`core/request_consistency.py`가 관련 HTTP 경로를 분류한다. 빠른 인쇄 preview/export와 하원 누락 요약도 결석 coordinator를 통과한다. 명시적인 storage-only GET은 같은 프로세스의 짧은 read cohort로 하나의 interprocess lease를 공유하고, 마지막 조회가 끝날 때까지 다른 스레드·프로세스의 결석 쓰기를 배제한다. 일반 mutation, 자동 배정 가능한 updates/bootstrap GET은 공유 조회로 분류하지 않아 잠금 승격을 피한다. 기존 rollback·recovery·동일 컨텍스트 재진입 계약은 유지한다.
+`core/request_consistency.py`가 관련 HTTP 경로를 분류한다. 빠른 인쇄 preview/export와 하원 누락 요약도 결석 coordinator를 통과한다. 명시적인 storage-only GET은 같은 프로세스의 짧은 read cohort로 하나의 interprocess lease를 공유하고, 마지막 조회가 끝날 때까지 다른 스레드·프로세스의 결석 쓰기를 배제한다. 일반 mutation, 호환 초기화 updates GET과 오늘 bootstrap GET은 공유 조회로 분류하지 않아 잠금 승격을 피한다. 기존 rollback·recovery·동일 컨텍스트 재진입 계약은 유지한다.
 
 루트 SQLite 정본은 `app.sqlite` 하나다. 데이터가 없고 코드 참조도 없던 구형 `vacation.db`는 2026-08-24 백업 후 제거했으며 다시 만들지 않는다.
 
@@ -560,7 +562,7 @@ python scripts/verify_refactor_safety.py --smoke
 - identity가 설정된 뒤 `persons.json`, `students.json` 또는 pending journal 일부가 손실되면 관련 학생 쓰기는 503으로 닫힌다. 빈 person directory를 자동 생성해 우회하지 않는다.
 - `progress.json`은 크고 날짜/sid keyed다. 프런트 전체 파일 교체를 하지 않는다.
 - 학생 bootstrap GET과 일부 GET은 보장/마이그레이션 쓰기를 할 수 있다.
-- bare `GET /api/updates`는 이름과 달리 자동 배정 쓰기를 할 수 있다. 검사·모달 hydrate에는 반드시 `?readOnly=1`을 사용한다.
+- 기본 `GET /api/updates`는 저장소 조회만 한다. 관리자 초기 로드와 실제 오늘 경계는 `POST /api/updates/ensure-today`로 기존 멱등 초기화를 호출한다. 선택 날짜 변경은 읽기만 한다. 호환 `?ensure=1` 또는 `UPDATES_GET_ENSURE=1`은 경고를 기록하고 초기화를 허용하며, `readOnly=1/true/yes`가 이를 우선 차단한다. 학생 bootstrap의 rebase·결석 coordinator는 유지한다.
 - 기존 영상 MID 변경·삭제는 일반 `/api/videos`에서 계속 409로 차단한다. 구현된 수정 모드는 운영 POST 없이 버전된 초안을 다운로드하고, 실제 적용은 이중 확인·서버 정지·확정 백업 hash·4-store readback·실패 롤백을 강제한다. 참조가 남은 삭제는 자동 거부한다.
 - watch `updatedAt`의 32비트 절단은 제거됐고 서버 수신 교정도 추가됐다. 관련 정규화나 병합을 바꿀 때 millisecond wire 회귀 검사를 함께 갱신한다.
 - `/api/kollus/lms-callback`은 `KOLLUS_CALLBACK_SECRET`이 비어 있으면 403으로 fail-closed하며, 설정된 secret 또는 서명 토큰을 검증한다. 운영에서는 secret 설정과 `verify_kollus_callback_auth.py` 검사를 유지한다.

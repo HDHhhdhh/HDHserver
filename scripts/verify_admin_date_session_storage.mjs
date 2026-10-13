@@ -549,6 +549,7 @@ function createCalendarLoaderFixture() {
     'applyAbsentPayload', 'state', 'window', 'ymd', 'yoil', 'MAKEUP_SLOTS', 'hasWeekday',
     'addSlotCounts', 'getCountSlots', 'getMakeupSlots', 'parseSlotNumbers',
     `let countMap = {}, EXTRA = {}, WEEKEND = {}, CARRYOVER = {};
+     const fetchJsonChecked = async (url) => { const response = await fetch(url); if (!response.ok) throw Error('fixture HTTP failure'); return response.json(); };
      ${calendarBlock('  let preloadExtraWeekendPromise = null;', '  // 슬롯 버튼')}
      ${calendarBlock('  function invalidateCalendarPreload()', '  function syncCalendarCellRatio()')}
      ${calendarBlock('  async function fetchCountsForRange(start, end)', '  function refreshCountBadges()')}
@@ -561,7 +562,7 @@ function createCalendarLoaderFixture() {
      };`,
   );
   const loader = factory(
-    url => request(url).then(payload => ({ json: async () => payload })),
+    url => request(url).then(payload => ({ ok: true, status: 200, json: async () => payload })),
     () => request('/api/makeup-carryover').then(payload => ({ payload, revision: 'fixture-revision' })),
     () => request('/api/absent'),
     payload => payload,
@@ -708,7 +709,7 @@ equal(
   'visible projections must reject a superseded range after the shared actual preload',
 );
 equal(
-  /async function preloadExtraWeekend\(\) \{\s*while \(true\) \{\s*if \(!preloadExtraWeekendPromise\)/.test(calendarSource),
+  /async function preloadExtraWeekend\(\{ forWrite = false \} = \{\}\) \{[\s\S]*?while \(true\) \{\s*if \(!preloadExtraWeekendPromise\)/.test(calendarSource),
   true,
   'action preloads must retain one shared pending read and retry only after a mutation invalidates it',
 );

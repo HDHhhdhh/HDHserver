@@ -29,7 +29,7 @@ function harness(candidate, hold=''){
     const u=new URL(url,'http://fixture.invalid'), d=u.searchParams.get('date')||A;
     if(u.pathname==='/api/students')return students(n);
     if(u.pathname==='/api/absent')return {by_date:{},by_student:{},by_slot:{}};
-    if(u.pathname==='/api/updates')return {[real]:{S1:{videos:['M1'],source:'auto'}}};
+    if(u.pathname==='/api/updates'||u.pathname==='/api/updates/ensure-today')return {[real]:{S1:{videos:['M1'],source:'auto'}}};
     if(u.pathname==='/api/logs/unarchived-summary'||u.pathname==='/api/arrive-time/missing-leave-summary')return {rowsAvailable:true,rows:[],total:0,byDate:[]};
     if(u.pathname==='/api/logs')return {[d]:{S1:{notes:'한글 메모',done:false},S2:{done:false}}};
     if(u.pathname==='/api/progress'){
@@ -43,12 +43,12 @@ function harness(candidate, hold=''){
     return {};
   };
   const fetch=(url,init={})=>{
-    assert.equal(init.method||'GET','GET');
+    assert.equal(init.method||'GET',url==='/api/updates/ensure-today'?'POST':'GET'); if(url==='/api/updates/ensure-today') assert.equal(init.body,'{}');
     const value=clone(payload(String(url),version));
     let finish;
     const gate=new Promise(resolve=>{finish=()=>resolve({ok:true,status:200,json:async()=>clone(value)});});
-    const read={url:String(url),version,finish}; reads.push(read);
-    const held=holding==='all'||(holding==='students'&&url==='/api/students')||(holding==='updates'&&url==='/api/updates');
+    const read={url:String(url),method:init.method||'GET',version,finish}; reads.push(read);
+    const held=holding==='all'||(holding==='students'&&url==='/api/students')||(holding==='updates'&&url.startsWith('/api/updates'));
     if(!held)finish();
     return gate;
   };
@@ -69,7 +69,7 @@ function harness(candidate, hold=''){
     console:{log(){},warn(){},error(){}},
     CustomEvent:function(type,init){this.type=type;this.detail=init?.detail;},
     getAdminDate:()=>selected,todayLocalKey:()=>real,isSelfStudyScheduledForDate:()=>false,
-    api:{get:async(url,init)=>(await fetch(url,init)).json()},
+    api:{get:async(url,init)=>(await fetch(url,init)).json(),getStrict:async(url,label,init)=>(await fetch(url,init)).json(),postStrict:async(url,data,label,init)=>(await fetch(url,{...init,method:'POST',body:JSON.stringify(data)})).json()},
     normalizeSearch:value=>String(value||'').trim(),searchKeyForText:String,
     todayStudentSearchKey:()=>'',matchesSearchKey:()=>true,applySearchPlaceholder(){},
     countPendingMakeupsBySid:()=>({}),scheduledMakeupStudentIdsForDate:()=>[],
@@ -119,7 +119,7 @@ async function run(candidate){
     await drain(); h.setDate(B); const b=h.load({force:true,reason:'date'}); await drain();
     h.release(); await Promise.all([a,b]); await drain();
     assert.ok(h.renders.every(r=>r.date===B));
-    observed.dateSwitch={bareUpdates:h.count('/api/updates'),renderDates:h.renders.map(r=>r.date)};
+    observed.dateSwitch={assignmentReads:h.count('/api/updates'),ensurePosts:h.reads.filter(r=>r.method==='POST').length,renderDates:h.renders.map(r=>r.date)}; assert.equal(observed.dateSwitch.ensurePosts,0,'selected date changes never initialize real-today assignments');
   }
   {
     const h=harness(candidate); await h.load(); await drain();
@@ -164,7 +164,7 @@ async function run(candidate){
     assert.equal(h.count('/api/updates'),candidate?1:2);
     h.release();await Promise.all([a,b]);await drain();
     assert.ok(h.state.updates[B]);
-    assert.equal(h.count('/api/updates?'),0,'today boundary keeps the bare side-effectful URL');
+    assert.equal(h.count('/api/updates?'),0,'assignment refresh uses explicit GET or POST, without query side effects');
   }
   {
     const h=harness(candidate,'updates'), old=h.load({force:true,reason:'date'});await drain();
@@ -178,7 +178,7 @@ async function run(candidate){
     const h=harness(candidate,'updates');h.setReal(B);
     const old=h.auto();await drain();
     h.setReal('2026-10-03');const fresh=h.auto();await drain();
-    const requests=h.reads.filter(r=>r.url==='/api/updates');
+    const requests=h.reads.filter(r=>r.url.startsWith('/api/updates'));
     requests[1].finish();await drain();requests[0].finish();h.release();await Promise.all([old,fresh]);await drain();
     observed.boundaryReversal={dates:Object.keys(h.state.updates),bareUpdates:h.count('/api/updates')};
     assert.deepEqual(Object.keys(h.state.updates),['2026-10-03']);

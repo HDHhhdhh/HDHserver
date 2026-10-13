@@ -111,6 +111,45 @@ def _normalize_extra_attend_patch(payload) -> dict[str, list[str]]:
     return normalized
 
 
+def _normalize_extra_attend_deltas(payload) -> dict[str, dict[str, bool]]:
+    if not isinstance(payload, dict) or any(key in payload for key in ("dates", "date", "sids")):
+        raise ValueError("deltas cannot be mixed with replacement fields")
+    deltas = payload.get("deltas")
+    if not isinstance(deltas, dict) or not deltas:
+        raise ValueError("deltas must be a non-empty date object")
+    normalized = {}
+    for raw_date, raw_mapping in deltas.items():
+        date_key = str(raw_date or "").strip()
+        if not is_iso_date_key(date_key):
+            raise ValueError("invalid date")
+        if not isinstance(raw_mapping, dict):
+            raise ValueError("delta mapping must be an object")
+        mapping = {}
+        for raw_sid, present in raw_mapping.items():
+            sid = str(raw_sid or "").strip()
+            if not sid or type(present) is not bool:
+                raise ValueError("delta requires a SID and an exact JSON boolean")
+            if is_ghost_student_sid(sid):
+                raise PermissionError(GHOST_STUDENT_WRITE_ERROR)
+            if sid in mapping:
+                raise ValueError("duplicate normalized sid")
+            mapping[sid] = present
+        normalized[date_key] = mapping
+    return normalized
+
+
+def _apply_extra_attend_delta(previous_sids, mapping) -> list:
+    # Keep untouched legacy values and order; alter only the addressed SID.
+    next_sids = list(previous_sids or [])
+    for sid, present in mapping.items():
+        if present:
+            if not any(str(value).strip() == sid for value in next_sids):
+                next_sids.append(sid)
+        else:
+            next_sids = [value for value in next_sids if str(value).strip() != sid]
+    return next_sids
+
+
 def _extra_attend_sids(value) -> set[str]:
     if not isinstance(value, list):
         return set()
@@ -120,10 +159,14 @@ def _extra_attend_sids(value) -> set[str]:
 @bp_api_schedule_overrides.route("/api/extra-attend", methods=["GET", "PATCH"])
 def api_extra_attend():
     if request.method == "GET":
-        return jsonify(_read_schedule_map(EXTRA_PATH))
+        response = jsonify(_read_schedule_map(EXTRA_PATH))
+        response.headers["X-Extra-Attend-Patch-Modes"] = "replace,delta"
+        return response
 
     try:
-        date_patch = _normalize_extra_attend_patch(request.get_json(silent=True))
+        payload = request.get_json(silent=True)
+        delta_patch = _normalize_extra_attend_deltas(payload) if isinstance(payload, dict) and "deltas" in payload else None
+        date_patch = {date: [] for date in delta_patch} if delta_patch is not None else _normalize_extra_attend_patch(payload)
     except PermissionError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 403
     except ValueError as exc:
@@ -139,11 +182,17 @@ def api_extra_attend():
             previous_sids = previous_map.get(date_key)
             if previous_sids is not None and not isinstance(previous_sids, list):
                 raise ScheduleStoreError("malformed_extra_day")
+            if delta_patch is not None:
+                sids = _apply_extra_attend_delta(previous_sids, delta_patch[date_key])
+                date_patch[date_key] = sids
             if _json_stable(previous_sids or []) == _json_stable(sids):
                 continue
             changed_dates.add(date_key)
-            affected_sids.update(_extra_attend_sids(previous_sids))
-            affected_sids.update(sids)
+            if delta_patch is None:
+                affected_sids.update(_extra_attend_sids(previous_sids))
+                affected_sids.update(sids)
+            else:
+                affected_sids.update(_extra_attend_sids(previous_sids) ^ _extra_attend_sids(sids))
             if sids:
                 next_map[date_key] = sids
             else:

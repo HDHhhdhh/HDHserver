@@ -68,7 +68,7 @@ assert.ok(modalSource.includes("const activeSelectedRows = selectedRows.filter(r
 assert.equal((modalSource.match(/for \(const row of activeSelectedRows\)/g) || []).length, 2);
 assert.ok(modalSource.includes('if (!currentStudentIds.has(sid)) continue'));
 assert.ok(modalSource.includes("isLegacy ? 'disabled title="));
-assert.ok(calendarSource.includes('...legacyExtraAttendanceIds(state.students, [...previousExtraSet])'));
+assert.ok(calendarSource.includes('...legacyExtraAttendanceIds(state.students, openingExtraIds)'));
 assert.ok(modalSource.includes('saveScheduleOverridesFailClosed({'));
 assert.equal((calendarSource.match(/saveScheduleOverridesFailClosed\(\{/g) || []).length, 2);
 assert.equal((mainSource.match(/20260929-retired-extra1/g) || []).length, 2);
