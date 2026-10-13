@@ -299,6 +299,10 @@ def allocate_unique_sid(
         sid = f"{prefix}{suffix:03d}"
         if sid not in existing:
             return sid
+    for suffix in range(1000):
+        sid = f"{prefix}{suffix:03d}"
+        if sid not in existing:
+            return sid
     raise PersonIdentityConflictError("no unique SID suffix is available")
 
 

@@ -9,6 +9,7 @@ from urllib.parse import unquote
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from core.paths import BASE, STU_PATH
+from core.payload import PayloadError, expect_dict, student_name, student_update
 
 try:
     from core.paths import PERSONS_PATH, PERSON_IDENTITY_JOURNAL_PATH
@@ -149,13 +150,16 @@ def api_students():
 
 @bp_api_students.post("/api/add-student")
 def api_add_student():
-    data = dict(request.get_json(force=True) or {})
+    try:
+        data = dict(expect_dict(request.get_json(force=True)))
+        raw_name = student_name(data.get("name"))
+    except PayloadError as exc:
+        return jsonify({"ok": False, "error": "invalid_payload", "detail": str(exc)}), 400
     if GICHUL_OVERLAY_FIELD in data and type(data[GICHUL_OVERLAY_FIELD]) is not bool:
         return jsonify({"ok": False, "error": f"field must be a JSON boolean: {GICHUL_OVERLAY_FIELD}"}), 400
     data.pop("id", None)
     data.pop("personId", None)
     data.pop("cloneFromSid", None)
-    raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
     apply_able_auto_video_assign_default(data)
 
@@ -254,15 +258,10 @@ def api_delete_student(sid: str):
 
 @bp_api_students.post("/api/update")
 def api_update_student_field():
-    body = request.get_json(force=True) or {}
-    sid = body.get("id")
-    field = body.get("field")
-    value = body.get("value")
-
-    if not sid or not field:
-        abort(400)
-
-    field = str(field)
+    try:
+        sid, field, value = student_update(request.get_json(force=True))
+    except PayloadError as exc:
+        return jsonify({"ok": False, "error": "invalid_payload", "detail": str(exc)}), 400
     if field in {"id", "personId"}:
         return jsonify({"ok": False, "error": f"field is immutable: {field}"}), 400
     if field in {WHITE_REVIEW_PENDING_FIELD, GICHUL_OVERLAY_FIELD} and type(value) is not bool:
