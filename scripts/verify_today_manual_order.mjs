@@ -73,7 +73,7 @@ const stateContext = vm.createContext({
   fetch: async (url, init = {}) => {
     assert.equal(url, '/api/today_order');
     const method = init.method || 'GET';
-    if (method === 'GET') return {json:async()=>initial};
+    if (method === 'GET') return {ok:true,status:200,json:async()=>initial};
     assert.equal(method, 'PATCH');
     const body = JSON.parse(init.body); writes.push(body);
     return {ok:true,json:async()=>({order:body.order})};
@@ -113,9 +113,9 @@ for (const operation of ['save', 'clear']) {
             assert.equal(init.cache, 'no-store');
             if (holdRead) return new Promise((resolve, reject) => {
               settleRead = () => readFails ? reject(new Error('held read failed'))
-                : resolve({json: async () => JSON.parse(JSON.stringify(oldMap))});
+                : resolve({ok:true,status:200,json: async () => JSON.parse(JSON.stringify(oldMap))});
             });
-            return Promise.resolve({json: async () => JSON.parse(JSON.stringify(oldMap))});
+            return Promise.resolve({ok:true,status:200,json: async () => JSON.parse(JSON.stringify(oldMap))});
           }
           assert.equal(method, operation === 'save' ? 'PATCH' : 'DELETE');
           if (operation === 'save') {

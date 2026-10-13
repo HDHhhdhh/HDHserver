@@ -51,6 +51,7 @@ def verify(source_root, guarded=True):
     progress_bp = Blueprint("date_progress", __name__)
     progress = dict(globals(), bp_api_progress=progress_bp, nocache_resp=jsonify,
                     _load_progress_strict=lambda: io(), _progress_sids_from_query=lambda: [],
+                    read_progress_projection=lambda **kwargs: io(),
                     _progress_for_sids=lambda *args: {}, _progress_lock=lambda: io(),
                     is_ghost_student_sid=lambda sid: False,
                     _youtube_cleanup_inputs=lambda *args: io())

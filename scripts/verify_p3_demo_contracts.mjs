@@ -5,6 +5,7 @@ import { createDemoFetch } from '../static/js/admin/demo/fetch.js';
 import { loadDemoStore, saveDemoStore } from '../static/js/admin/demo/store.js';
 import { patchDemoExtraAttendance } from '../static/js/admin/demo/extraAttendContract.js';
 import { demoVideoRevision, validateDemoVideoWrite } from '../static/js/admin/demo/videoCatalogContract.js';
+import { demoAdminState, demoAdminRevisions } from '../static/js/admin/demo/adminStateContract.js';
 
 class MemoryStorage {
   values = new Map();
@@ -24,6 +25,7 @@ const functionSlice = (start, end) => bootstrap.slice(bootstrap.indexOf(start), 
 const context = vm.createContext({
   URL, Response, Date, console, cloneDemoValue: clone, loadDemoStore, saveDemoStore,
   patchDemoExtraAttendance, demoVideoRevision, validateDemoVideoWrite,
+  demoAdminState, demoAdminRevisions,
   normalizePath: path => path.replace(/\/+$/, ''),
   readJsonBody: async (_input, init) => JSON.parse(init.body || '{}'),
   applyDemoHomeworkRequest: () => null, applyStudentLogsRequest: () => null,
@@ -31,8 +33,10 @@ const context = vm.createContext({
   requestHeader: (headers, name) => Object.entries(headers || {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] || '',
   demoJson: (body, { status = 200, headers = {} } = {}) => new Response(JSON.stringify(body), { status, headers }),
 });
+vm.runInContext(functionSlice('function demoRevision(', '\nfunction requestHeader('), context);
 vm.runInContext(functionSlice('async function handleDemoApiRequest(', '\nfunction demoJson('), context);
 vm.runInContext(functionSlice('function fallbackPayloadForGet(', '\nfunction filterDateSidMap('), context);
+vm.runInContext(functionSlice('function filterDateSidMap(', '\nfunction installNavigationGuard('), context);
 const fallback = (path, init = {}) => context.handleDemoApiRequest({ method: init.method || 'GET', headers: init.headers, url: new URL(path, 'http://fixture.invalid') }, null, init, {});
 const send = (transport, path, body, headers = {}, method = 'POST') => transport(path, { method, headers, body: JSON.stringify(body) });
 
@@ -67,6 +71,23 @@ for (const [name, transport] of [['primary', fetch], ['fallback', fallback]]) {
   const ensure = await send(transport, '/api/updates/ensure-today', {});
   assert.deepEqual(await ensure.json(), ensureBefore.updates);
   assert.deepEqual(loadDemoStore(), ensureBefore);
+  const initial = await transport(`/api/admin/bootstrap?date=${date}`);
+  assert.equal(initial.status, 200, name);
+  const bootstrapPayload = await initial.json();
+  assert.equal(bootstrapPayload.date, date);
+  for (const [key, url] of Object.entries({
+    students: '/api/students', videos: '/api/videos', updates: '/api/updates',
+    logs: `/api/logs?date=${date}`, absent: '/api/absent', progress: `/api/progress?date=${date}`, schoolCal: '/api/school-calendar',
+  })) assert.deepEqual(bootstrapPayload[key], await (await transport(url)).json(), `${name} ${key}`);
+  const revisions = await (await transport(`/api/admin/revisions?date=${date}`)).json();
+  assert.equal(Object.keys(revisions.revisions).length, 17);
+  assert.equal((await transport('/api/admin/bootstrap?date=2026-02-30')).status, 400, name);
+  assert.equal((await transport('/api/admin/revisions?date=2026-02-30')).status, 400, name);
+  assert.equal((await transport('/api/progress')).status, 400, name);
+  assert.equal((await transport(`/api/progress?sid=${sidA}&since=2026-02-30`)).status, 400, name);
+  const historical = await (await transport(`/api/progress?sid=${sidA}&since=${date}`)).json();
+  assert.ok(Object.keys(historical).every(key => key >= date));
+  assert.deepEqual(loadDemoStore(), ensureBefore, 'new GETs do not write synthetic data');
 }
 assert.equal(forwards, 0);
 console.log('P3 demo primary/fallback: SID deltas, invalid no-write, video revision/204/conflict, synthetic ensure and zero live forwards passed');

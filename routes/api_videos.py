@@ -45,6 +45,10 @@ def _video_catalog_revision(rows) -> str:
     return json_revision(rows)
 
 
+def read_admin_videos():
+    return _read_video_catalog()
+
+
 def _video_revision_response(payload, revision: str, status: int = 200):
     response = make_response("", 204) if status == 204 else make_response(jsonify(payload), status)
     response.headers["X-Store-Revision"] = revision
@@ -175,7 +179,7 @@ def _video_catalog_identity_changes(previous_videos, next_videos) -> dict[str, l
 @bp_api_videos.route("/api/videos", methods=["GET", "POST"])
 def api_videos():
     if request.method == "GET":
-        current_videos = _read_video_catalog()
+        current_videos = read_admin_videos()
         response = _video_revision_response(current_videos, _video_catalog_revision(current_videos))
         response.headers["X-Video-Providers"] = "kollus,youtube"
         return response

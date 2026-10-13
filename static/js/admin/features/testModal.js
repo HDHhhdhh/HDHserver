@@ -1841,7 +1841,7 @@ async function saveModal(options = {}) {
         testSelectionTouched = false;
         if (options.showPopup !== false) showTestSaveSuccess();
       }
-      if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
+      if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
       return items;
     } catch (error) {
       if (progressSaved) throw new Error(`테스트 상태는 저장됐지만 상담 기록 저장에 실패했습니다. 다시 저장해 주세요. ${error?.message || ''}`);

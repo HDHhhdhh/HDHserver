@@ -32,6 +32,7 @@ Admin core modules own the selected date, bootstrap state, shared API wrapper, t
 - Do not remove compatibility globals until every dependent feature module is migrated.
 
 - Bootstrap initializes real-today assignments through checked `api.postStrict`; selected-date reads use storage-only GET. Reject invalid critical root shapes before publishing state or mounting save controls.
+- `bootstrapTransport.js` owns checked initialization followed by combined reads and 404-only compatibility. Keep its actual HTTP/VM regressions in the full suite; see [P6 execution contract](../../../../docs/STABILITY_SPEED_EXECUTION.md#p6-관리자-첫-로드폴링저장-후-갱신).
 
 ## Verification
 - After selected-date changes, reload `/admin` and confirm the date bar updates plus `admin:date-change` listeners refresh.

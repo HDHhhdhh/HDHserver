@@ -140,16 +140,17 @@ async function loadClassLogExportData({ selectedDateMode, selectedDate, signal }
     );
     const refs = summaryTargetRefs(summary);
     if (refs === null) {
-      const [logs, progress] = await Promise.all([
-        fetchJsonChecked('/api/logs', 'export logs fallback', { cache: 'no-store', signal }),
-        fetchJsonChecked('/api/progress', 'export progress fallback', { cache: 'no-store', signal }),
-      ]);
+      const logs = await fetchJsonChecked('/api/logs', 'export logs fallback', { cache: 'no-store', signal });
       const targets = collectUnarchivedDoneLatestPerStudent(logs);
+      const sids = Array.from(new Set(targets.map(row => String(row.sid)).filter(Boolean)));
+      const progress = sids.length
+        ? await fetchJsonChecked(historyUrl('/api/progress', sids), 'export progress fallback', { cache: 'no-store', signal })
+        : {};
       return {
         logs,
         progress,
         targets,
-        sids: Array.from(new Set(targets.map(row => String(row.sid)))),
+        sids,
       };
     }
     targetRefs = refs;

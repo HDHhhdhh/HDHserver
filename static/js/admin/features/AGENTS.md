@@ -114,6 +114,7 @@ Feature modules own most admin behavior and the riskiest date-scoped UI flows. K
 - Calendar mutation paths require successful extra/weekend/carryover/absence preload before their first write. Read-only projections may retain fallback behavior. Selection saves use the opening baseline plus final read and SID deltas; apply the server returned dates and preserve untouched remote students and slots. Video catalog conflict stops queued saves until reload.
 
 ## Verification
+- `todayPolling.js` owns revision acknowledgements, epochs and selective refresh. Keep actual today/state/poller interaction checks as well as pure poller checks; see [P6 execution contract](../../../../docs/STABILITY_SPEED_EXECUTION.md#p6-관리자-첫-로드폴링저장-후-갱신).
 - For log-affecting work, open a known student/date with Korean notes, homework rows, and progress; verify no `???` text.
 - Toggle one green progress cell to white, save, reload, and confirm it remains white after automatic watch updates.
 - Change the date bar while a modal is open and confirm the save still targets the row/cell date captured at open.

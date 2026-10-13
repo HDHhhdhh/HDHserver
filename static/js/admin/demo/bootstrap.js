@@ -18,6 +18,7 @@ import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=202608
 import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 import { patchDemoExtraAttendance } from './extraAttendContract.js';
 import { demoVideoRevision, validateDemoVideoWrite } from './videoCatalogContract.js';
+import { demoAdminState, demoAdminRevisions } from './adminStateContract.js';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -405,6 +406,25 @@ async function handleDemoApiRequest(request, input, init, demo) {
   }
 
   const store = loadDemoStore();
+  if (path === '/api/admin/bootstrap' || path === '/api/admin/revisions') {
+    const date = String(url.searchParams.get('date') || '').trim();
+    const parsed = new Date(`${date}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      return demoJson({ ok: false, error: 'bad date' }, { status: 400, handler: 'bootstrap-fallback' });
+    }
+    const project = path.endsWith('/bootstrap') ? demoAdminState : demoAdminRevisions;
+    return demoJson(project(store, date, demoRevision), { handler: 'bootstrap-fallback' });
+  }
+  if (path === '/api/progress') {
+    if (!['date', 'sid', 'sids'].some(key => String(url.searchParams.get(key) || '').trim())) {
+      return demoJson({ ok: false, error: 'filter_required' }, { status: 400, handler: 'bootstrap-fallback' });
+    }
+    const since = String(url.searchParams.get('since') || '').trim();
+    const parsed = since && new Date(`${since}T00:00:00Z`);
+    if (since && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== since)) {
+      return demoJson({ ok: false, error: 'bad date' }, { status: 400, handler: 'bootstrap-fallback' });
+    }
+  }
   const payload = fallbackPayloadForGet(path, url.searchParams, store);
   const responseHeaders = {};
   if (path === '/api/progress') {
@@ -489,7 +509,8 @@ function fallbackPayloadForGet(path, params, store) {
     case '/api/arrive-time/missing-leave-summary':
       return missingLeaveSummary(store, params);
     case '/api/progress':
-      return cloneDemoValue(filterDateSidMap(store.progress || {}, params));
+      return cloneDemoValue(Object.fromEntries(Object.entries(filterDateSidMap(store.progress || {}, params))
+        .filter(([date]) => !params.get('since') || date >= params.get('since'))));
     case '/api/extra-attend':
       return cloneDemoValue(store.extraAttend || {});
     case '/api/weekend-slots':

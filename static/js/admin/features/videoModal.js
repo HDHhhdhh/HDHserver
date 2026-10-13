@@ -988,8 +988,9 @@ async function hydrateProgressMaybe(date = '', sid = '', isCurrent = () => true)
     // Automatic assignment depends on every prior status for this student.
     // A date-scoped read makes completed/skipped videos look unseen again when
     // the popup is reopened, so keep the request student-scoped instead.
-    const params = studentScoped ? new URLSearchParams({ sid: sidKey }) : null;
-    const data = await fetchJSONForVideoOpen(`/api/progress${params ? `?${params.toString()}` : ''}`);
+    if (!studentScoped) return false;
+    const params = new URLSearchParams({ sid: sidKey });
+    const data = await fetchJSONForVideoOpen(`/api/progress?${params.toString()}`);
 
     const obj = unwrapOkPayload(data, ['progress', 'data']);
     if (data?.ok !== false && obj && typeof obj === 'object' && !Array.isArray(obj) && isCurrent()) {
@@ -2482,7 +2483,7 @@ export function initVideoModal() {
       }
       invalidateVideoModalHydrationCaches(today, sid);
       if (showPopup && isCurrentSave()) showSavePopup('영상 제외 상태 저장 완료');
-      if (refresh) document.dispatchEvent(new CustomEvent('admin:refresh'));
+      if (refresh) document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
       return selected;
     }
 
@@ -2527,7 +2528,7 @@ export function initVideoModal() {
       activeVideoWatchRearms = {};
       if (showPopup) showSavePopup('저장 완료');
     }
-    if (refresh) document.dispatchEvent(new CustomEvent('admin:refresh'));
+    if (refresh) document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
     return selected;
   }
 
@@ -2543,7 +2544,7 @@ export function initVideoModal() {
     try {
       const manualSelection = selectedVideoMids().length > 0 && (activeVideoSelectionDirty || activeAssignmentManual);
       await saveVideoAssignmentForCurrent({ showPopup: true, refresh: false, manual: manualSelection });
-      document.dispatchEvent(new CustomEvent('admin:refresh'));
+      document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
     } catch (err) {
       console.error(err);
       if (saveSequence === videoOpenSeq) showSavePopup('저장 실패', true);

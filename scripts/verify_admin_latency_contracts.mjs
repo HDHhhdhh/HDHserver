@@ -317,8 +317,8 @@ function verifyTodayCriticalPathSource() {
 
   assert.match(computeSource, /^function computeTodayList\(dateKey, extraMap/);
   assert.doesNotMatch(computeSource, /loadExtraAttendMap\s*\(/);
-  assert.match(loadSource, /const extraAttendPromise = loadExtraAttendMap\(\);/);
-  assert.match(loadSource, /loadMakeupCarryoverMap\(\{ force \}\),\s*extraAttendPromise,/s);
+  assert.match(loadSource, /const extraAttendPromise = needs\('extra'\)/);
+  assert.match(loadSource, /loadMakeupCarryoverMap\(\{ force, onLoaded: mark\('makeupCarryover'\) \}\),\s*extraAttendPromise,/s);
   assert.match(loadSource, /computeTodayList\(dateKey, extraMap\)/);
 }
 

@@ -3517,7 +3517,7 @@ export function initLogModal() {
         } else {
           toast('저장 완료');
         }
-        document.dispatchEvent(new CustomEvent('admin:refresh'));
+        document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
       } catch (error) {
         console.error('[logModal] save all student popup changes failed:', error);
         alert(error?.message || '모든 팝업 변경사항 저장에 실패했습니다. 팝업을 닫지 않았습니다.');
@@ -3541,7 +3541,7 @@ export function initLogModal() {
         await saveRecordPopupForCurrent();
         toast(isContextMenuOnlyAccess() ? '영상 제외 상태 저장됨' : '숙제 저장됨');
         close(null, { saveCompleted: true });
-        document.dispatchEvent(new CustomEvent('admin:refresh'));
+        document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
       } catch (err) {
         if (err?.message) {
           alert(err.message);
@@ -3563,7 +3563,7 @@ export function initLogModal() {
         } else {
           toast('저장 완료');
         }
-        document.dispatchEvent(new CustomEvent('admin:refresh'));
+        document.dispatchEvent(new CustomEvent('admin:refresh', { detail: { changedStores: ['logHistory', 'arriveHistory'] } }));
       } catch (err) {
         if (err?.message) {
           alert(err.message);

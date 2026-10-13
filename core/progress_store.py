@@ -29,6 +29,24 @@ def save_progress_strict(path: Any, data: dict) -> None:
     get_store("progress", path).write_data_locked(data, writer=save_atomic)
 
 
+def load_progress_scope(path: Any, *, date="", sids=(), since="") -> dict:
+    keys = []
+    for sid in sids:
+        key = str(sid).strip()
+        if key not in keys:
+            keys.append(key)
+        if key.isdigit() and str(int(key)) not in keys:
+            keys.append(str(int(key)))
+    try:
+        return get_store("progress", path).read_nested(
+            outer_keys=[date] if date else None,
+            inner_keys=keys if sids else None,
+            min_key=since or None,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"progress.json read failed: {exc}") from exc
+
+
 def progress_file_lock(path: Any) -> InterProcessFileLock:
     """Return the canonical cross-process lock for one progress store."""
     return file_lock(path, timeout_sec=30.0, poll_sec=0.05, stale_sec=30.0)
@@ -36,6 +54,7 @@ def progress_file_lock(path: Any) -> InterProcessFileLock:
 
 __all__ = (
     "load_progress_strict",
+    "load_progress_scope",
     "progress_file_lock",
     "reset_progress_cache",
     "save_progress_strict",

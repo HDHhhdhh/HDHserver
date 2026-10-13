@@ -133,20 +133,24 @@ def _updated_student_rows(
     return None
 
 
-@bp_api_students.get("/api/students")
-def api_students():
+def read_admin_students():
     if _person_identity_configured():
         if _person_identity_writes_degraded():
-            return _person_identity_error("person identity recovery is required", 503)
-        try:
-            with identity_state_lock(PERSONS_PATH, STU_PATH, PERSON_IDENTITY_JOURNAL_PATH):
-                if PERSON_IDENTITY_JOURNAL_PATH.exists():
-                    return _person_identity_error("person identity recovery is required", 503)
-                _, students = load_identity_state_strict(PERSONS_PATH, STU_PATH)
-            return jsonify(students)
-        except (PersonIdentityUnavailableError, OSError, TimeoutError) as error:
-            return _person_identity_error(str(error), 503)
-    return jsonify(load(STU_PATH))
+            raise PersonIdentityUnavailableError("person identity recovery is required")
+        with identity_state_lock(PERSONS_PATH, STU_PATH, PERSON_IDENTITY_JOURNAL_PATH):
+            if PERSON_IDENTITY_JOURNAL_PATH.exists():
+                raise PersonIdentityUnavailableError("person identity recovery is required")
+            _, students = load_identity_state_strict(PERSONS_PATH, STU_PATH)
+        return students
+    return load(STU_PATH)
+
+
+@bp_api_students.get("/api/students")
+def api_students():
+    try:
+        return jsonify(read_admin_students())
+    except (PersonIdentityUnavailableError, OSError, TimeoutError) as error:
+        return _person_identity_error(str(error), 503)
 
 
 @bp_api_students.post("/api/add-student")

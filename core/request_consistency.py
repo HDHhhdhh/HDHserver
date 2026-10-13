@@ -19,6 +19,8 @@ def request_has_invalid_scoped_date(path: str, method: str, query, body) -> bool
         return not is_iso_date_key(str(value or "").strip())
 
     if method in {"GET", "HEAD"}:
+        if path in {"/api/admin/bootstrap", "/api/admin/revisions"}:
+            return invalid(query.get("date"))
         if path == "/api/logs/entry":
             return invalid(query.get("date"))
         if path == "/api/student/bootstrap":
@@ -31,6 +33,16 @@ def request_has_invalid_scoped_date(path: str, method: str, query, body) -> bool
             value = str(query.get("date") or "").strip()
             if value and invalid(value):
                 return True
+        if path == "/api/progress":
+            since = str(query.get("since") or "").strip()
+            if since and invalid(since):
+                return True
+            getlist = getattr(query, 'getlist', lambda key: [query.get(key)])
+            sids = getlist('sid') + getlist('sids')
+            has_sid = bool(str(query.get('sid') or '').strip()) or any(
+                part.strip() for raw in sids for part in str(raw or '').split(',')
+            )
+            return not str(query.get('date') or '').strip() and not has_sid
         if path == "/api/logs/unarchived-summary":
             value = str(query.get("exclude_date") or query.get("excludeDate") or "").strip()
             return bool(value) and invalid(value)
@@ -68,6 +80,7 @@ def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
     if method == "POST" and path in {"/api/absent", "/api/makeup-sheet-sync"}:
         return None  # These routes acquire the exclusive transaction scope.
     exact = {
+        "/api/admin/bootstrap", "/api/admin/revisions",
         "/api/absent", "/api/absent/recover", "/api/attend", "/api/homework-books",
         "/api/kollus/lms-callback", "/api/makeup-carryover", "/api/student/bootstrap",
         "/api/tests-records", "/api/tests-stats", "/api/today", "/api/watch", "/api/watch-status",
@@ -80,6 +93,7 @@ def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
         return None
     # Compatibility GET initialization and bootstrap need an exclusive lease.
     shared = {"/api/absent", "/api/homework-books", "/api/tests-records", "/api/tests-stats",
+              "/api/admin/bootstrap", "/api/admin/revisions",
               "/api/arrive-time/missing-leave-summary", "/api/makeup-carryover"}
     read_only_updates = path == "/api/updates" and not updates_get_initializes(query)
     if method in {"GET", "HEAD"} and (path in shared or read_only_updates

@@ -84,6 +84,7 @@ function harness(candidate, hold=''){
   Object.assign(context,exported);
   const summary=vm.runInContext('(function(){'+strip(feature('todayDoneSummary.js'))+'\nreturn {doneEntriesFromUnarchivedSummary,missingLeaveWarningText,recordCleanupWarningText,missingLeaveWarningRows:typeof missingLeaveWarningRows==="function"?missingLeaveWarningRows:()=>[]};})()',context);
   Object.assign(context,summary);
+  vm.runInContext(strip(feature('todayPolling.js')),context,{filename:'todayPolling.js'});
   const original=feature('today.js');
   vm.runInContext(strip(original),context,{filename:'today.js'});
   return {context,reads,renders,state,bound,auto:()=>intervals[0](),

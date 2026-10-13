@@ -1,27 +1,19 @@
 // 전역 상태 한 군데로 모으기 + 초기 로드
 import { api } from './api.js';
+import { loadAdminBootstrapTransport } from './bootstrapTransport.js';
 import { todayLocalKey } from './utils.js';
 
 export const state = {
   students: [], videos: [], materials: {}, updates: {}, assigns: {},
   extra: {}, logs: {}, absences: {}, absentByDate: {}, absentSlotsByDate: {}, progress: {},
-  schoolCal: {}, testsConfig: { categories: {} },
+  schoolCal: {}, testsConfig: { categories: {} }, revisions: {},
 };
 
 
 export async function bootstrap() {
   const today = todayLocalKey();
-  const [
-    students, videos, updates, logs, abs, progress, schoolCal
-  ] = await Promise.all([
-    api.get('/api/students'),
-    api.get('/api/videos'),
-    api.postStrict('/api/updates/ensure-today', {}, 'admin bootstrap assignments', { cache: 'no-store' }),
-    api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs'),
-    api.getOr('/api/absent', {}),
-    api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress'),
-    api.getOr('/api/school-calendar', {}),
-  ]);
+  const { students, videos, updates, logs, absent: abs, progress, schoolCal, revisions } =
+    await loadAdminBootstrapTransport(api, today);
 
   for (const [name, rows] of Object.entries({ students, videos })) {
     if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
@@ -39,6 +31,7 @@ export async function bootstrap() {
   state.updates = updates;
   state.logs = logs;
   state.progress = progress;
+  state.revisions = revisions;
 
   const isUnified = abs && (abs.by_date || abs.by_student);
   state.absentByDate = isUnified ? (abs.by_date || {}) : {};

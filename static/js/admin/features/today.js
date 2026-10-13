@@ -2,6 +2,7 @@ import { state } from '../core/state.js';
 import { api } from '../core/api.js';
 import { getAdminDate, setAdminDate } from '../core/adminDate.js';
 import { todayLocalKey } from '../core/utils.js';
+import { TodayRevisionPoller } from './todayPolling.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
@@ -112,63 +113,48 @@ function mergeDateSidMap(target, incoming) {
 
 async function ensureLogsForDate(dateKey, options = {}) {
   const key = String(dateKey || '').trim();
-  if (!key || (state.logs?.[key] && !options.force)) return;
+  if (!key || (state.logs?.[key] && !options.force)) return false;
   try {
     const res = await fetch(`/api/logs?${dateQuery(key)}`, { cache: 'no-store' });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = await res.json();
     if (data && typeof data === 'object') {
       state.logs = state.logs || {};
       state.logs[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
       window.logs = state.logs;
+      return true;
     }
   } catch {}
+  return false;
 }
 
 async function ensureProgressForDate(dateKey, options = {}) {
   const key = String(dateKey || '').trim();
-  if (!key || (state.progress?.[key] && !options.force)) return;
+  if (!key || (state.progress?.[key] && !options.force)) return false;
   try {
     const res = await fetch(`/api/progress?${dateQuery(key)}`, { cache: 'no-store' });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = await res.json();
     if (data && typeof data === 'object') {
       state.progress = state.progress || {};
       state.progress[key] = (data[key] && typeof data[key] === 'object') ? data[key] : {};
       window.progressData = state.progress;
+      return true;
     }
   } catch {}
+  return false;
 }
 
 const progressHistoryLoadedSids = new Set();
-let progressHistoryLoadedAll = false;
-let progressHistoryAllPromise = null;
 
-async function loadAllProgressHistoryOnce(force = false) {
-  if (progressHistoryLoadedAll && !force) return true;
-  if (progressHistoryAllPromise && !force) return progressHistoryAllPromise;
-
-  progressHistoryAllPromise = (async () => {
-    try {
-      const res = await fetch('/api/progress', { cache: 'no-store' });
-      if (!res.ok) return false;
-      const data = await res.json();
-      if (data && typeof data === 'object') {
-        state.progress = state.progress || {};
-        mergeDateSidMap(state.progress, data);
-        window.progressData = state.progress;
-        progressHistoryLoadedAll = true;
-        return true;
-      }
-    } catch {}
-    return false;
-  })();
-
-  try {
-    return await progressHistoryAllPromise;
-  } finally {
-    progressHistoryAllPromise = null;
-  }
+function replaceProgressHistory(sids, incoming) {
+  const keys = new Set(sids.map(String));
+  state.progress = state.progress || {};
+  Object.values(state.progress).forEach(day => {
+    if (day && typeof day === 'object' && !Array.isArray(day)) keys.forEach(sid => delete day[sid]);
+  });
+  mergeDateSidMap(state.progress, incoming);
+  window.progressData = state.progress;
 }
 
 async function loadProgressHistoryForSidBatch(sids) {
@@ -184,7 +170,7 @@ async function loadProgressHistoryForSidBatch(sids) {
     const data = await res.json();
     if (!data || typeof data !== 'object') return false;
     state.progress = state.progress || {};
-    mergeDateSidMap(state.progress, data);
+    replaceProgressHistory(chunk, data);
     window.progressData = state.progress;
     chunk.forEach(sid => progressHistoryLoadedSids.add(sid));
   }
@@ -193,40 +179,34 @@ async function loadProgressHistoryForSidBatch(sids) {
 
 async function ensureProgressHistoryForSids(sids, options = {}) {
   const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
-  if (!keys.length) return;
-  if (progressHistoryLoadedAll && !options.forceHistory) {
-    keys.forEach(sid => progressHistoryLoadedSids.add(sid));
-    return;
-  }
-
+  if (!keys.length) return true;
   const pending = keys.filter(sid => options.forceHistory || !progressHistoryLoadedSids.has(sid));
-  if (!pending.length) return;
+  if (!pending.length) return true;
 
   if (pending.length >= 4) {
-    const loadedBatch = await loadProgressHistoryForSidBatch(pending);
-    if (loadedBatch) return;
-
-    const loaded = await loadAllProgressHistoryOnce(!!options.forceHistory);
-    if (loaded) {
-      pending.forEach(sid => progressHistoryLoadedSids.add(sid));
-      return;
-    }
+    try {
+      const loadedBatch = await loadProgressHistoryForSidBatch(pending);
+      if (loadedBatch) return true;
+    } catch {}
   }
 
-  await Promise.all(pending.map(async (sid) => {
+  const results = await Promise.all(pending.map(async (sid) => {
     try {
       const q = new URLSearchParams({ sid }).toString();
       const res = await fetch(`/api/progress?${q}`, { cache: 'no-store' });
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const data = await res.json();
       if (data && typeof data === 'object') {
         state.progress = state.progress || {};
-        mergeDateSidMap(state.progress, data);
+        replaceProgressHistory([sid], data);
         window.progressData = state.progress;
         progressHistoryLoadedSids.add(sid);
+        return true;
       }
     } catch {}
+    return false;
   }));
+  return results.every(Boolean);
 }
 
 async function refreshStudentsIfNeeded(options = {}) {
@@ -238,8 +218,10 @@ async function refreshStudentsIfNeeded(options = {}) {
     if (Array.isArray(data)) {
       state.students = data;
       window.students = state.students;
+      return true;
     }
   } catch {}
+  return false;
 }
 
 async function refreshAbsencesIfNeeded(options = {}) {
@@ -259,8 +241,10 @@ async function refreshAbsencesIfNeeded(options = {}) {
         window.state.absences = state.absences;
         window.state.absentSlotsByDate = state.absentSlotsByDate;
       }
+      return true;
     }
   } catch {}
+  return false;
 }
 
 function todayOperationWarningStack() {
@@ -654,6 +638,7 @@ async function loadMakeupCarryoverMap(options = {}) {
     if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
     const data = await res.json();
     _makeupCarryover = data && typeof data === 'object' ? data : {};
+    options.onLoaded?.();
   } catch (err) {
     console.warn('[today] makeup carryover load failed:', err);
     _makeupCarryover = _makeupCarryover || {};
@@ -814,12 +799,15 @@ function sortTodayStudents(list, dateStr, { preserveCurrentOrder = false, savedO
 // ─────────────────────────────────────────────
 // 선택 날짜 명단 계산
 // ─────────────────────────────────────────────
-async function loadExtraAttendMap() {
+async function loadExtraAttendMap(options = {}) {
   try {
-    const m = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
+    const res = await fetch('/api/extra-attend', { cache: 'no-store' });
+    if (!res.ok) return {};
+    const m = await res.json();
     if (m && typeof m === 'object') {
       state.extra = m;
       window.extra = state.extra;
+      options.onLoaded?.();
       return m;
     }
     return {};
@@ -877,6 +865,8 @@ let assignmentBoundaryFlight = null;
 let todayRenderSeq = 0;
 let missingLeaveWarningDateKey = '';
 let lastAutoAssignmentBoundaryDate = todayLocalKey();
+const revisionPoller = new TodayRevisionPoller();
+let lastDoneSummary = null;
 
 function renderDoneSummaryWhenIdle(entries, seq, dateKey) {
   const apply = () => {
@@ -919,7 +909,16 @@ export async function loadTodayAndRender(options = {}) {
   const force = !!options.force;
   const dateKey = getAdminDate();
   const forceDatePayloads = !!(force && (options.reason === 'date' || options.forceDatePayloads));
-  const key = JSON.stringify([dateKey, force, forceDatePayloads, options.reason === 'date', todayLocalKey()]);
+  const changed = options.changedStores ? new Set(options.changedStores) : null;
+  const needs = key => !changed || changed.has(key);
+  const loaded = new Set();
+  const mark = key => () => loaded.add(key);
+  const run = async (key, callback) => {
+    if (!needs(key)) return;
+    try { if (await callback()) loaded.add(key); }
+    catch (error) { console.warn(`[today] ${key} refresh failed:`, error); }
+  };
+  const key = JSON.stringify([dateKey, force, forceDatePayloads, options.reason === 'date', todayLocalKey(), options.changedStores || null]);
   const share = options.reason !== 'event' && options.reason !== 'mutation';
   if (share && todayRefreshFlight?.key === key) return todayRefreshFlight.promise;
   const seq = ++todayRenderSeq;
@@ -938,24 +937,47 @@ export async function loadTodayAndRender(options = {}) {
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
 
-  const extraAttendPromise = loadExtraAttendMap();
+  const extraAttendPromise = needs('extra')
+    ? loadExtraAttendMap({ onLoaded: mark('extra') }) : Promise.resolve(state.extra || {});
   await Promise.all([
-    refreshStudentsIfNeeded({ force }),
-    refreshAbsencesIfNeeded({ force }),
-    ensureLogsForDate(dateKey, { force: forceDatePayloads }),
-    ensureProgressForDate(dateKey, { force: forceDatePayloads }),
-    loadWeekendSlots(),
-    ensureAttendLoaded(dateKey, { force }),
-    ensureContactLoaded(dateKey, { force }),
-    ensureArriveLoaded(dateKey, { force }),
-    loadMakeupCarryoverMap({ force }),
+    run('students', () => refreshStudentsIfNeeded({ force })),
+    run('absent', () => refreshAbsencesIfNeeded({ force })),
+    run('logs', () => ensureLogsForDate(dateKey, { force: forceDatePayloads })),
+    run('progress', () => ensureProgressForDate(dateKey, { force: forceDatePayloads })),
+    needs('weekend') && loadWeekendSlots({ onLoaded: mark('weekend') }),
+    run('attendance', () => ensureAttendLoaded(dateKey, { force })),
+    run('contact', () => ensureContactLoaded(dateKey, { force })),
+    run('arriveTime', () => ensureArriveLoaded(dateKey, { force })),
+    needs('makeupCarryover') && loadMakeupCarryoverMap({ force, onLoaded: mark('makeupCarryover') }),
     extraAttendPromise,
-    loadOrderMap({ force }),
+    needs('todayOrder') && loadOrderMap({ force, onLoaded: mark('todayOrder') }),
+    changed && run('updates', async () => {
+      const updates = await api.getStrict('/api/updates?readOnly=1', 'today assignment refresh', { cache: 'no-store' });
+      if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return false;
+      state.updates = updates;
+      return true;
+    }),
+    changed && run('videos', async () => {
+      const videos = await api.getStrict('/api/videos', 'today catalog refresh', { cache: 'no-store' });
+      if (!Array.isArray(videos)) return false;
+      state.videos = videos;
+      window.videos = videos;
+      return true;
+    }),
+    changed && run('schoolCal', async () => {
+      const calendar = await api.getStrict('/api/school-calendar', 'today school calendar refresh', { cache: 'no-store' });
+      if (!calendar || typeof calendar !== 'object' || Array.isArray(calendar)) return false;
+      state.schoolCal = calendar;
+      window.schoolCal = calendar;
+      return true;
+    }),
   ]);
 
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
-  const localDoneEntries = sortDoneEntries(collectUnarchivedLogsByDate(dateKey));
+  const cachedDone = changed && !needs('logHistory') && lastDoneSummary?.date === dateKey
+    ? doneEntriesFromUnarchivedSummary(lastDoneSummary.summary) : null;
+  const localDoneEntries = sortDoneEntries(cachedDone || collectUnarchivedLogsByDate(dateKey));
   const extraMap = await extraAttendPromise;
 
   const { list: raw } = await computeTodayList(dateKey, extraMap);
@@ -965,7 +987,10 @@ export async function loadTodayAndRender(options = {}) {
     savedOrder: getSavedOrder(dateKey),
   }));
 
-  await ensureProgressHistoryForSids(list.map(s => s.id), { forceHistory: forceDatePayloads });
+  if (changed && needs('progressHistory')) progressHistoryLoadedSids.clear();
+  if (await ensureProgressHistoryForSids(list.map(s => s.id), {
+    forceHistory: forceDatePayloads && (!changed || needs('progressHistory')),
+  }) && changed && needs('progressHistory')) loaded.add('progressHistory');
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
   const makeupCounts = aggregateMakeupCountsByStudent(state.students || [], countPendingMakeupsBySid({
@@ -986,7 +1011,7 @@ export async function loadTodayAndRender(options = {}) {
     renderToday(list, dateKey, false, makeupCounts);
   });
   applyTodaySearchFilter();
-  renderStaleDoneWarning({ total: 0, byDate: [] });
+  if (!cachedDone) renderStaleDoneWarning({ total: 0, byDate: [] });
   // Keep the last authoritative warning through same-date auto refreshes.
   // Clear it only when switching dates so an old date never leaks into the new view.
   if (missingLeaveWarningDateKey !== dateKey) {
@@ -997,17 +1022,34 @@ export async function loadTodayAndRender(options = {}) {
     detail: { dateKey, students: list },
   }));
 
-  void (async () => {
+  const warnings = (async () => {
+    const needsDone = needs('logHistory');
+    const needsLeave = ['logHistory', 'arriveHistory', 'students', 'extra', 'makeupCarryover', 'absent'].some(needs);
+    if (!needsDone && !needsLeave) return;
     const [unarchivedSummary, missingLeaveSummary] = await Promise.all([
-      fetchUnarchivedDoneSummary(dateKey),
-      fetchMissingLeaveSummary(dateKey),
+      needsDone ? fetchUnarchivedDoneSummary(dateKey) : null,
+      needsLeave ? fetchMissingLeaveSummary(dateKey) : null,
     ]);
     if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
-    const summaryDoneEntries = doneEntriesFromUnarchivedSummary(unarchivedSummary);
-    if (summaryDoneEntries !== null) renderDoneSummaryWhenIdle(summaryDoneEntries, seq, dateKey);
-    renderStaleDoneWarning(unarchivedSummary || { total: 0, byDate: [] });
-    renderMissingLeaveWarning(missingLeaveSummary || { total: 0, rowsAvailable: false, rows: [] });
+    if (needsDone) {
+      const summaryDoneEntries = doneEntriesFromUnarchivedSummary(unarchivedSummary);
+      if (summaryDoneEntries !== null) renderDoneSummaryWhenIdle(summaryDoneEntries, seq, dateKey);
+      renderStaleDoneWarning(unarchivedSummary || { total: 0, byDate: [] });
+      if (summaryDoneEntries !== null) {
+        lastDoneSummary = { date: dateKey, summary: unarchivedSummary };
+        loaded.add('logHistory');
+      }
+    }
+    if (needsLeave) {
+      renderMissingLeaveWarning(missingLeaveSummary || { total: 0, rowsAvailable: false, rows: [] });
+      if (missingLeaveSummary && missingLeaveSummary.rowsAvailable !== false) loaded.add('arriveHistory');
+      else {
+        for (const key of ['logHistory', 'arriveHistory', 'students', 'extra', 'makeupCarryover', 'absent']) loaded.delete(key);
+      }
+    }
   })();
+  if (changed) await warnings;
+  return loaded;
 
   })();
   todayRefreshFlight = flight;
@@ -1017,6 +1059,7 @@ export async function loadTodayAndRender(options = {}) {
 }
 
 function refreshAfterTodayMutation(options = {}) {
+  revisionPoller.invalidate();
   return loadTodayAndRender({ ...options, reason: 'mutation' });
 }
 
@@ -1063,7 +1106,14 @@ function initAdminAutoRefresh() {
   const refresh = async () => {
     await refreshUpdatesAtAssignmentBoundary('auto');
     if (shouldSkipAutoRefresh()) return;
-    loadTodayAndRender({ force: true, reason: 'auto' });
+    try {
+      await revisionPoller.poll({
+        date: getAdminDate(), realDate: todayLocalKey(),
+        isCurrent: (date, realDate) => isCurrentAdminDate(date) && todayLocalKey() === realDate && !shouldSkipAutoRefresh(),
+        getRevisions: date => api.getStrict(`/api/admin/revisions?${dateQuery(date)}`, 'today revisions', { cache: 'no-store' }),
+        refresh: changedStores => loadTodayAndRender({ force: true, forceDatePayloads: true, reason: 'auto', changedStores }),
+      });
+    } catch (error) { console.warn('[today] automatic refresh failed:', error); }
   };
 
   window.setInterval(refresh, 30 * 1000);
@@ -1073,9 +1123,14 @@ function initAdminAutoRefresh() {
 }
 
 document.addEventListener('admin:refresh', (ev) => {
+  revisionPoller.invalidate();
   const force = !!ev?.detail?.force;
   const forceDatePayloads = !!ev?.detail?.forceDatePayloads;
-  loadTodayAndRender({ force, forceDatePayloads, reason: 'event' });
+  const changedStores = Array.isArray(ev?.detail?.changedStores) ? ev.detail.changedStores : null;
+  loadTodayAndRender({ force, forceDatePayloads, changedStores, reason: 'event' });
 });
-document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));
+document.addEventListener('admin:date-change', () => {
+  revisionPoller.invalidate();
+  loadTodayAndRender({ force: true, reason: 'date' });
+});
 initAdminAutoRefresh();

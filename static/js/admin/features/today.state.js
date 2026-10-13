@@ -305,7 +305,7 @@ function publishWeekendSlots() {
   }
 }
 
-export async function loadWeekendSlots() {
+export async function loadWeekendSlots(options = {}) {
   const revision = _weekendSlotsRevision;
   try {
     const response = await fetch('/api/weekend-slots', { cache: 'no-store' });
@@ -315,6 +315,7 @@ export async function loadWeekendSlots() {
     if (revision !== _weekendSlotsRevision || _weekendSlotsPendingWrites > 0) return WEEKEND_SLOTS;
     WEEKEND_SLOTS = next;
     publishWeekendSlots();
+    options.onLoaded?.();
   } catch {}
   return WEEKEND_SLOTS;
 }
@@ -565,8 +566,14 @@ export async function loadOrderMap(options = {}) {
   if (_orderMap && !options.force) return _orderMap;
   const epoch = _orderMutationEpoch;
   try {
-    const loaded = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json());
-    if (epoch === _orderMutationEpoch) _orderMap = loaded;
+    const response = await fetch('/api/today_order', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`/api/today_order ${response.status}`);
+    const loaded = await response.json();
+    if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) throw new Error('Invalid today order');
+    if (epoch === _orderMutationEpoch) {
+      _orderMap = loaded;
+      options.onLoaded?.();
+    }
   } catch {
     if (epoch === _orderMutationEpoch) _orderMap = {};
   }
@@ -658,7 +665,9 @@ function saveAttendMapLocal(dateKey, map) {
 async function fetchAttendDay(dateKey) {
   try {
     const qs = new URLSearchParams({ date: dateKey });
-    const obj = await fetch(`${ATT_URL}?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json());
+    const response = await fetch(`${ATT_URL}?${qs.toString()}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const obj = await response.json();
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
   } catch {}
   return null;
@@ -668,6 +677,7 @@ export async function ensureAttendLoaded(dateKey, options = {}) {
   const server = await fetchAttendDay(dateKey);
   if (server) { _attCache.set(dateKey, server); saveAttendMapLocal(dateKey, server); }
   else { const local = loadAttendMapLocal(dateKey); _attCache.set(dateKey, local); }
+  return Boolean(server);
 }
 function loadAttendMap(dateKey) {
   if (_attCache.has(dateKey)) return _attCache.get(dateKey);
@@ -702,7 +712,9 @@ function saveContactMapLocal(dateKey, map) {
 async function fetchContactDay(dateKey) {
   try {
     const qs = new URLSearchParams({ date: dateKey });
-    const obj = await fetch(`${CONTACT_URL}?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json());
+    const response = await fetch(`${CONTACT_URL}?${qs.toString()}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const obj = await response.json();
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
   } catch {}
   return null;
@@ -712,6 +724,7 @@ export async function ensureContactLoaded(dateKey, options = {}) {
   const server = await fetchContactDay(dateKey);
   if (server) { _contactCache.set(dateKey, server); saveContactMapLocal(dateKey, server); }
   else { const local = loadContactMapLocal(dateKey); _contactCache.set(dateKey, local); }
+  return Boolean(server);
 }
 function loadContactMap(dateKey) {
   if (_contactCache.has(dateKey)) return _contactCache.get(dateKey);
@@ -759,7 +772,9 @@ function normalizeDayMap(obj, dateKey) {
 async function fetchArriveDay(dateKey) {
   try {
     const qs = new URLSearchParams({ date: dateKey });
-    const obj = await fetch(`${ARRIVE_URL}?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json());
+    const response = await fetch(`${ARRIVE_URL}?${qs.toString()}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const obj = await response.json();
     const day = normalizeDayMap(obj, dateKey);
     if (day) return day;
   } catch {}
@@ -767,7 +782,9 @@ async function fetchArriveDay(dateKey) {
 }
 async function fetchArriveAll() {
   try {
-    const obj = await fetch(ARRIVE_URL, { cache: 'no-store' }).then(r => r.json());
+    const response = await fetch(ARRIVE_URL, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const obj = await response.json();
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
   } catch {}
   return null;
@@ -776,18 +793,19 @@ export async function ensureArriveLoaded(dateKey, options = {}) {
   if (_arriveCache.has(dateKey) && !options.force) return;
 
   const day = await fetchArriveDay(dateKey);
-  if (day) { _arriveCache.set(dateKey, day); saveArriveMapLocal(dateKey, day); return; }
+  if (day) { _arriveCache.set(dateKey, day); saveArriveMapLocal(dateKey, day); return true; }
 
   const all = await fetchArriveAll();
   if (all && all[dateKey] && typeof all[dateKey] === 'object' && !Array.isArray(all[dateKey])) {
     const m = all[dateKey];
     _arriveCache.set(dateKey, m);
     saveArriveMapLocal(dateKey, m);
-    return;
+    return true;
   }
 
   const local = loadArriveMapLocal(dateKey);
   _arriveCache.set(dateKey, local);
+  return false;
 }
 function loadArriveMap(dateKey) {
   if (_arriveCache.has(dateKey)) return _arriveCache.get(dateKey);

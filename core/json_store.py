@@ -169,6 +169,24 @@ class JsonStore:
         """Reuse a stable cached revision without copying the whole payload."""
         return self._cached_snapshot().revision
 
+    def read_nested(self, *, outer_keys=None, inner_keys=None, min_key=None):
+        """Copy only selected branches of an object, without exposing the cache."""
+        snapshot = self._cached_snapshot()
+        if not isinstance(snapshot.data, dict):
+            raise StoreCorrupt(f"JSON store root is not an object: {self.path}")
+        outer = snapshot.data.keys() if outer_keys is None else outer_keys
+        selected = {}
+        for key in outer:
+            if key not in snapshot.data or (min_key is not None and str(key) < min_key):
+                continue
+            value = snapshot.data[key]
+            if inner_keys is not None:
+                if not isinstance(value, dict):
+                    continue
+                value = {inner: value[inner] for inner in inner_keys if inner in value}
+            selected[key] = value
+        return copy.deepcopy(selected)
+
     def read_locked(self) -> tuple[Any, str]:
         """Read fresh under the caller's native lease; never acquire a lease."""
         with self._cache_lock:

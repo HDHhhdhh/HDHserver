@@ -8,6 +8,7 @@ import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=202608
 import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 import { patchDemoExtraAttendance } from './extraAttendContract.js';
 import { demoVideoRevision, validateDemoVideoWrite } from './videoCatalogContract.js';
+import { demoAdminState, demoAdminRevisions } from './adminStateContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -1090,6 +1091,12 @@ async function handleGet(root, ctx, store) {
     }));
   }
   if (path === '/api/students') return responseJson(root, clone(store.students || []));
+  if (path === '/api/admin/bootstrap' || path === '/api/admin/revisions') {
+    const date = canonicalDate(url.searchParams.get('date'));
+    if (!date) return responseJson(root, { ok: false, error: 'bad date' }, 400);
+    const project = path.endsWith('/bootstrap') ? demoAdminState : demoAdminRevisions;
+    return responseJson(root, project(store, date, demoRevision));
+  }
   if (path === '/api/videos') return responseJson(root, clone(store.videos || []), 200, {
     'X-Store-Revision': demoVideoRevision(store.videos || []),
     'X-Video-Providers': 'kollus,youtube',
@@ -1100,7 +1107,16 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/logs') return responseJson(root, filterDateSidMap(store.logs, url));
   if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
-  if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url), 200, { 'X-Video-Watch-Cycles': '1' });
+  if (path === '/api/progress') {
+    if (!['date', 'sid', 'sids'].some(key => String(url.searchParams.get(key) || '').trim())) {
+      return responseJson(root, { ok: false, error: 'filter_required' }, 400);
+    }
+    const since = String(url.searchParams.get('since') || '').trim();
+    if (since && !canonicalDate(since)) return responseJson(root, { ok: false, error: 'bad date' }, 400);
+    const projected = filterDateSidMap(store.progress, url);
+    const filtered = since ? Object.fromEntries(Object.entries(projected).filter(([date]) => date >= since)) : projected;
+    return responseJson(root, filtered, 200, { 'X-Video-Watch-Cycles': '1' });
+  }
   if (path === '/api/extra-attend') {
     const response = extraAttendResponse(root, store, url);
     response.headers.set('X-Extra-Attend-Patch-Modes', 'replace,delta');

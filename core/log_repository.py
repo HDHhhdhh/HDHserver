@@ -372,6 +372,9 @@ class LogRepository:
     def revision(self, date_filter: str = "", sid_filters=None) -> str:
         return json_revision(self.read_logs(date_filter, sid_filters=sid_filters))
 
+    def cache_identity(self) -> tuple:
+        return os.path.abspath(self._default_db_path()), os.path.abspath(self.logs_path), id(self.repair_entry)
+
     def cache_signature(self) -> tuple:
         database = pathlib.Path(self._default_db_path())
         db_signature = tuple(_log_json_signature(pathlib.Path(str(database) + suffix))

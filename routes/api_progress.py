@@ -9,7 +9,7 @@ from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
 from core.paths import PRG_PATH, STU_PATH, VID_PATH
 from core.progress_notifications import commit_progress_notifications, progress_notification_snapshot
 from core.progress_rules import merge_progress_day_sid
-from core.progress_store import load_progress_strict, progress_file_lock, save_progress_strict
+from core.progress_store import load_progress_scope, load_progress_strict, progress_file_lock, save_progress_strict
 from core.video_watch_cycles import WatchCycleConflict, latest_watch_cycles, rearm_watch_cycles, validate_watch_rearms
 from core.video_sources import is_youtube_mid, youtube_record_cleanup_patch
 
@@ -135,27 +135,19 @@ def _youtube_cleanup_inputs(date: str, sid: str):
     return _sid_lookup(updates.get(date, {}), sid), videos
 
 
-@bp_api_progress.route("/api/progress", methods=["GET"])
-def api_progress():
-    date = str(request.args.get("date") or "").strip()
-    sid = str(request.args.get("sid") or "").strip()
-    sids = _progress_sids_from_query()
-
-    if date and not is_iso_date_key(date):
-        return jsonify({"ok": False, "error": "bad date"}), 400
-
-    data = _load_progress_strict()
+def read_progress_projection(*, date="", sid="", sids=(), since=""):
+    data = load_progress_scope(PRG_PATH, date=date, sids=sids or ([sid] if sid else []), since=since)
     if date:
         day = data.get(date) if isinstance(data, dict) else {}
         if sids:
-            return jsonify(_progress_for_sids(data, sids, date=date))
+            return _progress_for_sids(data, sids, date=date)
         if sid:
             entry = _sid_lookup(day if isinstance(day, dict) else {}, sid) or {}
-            return jsonify({date: {str(sid): entry}})
-        return jsonify({date: day if isinstance(day, dict) else {}})
+            return {date: {str(sid): entry}}
+        return {date: day if isinstance(day, dict) else {}}
 
     if sids:
-        return jsonify(_progress_for_sids(data, sids))
+        return _progress_for_sids(data, sids)
 
     if sid:
         out = {}
@@ -165,9 +157,23 @@ def api_progress():
             entry = _sid_lookup(day, sid)
             if isinstance(entry, dict) and entry:
                 out[day_key] = {str(sid): entry}
-        return jsonify(out)
+        return out
 
-    return jsonify(data)
+    return data
+
+
+@bp_api_progress.route("/api/progress", methods=["GET"])
+def api_progress():
+    date = str(request.args.get("date") or "").strip()
+    sid = str(request.args.get("sid") or "").strip()
+    sids = _progress_sids_from_query()
+    since = str(request.args.get("since") or "").strip()
+    if (date and not is_iso_date_key(date)) or (since and not is_iso_date_key(since)):
+        return jsonify({"ok": False, "error": "bad date"}), 400
+    if not date and not sid and not sids:
+        return jsonify({"ok": False, "error": "filter_required"}), 400
+
+    return jsonify(read_progress_projection(date=date, sid=sid, sids=sids, since=since))
 
 
 @bp_api_progress.post("/api/progress/patch")

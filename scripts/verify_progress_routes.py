@@ -96,8 +96,8 @@ def main() -> int:
             before_get_hash = _sha256(progress_path)
 
             response = client.get("/api/progress")
-            assert response.status_code == 200
-            assert response.get_json() == _fixture()
+            assert response.status_code == 400
+            assert response.get_json() == {"ok": False, "error": "filter_required"}
 
             response = client.get(f"/api/progress?date={DATE}&sid=007")
             assert response.status_code == 200

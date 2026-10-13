@@ -44,6 +44,7 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_async_mirror.py",
     ROOT / "scripts/verify_log_reconcile.py",
     ROOT / "scripts/verify_log_sqlite_mode.py",
+    ROOT / "scripts/verify_admin_bootstrap_contract.py",
     ROOT / "scripts/verify_log_store_parity.py",
     ROOT / "scripts/export_logs_sqlite_to_json.py",
     ROOT / "scripts/verify_admin_api_body_validation.py",
@@ -1227,13 +1228,20 @@ def run_stability_auth_boundary_checks() -> None:
 
 
 def run_stability_storage_boundary_checks() -> None:
-    for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_log_reconcile.py", "verify_log_sqlite_mode.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
+    for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_log_reconcile.py", "verify_log_sqlite_mode.py", "verify_admin_bootstrap_contract.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
         proc = _run_captured([sys.executable, "scripts/" + script])
         if proc.stdout:
             print(proc.stdout, end="")
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, "stability storage/body boundary failed")
+    for script in ("verify_admin_bootstrap_transport.mjs", "verify_admin_today_polling.mjs", "verify_admin_today_polling_interactions.mjs"):
+        proc = _run_captured(["node", "scripts/" + script])
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "administrator bootstrap/polling boundary failed")
 
 
 def run_admin_today_action_reachability_checks() -> None:
@@ -2397,8 +2405,8 @@ def run_progress_batch_sids_unit_checks() -> None:
         },
     }
 
-    original_loader = api_progress._load_progress_strict
-    api_progress._load_progress_strict = lambda: progress_fixture
+    original_loader = api_progress.load_progress_scope
+    api_progress.load_progress_scope = lambda _path, **_scope: progress_fixture
     try:
         app = Flask("verify-progress-batch-sids")
         app.register_blueprint(api_basic.bp_api_basic)
@@ -2475,14 +2483,15 @@ def run_progress_batch_sids_unit_checks() -> None:
         )
 
         full = client.get("/api/progress")
-        _assert_unit(full.get_json() == progress_fixture, "no-query progress route must still return the full map")
+        _assert_unit(full.status_code == 400 and full.get_json() == {"ok": False, "error": "filter_required"},
+                     "no-query progress route must reject unbounded reads before storage")
 
         invalid = client.get("/api/progress?date=bad&sids=s1,s2")
         invalid_payload = invalid.get_json() or {}
         _assert_unit(invalid.status_code == 400, "batch progress must preserve invalid date rejection")
         _assert_unit(invalid_payload.get("error") == "bad date", "invalid date error message must stay stable")
     finally:
-        api_progress._load_progress_strict = original_loader
+        api_progress.load_progress_scope = original_loader
 
 
 def run_progress_read_cache_unit_checks() -> None:
@@ -4138,7 +4147,8 @@ def run_video_assignment_boundary_source_checks() -> None:
         "assignment boundary uses checked POST for real-today and storage-only GET for selected dates",
     )
     _assert_unit(
-        "document.addEventListener('admin:date-change', () => loadTodayAndRender({ force: true, reason: 'date' }));" in today_js,
+        "document.addEventListener('admin:date-change', () => {" in today_js
+        and "loadTodayAndRender({ force: true, reason: 'date' });" in today_js,
         "admin date changes must enter the assignment boundary path",
     )
     _assert_unit(
@@ -7900,7 +7910,7 @@ def run_admin_calendar_test_completion_source_checks() -> None:
         "기록 정리 must remain the path that completes assigned tests",
     )
 def run_admin_wave_b_source_checks() -> None:
-    state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
+    state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8") + "\n" + (ROOT / "static/js/admin/core/bootstrapTransport.js").read_text("utf-8")
     main_js = (ROOT / "static/js/admin/main.js").read_text("utf-8")
     today_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
 
@@ -8020,7 +8030,7 @@ def run_admin_wave_b_source_checks() -> None:
 def run_admin_api_wrapper_usage_source_checks() -> None:
     shared_api_js = (ROOT / "static/js/shared/api.js").read_text("utf-8")
     admin_api_js = (ROOT / "static/js/admin/core/api.js").read_text("utf-8")
-    state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8")
+    state_js = (ROOT / "static/js/admin/core/state.js").read_text("utf-8") + "\n" + (ROOT / "static/js/admin/core/bootstrapTransport.js").read_text("utf-8")
 
     _assert_unit(
         "export async function fetchJsonChecked(url, label = 'request', init = {})" in shared_api_js,
@@ -8068,8 +8078,8 @@ def run_admin_progress_batch_source_checks() -> None:
         "today progress history batch loader must request /api/progress with sids",
     )
     _assert_unit(
-        "mergeDateSidMap(state.progress, data);" in today_batch_block,
-        "today progress history batch loader must merge date/sid maps without replacing all progress",
+        "replaceProgressHistory(chunk, data);" in today_batch_block,
+        "today progress history must replace only requested SIDs so historical deletions propagate",
     )
 
     ensure_start = today_js.index("async function ensureProgressHistoryForSids")
@@ -8080,8 +8090,9 @@ def run_admin_progress_batch_source_checks() -> None:
         "today progress history must try batch loading before full-history fallback",
     )
     _assert_unit(
-        ensure_block.index("loadProgressHistoryForSidBatch(pending)") < ensure_block.index("loadAllProgressHistoryOnce"),
-        "today progress history full-load fallback must remain after the batch attempt",
+        ensure_block.index("loadProgressHistoryForSidBatch(pending)") < ensure_block.index("Promise.all(pending.map")
+        and "loadAllProgressHistoryOnce" not in today_js,
+        "today progress history fallback must remain SID scoped after the batch attempt",
     )
 
     roster_start = export_logs_js.index("async function ensureRosterProgressHistory")
@@ -8220,6 +8231,7 @@ ok(calls.includes('/api/updates/ensure-today'), 'critical updates endpoint was r
 
 globalThis.fetch = async (url) => {
   if (String(url) === '/api/materials') throw new Error('materials offline');
+  if (String(url).startsWith('/api/admin/bootstrap?')) return response({ error: 'old backend' }, 404);
   return response(payloadFor(url));
 };
 await stateModule.bootstrap();

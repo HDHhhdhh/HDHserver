@@ -40,6 +40,7 @@ from core.person_identity_store import (
 )
 from core.runtime_server_guard import refuse_concurrent_live_server
 from core.request_consistency import POST_DATE_ENDPOINTS, absence_barrier_mode, request_has_invalid_scoped_date
+from routes.api_admin_state import bp_api_admin_state
 
 from core.network_access import (
     academy_network_allowed,
@@ -367,6 +368,7 @@ def create_app() -> Flask:
     # Blueprints
     app.register_blueprint(bp_pages)
     app.register_blueprint(bp_api_basic)
+    app.register_blueprint(bp_api_admin_state)
     app.register_blueprint(bp_api_student_bootstrap)
     app.register_blueprint(bp_api_updates)
     app.register_blueprint(bp_api_students)
