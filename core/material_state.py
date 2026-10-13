@@ -17,6 +17,8 @@ from core.file_material_transaction import (
     verify_applied,
 )
 from core.storage import file_lock, save_atomic
+from core.stores import get_store
+from core.json_store import StoreError
 
 
 log = logging.getLogger(__name__)
@@ -75,10 +77,8 @@ def material_state_revision(materials: Any, assignments: Any, page_folders: Any)
 def _load_store_strict(path) -> Any:
     source = pathlib.Path(path)
     try:
-        return json.loads(source.read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return get_store("legacy", source).read_data_locked()
+    except StoreError as exc:
         raise MaterialStateRecoveryRequiredError(
             f"material state store is unreadable: {source}"
         ) from exc
@@ -272,7 +272,7 @@ def recover_material_state_locked(
         state = payload["state"]
         for path, key in ((materials_path, "materials"), (assignments_path, "assignments"),
                           (page_folders_path, "pageFolders")):
-            save_atomic(pathlib.Path(path), state[key])
+            get_store(key, path).write_data_locked(state[key], writer=save_atomic)
         _write_journal_atomic(material_state_last_good_path(materials_path),
                               _journal_payload(state["materials"], state["assignments"], state["pageFolders"]))
         if plan is not None:

@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from routes import api_schedule_overrides  # noqa: E402
+from core.json_store import JsonStore  # noqa: E402
 
 
 def _write_store(path: Path, value) -> None:
@@ -67,6 +68,7 @@ def main() -> int:
             "enqueue": api_schedule_overrides.enqueue_current_schedule_changes,
             "load": api_schedule_overrides.load,
             "save_atomic": api_schedule_overrides.save_atomic,
+            "read_data_locked": JsonStore.read_data_locked,
         }
         initializer_calls: list[dict] = []
         initializer_state = {"failures_remaining": 0}
@@ -192,14 +194,14 @@ def main() -> int:
             assert len(initializer_calls) == 2
             assert notification_calls[-1] == set()
 
-            real_load = api_schedule_overrides.load
+            real_read = JsonStore.read_data_locked
             first_loaded = threading.Event()
             release_first = threading.Event()
             writer_results: dict[str, int] = {}
 
-            def delayed_load(path):
-                value = real_load(path)
-                if path == extra_path and threading.current_thread().name == "extra-writer-one":
+            def delayed_read(store):
+                value = real_read(store)
+                if store.path == extra_path and threading.current_thread().name == "extra-writer-one":
                     first_loaded.set()
                     assert release_first.wait(3), "timed out releasing the first extra writer"
                 return value
@@ -212,7 +214,7 @@ def main() -> int:
                     )
                     writer_results[label] = response.status_code
 
-            api_schedule_overrides.load = delayed_load
+            JsonStore.read_data_locked = delayed_read
             first = threading.Thread(
                 target=write_extra,
                 args=("first", "2026-06-08", "writer-a"),
@@ -237,7 +239,7 @@ def main() -> int:
             assert concurrent_extra["2026-06-08"] == ["writer-a"]
             assert concurrent_extra["2026-06-09"] == ["writer-b"]
             assert concurrent_extra["2026-06-10"] == ["untouched"]
-            api_schedule_overrides.load = real_load
+            JsonStore.read_data_locked = real_read
 
             weekend_before_failures = _fingerprint(weekend_path)
             students_before_failures = _fingerprint(students_path)
@@ -443,6 +445,7 @@ def main() -> int:
                 "s1",
             )
         finally:
+            JsonStore.read_data_locked = original["read_data_locked"]
             api_schedule_overrides.EXTRA_PATH = original["EXTRA_PATH"]
             api_schedule_overrides.WEEKEND_SLOTS_PATH = original["WEEKEND_SLOTS_PATH"]
             api_schedule_overrides.STU_PATH = original["STU_PATH"]

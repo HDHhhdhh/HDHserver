@@ -287,7 +287,7 @@ def main():
     parser.add_argument("--expect", choices=("guarded", "vulnerable"), default="guarded")
     args = parser.parse_args()
     checks = Checks()
-    with patch.object(os, "environ", {"AUTH_SECRET": "qa-only-policy-secret-" + "x" * 48, "MASTER_PW": ""}):
+    with patch.object(os, "environ", {"AUTH_SECRET": "qa-only-policy-secret-" + "x" * 48, "MASTER_PW": "", "DATA_MIRROR_SYNC": "1"}):
         lifecycle(checks, args.source_root, args.expect == "vulnerable")
         if args.expect == "guarded":
             public_reactivation(checks, args.source_root)

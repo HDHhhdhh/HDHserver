@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import re
 from urllib.parse import parse_qs, urlparse
@@ -9,7 +7,10 @@ from urllib.parse import parse_qs, urlparse
 from flask import Blueprint, current_app, jsonify, make_response, request
 
 from core.paths import VID_PATH
-from core.storage import file_lock, load, save_atomic
+from core.storage import file_lock, save_atomic
+from core.stores import get_store, load_cached as load
+from core.json_revision import json_revision
+from core.json_store import StoreError
 from core.video_sources import is_youtube_mid, parse_youtube_url
 
 
@@ -31,18 +32,17 @@ def _video_catalog_store_error(exc):
     return jsonify({"ok": False, "error": "video_catalog_unavailable"}), 503
 
 
-def _read_video_catalog():
+def _read_video_catalog(*, fresh: bool = False):
     try:
-        rows = load(VID_PATH)
+        rows = get_store("videos", VID_PATH).read_data_locked() if fresh else load(VID_PATH)
         _video_catalog_rows_by_id(rows, "current video catalog")
         return rows
-    except (OSError, UnicodeError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError, StoreError) as exc:
         raise VideoCatalogStoreError("video catalog unavailable") from exc
 
 
 def _video_catalog_revision(rows) -> str:
-    encoded = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return json_revision(rows)
 
 
 def _video_revision_response(payload, revision: str, status: int = 200):
@@ -183,7 +183,7 @@ def api_videos():
     try:
         next_videos = _normalize_video_mid_fields(request.get_json(force=True))
         with file_lock(VID_PATH, timeout_sec=20.0, poll_sec=0.05):
-            previous_videos = _read_video_catalog()
+            previous_videos = _read_video_catalog(fresh=True)
             changes = _video_catalog_identity_changes(previous_videos, next_videos)
             if changes["removedIds"] or changes["midChanges"]:
                 return jsonify({
@@ -195,7 +195,7 @@ def api_videos():
             revision_error = _video_revision_precondition(_video_catalog_revision(previous_videos))
             if revision_error is not None:
                 return revision_error
-            save_atomic(VID_PATH, next_videos)
+            get_store("videos", VID_PATH).write_data_locked(next_videos, writer=save_atomic)
     except ValueError as exc:
         return jsonify({"ok": False, "error": "invalid_video_catalog", "message": str(exc)}), 400
     return _video_revision_response(None, _video_catalog_revision(next_videos), 204)

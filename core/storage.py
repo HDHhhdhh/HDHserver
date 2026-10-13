@@ -6,21 +6,24 @@ file lock cannot replace identity, material or absence journal transactions.
 """
 from __future__ import annotations
 
+import atexit
 import datetime as dt
-import filecmp
 import errno
 import json
 import logging
 import os
 import pathlib
 import re
-import shutil
+import stat
 import threading
 import time
 import uuid
 from typing import Any
 
 from flask import jsonify, make_response
+
+from core.mirror_queue import MirrorJob, MirrorQueue
+from core.json_revision import json_revision
 
 log = logging.getLogger(__name__)
 
@@ -117,72 +120,114 @@ def _prune_snapshots(snap_dir: pathlib.Path, stem: str, max_keep: int) -> None:
             pass
 
 
-def _mirror_copy(path) -> None:
-    """
-    Best-effort mirror copy for redundancy.
-    - Never raises: primary save should remain authoritative.
-    - Copies JSON file to mirror root with same filename.
-    - Also writes timestamped snapshot for rollback.
-    """
+_MIRROR_QUEUE: MirrorQueue | None = None
+_MIRROR_QUEUE_GUARD = threading.Lock()
+_MIRROR_ATEXIT_REGISTERED = False
+
+
+def _atomic_mirror_bytes(path: pathlib.Path, job: MirrorJob) -> None:
+    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
     try:
-        src = pathlib.Path(path)
-        if src.suffix.lower() != ".json":
-            return
-
-        mirror_root = _resolve_mirror_root(src)
-        if mirror_root is None:
-            return
-
-        mirror_root.mkdir(parents=True, exist_ok=True)
-        mirror_file = mirror_root / src.name
-        snap_dir = mirror_root / "_snapshots" / src.stem
-        snap_dir.mkdir(parents=True, exist_ok=True)
-
-        shutil.copy2(src, mirror_file)
-
-        # Snapshot controls (all optional env vars):
-        # - DATA_MIRROR_SNAPSHOTS=0              => disable snapshots
-        # - DATA_MIRROR_MAX_SNAPS_PER_FILE=96    => keep only newest N snapshots/file
-        # - DATA_MIRROR_SNAPSHOT_MIN_SEC=300     => min interval seconds between snapshots
-        snapshot_flag = os.environ.get("DATA_MIRROR_SNAPSHOTS", "1").strip().lower()
-        snapshots_enabled = snapshot_flag not in {"0", "false", "off", "no"}
-        if not snapshots_enabled:
-            return
-
-        max_keep = _env_int("DATA_MIRROR_MAX_SNAPS_PER_FILE", 96, min_value=0)
-        min_sec = _env_int("DATA_MIRROR_SNAPSHOT_MIN_SEC", 300, min_value=0)
-
-        latest = None
+        tmp.write_bytes(job.data)
+        os.chmod(tmp, stat.S_IMODE(job.mode))
+        os.utime(tmp, ns=(job.atime_ns, job.mtime_ns))
+        os.replace(tmp, path)
+    finally:
         try:
-            cands = list(snap_dir.glob(f"{src.stem}.*.json"))
-            if cands:
-                latest = max(cands, key=lambda p: p.stat().st_mtime)
-        except Exception:
-            latest = None
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-        should_snapshot = True
-        if latest is not None:
-            try:
-                age_sec = max(0.0, time.time() - latest.stat().st_mtime)
-                if min_sec > 0 and age_sec < float(min_sec):
-                    should_snapshot = False
-                elif latest.stat().st_size == src.stat().st_size and filecmp.cmp(latest, src, shallow=False):
-                    should_snapshot = False
-            except Exception:
-                pass
 
-        if should_snapshot:
-            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-            snap_file = snap_dir / f"{src.stem}.{stamp}.json"
-            shutil.copy2(src, snap_file)
+def _write_mirror_job(job: MirrorJob) -> None:
+    job.mirror_file.parent.mkdir(parents=True, exist_ok=True)
+    # Serialize destination publication across processes without ever reading
+    # the primary again. A newer copied primary mtime fences older queued jobs.
+    with file_lock(job.mirror_file, timeout_sec=5.0):
+        try:
+            destination = job.mirror_file.stat()
+            if job.inode and (destination.st_dev, destination.st_ino) == (job.device, job.inode):
+                return  # Captured primary inode, including a later hardlink alias.
+            if destination.st_mtime_ns > job.mtime_ns:
+                return
+        except FileNotFoundError:
+            pass
+        _write_mirror_payload(job)
 
-        _prune_snapshots(snap_dir, src.stem, max_keep=max_keep)
-    except Exception:
-        # mirror is redundancy only; ignore failures
+
+def _write_mirror_payload(job: MirrorJob) -> None:
+    job.mirror_file.parent.mkdir(parents=True, exist_ok=True)
+    job.snapshot_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_mirror_bytes(job.mirror_file, job)
+    if not job.snapshots_enabled:
         return
+    latest = None
+    try:
+        candidates = list(job.snapshot_dir.glob(f"{job.stem}.*.json"))
+        if candidates:
+            latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    except Exception:
+        pass
+    should_snapshot = True
+    if latest is not None:
+        try:
+            age_sec = max(0.0, time.time() - latest.stat().st_mtime)
+            if job.min_sec > 0 and age_sec < float(job.min_sec):
+                should_snapshot = False
+            elif latest.stat().st_size == len(job.data) and latest.read_bytes() == job.data:
+                should_snapshot = False
+        except Exception:
+            pass
+    if should_snapshot:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        _atomic_mirror_bytes(job.snapshot_dir / f"{job.stem}.{stamp}.json", job)
+    _prune_snapshots(job.snapshot_dir, job.stem, max_keep=job.max_keep)
 
 
-def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool = True) -> None:
+def _get_mirror_queue() -> MirrorQueue:
+    global _MIRROR_QUEUE, _MIRROR_ATEXIT_REGISTERED
+    with _MIRROR_QUEUE_GUARD:
+        if _MIRROR_QUEUE is None:
+            _MIRROR_QUEUE = MirrorQueue(lambda job: _write_mirror_job(job))
+        if not _MIRROR_ATEXIT_REGISTERED:
+            atexit.register(shutdown_mirrors)
+            _MIRROR_ATEXIT_REGISTERED = True
+        return _MIRROR_QUEUE
+
+
+def drain_mirrors(timeout_sec: float = 5.0) -> bool:
+    queue = _MIRROR_QUEUE
+    return queue is None or queue.drain(timeout_sec)
+
+
+def shutdown_mirrors(timeout_sec: float = 5.0) -> bool:
+    queue = _MIRROR_QUEUE
+    return queue is None or queue.shutdown(timeout_sec)
+
+
+def _submit_committed_mirror(path, data: bytes, metadata, mirror) -> None:
+    src = pathlib.Path(path)
+    primary = src.resolve()
+    mirror_root = _resolve_mirror_root(src)
+    if mirror_root is None:
+        return
+    # Freeze relative destinations and policy now, before the worker can run.
+    mirror_root = mirror_root.resolve()
+    mirror_file = mirror_root / src.name
+    if os.path.normcase(str(mirror_file)) == os.path.normcase(str(primary)):
+        return  # Keep the old copy2 SameFileError exclusion; never mirror onto primary.
+    snapshots = os.environ.get("DATA_MIRROR_SNAPSHOTS", "1").strip().lower() not in {"0", "false", "off", "no"}
+    job = MirrorJob(str(primary), mirror_file,
+                    mirror_root / "_snapshots" / src.stem, src.stem, data,
+                    metadata.st_atime_ns, metadata.st_mtime_ns, metadata.st_mode,
+                    metadata.st_dev, metadata.st_ino,
+                    snapshots, _env_int("DATA_MIRROR_MAX_SNAPS_PER_FILE", 96),
+                    _env_int("DATA_MIRROR_SNAPSHOT_MIN_SEC", 300))
+    synchronous = mirror == "sync" or os.environ.get("DATA_MIRROR_SYNC", "").strip() == "1"
+    _get_mirror_queue().submit(job, synchronous=synchronous)
+
+
+def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool | str = "async") -> None:
     """
     원자적 쓰기(임시파일 → 교체).
     Windows에서 WinError 32(다른 프로세스가 파일 사용 중) 뜨는 케이스가 있어:
@@ -195,13 +240,24 @@ def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool = True) -
     else:
         serialized = json.dumps(obj, ensure_ascii=False, indent=2)
     tmp.write_text(serialized, "utf-8")
+    mirror_data = mirror_metadata = None
+    if mirror and path.suffix.lower() == ".json":
+        try:
+            # Private tmp bytes include the exact Windows newline translation.
+            # Never re-read the primary after another mirror=False save.
+            mirror_data, mirror_metadata = tmp.read_bytes(), tmp.stat()
+        except Exception:
+            log.exception("Mirror capture failed for %s", path)
 
     last_err = None
     for _ in range(10):
         try:
             os.replace(tmp, path)
-            if mirror:
-                _mirror_copy(path)
+            if mirror_data is not None:
+                try:
+                    _submit_committed_mirror(path, mirror_data, mirror_metadata, mirror)
+                except Exception:
+                    log.exception("Mirror enqueue failed for %s", path)
             return
         except OSError as e:
             last_err = e
@@ -358,20 +414,31 @@ class InterProcessFileLock:
 
     def acquire(self) -> None:
         deadline = time.time() + self.timeout_sec
+        permission_retries = 0
         while True:
             try:
                 token = uuid.uuid4().hex
                 fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                self._fd = fd
-                self._token = token
-                os.write(fd, f"pid={os.getpid()} time={time.time()} token={token}".encode("utf-8"))
-                _register_local_lock_token(self.lock_path, token)
-                return
             except FileExistsError:
                 self._try_break_stale_lock()
                 if time.time() > deadline:
                     raise TimeoutError(f"lock timeout: {self.lock_path}")
                 time.sleep(self.poll_sec)
+            except PermissionError as exc:
+                # Windows can expose delete-pending O_EXCL conflicts as EACCES.
+                # Never break a lock for this error, and retain real ACL failures.
+                if os.name != "nt" or getattr(exc, "winerror", None) not in {None, 5, 32, 33}:
+                    raise
+                if permission_retries >= 3 or time.time() >= deadline:
+                    raise
+                permission_retries += 1
+                time.sleep(self.poll_sec)
+            else:
+                self._fd = fd
+                self._token = token
+                os.write(fd, f"pid={os.getpid()} time={time.time()} token={token}".encode("utf-8"))
+                _register_local_lock_token(self.lock_path, token)
+                return
 
     def release(self) -> None:
         token = self._token

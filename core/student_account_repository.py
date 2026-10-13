@@ -12,6 +12,7 @@ from typing import Mapping, Sequence
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from core.storage import file_lock, save_atomic
+from core.stores import get_store
 from core.student_account_rules import (
     DEFAULT_ACTIVATION_PASSWORD,
     ActivationDecision,
@@ -189,7 +190,7 @@ class StudentAccountRepository:
             if not sids:
                 raise AccountRepositoryError("no_linked_sid", normalized)
             accounts[normalized] = self._new_record(sids, password)
-            save_atomic(self.accounts_path, accounts)
+            get_store("accounts", self.accounts_path).write_data_locked(accounts, writer=save_atomic)
             return AccountLoginResult(normalized, sids, True, decision.decision, True)
 
     def public_login(self, identifier: str, password: str) -> AccountLoginResult:
@@ -217,7 +218,7 @@ class StudentAccountRepository:
                         record["must_change_credentials"] = True
                         record["updated_at"] = _iso_now()
                         accounts[key] = record
-                        save_atomic(self.accounts_path, accounts)
+                        get_store("accounts", self.accounts_path).write_data_locked(accounts, writer=save_atomic)
                         must_change = True
                 return AccountLoginResult(key, sids, must_change, ActivationDecision.EXISTING, False)
 
@@ -231,7 +232,7 @@ class StudentAccountRepository:
             if not sids:
                 raise AccountRepositoryError("no_linked_sid", normalized)
             accounts[normalized] = self._new_record(sids, password)
-            save_atomic(self.accounts_path, accounts)
+            get_store("accounts", self.accounts_path).write_data_locked(accounts, writer=save_atomic)
             return AccountLoginResult(normalized, sids, True, decision.decision, True)
 
     def public_login_transition(self, identifier: str, password: str) -> AccountLoginResult:
@@ -259,7 +260,7 @@ class StudentAccountRepository:
             record["updated_at"] = now
             record["credentials_updated_at"] = now
             accounts[key] = record
-            save_atomic(self.accounts_path, accounts)
+            get_store("accounts", self.accounts_path).write_data_locked(accounts, writer=save_atomic)
             return AdminResetResult(key, True, True)
 
     def admin_set_disabled(self, identifier: str, disabled: bool) -> AdminStateResult:
@@ -281,7 +282,7 @@ class StudentAccountRepository:
             record["disabled"] = disabled
             record["updated_at"] = _iso_now()
             accounts[key] = record
-            save_atomic(self.accounts_path, accounts)
+            get_store("accounts", self.accounts_path).write_data_locked(accounts, writer=save_atomic)
             return AdminStateResult(key, disabled)
 
     read_accounts = load

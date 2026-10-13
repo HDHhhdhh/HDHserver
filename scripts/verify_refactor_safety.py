@@ -39,6 +39,9 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_auth_startup_safety.py",
     ROOT / "scripts/verify_auth_schedule_scope.py",
     ROOT / "scripts/verify_json_store_safety.py",
+    ROOT / "scripts/verify_json_store_transport.py",
+    ROOT / "scripts/verify_json_store_owners.py",
+    ROOT / "scripts/verify_async_mirror.py",
     ROOT / "scripts/verify_admin_api_body_validation.py",
     ROOT / "scripts/verify_schedule_store_safety.py",
     ROOT / "scripts/report_duplicate_student_ids.py",
@@ -1220,7 +1223,7 @@ def run_stability_auth_boundary_checks() -> None:
 
 
 def run_stability_storage_boundary_checks() -> None:
-    for script in ("verify_json_store_safety.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
+    for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
         proc = _run_captured([sys.executable, "scripts/" + script])
         if proc.stdout:
             print(proc.stdout, end="")
@@ -2493,7 +2496,9 @@ def run_progress_read_cache_unit_checks() -> None:
 
             first = api_basic._load_progress_strict()
             second = api_basic._load_progress_strict()
-            _assert_unit(first is second, "progress read cache must reuse data while file signature is unchanged")
+            _assert_unit(first == second and first is not second, "progress cache must return independent equal snapshots")
+            first["2026-06-01"]["s1"]["m1"] = "skip"
+            _assert_unit(api_basic._load_progress_strict() == {"2026-06-01": {"s1": {"m1": "done"}}}, "caller edits must not mutate the cached progress snapshot")
 
             progress_path.write_text(
                 '{"2026-06-02":{"s2":{"m2":"interrupted"},"s3":{"m3":"skip"}}}',
@@ -2511,27 +2516,22 @@ def run_progress_read_cache_unit_checks() -> None:
 
             import concurrent.futures
 
-            class SlowProgressPath:
-                def __init__(self, path: pathlib.Path):
-                    self.path = path
-                    self.read_count = 0
+            from unittest.mock import patch
+            actual_read = pathlib.Path.read_bytes
+            read_count = [0]
 
-                def stat(self):
-                    return self.path.stat()
-
-                def read_text(self, encoding: str):
-                    self.read_count += 1
+            def slow_read(path):
+                if path == progress_path:
+                    read_count[0] += 1
                     time.sleep(0.05)
-                    return self.path.read_text(encoding=encoding)
+                return actual_read(path)
 
-            slow_path = SlowProgressPath(progress_path)
-            api_basic.PRG_PATH = slow_path
             progress_store.reset_progress_cache()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            with patch.object(pathlib.Path, "read_bytes", slow_read), concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 concurrent_reads = list(pool.map(lambda _: api_basic._load_progress_strict(), range(2)))
             _assert_unit(
-                slow_path.read_count == 1 and concurrent_reads[0] is concurrent_reads[1],
-                "concurrent cold progress reads must share one JSON parse",
+                read_count[0] == 1 and concurrent_reads[0] == concurrent_reads[1] and concurrent_reads[0] is not concurrent_reads[1],
+                "concurrent cold progress reads must share one parse and return defensive copies",
             )
 
             api_basic.PRG_PATH = progress_path
@@ -2540,9 +2540,11 @@ def run_progress_read_cache_unit_checks() -> None:
             saved_text = progress_path.read_text(encoding="utf-8")
             _assert_unit("\n" not in saved_text, "progress writes must use compact JSON on the hot path")
             _assert_unit(
-                api_basic._load_progress_strict() is saved,
-                "progress writes must publish the saved object to the read cache",
+                api_basic._load_progress_strict() == saved and api_basic._load_progress_strict() is not saved,
+                "progress reads must return committed values without exposing the caller's object",
             )
+            saved["2026-06-03"]["s4"]["tests"]["unit-1"] = "done"
+            _assert_unit(api_basic._load_progress_strict() == {"2026-06-03": {"s4": {"tests": {"unit-1": "assigned"}}}}, "post-save caller edits must not change committed progress")
         finally:
             api_basic.PRG_PATH = original_path
             progress_store.reset_progress_cache()
@@ -3422,10 +3424,11 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     import routes.api_students as api_students
     import routes.api_updates as api_updates
 
-    extra_path = object()
-    weekend_path = object()
-    students_path = object()
-    updates_path = object()
+    hook_root = pathlib.Path(tempfile.gettempdir()) / f"verify-route-hooks-{time.time_ns()}"
+    extra_path = hook_root / "extra.json"
+    weekend_path = hook_root / "weekend.json"
+    students_path = hook_root / "students.json"
+    updates_path = hook_root / "updates.json"
     store = {"extra": {}, "weekend": {}, "students": [], "updates": {}}
     init_calls = []
     expand_calls = []
@@ -3451,6 +3454,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "STU_PATH": api_students.STU_PATH,
         "load": api_students.load,
         "save_atomic": api_students.save_atomic,
+        "get_store": api_students.get_store,
         "file_lock": api_students.file_lock,
         "_today_kst_iso": api_students._today_kst_iso,
         "enqueue_current_schedule_changes": api_students.enqueue_current_schedule_changes,
@@ -3462,6 +3466,7 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "STU_PATH": api_schedule_overrides.STU_PATH,
         "load": api_schedule_overrides.load,
         "save_atomic": api_schedule_overrides.save_atomic,
+        "get_store": api_schedule_overrides.get_store,
         "file_lock": api_schedule_overrides.file_lock,
         "_today_kst_iso": api_schedule_overrides._today_kst_iso,
         "enqueue_current_schedule_changes": api_schedule_overrides.enqueue_current_schedule_changes,
@@ -3473,30 +3478,30 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     }
 
     def fake_load(path):
-        if path is extra_path:
+        if path == extra_path:
             _assert_unit(lock_state["depth"] == 1, "extra-attend read occurs inside the file lock")
             return store["extra"]
-        if path is weekend_path:
+        if path == weekend_path:
             _assert_unit(lock_state["depth"] == 1, "weekend slot read occurs inside the file lock")
             return store["weekend"]
-        if path is students_path:
+        if path == students_path:
             student_io_events.append(("load", lock_state["depth"]))
             return store["students"]
-        if path is updates_path:
+        if path == updates_path:
             return store["updates"]
         return {}
 
     def fake_save(path, value, **kwargs):
-        if path is extra_path:
+        if path == extra_path:
             _assert_unit(lock_state["depth"] == 1, "extra-attend save occurs inside the file lock")
             store["extra"] = value
-        elif path is weekend_path:
+        elif path == weekend_path:
             _assert_unit(lock_state["depth"] == 1, "weekend slot save occurs inside the file lock")
             store["weekend"] = value
-        elif path is students_path:
+        elif path == students_path:
             student_io_events.append(("save", lock_state["depth"]))
             store["students"] = value
-        elif path is updates_path:
+        elif path == updates_path:
             store["updates"] = value
 
     @contextlib.contextmanager
@@ -3505,9 +3510,9 @@ def run_video_assignment_route_hook_unit_checks() -> None:
             path in {extra_path, weekend_path, students_path},
             "route locks its own storage path",
         )
-        if path is extra_path:
+        if path == extra_path:
             label = "extra"
-        elif path is weekend_path:
+        elif path == weekend_path:
             label = "weekend"
         else:
             label = "students"
@@ -3546,6 +3551,18 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         api_updates.save_updates_strict = fake_save
         api_students.load = fake_load
         api_students.save_atomic = fake_save
+        class HookStore:
+            def __init__(self, path):
+                self.path = path
+
+            def read_data_locked(self):
+                return fake_load(self.path)
+
+            def write_data_locked(self, data, *, writer):
+                writer(self.path, data)
+
+        api_students.get_store = lambda _name, path: HookStore(path)
+        api_schedule_overrides.get_store = lambda _name, path: HookStore(path)
         api_students.file_lock = fake_file_lock
         api_schedule_overrides.load = fake_load
         api_schedule_overrides.save_atomic = fake_save
@@ -11940,4 +11957,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Existing fixtures fingerprint mirrors before cleanup. Async queue behavior
+    # has its own event-driven verifier that explicitly selects asynchronous mode.
+    os.environ.setdefault("DATA_MIRROR_SYNC", "1")
     raise SystemExit(main())

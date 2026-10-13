@@ -46,7 +46,7 @@ class ScheduleStoreTests(unittest.TestCase):
             path = Path(temporary) / "extra.json"
             path.write_text('{"2026-10-15":["keep"]}', "utf-8")
             before = path.read_bytes()
-            original = Path.read_text
+            original = Path.read_bytes
 
             def denied(target, *args, **kwargs):
                 if target == path:
@@ -55,7 +55,7 @@ class ScheduleStoreTests(unittest.TestCase):
 
             app = Flask("schedule-read-fixture")
             app.register_blueprint(schedules.bp_api_schedule_overrides)
-            with patch.object(schedules, "EXTRA_PATH", path), patch.object(Path, "read_text", denied):
+            with patch.object(schedules, "EXTRA_PATH", path), patch.object(Path, "read_bytes", denied):
                 response = app.test_client().get("/api/extra-attend")
             self.assertEqual(response.status_code, 503)
             self.assertEqual(path.read_bytes(), before)
@@ -67,7 +67,7 @@ class ScheduleStoreTests(unittest.TestCase):
             path.write_text('{"keep":{"other":[2]}}', "utf-8")
             roster.write_text('[{"id":"student0"}]', "utf-8")
             before = (path.stat().st_mtime_ns, path.read_bytes())
-            original = Path.read_text
+            original = Path.read_bytes
             calls = []
 
             def denied(target, *args, **kwargs):
@@ -78,7 +78,7 @@ class ScheduleStoreTests(unittest.TestCase):
             app = Flask("weekend-roster-read-fixture")
             schedules.configure_schedule_override_assignment_hooks(app, initialize_today=lambda **kwargs: calls.append("initialize"), reconcile=lambda *args, **kwargs: calls.append("reconcile"))
             app.register_blueprint(schedules.bp_api_schedule_overrides)
-            with patch.object(schedules, "WEEKEND_SLOTS_PATH", path), patch.object(schedules, "STU_PATH", roster), patch.object(Path, "read_text", denied), patch.object(schedules, "enqueue_current_schedule_changes", side_effect=lambda *args: calls.append("notify")):
+            with patch.object(schedules, "WEEKEND_SLOTS_PATH", path), patch.object(schedules, "STU_PATH", roster), patch.object(Path, "read_bytes", denied), patch.object(schedules, "enqueue_current_schedule_changes", side_effect=lambda *args: calls.append("notify")):
                 response = app.test_client().post("/api/weekend-slots", json={"2026-10-15": {"student0": [1]}})
             self.assertEqual(response.status_code, 503)
             self.assertEqual(response.get_json(), {"ok": False, "error": "student roster unavailable"})

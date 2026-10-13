@@ -406,6 +406,27 @@
 
 `app.sqlite-wal`, `app.sqlite-shm`, `data/`, `files/`, `_data_mirror/`, `_runtime_backups/`, root `*.tmp`도 런타임 데이터다.
 
+### JSON 저장소와 미러 처리
+
+`core.json_store.JsonStore`와 지연 생성하는 `core.stores` registry는 단일 JSON 파일의 read/write와 content revision을 공유한다. 생성 자체는 파일을 만들거나 읽지 않는다. registry는 최대 64개 경로를 보관하며 경로를 생성 시점의 절대경로로 고정한다. students/persons/videos의 필수 파일 누락은 빈 값으로 바꾸지 않는다. identity/material/absence coordinator의 잠금 순서·저널·복구는 기존 소유자가 유지한다.
+
+일반 `read()`는 mtime_ns·ctime_ns·size·inode가 안정된 snapshot의 방어 복사본을 반환한다. `revision()`은 같은 signature이면 SHA-256을 재사용한다. 신원·자료·계정과 쓰기 전제의 authoritative read는 캐시를 건너뛴다. 기존 lease 아래 `read_data_locked()`/`write_data_locked()`를 사용하면 버전을 필요로 하지 않는 경로에서 추가 hash와 반환 복사를 생략한다. revision이 필요한 호출은 `read_locked()`/`write_locked()`를 유지한다. 외부 도구가 모든 signature를 보존해 덮어쓰는 수동 복구에는 명시적 cache invalidation이 필요하다.
+
+`save_atomic()`는 원본 tmp의 실제 bytes·metadata를 캡처하고 primary replace 성공 뒤 미러 job을 제출한다. 기본 `mirror="async"`와 boolean True는 daemon 하나에서 목적지별 최신 대기 job을 합쳐 처리한다. worker는 원본을 다시 읽지 않는다. `mirror=False`는 캡처·enqueue에서 제외하며 계정 map과 민감한 저널에 적용한다. `mirror="sync"` 또는 `DATA_MIRROR_SYNC=1`은 종료형 CLI/검증에서 동기 처리를 선택한다. 미러 실패는 확정된 primary 저장을 실패로 바꾸지 않는다.
+
+```mermaid
+flowchart LR
+  A[기존 coordinator·lease] --> B[Fresh read·merge]
+  B --> C[Primary atomic replace]
+  C --> D[응답]
+  C --> E[허용된 bytes 큐]
+  E --> F[Mirror·snapshot]
+```
+
+snapshot의 간격·byte 중복 제거·개수 제한은 처리되는 job에 유지한다. coalescing한 중간 버전의 snapshot은 생략될 수 있다. 미러는 durable journal이 아니며 crash 때 대기 job을 잃을 수 있다. 정상 종료의 drain은 최대 5초다. 같은 프로세스의 generation과 목적지 file_lock·captured mtime fence가 오래된 job의 재덮기를 줄인다. 동일 경로·hardlink primary alias는 제외한다. 서로 다른 프로세스의 동일 mtime·벽시계 역행·수동 미래 mtime 복원까지 완전한 순서를 보장하지 않는다. 복원 작업은 기존 정지·backup·sync/drain 경계를 따라야 한다.
+
+Windows O_EXCL이 잠금 삭제 중 PermissionError를 반환할 때만 기존 timeout 안에서 최대 세 번 다시 시도한다. 이 경로는 stale-lock 제거를 실행하지 않으며 지속적인 ACL 오류는 원래 오류로 전달한다. 기존 active-token/PID 보호는 유지한다.
+
 ### 백업 확정 경계
 
 유지보수의 정지 완료는 8003 리스너가 사라진 시점만으로 판정하지 않는다. 해당 운영 runner에 연결된 `guard_waitress_shadow_listener.ps1` 프로세스도 종료됐는지 확인한 뒤 백업을 시작한다. 감시 프로세스는 runner 종료를 감지한 뒤 `instance/waitress-shadow-guard.log`에 마지막 종료 기록을 쓸 수 있다. 이 파일을 임의로 제외하거나 원본 변화 검사를 약화하지 않는다.

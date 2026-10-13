@@ -27,6 +27,8 @@ from core.person_identity import (
     validate_identity_state,
 )
 from core.storage import file_lock, save_atomic
+from core.stores import get_store
+from core.json_store import StoreError
 
 
 log = logging.getLogger(__name__)
@@ -79,13 +81,13 @@ def identity_is_configured(
     )
 
 
-def _load_json_strict(path: Any) -> Any:
+def _load_json_strict(path: Any, store_name: str) -> Any:
     source = pathlib.Path(path)
     try:
-        return json.loads(source.read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
-        raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return get_store(store_name, source).read_data_locked()
+    except StoreError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            raise exc.__cause__
         raise PersonIdentityRecoveryRequiredError(
             f"identity store is unreadable: {source}"
         ) from exc
@@ -93,11 +95,11 @@ def _load_json_strict(path: Any) -> Any:
 
 def load_identity_state_strict(persons_path: Any, students_path: Any) -> tuple[dict, list]:
     try:
-        directory = _load_json_strict(persons_path)
+        directory = _load_json_strict(persons_path, "persons")
     except FileNotFoundError as exc:
         raise PersonIdentityUnavailableError("person directory is not initialized") from exc
     try:
-        students = _load_json_strict(students_path)
+        students = _load_json_strict(students_path, "students")
     except FileNotFoundError as exc:
         raise PersonIdentityRecoveryRequiredError("students store is missing") from exc
     try:
@@ -178,14 +180,14 @@ def _write_after_state(
     *,
     failure_injector: Callable[[str], None] | None = None,
 ) -> None:
-    save_atomic(persons_path, snapshot["persons"])
+    get_store("persons", persons_path).write_data_locked(snapshot["persons"], writer=save_atomic)
     if failure_injector is not None:
         failure_injector("after_persons")
-    save_atomic(students_path, snapshot["students"])
+    get_store("students", students_path).write_data_locked(snapshot["students"], writer=save_atomic)
     if failure_injector is not None:
         failure_injector("after_students")
-    persisted_directory = _load_json_strict(persons_path)
-    persisted_students = _load_json_strict(students_path)
+    persisted_directory = _load_json_strict(persons_path, "persons")
+    persisted_students = _load_json_strict(students_path, "students")
     validate_identity_state(persisted_directory, persisted_students)
 
 
@@ -194,9 +196,9 @@ def _restore_before_state(
     students_path: pathlib.Path,
     snapshot: dict,
 ) -> None:
-    save_atomic(students_path, snapshot["students"])
+    get_store("students", students_path).write_data_locked(snapshot["students"], writer=save_atomic)
     if snapshot.get("personsExists") is True:
-        save_atomic(persons_path, snapshot["persons"])
+        get_store("persons", persons_path).write_data_locked(snapshot["persons"], writer=save_atomic)
         validate_identity_state(snapshot["persons"], snapshot["students"])
     else:
         try:
@@ -335,12 +337,12 @@ def initialize_identity_state(
             raise PersonIdentityConflictError("person directory already exists")
         if sha256_file(students_file) != normalized_text(expected_students_sha256).lower():
             raise PersonIdentityConflictError("students store changed after the migration plan")
-        current_students = _load_json_strict(students_file)
+        current_students = _load_json_strict(students_file, "students")
         if not isinstance(current_students, list):
             raise PersonIdentityRecoveryRequiredError("students store must be an array")
         before = {
             "personsExists": persons_file.exists(),
-            "persons": _load_json_strict(persons_file) if persons_file.exists() else None,
+            "persons": _load_json_strict(persons_file, "persons") if persons_file.exists() else None,
             "students": current_students,
         }
         _commit_identity_state_locked(

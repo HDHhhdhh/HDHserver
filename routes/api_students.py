@@ -37,7 +37,8 @@ from core.person_identity_store import (
     retire_student_identity,
     update_person_profile_field,
 )
-from core.storage import file_lock, load, save_atomic
+from core.storage import file_lock, save_atomic
+from core.stores import get_store, load_cached as load
 from core.student_auto_assignment_rules import (
     AUTO_VIDEO_ASSIGN_FIELD,
     apply_able_auto_video_assign_default,
@@ -201,7 +202,7 @@ def api_add_student():
         return jsonify({"id": created["id"], "personId": created["personId"]})
 
     with file_lock(STU_PATH):
-        students: list[dict] = load(STU_PATH)
+        students = get_store("students", STU_PATH).read_data_locked()
         try:
             data["id"] = allocate_unique_sid(
                 name_slug,
@@ -215,7 +216,7 @@ def api_add_student():
         except PersonIdentityConflictError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 409
         students.append(data)
-        save_atomic(STU_PATH, students)
+        get_store("students", STU_PATH).write_data_locked(students, writer=save_atomic)
     enqueue_current_schedule_changes([data["id"]])
     return jsonify({"id": data["id"]})
 
@@ -247,11 +248,11 @@ def api_delete_student(sid: str):
         return "", 204
 
     with file_lock(STU_PATH):
-        students: list[dict] = load(STU_PATH)
+        students = get_store("students", STU_PATH).read_data_locked()
         for index, student in enumerate(students):
             if str(student.get("id")) == str(sid):
                 del students[index]
-                save_atomic(STU_PATH, students)
+                get_store("students", STU_PATH).write_data_locked(students, writer=save_atomic)
                 return "", 204
     abort(404, description="학생을 찾을 수 없습니다.")
 
@@ -345,7 +346,7 @@ def api_update_student_field():
             return jsonify({"ok": False, "error": str(exc)}), 409
     else:
         with file_lock(STU_PATH):
-            current_students: list[dict] = load(STU_PATH)
+            current_students = get_store("students", STU_PATH).read_data_locked()
             students = _updated_student_rows(
                 current_students,
                 str(sid),
@@ -353,7 +354,7 @@ def api_update_student_field():
                 value,
             )
             if students is not None:
-                save_atomic(STU_PATH, students)
+                get_store("students", STU_PATH).write_data_locked(students, writer=save_atomic)
 
     if students is None:
         abort(404)

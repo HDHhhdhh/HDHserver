@@ -164,7 +164,7 @@ def main(source_root=ROOT, *, guarded=True):
             notifications.clear()
             operations.clear()
 
-        original_read = Path.read_text
+        original_read = Path.read_bytes
         error_type = PermissionError
 
         def read_error(path, *args, **kwargs):
@@ -200,7 +200,7 @@ def main(source_root=ROOT, *, guarded=True):
                 reset(watch_bytes)
                 before = {path: fingerprint(path) for path in stores}
                 error_type = PermissionError if name == "permission_error" else OSError
-                failure = patch.object(Path, "read_text", read_error) if name in ("permission_error", "os_error") else contextlib.nullcontext()
+                failure = patch.object(Path, "read_bytes", read_error) if name in ("permission_error", "os_error") else contextlib.nullcontext()
                 with failure:
                     outcome, payload = call(entrypoint)
                 changed = [path.name for path, old in before.items() if fingerprint(path) != old]

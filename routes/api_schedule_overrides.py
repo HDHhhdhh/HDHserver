@@ -8,7 +8,9 @@ from flask import Blueprint, current_app, jsonify, request
 from core.date_rules import is_iso_date_key
 from core.ghost_student import GHOST_STUDENT_WRITE_ERROR, is_ghost_student_sid
 from core.paths import EXTRA_PATH, STU_PATH, WEEKEND_SLOTS_PATH
-from core.storage import file_lock, load, save_atomic
+from core.storage import file_lock, save_atomic
+from core.stores import get_store, load_cached as load
+from core.json_store import StoreError
 from core.student_notification_hooks import enqueue_current_schedule_changes
 
 
@@ -23,10 +25,10 @@ def _schedule_store_unavailable(_error):
     return jsonify({"ok": False, "error": "schedule_store_unavailable"}), 503
 
 
-def _read_schedule_map(path) -> dict:
+def _read_schedule_map(path, *, fresh: bool = False) -> dict:
     try:
-        value = load(path)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = get_store("legacy", path).read_data_locked() if fresh else load(path)
+    except (OSError, UnicodeError, json.JSONDecodeError, StoreError) as exc:
         raise ScheduleStoreError("unreadable_schedule") from exc
     if not isinstance(value, dict):
         raise ScheduleStoreError("malformed_schedule")
@@ -176,7 +178,7 @@ def api_extra_attend():
     affected_sids: set[str] = set()
     changed_dates: set[str] = set()
     with file_lock(EXTRA_PATH):
-        previous_map = _read_schedule_map(EXTRA_PATH)
+        previous_map = _read_schedule_map(EXTRA_PATH, fresh=True)
         next_map = dict(previous_map)
         for date_key, sids in date_patch.items():
             previous_sids = previous_map.get(date_key)
@@ -198,7 +200,7 @@ def api_extra_attend():
             else:
                 next_map.pop(date_key, None)
         if changed_dates:
-            save_atomic(EXTRA_PATH, next_map)
+            get_store("extra", EXTRA_PATH).write_data_locked(next_map, writer=save_atomic)
 
     real_today = _today_kst_iso()
     # Replay today's idempotent initializer even when this PATCH is now a
@@ -256,8 +258,8 @@ def _validate_weekend_slot_students(
     patch: dict[str, dict[str, object]],
 ) -> None:
     try:
-        students = load(STU_PATH)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        students = get_store("students", STU_PATH).read_data_locked()
+    except (OSError, UnicodeError, json.JSONDecodeError, StoreError) as exc:
         raise RuntimeError("student roster unavailable") from exc
     if not isinstance(students, list) or any(not isinstance(row, dict) for row in students):
         raise RuntimeError("student roster unavailable")
@@ -291,7 +293,7 @@ def api_weekend_slots():
 
     initialize_today, reconcile = _assignment_hooks()
     with file_lock(WEEKEND_SLOTS_PATH):
-        current = _read_schedule_map(WEEKEND_SLOTS_PATH)
+        current = _read_schedule_map(WEEKEND_SLOTS_PATH, fresh=True)
         for date_key, mapping in body.items():
             day = current.setdefault(date_key, {})
             if not isinstance(day, dict):
@@ -303,7 +305,7 @@ def api_weekend_slots():
                 day[sid] = _normalize_weekend_slot_value(value)
             if not day:
                 current.pop(date_key, None)
-        save_atomic(WEEKEND_SLOTS_PATH, current)
+        get_store("weekend", WEEKEND_SLOTS_PATH).write_data_locked(current, writer=save_atomic)
 
     real_today = _today_kst_iso()
     if real_today in body:

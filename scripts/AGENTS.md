@@ -114,6 +114,8 @@ this file owns operational-script and verification safety.
 - Correction drafts and runtime backup archives are sensitive local artifacts and must not be committed. Live MID correction is permitted only through the PowerShell wrapper with both `-Apply` and `-ConfirmApply`; do not invoke the Python `--apply` path against the live root by hand.
 - Keep `verify_student_watch_timestamp.mjs` and `verify_watch_timestamp_guard.py` green; they reject 32-bit/10-digit `updatedAt` values and prove browser-to-server millisecond preservation/repair.
 
+- JSON transport/owner/mirror 변경은 `verify_json_store_transport.py`, `verify_json_store_owners.py`, `verify_async_mirror.py`를 기본 suite에서 함께 실행한다. 실제 module·OS-temp·native lease·독립 literal/hash·오류 무쓰기와 whole auth blueprint를 유지한다. 비동기 worker 검증은 event/drain을 쓰며 temp cleanup 전에 worker/child를 종료한다. 기존 즉시 fingerprint fixture는 `DATA_MIRROR_SYNC=1`을 사용하되 async verifier의 별도 비동기 모드를 유지한다.
+
 ## Anti-Patterns
 - Never launch another `app:app`/Flask server directly from the live root while production is running. Use `manage_isolated_design_server.ps1` when port 8004 is required; it is the only supported concurrent-server path.
 - Do not commit runtime backup archives, generated CSVs, debug screenshots, or local Drive downloads unless explicitly requested.

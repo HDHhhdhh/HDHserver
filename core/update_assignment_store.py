@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from core.storage import InterProcessFileLock, save_atomic
+from core.stores import get_store
 
 
 class UpdateAssignmentStoreError(RuntimeError):
@@ -13,11 +12,8 @@ class UpdateAssignmentStoreError(RuntimeError):
 
 def load_updates_strict(path: Any) -> dict:
     """Load an object-shaped updates store without treating corruption as empty."""
-    target = Path(path)
     try:
-        data = {} if not target.exists() else json.loads(
-            target.read_text(encoding="utf-8-sig")
-        )
+        data = get_store("updates", path).read_data_locked()
     except Exception as exc:
         raise UpdateAssignmentStoreError(
             f"updates store read failed: {exc}"
@@ -33,7 +29,7 @@ def save_updates_strict(path: Any, data: dict) -> None:
     if not isinstance(data, dict):
         raise UpdateAssignmentStoreError("updates store must be an object")
     try:
-        save_atomic(path, data)
+        get_store("updates", path).write_data_locked(data, writer=save_atomic)
     except Exception as exc:
         raise UpdateAssignmentStoreError(
             f"updates store write failed: {exc}"

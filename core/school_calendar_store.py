@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
-import pathlib
 from typing import Any
 
 from core.storage import file_lock, save_atomic
+from core.json_revision import json_revision
+from core.json_store import StoreError
+from core.stores import get_store
 
 
 class SchoolCalendarConflictError(RuntimeError):
@@ -21,24 +21,15 @@ class SchoolCalendarUnavailableError(RuntimeError):
 def school_calendar_revision(document: dict[str, Any]) -> str:
     if not isinstance(document, dict):
         raise ValueError("school calendar must be an object")
-    encoded = json.dumps(
-        document,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return json_revision(document)
 
 
 def _load_school_calendar_strict(path: Any) -> dict[str, Any]:
-    source = pathlib.Path(path)
     try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = get_store("calendar", path).read_data_locked()
+    except StoreError as exc:
         raise SchoolCalendarUnavailableError(
-            f"school calendar is unreadable: {source}"
+            f"school calendar is unreadable: {path}"
         ) from exc
     if not isinstance(value, dict):
         raise SchoolCalendarUnavailableError("school calendar must be an object")
@@ -65,7 +56,7 @@ def replace_school_calendar(
         current_revision = school_calendar_revision(current)
         if expected_revision != current_revision:
             raise SchoolCalendarConflictError(current_revision)
-        save_atomic(pathlib.Path(path), document)
+        get_store("calendar", path).write_data_locked(document, writer=save_atomic)
         return school_calendar_revision(document)
 
 

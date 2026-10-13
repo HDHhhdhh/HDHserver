@@ -13,6 +13,8 @@
   파생값이므로 고정하지 않는다. 구조 판단은 아래 책임 표와 현재 심볼
   검색을 사용한다.
 
+단일 JSON transport는 `core/json_store.py`, 지연 경로 registry는 `core/stores.py`, 순수 revision은 `core/json_revision.py`가 소유한다. `core/storage.py`의 primary replace 뒤 captured bytes를 `core/mirror_queue.py`에 넘긴다. HTTP/도메인 소유자는 기존 coordinator·lease·journal·response를 유지하고 cached projection과 fresh authoritative read를 구분한다. 구체적인 일관성·미러 한계는 canonical §14를 따른다.
+
 ## 2. 앱 조립 모드
 
 `create_app()`은 학생 앱 기능 플래그에 따라 Blueprint와 URL 표면을 조건부

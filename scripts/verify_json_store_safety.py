@@ -44,7 +44,7 @@ class StrictJsonReadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "store.json"
-            with patch.dict("os.environ", {"DATA_MIRROR_DIR": str(root / "mirror"), "DATA_MIRROR_SYNC": "1"}), patch.object(storage.shutil, "copy2", side_effect=PermissionError("mirror unavailable")):
+            with patch.dict("os.environ", {"DATA_MIRROR_DIR": str(root / "mirror"), "DATA_MIRROR_SYNC": "1"}), patch.object(storage, "_atomic_mirror_bytes", side_effect=PermissionError("mirror unavailable")):
                 storage.save_atomic(path, {"committed": True, "unknown": "한글"})
             self.assertEqual(json.loads(path.read_text("utf-8")), {"committed": True, "unknown": "한글"})
 

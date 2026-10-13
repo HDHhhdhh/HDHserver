@@ -12,6 +12,7 @@ from typing import Mapping, Sequence, TypeAlias, TypedDict
 from werkzeug.security import generate_password_hash
 
 from core.storage import file_lock, save_atomic
+from core.stores import get_store
 from core.student_account_rules import account_id_key, normalize_account_id
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -128,7 +129,7 @@ def create_account(path: Path, identifier: str, sids: Sequence[str]) -> str:
             "credentials_updated_at": now,
             "legacy_session_id": secrets.token_urlsafe(32),
         }
-        save_atomic(path, accounts)
+        get_store("accounts", path).write_data_locked(accounts, writer=save_atomic)
     return normalized
 
 
@@ -156,7 +157,7 @@ def change_credentials(path: Path, current_id: str, new_id: str, password_hash: 
             accounts.pop(current_key, None)
             record["legacy_session_id"] = secrets.token_urlsafe(32)
             accounts[target] = record
-        save_atomic(path, accounts)
+        get_store("accounts", path).write_data_locked(accounts, writer=save_atomic)
     return target if target_key != current_key else current_key
 
 

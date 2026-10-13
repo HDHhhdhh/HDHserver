@@ -77,6 +77,18 @@ OCR의 두 기존 blueprint는 사용자 지시에 따라 이번 신규 가드�
 
 subagent는 P1/P2 경계 검토와 P3 route·실제 video/extra entrypoint·calendar listener fixture 및 독립 diff 검토에 사용했다. 실제 소스 적용·검증·결론은 hub가 맡는다. P4 JsonStore 초안은 local audit의 OS-temp 24개 테스트·111건 쓰기까지이며 실제 통합과 async mirror는 다음 작업이다.
 
+## P4 JSON transport·미러
+
+JsonStore와 lazy bounded registry를 실제 owner에 연결했다. 학생/영상/보강/weekend/학교캘린더/자료/updates/progress/watch와 계정 writer가 기존 lease·typed error·포맷·unknown field·journal 경계를 유지한다. 신원·자료·계정과 mutation precondition은 fresh read이며 일반 projection/progress cache는 방어 복사본이다. strict owner의 warm-cache 읽기 실패가 journal/쓰기를 시작하지 않는 실제 모듈 fixture를 추가했다. 레거시와 학생 앱 account writers 모두 미러 제외를 유지한다. 실제 credential·운영 데이터는 Git에 넣지 않는다.
+
+미러는 허용된 tmp bytes만 queue에 넣고 새 excluded primary를 다시 읽지 않는다. 실제 Windows CRLF/compact byte parity·coalescing/dirty replay·동기 추월·별도 PID destination lease·alias 보호·snapshot 정책·5초 종료를 14개 fixture에서 확인했다. transport는 28개 테스트, owner는 whole auth blueprint·신원/자료 rollback/recovery 등을 포함한 12개 테스트를 통과했다. independent review에서 발견한 상대경로 변경과 warm-cache read-failure 회귀를 수정했다. Windows concurrent lock delete-pending은 원래 권한 오류를 보존하는 세 번 재시도로 보강하고 실제 16writer×20round 학생 저장 검사를 통과했다.
+
+처음 전체 실행의 old read_text fault hook과 pure object path fixture를 실제 byte-read/새 transport seam에 맞췄다. 기존 실패 무쓰기·hook·literal·concurrency 단언은 유지했다. unused revision 직렬화와 fresh JSON의 중복 copy도 줄였다. 전체 기본 하네스의 최종 실행은 exit 0, 109개 그룹 통과, 실패 0이다.
+
+관리형 8004를 hub가 직접 재시작했다. 합성 관리자 설정만 process scope에서 주입하고 부모 환경을 복원했다. PID 40092의 managed/단일 loopback/HTTP200, 운영 ping·공개 app200과 13개 backend snapshot hash를 확인했다. Chrome에서 합성 영상의 초록 배정을 흰색으로 저장해 none/manual watch hold/배정 제거를 API로 확인했고 reload 후에도 none/unchecked가 유지됐다. 두 log GET은 합성 runtime에서 200이었다. 실제 native Kollus 재생/학원망 검증과 이 단계의 synthetic fixture는 구분한다.
+
+200회 순차 HTTP의 첫 before/after는 동시 full-suite 부하 속에서 mean 21.677→27.676ms, p95 26.541→33.859ms로 개선되지 않았다. 이 결과를 개선 수치로 사용하지 않는다. 최종 코드의 같은 synthetic dated assignment에서 각 200회 순차 HTTP를 비교했다. sync/async mean은 37.851→23.945ms(36.7% 감소), p50은 35.893→22.368ms, p95는 40.624→28.886ms(28.9% 감소)였다. 이는 loopback의 해당 저장 응답 측정이며 전체 팝업·운영망 속도를 보장하는 수치는 아니다. 최종 PID 11548에서 19개 backend source hash 일치와 동일 흰색 저장 상태를 다시 확인했다. IAB 데모에서도 보강 저장·닫힘·학생 추가와 forwardedApiCalls/API resource 0을 확인했다. manager의 snapshots=0 설정은 유지했고 최신 primary/mirror byte 일치는 2초 안에 확인했다. snapshot 정책 자체는 OS-temp fixture로 검증했다. 운영 배포와 실제 운영일 soak는 별도이며 아직 수행하지 않았다.
+
 ## 단계 상태
 
 | 단계 | 구현 | 합성 검증 | 운영 적용·관찰 |
@@ -85,7 +97,7 @@ subagent는 P1/P2 경계 검토와 P3 route·실제 video/extra entrypoint·cale
 | P1 | 인증·오류·계정 범위 구현 | 전체 108그룹·8004 실제 인증/Chrome 저장·IAB 탐색/팝업 통과 | log 첫 배포·2~3 운영일 관찰 대기 |
 | P2 | 잠금·입력·SID·strict read 구현 | 전체 109그룹·8004 상태/객체 저장·400 무변경·두 브라우저 팝업 통과 | P1 관찰 뒤 반영 대기 |
 | P3 | 충돌·delta·strict preload·GET 분리·저장 owner 구현 | 전체 109그룹·실제 2화면 보강/영상 충돌·FullCalendar·IAB 저장 통과 | P1 관찰 뒤 반영 대기 |
-| P4 | JsonStore 로컬 초안 준비 | 초안 24개 테스트·111건 쓰기 통과, 실제 통합 대기 | 대기 |
+| P4 | 공통 transport·async mirror 실제 통합 | 전체109그룹·transport28·owner12·mirror14·실제 흰색 저장/reload·IAB 보강 저장 통과 | 배포·운영일 soak 대기 |
 | P5 | 대기 | 대기 | 정합 충돌·parity 게이트 필요 |
 | P6 | 대기 | 대기 | 전후 측정 필요 |
 | P7 | 대기 | 대기 | 관찰 뒤 호환 스위치 정리 |

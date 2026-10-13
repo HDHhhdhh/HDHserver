@@ -19,6 +19,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from core.paths import STU_PATH
 from core.person_identity import is_valid_person_id, normalized_text, same_person
 from core.storage import file_lock, save_atomic
+from core.json_store import StoreError
+from core.stores import get_store
 
 bp_api_auth = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
@@ -151,10 +153,8 @@ def _load_acct_map() -> dict:
     }
     """
     try:
-        m = json.loads(ACCT_PATH.read_text("utf-8-sig"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        m = get_store("accounts", ACCT_PATH).read_data_locked()
+    except StoreError as exc:
         raise AuthAccountStoreError("unreadable_accounts") from exc
     if not isinstance(m, dict) or any(not isinstance(row, dict) for row in m.values()):
         raise AuthAccountStoreError("malformed_accounts")
@@ -167,7 +167,7 @@ def _load_acct_map() -> dict:
 
 def _save_acct_map(m: dict) -> None:
     try:
-        save_atomic(ACCT_PATH, m, mirror=False)
+        get_store("accounts", ACCT_PATH).write_data_locked(m, writer=save_atomic)
     except OSError as exc:
         raise AuthAccountStoreError("accounts_save_failed") from exc
 
