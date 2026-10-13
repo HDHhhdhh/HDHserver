@@ -1,8 +1,10 @@
 // /static/js/admin/features/hoverTooltip.js
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js';
+import { resolveSchoolCalendarEntry, resolveSchoolCalendarEntries } from '../../shared/schoolCalendar.js?v=20260814-active-semester1';
 import { regularAttendanceDaysForStudent } from '../../shared/selfStudy.js';
+import { fetchJsonChecked } from '../../shared/api.js';
+import { buildExamAttendance, createExamAttendanceLoader } from './examAttendance.js';
 
 export function initHoverTooltip() {
   if (document._adminHoverTooltipInitialized) return;
@@ -10,7 +12,6 @@ export function initHoverTooltip() {
 
   let tipEl = null;
   let tipMode = 'hover';        // 'hover' | 'fixed'
-  let tipVariant = 'default';   // 'default' | 'log'  (log 모달용 축약 버전)
   let activeHoverAnchor = null;
   let pointerHoverAnchor = null;
   let focusHoverAnchor = null;
@@ -27,8 +28,12 @@ export function initHoverTooltip() {
   let studentsBySid = new Map();
   let studentsByName = new Map();
   let placementEpoch = 0;
+  let attendanceTargets = [];
+  let attendanceRequest = 0;
+  const attendanceLoader = createExamAttendanceLoader(url => fetchJsonChecked(url, '시험 전 출석 조회', {
+    cache: 'no-store', credentials: 'same-origin',
+  }));
 
-  const WCHR = '일월화수목금토';
   const LOG_TIP_POS_KEY = 'admin:logTipPos'; // 로그 모달 툴팁 위치 저장 키
   let dragState = null; // { pointerId, startX, startY, startLeft, startTop }
 
@@ -162,6 +167,22 @@ export function initHoverTooltip() {
       <div style="font-weight:700; word-break:break-word">${value || '-'}</div>
     </div>`;
 
+  function classifySubjectExamTiming(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+
+    const withoutYear = text.replace(/\b(?:19|20)\d{2}\s*[-./]\s*/g, '');
+    const numericDates = withoutYear.match(/\b\d{1,2}\s*[-./]\s*\d{1,2}\b/g) || [];
+    const koreanDates = withoutYear.match(/\b\d{1,2}\s*월\s*\d{1,2}\s*일\b/g) || [];
+    const dateCount = numericDates.length + koreanDates.length;
+    const hasRangeMarker = /[~∼～〜]|(?:부터|에서).*까지/.test(text);
+
+    if (dateCount >= 2 || hasRangeMarker) return 'range';
+    if (dateCount === 1) return 'date';
+    return '';
+  }
+
+
   const escHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (m) => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -170,39 +191,9 @@ export function initHoverTooltip() {
     "'": '&#39;',
   }[m]));
 
-  const tipRow = (label, value) => `
-    <div style="display:grid; grid-template-columns:104px minmax(0,1fr); gap:12px; align-items:start;">
-      <div style="opacity:.78; font-weight:800">${escHtml(label)}</div>
-      <div style="font-weight:900; word-break:keep-all">${escHtml(value || '-')}</div>
-    </div>`;
 
-  function levelBadgeHtml(level) {
-    const text = String(level || '').trim();
-    if (!text) return '';
 
-    const palette = (() => {
-      if (text.includes('중상')) return { bg: '#d97706', fg: '#fffbeb', ring: 'rgba(251,191,36,.35)' };
-      if (text.includes('상')) return { bg: '#2563eb', fg: '#eff6ff', ring: 'rgba(96,165,250,.35)' };
-      if (text.includes('중')) return { bg: '#16a34a', fg: '#ecfdf5', ring: 'rgba(74,222,128,.35)' };
-      if (text.includes('하')) return { bg: '#dc2626', fg: '#fff1f2', ring: 'rgba(248,113,113,.35)' };
-      return { bg: '#475569', fg: '#f8fafc', ring: 'rgba(148,163,184,.32)' };
-    })();
-
-    return `
-      <span
-        aria-label="난이도 ${escHtml(text)}"
-        style="
-          display:inline-flex; align-items:center; justify-content:center;
-          min-width:44px; height:38px; padding:0 12px; border-radius:999px;
-          background:${palette.bg}; color:${palette.fg};
-          font-size:19px; font-weight:950; line-height:1;
-          box-shadow:0 0 0 5px ${palette.ring};
-          flex:0 0 auto;
-        "
-      >${escHtml(text)}</span>`;
-  }
-
-  function todayInfoRow(icon, label, value) {
+  function todayInfoRow(icon, label, value, valueHtml = null) {
     return `
       <div style="display:grid; grid-template-columns:38px minmax(92px,128px) minmax(0,1fr); gap:12px; align-items:center;">
         <span
@@ -215,7 +206,7 @@ export function initHoverTooltip() {
           "
         >${icon}</span>
         <span style="min-width:0; opacity:.82; font-size:16px; font-weight:850; word-break:normal; overflow-wrap:anywhere;">${escHtml(label)}</span>
-        <span style="min-width:0; font-size:19px; font-weight:950; word-break:normal; overflow-wrap:anywhere;">${escHtml(value || '-')}</span>
+        <span style="min-width:0; font-size:19px; font-weight:950; word-break:normal; overflow-wrap:anywhere;">${valueHtml ?? escHtml(value || '-')}</span>
       </div>`;
   }
 
@@ -262,7 +253,10 @@ export function initHoverTooltip() {
       return phaseKey && (phaseKey.includes(curriculumKey) || curriculumKey.includes(phaseKey));
     });
 
-    return loose.length ? loose : [];
+    if (loose.length) return loose;
+
+    // 학교 공통/학년 일정은 과목명이 없을 수 있으므로 모든 과목에 적용한다.
+    return scheduleEntries.filter(entry => !normalizeSubjectKey(entry?.phase));
   }
 
   function buildTextbookPublisherHtml(scheduleEntries, fallbackEntry) {
@@ -303,9 +297,9 @@ export function initHoverTooltip() {
   }
 
   // ───────────────────────────────────────────
-  // 학사일정: 기말(final) 우선, 없으면 중간(midterm) 폴백
+  // 선택 운영일에서 중간 시험이 끝났으면 기말로 전환한다.
   // ───────────────────────────────────────────
-  function pickExam(sc, prefer = 'auto') {
+  function pickExam(sc, prefer = 'auto', referenceDate = null) {
     const get = (obj, k, altKeys = []) => {
       for (const key of [k, ...altKeys]) {
         if (obj[key] != null && String(obj[key]).trim()) return obj[key];
@@ -334,18 +328,24 @@ export function initHoverTooltip() {
       .some(v => v && String(v).trim());
 
     if (prefer === 'auto') {
-      const today = new Date();
+      const today = referenceDate instanceof Date
+        ? new Date(referenceDate)
+        : new Date();
       today.setHours(0, 0, 0, 0);
 
+      const midtermEnd = (classifySubjectExamTiming(packs.midterm.math) === 'date'
+        ? parseLastMonthDay(packs.midterm.math, today) : null)
+        || parseLastMonthDay(packs.midterm.date || packs.midterm.math, today);
+      if (midtermEnd) {
+        // 기말 정보가 비어 있어도 지난 중간 정보를 다시 표시하지 않는다.
+        return midtermEnd < today ? packs.final : packs.midterm;
+      }
       const score = (pack, order) => {
         if (!hasAny(pack)) return [9, order];
-        const source = pack.date || pack.math || '';
-        const m = String(source).match(/(\d{1,2})\/(\d{1,2})/);
-        if (!m) return [8, order];
-        const month = parseInt(m[1], 10);
-        const day = parseInt(m[2], 10);
-        const d = new Date(today.getFullYear(), month - 1, day);
-        d.setHours(0, 0, 0, 0);
+        const mathIsExactDate = classifySubjectExamTiming(pack.math) === 'date';
+        const source = mathIsExactDate ? pack.math : (pack.date || pack.math || '');
+        const d = parseFirstMonthDay(source, today);
+        if (!d) return [8, order];
         const diff = d.getTime() - today.getTime();
         return diff >= 0 ? [0, diff, order] : [1, Math.abs(diff), order];
       };
@@ -375,80 +375,222 @@ export function initHoverTooltip() {
     return hasPrimary ? primary : fallback;
   }
 
+  function hasExamSchedule(entry = {}) {
+    return [
+      'midterm', 'midtermMath',
+      'final', 'finalMath',
+    ].some((key) => String(entry?.[key] || '').trim());
+  }
+
+  function buildSharedExamPeriodEntry(scheduleEntries = []) {
+    const pickSharedValue = (key) => {
+      const values = [...new Set(
+        scheduleEntries
+          .map((entry) => String(entry?.[key] || '').trim())
+          .filter(Boolean),
+      )];
+      return values.length === 1 ? values[0] : '';
+    };
+
+    const midterm = pickSharedValue('midterm');
+    const final = pickSharedValue('final');
+    return {
+      ...(midterm ? { midterm } : {}),
+      ...(final ? { final } : {}),
+    };
+  }
+
   // ───────────────────────────────────────────
   // 날짜 파싱 & 시험까지 남은 출석일 계산
   // ───────────────────────────────────────────
-  function parseFirstMonthDay(str) {
-    if (!str) return null;
-    const m = String(str).match(/(\d{1,2})\/(\d{1,2})/);
-    if (!m) return null;
-    const month = parseInt(m[1], 10);
-    const day = parseInt(m[2], 10);
-    if (!month || !day) return null;
+  function adminReferenceDate() {
+    const raw = String(getAdminDate() || '').trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      const parsed = new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+      );
+      parsed.setHours(0, 0, 0, 0);
+      if (
+        parsed.getFullYear() === Number(match[1])
+        && parsed.getMonth() === Number(match[2]) - 1
+        && parsed.getDate() === Number(match[3])
+      ) return parsed;
+    }
 
-    const today = new Date();
-    const year = today.getFullYear();
+    const fallback = new Date();
+    fallback.setHours(0, 0, 0, 0);
+    return fallback;
+  }
+
+  function parseLastMonthDay(str, referenceDate) {
+    const tokens = [...String(str || '').matchAll(
+      /(?:^|[^\d])(?:(\d{4})\s*[-./년]\s*)?(\d{1,2})\s*[-./월]\s*(\d{1,2})(?:\s*일)?/g,
+    )];
+    if (!tokens.length) return null;
+    let year = referenceDate.getFullYear();
+    const firstMonth = Number(tokens[0][2]);
+    const lastMonth = Number(tokens[tokens.length - 1][2]);
+    const crossesYear = firstMonth - lastMonth > 6;
+    if (!tokens[0][1]) {
+      if (crossesYear && referenceDate.getMonth() < 3) year -= 1;
+      else if (firstMonth <= 2 && referenceDate.getMonth() >= 8) year += 1;
+    }
+    let previousMonth = firstMonth;
+    let lastDate = null;
+    for (const token of tokens) {
+      const month = Number(token[2]);
+      const day = Number(token[3]);
+      if (token[1]) year = Number(token[1]);
+      else if (previousMonth - month > 6) year += 1;
+      const date = new Date(year, month - 1, day);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+      if (!lastDate || date > lastDate) lastDate = date;
+      previousMonth = month;
+    }
+    return lastDate;
+  }
+
+  function parseFirstMonthDay(str, referenceDate = null) {
+    if (!str) return null;
+    const text = String(str).trim();
+    const full = text.match(/\b((?:19|20)\d{2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})\b/);
+    const short = full
+      ? null
+      : text.match(/(?:^|[^\d])(\d{1,2})\s*(?:[-./]|월)\s*(\d{1,2})(?:\s*일)?/);
+    if (!full && !short) return null;
+
+    const base = referenceDate instanceof Date ? new Date(referenceDate) : adminReferenceDate();
+    base.setHours(0, 0, 0, 0);
+    const year = full ? Number(full[1]) : base.getFullYear();
+    const month = Number(full ? full[2] : short[1]);
+    const day = Number(full ? full[3] : short[2]);
     const d = new Date(year, month - 1, day);
     d.setHours(0, 0, 0, 0);
+    if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+
+    // 연도 없는 1~2월 시험을 전년도 말 운영일에서 볼 때만 다음 해로 해석한다.
+    if (!full && d.getTime() < base.getTime() - 183 * 24 * 60 * 60 * 1000) {
+      d.setFullYear(year + 1);
+    }
     return d;
   }
 
-  function extractAttendWeekdays(stu) {
-    const set = new Set();
-    Object.keys(stu || {}).forEach(k => {
-      if (!/^day\d+$/.test(k)) return;
-      const v = String(stu[k] || '').trim();
-      if (!v) return;
-      const ch = v[0];
-      if ('월화수목금토일'.includes(ch)) set.add(ch);
-    });
-    return [...set];
+  function tooltipStudentSchool(student) {
+    return String(
+      student?.school ||
+      student?.highSchool || student?.schoolHigh || student?.high || student?.highschool || student?.high_school || student?.['고등학교'] ||
+      student?.middleSchool || student?.schoolMiddle || student?.middle || student?.middleschool || student?.middle_school || student?.['중학교'] ||
+      '',
+    ).trim();
   }
 
+  function subjectMatchesTooltipContext(value, contextKey) {
+    const key = normalizeSubjectKey(value);
+    return Boolean(key && contextKey && (
+      key === contextKey || key.includes(contextKey) || contextKey.includes(key)
+    ));
+  }
+
+  function sameTooltipStudent(left, right) {
+    const leftId = String(left?.id || '').trim();
+    const rightId = String(right?.id || '').trim();
+    if (leftId && rightId && leftId === rightId) return true;
+
+    const leftName = String(left?.name || '').trim();
+    const rightName = String(right?.name || '').trim();
+    if (!leftName || leftName !== rightName) return false;
+
+    const leftSchool = tooltipStudentSchool(left);
+    const rightSchool = tooltipStudentSchool(right);
+    if (leftSchool && rightSchool && leftSchool !== rightSchool) return false;
+
+    const leftGrade = String(left?.grade || '').trim();
+    const rightGrade = String(right?.grade || '').trim();
+    if (leftGrade && rightGrade && leftGrade !== rightGrade) return false;
+    return true;
+  }
+
+  function attendanceStudentsForTooltip(stu, subjectContext = '') {
+    const contextKey = normalizeSubjectKey(subjectContext);
+    if (!contextKey || subjectMatchesTooltipContext(stu?.curriculum, contextKey)) return [stu];
+
+    const records = Array.isArray(state.students) ? state.students : [];
+    const subjectRecords = records.filter((record) => (
+      sameTooltipStudent(record, stu) && subjectMatchesTooltipContext(record?.curriculum, contextKey)
+    ));
+    return subjectRecords.length ? subjectRecords : [stu];
+  }
+
+  function attendanceDaysForTooltip(stu, subjectContext = '') {
+    return [...new Set(attendanceStudentsForTooltip(stu, subjectContext)
+      .flatMap(record => regularAttendanceDaysForStudent(record)))];
+  }
   // "시험 시작일" 직전까지 등원 요일만 카운트
-  function calcRemainingSessions(sc, stu) {
+  function calcRemainingSessions(sc, stu, referenceDate = null, snapshot = null) {
     if (!sc || !stu) return null;
 
-    // 툴팁에 쓰는 것과 동일한 학사일정 패키지
-    const examPack = pickExam(sc, 'auto');
+    const baseDate = referenceDate instanceof Date
+      ? new Date(referenceDate)
+      : adminReferenceDate();
+    baseDate.setHours(0, 0, 0, 0);
 
-    // 1순위: 기말 시작일(기간) → 예: "12/3(수)~12/9(화)"
-    // 2순위: 수학시험일 → 예: "12/4(목)"
+    // 툴팁에 쓰는 것과 동일한 학사일정 패키지
+    const examPack = pickExam(sc, 'auto', baseDate);
+
+    // 과목 시험일이 정확한 하루로 확정되면 그 날짜를 우선한다.
+    // 아직 기간만 있으면 학교 시험기간 시작일을 사용한다.
     let examDate = null;
-    if (examPack.date) {
-      examDate = parseFirstMonthDay(examPack.date);
+    if (classifySubjectExamTiming(examPack.math) === 'date') {
+      examDate = parseFirstMonthDay(examPack.math, baseDate);
+    }
+    if (!examDate && examPack.date) {
+      examDate = parseFirstMonthDay(examPack.date, baseDate);
     }
     if (!examDate && examPack.math) {
-      examDate = parseFirstMonthDay(examPack.math);
+      examDate = parseFirstMonthDay(examPack.math, baseDate);
     }
     if (!examDate) return null;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // 시험이 선택 운영일이거나 이미 시작한 경우: 남은 등원 0회
+    const subject = String(sc?.phase || stu?.curriculum || '');
+    return buildExamAttendance({
+      students: attendanceStudentsForTooltip(stu, subject),
+      attendanceDays: attendanceDaysForTooltip(stu, subject),
+      referenceDate: baseDate, examDate, snapshot,
+    });
+  }
 
-    // 시험이 오늘이거나 이미 시작한 경우: 남은 등원 0회
-    if (examDate <= today) return 0;
+  function attendanceMarkup(result, snapshot, failed = false) {
+    if (!result) return '-';
+    if (!snapshot) return `정규 ${escHtml(result.regular)}회 · 보강 ${failed ? '확인 실패' : '확인 중…'}`;
+    return `${escHtml(result.total)}회${result.pending > 0 ? ` <span class="student-tooltip-exam-pending" style="color:var(--exam-attendance-pending-color, #fda4af)">(+${escHtml(result.pending)}회 : 보강 잡자!)</span>` : ''}`;
+  }
 
-    // "시험 시작일" 전날까지만 포함
-    const end = new Date(examDate);
-    end.setDate(end.getDate() - 1);
-    end.setHours(0, 0, 0, 0);
+  function attendanceHtml(entry, stu, referenceDate) {
+    const index = attendanceTargets.push({ entry, stu, referenceDate }) - 1;
+    const snapshot = attendanceLoader.peek();
+    const result = calcRemainingSessions(entry, stu, referenceDate, snapshot);
+    return `<span data-exam-attendance="${index}">${attendanceMarkup(result, snapshot)}</span>`;
+  }
 
-    const daysOfWeek = extractAttendWeekdays(stu);
-    if (!daysOfWeek.length) return null;
-
-    let count = 0;
-    const cur = new Date(today);
-
-    // 오늘 ~ (시험 시작 전날)까지, 등원 요일 카운트
-    while (cur <= end) {
-      const w = WCHR[cur.getDay()];
-      if (daysOfWeek.includes(w)) count++;
-      cur.setDate(cur.getDate() + 1);
-      cur.setHours(0, 0, 0, 0);
-    }
-
-    return count;
+  function hydrateAttendance() {
+    if (!attendanceTargets.length || !tipEl || tipEl.style.display === 'none') return;
+    const targets = attendanceTargets;
+    const epoch = placementEpoch;
+    const request = ++attendanceRequest;
+    const apply = (snapshot, failed = false) => {
+      if (request !== attendanceRequest || epoch !== placementEpoch || tipEl.style.display === 'none') return;
+      for (const node of tipEl.querySelectorAll('[data-exam-attendance]')) {
+        const target = targets[Number(node.dataset.examAttendance)];
+        if (!target) continue;
+        node.innerHTML = attendanceMarkup(calcRemainingSessions(target.entry, target.stu, target.referenceDate, snapshot), snapshot, failed);
+      }
+      hoverTipSize = null;
+    };
+    attendanceLoader.load().then(snapshot => apply(snapshot)).catch(() => apply(null, true));
   }
 
 
@@ -548,6 +690,15 @@ export function initHoverTooltip() {
   }
 
   // ───────────────────────────────────────────
+
+  function tooltipSubjectForAnchor(anchorEl, explicitSubject = '') {
+    return String(
+      explicitSubject ||
+      anchorEl?.dataset?.curriculum ||
+      anchorEl?.closest?.('tr[data-curriculum]')?.dataset?.curriculum ||
+      '',
+    ).trim();
+  }
   // 위치 계산
   // ───────────────────────────────────────────
   function placeTooltipAt(x, y, measuredSize = null) {
@@ -674,26 +825,11 @@ export function initHoverTooltip() {
   // ───────────────────────────────────────────
   // HTML 구성
   // ───────────────────────────────────────────
-  function nextRegularAttendanceDate(student) {
-    const days = regularAttendanceDaysForStudent(student);
-    if (!days.length) return '';
-    const weekdayChars = '\uC77C\uC6D4\uD654\uC218\uBAA9\uAE08\uD1A0';
-    const now = new Date();
-    const pad = (value) => String(value).padStart(2, '0');
-    for (let offset = 1; offset <= 7; offset += 1) {
-      const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-      const weekday = weekdayChars[candidate.getDay()];
-      if (!days.some((value) => String(value || '').includes(weekday))) continue;
-      return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}`;
-    }
-    return '';
-  }
   function buildTipHtml(stu, opts = {}) {
-    const { includeVideo = true, includeTests = false, includeAssistantNotes = false } = opts;
+    const { includeVideo = true, includeTests = false, studentWorkLayout = false, attendanceSubject = "" } = opts;
 
     const name = (stu.name || '').trim();
-    const level = stu.level || '';
-    const days = regularAttendanceDaysForStudent(stu).join('·');
+    const days = attendanceDaysForTooltip(stu, attendanceSubject).join('·');
     const subBooks = (state.homeworkBooksBySid?.[String(stu.id)] || []).filter(Boolean).join(', ');
 
     const schoolName =
@@ -707,60 +843,67 @@ export function initHoverTooltip() {
       ? resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade)
       : {};
     const sc = scheduleEntries[0] || fallbackScheduleEntry;
-    const textbookPublisherBlock = buildTextbookPublisherHtml(scheduleEntries, sc);
+    const textbookEntries = scheduleEntries.length
+      ? scheduleEntries
+      : allScheduleEntries.map((entry) => ({ ...entry, phase: '', grade: '' }));
+    const textbookPublisherBlock = buildTextbookPublisherHtml(textbookEntries, sc);
+    const sharedExamPeriodEntry = buildSharedExamPeriodEntry(allScheduleEntries);
+    const examEntries = scheduleEntries.length
+      ? scheduleEntries
+      : (Object.keys(sharedExamPeriodEntry).length
+          ? [sharedExamPeriodEntry]
+          : (sc && Object.keys(sc).length ? [sc] : []));
+    const visibleExamEntries = examEntries.filter(hasExamSchedule);
+    const referenceDate = adminReferenceDate();
 
-    const badgeColor =
-      level === '상' ? '#2563eb' :
-        level === '중상' ? '#f59e0b' :
-          level === '중' ? '#16a34a' :
-            '#ef4444';
 
-    const levelBadge = level
-      ? `<span class="student-tooltip-level-badge" style="padding:2px 8px;border-radius:999px;
-                      background:${badgeColor}; color:#fff; font-size:12px; font-weight:700;">
-           ${escHtml(level)}
-         </span>`
-      : '';
 
     const mainBlock = `
-      <div class="student-tooltip-identity-row">
+      <div class="student-tooltip-identity-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px 5px; margin-bottom:6px">
         <span class="student-tooltip-name-group">
-          <span class="student-tooltip-name">${escHtml(name)}</span>${levelBadge}
+          <span class="student-tooltip-name">${escHtml(name)}</span>
         </span>
         ${textbookPublisherBlock}
       </div>
-      ${schoolName ? `<div style="font-size:14px; font-weight:600; margin-bottom:6px">${schoolName}</div>` : ''}
-      <div style="font-size:13px; margin-bottom:4px">
-        ${days ? `<span style="margin-right:8px">📅 ${days}</span>` : ''}
-        ${subBooks ? `<span style="margin-right:8px">📘 ${subBooks}</span>` : ''}
+      <div class="student-tooltip-schedule-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin-bottom:4px; font-size:13px">
+        ${days ? `<span>📅 ${days}</span>` : ''}
+        ${schoolName ? `<span class="student-tooltip-school">${escHtml(schoolName)}</span>` : ''}
+        ${subBooks ? `<span>📘 ${escHtml(subBooks)}</span>` : ''}
       </div>
     `;
 
-    const examDetailMinHeight = includeAssistantNotes
+    const examDetailMinHeight = studentWorkLayout
       ? '82px'
       : (!includeVideo && !includeTests ? '260px' : (!includeTests ? '128px' : '92px'));
-    const examEntries = scheduleEntries.length
-      ? scheduleEntries
-      : (sc && Object.keys(sc).length ? [sc] : []);
-    const examRows = examEntries.map((entry, idx) => {
-      const exam = pickExam(entry || {}, 'auto');
-      const remain = calcRemainingSessions(entry || {}, stu);
-      const remainInline = (remain != null)
-        ? `<div style="font-size:14px;font-weight:900;margin-left:10px;white-space:nowrap;">
-             시험 전 출석 : ${remain}회
+
+    const examRows = visibleExamEntries.map((entry, idx) => {
+      const exam = pickExam(entry || {}, 'auto', referenceDate);
+      const remain = calcRemainingSessions(entry || {}, stu, referenceDate);
+      const attendanceBlock = (remain != null)
+        ? `<div class="student-tooltip-exam-attendance" style="margin-top:8px;font-size:12px;font-weight:800;">
+             시험 전 출석 횟수 : <strong>${attendanceHtml(entry || {}, stu, referenceDate)}</strong>
            </div>`
         : '';
+      const examInfoBlock = `
+        <div class="student-tooltip-exam-info" style="margin-top:6px;padding:8px 10px;border:1px solid rgba(255,255,255,.16);border-radius:9px;line-height:1.45;">
+          <span style="display:block;font-size:11px;font-weight:900;opacity:.72;">시험 정보</span>
+          <strong style="display:block;margin-top:2px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">${escHtml(exam.note || '-')}</strong>
+        </div>`;
 
       const phase = String(entry?.phase || '').trim();
       const examSubject = phase || '수학';
-
-      return `
-        <div style="margin-top:${idx === 0 ? 6 : 10}px; display:block; font-size:12px; max-width:100%">
-          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:0; max-width:100%">
-            ${pill(exam.label, exam.date || '-')}
-            ${pill(`${examSubject} 시험일`, exam.math || '-', { big: true })}
-            ${remainInline}
-          </div>
+      const subjectExamTimingKind = classifySubjectExamTiming(exam.math);
+      const subjectExamPill = subjectExamTimingKind
+        ? pill(
+            `${examSubject} ${subjectExamTimingKind === 'date' ? '시험일' : '시험 기간'}`,
+            exam.math,
+            { big: true },
+          )
+        : '';
+      const examTimingPills = exam.label === '중간'
+        ? (subjectExamPill || pill('중간 시험 기간', exam.date || '-', { big: true }))
+        : `${pill(exam.label, exam.date || '-')}${subjectExamPill}`;
+      const detailsBlock = exam.label === '중간' ? '' : `
           <details class="student-exam-details" style="margin-top:8px; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:10px 12px">
             <summary style="cursor:pointer; font-weight:800">${exam.label} 범위/특이사항</summary>
             <div class="student-exam-details-body" style="padding-top:8px; min-height:${examDetailMinHeight}">
@@ -768,6 +911,16 @@ export function initHoverTooltip() {
               ${em('비고', exam.note)}
             </div>
           </details>
+        `;
+
+      return `
+        <div class="student-tooltip-exam-row" style="margin-top:${idx === 0 ? 6 : 10}px; display:block; font-size:12px; max-width:100%">
+          <div class="student-tooltip-exam-timing-row" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:0; max-width:100%">
+            ${examTimingPills}
+          </div>
+          ${attendanceBlock}
+          ${examInfoBlock}
+          ${detailsBlock}
         </div>
       `;
     }).join('');
@@ -776,56 +929,26 @@ export function initHoverTooltip() {
       ? examRows
       : '<div style="opacity:.8;margin-top:6px;font-size:12px">학교 정보 없음</div>';
 
-    const nextReminderDate = nextRegularAttendanceDate(stu);
-
-    const assistantNotesBlock = includeAssistantNotes ? `
-      <section id="assistantStudentNotes" class="assistant-student-notes" data-student-id="${escHtml(stu.id)}" data-next-reminder-date="${escHtml(nextReminderDate)}" data-note-mode="general">
-        <div class="assistant-note-heading">
-          <h3>조교 메모</h3>
-          <span class="assistant-note-count" data-note-count>댓글 0개</span>
+    const homeworkBlock = studentWorkLayout ? `
+      <section class="student-tooltip-homework" aria-labelledby="studentTooltipHomeworkTitle">
+        <div class="student-tooltip-homework-heading">
+          <h3 id="studentTooltipHomeworkTitle">숙제</h3>
+          <div id="tooltipHomeworkActions" class="student-tooltip-homework-actions" aria-label="숙제 작업"></div>
         </div>
-        <div class="assistant-note-thread" data-note-list role="log" aria-label="조교 댓글 목록" aria-live="polite">
-          <p class="assistant-note-empty">불러오는 중...</p>
-        </div>
-        <div class="assistant-note-compose">
-          <div class="assistant-note-mode-tabs" role="tablist" aria-label="메모 종류">
-            <button type="button" class="assistant-note-mode-button is-selected" data-note-mode="general" role="tab" aria-selected="true">일반 메모</button>
-            <button type="button" class="assistant-note-mode-button" data-note-mode="reminder" role="tab" aria-selected="false">확인일 메모</button>
-          </div>
-          <div class="assistant-note-author-row" role="group" aria-label="댓글 작성자 선택">
-            <div class="assistant-note-author-buttons">
-              <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
-              <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
-              <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
-              <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
-            </div>
-          </div>
-          <div class="assistant-note-compose-reminder" data-note-reminder-fields hidden>
-            <label class="assistant-note-compose-reminder-label">
-              <span>&#54869;&#51064;&#51068;</span>
-              <input class="assistant-note-remind-input" data-note-remind-input type="date" aria-label="&#54869;&#51064;&#51068;">
-            </label>
-          </div>
-          <textarea class="assistant-note-input" data-note-input rows="3" maxlength="5000" placeholder="작성자를 선택한 뒤 새 댓글을 입력하세요."></textarea>
-          <div class="assistant-note-compose-actions">
-            <div class="assistant-note-save-info">
-              <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
-            </div>
-            <button class="assistant-note-save" data-note-save type="button">댓글 등록</button>
-          </div>
+        <div id="tooltipHomeworkHost" class="student-tooltip-homework-host">
+          <p class="student-tooltip-homework-loading">숙제 불러오는 중...</p>
         </div>
       </section>
     ` : '';
 
     const progBlock = renderProgressTables(stu, { includeVideo, includeTests });
 
-    return `${mainBlock}${examBlock}${assistantNotesBlock}${progBlock}`;
+    return `${mainBlock}${examBlock}${homeworkBlock}${progBlock}`;
   }
 
-  function buildTodayNameTipHtml(stu) {
+  function buildTodayNameTipHtml(stu, opts = {}) {
     const name = String(stu?.name || '').trim();
-    const level = String(stu?.level || '').trim();
-    const days = regularAttendanceDaysForStudent(stu).join(' · ');
+    const days = attendanceDaysForTooltip(stu, opts.attendanceSubject).join(' · ');
 
     const schoolName =
       stu.school ||
@@ -837,24 +960,24 @@ export function initHoverTooltip() {
     const fallbackScheduleEntry = !allScheduleEntries.length
       ? resolveSchoolCalendarEntry(state.schoolCal, schoolName, stu.grade)
       : {};
-    const sc = scheduleEntries[0] || fallbackScheduleEntry;
+    const sharedExamPeriodEntry = buildSharedExamPeriodEntry(allScheduleEntries);
+    const sc = scheduleEntries[0]
+      || (Object.keys(sharedExamPeriodEntry).length ? sharedExamPeriodEntry : fallbackScheduleEntry);
     const remainEntries = scheduleEntries.length
       ? scheduleEntries
       : (sc && Object.keys(sc).length ? [sc] : []);
-    const remain = remainEntries
-      .map(entry => calcRemainingSessions(entry || {}, stu))
-      .find(value => value != null);
-    const remainText = remain == null ? '-' : `${remain}회`;
+    const referenceDate = adminReferenceDate();
+    const remainEntry = remainEntries.find(entry => calcRemainingSessions(entry || {}, stu, referenceDate) != null);
+    const remainHtml = remainEntry ? attendanceHtml(remainEntry, stu, referenceDate) : null;
 
     return `
       <div style="width:min(420px, calc(92vw - 36px)); max-width:100%; box-sizing:border-box; padding:4px 2px 6px;">
         <div style="display:flex; align-items:center; gap:14px; margin-bottom:20px;">
           <div style="font-weight:950; font-size:30px; line-height:1.12; letter-spacing:0; word-break:keep-all;">${escHtml(name || '-')}</div>
-          ${levelBadgeHtml(level)}
         </div>
         <div style="display:grid; gap:14px; line-height:1.35">
           ${todayInfoRow('📅', '등원요일', days)}
-          ${todayInfoRow('⏱️', '남은출석횟수', remainText)}
+          ${todayInfoRow('⏱️', '남은출석횟수', '-', remainHtml)}
           ${todayInfoRow('🏫', '학교', schoolName)}
         </div>
       </div>
@@ -914,10 +1037,10 @@ export function initHoverTooltip() {
     const sid = studentSidForAnchor(anchorEl);
     const name = (anchorEl.textContent || '').trim();
     const stu = findStudent(sid, name);
+    const attendanceSubject = tooltipSubjectForAnchor(anchorEl, opts.subject);
     if (!stu) return false;
 
     const variant = opts.variant || 'default';
-    tipVariant = variant;
     tipMode = opts.fixed ? 'fixed' : 'hover';
     const renderEpoch = ++placementEpoch;
 
@@ -944,17 +1067,14 @@ export function initHoverTooltip() {
     }
     el.setAttribute('aria-hidden', 'false');
     const useStudentWorkLayout = opts.layout === 'student-work';
-    if (!useStudentWorkLayout) resetStudentWorkTooltipPlacement();
+    if (useStudentWorkLayout) placeForStudentWorkLayout();
+    else resetStudentWorkTooltipPlacement();
+    attendanceTargets = [];
     el.innerHTML = variant === 'today'
-      ? buildTodayNameTipHtml(stu)
-      : buildTipHtml(stu, { includeVideo, includeTests, includeAssistantNotes: useStudentWorkLayout });
+      ? buildTodayNameTipHtml(stu, { attendanceSubject })
+      : buildTipHtml(stu, { includeVideo, includeTests, studentWorkLayout: useStudentWorkLayout, attendanceSubject });
     el.style.display = 'block';
-    const assistantNotesRoot = el.querySelector('#assistantStudentNotes');
-    if (assistantNotesRoot) {
-      document.dispatchEvent(new CustomEvent('admin:assistant-notes-mount', {
-        detail: { root: assistantNotesRoot, studentId: String(stu.id || '') },
-      }));
-    }
+    hydrateAttendance();
 
     // 고정 모드(로그 모달 등)에서는 드래그 가능해야 하므로 pointer-events: auto
     if (tipMode === 'fixed') {
@@ -998,7 +1118,8 @@ export function initHoverTooltip() {
       showTooltipForElement(anchorEl, null, {
         fixed: !!(opts && opts.fixed),
         variant: opts?.variant || 'default',
-        layout: opts?.layout
+        layout: opts?.layout,
+        subject: opts?.subject
       });
     } catch (e) { console.warn(e); }
   };
@@ -1014,7 +1135,8 @@ export function initHoverTooltip() {
         showTooltipForElement(el, null, {
           fixed: !!(opts && opts.fixed),
           variant: opts?.variant || 'default',
-          layout: opts?.layout
+          layout: opts?.layout,
+          subject: opts?.subject || tooltipSubjectForAnchor(el)
         });
       } catch (e) { console.warn(e); }
     }
@@ -1028,7 +1150,6 @@ export function initHoverTooltip() {
     tipEl.style.display = 'none';
     tipEl.setAttribute('aria-hidden', 'true');
     tipMode = 'hover';
-    tipVariant = 'default';
     tipEl.style.pointerEvents = 'none';
     tipEl.style.cursor = 'default';
     resetStudentWorkTooltipPlacement();
@@ -1165,7 +1286,7 @@ export function initHoverTooltip() {
       host.addEventListener('keydown', onKeyDown);
     });
   }
-  function onTodayRendered() {
+  function onRosterRendered() {
     focusTransitionEpoch += 1;
     if (tipMode === 'hover') {
       hideHoverPresentation();
@@ -1176,20 +1297,16 @@ export function initHoverTooltip() {
     lastPointerPoint = null;
     bindTooltipHosts();
   }
-  function onAllRendered() {
-    focusTransitionEpoch += 1;
-    if (tipMode === 'hover') {
-      hideHoverPresentation();
-    }
-    pointerHoverAnchor = null;
-    focusHoverAnchor = null;
-    focusTooltipDismissed = false;
-    lastPointerPoint = null;
-    bindTooltipHosts();
-  }
+
   bindTooltipHosts();
-  document.addEventListener('today:rendered', onTodayRendered);
-  document.addEventListener('all:rendered', onAllRendered);
+  document.addEventListener('today:rendered', onRosterRendered);
+  document.addEventListener('all:rendered', onRosterRendered);
+  ['admin:refresh', 'attendance:updated', 'admin:date-change'].forEach(type => {
+    document.addEventListener(type, () => {
+      attendanceLoader.invalidate();
+      hydrateAttendance();
+    });
+  });
   window.addEventListener('resize', () => {
     hoverTipSize = null;
     if (!tipEl || tipMode !== 'hover' || tipEl.style.display === 'none') return;
@@ -1207,5 +1324,5 @@ export function initHoverTooltip() {
       scheduleHoverPlacement(r.right, r.top, { remeasure: true });
     });
   });
-  // the fixed 상담 기록 tooltip explicitly through showStudentTooltipForSid().
+  // the fixed student-operation tooltip explicitly through showStudentTooltipForSid().
 }

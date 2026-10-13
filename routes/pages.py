@@ -6,7 +6,7 @@ import os
 from flask import Blueprint, Response, abort, current_app, g, make_response, request
 from werkzeug.utils import safe_join
 
-from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, admin_network_allowed, verify_admin_authorization
+from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, verify_admin_authorization
 from core.network_access import ip_allowed
 
 bp_pages = Blueprint("pages", __name__)
@@ -83,8 +83,6 @@ def _admin_auth_required() -> Response:
 def _gate_admin_pages() -> Response | None:
     if _admin_route_key(request.path) not in _ADMIN_PAGE_PATHS and not _is_admin_static_alias():
         return None
-    if not admin_network_allowed(request):
-        abort(403)
     verifier = current_app.config.get("ACADEMY_ADMIN_AUTHORIZER")
     if not callable(verifier):
         verifier = verify_admin_authorization
@@ -129,7 +127,32 @@ def page_student_app():
 @bp_pages.get("/dh1130")
 @bp_pages.get("/demo/rh3123")
 def page_admin():
-    return current_app.send_static_file("admin.html")
+    response = current_app.send_static_file("admin.html")
+    if _admin_route_key(request.path) != "/demo/rh3123":
+        return response
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    if request.args.get("design") == "off":
+        response.headers["X-Admin-Design"] = "baseline"
+        return response
+
+    response.direct_passthrough = False
+    source = response.get_data(as_text=True)
+    head_marker = "</head>"
+    body_marker = '<body class="admin">'
+    if head_marker not in source or body_marker not in source:
+        abort(500)
+
+    source = source.replace(
+        head_marker,
+        '  <link rel="stylesheet" href="/css/admin-design-test.css?v=20260826-layout-lock1">\n</head>',
+        1,
+    )
+    source = source.replace(body_marker, '<body class="admin admin-design-test">', 1)
+    response.set_data(source)
+    response.headers["X-Admin-Design"] = "visual-skin"
+    return response
 
 @bp_pages.get("/students")
 @bp_pages.get("/demo/rh3123/students")
@@ -140,9 +163,10 @@ def page_all():
 def page_student(sid: str):
     return current_app.send_static_file("student.html")
 
-@bp_pages.get("/student-test/<sid>")
-def page_student_test(sid: str):
-    return current_app.send_static_file("student.html")
+
+@bp_pages.get("/student-test-capture")
+def page_student_test_capture():
+    return current_app.send_static_file("student-test-capture.html")
 
 @bp_pages.get("/video-manage")
 @bp_pages.get("/demo/rh3123/video-manage")

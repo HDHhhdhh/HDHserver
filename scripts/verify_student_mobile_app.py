@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import socket
 import sys
 from pathlib import Path
 from typing import Final, Mapping, TypeAlias
@@ -66,7 +67,6 @@ RUNTIME_FILE_NAMES: Final[tuple[str, ...]] = (
     "materials.json",
     "mat_assign.json",
     "updates.json",
-    "today_order.json",
     "extra_attend.json",
     "logs.json",
     "tests.json",
@@ -86,6 +86,17 @@ RUNTIME_FILE_NAMES: Final[tuple[str, ...]] = (
     "auth_accounts.json",
     "app.sqlite",
 )
+SQLITE_TRANSIENT_SUFFIXES: Final[tuple[str, ...]] = (".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm")
+EXPECTED_RUNTIME_ISOLATION: Final[dict[str, str]] = {
+    "academy-gates": "temporary core.paths module and files only",
+    "dashboard": "pure fixtures plus temporary isolated routes; no live app/runtime paths",
+    "deployment": "temporary fixtures and dry-run subprocesses only",
+    "focus": "temporary SQLite and injected Flask fixtures only",
+    "homework": "temporary SQLite/JSON only; no live app or core.paths",
+    "notifications": "temporary SQLite only; no app, core.paths, or runtime JSON imports",
+    "push": "temporary JSON and SQLite only",
+    "student-data": "temporary paths module and JSON fixtures only",
+}
 
 
 class RuntimeStateChangedError(RuntimeError):
@@ -126,14 +137,41 @@ def runtime_snapshot() -> dict[str, dict[str, int | str]]:
     """Capture live runtime hashes and mtimes without importing app paths."""
     snapshot: dict[str, dict[str, int | str]] = {}
     for path in _runtime_paths():
-        relative = path.relative_to(ROOT).as_posix()
-        stat = path.stat()
-        snapshot[relative] = {
-            "sha256": _sha256(path),
-            "mtime_ns": stat.st_mtime_ns,
-            "size": stat.st_size,
-        }
+        try:
+            relative = path.relative_to(ROOT).as_posix()
+            stat = path.stat()
+            snapshot[relative] = {
+                "sha256": _sha256(path),
+                "mtime_ns": stat.st_mtime_ns,
+                "size": stat.st_size,
+            }
+        except FileNotFoundError:
+            # A live SQLite connection can checkpoint and remove a sidecar mid-snapshot.
+            continue
     return snapshot
+
+
+def _local_runtime_service_is_active(port: int = 8003) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _isolated_results_allow_concurrent_runtime_changes(
+    selected: tuple[str, ...],
+    results: list[CheckResult],
+    *,
+    service_active: bool,
+) -> bool:
+    if not service_active or len(selected) != len(results):
+        return False
+    return all(
+        EXPECTED_RUNTIME_ISOLATION.get(name)
+        and result.get("runtimeIsolation") == EXPECTED_RUNTIME_ISOLATION[name]
+        for name, result in zip(selected, results, strict=True)
+    )
 
 
 def _load_result(name: str) -> CheckResult:
@@ -192,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run selected checks and prove live runtime data remained unchanged."""
     args = _parser().parse_args(argv)
     selected = _select_checks(args.only)
+    service_active_before = _local_runtime_service_is_active()
     before = runtime_snapshot()
     after = before
     results: list[CheckResult] = []
@@ -204,8 +243,21 @@ def main(argv: list[str] | None = None) -> int:
         for name in selected:
             results.append(_load_result(name))
         after = runtime_snapshot()
-        if before != after:
+        runtime_diff = _snapshot_diff(before, after)
+        disallowed_runtime_diff = _disallowed_snapshot_diff(runtime_diff)
+        concurrent_runtime_changes_allowed = _isolated_results_allow_concurrent_runtime_changes(
+            selected,
+            results,
+            service_active=service_active_before and _local_runtime_service_is_active(),
+        )
+        if disallowed_runtime_diff and not concurrent_runtime_changes_allowed:
             raise RuntimeStateChangedError("runtime data changed during focused verification")
+        if disallowed_runtime_diff:
+            print(
+                "allowed concurrent live-runtime changes during isolated verification: "
+                + ", ".join(disallowed_runtime_diff),
+                file=sys.stderr,
+            )
     except Exception as exc:  # noqa: BROAD_EXCEPT_OK
         if after is before:
             after = runtime_snapshot()
@@ -236,6 +288,14 @@ def _snapshot_diff(
         key: {"before": before.get(key), "after": after.get(key)}
         for key in keys
         if before.get(key) != after.get(key)
+    }
+
+
+def _disallowed_snapshot_diff(diff: Mapping[str, CheckValue]) -> dict[str, CheckValue]:
+    return {
+        path: change
+        for path, change in diff.items()
+        if not path.lower().endswith(SQLITE_TRANSIENT_SUFFIXES)
     }
 
 

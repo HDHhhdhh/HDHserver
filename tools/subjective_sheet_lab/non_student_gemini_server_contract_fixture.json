@@ -1,0 +1,30 @@
+{
+  "case_id": "adult_contract_fixture_001",
+  "provenance": "adult_non_student",
+  "cache_status": "hit",
+  "test_id": "adult_contract_test_20",
+  "round": "1",
+  "auto_confirm_policy_version": "gemini_flash_lite_policy_d_boundary_v1",
+  "items": [
+    { "question_no": 1, "review_state": "auto_confirm", "candidate": "1", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "1", "enhanced_candidate": "1" } },
+    { "question_no": 2, "review_state": "auto_confirm", "candidate": "2", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "2", "enhanced_candidate": "2" } },
+    { "question_no": 3, "review_state": "auto_confirm", "candidate": "3", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "3", "enhanced_candidate": "3" } },
+    { "question_no": 4, "review_state": "auto_confirm", "candidate": "4", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "4", "enhanced_candidate": "4" } },
+    { "question_no": 5, "review_state": "auto_confirm", "candidate": "5", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "5", "enhanced_candidate": "5" } },
+    { "question_no": 6, "review_state": "auto_confirm", "candidate": "6", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "6", "enhanced_candidate": "6" } },
+    { "question_no": 7, "review_state": "auto_confirm", "candidate": "7", "warning": [], "crop_preview": "", "auto_confirm_evidence": { "policy_version": "gemini_flash_lite_policy_d_boundary_v1", "boundary_gate_pass": true, "truth_used_by_gate": false, "parser_pass": true, "historical_agreement": true, "original_confidence": "high", "enhanced_confidence": "high", "original_candidate": "7", "enhanced_candidate": "7" } },
+    { "question_no": 8, "review_state": "review_recommended", "candidate": "8", "warning": [], "crop_preview": "" },
+    { "question_no": 9, "review_state": "review_recommended", "candidate": "9", "warning": ["symbol_risk"], "crop_preview": "" },
+    { "question_no": 10, "review_state": "review_recommended", "candidate": "10", "warning": [], "crop_preview": "" },
+    { "question_no": 11, "review_state": "review_recommended", "candidate": "11", "warning": [], "crop_preview": "" },
+    { "question_no": 12, "review_state": "review_recommended", "candidate": "12", "warning": [], "crop_preview": "" },
+    { "question_no": 13, "review_state": "review_recommended", "candidate": "13", "warning": [], "crop_preview": "" },
+    { "question_no": 14, "review_state": "review_recommended", "candidate": "14", "warning": ["format_risk"], "crop_preview": "" },
+    { "question_no": 15, "review_state": "review_recommended", "candidate": "15", "warning": [], "crop_preview": "" },
+    { "question_no": 16, "review_state": "direct_input", "candidate": "", "warning": ["overwritten_answer"], "crop_preview": "" },
+    { "question_no": 17, "review_state": "direct_input", "candidate": "", "warning": ["unclear_final_answer"], "crop_preview": "" },
+    { "question_no": 18, "review_state": "direct_input", "candidate": "", "warning": ["multiple_answer_candidates"], "crop_preview": "" },
+    { "question_no": 19, "review_state": "retake_required", "candidate": "", "warning": ["crop_quality_blurry"], "crop_preview": "", "retake_reason": "blur" },
+    { "question_no": 20, "review_state": "retake_required", "candidate": "", "warning": ["crop_quality_cutoff_risk"], "crop_preview": "", "retake_reason": "cutoff" }
+  ]
+}

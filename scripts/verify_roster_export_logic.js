@@ -8,6 +8,7 @@ const sourcePath = path.join(root, 'static/js/admin/features/exportLogs.js');
 
 let source = fs.readFileSync(sourcePath, 'utf8');
 source = source.replace(/import[\s\S]*?from '\.\/today\.state\.js';\s*/m, '');
+source = source.replace(/import\s*\{[\s\S]*?\}\s*from '\.\/exportLogTargets\.js\?[^']+';\s*/m, '');
 source = source.replace(/export function initExport\(/, 'function initExport(');
 
 function makeContext(state) {
@@ -52,6 +53,13 @@ function videoTextFor(state, date, sid = 's1') {
 function taskTextFor(state, date, sid = 's1') {
   const context = makeContext(state);
   return context.rosterTaskText(date, { id: sid, subject: '대수' }, context.videoMapForRoster());
+}
+
+function exportedTaskTestNames(text) {
+  const lines = String(text || '').split(/\r?\n/u);
+  const markerIndex = lines.findIndex(value => value === '테스트 :');
+  if (markerIndex < 0) return [];
+  return lines.slice(markerIndex + 1).map(value => value.trim()).filter(Boolean);
 }
 
 function dateKeyFromOffset(offset) {
@@ -407,50 +415,123 @@ const schoolPastText = taskTextFor({
   updates: {},
 }, '2026-06-03');
 
-if (!schoolPastText.includes('학군지기출(상)(50분) :\n1회차 압구정고\n2회차 세화여고')) {
-  console.error('FAIL school-past export includes line-separated school names');
+const schoolExportedNames = exportedTaskTestNames(schoolPastText);
+assertEqual(
+  'roster export labels school and Ilsan past tests with source, difficulty, and round',
+  schoolExportedNames.slice().sort((a, b) => a.localeCompare(b, 'ko')),
+  [
+    '학군지(상) 1회차 압구정고',
+    '학군지(상) 2회차 세화여고',
+    '일산(중상) 1회차 저동고',
+    '일산(상) 2회차 운정',
+    '일산(그래프 포함) 1회차 24 가좌',
+  ]
+    .sort((a, b) => a.localeCompare(b, 'ko')),
+);
+if (/50분|기말고사/u.test(schoolPastText)) {
+  console.error('FAIL roster export leaked duration or term metadata');
   console.error(schoolPastText);
   process.exit(1);
 }
-if (!schoolPastText.includes('일산기출(중)(50분) :\n1회차 저동고')) {
-  console.error('FAIL ilsan-past export includes line-separated school names');
-  console.error(schoolPastText);
-  process.exit(1);
-}
-if (!schoolPastText.includes('일산기출(중상)(50분) :\n2회차 운정')) {
-  console.error('FAIL ilsan-past export maps legacy 상 to 중상');
-  console.error(schoolPastText);
-  process.exit(1);
-}
-if (!schoolPastText.includes('일산기출(그래프부터)(50분) :\n1회차 24 가좌')) {
-  console.error('FAIL ilsan-past export shortens graph label and strips duplicated prefix');
-  console.error(schoolPastText);
-  process.exit(1);
-}
-if (schoolPastText.indexOf('일산기출(중)(50분)') > schoolPastText.indexOf('일산기출(중상)(50분)') ||
-  schoolPastText.indexOf('일산기출(중상)(50분)') > schoolPastText.indexOf('일산기출(그래프부터)(50분)')) {
-  console.error('FAIL ilsan-past export difficulty order');
-  console.error(schoolPastText);
-  process.exit(1);
-}
-console.log('PASS school-past export includes line-separated school names');
+
+const greenLabel = 'UNIT / 대수 / Lv.4 / 1 / 초록 테스트';
+const orangeLabel = 'UNIT / 대수 / Lv.4 / 2 / 주황 테스트';
+const blueLabel = 'UNIT / 대수 / Lv.4 / 3 / 파랑 테스트';
+const redLabel = 'UNIT / 대수 / Lv.4 / 4 / 빨강 테스트';
+const greenOnlyText = taskTextFor({
+  logs: {
+    '2026-06-03': {
+      s1: {
+        testAssignmentDailyTests: [
+          { label: greenLabel, name: '초록 테스트', status: 'assigned', categoryKey: 'UNIT', curriculum: '대수' },
+          { label: orangeLabel, name: '주황 테스트', status: 'interrupted', categoryKey: 'UNIT', curriculum: '대수' },
+          { label: blueLabel, name: '파랑 테스트', status: 'done', categoryKey: 'UNIT', curriculum: '대수' },
+          { label: redLabel, name: '빨강 테스트', status: 'skip', categoryKey: 'UNIT', curriculum: '대수' },
+        ],
+      },
+    },
+  },
+  progress: {
+    '2026-06-03': {
+      s1: {
+        tests: {
+          [greenLabel]: 'assigned',
+          [orangeLabel]: 'interrupted',
+          [blueLabel]: 'done',
+          [redLabel]: 'skip',
+        },
+      },
+    },
+  },
+  videos: [],
+  updates: {},
+}, '2026-06-03');
+assertEqual(
+  'roster task export keeps only green assigned test names',
+  exportedTaskTestNames(greenOnlyText),
+  ['초록 테스트'],
+);
 
 assertEqual(
-  'video export uses all videos assigned on the selected date, including repeated auto assignments',
+  'video export excludes prior done videos unless the selected date explicitly reopens them',
   videoTextFor({
     logs: {},
-    progress: {},
+    progress: {
+      '2026-06-02': { s1: { v41: 'done', v42: 'done' } },
+      '2026-06-03': { s1: { v42: 'none', v43: { status: 'done' }, v44: 'interrupted' } },
+    },
     videos: [
       { mid: 'v41', chapter: 41, title: 'video 41' },
+      { mid: 'v42', chapter: 42, title: 'video 42' },
       { mid: 'v43', chapter: 43, title: 'video 43' },
       { mid: 'v44', chapter: 44, title: 'video 44' },
     ],
     updates: {
       '2026-06-02': { s1: { videos: ['v41', 'v43'], source: 'auto' } },
-      '2026-06-03': { s1: { videos: ['v41', 'v43', 'v44'], source: 'auto' } },
+      '2026-06-03': { s1: { videos: ['v41', 'v42', 'v43', 'v44'], source: 'auto' } },
     },
   }, '2026-06-03'),
-  '41차시, 43차시, 44차시',
+  '42차시, 43차시, 44차시',
+);
+
+const combinedVideoAndTestText = taskTextFor({
+  logs: {
+    '2026-06-03': {
+      s1: {
+        testAssignmentDailyTests: [
+          { label: greenLabel, name: '초록 테스트', status: 'assigned', categoryKey: 'UNIT', curriculum: '대수' },
+        ],
+      },
+    },
+  },
+  progress: {
+    '2026-06-02': {
+      s1: { v40: 'done' },
+    },
+    '2026-06-03': {
+      s1: {
+        v41: 'done',
+        v43: { status: 'done' },
+        tests: { [greenLabel]: 'assigned' },
+      },
+    },
+  },
+  videos: [
+    { mid: 'v40', chapter: 40, title: 'video 40' },
+    { mid: 'v41', chapter: 41, title: 'video 41' },
+    { mid: 'v43', chapter: 43, title: 'video 43' },
+  ],
+  updates: {
+    '2026-06-03': { s1: { videos: ['v40', 'v41', 'v43'], source: 'manual' } },
+  },
+}, '2026-06-03');
+assertEqual(
+  'roster task export removes prior done videos while keeping selected-date videos and tests together',
+  [
+    combinedVideoAndTestText.includes('영상 : 41차시, 43차시'),
+    exportedTaskTestNames(combinedVideoAndTestText),
+  ],
+  [true, ['초록 테스트']],
 );
 
 {

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <meta name="robots" content="noindex,nofollow">
+  <title>테스트 답안 촬영</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/student-test-ocr.css?v=20260828-1">
+  <script type="module" src="/js/student-test-capture.js?v=20261004-1"></script>
+</head>
+<body class="student-test-capture-page">
+  <main class="student-test-capture-shell">
+    <header class="student-test-capture-head">
+      <a id="captureBack" href="/">뒤로</a>
+      <div class="student-test-capture-title">
+        <h1 id="captureTestName">테스트 답안 촬영</h1>
+        <p id="captureTestMeta">20문항</p>
+      </div>
+    </header>
+
+    <section class="student-test-capture-card" aria-live="polite">
+      <div id="cameraStage" class="student-test-camera-stage" hidden>
+        <video id="cameraPreview" autoplay muted playsinline aria-label="답안지 촬영 화면"></video>
+        <div class="student-test-camera-shade"></div>
+        <div id="cameraGuide" class="student-test-camera-guide" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </div>
+        <p id="cameraQuality" class="student-test-camera-quality">카메라 준비 중</p>
+        <p id="cameraMessage" class="student-test-camera-message">답안지 네 모서리가 모두 화면 안에 들어오도록, 밝은 곳에서 흔들림 없이 정면으로 비춰 주세요. 화면이 안정되면 자동 촬영됩니다.</p>
+        <div class="student-test-camera-actions">
+          <button id="cameraCapture" class="student-test-camera-capture" type="button" aria-label="지금 촬영" disabled></button>
+        </div>
+      </div>
+
+      <section id="processingView" class="student-test-view" hidden>
+        <div class="student-test-processing-indicator" aria-hidden="true"></div>
+        <h2>답안을 읽고 있습니다</h2>
+        <p id="processingMessage">20개 답을 확인하고 자동 채점하는 중입니다. 잠시만 기다려 주세요.</p>
+      </section>
+
+      <section id="actionView" class="student-test-view" hidden>
+        <h2>확인이 필요한 답이 있습니다</h2>
+        <p>표시된 문항만 확인하면 바로 채점됩니다.</p>
+        <div id="studentActionList" class="student-test-action-list"></div>
+      </section>
+
+      <section id="retakeView" class="student-test-view" hidden>
+        <h2>시험지를 한 번 더 촬영해 주세요</h2>
+        <p>4문항 이상이 흐리거나 답안지 위치를 찾기 어려웠습니다. 답안지 네 모서리가 모두 보이게 다시 촬영해 주세요.</p>
+        <button id="retakeStart" class="student-test-primary" type="button">시험지 다시 촬영</button>
+      </section>
+
+      <section id="resultView" class="student-test-view" hidden>
+        <h2 id="resultTitle">채점 완료</h2>
+        <p id="resultSummary"></p>
+        <div class="student-test-result-grid">
+          <div><span>정답</span><strong id="resultCorrect">-</strong></div>
+          <div><span>오답</span><strong id="resultIncorrect">-</strong></div>
+          <div><span>보류</span><strong id="resultPending">-</strong></div>
+        </div>
+        <p id="resultWrong" class="student-test-wrong-list" hidden></p>
+        <p id="resultPendingNote" class="student-test-pending-note" hidden>정답 여부는 선생님이 판별합니다.</p>
+        <a id="resultAnswerLink" class="student-test-answer-link" href="#" target="_blank" rel="noopener noreferrer" hidden>답지 보기</a>
+      </section>
+
+      <section id="errorView" class="student-test-view" hidden>
+        <h2 id="errorTitle">촬영을 시작할 수 없습니다</h2>
+        <p id="errorMessage">학생 페이지에서 다시 시도해 주세요.</p>
+        <p id="errorCode" class="student-test-error-code"></p>
+        <button id="errorRetry" class="student-test-secondary" type="button" hidden>다시 시도</button>
+      </section>
+    </section>
+  </main>
+  <canvas id="captureCanvas" hidden></canvas>
+</body>
+</html>

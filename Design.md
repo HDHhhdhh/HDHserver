@@ -1,6 +1,6 @@
 # Server Student UI Design System
 
-This document captures the existing student-page modal design system so future OCR UI work stays consistent. It is intentionally narrow: the current contract covers the student test submit modal, hidden `?ocr=1` OCR review flow, submit result panel, and answer-preview modal.
+This document mixes current UI contracts with a retired student test-submit/OCR design reference. The test submit modal, hidden `?ocr=1` flow, OCR routes, and submit result are not current product surfaces and must not be restored without a new feature decision. The admin components, answer-link preview rules, and student previous-video review section remain active where current code uses them.
 
 ## 1. Atmosphere & Identity
 
@@ -150,10 +150,10 @@ All modal spacing should stay on the existing 4px rhythm.
 ### Admin record popup reuse
 
 - **Structure**: the all-students row action uses the same unified launcher as the admin board, opening the fixed student tooltip, counseling/log card, video-assignment card, and test-assignment card together; no parallel popup skin or screenshot substitute is allowed.
-- **Visual parity**: while the unified popup is open on the all-students page, suspend the roster stylesheet and use the administrator page's `main.css` → `admin.css` stack and `body.admin` scope. Restore the roster stylesheet and `body.all-page` immediately after every popup closes so the shared popup is pixel-identical without adding admin CSS to the initial page load.
-- **All-students state**: counseling notes, homework fields, and video/test assignment controls are read-only; completion/add/delete controls are hidden, and the primary action is labeled `영상 진도 저장`.
+- **Visual parity**: while the unified popup is open on the all-students page, suspend the roster stylesheet and use the administrator page's `main.css` → `admin.css` → `student-work-light.css` stack and `body.admin` scope. Restore the roster stylesheet and `body.all-page` immediately after every popup closes; no separate popup skin is introduced at initial page load.
+- **All-students state**: class-log notes, homework, and video/test assignments are read-only. Video save permits only right-click skip changes. The separate assistant-note thread supports list/create, but existing-note edit/delete/pin actions are locked; hidden log-save controls must not be described as active primary actions.
 - **Progress state**: left click and left drag do not mutate cells; right click retains the admin `skip` behavior and only changed progress values may be saved.
-- **Compact and tablet screens**: at `900px` and below, a fixed four-tab switcher (`영상`, `상담`, `테스트`, `학생정보`) keeps every unified surface reachable one at a time; the active card fills the usable viewport, Korean labels stay intact, and no card may be stranded off-screen.
+- **Compact and tablet screens**: at `900px` and below, a fixed four-tab switcher (`영상`, `조교 메모`, `숙제·정보`, `테스트`) keeps every unified surface reachable one at a time; the active card fills the usable viewport, Korean labels stay intact, and no card may be stranded off-screen.
 
 ### All-students roster table
 
@@ -172,9 +172,10 @@ All modal spacing should stay on the existing 4px rhythm.
 
 ### Assistant student memo author state
 
-- **Dated entry marker**: the first author-button press for a new draft appends a compact `M.D [작성자]` marker before the new memo text.
-- **Persisted color**: the memo text color follows the last successfully saved author, not the currently pressed draft-author button. Reopening the popup restores that saved author and color.
-- **Selection state**: author buttons remain real buttons with `aria-pressed`; choosing a different draft author may change the selected button, but must not recolor previously saved content until the new draft is saved.
+- **Metadata**: author and dates are structured student-scoped fields, not an automatically inserted `M.D [작성자]` text prefix. Meaning and sort priority are owned by canonical §12.
+- **Persisted appearance**: light-theme body text is dark neutral; each note retains its own author's rail/dot/tag colors. Pin emphasis uses that author's top-to-bottom tint, not a shared orange fill.
+- **Selection state**: author buttons remain real buttons with `aria-pressed`. Choosing a draft author changes the composer border/focus color without recoloring saved notes or adding text.
+- **Layout**: author/pin and reminder status/dates share the header, compact edit/delete actions align right, and the body starts on the next row with wrapping before the date/action column. No completion control is added.
 
 ### Admin operation memo panel
 
@@ -238,10 +239,10 @@ The previous-video review surface is a deliberately opened study utility within 
 
 - **Disclosure**: `.previous-videos` contains a native `영상 복습` button with a count. It controls one hidden panel, starts disabled when no fresh server-authorized rows exist, and exposes `aria-expanded`/`aria-controls`.
 - **Chooser/list**: `.previous-videos-panel` contains a native `영상 등록` button and `.previous-videos-list`. Every eligible `reviewVideosCache` row is a semantic label containing exactly one native checkbox followed by one visible title node, `${chapter}. ${title}`. The chooser keeps the server order and title-only copy; `reviewStatus` never renders as status/meta text.
-- **Authorization state**: `reviewStatus` (`done` or `interrupted`) remains internal server-authorized membership metadata. It must not create a visible status badge, `완료`/`시청 중단` row copy, or `차시 N` metadata.
-- **Registered state**: checked registered rows remain in the chooser, stay checked and disabled, and expose `등록됨` through the checkbox accessible name. Registration never removes or rewrites the fresh server review set.
-- **Local registration**: the browser stores only an ordered, deduped SID/date-scoped MID list. On load it parses storage and intersects it with the current server review set, so storage-only MIDs cannot enter the playlist. Clicking `영상 등록` only updates this local list and rerenders the playlist; it never writes/fetches a server assignment. Repeated registration is idempotent and issues no network request.
-- **Playlist**: registered review items append after today's existing assignment rows, deduped by MID. Registration rerenders with `autoPlay: false`; it never changes the current player. Only the existing delegated `#vidList li[data-mid]` handler can play an appended row.
+- **Authorization state**: `reviewStatus: "done"` remains internal server-authorized membership metadata. `interrupted` is not eligible. The status must not create a visible badge, `완료` row copy, or `차시 N` metadata.
+- **Registered state**: registered rows remain checked and can be unchecked to remove the local selection; `등록됨` is an accessible label, not a permanent disabled state. Registration never rewrites the fresh server review set.
+- **Local registration**: the browser stores only an ordered, deduped SID/date-scoped MID list and intersects it with current server review membership on load. A newly registered selection triggers one page reload as approved in canonical §9; it does not write server assignments, logs, counseling history, progress, or watch. Do not describe the reload as network-free.
+- **Playlist**: registered review items append after today's assignment rows, deduped by MID. Registration does not directly auto-play; the existing delegated playlist handler owns playback. A page reload may reinitialize the existing player, so current-player identity is not an invariant of registration.
 - **Restrictions**: regular and self-study students share the chooser and registration flow. Course-blocked, absent, archived, ghost, malformed, empty, and outside-academy states expose no actionable registration or unauthorized playlist row; disabled metadata remains title-only where the existing access contract permits it.
 - **Motion/responsive**: chooser opening, row/title clicks, selection, and registration use no layout animation or direct playback; playback remains owned by the existing playlist rows. Keep 44px minimum targets, visible `:focus-visible` rings, light/dark tokens, and readable Korean wrapping at narrow, tablet, and desktop widths.
 
@@ -250,29 +251,3 @@ The previous-video review surface is a deliberately opened study utility within 
 Rows use the existing student accent and card/line tokens; no status-color tokens are needed because `reviewStatus` is authorization metadata only and never renders in a row.
 
 The review component consumes the narrowly scoped geometry/type tokens `--stu-review-gap`, `--stu-review-tight-gap`, `--stu-review-section-space`, `--stu-review-mobile-section-space`, `--stu-review-tap-min-height`, `--stu-review-control-pad-block`, `--stu-review-control-pad-inline`, `--stu-review-item-pad-block`, `--stu-review-item-pad-inline`, `--stu-review-title-size`, `--stu-review-summary-size`, `--stu-review-summary-weight`, `--stu-review-summary-line-height`, `--stu-review-copy-line-height`, `--stu-review-control-weight`, `--stu-review-focus-width`, `--stu-review-focus-offset`, and `--stu-review-mobile-control-pad-inline`. These tokens cover the compact chooser rows, checkbox/title gap, register action alignment, and focus treatment; no status/meta row geometry or status-color tokens are needed because rows remain title-only.
-
-## 9. Student PWA preparation and daily overview
-
-The public student PWA uses one continuous preparation flow and one compact daily overview. Both surfaces reuse the existing student colors, typography, spacing, and 32rem mobile shell; they do not create a second dashboard design system.
-
-### Preparation-step contract
-
-- **Stages**: `계정 확인`, `보안 설정`, and `설치·알림` are shown as one ordered three-step sequence. The current stage uses `aria-current="step"`; completed and upcoming stages remain visually distinct without relying on color alone.
-- **Forms**: login, activation, and forced-credential states are real forms. Native required, pattern, and minimum-length validation runs before any request. A rejected request preserves the entered values, shows a safe inline message, and returns focus to the relevant field.
-- **Status**: only the dedicated status line is live. The app root is not a broad live region, so typing and state rerenders are not repeatedly announced.
-- **Actions**: the primary action stays visually singular and uses the documented high-contrast action colors in both light and dark themes.
-
-### Daily-overview contract
-
-- **Authoritative inputs only**: the overview may display the homework-book count, today's assigned-video completion count, pending assigned-test count, and pending-announcement count already present in the session-bound student data. It must not infer curriculum-wide progress, class schedules, homework deadlines, or homework completion.
-- **Hierarchy**: one grouped `한눈에 보기` surface appears before the detailed panels. Four metrics and four quick actions use divider-based grids rather than nested cards.
-- **Navigation**: quick actions are native links or buttons with 44px minimum targets. A link is hidden when its destination panel is unavailable. The notice shortcut delegates to the existing notice control.
-- **Public scope**: markup is hidden by default, rendering is guarded by public student-app mode, and styles are scoped to `.student-app-mobile-surface`. Local/non-public student pages retain their existing behavior.
-- **Responsive behavior**: the overview is two columns on phone and tablet widths, collapses actions to one column only on very narrow screens, and remains inside the 32rem authenticated shell. Safe-area padding, reduced motion, readable Korean wrapping, and visible focus rings are required.
-
-### Announcement-dialog keyboard contract
-
-- Opening a notice or notice history stores the invoking control, sets the dialog visible to assistive technology, isolates the student shell with `inert`, and moves focus into the dialog.
-- Tab and Shift+Tab remain inside the active dialog even when the heading initially owns focus. Closing history or a previously completed/history notice restores the invoking control.
-- A required pending notice does not use Escape as a completion bypass. Read acknowledgment and required survey submission continue to own that workflow.
-- Only the active dialog is exposed; hidden notice surfaces retain `aria-hidden="true"`.

@@ -1,11 +1,13 @@
 import { state as adminState } from '../../admin/core/state.js';
-import { initLogModal } from '../../admin/features/logModal.js';
-import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js';
-import { initVideoModal } from '../../admin/features/videoModal.js';
+import { initLogModal } from '../../admin/features/logModal.js?v=20260914-homework-open-stable1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007';
+import { initHoverTooltip as initAdminHoverTooltip } from '../../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
+import { initVideoModal } from '../../admin/features/videoModal.js?v=20260912-watch-rearm1&youtube=20260913&hubSave=20261001&uiPerf=20261002&dragScroll=20261007';
+import { initAssistantStudentNotes } from '../../admin/features/assistantStudentNotes.js?v=20260821-note-body-row2';
 
 const ADMIN_POPUP_STYLESHEETS = [
   '/css/main.css?v=20260417a',
   '/css/admin.css?v=20260527chat',
+  '/css/student-work-light.css?v=20260906-exam-pending-color1',
 ];
 const ADMIN_POPUP_STYLESHEET_MARKER = 'data-all-students-admin-popup-style';
 
@@ -105,8 +107,9 @@ function installReadOnlyAssignmentGuard() {
   readOnlyAssignmentGuardInstalled = true;
 
   const mutationSelector = [
-    '#vidModal.student-work-layout .vid-save-btn',
-    '#vidModal.student-work-layout .vid-row input',
+    '#vidModal.student-work-layout .vid-row',
+    '#vidModal.student-work-layout .auto-count-btn',
+    '#vidModal.student-work-layout .vid-exclude-high-btn',
     '#vidModal.student-work-layout #autoAssignCountRange',
     '#vidModal.student-work-layout .vid-extra-add',
     '#vidModal.student-work-layout .vid-extra-controls input',
@@ -115,9 +118,18 @@ function installReadOnlyAssignmentGuard() {
     '#testModal.student-work-layout .test-row',
     '#testModal.student-work-layout .test-mini-actions button',
     '#testModal.student-work-layout .test-note-option input',
+    '#logModal.student-work-layout .assistant-note-pin',
+    '#logModal.student-work-layout .assistant-note-action-group',
+    '#assistantStudentNotes[data-existing-read-only="true"] .assistant-note-pin',
+    '#assistantStudentNotes[data-existing-read-only="true"] .assistant-note-action-group',
   ].join(',');
   const blockMutation = (event) => {
-    if (!event.target?.closest?.(mutationSelector)) return;
+    const target = event.target?.closest?.(mutationSelector);
+    if (!target) return;
+    if (
+      target.closest?.('#vidModal .vid-row')
+      && (event.type === 'contextmenu' || (event.type === 'mousedown' && event.button === 2))
+    ) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   };
@@ -130,6 +142,7 @@ async function initializeAllStudentsRecordPopup() {
   await activateAdminPopupSkin();
   try {
     initAdminHoverTooltip();
+    initAssistantStudentNotes();
     initVideoModal();
     initLogModal();
     observeUnifiedPopupClose();

@@ -550,14 +550,57 @@ function readStudentBootstrapSource() {
   return source.slice(0, end + '\n})();'.length);
 }
 
+function readStudentBootstrapStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'bootstrapState.js'),
+    'utf8',
+  );
+}
+
+function readStudentWatchStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'watchState.js'),
+    'utf8',
+  );
+}
+
+function readStudentPlaybackSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'playback.js'),
+    'utf8',
+  );
+}
+
+function readStudentReviewPlaylistSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'reviewPlaylist.js'),
+    'utf8',
+  );
+}
+
+function readStudentAnnouncementStateSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'announcementState.js'),
+    'utf8',
+  );
+}
+
+function readStudentTestPresentationSource() {
+  return fs.readFileSync(
+    path.join(ROOT, 'static', 'js', 'student', 'testPresentation.js'),
+    'utf8',
+  );
+}
+
 async function runStudentFixture(options = {}) {
   const date = '2026-08-03';
   const fixtureDate = options.fixtureDate || date;
   const FixtureDate = makeFixtureDateConstructor(fixtureDate);
-  const sid = '7';
+  const sid = options.sid || '7';
   const document = buildStudentFixtureDom();
   const requestLog = [];
   const alerts = [];
+  let reloadCount = 0;
   const storage = new Map(Object.entries(options.initialStorage || {}));
   const listeners = new Map();
   const student = { id: sid, name: '테스트 학생', curriculum: 'ALG', subCurriculum: 'A', day1: '월1' };
@@ -581,12 +624,17 @@ async function runStudentFixture(options = {}) {
   const bootstrap = options.bootstrap === undefined ? defaultBootstrap : options.bootstrap;
   const window = {
     __STU_SID__: sid,
-    __OCR_TEST_SHEET_ENABLED__: false,
-    __OCR_QA_DATE__: options.useQaDate === false ? '' : date,
     Date: FixtureDate,
     innerWidth: 1280,
     navigator: {},
-    location: { pathname: `/student/${sid}`, search: '', hash: '', origin: 'http://localhost' },
+    location: {
+      pathname: `/student/${sid}`,
+      search: '',
+      hash: '',
+      origin: 'http://localhost',
+      reload() { reloadCount += 1; },
+      ...options.location,
+    },
     document,
     addEventListener(type, handler) {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -614,13 +662,7 @@ async function runStudentFixture(options = {}) {
     if (target.startsWith('/api/watch/latest')) return makeResponse({ watch: options.watch || {} });
     if (target.startsWith('/api/get-url')) return makeResponse('https://video.example.test/embed');
     if (target.startsWith('/api/watch')) return makeResponse({ ok: true });
-    if (target.startsWith('/api/students')) return makeResponse([student]);
-    if (target.startsWith('/api/videos')) return makeResponse(options.legacyVideos || options.videos || []);
-    if (target.startsWith('/api/updates')) return makeResponse({ [date]: { [sid]: options.assignment || [] } });
-    if (target.startsWith('/api/materials')) return makeResponse({});
-    if (target.startsWith('/api/mat-assign')) return makeResponse({ [sid]: [] });
-    if (target.startsWith('/api/absent')) return makeResponse({ by_date: { [date]: options.absent || [] } });
-    if (target.startsWith('/api/logs')) return makeResponse({ [date]: { [sid]: options.logEntry || {} } });
+
     return makeResponse({});
   };
   const context = {
@@ -651,15 +693,39 @@ async function runStudentFixture(options = {}) {
     setInterval() { return 1; },
     clearInterval() {},
   };
+  window.fetch = fetch;
+  vm.runInNewContext(readStudentBootstrapStateSource(), context, {
+    filename: 'static/js/student/bootstrapState.js',
+  });
+  vm.runInNewContext(readStudentWatchStateSource(), context, {
+    filename: 'static/js/student/watchState.js',
+  });
+  vm.runInNewContext(readStudentPlaybackSource(), context, {
+    filename: 'static/js/student/playback.js',
+  });
+  vm.runInNewContext(readStudentReviewPlaylistSource(), context, {
+    filename: 'static/js/student/reviewPlaylist.js',
+  });
+  vm.runInNewContext(readStudentAnnouncementStateSource(), context, {
+    filename: 'static/js/student/announcementState.js',
+  });
+  vm.runInNewContext(readStudentTestPresentationSource(), context, {
+    filename: 'static/js/student/testPresentation.js',
+  });
   vm.runInNewContext(readStudentBootstrapSource(), context, { filename: 'static/js/student.js' });
-  // The isolated student source recomputes OCR date globals at load time; set
-  // the fixture boundary after that bootstrap so non-OCR scenarios remain
-  // pinned without enabling the OCR query flag.
-  window.__OCR_QA_DATE__ = options.useQaDate === false ? '' : date;
   await new Promise(resolve => setImmediate(resolve));
   await Promise.resolve();
   await new Promise(resolve => setImmediate(resolve));
-  return { document, window, requestLog, alerts, storage, context, fixtureSelfStudy: bootstrap?.selfStudy };
+  return {
+    document,
+    window,
+    requestLog,
+    alerts,
+    storage,
+    context,
+    fixtureSelfStudy: bootstrap?.selfStudy,
+    getReloadCount: () => reloadCount,
+  };
 }
 
 function reviewRows(document) {
@@ -721,9 +787,16 @@ function assertTitleOnlyReviewRows(rows, sourceItems, label = 'review rows') {
 async function runDomContractCurrent() {
   const checks = [];
   const rowsFixture = [
-    { mid: 'done-mid', title: 'First lesson', chapter: '1', reviewStatus: 'done' },
+    {
+      mid: 'second-done-mid',
+      title: 'Third lesson',
+      chapter: '3',
+      reviewStatus: 'done',
+      exNum: { 하: '13' },
+    },
     { mid: 'orange-mid', title: 'Second lesson', chapter: '2', reviewStatus: 'interrupted' },
-    { mid: 'orange-mid', title: 'Second duplicate', reviewStatus: 'done' },
+    { mid: 'done-mid', title: 'First lesson', chapter: '1', reviewStatus: 'done' },
+    { mid: 'second-done-mid', title: 'Third duplicate', reviewStatus: 'done' },
     { mid: 'wrong-status', title: 'Skipped lesson', reviewStatus: 'skip' },
     { mid: 'assigned-status', title: 'Assigned lesson', reviewStatus: 'assigned' },
     { mid: '   ', title: 'Missing MID', reviewStatus: 'done' },
@@ -741,13 +814,16 @@ async function runDomContractCurrent() {
   const wrapper = fixture.document.getElementById('previousVideos');
   const summary = fixture.document.getElementById('previousVideosSummary');
   const rows = reviewRows(fixture.document);
-  assert(rows.length === 2, 'chooser must render only deduped done/interrupted server rows', checks);
+  assert(rows.length === 2
+    && rows.map(row => row.dataset.mid).join('|') === 'done-mid|second-done-mid'
+    && !rows.some(row => row.dataset.mid === 'orange-mid'),
+  'chooser must render only deduped completed blue rows in ascending chapter order', checks);
   assertTitleOnlyReviewRows(rows, rowsFixture);
   assertNoPlaybackFields(rows.find(row => row.dataset.mid === 'done-mid'), 'review rows');
   assert(register?.disabled === true && register.hidden === false,
     'register must be visible but disabled until a new eligible checkbox is selected', checks);
-  assert(summary.textContent === '복습할 영상을 선택한 뒤 영상 등록을 누르세요',
-    'chooser summary must explain local selection and registration', checks);
+  assert(summary.textContent === '등록할 영상은 체크하고, 등록 취소는 체크를 해제하세요',
+    'chooser summary must explain local registration and cancellation', checks);
   assert(!REVIEW_SUMMARY_FORBIDDEN_COPY.test(summary.textContent),
     'review summary must not expose completion/interruption/chapter wording', checks);
   assert(toggle.textContent === '영상 복습 (2)' && toggle.disabled === false,
@@ -764,43 +840,147 @@ async function runDomContractCurrent() {
     && fixture.requestLog.length === beforeToggle,
   'keyboard disclosure activation must remain toggle-only with stable ARIA state', checks);
 
-  const orange = rows.find(row => row.dataset.mid === 'orange-mid');
+  const secondDone = rows.find(row => row.dataset.mid === 'second-done-mid');
   const reviewGetUrlBeforeRowClick = requestCount(fixture.requestLog, '/api/get-url');
-  orange.click();
-  orange.querySelector('.previous-video-title').click();
+  secondDone.click();
+  secondDone.querySelector('.previous-video-title').click();
   assert(requestCount(fixture.requestLog, '/api/get-url') === reviewGetUrlBeforeRowClick,
     'chooser row/title clicks must never play or issue get-url requests', checks);
-  orange.querySelector('input[type="checkbox"]').click();
+  secondDone.querySelector('input[type="checkbox"]').click();
   assert(register.disabled === false, 'register must enable when a fresh eligible checkbox is checked', checks);
   const requestCountBeforeRegistration = fixture.requestLog.length;
   register.click();
   await new Promise(resolve => setImmediate(resolve));
   assert(fixture.requestLog.length === requestCountBeforeRegistration,
     'local registration must not write or fetch a server assignment', checks);
+  assert(fixture.getReloadCount() === 1,
+    'successful local registration must force exactly one page reload', checks);
   assert(register.disabled === true, 'register must disable after the checked MID is registered', checks);
   const registeredRows = reviewRows(fixture.document);
   assert(registeredRows.length === rows.length
     && registeredRows.map(row => row.dataset.mid).join('|') === rows.map(row => row.dataset.mid).join('|'),
   'registration must keep every fresh server review row visible', checks);
-  const registeredOrangeCheckbox = registeredRows.find(row => row.dataset.mid === 'orange-mid')
+  const registeredSecondDoneCheckbox = registeredRows.find(row => row.dataset.mid === 'second-done-mid')
     ?.querySelector('input[type="checkbox"]');
-  assert(registeredOrangeCheckbox?.checked === true && registeredOrangeCheckbox.disabled === true
-    && String(registeredOrangeCheckbox.getAttribute('aria-label') || '').includes('등록됨'),
-  'registered chooser rows must stay checked, disabled, and expose an accessible registered hint', checks);
+  assert(registeredSecondDoneCheckbox?.checked === true && registeredSecondDoneCheckbox.disabled === false
+    && String(registeredSecondDoneCheckbox.getAttribute('aria-label') || '').includes('등록 취소'),
+  'registered chooser rows must stay checked and expose an accessible cancellation action', checks);
   const registeredMids = fixture.document.getElementById('vidList')
     .querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
-  assert(registeredMids.includes('orange-mid'), 'registration must append the checked review MID to the playlist', checks);
+  assert(registeredMids.includes('second-done-mid'), 'registration must append the checked review MID to the playlist', checks);
+  const registeredReviewItem = fixture.document.getElementById('vidList')
+    .querySelectorAll('li[data-mid]')
+    .find(item => item.dataset.mid === 'second-done-mid');
+  const registeredReviewEssay = registeredReviewItem?.querySelector('.essay-badge');
+  assert(registeredReviewEssay?.textContent === '[서술형 13번]',
+    'registered review videos must show their level-specific subjective problem number', checks);
   const reviewStorageKey = 'student:review-playlist:7:2026-08-03';
   assert(fixture.storage.get(reviewStorageKey)
-    && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'orange-mid',
+    && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'second-done-mid',
   'registered review selection must persist under the SID/date-scoped localStorage key', checks);
+  const cancellationRequestCount = fixture.requestLog.length;
+  const cancellationReloadCount = fixture.getReloadCount();
+  registeredSecondDoneCheckbox.click();
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelledSecondDoneRow = reviewRows(fixture.document)
+    .find(row => row.dataset.mid === 'second-done-mid');
+  const cancelledSecondDoneCheckbox = cancelledSecondDoneRow?.querySelector('input[type="checkbox"]');
+  const cancelledPlaylistMids = fixture.document.getElementById('vidList')
+    .querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
+  assert(cancelledSecondDoneCheckbox?.checked === false && cancelledSecondDoneCheckbox.disabled === false
+    && !cancelledPlaylistMids.includes('second-done-mid')
+    && JSON.parse(fixture.storage.get(reviewStorageKey)).length === 0,
+  'unchecking a registered review row must cancel the local registration and restore its chooser state', checks);
+  assert(fixture.requestLog.length === cancellationRequestCount,
+    'review cancellation must not fetch or write any server state', checks);
+  assert(fixture.getReloadCount() === cancellationReloadCount,
+    'review cancellation must not force a page reload', checks);
+  cancelledSecondDoneCheckbox.click();
+  assert(register.disabled === false,
+    'a cancelled review row must be immediately selectable for registration again', checks);
+  register.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(fixture.document.getElementById('vidList').querySelectorAll('li[data-mid="second-done-mid"]').length === 1
+    && JSON.parse(fixture.storage.get(reviewStorageKey)).join('|') === 'second-done-mid'
+    && fixture.requestLog.length === cancellationRequestCount
+    && fixture.getReloadCount() === cancellationReloadCount + 1,
+  'a cancelled review video must support clean local re-registration without server requests', checks);
   const registrationRequestCount = fixture.requestLog.length;
   register.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert(fixture.requestLog.length === registrationRequestCount,
+  assert(fixture.requestLog.length === registrationRequestCount
+    && fixture.getReloadCount() === cancellationReloadCount + 1,
     'repeated registration must be idempotent with no additional requests', checks);
   assert(fixture.document.getElementById('vidList').querySelectorAll('li[data-mid]').length === registeredMids.length,
     'repeated registration must not duplicate playlist rows', checks);
+
+  const finishedAssignment = await runStudentFixture({
+    assignment: { videos: ['assigned-mid', 'done-mid'], source: 'auto' },
+    videos: [
+      { mid: 'assigned-mid', title: 'Assigned today', chapter: '1' },
+      {
+        mid: 'done-mid',
+        title: 'Finished today',
+        chapter: '2',
+        todayAutoAssignmentStatus: 'done',
+      },
+    ],
+    reviewVideos: [],
+    selfStudy: false,
+    logEntry: { archived: true, done: true },
+    initialStorage: {
+      'stu:7:watch:done-mid': JSON.stringify({ last: 100, dur: 100, completed: true, updatedAt: 1 }),
+    },
+  });
+  const finishedPlaylistMids = finishedAssignment.document.getElementById('vidList')
+    .querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
+  const finishedRow = finishedAssignment.document.getElementById('vidList')
+    .querySelector('li[data-mid="done-mid"]');
+  assert(finishedPlaylistMids.join('|') === 'assigned-mid|done-mid'
+    && finishedRow?.querySelector('.badge-done')?.textContent === '완료'
+    && !reviewRows(finishedAssignment.document).some(row => row.dataset.mid === 'done-mid'),
+  'a completed blue video from today automatic assignment must remain in the current playlist after class archival without review duplication', checks);
+
+  const completingAssignment = await runStudentFixture({
+    assignment: { videos: ['fresh-auto-mid'], source: 'auto' },
+    videos: [{ mid: 'fresh-auto-mid', title: 'Completes now', chapter: '1' }],
+    reviewVideos: [],
+    selfStudy: false,
+  });
+  completingAssignment.window.dispatchEvent({
+    type: 'message',
+    source: completingAssignment.window,
+    data: {
+      type: 'kollus.progress',
+      mid: 'fresh-auto-mid',
+      currentTime: 95,
+      duration: 100,
+      ended: false,
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const completingRow = completingAssignment.document.getElementById('vidList')
+    .querySelector('li[data-mid="fresh-auto-mid"]');
+  assert(completingRow?.querySelector('.badge-done')?.textContent === '완료'
+    && fixtureProgress(completingAssignment, 'fresh-auto-mid')?.completed === true,
+  'an automatic video completed during playback must stay rendered and turn blue immediately', checks);
+
+  const reopenedAssignment = await runStudentFixture({
+    assignment: ['reopened-mid'],
+    videos: [{ mid: 'reopened-mid', title: 'Reopened today', chapter: '3' }],
+    reviewVideos: [],
+    watch: {
+      'reopened-mid': { last: 100, dur: 100, completed: true, updatedAt: 2 },
+    },
+    initialStorage: {
+      'stu:7:watch:reopened-mid': JSON.stringify({ last: 100, dur: 100, completed: true, updatedAt: 1 }),
+    },
+  });
+  const reopenedPlaylist = reopenedAssignment.document.getElementById('vidList')
+    .querySelectorAll('li[data-mid]').map(item => item.dataset.mid);
+  assert(reopenedPlaylist.join('|') === 'reopened-mid'
+    && fixtureProgress(reopenedAssignment, 'reopened-mid') === null,
+  'a server-authorized green assignment must clear stale completed watch cache and remain in the playlist', checks);
 
   const regular = await runStudentFixture({ selfStudy: false, reviewVideos: rowsFixture });
   const regularRows = reviewRows(regular.document);
@@ -832,7 +1012,7 @@ async function runDomContractCurrent() {
     videos: [{ mid: 'today-mid', title: 'Today', chapter: '1' }],
     reviewVideos: [
       { mid: 'first-mid', title: 'First', chapter: '2', reviewStatus: 'done' },
-      { mid: 'second-mid', title: 'Second', chapter: '3', reviewStatus: 'interrupted' },
+      { mid: 'second-mid', title: 'Second', chapter: '3', reviewStatus: 'done' },
     ],
   });
   const orderedRows = reviewRows(ordered.document);
@@ -846,8 +1026,9 @@ async function runDomContractCurrent() {
   assert(orderedPlaylistMids.join('|') === 'today-mid|second-mid|first-mid',
     'registration must append in checkbox selection order after today rows', checks);
   assert(ordered.requestLog.length === orderedRequestLogBefore
-    && requestCount(ordered.requestLog, '/api/get-url') === orderedGetUrlBefore,
-    'registration must preserve current autoplay state without a new playback request', checks);
+    && requestCount(ordered.requestLog, '/api/get-url') === orderedGetUrlBefore
+    && ordered.getReloadCount() === 1,
+    'registration must preserve current autoplay state, avoid playback requests, and force one reload', checks);
 
   const noToday = await runStudentFixture({
     assignment: [],
@@ -861,8 +1042,23 @@ async function runDomContractCurrent() {
   await new Promise(resolve => setImmediate(resolve));
   const standalonePlaylist = noToday.document.getElementById('vidList').querySelectorAll('li[data-mid]');
   assert(standalonePlaylist.length === 1 && standalonePlaylist[0].dataset.mid === 'standalone-mid'
-    && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0,
-    'local registration must append a standalone review MID without server or playback requests', checks);
+    && noToday.requestLog.length === noTodayBefore && requestCount(noToday.requestLog, '/api/get-url') === 0
+    && noToday.getReloadCount() === 1,
+    'local registration must append a standalone review MID, force one reload, and avoid server or playback requests', checks);
+  const standalonePlayer = noToday.document.getElementById('player');
+  const standalonePlayerCard = standalonePlayer.closest('.player-card');
+  const standalonePlayerBox = noToday.document.getElementById('playerBox');
+  assert(standalonePlayer.hidden === true && standalonePlayerCard.hidden === true
+    && standalonePlayerBox.classList.contains('is-player-empty'),
+  'standalone review registration must preserve the empty player until its playlist row is activated', checks);
+  standalonePlaylist[0].querySelector('.video-row-action').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(requestCount(noToday.requestLog, '/api/get-url') === 1
+    && standalonePlayer.hidden === false && standalonePlayerCard.hidden === false
+    && !standalonePlayerBox.classList.contains('is-player-empty')
+    && standalonePlaylist[0].classList.contains('active')
+    && String(standalonePlayer.src || '').startsWith('https://video.example.test/embed'),
+  'activating the first standalone review row must restore the shared player and load its playable iframe', checks);
 
   const missing = await runStudentFixture({ videos: [{ mid: 'catalog-only', title: 'Catalog only' }], reviewVideos: [] });
   assert(missing.document.getElementById('previousVideos').hidden === false
@@ -873,19 +1069,28 @@ async function runDomContractCurrent() {
   assert(malformed.document.getElementById('previousVideos').hidden === true
     && reviewRows(malformed.document).length === 0,
   'malformed reviewVideos must hide the review surface', checks);
-  const fallback = await runStudentFixture({
+  const failedBootstrap = await runStudentFixture({
     bootstrapStatus: 404,
     reviewVideos: rowsFixture,
-    legacyVideos: [{ mid: 'catalog-only', title: 'Catalog only' }],
   });
-  assert(requestCount(fallback.requestLog, '/api/videos') === 1
-    && fallback.document.getElementById('previousVideosToggle').disabled === true
-    && reviewRows(fallback.document).length === 0,
-  'legacy fallback must keep review membership empty', checks);
+  const retiredBootstrapPrefixes = [
+    '/api/students',
+    '/api/videos',
+    '/api/updates',
+    '/api/materials',
+    '/api/mat-assign',
+    '/api/absent',
+    '/api/logs',
+  ];
+  assert(failedBootstrap.alerts.some(message => message.includes('데이터 로드 실패') && message.includes('bootstrap 404'))
+    && retiredBootstrapPrefixes.every(prefix => requestCount(failedBootstrap.requestLog, prefix) === 0)
+    && failedBootstrap.document.getElementById('previousVideosToggle').disabled === true
+    && reviewRows(failedBootstrap.document).length === 0,
+  'failed bootstrap must surface an error and never call the retired multi-GET fallback', checks);
 
   const outside = await runStudentFixture({
     academyAccessAllowed: false,
-    reviewVideos: [{ mid: 'restricted-mid', title: 'Restricted', reviewStatus: 'interrupted' }],
+    reviewVideos: [{ mid: 'restricted-mid', title: 'Restricted', reviewStatus: 'done' }],
   });
   const outsideRow = outside.document.getElementById('previousVidList').querySelector('button[data-mid]');
   const outsideRegister = outside.document.getElementById('previousVideosRegister');
@@ -894,7 +1099,8 @@ async function runDomContractCurrent() {
   assert(outsideRow.dataset.playbackRestricted === 'true'
     && outsideRegister.hidden === true && outsideRegister.disabled === true
     && outside.requestLog.length === outsideBefore
-    && requestCount(outside.requestLog, '/api/get-url') === 0,
+    && requestCount(outside.requestLog, '/api/get-url') === 0
+    && outside.getReloadCount() === 0,
   'outside-academy review choices must remain title-only and non-actionable without playback or watch mutation', checks);
 
   for (const [label, options] of Object.entries({
@@ -931,6 +1137,18 @@ async function runDomContractCurrent() {
     && activeReviewItem.getAttribute('aria-current') === 'true'
     && requestCount(active.requestLog, '/api/get-url') === activeGetUrlBefore,
   'registering a duplicate current MID must preserve today order, active state, and autoplay exactly once', checks);
+  const duplicateCancellationRequests = active.requestLog.length;
+  activeReviewItem.querySelector('input[type="checkbox"]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  const activeAfterCancellation = active.document.getElementById('vidList')
+    .querySelectorAll('li[data-mid="shared-mid"]');
+  const activeReviewAfterCancellation = reviewRows(active.document)
+    .find(row => row.dataset.mid === 'shared-mid');
+  assert(activeAfterCancellation.length === 1
+    && activeAfterCancellation[0].classList.contains('active')
+    && activeReviewAfterCancellation?.querySelector('input[type="checkbox"]')?.checked === false
+    && active.requestLog.length === duplicateCancellationRequests,
+  'cancelling a duplicate review registration must preserve the active today assignment without playback requests', checks);
 
   const current = await runStudentFixture({
     assignment: ['current-mid'],

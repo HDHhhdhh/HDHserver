@@ -205,8 +205,6 @@ def main(argv: list[str] | None = None) -> int:
     categories = ensure_category_scaffolding(cfg)
     review_category = categories["REVIEW"]
     review_tests = review_category.get("tests", [])
-    if not isinstance(review_tests, list):
-        review_tests = []
 
     generated = build_generated_tests(args.csv)
     merged, added, updated, preserved = merge_tests(review_tests, generated)

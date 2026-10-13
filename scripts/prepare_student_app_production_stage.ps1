@@ -95,7 +95,7 @@ $checks += Invoke-StageCheck "release-verify" $pythonPath @(
 $checks += Invoke-StageCheck "compileall" $pythonPath @(
     "-m", "compileall", "-q", "app.py", "routes", "core", "scripts"
 ) $sourceRoot
-$checks += Invoke-StageCheck "stage-runtime-seed" $pythonPath @(
+$checks += Invoke-StageCheck "stage-path-declarations" $pythonPath @(
     "-c", "import core.paths"
 ) $sourceRoot
 $checks += Invoke-StageCheck "backend-focused-all" $pythonPath @(
@@ -130,7 +130,7 @@ $receipt = [ordered]@{
     productionChanged = $false
     productionRuntimeRead = $false
     productionRuntimeWritten = $false
-    stageRuntimeSeeded = $true
+    stageRuntimeSeeded = $false
     stageVenvLinked = $true
 }
 

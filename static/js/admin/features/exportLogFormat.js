@@ -36,6 +36,8 @@ export function validateExportLogOptions(value) {
   return { ok: true, code: 'ok', message: '', options };
 }
 
+
+
 export function classLogRecordHasSelectedContent(record, value) {
   const { sections } = normalizeExportLogOptions(value);
   return !!(
@@ -63,7 +65,7 @@ export function renderClassLogText(records, value) {
       out += `특이사항 : ${record.notes}\n\n`;
     }
     if (options.sections.tests && record.hasTests) {
-      out += `테스트 : ${(record.testLines || []).join(' / ')}\n\n`;
+      out += `테스트 :\n${(record.testLines || []).join('\n')}\n\n`;
     }
     if (options.sections.progress) {
       out += `진도 (${record.curriculum}) : ${(record.diffs || []).join(', ')}\n\n`;
@@ -116,7 +118,7 @@ export function recordsToCsv(records) {
         record?.school,
         record?.curriculum,
         record?.notes,
-        (record?.testLines || []).join(' / '),
+        (record?.testLines || []).join('\n'),
         (record?.diffs || []).join(', '),
         homework ? String(index + 1) : '',
         homework?.book || '',

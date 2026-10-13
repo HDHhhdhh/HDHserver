@@ -335,29 +335,46 @@ def _schedule_hooks(state: list[int]) -> None:
         _check(state, enqueue_current_schedule_changes(["sid-a"]) == 0,
                "rollout-off schedule hook did not return before runtime reads")
 
-    basic = (ROOT / "routes" / "api_basic.py").read_text(encoding="utf-8")
+    students_source = (ROOT / "routes" / "api_students.py").read_text(encoding="utf-8")
+    student_routes = {
+        node.name: ast.get_source_segment(students_source, node)
+        for node in ast.parse(students_source).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    add_route = student_routes["api_add_student"]
+    update_route = student_routes["api_update_student_field"]
+    progress_route = (ROOT / "routes" / "api_progress.py").read_text(encoding="utf-8")
     attend = (ROOT / "routes" / "api_attend.py").read_text(encoding="utf-8")
     makeup_path = ROOT / "routes" / "api_makeup_carryover.py"
     makeup = makeup_path.read_text(encoding="utf-8")
-    _check(state, basic.index("save_atomic(STU_PATH, incoming)")
-           < basic.index("enqueue_current_schedule_changes(affected)")
+    _check(state, add_route.index("create_student_with_identity(")
+           < add_route.index('enqueue_current_schedule_changes([created["id"]])')
+           and add_route.index("save_atomic(STU_PATH, students)")
+           < add_route.index('enqueue_current_schedule_changes([data["id"]])')
+           and students_source.count("enqueue_current_schedule_changes(") == 3
            and "before_pairs ^ after_pairs" in attend
-           and attend.index("save_absent(payload, locked=True)") < attend.index("enqueue_current_schedule_changes(")
-           and basic.count("enqueue_current_schedule_changes(") >= 4,
+           and attend.index("save_absent(payload, locked=True)") < attend.index("enqueue_current_schedule_changes("),
            "student/absence schedule hooks are missing or run before persistence")
-    update_route = basic[basic.index('def api_update_student_field():'):]
-    _check(state, 're.fullmatch(r"(?:day|visitTime)\\d+", str(field))' in update_route
-           and "enqueue_current_schedule_changes([str(sid)])" in update_route,
-           "normal all-students schedule editor route lost its notification hook")
+    notification_position = update_route.index("enqueue_current_schedule_changes([str(sid)])")
+    _check(state, update_route.index("mutate_identity_state(") < notification_position
+           and update_route.index("save_atomic(STU_PATH, students)") < notification_position
+           and 'field = str(field)' in update_route
+           and 're.fullmatch(r"(?:day|visitTime)\\d+", field)' in update_route,
+           "normal all-students schedule editor route lost its post-commit notification hook")
     _check(state, makeup.count("enqueue_current_schedule_changes(") == 2
            and "_makeup_student_ids(previous) | _makeup_student_ids(normalized)" in makeup
-           and "_makeup_student_ids(current) | _makeup_student_ids(result.get(\"carryover\"))" in makeup,
+           and 'enqueue_current_schedule_changes(result.get("addedSids") or [])' in makeup,
            "makeup save/sheet-sync hooks lost old/new SID coverage")
     watch = (ROOT / "routes" / "api_watch.py").read_text(encoding="utf-8")
-    _check(state, "enqueue_progress_milestones" in basic
-           and "_notification_progress_commit" in basic
-           and "_notification_progress_snapshot" in watch
-           and "_notification_progress_commit" in watch,
+    progress_writer = (ROOT / "core" / "watch_progress_writer.py").read_text(encoding="utf-8")
+    progress_notifications = (ROOT / "core" / "progress_notifications.py").read_text(encoding="utf-8")
+    _check(state, "progress_notification_snapshot" in progress_route
+           and "commit_progress_notifications" in progress_route
+           and "save_progress_status" in watch
+           and "progress_notification_snapshot" in progress_writer
+           and "commit_progress_notifications" in progress_writer
+           and "enqueue_progress_milestones" in progress_notifications
+           and "from routes.api_basic import" not in watch,
            "progress write seams lost milestone hooks")
     authority = (ROOT / "core" / "student_notification_authority.py").read_text(encoding="utf-8")
     _check(state, "anchor.date() + dt.timedelta(days=45)" in authority,
@@ -367,18 +384,8 @@ def _schedule_hooks(state: list[int]) -> None:
            and 'deterministic_event_id("announcement_published", announcement_id)' in announcements,
            "student announcement projection lost its opaque notification deep-link alias")
 
-    tree = ast.parse(makeup)
-    helper_names = {
-        "_norm_date", "_norm_sid", "_norm_slot_list", "_normalize_schedule",
-        "_normalize_manual", "_normalize_payload", "_makeup_student_ids",
-    }
-    module = ast.Module(
-        body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in helper_names],
-        type_ignores=[],
-    )
-    namespace = {"dt": dt, "Any": object, "Dict": dict}
-    exec(compile(ast.fix_missing_locations(module), str(makeup_path), "exec"), namespace)
-    collect = namespace["_makeup_student_ids"]
+    from core.makeup_payload_rules import makeup_student_ids
+    collect = makeup_student_ids
     fixture = {
         "by_absence": {"2026-08-09": {"sid-a|absence": {
             "scheduledMakeup": {"studentId": "sid-a", "makeupDate": "2026-08-10",

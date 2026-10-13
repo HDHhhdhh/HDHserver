@@ -1,7 +1,6 @@
 import { getAdminDate } from '../core/adminDate.js';
 import { getLeaveTime, labelFor, plannedTimeFor } from './today.state.js';
 
-console.log('[timeGraph] VERSION 2026-04-01 - Synced with today table');
 
 const ARRIVE_TIME_MAP = { '1': '13:00', '2': '18:00' };
 

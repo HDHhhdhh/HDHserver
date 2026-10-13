@@ -1,4 +1,4 @@
-"""Temp-only contract checks for academy-gated student-account administration."""
+"""Temp-only contract checks for Basic-authenticated student-account administration."""
 from __future__ import annotations
 
 import base64
@@ -77,8 +77,8 @@ def _lazy_gate_checks(count: list[int], root: Path, config: Any) -> None:
     _check(count, public.status_code == 404, "exact public host is hidden")
     direct = client.get("/api/student-accounts", base_url="http://admin.local", environ_overrides={"REMOTE_ADDR": "203.0.113.7"})
     spoof = client.get("/api/student-accounts", base_url="http://admin.local", headers={"X-Forwarded-For": "10.0.0.8"}, environ_overrides={"REMOTE_ADDR": "203.0.113.7"})
-    _check(count, direct.status_code == 403 and _json(direct).get("code") == "academy_network_required", "off-network request is typed-forbidden")
-    _check(count, spoof.status_code == 403, "untrusted peer cannot spoof academy IP")
+    _check(count, direct.status_code == 401 and _json(direct).get("code") == "admin_auth_required", "off-network request without credentials is challenged")
+    _check(count, spoof.status_code == 401 and _json(spoof).get("code") == "admin_auth_required", "forwarded IP does not replace Basic authentication")
     missing = client.get("/api/student-accounts", base_url="http://admin.local", environ_overrides={"REMOTE_ADDR": "10.2.3.4"})
     bad = client.get("/api/student-accounts", base_url="http://admin.local", headers={"Authorization": "Basic Zm9vOmJhcg=="}, environ_overrides={"REMOTE_ADDR": "10.2.3.4"})
     _check(count, missing.status_code == 401 and _json(missing).get("code") == "admin_auth_required" and missing.headers.get("WWW-Authenticate"), "academy request without admin credentials is challenged")
@@ -129,8 +129,10 @@ def _list_and_reset(count: list[int], app: Flask, accounts_path: Path, deps: Stu
     push.upsert("custom-a", "minsu-a1", "device-1", "https://fcm.googleapis.com/fcm/send/secret-endpoint", p256dh, auth, now=1000)
     client = app.test_client()
     listed = _request(client, "GET", "/api/student-accounts")
+    external = _request(client, "GET", "/api/student-accounts", environ_overrides={"REMOTE_ADDR": "203.0.113.7"})
     body, raw = _json(listed), listed.get_data(as_text=True)
     _check(count, listed.status_code == 200 and isinstance(body.get("groups"), list) and len(body["groups"]) == 3, "roster groups are listed")
+    _check(count, external.status_code == 200 and len(_json(external).get("groups", [])) == 3, "valid Basic credentials open account administration off-network")
     group = next(item for item in body["groups"] if item.get("account", {}).get("aid") == "custom-a")
     _check(count, group["account"]["status"] == "active" and group["account"]["activeSessionCount"] == 1 and group["account"]["activePushSubscriptionCount"] == 1 and group["activationCodeRequired"] is True, "list reports counts and marks every duplicate group for group-bound activation")
     missing_group = next(item for item in body["groups"] if item["identity"]["sids"] == ["minsu-b1"])

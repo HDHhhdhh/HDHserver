@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from ocr_provider_free_extended_gate_common import JsonObject
+
+
+def core_markdown_lines(output: JsonObject) -> tuple[str, ...]:
+    return (
+        "# OCR Provider-Free Accuracy Gate Extended",
+        "",
+        "- Gemini/API calls: 0; external OCR API calls: 0",
+        "- `/api/submit-test` calls: 0",
+        "- `#tsSubmit` clicks: 0",
+        "- student-facing: false",
+        "- production default: `NO-GO`",
+        f"- base provider-free gates: {output['base_gate_count']}",
+        f"- extended provider-free gates: {output['extended_gate_count']}",
+        f"- priority crop-feature cases: {output['priority_crop_feature_case_count']}",
+        f"- priority digit-shape cases: {output['priority_digit_shape_case_count']}",
+        f"- digit-shape generalization rows: {output['digit_shape_generalization_row_count']}",
+        f"- digit-shape candidate-comparison rows: {output['digit_shape_candidate_comparison_row_count']}",
+        f"- digit-shape candidate-comparison review-required: {output['digit_shape_candidate_comparison_review_required_count']}",
+        f"- digit-shape candidate-comparison auto-fill allowed: {output['digit_shape_candidate_comparison_auto_fill_allowed_count']}",
+        f"- q003 signal audit cases: {output['q003_signal_audit_case_count']}",
+        f"- q003/q018 ambiguity manifest items: {output['q003_q018_ambiguity_manifest_item_count']}",
+        f"- q003/q018 ambiguity review-required: {output['q003_q018_ambiguity_review_required_count']}",
+        f"- q003/q018 ambiguity safe controls: {output['q003_q018_ambiguity_safe_control_count']}",
+        f"- q015/q016 relation manifest items: {output['q015_q016_relation_manifest_item_count']}",
+        f"- q015/q016 relation review-required: {output['q015_q016_relation_review_required_count']}",
+        f"- q015/q016 relation auto-confirm: {output['q015_q016_relation_auto_confirm_count']}",
+        f"- visible-digit targets: {output['visible_digit_target_count']}",
+        f"- visible-digit candidates: {output['visible_digit_candidate_count']}",
+        f"- visible-digit second-pass candidates: {output['visible_digit_second_pass_candidate_count']}",
+        f"- visible-digit second-pass eligibility cases: {output['visible_digit_second_pass_eligibility_case_count']}",
+        f"- visible-digit second-pass eligible: {output['visible_digit_second_pass_eligible_count']}",
+        f"- visible-digit second-pass negatives blocked: {output['visible_digit_second_pass_negative_blocked_count']}",
+        f"- route visible-digit geometry scans: {output['route_visible_digit_geometry_scan_count']}",
+        f"- route geometry-only candidates: {output['route_visible_digit_geometry_only_candidate_count']}",
+        f"- route geometry-only allowed: {output['route_visible_digit_geometry_only_allowed_count']}",
+        f"- second-pass manifest candidates: {output['second_pass_manifest_candidate_count']}",
+        f"- second-pass manifest blocked reviews: {output['second_pass_manifest_blocked_review_count']}",
+        f"- second-pass batch request items: {output['second_pass_batch_request_item_count']}",
+        f"- second-pass batch future call budget required: {output['second_pass_batch_request_future_call_budget_required']}",
+        f"- person second-pass request items: {output['person_second_pass_request_item_count']}",
+        f"- person second-pass control items: {output['person_second_pass_control_item_count']}",
+        f"- second-pass internal candidate links: {output['second_pass_internal_candidate_link_count']}",
+        f"- second-pass internal candidate signals: {output['second_pass_internal_candidate_signal_count']}",
+        f"- person03 live-handoff request items: {output['person03_live_handoff_request_item_count']}",
+    )

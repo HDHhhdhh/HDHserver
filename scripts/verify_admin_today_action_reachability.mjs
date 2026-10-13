@@ -10,7 +10,7 @@ const today = renderTodayActionButtons({ sid: 'sid-1', name: '홍길동' });
 assert.equal((today.match(/<button /g) || []).length, 4, 'today rows expose four primary actions');
 assert.equal((today.match(/type="button"/g) || []).length, 4, 'every today action is a non-submit button');
 for (const contract of [
-  ['openStudentPopups', '홍길동 상담 기록', '>상담</button>'],
+  ['openStudentPopups', '홍길동 학생 운영 팝업', '>운영</button>'],
   ['studentTestRecordBtn', '홍길동 테스트 기록 보기', '>기록</button>'],
   ['markAbsent', '홍길동 결석 처리', '>결석</button>'],
   ['markLeave', '홍길동 하원 처리', '>하원</button>'],
@@ -41,21 +41,21 @@ const renderSource = fs.readFileSync('static/js/admin/features/today.render.js',
 const cssSource = fs.readFileSync('static/css/admin.css', 'utf8');
 
 assert.match(renderSource, /import \{ renderTodayActionButtons, renderTodayDocumentButton \} from '\.\/todayActionMarkup\.js';/);
-assert.equal((renderSource.match(/renderTodayActionButtons\(\{/g) || []).length, 3, 'all three row render paths share the action contract');
-assert.equal((renderSource.match(/renderTodayDocumentButton\(\{/g) || []).length, 3, 'all three row render paths share the document contract');
+assert.equal((renderSource.match(/renderTodayActionButtons\(\{/g) || []).length, 2, 'both current row render paths share the action contract');
+assert.equal((renderSource.match(/renderTodayDocumentButton\(\{/g) || []).length, 2, 'both current row render paths share the document contract');
 assert.match(
   renderSource,
-  /<td class="today-name-cell">[\s\S]*?<\/td>\s*<td class="today-action-cell">/,
-  'today actions render immediately after the student name',
+  /renderWhiteReviewPendingCell\(s\.id, s\.name, whiteReviewPending\)[\s\S]*?<td class="today-action-cell">/,
+  'today actions retain the approved white-review column immediately before them',
 );
 assert.ok(
-  (renderSource.match(/<td class="today-name-cell">[\s\S]*?<\/td>\s*<td class="done-action-cell">/g) || []).length >= 2,
-  'both done-row render paths place actions immediately after the student name',
+  /renderWhiteReviewPendingCell\(sidKey, name\)\}[\s\S]*?<td class="done-action-cell">/.test(renderSource),
+  'done actions retain the approved white-review column immediately before them',
 );
-assert.equal((renderSource.match(/class="done-action-date"/g) || []).length, 2, 'both done-row render paths expose a mobile date badge');
-assert.equal((renderSource.match(/date: dateKey, includeDoneActions: true/g) || []).length, 2, 'both done action groups name their target date');
-assert.match(renderSource, /class="today-homework-request-head"/);
-assert.match(renderSource, /querySelector\('\.today-homework-request-head'\)/, 'self-study header insertion uses a semantic anchor');
+assert.equal((renderSource.match(/class="done-action-date"/g) || []).length, 1, 'the actual done-row renderer exposes a mobile date badge');
+assert.equal((renderSource.match(/date: dateKey, includeDoneActions: true/g) || []).length, 1, 'the done action group names its frozen target date');
+assert.match(renderSource, /done-white-review-head/);
+assert.match(renderSource, /width:36px.*width:232px/, 'white-review and action column widths remain approved');
 assert.match(cssSource, /#todayWrap \.today-table \.today-actions button[^}]*min-height:\s*40px/);
 assert.match(cssSource, /#doneWrap \.done-table \.today-actions button[^}]*min-height:\s*40px/);
 assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*grid-template-columns:\s*repeat\(3, 44px\)/);

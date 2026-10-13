@@ -1,33 +1,99 @@
 from __future__ import annotations
 
 import datetime as dt
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
 import time
 from urllib.parse import urlencode
 
-from flask import Blueprint, abort, g, jsonify, request
+from flask import Blueprint, abort, g, jsonify, request, make_response
 
 from core.network_access import ACADEMY_ACCESS_MESSAGE, academy_network_allowed, client_ip_from_request, ip_allowed
-from core.paths import STU_PATH, VID_PATH
+from core.paths import PRG_PATH, STU_PATH, VID_PATH, WATCH_PATH
 from core.progress_rules import WATCH_DONE_RATIO, WATCH_INTERRUPTED_RATIO
 from core.storage import load
-from routes.api_watch import (
-    _save_progress_status,
-    _save_watch_entry,
-)
+from core.progress_store import load_progress_strict
+from core.video_watch_cycles import cycle_watch_record, latest_watch_cycles
+from core.isolated_kollus_qa import isolated_kollus_qa_allowed
+from core.video_sources import is_youtube_mid, youtube_embed_url, parse_youtube_url
+from core.watch_progress_writer import save_progress_status, save_watch_entry, save_watch_observation_progress
+from core.watch_store import WatchStoreReadError
 
 bp_api_kollus = Blueprint("api_kollus", __name__)
 
+
+@bp_api_kollus.errorhandler(WatchStoreReadError)
+def _watch_store_unavailable(_error):
+    return jsonify({"ok": False, "error": "watch_store_unavailable"}), 503
+
 KST = dt.timezone(dt.timedelta(hours=9))
 MID_RE = re.compile(r"^[A-Za-z0-9_-]{4,128}$")
+CALLBACK_TOKEN_MAX_AGE_SEC = 24 * 60 * 60
+CALLBACK_TOKEN_FUTURE_SKEW_SEC = 5 * 60
 
 
-def kollus_signed_url(mid: str, client_ip: str, sid: str = "") -> str:
+def _callback_secret() -> str:
+    return str(os.environ.get("KOLLUS_CALLBACK_SECRET") or "").strip()
+
+
+def _callback_signature(secret: str, sid: str, mid: str, issued_at: str) -> str:
+    message = f"{sid}\n{mid}\n{issued_at}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _encode_callback_token(secret: str, sid: str, mid: str, issued_at: str, cycle_token: str = "") -> str:
+    encoded_sid = base64.urlsafe_b64encode(sid.encode("utf-8")).decode("ascii").rstrip("=")
+    if cycle_token:
+        signature = _callback_signature(secret, sid, mid, f"{issued_at}\n{cycle_token}")
+        return f"v2.{encoded_sid}.{issued_at}.{cycle_token}.{signature}"
+    signature = _callback_signature(secret, sid, mid, issued_at)
+    return f"v1.{encoded_sid}.{issued_at}.{signature}"
+
+
+def _decode_callback_token(token: str, mid: str, secret: str) -> tuple[str | None, bool]:
+    sid, valid, _cycle = _decode_callback_session(token, mid, secret)
+    return sid, valid
+
+
+def _decode_callback_session(token: str, mid: str, secret: str) -> tuple[str | None, bool, str]:
+    parts = str(token or "").split(".")
+    if not ((len(parts) == 4 and parts[0] == "v1") or (len(parts) == 5 and parts[0] == "v2")):
+        return None, False, ""
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        sid = base64.b64decode(parts[1] + padding, altchars=b"-_", validate=True).decode("utf-8").strip()
+        issued_at_int = int(parts[2])
+    except Exception:
+        return None, False, ""
+    if not sid:
+        return None, False, ""
+    now = int(time.time())
+    within_window = (
+        issued_at_int <= now + CALLBACK_TOKEN_FUTURE_SKEW_SEC
+        and issued_at_int >= now - CALLBACK_TOKEN_MAX_AGE_SEC
+    )
+    if not secret or not within_window:
+        return sid, False, ""
+    cycle = parts[3] if parts[0] == "v2" else ""
+    signed_time = f"{parts[2]}\n{cycle}" if cycle else parts[2]
+    expected_signature = _callback_signature(secret, sid, mid, signed_time)
+    valid = hmac.compare_digest(parts[-1], expected_signature)
+    return sid, valid, cycle if valid else ""
+
+
+def kollus_signed_url(mid: str, client_ip: str, sid: str = "", cycle_token: str = "") -> str:
     query = {}
     if sid:
-        query["uservalue0"] = sid
+        secret = _callback_secret()
+        if secret:
+            issued_at = str(int(time.time()))
+            query["uservalue0"] = _encode_callback_token(secret, sid, mid, issued_at, cycle_token)
+        else:
+            query["uservalue0"] = sid
     query_string = urlencode(query)
     return f"https://v.kr.kollus.com/{mid}?{query_string}" if query_string else f"https://v.kr.kollus.com/{mid}?"
 
@@ -59,12 +125,16 @@ def local_only(f):
 
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if not _academy_request_allowed():
+        qa_allowed = isolated_kollus_qa_allowed(
+            str(request.args.get("sid") or "").strip(), str(request.args.get("mid") or "").strip()
+        )
+        if not _academy_request_allowed() and not qa_allowed:
             return jsonify({
                 "ok": False,
                 "error": "academy_network_required",
                 "message": ACADEMY_ACCESS_MESSAGE,
             }), 403
+        g.kollus_video_qa_allowed = qa_allowed
         return f(*args, **kwargs)
 
     return wrapper
@@ -86,17 +156,19 @@ def _known_sid(sid: str) -> bool:
     return any(isinstance(s, dict) and str(s.get("id") or "").strip() == sid for s in students)
 
 
-def _callback_secret_ok() -> bool:
-    expected = str(os.environ.get("KOLLUS_CALLBACK_SECRET") or "").strip()
+def _callback_secret_ok(payload: dict | None = None) -> bool:
+    expected = _callback_secret()
     if not expected:
-        return True
+        return False
     provided = (
         request.headers.get("X-Kollus-Secret")
         or request.args.get("token")
         or request.form.get("token")
         or ""
     )
-    return str(provided).strip() == expected
+    if provided and hmac.compare_digest(str(provided).strip(), expected):
+        return True
+    return isinstance(payload, dict) and payload.get("callbackTokenValid") is True
 
 
 def _pick_mapping_value(mapping: dict, *keys: str):
@@ -147,16 +219,20 @@ def _extract_callback_fields() -> dict:
     content_info = json_data.get("content_info") if isinstance(json_data.get("content_info"), dict) else {}
     uservalues = json_data.get("uservalues") if isinstance(json_data.get("uservalues"), dict) else {}
 
-    sid = _pick_mapping_value(
+    raw_sid = _pick_mapping_value(
         uservalues,
         "uservalue0",
         "USERVALUE0",
     ) or _pick_mapping_value(
-        params,
-        "sid",
-        "SID",
+        content_info,
         "uservalue0",
         "USERVALUE0",
+    ) or _pick_mapping_value(
+        params,
+        "uservalue0",
+        "USERVALUE0",
+        "sid",
+        "SID",
     ) or _pick_mapping_value(
         user_info,
         "client_user_id",
@@ -186,8 +262,10 @@ def _extract_callback_fields() -> dict:
     play_time = _pick_mapping_value(content_info, "playtime", "PLAY_TIME") or _pick_mapping_value(params, "playtime", "PLAY_TIME", "PT")
     real_playtime = _pick_mapping_value(content_info, "real_playtime", "REAL_PLAYTIME") or _pick_mapping_value(params, "real_playtime", "REAL_PLAYTIME")
 
-    sid = str(sid or "").strip()
     mid = str(mid or "").strip()
+    raw_sid = str(raw_sid or "").strip()
+    token_sid, callback_token_valid, cycle_token = _decode_callback_session(raw_sid, mid, _callback_secret())
+    sid = token_sid or raw_sid
     last = max(0, _to_int(last_play_at, 0))
     dur = max(0, _to_int(duration, 0))
     pct = max(0, _to_int(playtime_percent, 0))
@@ -208,6 +286,8 @@ def _extract_callback_fields() -> dict:
         "play_time": play_time,
         "real_playtime": real_playtime,
         "completed": completed,
+        "callbackTokenValid": callback_token_valid,
+        "cycleToken": cycle_token,
     }
 
 
@@ -224,16 +304,36 @@ def api_get_url():
         return jsonify({"ok": False, "error": "unknown mid"}), 404
     if sid and not _known_sid(sid):
         return jsonify({"ok": False, "error": "unknown sid"}), 404
+    if is_youtube_mid(mid):
+        if not sid:
+            return jsonify({"ok": False, "error": "missing sid"}), 400
+        video = next((row for row in load(VID_PATH) if isinstance(row, dict) and row.get("mid") == mid), {})
+        try:
+            response = make_response(youtube_embed_url(video))
+            response.headers["X-Video-Provider"] = "youtube"
+            response.headers["X-Video-Open-Url"] = parse_youtube_url(video.get("url"))["url"]
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        except ValueError:
+            return jsonify({"ok": False, "error": "invalid youtube catalog entry"}), 409
     client_ip = get_real_client_ip()
-    return kollus_signed_url(mid, client_ip, sid=sid)
+    today = dt.datetime.now(KST).date().isoformat()
+    cycle = latest_watch_cycles(load_progress_strict(PRG_PATH), sid, today).get(mid, {}) if sid else {}
+    provider_sid = "" if getattr(g, "kollus_video_qa_allowed", False) is True else sid
+    if not cycle:
+        return kollus_signed_url(mid, client_ip, sid=provider_sid)
+    response = make_response(kollus_signed_url(mid, client_ip, sid=provider_sid, cycle_token=cycle.get("token", "")))
+    response.headers["X-Video-Watch-State"] = json.dumps(cycle_watch_record(cycle), separators=(",", ":"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @bp_api_kollus.route("/api/kollus/lms-callback", methods=["GET", "POST"])
 def api_kollus_lms_callback():
-    if not _callback_secret_ok():
+    payload = _extract_callback_fields()
+    if not _callback_secret_ok(payload):
         abort(403)
 
-    payload = _extract_callback_fields()
     sid = payload["sid"]
     mid = payload["mid"]
     if not sid or not mid:
@@ -245,6 +345,9 @@ def api_kollus_lms_callback():
     if not _known_mid(mid):
         return jsonify({"ok": False, "error": "unknown mid"}), 404
 
+    if is_youtube_mid(mid):
+        return jsonify({"ok": False, "error": "youtube watch tracking is disabled"}), 400
+
     has_progress = (
         payload["completed"]
         or payload["last"] > 0
@@ -255,7 +358,8 @@ def api_kollus_lms_callback():
     if not has_progress:
         return jsonify({"ok": True, "ignored": True})
 
-    watch = _save_watch_entry(
+    watch = save_watch_entry(
+        WATCH_PATH,
         payload["date"],
         sid,
         mid,
@@ -276,7 +380,12 @@ def api_kollus_lms_callback():
     elif (payload["pct"] / 100) >= WATCH_INTERRUPTED_RATIO:
         status = "interrupted"
 
-    progress = _save_progress_status(payload["date"], sid, mid, status) if status else {}
+    progress, cycle_watch, _stale = save_watch_observation_progress(
+        PRG_PATH, STU_PATH, VID_PATH, payload["date"], sid, mid, status,
+        observation={"last": payload["last"], "dur": payload["dur"], "completed": payload["completed"], "updatedAt": int(time.time() * 1000)},
+        cycle_token=payload["cycleToken"],
+        observation_status=status,
+    )
 
     return jsonify({
         "ok": True,

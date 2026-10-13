@@ -5,9 +5,17 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch } from './fetch.js';
+import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1';
+import {
+  applyAssistantStudentNotesRequest,
+  isAssistantStudentNotesPath,
+} from './assistantStudentNotesContract.js';
 import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest, isOperationNotesPath } from './operationNotesContract.js';
+import { applyStudentLogsRequest } from './studentLogsContract.js';
+import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
+import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
+import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 import { installDemoTutorial } from './tutorial.js';
 
 const DEMO_ROOT_PATH = '/demo/rh3123';
@@ -103,6 +111,18 @@ function installDemoBootstrap() {
   onReady(() => {
     injectDemoControls();
     installDemoTutorial({ window, demo });
+    if (currentPath === DEMO_ROOT_PATH) {
+      void import('./threadPreview.js?v=20260914-threads1')
+        .then(({ initDemoThreadPreview }) => initDemoThreadPreview())
+        .catch((error) => {
+          demo.errors = Array.isArray(demo.errors) ? demo.errors : [];
+          demo.errors.push({
+            at: new Date().toISOString(),
+            type: 'thread-preview-load-failed',
+            message: error?.message || String(error),
+          });
+        });
+    }
   });
   showDemoMessage('데모 모드입니다. 모든 응답은 더미 데이터 기준입니다.', { quiet: true });
 }
@@ -120,6 +140,27 @@ function canonicalDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
   const parsed = new Date(`${date}T00:00:00Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function demoRevision(value) {
+  const text = JSON.stringify(value || {});
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function schoolCalendarDemoRevision(value) {
+  return demoRevision(value).replace(/^demo-/, '').repeat(8);
+}
+
+function requestHeader(headers, name) {
+  if (headers?.get) return String(headers.get(name) || '');
+  const target = String(name || '').toLowerCase();
+  const found = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === target);
+  return String(found?.[1] || '');
 }
 
 function projectedDoneEntry(entry) {
@@ -185,7 +226,7 @@ function normalizeFetchRequest(input, init = {}) {
     const rawUrl = requestLike ? requestLike.url : input;
     const url = new URL(rawUrl, window.location.origin);
     const method = String(init.method || requestLike?.method || 'GET').toUpperCase();
-    return { method, url };
+    return { method, url, headers: init.headers || requestLike?.headers };
   } catch {
     return null;
   }
@@ -213,6 +254,38 @@ async function handleDemoApiRequest(request, input, init, demo) {
     });
   }
 
+  const studentLogsResult = applyStudentLogsRequest({
+    method,
+    path,
+    body: homeworkBody,
+    store: homeworkStore,
+    createdAt: () => new Date().toISOString(),
+    today: homeworkStore.demoDate,
+  });
+  if (studentLogsResult) {
+    if (studentLogsResult.changed) saveDemoStore(homeworkStore);
+    return demoJson(studentLogsResult.payload, {
+      status: studentLogsResult.status,
+      handler: 'bootstrap-fallback',
+    });
+  }
+
+  if (isAssistantStudentNotesPath(path)) {
+    const result = applyAssistantStudentNotesRequest({
+      method,
+      path,
+      params: url.searchParams,
+      body: homeworkBody,
+      store: homeworkStore,
+      createdAt: () => new Date().toISOString(),
+    });
+    if (result.changed) saveDemoStore(homeworkStore);
+    return demoJson(result.payload, {
+      status: result.status,
+      handler: 'bootstrap-fallback',
+    });
+  }
+
   if (isOperationNotesPath(path)) {
     const body = method === 'GET' ? {} : await readJsonBody(input, init);
     const store = loadDemoStore();
@@ -230,20 +303,127 @@ async function handleDemoApiRequest(request, input, init, demo) {
     });
   }
 
+  if (method === 'PATCH' && path === '/api/extra-attend') {
+    const rawDates = homeworkBody?.dates && typeof homeworkBody.dates === 'object'
+      ? homeworkBody.dates
+      : { [homeworkBody?.date]: homeworkBody?.sids };
+    const dates = {};
+    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
+      const date = canonicalDate(rawDate);
+      if (!date || !Array.isArray(rawSids)) {
+        return demoJson({ ok: false, error: 'invalid date or sids' }, {
+          status: 400,
+          handler: 'bootstrap-fallback',
+        });
+      }
+      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
+    }
+    const store = loadDemoStore();
+    store.extraAttend = store.extraAttend && typeof store.extraAttend === 'object' ? store.extraAttend : {};
+    Object.entries(dates).forEach(([date, sids]) => {
+      if (sids.length) store.extraAttend[date] = sids;
+      else delete store.extraAttend[date];
+    });
+    saveDemoStore(store);
+    return demoJson({ ok: true, dates, changedDates: Object.keys(dates) }, {
+      handler: 'bootstrap-fallback',
+    });
+  }
+
+  if (method === 'POST' && path === '/api/makeup-carryover') {
+    const store = loadDemoStore();
+    const current = cloneDemoValue(store.makeupCarryover || {});
+    const currentRevision = demoRevision(current);
+    const expectedRevision = requestHeader(request.headers, 'If-Match').trim().replace(/^"|"$/g, '');
+    if (!expectedRevision || expectedRevision !== currentRevision) {
+      return demoJson({
+        ok: false,
+        error: expectedRevision ? 'makeup_revision_conflict' : 'makeup_revision_required',
+      }, {
+        status: expectedRevision ? 409 : 428,
+        handler: 'bootstrap-fallback',
+        headers: { 'X-Makeup-Carryover-Revision': currentRevision },
+      });
+    }
+    store.makeupCarryover = homeworkBody && typeof homeworkBody === 'object'
+      ? cloneDemoValue(homeworkBody)
+      : {};
+    saveDemoStore(store);
+    return demoJson(cloneDemoValue(store.makeupCarryover), {
+      handler: 'bootstrap-fallback',
+      headers: {
+        'X-Makeup-Carryover-Revision': demoRevision(store.makeupCarryover),
+      },
+    });
+  }
+
+  if (method === 'POST' && path === '/api/school-calendar') {
+    const store = loadDemoStore();
+    const current = cloneDemoValue(store.schoolCalendar || {});
+    const currentRevision = schoolCalendarDemoRevision(current);
+    const expectedRevision = requestHeader(request.headers, 'If-Match')
+      .trim()
+      .replace(/^W\//, '')
+      .replace(/^"|"$/g, '')
+      .toLowerCase();
+    if (!expectedRevision || expectedRevision !== currentRevision) {
+      return demoJson({
+        ok: false,
+        code: expectedRevision
+          ? 'school_calendar_conflict'
+          : 'school_calendar_revision_required',
+      }, {
+        status: expectedRevision ? 409 : 428,
+        handler: 'bootstrap-fallback',
+        headers: { 'X-School-Calendar-Revision': currentRevision },
+      });
+    }
+    if (!homeworkBody || typeof homeworkBody !== 'object' || Array.isArray(homeworkBody)) {
+      return demoJson({ ok: false, code: 'invalid_school_calendar' }, {
+        status: 400,
+        handler: 'bootstrap-fallback',
+      });
+    }
+    store.schoolCalendar = cloneDemoValue(homeworkBody);
+    saveDemoStore(store);
+    const revision = schoolCalendarDemoRevision(store.schoolCalendar);
+    return demoJson(cloneDemoValue(store.schoolCalendar), {
+      handler: 'bootstrap-fallback',
+      headers: {
+        'X-School-Calendar-Revision': revision,
+        ETag: `"${revision}"`,
+      },
+    });
+  }
+
   if (method !== 'GET') {
     const mutation = await handleFallbackMutation(path, input, init);
-    return demoJson(mutation, {
-      status: mutation?.ok === false ? 400 : 200,
+    const responseStatus = Number(mutation?.__demoStatus) || (mutation?.ok === false ? 400 : 200);
+    const responsePayload = { ...(mutation || {}) };
+    delete responsePayload.__demoStatus;
+    return demoJson(responsePayload, {
+      status: responseStatus,
       handler: 'bootstrap-fallback',
     });
   }
 
   const store = loadDemoStore();
   const payload = fallbackPayloadForGet(path, url.searchParams, store);
-  return demoJson(payload, { handler: 'bootstrap-fallback' });
+  const responseHeaders = {};
+  if (path === '/api/progress') {
+    responseHeaders['X-Video-Watch-Cycles'] = '1';
+  } else if (path === '/api/makeup-carryover') {
+    responseHeaders['X-Makeup-Carryover-Revision'] = demoRevision(payload);
+  } else if (path === '/api/school-calendar') {
+    responseHeaders['X-School-Calendar-Revision'] = schoolCalendarDemoRevision(payload);
+  }
+  return demoJson(payload, {
+    handler: 'bootstrap-fallback',
+    headers: responseHeaders,
+  });
 }
 
-function demoJson(payload, { status = 200, handler = 'bootstrap' } = {}) {
+function demoJson(payload, { status = 200, handler = 'bootstrap', headers = {} } = {}) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
@@ -251,6 +431,7 @@ function demoJson(payload, { status = 200, handler = 'bootstrap' } = {}) {
       'Cache-Control': 'no-store',
       'X-Admin-Demo': '1',
       'X-Admin-Demo-Handler': handler,
+      ...headers,
     },
   });
 }
@@ -303,6 +484,8 @@ function fallbackPayloadForGet(path, params, store) {
       };
     case '/api/logs/unarchived-summary':
       return unarchivedDoneSummary(store, params);
+    case '/api/arrive-time/missing-leave-summary':
+      return missingLeaveSummary(store, params);
     case '/api/progress':
       return cloneDemoValue(filterDateSidMap(store.progress || {}, params));
     case '/api/extra-attend':
@@ -311,6 +494,11 @@ function fallbackPayloadForGet(path, params, store) {
       return cloneDemoValue(store.weekendSlots || {});
     case '/api/today_order':
       return cloneDemoValue(store.todayOrder || {});
+    case '/api/makeup-sheet-sync/config':
+      return {
+        ok: true,
+        sheetUrl: String(store.makeupSheetSyncConfig?.sheetUrl || ''),
+      };
     case '/api/makeup-carryover':
       return cloneDemoValue(store.makeupCarryover || {});
     case '/api/absent':
@@ -326,7 +514,6 @@ function fallbackPayloadForGet(path, params, store) {
       return dateMapPayload(store.attendance || {}, params);
     case '/api/contact':
       return dateMapPayload(store.contact || {}, params);
-    case '/arrive-time':
     case '/api/arrive-time':
       return dateMapPayload(store.arriveTime || {}, params);
     case '/api/announce-status':
@@ -394,6 +581,44 @@ function unarchivedDoneSummary(store, params) {
   };
 }
 
+function missingLeaveSummary(store, params) {
+  const excludeDate = String(params.get('exclude_date') || params.get('excludeDate') || '').trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const absentByDate = store.absent?.by_date || {};
+  const rows = [];
+
+  Object.entries(store.arriveTime || {}).forEach(([date, bySid]) => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey || (today && dateKey >= today) || (excludeDate && dateKey === excludeDate)) return;
+    const absent = new Set(Array.isArray(absentByDate?.[dateKey]) ? absentByDate[dateKey].map(String) : []);
+    const rosterIds = effectiveDemoRosterStudentIds(store, dateKey);
+    Object.entries(bySid && typeof bySid === 'object' ? bySid : {}).forEach(([sid, arriveTime]) => {
+      const sidKey = String(sid || '').trim();
+      const arrive = String(arriveTime || '').trim();
+      if (!sidKey || !arrive || absent.has(sidKey) || !rosterIds.has(sidKey)) return;
+      const entry = store.logs?.[dateKey]?.[sidKey];
+      const done = entry?.done === true || entry?.done === 1 || entry?.done === '1' || entry?.done === 'true';
+      if (!done) rows.push({ date: dateKey, sid: sidKey, arriveTime: arrive });
+    });
+  });
+
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid)));
+  const byDate = new Map();
+  rows.forEach(row => byDate.set(row.date, (byDate.get(row.date) || 0) + 1));
+  return {
+    ok: true,
+    sinceDate: store.dates?.previous || '',
+    excludeDate,
+    total: rows.length,
+    students: new Set(rows.map(row => row.sid)).size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows,
+  };
+}
+
 function homeworkBooksBySid(logs) {
   const out = {};
   Object.keys(logs || {}).sort().reverse().forEach(date => {
@@ -415,10 +640,116 @@ function homeworkBooksBySid(logs) {
   return out;
 }
 
+function applyFallbackLogPatchBatch(store, body) {
+  const patches = body?.patches;
+  if (!Array.isArray(patches) || patches.length < 1 || patches.length > 100) {
+    return { error: 'patches must contain 1 to 100 items' };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of patches) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'bad patch item' };
+    const date = canonicalDate(raw.date);
+    const sid = String(raw.sid || '').trim();
+    const entry = raw.entry == null ? {} : raw.entry;
+    const clear = raw.__clear;
+    if (!date || !sid || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { error: 'bad patch item' };
+    }
+    if (clear != null && !Array.isArray(clear)) return { error: 'bad clear list' };
+
+    const targetKey = `${date}\u0000${sid}`;
+    if (seen.has(targetKey)) return { error: 'duplicate patch target' };
+    seen.add(targetKey);
+    normalized.push({ date, sid, entry: cloneDemoValue(entry), clear: cloneDemoValue(clear || []) });
+  }
+
+  const logs = cloneDemoValue(store.logs || {});
+  normalized.forEach(({ date, sid, entry, clear }) => {
+    logs[date] = logs[date] && typeof logs[date] === 'object' ? logs[date] : {};
+    const previous = logs[date][sid] && typeof logs[date][sid] === 'object' ? logs[date][sid] : {};
+    const next = { ...previous, ...entry };
+    clear.forEach(key => { if (key != null) delete next[String(key)]; });
+    logs[date][sid] = next;
+  });
+  store.logs = logs;
+  return { count: normalized.length };
+}
+
 async function handleFallbackMutation(path, input, init) {
   const body = await readJsonBody(input, init);
   const request = normalizeFetchRequest(input, init);
   const method = request?.method || String(init?.method || 'POST').toUpperCase();
+  if (path === '/api/progress/patch' && (method === 'POST' || method === 'PATCH')) {
+    const store = loadDemoStore();
+    const result = mergeProgressPatch(store, body);
+    if (result.error) return { ok: false, error: result.error, __demoStatus: result.status || 400 };
+    saveDemoStore(store);
+    return { ok: true, progress: result.progress };
+  }
+
+  const quickPrinterStore = loadDemoStore();
+  const quickPrinterResult = applyDemoQuickPrinterRequest({
+    method,
+    path,
+    body,
+    store: quickPrinterStore,
+    createdAt: () => new Date().toISOString(),
+  });
+  if (quickPrinterResult) {
+    if (quickPrinterResult.changed) saveDemoStore(quickPrinterStore);
+    return {
+      ...cloneDemoValue(quickPrinterResult.payload),
+      __demoStatus: quickPrinterResult.status,
+    };
+  }
+
+  if (path === '/api/tests-config/test' && method === 'PATCH') {
+    const store = loadDemoStore();
+    const result = patchDemoTestConfig(store.testsConfig || { categories: {} }, body);
+    if (!result.ok) return { ok: false, demo: true, error: result.error };
+    store.testsConfig = result.config;
+    saveDemoStore(store);
+    return { ok: true, demo: true, test: result.test };
+  }
+
+  if (path === '/api/logs/patch-batch' && method === 'POST') {
+    const store = loadDemoStore();
+    const result = applyFallbackLogPatchBatch(store, body);
+    if (result.error) return { ok: false, demo: true, error: result.error };
+    saveDemoStore(store);
+    return { ok: true, demo: true, count: result.count };
+  }
+
+  if (path === '/api/makeup-sheet-sync/config' && method === 'POST') {
+    const sheetUrl = String(body?.sheetUrl || '').trim();
+    if (!sheetUrl.includes('docs.google.com/spreadsheets/d/')) {
+      return { ok: false, demo: true, error: 'Google Sheets link required' };
+    }
+    const store = loadDemoStore();
+    store.makeupSheetSyncConfig = {
+      ...(store.makeupSheetSyncConfig && typeof store.makeupSheetSyncConfig === 'object'
+        ? store.makeupSheetSyncConfig
+        : {}),
+      sheetUrl,
+    };
+    saveDemoStore(store);
+    return { ok: true, demo: true, sheetUrl };
+  }
+
+  if (path === '/api/makeup-sheet-sync' && method === 'POST') {
+    return {
+      ok: true,
+      demo: true,
+      mode: 'additive-only',
+      opened: 0,
+      added: 0,
+      skippedExisting: 0,
+      unmatchedStarredRows: 0,
+      months: [],
+    };
+  }
 
   if (path === '/api/absent/recover') {
     const date = canonicalDate(body?.date);
@@ -463,11 +794,6 @@ async function handleFallbackMutation(path, input, init) {
     delete store.todayOrder[date];
     saveDemoStore(store);
     return { ok: true, demo: true, date, cleared };
-  }
-
-  if (path === '/api/today_order' && method === 'POST') {
-    saveDemoStore({ ...loadDemoStore(), todayOrder: body && typeof body === 'object' ? body : {} });
-    return { ok: true, demo: true };
   }
 
   if (path === '/api/announcements/image') {

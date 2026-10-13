@@ -86,7 +86,7 @@ async function lifecycleCheck() {
   const snapshot = () => session ? { ...session, schedule: { ...schedule } } : null;
   const currentBody = () => ({
     ok: true, serverNow: new Date(now).toISOString(),
-    eligibility: { state: session ? 'eligible' : 'eligible', opensAt: '2026-08-10T17:30:00+09:00', closesAt: schedule.endAt, schedule },
+    eligibility: { state: 'eligible', opensAt: '2026-08-10T17:30:00+09:00', closesAt: schedule.endAt, schedule },
     session: snapshot(),
   });
   const mutation = extra => ({ ok: true, serverNow: new Date(now).toISOString(), session: snapshot(), ...extra });
@@ -374,7 +374,7 @@ export async function runChecks() {
   for (const id of ['studentFocusOpen', 'studentFocusAdminModal', 'studentFocusAdminClose', 'studentFocusAdminDate', 'studentFocusAdminList']) {
     assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
   }
-  assert.match(adminMain, /import\s+\{\s*initStudentFocus\s*\}.*studentFocus\.js/);
+  assert.match(adminMain, /import\(['"]\.\/features\/studentFocus\.js(?:\?[^'"]*)?['"]\)\.then\(module => module\.initStudentFocus\(\)\)/);
   assert.match(adminMain, /initStudentFocus\(\)/);
   assert.match(adminFeature, /modal\.style\.display\s*=\s*['"]flex['"]/,
     'focus modal open must override the shared display:none backdrop rule');
@@ -383,7 +383,7 @@ export async function runChecks() {
   checks += 1;
 
   assert.match(demoData, /focusSummaries:/);
-  assert.match(demoStore, /DEMO_SCHEMA_VERSION\s*=\s*3/);
+  assert.match(demoStore, /DEMO_SCHEMA_VERSION\s*=\s*5/);
   assert.match(demoStore, /store\.focusSummaries/);
   assert.match(demoFetch, /\/api\/admin\/student-focus\/summary/);
   assert.match(demoBootstrap, /\/api\/admin\/student-focus\/summary/);

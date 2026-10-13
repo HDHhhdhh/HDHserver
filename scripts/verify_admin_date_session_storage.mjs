@@ -531,6 +531,102 @@ deepEqual(invalidatedProjectedRanges, ['B'], 'invalidate recovery must reload an
 
 const calendarSource = fs.readFileSync('static/js/admin/features/calendar.js', 'utf8');
 const adminMainSource = fs.readFileSync('static/js/admin/main.js', 'utf8');
+
+function calendarBlock(startMarker, endMarker) {
+  const start = calendarSource.indexOf(startMarker);
+  const end = calendarSource.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `missing executable calendar block: ${startMarker}`);
+  return calendarSource.slice(start, end);
+}
+
+function createCalendarLoaderFixture() {
+  const requests = [];
+  const state = { students: [], absentByDate: {}, absentSlotsByDate: {} };
+  const published = {};
+  const request = url => new Promise(resolve => requests.push({ url, resolve }));
+  const factory = new Function(
+    'fetch', 'fetchMakeupCarryoverSnapshot', 'fetchAbsentSnapshot', 'normalizeCarryoverPayload',
+    'applyAbsentPayload', 'state', 'window', 'ymd', 'yoil', 'MAKEUP_SLOTS', 'hasWeekday',
+    'addSlotCounts', 'getCountSlots', 'getMakeupSlots', 'parseSlotNumbers',
+    `let countMap = {}, EXTRA = {}, WEEKEND = {}, CARRYOVER = {};
+     ${calendarBlock('  let preloadExtraWeekendPromise = null;', '  // 슬롯 버튼')}
+     ${calendarBlock('  function invalidateCalendarPreload()', '  function syncCalendarCellRatio()')}
+     ${calendarBlock('  async function fetchCountsForRange(start, end)', '  function refreshCountBadges()')}
+     return {
+       load: preloadExtraWeekend,
+       counts: fetchCountsForRange,
+       invalidate: invalidateCalendarPreload,
+       direct(extra) { invalidateCalendarPreload(); EXTRA = extra; state.extra = extra; window.extra = extra; },
+       inspect() { return structuredClone({ extra: window.extra, carryover: CARRYOVER, counts: countMap }); }
+     };`,
+  );
+  const loader = factory(
+    url => request(url).then(payload => ({ json: async () => payload })),
+    () => request('/api/makeup-carryover').then(payload => ({ payload, revision: 'fixture-revision' })),
+    () => request('/api/absent'),
+    payload => payload,
+    payload => { state.absentByDate = payload.by_date || {}; state.absentSlotsByDate = payload.by_slot || {}; },
+    state, published,
+    value => `${String(value.getFullYear()).padStart(4, '0')}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`,
+    () => '월', [1, 2], () => false,
+    (slots, sid) => slots[1].add(String(sid)), () => [1], () => [1], value => Array.isArray(value) ? value : [value],
+  );
+  const settle = (batch, sid) => {
+    const pending = requests.slice(batch * 4, batch * 4 + 4);
+    equal(pending.length, 4, 'one actual calendar preload starts exactly four independent store reads');
+    pending.slice().reverse().forEach(({ url, resolve }) => resolve(
+      url === '/api/extra-attend' ? { '2026-06-02': [sid] }
+        : url === '/api/makeup-carryover' ? { by_absence: { [sid]: {} } }
+          : {},
+    ));
+  };
+  return { loader, requests, settle };
+}
+
+const actualVisible = createCalendarLoaderFixture();
+const actualRangeA = actualVisible.loader.counts('2026-06-01', '2026-06-02');
+const actualRangeB = actualVisible.loader.counts('2026-06-02', '2026-06-03');
+equal(actualVisible.requests.length, 4, 'concurrent visible ranges must share one actual preload');
+actualVisible.settle(0, 'newest');
+equal(await actualRangeA, false, 'a stale visible range must not publish its count projection');
+equal(await actualRangeB, true, 'the newest visible range must publish its count projection');
+deepEqual(actualVisible.loader.inspect().counts, { '2026-06-02': { 1: 1, 2: 0 } }, 'visible projection must contain only the newest range');
+
+for (const actionFirst of [false, true]) {
+  const actualShared = createCalendarLoaderFixture();
+  const first = actionFirst ? actualShared.loader.load() : actualShared.loader.counts('2026-06-02', '2026-06-03');
+  const second = actionFirst ? actualShared.loader.counts('2026-06-02', '2026-06-03') : actualShared.loader.load();
+  equal(actualShared.requests.length, 4, 'action and visible calls must share one actual preload in either start order');
+  actualShared.settle(0, 'shared');
+  await Promise.all([first, second]);
+  deepEqual(actualShared.loader.inspect().extra, { '2026-06-02': ['shared'] }, 'shared action/visible reads must publish the same fresh state');
+  equal(actualShared.requests.length, 4, 'coalesced action/visible reads must not create a retry loop');
+}
+
+const actualInvalidation = createCalendarLoaderFixture();
+const invalidatedActualLoad = actualInvalidation.loader.load();
+actualInvalidation.loader.direct({ '2026-06-02': ['direct-write'] });
+actualInvalidation.loader.invalidate();
+const coalescedActualLoad = actualInvalidation.loader.load();
+actualInvalidation.settle(0, 'stale-read');
+for (let turn = 0; actualInvalidation.requests.length < 8 && turn < 20; turn += 1) await Promise.resolve();
+equal(actualInvalidation.requests.length, 8, 'invalidated waiters must coalesce behind one fresh actual preload');
+deepEqual(actualInvalidation.loader.inspect().extra, { '2026-06-02': ['direct-write'] }, 'an invalidated actual read must not overwrite direct mutation state');
+actualInvalidation.settle(1, 'fresh-read');
+await Promise.all([invalidatedActualLoad, coalescedActualLoad]);
+deepEqual(actualInvalidation.loader.inspect().extra, { '2026-06-02': ['fresh-read'] }, 'invalidated waiters must eventually receive the fresh actual state');
+equal(actualInvalidation.requests.length, 8, 'repeated invalidation must not create an unbounded reload loop');
+
+const actualInvalidatedRange = createCalendarLoaderFixture();
+const oldActualProjection = actualInvalidatedRange.loader.counts('2026-06-01', '2026-06-02');
+actualInvalidatedRange.loader.invalidate();
+const freshActualProjection = actualInvalidatedRange.loader.counts('2026-06-02', '2026-06-03');
+actualInvalidatedRange.settle(0, 'old-range');
+for (let turn = 0; actualInvalidatedRange.requests.length < 8 && turn < 20; turn += 1) await Promise.resolve();
+actualInvalidatedRange.settle(1, 'new-range');
+equal(await oldActualProjection, false, 'invalidated recovery must never project the old visible range');
+equal(await freshActualProjection, true, 'invalidated recovery must project the current visible range');
+deepEqual(actualInvalidatedRange.loader.inspect().counts, { '2026-06-02': { 1: 1, 2: 0 } }, 'recovered actual projections must remain on the current range');
 equal(
   adminMainSource.includes("import { initAdminDateBar } from './core/adminDate.js';"),
   true,
@@ -602,27 +698,28 @@ equal(
   'makeup scheduling must reject unsupported calendar dates',
 );
 equal(
-  /const extraWeekendCoordinator = createSnapshotCoordinator\(\s*loadExtraWeekendSnapshot,\s*applyExtraWeekendSnapshot,\s*\);/.test(calendarSource),
+  /const generation = calendarMutationGeneration;[\s\S]*?Promise\.allSettled\(\[[\s\S]*?generation !== calendarMutationGeneration/.test(calendarSource),
   true,
-  'all calendar snapshot loads must share one latest-state coordinator',
+  'calendar snapshot loads must retain their single-flight mutation-generation owner',
 );
 equal(
-  /async function refreshVisibleCalendar\(range\) \{\s*const result = await extraWeekendCoordinator\.load\(range\);\s*let projectionRange = range;\s*if \(!result\.committed\) \{\s*const settled = await extraWeekendCoordinator\.settled\(\);\s*if \(!settled\.snapshot\) return refreshVisibleCalendar\(currentVisibleRange\(\)\);\s*projectionRange = currentVisibleRange\(\);\s*\}\s*countMap = buildCountsForRange\(projectionRange\.start, projectionRange\.end\);/.test(calendarSource),
+  /const projectionGeneration = \+\+calendarProjectionGeneration;\s*await preloadExtraWeekend\(\);\s*if \(projectionGeneration !== calendarProjectionGeneration\) return false;/.test(calendarSource),
   true,
-  'visible projections must coalesce behind the newest committed shared snapshot',
+  'visible projections must reject a superseded range after the shared actual preload',
 );
 equal(
-  /async function preloadExtraWeekend\(\) \{\s*const result = await extraWeekendCoordinator\.load\(\);\s*if \(!result\.committed\) \{\s*const settled = await extraWeekendCoordinator\.settled\(\);\s*if \(settled\.snapshot\) return settled\.snapshot;\s*return preloadExtraWeekend\(\);\s*\}\s*return result\.snapshot;\s*\}/.test(calendarSource),
+  /async function preloadExtraWeekend\(\) \{\s*while \(true\) \{\s*if \(!preloadExtraWeekendPromise\)/.test(calendarSource),
   true,
-  'action preloads must coalesce behind the newest committed shared snapshot',
+  'action preloads must retain one shared pending read and retry only after a mutation invalidates it',
 );
 equal(/Promise\.all\(\[[\s\S]*?\/api\/extra-attend[\s\S]*?\]\)\.then\(\(\[att, extraMap, weekendMap\]\) => \{\s*EXTRA\s*=/.test(calendarSource), false, 'attendance display loads must not overwrite the shared extra-attendance snapshot');
 equal(/Promise\.all\(\[[\s\S]*?\/api\/weekend-slots[\s\S]*?\]\)\.then\(\(\[todayAtt, extraMap, weekendMap\]\) => \{\s*EXTRA\s*=/.test(calendarSource), false, 'selection display loads must not overwrite the shared weekend snapshot');
-equal(/extraWeekendCoordinator\.invalidate\(\);\s*EXTRA\[dateStr\] = Array\.from\(nextSet\)/.test(calendarSource), true, 'selection saves must invalidate pending shared reads before in-place mutation');
+equal(/await saveScheduleOverridesFailClosed\([\s\S]*?invalidateCalendarPreload\(\);/.test(calendarSource), true, 'revisioned selection saves must invalidate pending shared reads after committing');
 const datesSetBlock = calendarSource.match(/datesSet: range => \{([\s\S]*?)\r?\n\s{4}\}\r?\n\s{2}\}\);/)?.[1] || '';
-equal(datesSetBlock.includes('refreshVisibleCalendar(range);'), true, 'datesSet must use the consolidated calendar refresh');
+equal(datesSetBlock.includes('fetchCountsForRange(range.start, range.end)'), true, 'datesSet must project counts through the shared actual preload');
 equal(datesSetBlock.includes('loadExtraWeekendSnapshot('), false, 'datesSet must not start a duplicate data preload');
-equal(datesSetBlock.includes('refreshMakeupPlanner('), false, 'datesSet must not start a duplicate planner preload');
+equal(datesSetBlock.includes('preloadExtraWeekend('), false, 'datesSet must not start a second direct data preload');
+equal(datesSetBlock.includes('refreshMakeupPlanner('), true, 'datesSet must retain planner refresh through the same single-flight loader');
 equal(
   /document\.addEventListener\('admin:date-change', \(event\) => \{\s*setCalendarFocusDate\(event\?\.detail\?\.dateStr\)/.test(calendarSource),
   true,

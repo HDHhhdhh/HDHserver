@@ -4,7 +4,16 @@ const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const TESTS_JS_PATH = path.join(ROOT, 'static', 'js', 'tests.js');
+const CATALOG_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogState.js');
+const CATALOG_EDITOR_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogEditorState.js');
+const CATALOG_STATISTICS_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogStatisticsState.js');
 const TESTS_HTML_PATH = path.join(ROOT, 'static', 'tests.html');
+const TESTS_CSS_PATH = path.join(ROOT, 'static', 'css', 'tests.css');
+const catalogStateSource = fs.readFileSync(CATALOG_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogEditorStateSource = fs.readFileSync(CATALOG_EDITOR_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogStatisticsStateSource = fs.readFileSync(CATALOG_STATISTICS_STATE_PATH, 'utf8')
+  .replace(/import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/catalogState\.js(?:\?[^'"]*)?['"];\s*/, '')
+  .replace(/^export\s+/gm, '');
 const source = fs
   .readFileSync(TESTS_JS_PATH, 'utf8')
   .replace(/import\s+\{[^}]+\}\s+from\s+['"]\.\/shared\/search\.js['"];\s*/, `
@@ -15,8 +24,21 @@ function searchKeyForText(value) { return String(Array.isArray(value) ? value.jo
   .replace(
     /import\s+\{\s*createUnitTestDisplayNameResolver\s*\}\s+from\s+['"]\.\/shared\/testCatalogDisplay\.js['"];\s*/,
     "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');\n",
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogEditorState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogEditorStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogStatisticsState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStatisticsStateSource}\n`,
   );
 const testsHtml = fs.readFileSync(TESTS_HTML_PATH, 'utf8');
+const testsCss = fs.readFileSync(TESTS_CSS_PATH, 'utf8');
 
 class ElementStub {
   constructor(id = '') {
@@ -78,7 +100,7 @@ function assertExcludes(haystack, needle) {
 }
 
 function assertCssIncludes(needle) {
-  if (!testsHtml.includes(needle)) {
+  if (!testsCss.includes(needle)) {
     throw new Error(`missing CSS contract: ${needle}`);
   }
 }

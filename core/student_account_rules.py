@@ -34,6 +34,7 @@ class IdentityKey:
     name: str
     school: str
     grade: str
+    person_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +80,7 @@ def _student_field(student: StudentRecord, key: str) -> str:
 
 
 def identity_key(student: StudentRecord) -> IdentityKey:
-    """Return the name+school+grade key used to group roster copies."""
+    """Return the stable person key with a legacy profile fallback."""
 
     school = _student_field(student, "school")
     if not school:
@@ -90,6 +91,7 @@ def identity_key(student: StudentRecord) -> IdentityKey:
         name=_student_field(student, "name"),
         school=school,
         grade=_student_field(student, "grade"),
+        person_id=_student_field(student, "personId"),
     )
 
 

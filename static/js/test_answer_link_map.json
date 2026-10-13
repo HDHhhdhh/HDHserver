@@ -10095,28 +10095,5 @@
       "subject": "공수2",
       "unitName": "원의방정식2 Lv.3"
     }
-  },
-  "t_단원평가_z2i0ffr": {
-    "1": {
-      "answerUrl": "https://drive.google.com/file/d/15HHE2wpa6fCRhGs989KmCZLrSbRmTjVF/view?usp=drivesdk",
-      "fileId": "15HHE2wpa6fCRhGs989KmCZLrSbRmTjVF",
-      "label": "공수2 무리함수 Lv.3 1회차 해설",
-      "subject": "공수2",
-      "unitName": "공수2 무리함수 Lv.3"
-    },
-    "2": {
-      "answerUrl": "https://drive.google.com/file/d/1G3rTBcmTsQLWzA_b5oPztIx1C7XqIeK0/view?usp=drivesdk",
-      "fileId": "1G3rTBcmTsQLWzA_b5oPztIx1C7XqIeK0",
-      "label": "무리함수 Lv.3 2회차 해설",
-      "subject": "공수2",
-      "unitName": "무리함수 Lv.3"
-    },
-    "3": {
-      "answerUrl": "https://drive.google.com/file/d/1wTQoUVqLvKzD1FiBhSHWyPna7cMb5taf/view?usp=drivesdk",
-      "fileId": "1wTQoUVqLvKzD1FiBhSHWyPna7cMb5taf",
-      "label": "무리함수 Lv.3 3회차 해설",
-      "subject": "공수2",
-      "unitName": "무리함수 Lv.3"
-    }
   }
 }

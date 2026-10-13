@@ -1,0 +1,1912 @@
+{
+  "task": "AI slop source audit and cleanup",
+  "date": "2026-10-03",
+  "baselineInventory": 1562,
+  "changesAreRelativeToTaskEntryNotHEAD": true,
+  "baselineGit": {
+    "staged": 0,
+    "unstaged": 161,
+    "untracked": 92
+  },
+  "changedImplementationVerificationDocumentationFiles": 132,
+  "newVerificationFiles": 1,
+  "addedLines": 691,
+  "removedLines": 1629,
+  "areas": {
+    "docs_tools": 12,
+    "backend": 19,
+    "scripts": 41,
+    "frontend": 22,
+    "admin": 20,
+    "lab": 18
+  },
+  "ignoredLabChanges": 18,
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": "CONTEXT_PACK.txt",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "62504525626e4acf46861c394a9b3a68daf22b3e97f0dd5e7a5ea6171c7afd6a",
+      "afterSha256": "f653ccc1aa196adcfb3fd038a1978633eb5add5a8db8094b62204c55ef5e6cf2",
+      "addedLines": 2,
+      "removedLines": 0,
+      "findings": [
+        "DOCS-008 mark stale manual context historical; original retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/AGENTS.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "0e8041cc3378c75fe5e4f8e8e2a7bd74a4631495da4870bd5311ead3d435e3cc",
+      "afterSha256": "4f4c3a4f4bca06431dd031c1eeaacdde6afe5505592269526ce778d318f932bc",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "DOCS-003 same-guide initialization reminder duplicated"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/absence_transaction.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "3773c798a6b4d15966bee2f8b7d676b6a6ee5b487a227fc84ef83c15333a1f09",
+      "afterSha256": "087c78f0ee9a8fb097e8b6478f4aca5138d1e5881d078064705527ea94c7ccc1",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "B-011 unused pre-snapshot empty initializers"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/log_repository.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "954b71a0ab8b5b218cddde9899f8af72df1f0056be276388886d00e151c5f380",
+      "afterSha256": "b5f3ebc232de0b04f9d3174f5e7e311c08b687dab20e5b477fc7dca63befa7e1",
+      "addedLines": 10,
+      "removedLines": 21,
+      "findings": [
+        "B-010 standard exception-propagating null context",
+        "B-010 four already-held lock paths remain lock-free",
+        "B-010 redundant private context manager",
+        "B-014 canonical uncached JSON status parser",
+        "B-014 retain cache raw-reader monkeypatch alias",
+        "B-014 writer delegates only to uncached parser; status doc retained",
+        "B-007 removal left two EOF separators; remove only task-created blank lines"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/makeup_sheet_reader.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "5077b35ae3c3c6236c4b2ec93ec089b387c3e3f7ed4b74431918a79995fb34a6",
+      "afterSha256": "ad825b7c7242e42964435a18d48aa6c5d3c2ec439f3407007982c42aa1d5c80b",
+      "addedLines": 0,
+      "removedLines": 15,
+      "findings": [
+        "B-004 unused old reader adapter"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/makeup_sheet_sync.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "eb68271c489e21d924f46fe26251a157cdc5dbd3ed5ea80226de64c07d6a638b",
+      "afterSha256": "cedb42aaec960de45f516d0fcdf18207a8d512ec7e7f25c89387abf35d011251",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "B-012 unused private cell argument",
+        "B-012 unused private cell parameter"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/quick_printer_export.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "7fc8b5620c5f36ef6c69650305f81eec0b55a89e2f05420b3ac7feab47275ec7",
+      "afterSha256": "06e49c3205aeccfc6157fd30e2f67d2ba26517c0495ca5ad8f37d1d6386e977e",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "unused stdlib import not in __all__ and no checked consumers"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/storage.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "c4a9a9a372bc3363f5be96f30840220b78bf9be08892a9c936cad7cc3ad5322c",
+      "afterSha256": "3777fe0736a5173e98603480261658d16f9b9224abfd6056d4874abc58904f54",
+      "addedLines": 0,
+      "removedLines": 3,
+      "findings": [
+        "B-009 identical OSError retry includes PermissionError"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_app_auth_service.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "efdd8b2ea847d0dd0b81de124f88463f8d70528fe71d7de1a2e6a2c679a3cb1b",
+      "afterSha256": "734011ad2187303fe91f61a53a3ae14d97d9a41271aef7a7167f16e20dd5dbb9",
+      "addedLines": 2,
+      "removedLines": 2,
+      "findings": [
+        "STU-003 one roster narrowing and one current-account SID set; auth gates unchanged"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_homework_service.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "8626e47034bbf8429738da933073867418fc70f40ac12e9aedc7bbbf045d13f4",
+      "afterSha256": "7f82a22eeedb9b948410221c08fb0b0547214e3a49066e25ce08367cadf32eaa",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "STU-002 inert branch before unchanged invalid-cursor raise"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_notification_repository.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "92bc58f8447741d59064ff408439eecc3825c850727ca15a4f892ebc1c8e7d5e",
+      "afterSha256": "833e13d3f8ff205d555530be3ecfeaa0c3f959c8f9f40f20ca9bac66d7c132fb",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "unused stdlib import not in __all__ and no checked consumers"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_public_surface_adapter.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "3b6d12378a5d40fb70c0e346dcfe6a24520e76f8fc43079d519123181f61ca30",
+      "afterSha256": "7ca661ea6d45fa4a4c001aebcf9eb7b4508c471c4105ad3e81368823cd2f7a6e",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "STU-004 identity return branch; caller required-session denial retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_push_authority.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "69217c9d7bbe11f9b38b5f592bf7f26b2d7956e54507f57c8f36d2e3f07d3250",
+      "afterSha256": "a09d3bd28405c8bcce3eafcc6fdae6a4e24c8d6c67f27a33b84042541f13fbbe",
+      "addedLines": 0,
+      "removedLines": 13,
+      "findings": [
+        "STU-001 unused old push time parser; board visibility owner retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/student_test_ocr_job_runner.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "bc8840c19175a70af2fcc087c9e806241e4adcbdbcca043835dee536137bb06e",
+      "afterSha256": "d3d45840ffe663ee2b9f71f6f25090af96b0cf131d048839ce9b308c1eb69f63",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "STU-005 unused incidental engine-error import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "core/update_assignment_rules.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "a54dd55544f219f5b5c1f4866206ab3fdf48805974d6f7d8e3a0d3221e1964c2",
+      "afterSha256": "706df229b6154b6bd13195b5c3596a878eefa8ca4bf0aa94029be2a6c8853636",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "B-005 normalization makes missing-videos fallback unreachable"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/CODE_FLOW_MAP.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "9ebbeca50d360facd38f29f8049cc373b3381a5771d3f56ef5ac3f770e1be2bc",
+      "afterSha256": "8deafe8a0138233c3495a01867d3f215299ad465d50f6372ae41c8f4beec9f57",
+      "addedLines": 1,
+      "removedLines": 2,
+      "findings": [
+        "DOCS-001 repeated current ownership summary",
+        "DOCS-006 existing restricted all-students note consumer documented"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/LOGIC_DECISION_LEDGER.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "8d2e2bf378b34e0d8b3ef3d38079d0c9c1af86d25d6a1fbe8425b0b8a9f25a9b",
+      "afterSha256": "0111232748580316cbaa589c066081b118a9b15c1026c87f136f49f22b87d18d",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "DOCS-012 preserve historical L-12 summary and reference later phase-specific recovery",
+        "DOCS-012 final owner/anchor/history clarification"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/PROJECT_FUNCTIONS_AND_LOGIC.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "509906a1c8f06a7f0928c3af4ff00b8cdc5eef8f6d2666476e1b49b7b5a0f176",
+      "afterSha256": "5351f8a789e2a415f8201424e20910734c439240b5f0149a5a6b3ff9285c5707",
+      "addedLines": 8,
+      "removedLines": 53,
+      "findings": [
+        "DOCS-002 repeated shell list; retired contract retained",
+        "DOCS-005 52 repeated locators replaced with existing owner links; four unique app boundaries retained; row proof in audit"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "a5bb5e41140a2d29683b26e88ea2d7f5b8bc0300bbe15b28455e01542577e2e7",
+      "afterSha256": "ddeb50476712c9edc32f347e9474fc996e58fad5296308aea563f1f41bc285fd",
+      "addedLines": 3,
+      "removedLines": 0,
+      "findings": [],
+      "trackedByGit": false
+    },
+    {
+      "path": "docs/STUDENT_TEST_OCR_PUBLIC_DATA.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "4091c89beac38adc756490120d165ce5e856f202a28a80a46d621f3e566f1179",
+      "afterSha256": "117f1368dd7b08f2608b568f08c731655a1308d464379f8347a7e7dcc74f5d34",
+      "addedLines": 2,
+      "removedLines": 0,
+      "findings": [
+        "DOCS-013 latest evidence navigation only; historical metrics, unavailable checkpoint and OFF gates retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/student-app-domain-split.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "e8c5b81507d87295334d00fcbf9db3fb3e67544a8409afff32286e5c8abb9f87",
+      "afterSha256": "100ac7d9353dee703aab9bcbc33afe46dce1f639c0ebbfb7e94bda7c01e196f9",
+      "addedLines": 2,
+      "removedLines": 0,
+      "findings": [
+        "DOCS-009 distinguish node-transition record from current isolated 8004 authority",
+        "DOCS-009 final owner/anchor/history clarification"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/student-app-node-handoff.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "aa9a4b09b1086ba1662b59275f03d527db8af74a006f41d225c853e0c7e30a7a",
+      "afterSha256": "f9bfdc127bafbf2fd03f52f7d5e24fca9b357ee8e5e97064a9e6df74abf5b1c9",
+      "addedLines": 3,
+      "removedLines": 1,
+      "findings": [
+        "DOCS-010 preserve old release receipts with explicit as-of authority boundary",
+        "DOCS-010 final owner/anchor/history clarification"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "docs/student-mobile-app-deploy.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "7f85d908b073a96f24102b29c66e3ebbe36ce08b266524f659fd65e341f3b003",
+      "afterSha256": "85152c493661555b138f2db729223f69e2c763f052e4afcd38343ff35315c23a",
+      "addedLines": 4,
+      "removedLines": 3,
+      "findings": [
+        "DOCS-007 distinguish approved private runtime backup from public evidence; secrets remain excluded",
+        "DOCS-007 canonical quiescent backup includes attached guard",
+        "DOCS-007 no implied listener-only sufficient backup gate",
+        "DOCS-007 correct native snapshot inventory; main database verification retained",
+        "DOCS-007 final owner/anchor/history clarification"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/api_announcements.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "4eaf2405cdcd77c8baed85cb9ff832bbfe8b08a57ce6545aaf6772126bc138bd",
+      "afterSha256": "53ee1adf7ee791706a982437968df9e8967faa35373478d306f84a2dc8a9e324",
+      "addedLines": 0,
+      "removedLines": 13,
+      "findings": [
+        "B-003 disconnected survey helper",
+        "B-003 disconnected old target helper"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/api_auth.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "38041de994fae72208b5cd814ce4e66ef2d72dc28eb901455b952f7e7027ba41",
+      "afterSha256": "d87ed1889a2480ce8917d231557735c4da5b8988025a3a99f656b1fcd402c6b7",
+      "addedLines": 1,
+      "removedLines": 4,
+      "findings": [
+        "B-007 unused change-handler SID list",
+        "B-013 misleading unconditional-pass comment",
+        "B-013 historical comment restatement"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/api_basic.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "385213f8664351b2425b60967e2357b6c1eb0da3b2ea2f8c7338769d6b7b945a",
+      "afterSha256": "cde25feda97fd56045d58a3ceaff8993859eab8356f6ec4c3254ff0819f9cbe9",
+      "addedLines": 1,
+      "removedLines": 67,
+      "findings": [
+        "B-002 disconnected historical test closure",
+        "B-008 unused incidental import",
+        "B-008 unused make_response import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/api_student_bootstrap.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "d2e3a9da5577daa098ace83c952126917910c2a0fbe3c8dcb27cced29a9f6092",
+      "afterSha256": "eefcbdec101e049cc1e38fa5b5d33610d714c3fa517c47461e4ce549464ef62f",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "B-008 unused datetime import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/api_tests.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "605c45f547a40e16a9ea3cb96c11ab52ab68a98331810341849c0cda1c5470a2",
+      "afterSha256": "dd23e591959847dc908c26a02a3defa8f8463cd2a6c54cb64ad7618c3b2e2082",
+      "addedLines": 1,
+      "removedLines": 2,
+      "findings": [
+        "B-008 unused time import",
+        "B-008 unused abort import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "routes/student_bootstrap_projection.py",
+      "area": "backend",
+      "newFile": false,
+      "beforeSha256": "263753e6b029d53c2c2e4944e908906dcfb57846c3ac83b91af9688b483be006",
+      "afterSha256": "bdf91c41bafae35cf345fa2eae2f1473ffe7ccc1a642a5a987c125c9053ec9bf",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "B-006 both branches overwrite response value",
+        "B-006 discard only normalization before filtering"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/AGENTS.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "3e7525fc74ad0257c3c6d7ab5045d22c648a1af6bc8ea5ab07d8785f66a4e1de",
+      "afterSha256": "28c83b5d07772b36e32a635b19cc2dc89604bbcd06535c5b1d7a922c21f6033c",
+      "addedLines": 1,
+      "removedLines": 2,
+      "findings": [
+        "DOCS-004 restore interrupted Markdown table, preserve all gate text"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/apply_student_app_production.ps1",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "718e2f56194fece917c590923fd8113cd22ab5a1aa62dfc141e899d85cb79422",
+      "afterSha256": "a11da0093709f82ed52f8557a5d59d61f888872f04f55d75b319cd876502db1c",
+      "addedLines": 0,
+      "removedLines": 6,
+      "findings": [
+        "SCRIPT-001 six write-only taskStopped assignments; lifecycle branches retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/benchmark_student_test_free_ocr.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "5f5cb09718e18d194dcd9755213eb278d8a4536eb3fad2d7d32029dbd9132256",
+      "afterSha256": "57d6492a49eda83703e5e31d226acdc17d66a60be5e8d6d830ebb040d4cd4e33",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-005 unused choice_targets; module import retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/benchmark_student_test_local_ocr_accuracy.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "b1c757fca1601b098f89cc89237eb5b7b98efc204ff6d745e1785a7aae185261",
+      "afterSha256": "06be253ec091fa78ee1da1ec89bb7eb99406cbadbd5b4d78bdc7d92b20c67f21",
+      "addedLines": 1,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-005 unused counter import",
+        "SCRIPT-005 unused Iterable import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/build_quick_printer_test_mapping.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "b393d58fc689e16ce898b1b2c182a8ab1847f3455c136d6e41fdd439ae36a1b8",
+      "afterSha256": "0e23c239d8436077a45a32832d4fdee1cec7537b0a7f253a73e47560e8d93056",
+      "addedLines": 0,
+      "removedLines": 7,
+      "findings": [
+        "SCRIPT-007 unused private raw catalog field",
+        "SCRIPT-007 unused private issue parameter",
+        "SCRIPT-007 remove four unused issue arguments",
+        "SCRIPT-007 no longer used local lookup; mappings originate from definitions"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/build_unit_test_csv_from_drive.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "5ad34ec8645a95d30c8151a18d764e282f02d24c5edb016e00d2f194725a8c27",
+      "afterSha256": "70f9f5828b6bb58611e5ea752d5ad13246660d6525daba1f8c063e464741888a",
+      "addedLines": 4,
+      "removedLines": 30,
+      "findings": [
+        "SCRIPT-008 preserve public cell_answer via existing parser owner",
+        "SCRIPT-008 duplicate public parser body, callable retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/evaluate_student_test_aihub_choice_validation.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "6bfa0fb1d96920b0ce2086080d53632063d6650f62a1d2142329505f61efadc5",
+      "afterSha256": "a43b9f08cbb43bb0d490622b3c9d5ffa909a5004bb9922e519f861f50319a900",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-005 unused Iterable import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/generate_student_vapid_key.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "4982f77673f1e8e7e75407a37aefc6ea96919b69f5d73ce70f24e7ecaa3e1dbc",
+      "afterSha256": "3846588a05277210ec122ec9b676d65a9efd8bc7fbe1d3cb4a5c9765de9f095a",
+      "addedLines": 0,
+      "removedLines": 10,
+      "findings": [
+        "SCRIPT-009 stale installation boilerplate; provider/CLI metadata retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/import_review_test_catalog_append_csv.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "c3a31e1700ba026bfd4edd7f285f2bea32abcd6c6033b8bb2ebb453cf5e2a657",
+      "afterSha256": "f74b9bf3d583ee020ee5ef6a68db41160e1a48c0d0e4fe03bf1cf9ee5e7d9107",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-006 scaffolding already guarantees category tests list"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/import_school_past_test_catalog_append_csv.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d6168d713c2e73477955a2dfb6ab529e504730acf52390340a60227212fc9707",
+      "afterSha256": "43a220616ca35d069617d4b3a67ce1749ac709e08ec57366f1a5ecb56e6410c4",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-006 scaffolding already guarantees category tests list"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/import_unit_test_catalog_append_csv.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "0b3122a1cc680d4c8b3fdc786dc3cb46ccee642af27018a8b0aedd8668a89bcb",
+      "afterSha256": "4b70eb3456b7c1b7df249ff50095cc3044e310a11491eba069bdd7ce50ef25d7",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-006 scaffolding already guarantees category tests list"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/prepare_student_app_production_stage.ps1",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "19aa2bcd726a125fdc7e872fc8020f03a6a54d8e2776985c715cf11a4db3d193",
+      "afterSha256": "fd9931ac1acee44076769f5f9d0658c7f6f83fc2eeb4ef281ff38743e119f0ae",
+      "addedLines": 2,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-010 current import declares paths without creating stage runtime",
+        "SCRIPT-010 retain receipt key and correct false seeding claim; initialization unchanged"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/send_student_test_push.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d826069781cc8bdff77788a6cb140038396045ea1b2e489d181e22df0ace68c0",
+      "afterSha256": "de0ec9c33e86fd014887c02d61b23928564432cd8e4216a08504fce979da9080",
+      "addedLines": 1,
+      "removedLines": 5,
+      "findings": [
+        "SCRIPT-002 task states always tuples",
+        "SCRIPT-003 unused private queue wrapper"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/accounts.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "15d1fb088e2bc44ded5f4d45eda2d120bb21cfea997d66a6d1758e43eb73d8aa",
+      "afterSha256": "bd7d619689b83585981061d4b822291e70b7adccc32abc23b67dd809434546d0",
+      "addedLines": 2,
+      "removedLines": 22,
+      "findings": [
+        "DV-09 discarded lifecycle-shape helper",
+        "DV-09 discarded snapshots; repository/assertion flow retained",
+        "DV-09 actual private no-result contract",
+        "DV-09 accurate summary description"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/config.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d83cd050217e4cfa00790e450a45293b0ce93fd0ddfb32925d88bf290475d866",
+      "afterSha256": "1f9a09b7df5289e7347b5d4b6e978284f416f2130e227c49e0cb73b81a6f3597",
+      "addedLines": 11,
+      "removedLines": 7,
+      "findings": [
+        "DV-08 actual isolated subprocess import observer",
+        "DV-08 temp cwd plus independent audit hook blocks writes anywhere; matrix retained",
+        "DV-08 record attempted writes even when importer catches the audit exception",
+        "DV-08 record attempted filesystem mutation",
+        "DV-08 captured mutation still fails observer"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/dashboard.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "bebb7447e7c383ce0c80b269cb3f53efc64ed1fec0dc13b63471dd237acb4866",
+      "afterSha256": "82942f14023a5aaec48677caea7f1b3951c58463d5eb11a51e5fcde6d76f1b4d",
+      "addedLines": 17,
+      "removedLines": 4,
+      "findings": [
+        "DV-12 current bootstrap projection owner",
+        "DV-12 load current source owner",
+        "DV-12 accurate source ownership contract",
+        "DV-12 old inline projection source check",
+        "DV-12 retired fallback source check",
+        "DV-12 actual whole-module projection with literal nine-slot, watch and assignment identity oracles"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/focus.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "9d3b70d98a2e405515c9df7c31ea92965d0723af32f0205da833d04c905939e2",
+      "afterSha256": "2b4fd165b9a2003f7d65784ea834bdb4c9e35ac53f099d7351cd491d10cef222",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "DV-11 identical ternary arms"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/focus.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "0de9cf52479812a2d9f87b2ef148c1f5f96bfc08322be384598251da7a54d5c1",
+      "afterSha256": "b5d74781426f62193d1ab9c6ac54fa5c159fa5787a7f2e5abfd8c37c3a36768d",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "DV-02 unused timedelta import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/homework-student.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "9ca534feedfa9ba9f6c45bfd2e7903043cd56ea089f318581428bbd2a629f41b",
+      "afterSha256": "824c7fae850839fcf24d5ef8b5045da8e3e439c66a0e5ce9e705cf81059ea3bd",
+      "addedLines": 3,
+      "removedLines": 2,
+      "findings": [
+        "DV-13 inspect active versioned/deferred tags, not superseded cache-key comments"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/notifications.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "83fc52795cceed7933e9717b6a901d25397e8f45a279e8e3248680e65565ca87",
+      "afterSha256": "bdfe1da701822ac8aba3a692835e73b7ce608bb0efc400f6188862b3e22fd207",
+      "addedLines": 23,
+      "removedLines": 11,
+      "findings": [
+        "DV-07 scope source gates to actual registered route owners; ast import now purposeful",
+        "DV-07 obsolete roster bulk-write gate replaced by current identity and legacy commit gates",
+        "DV-07 preserve exact current SID hook coverage and post-commit ordering",
+        "DV-07 milestone gate follows dedicated progress route"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_mobile_app_checks/repositories_push_contract.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "0321bd3aac5ef5f4cb88bb1872f9fc6b48d13ca7f33a58475cc70423c3674bd4",
+      "afterSha256": "8f19e739cf6daa51b179c6f90faff853fae81d75d02ca7f6bbaeebf31c74e0ef",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "DV-03 unused outer standard-library import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/student_test_gpu_archive.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "9e4ef9dd18be4101f1d09b517c0c3a44a1561b2b823cc999efffe6326792862b",
+      "afterSha256": "b71dfd0387279f9077559119c5a0ecb26c9b40079adddcf2dbc049ff964e08ff",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-005 unused standard import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/sync_makeup_sheet_additive.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d2b3ea5e7ee82bf30a34e463b82c339338b9f169acbadef201d3f4c470cb163e",
+      "afterSha256": "6fd5b6bc8140bfe44cc32ce82db644a0b9ded5cddf2e3a663bdd0b4882c9f965",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-004 unused pre-journal save import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_academy_proxy_network_access.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "55d6984bebe549c925bfd7b052dc719dcde1b7380eca417972c0da51a103b54c",
+      "afterSha256": "c0be3d7e4568d822d2bd281bb025e5971bc1fba4c6f5926eb030841debae740c",
+      "addedLines": 11,
+      "removedLines": 72,
+      "findings": [
+        "SCRIPT-016 obvious setup/call/assert labels only; all 25 tests preserved",
+        "SCRIPT-017 isolated CLI child dispatch",
+        "SCRIPT-017 defer actual app import until synthetic stores installed",
+        "SCRIPT-017 actual Flask factory under synthetic fixture boundary",
+        "SCRIPT-017 standalone25 case CLI always launches synthetic child; test bodies intact",
+        "SCRIPT-017 configure actual Flask instances with synthetic static map and instance paths",
+        "SCRIPT-017 final fixture: Python isolated startup / remove idle branch / reject unknown mutation descriptors",
+        "SCRIPT-017 remove task-created trailing footer separators only"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_admin_assistant_notes_demo.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "78356a44b450722a73ea9b21b12a37058528e1aae4ca423b2bf0317da23f0e55",
+      "afterSha256": "045fc71fdd5009a51b0246fabf39c224d8d362d6ffd2c48b2cd51528a3f64bfa",
+      "addedLines": 137,
+      "removedLines": 0,
+      "findings": [
+        "ADM-M06 actual full module DOM oracle: literal order, input hash, readonly, reminders"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_admin_white_review_pending.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "fac3951fb6546e1a6c97d45a4a79197bf763f92c90459dcb68961988c4bf4ade",
+      "afterSha256": "a48f4eb83a1ee14aa587d30f0379c4e9108ca316141dbed9452b1007a3e02d2e",
+      "addedLines": 94,
+      "removedLines": 7,
+      "findings": [
+        "PP-001 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_app_runtime.py",
+      "area": "scripts",
+      "newFile": true,
+      "beforeSha256": null,
+      "afterSha256": "071f690d5c20dfe5373488372173189c0bd925931b8159f3523340193c315413",
+      "addedLines": 120,
+      "removedLines": 0,
+      "findings": [
+        "SCRIPT-017 synthetic runtime fixture helper, guarded source/runtime access and network",
+        "SCRIPT-017 restore cwd before Windows Temp cleanup even on setup failure",
+        "SCRIPT-017 final review: synthetic static answer map/instance and Temp-only writes; source origin and subprocess guard",
+        "SCRIPT-017 final fixture: Python isolated startup / remove idle branch / reject unknown mutation descriptors",
+        "SCRIPT-017 explicit generated answer-map read rejection and POSIX failure cleanup before cwd restore"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_assistant_student_notes.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "96be0fcaae3ab41c7e3e83785612b51613f3256b0d3143f54ae4f02b03e8ceec",
+      "afterSha256": "8bf4291ef61ced190aefe51a8347be2f3d1c92223d1fab1be9a86e65197a06f8",
+      "addedLines": 7,
+      "removedLines": 8,
+      "findings": [
+        "ADM-M06 source seam retains pin comparator; actual render oracle added separately",
+        "ADM-M06 source gate retains immutable copy and newest comparator",
+        "SCRIPT-015 keep every style predicate; remove prose-comment dependence"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_file_transaction_routes.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "72807b2cf76c177803cd424b64496cade11865de5f843bb6042848214bd1b11b",
+      "afterSha256": "2704cc919f7c729ca81ee452639be764cd33e38ccf54162e23338d5d72e253e6",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-013 unused import"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_isolated_kollus_qa.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "0db26a44749e6aa996e3592e12750920b82aa21dcf2942b5533c1c96d1db41e5",
+      "afterSha256": "4aa534904fa06c93e9b85b7d38559e57de469376c8c12e895018714a35673340",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-014 unused import"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_makeup_projection_oracle.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "b69875d9cabd7a1c7628add7e8aabe6ed4d29ba286d35b79a9ce086346a993f2",
+      "afterSha256": "7bf7a425c8a3522593fc7c1acb2cffdee79b2579a584510d9838976edfbf643d",
+      "addedLines": 5,
+      "removedLines": 2,
+      "findings": [
+        "ADM-M05 retain frozen source SHA with exact inverse transform"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_refactor_safety.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "9782b5600ca8e9cb71c84bbbbf917b161b919ca5bd5d536598c06a67ab04d945",
+      "afterSha256": "c399789711fb31a0b31acee176cc000c8632422df81c8f17c2aa4524d2677eb0",
+      "addedLines": 37,
+      "removedLines": 42,
+      "findings": [
+        "PP-003 reviewed exact private removal / active-owner gate migration",
+        "PP-004 reviewed exact private removal / active-owner gate migration",
+        "PP-006 reviewed exact private removal / active-owner gate migration",
+        "PP-011 reviewed exact private removal / active-owner gate migration",
+        "PP-005 active finished-status path; existing course-completion literal unit cases preserved",
+        "PP-005 actual UI owner responsibility; server authoritative completion checks retained",
+        "PP-009 same bounded snap10 value seam; width/range invariant remains",
+        "DC-001 actual three labeled strict bootstrap calls; existing error/fallback behavior oracle retained",
+        "DC-001 optional API fallback ownership remains alongside strict calls",
+        "DC-001 direct strict calls in unchanged required URL oracle",
+        "SCRIPT-019 unused old fixture binding; direct dependencies retained",
+        "SCRIPT-018 inspect CSS declarations rather than decorative banner",
+        "SCRIPT-021 guard actual homework change dispatch instead of prose",
+        "SCRIPT-020 shared complete ordered check execution without short-circuiting",
+        "SCRIPT-017 default app import uses synthetic child, no live import",
+        "SCRIPT-017 final fixture: Python isolated startup / remove idle branch / reject unknown mutation descriptors"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_review_hardening.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "c261126ed00f25656aa76f7cbb83538a8b915604bda199f33c5a2246d48ee02c",
+      "afterSha256": "7229eba097181a6427eeb5128e9d24f841e2e20bd2398a0f45f2dcea44c55316",
+      "addedLines": 1,
+      "removedLines": 2,
+      "findings": [
+        "SCRIPT-011 unused verifier json import",
+        "SCRIPT-011 unused error import; barrier module retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_student_test_gpu_archive.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "e7340becc35f5e2bfef18f198291895677f0251e5d8b27bed48b961948838ae1",
+      "afterSha256": "03f65e404b88a782b7d6ab1255ed3383fc9ac9eaff99ee11236f6090c421efd0",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "DV-04 unused outer standard-library import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_student_test_ocr_engine.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d3ec98b6c002a891e7d804857652b2afd7fefbaf44a4077ca43297787f4c2946",
+      "afterSha256": "4c648941a4fdb66ea3ba8dc827570c5a89d0bd4d4d0bb9df65946dd8c3d8fefc",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "DV-05 unused outer standard-library import"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_test_assignment_note_logic.js",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "781307b1a47680e97e0674c969e7cc071a696b8313222cef7129864768e33438",
+      "afterSha256": "f5062b15c12fb780e99678240d0e5290514b2a9fc014d2f13f1c6b09adccfe6d",
+      "addedLines": 13,
+      "removedLines": 2,
+      "findings": [
+        "PP-007+PP-010 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_test_catalog_render_projection.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "d8a6e91eb6481fa4b3ff54ac487e97b8a7175d2efc56cf4b471f657a7ea8b5fd",
+      "afterSha256": "f468662b27716bed4d169d440b0da6cff4bbc083196806deda575bfc6db4f31d",
+      "addedLines": 2,
+      "removedLines": 2,
+      "findings": [
+        "DV-01 successful prerequisite guarantees current installed projection"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_test_popup_hydration.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "730ad3f5290c79fb2feb285e1afea4434621f536471ee7ee2bca07a774c0730b",
+      "afterSha256": "449f3f7df4e4fbd2e46f125b39febe2fe7cd47e4aedc8cfcdc6aea967179ae5a",
+      "addedLines": 3,
+      "removedLines": 1,
+      "findings": [
+        "PP-007 current imported names; hydration cases and real rules module preserved"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_tests_stylesheet_extraction.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "51c8cc4fe4c6fee7ee3da20f5714d4b0c19d4bffd7312711d8fe35d877c8a7f2",
+      "afterSha256": "9e90c3ab9b160b54e9ea1aa5b7ca10d8cccd6d04801923526f7bd3a34e6887ca",
+      "addedLines": 21,
+      "removedLines": 3,
+      "findings": [
+        "FS-10 original immutable CSS hash through exact five-line inverse plus actual TD/TH/mobile literal assertions",
+        "FS-10 original extraction line count retained",
+        "FS-10 original extraction scope count retained",
+        "FS-10 unindented line boundary anchor",
+        "FS-10 exact original five selector prefix reconstruction"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "scripts/verify_today_refresh_flights.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "e0b02b1ee776dd1430299656f5913207e90f9f45b7dc61f0dc14eeefb6c4e921",
+      "afterSha256": "34c978c0ebb03c97136f09bcfc31d807bc0c3227535f54f1482fb17dbaa1cdf5",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M03 same VM injections under direct names"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_today_search_projection.mjs",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "e57fae35839226fcb3c5f40ae98a198b55e163fceb637fed5043d2fee0b67cbc",
+      "afterSha256": "2378f08d06fffba8df7d07f1b5add2746eb4c3bd8d4717cc1a121280742429e5",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M03 same actual shared search injection"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "scripts/verify_video_watch_rearm.py",
+      "area": "scripts",
+      "newFile": false,
+      "beforeSha256": "727511ec6be31b1c8c5b3b4ef3f1bf542dd34ee99105fda5bdb5261cf97b43b5",
+      "afterSha256": "f442b7ad6b76545a9076533d43adc60e5edbe03be3c50e5f7517636749215f4b",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "SCRIPT-012 unused import"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "static/css/admin.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "91d591a63566956be829045ab0ac95920f3eda63f10561fc2518f81eb3c3836d",
+      "afterSha256": "34236dd2c34664181a56da257f3005c57beb3f54a7c4dffd07157e71de55f7f6",
+      "addedLines": 0,
+      "removedLines": 248,
+      "findings": [
+        "FS-01 independently reviewed redundant cascade span",
+        "FS-02 independently reviewed redundant cascade span"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/css/student-app.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "243d409ba8d3230a582df1d56a01d59948c61abf327373f6f97ccd02b631acbf",
+      "afterSha256": "c2491267c94ec8fd7e43a0581a82c91d147fd6bcf01ec4ec734f1a5e6810d9d0",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "FS-03 independently reviewed redundant cascade span"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/css/student-work-light.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "6f19da62dac92a9e443ceddd27aeaf0883989c2f12a8c3fcc45b1d30a332f36a",
+      "afterSha256": "3b8d1b96041efe3ad8978fa04ea07d9c2a67d2581e9db9f0aeda45c28e918804",
+      "addedLines": 0,
+      "removedLines": 36,
+      "findings": [
+        "FS-05 independently reviewed redundant cascade span",
+        "SCRIPT-015 incidental prose not a style contract"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/css/student.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "b367b7a8f3e3a45d1eba33120b11ee6a4f0135787f736ac57ddb308ab5c38709",
+      "afterSha256": "047357c03f656c5952dca523c7a6f0d71c0d03acde1e2f2a0ab78da2ee666855",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "FS-08 independently reviewed redundant cascade span"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/css/style.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "3c1907734baac835ad7cec23c81b9b68804f28e4209a9707add25c3d673fee51",
+      "afterSha256": "3576f7aab8bb0e7ae84fff8356f615f5318b3ada45953e41089015d013938789",
+      "addedLines": 0,
+      "removedLines": 51,
+      "findings": [
+        "FS-07 independently reviewed redundant cascade span",
+        "FS-06 independently reviewed redundant cascade span"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/css/tests.css",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "9438d2eb2dbc5a7b925becdbbaed2135acb654a1620c6f4db0380dd3b98f39f8",
+      "afterSha256": "6203e2fd02572890e1cdbea10642da28172538b1f013c73b311630d839bd4d8f",
+      "addedLines": 0,
+      "removedLines": 5,
+      "findings": [
+        "FS-10 independently reviewed redundant cascade span"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/core/saveConflict.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "ed01257c7e937eb1415c496e49f8fbb3f15d7c707a4ce50cb329c83336e12434",
+      "afterSha256": "ea236537105efe96ecc734e60ece158bc9e4a78ec381419ca118bbad4e1070ef",
+      "addedLines": 1,
+      "removedLines": 3,
+      "findings": [
+        "DC-002 lock branch already returned; revision default unchanged"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/core/state.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "1289189d4ab684df4827afd16da223c1cb5366dde0ccfa8f74064f7659f147a5",
+      "afterSha256": "1eb60672e1270a0534bed8ae7bfe2e5e563cf883da452ef8777828ddbb2fa8ae",
+      "addedLines": 3,
+      "removedLines": 6,
+      "findings": [
+        "DC-001 private pass-through critical loader",
+        "DC-001 exact existing API arguments preserved"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/demo/fetch.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "d4a9fa1e43844ed053c2b1b24502f8c3cf3c004a06a287df0ec0e7812f624056",
+      "afterSha256": "f051deae66c6fc0b4251fa886dadd418d4977c19f72919ef24be49ec99f00914",
+      "addedLines": 4,
+      "removedLines": 12,
+      "findings": [
+        "DC-003 unused private date-map helper",
+        "DC-015 reviewed exact private removal / active-owner gate migration",
+        "DC-014 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/absentRegister.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "df01ae1a264522f9388f7c3a97a32bd08de36431f6f0f35e859ff46ad32f75f3",
+      "afterSha256": "d787717705cafa43c66374486e151e4ab7d53be48e8c413fd6ae6d083769d716",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M08 duplicate post-hydration display"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/announcements.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "769135e8bf5d44594e93ffdef8473f71c1947369f076fda106b53b8f41e57b8b",
+      "afterSha256": "d49325d8a4d23406f4883d9c4fd9ff29ab8cf9870a02ceeb33b08a752a49c4a4",
+      "addedLines": 0,
+      "removedLines": 62,
+      "findings": [
+        "DC-004 unused metadata formatter closure",
+        "DC-005 unused old survey editor",
+        "DC-006 write-only latest roster",
+        "DC-006 write-only roster selection"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/assistantStudentNotes.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "e4e2e1908e950b5fec08d45ccef3af50e086fc9b665ad1e18c319dfae18ed1c5",
+      "afterSha256": "67047f3ed1fcafc73d6d6fc5af8c88cc96aff04e501176c27214fefbff25802e",
+      "addedLines": 1,
+      "removedLines": 7,
+      "findings": [
+        "ADM-M07 unused private reminder date",
+        "ADM-M07 unused private reminder label",
+        "ADM-M06 comparator already covers pin and due priority"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/calendar.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "6fc275a9f415f527e6db64b1739d5df7a83abdc0f6a4499c0982e7d22dc0dd09",
+      "afterSha256": "a142eab6ba6c05075881987cd8eafa22720a9b897fe8686f6f9fa4a3aa70bd58",
+      "addedLines": 1,
+      "removedLines": 63,
+      "findings": [
+        "DC-007 disconnected old makeup resolver closure",
+        "DC-008 unused private weekend helper",
+        "DC-008 unused local student lookup",
+        "DC-009 existing HTML escaping already includes quotes"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/examAttendance.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "38faac9fe85d1dd2986faac369900bec1a7e9551ac3c8227d5a29e88e0496538",
+      "afterSha256": "d5e2c7714a95dbf0b1e4fe8eb03a246685fd0d4860539f24dce50acc6e3931a2",
+      "addedLines": 3,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M12 one pure slot parse; empty/weekday-only cases preserved"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/exportLogs.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "d5de0abf2943d91dbe25aad75c5e6f93878cce6d2c4a6b0ed15ea1c13571e0fc",
+      "afterSha256": "80cf4402ab081bfe28117b652fd439f548eaf5f4872e046abe41e5079232630a",
+      "addedLines": 1,
+      "removedLines": 73,
+      "findings": [
+        "DC-010 unused roster delta chain and its private cache fields",
+        "DC-011 identical nullish conditional arms"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/extraModal.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "819da57dd987fe216fb749ff35397ac4d5873eab0d632432b2f000546b3d3369",
+      "afterSha256": "e2a04b32bca7bcd5ce02dd197921dd5fb7b77c093480bb0985b31a84cfa784f4",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "ADM-M08 duplicate post-hydration display",
+        "ADM-M08 duplicate save-button lock"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/hoverTooltip.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "36203f38612e30961da202e0afef7471065d4a4238e7ab79b6b39a89d18ac7f9",
+      "afterSha256": "bf594bb78a3ad7e73840296ece349c987f25ca79641929c7cfa966dce4466d72",
+      "addedLines": 4,
+      "removedLines": 37,
+      "findings": [
+        "DC-012 dead tooltip-only values; log reminder stays live",
+        "DC-013 identical reset handler for both existing events"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/logModal.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "e8a536aaac1557af2d477487c5cf9d3f9179c730c5b558636e4f78f8a3d32136",
+      "afterSha256": "d0c46ddfe0271d847906000d63586612ecd6f9925e268f0da59501bf4c373ce9",
+      "addedLines": 4,
+      "removedLines": 8,
+      "findings": [
+        "PP-002B reviewed exact private removal / active-owner gate migration",
+        "PP-009 reviewed exact private removal / active-owner gate migration",
+        "PP-003 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/makeupPending.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "45e3140daca0e7b28f76e50f63d4714ff4386de701983fcbf302366875fa48a9",
+      "afterSha256": "8fb7d4704002bf2de7f9591c7127502d9238d45073e893b00b46b0abf97680e5",
+      "addedLines": 0,
+      "removedLines": 7,
+      "findings": [
+        "ADM-M05 write-only export counter"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/studentLogs.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "6c9683810dcf72c3e2f69cf2bd4febbc7b2c9283806ebb7d04849dc7f561d620",
+      "afterSha256": "ea3c1f0d0ac198c9cd229074414153eea87b2d306ca0b62c5cc0b63f35a69027",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M04 redundant copy of new filtered array"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/testModal.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "5dfc757c21ea90d9c5b32059e430bdfff41b73fe87f37af517f6b462b6cdd865",
+      "afterSha256": "9ccdea139a1a17764f3ee3fa68738c3a05dbceaeb956a396f8ba42364f53293c",
+      "addedLines": 9,
+      "removedLines": 21,
+      "findings": [
+        "PP-010 reviewed exact private removal / active-owner gate migration",
+        "PP-006 reviewed exact private removal / active-owner gate migration",
+        "PP-011 reviewed exact private removal / active-owner gate migration",
+        "PP-002C reviewed exact private removal / active-owner gate migration",
+        "PP-007 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/timeGraph.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "21573dcbc18649cfa6b3c36acf7e6207f5c1b509d164cbef0fed145927e3178b",
+      "afterSha256": "d97e4d1af3e3059e16fc31268c0f214727928dfc73e97600497bd6f34ec046c3",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M09 stale module version banner"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/today.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "5735c4e33613d2c16656ceab3c91fd25d847260bedc2ab69306db5b132bb99c5",
+      "afterSha256": "4d002787ccb251443863608f761c60670a738155485096c66ab8ad0c58b2e7ed",
+      "addedLines": 2,
+      "removedLines": 61,
+      "findings": [
+        "ADM-M02 stale alpha-sort change header",
+        "ADM-M01 unused log history loader",
+        "ADM-M03 direct shared import",
+        "ADM-M02 unreachable mode flag",
+        "ADM-M03 private pass-through functions",
+        "ADM-M02 dead flag reset",
+        "ADM-M02 unreachable alphabet branch"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/today.render.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "8aee0e7e17bf3cf0290eb69131c3a71eeab10d06df76dfa1480dd888e20ee685",
+      "afterSha256": "16d4b951b2f0aa00e79d431424674129be304b5042c66ee89b8720d79e9d1bb2",
+      "addedLines": 3,
+      "removedLines": 125,
+      "findings": [
+        "PP-001 reviewed exact private removal / active-owner gate migration",
+        "PP-002A reviewed exact private removal / active-owner gate migration",
+        "PP-008 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/todayDoneSummary.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "f1d3a0e24af19d964836f509584995eb40d32563abb6bf1bf52bcde48a80de8d",
+      "afterSha256": "bae9c3c5110e91d94ca8cec4f818551526e2f03b677f169693dcdbf0dd933b48",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "ADM-M10 canonical-date result already validated"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/admin/features/videoModal.js",
+      "area": "admin",
+      "newFile": false,
+      "beforeSha256": "426f1265249713230b69b4a753e3066a3661afc58e6e8baf8fc3d3d08dbee2a0",
+      "afterSha256": "23eef275ff2290555bcc4330a0785967a9734c72c82329f7905320782edde729",
+      "addedLines": 0,
+      "removedLines": 36,
+      "findings": [
+        "PP-004 reviewed exact private removal / active-owner gate migration",
+        "PP-005 reviewed exact private removal / active-owner gate migration"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/all/features/AGENTS.md",
+      "area": "docs_tools",
+      "newFile": false,
+      "beforeSha256": "51cc8a3f45babe91c1218a6dbbaa811dca7b67f8274bb5e23f17e6d347131ed0",
+      "afterSha256": "7f2c766f7257de305bf6cef89ebb1c2db9780a1e7dbccb1d777f60f51adf589b",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "DOCS-011 exact existing mobile switcher names/order"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/all/features/chatRosterExport.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "d01077af66d5491abe345bace5f875e14c9ca45268e136a38adf951761699c92",
+      "afterSha256": "6751e4c42652b3e10eb55e03b9a71d1db52e7650aab99a902a67ad88428916a5",
+      "addedLines": 2,
+      "removedLines": 19,
+      "findings": [
+        "FRONT-003 existing canonical download helper",
+        "FRONT-003 duplicated download implementation",
+        "FRONT-013 same nullish school aliases; only display suffix removal"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/all/features/sortHelpers.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "af83e8a884fa74886a4a7efaf1acb1eff78d3fbc5a7abaaf0cea4fe2c4709e52",
+      "afterSha256": "2e049c50888d523a91ce6ffdc3999be20d08b35dde48ee6476c004f51ddc2777",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "FRONT-001 unused private curriculum order"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/all/features/table.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "4e84a9fff947b0d191cd598901bfe602b1d6bfc5fe5d14b245effd1201f3813f",
+      "afterSha256": "66d84abc67f2c3af1a5ee2097442efa8f7996580a43164c0f57ca75536ce7420",
+      "addedLines": 3,
+      "removedLines": 23,
+      "findings": [
+        "FRONT-002 patchField already rejects HTTP failures",
+        "FRONT-002 unreachable response-shape predicate",
+        "FRONT-011 keep exact table key as shared count/render owner",
+        "FRONT-012 two unused commit-local SIDs; other SID locals retained",
+        "FRONT-012 exact existing caret and focus order"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/all/main.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "9349152268707fed2e012062d0e2013db60fe35a91d74e74285e6b191ab73812",
+      "afterSha256": "52a5dbef2eb6af7f65c3486018c4093d3ef0f65006f68e021f5ad6b7ffb7d4ab",
+      "addedLines": 1,
+      "removedLines": 29,
+      "findings": [
+        "FRONT-011 same existing versioned table import",
+        "FRONT-011 private duplicated roster identity key"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/auth.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "7cb1b20ac9bcbbc6a3cc0425276017968d087581d41410606cc289c24bcb0d7d",
+      "afterSha256": "3a2a411850a0bdfed15b6669cb0e3fb1f15242456604c808bdfea455ab1a7a50",
+      "addedLines": 1,
+      "removedLines": 3,
+      "findings": [
+        "FRONT-007 equality implies includes"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/file-manage.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "5bdd65761aebd56d28dad6ca3ebc4713d73c52e423af927d105c8d1a49ede712",
+      "afterSha256": "077d8d0e115186686af756c09b650c05a4b86e62f78ec33ce0c6e33490b83bd5",
+      "addedLines": 2,
+      "removedLines": 4,
+      "findings": [
+        "FRONT-004 write-only assignment revision",
+        "FRONT-004 write-only loaded revision",
+        "FRONT-004 add/remove retain fresh revision and awaited save"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/school-cal.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "644a32a7a0548402e7b985b091d1834c423722c751de7b56e04e27d07f5748eb",
+      "afterSha256": "b933844d882fff85dabb7405c122e9b393b5a4a54e19ab307725b3f7d0604d0e",
+      "addedLines": 4,
+      "removedLines": 10,
+      "findings": [
+        "FRONT-008 redundant next-element membership set",
+        "FRONT-008 next element always in its own set",
+        "FRONT-015 identical input/search listener body; both events preserved"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/school-calendar/state.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "c12680b4eaa002740e82643313f70c63bbb9e17932e5c797438280bff49be346",
+      "afterSha256": "b2ee65e974ce2d13cbffff2359bba9a0725738e2ee88358cc8917dc004e62067",
+      "addedLines": 5,
+      "removedLines": 45,
+      "findings": [
+        "FRONT-008 prior nonempty grade guarantees key",
+        "FRONT-014 import existing pure owner, preserve state callers",
+        "FRONT-014 duplicate fields and delimiter declarations",
+        "FRONT-014 duplicate field normalizer",
+        "FRONT-014 retain state public signature with canonical value predicate",
+        "FRONT-014 duplicate grade/phase parser"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/shared/schoolCalendar.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "c3314d4e60f11ab5939d2164fd36940a122e226e74e581acd72198424de841a5",
+      "afterSha256": "bb921b716e0bdb54f88c2e5362ab7efab632abf15a53abc04c22ebfaeca17a32",
+      "addedLines": 4,
+      "removedLines": 4,
+      "findings": [
+        "FRONT-014 pure calendar helpers now shared; mutable key list private",
+        "FRONT-014 shared immutable grade/phase delimiter"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/student-app-contract.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "c488b1ea4fb3edc142e56cbda969478325c4f2120c1e6a2ca9c72a6d0fe0d477",
+      "afterSha256": "0c12b2f85cbc78ad266cab66a182d26a83db8da15ccfffd76b5c98bcdc23c42b",
+      "addedLines": 1,
+      "removedLines": 3,
+      "findings": [
+        "FS-04 same RegExp object alias",
+        "FS-04 same non-stateful RegExp; public parameters and route behavior retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/student.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "54d0c7912f54ec094e1042f0bdb9554a1738df7077e4769af235d0d49184ba15",
+      "afterSha256": "a794f7f459bce77be7ef521a748dc295f370a63bd8bb196abfac6da2986c6791",
+      "addedLines": 6,
+      "removedLines": 23,
+      "findings": [
+        "FRONT-006 unused private presentation binding",
+        "FRONT-006 unused old difficulty helper",
+        "FRONT-006 unused frame binding",
+        "FRONT-010 duplicate already-stringified material aliases",
+        "FRONT-010 earlier files branch already returned",
+        "FRONT-016 action UI already synchronizes reply-limit controls",
+        "FRONT-016 same survey input/change clearing; accessible feedback remains"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/student/playback.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "8e953ee4a346f4995f1638d8776921783430ec9f40143a163304d5c812f9aacd",
+      "afterSha256": "a79b5bf6732243f2eafd8e66a140256cf7484a1f3ed97f82311d8d6b012cbdee",
+      "addedLines": 5,
+      "removedLines": 12,
+      "findings": [
+        "FRONT-017 one identical sampling body; distinct async play/pause callbacks and SDK semantics preserved"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/tests.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "231ad82f959d77acd3e3300aeb1017f148adbc453c04c382dae884fb432db181",
+      "afterSha256": "f52c4e20f8c652991fd7cc3e8400d4bfee4624638621a40c9277ae30668a7ca4",
+      "addedLines": 2,
+      "removedLines": 3,
+      "findings": [
+        "FRONT-005 unused import; shared export retained",
+        "FRONT-005 quotes already escaped",
+        "FRONT-005 unused split component"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/js/video-manage.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "3698f1111587b3e5f0ff9e61876470de95db7caaa835e044256db2534b0c1c5e",
+      "afterSha256": "b3f193c8cbf88bbe238bb9bb186afdcb72cf77b97223ffa93aa215a0b37020c7",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "FRONT-009 redundant subset hostname expression; semantics unchanged"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/student.html",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "b9c0f63bb6f9819f36a33212313dd892e476de85fcb163bf369e79a6d6c65eb1",
+      "afterSha256": "72e2c15d1b86a469a59a1cc9a6afd5c7094d79f767785933a27512bf08216b63",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "FS-09/DV-13 obsolete verifier-appeasement comment"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "static/sw.js",
+      "area": "frontend",
+      "newFile": false,
+      "beforeSha256": "0507a6a6813e9daad118117e14666d439252eba5116d263ef8c2cbddf2f91ebc",
+      "afterSha256": "44834bad950acde2339691826a70fe5a0730a31eb5a66510691e812c0b5ec610",
+      "addedLines": 1,
+      "removedLines": 3,
+      "findings": [
+        "FS-04 same RegExp object alias",
+        "FS-04 same non-stateful RegExp; public parameters and route behavior retained"
+      ],
+      "trackedByGit": true
+    },
+    {
+      "path": "tools/subjective_sheet_lab/answer_sheet_v3_types.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "be9a3cc866d6f9cb6b50cd6dee515595e12dd2b0fa61e64c49e24a800da41170",
+      "afterSha256": "08a3ca0e1a6ca4151a9eb08dffeccf05c0b1dfdd1d2031093e6f05bc7a6fa8b4",
+      "addedLines": 17,
+      "removedLines": 0,
+      "findings": [
+        "LAB-P03 one immutable geometry factory in existing types owner"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/choice_omr.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "78774f3edb3063265acdcd39870f631877c722c9ee7ff6d4f17dfb63590430c2",
+      "afterSha256": "8b88d7fd05f5545465f85bf71b6b97d55666fd44ad459a4d1a841d7e9c8b7c2c",
+      "addedLines": 2,
+      "removedLines": 14,
+      "findings": [
+        "LAB-P03 original public sheet_spec wrapper preserved with fresh immutable result",
+        "LAB-P03 existing types module import only"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/create_answer_sheet_v3.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "64e4912b3dd334ed69db156811dcacd05160c44c1253c0d2587d0c65ca0e09e4",
+      "afterSha256": "72eeaa2d770f9d21f1f734b010d2cb529227dd017fa8c2620460ea00e7e5fcbf",
+      "addedLines": 2,
+      "removedLines": 13,
+      "findings": [
+        "LAB-P03 original public sheet_spec wrapper preserved with fresh immutable result",
+        "LAB-P03 existing types module import only"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/ocr_extended_gate_count_consistency_model.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "b565b7141305c4a6576547814b80ad128128f3fd2ad62c4b2503e0bc0b6ac0fa",
+      "afterSha256": "c6070737d1868c8df261aa2bb5703cd3e8747093e451dc787a5ba325451b3011",
+      "addedLines": 2,
+      "removedLines": 11,
+      "findings": [
+        "LAB-CASCADE-03 reuse canonical last-heading section parser",
+        "LAB-CASCADE-03 public extractor name retained; unreachable later-heading loop removed"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/ocr_post_chain_handoff_retention_manifest_guard_model.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "010289ead864c5390ca47a47c897d1f5f0f2869b3dea31bcdc6a98617be06318",
+      "afterSha256": "61a56b4c266476091dd0330e6c3c908a622ef26ebe4c36d6bd1b9f29bb12ef37",
+      "addedLines": 1,
+      "removedLines": 6,
+      "findings": [
+        "LAB-CASCADE07 existing shared pure mtime owner; public bound name retained",
+        "LAB-CASCADE07 identical local helper body"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/ocr_preflight_env_split_operator_runbook.md",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "67d24d726a8d3c51164938e668acb86c84252b98dcefe02dd73986f50760e4dc",
+      "afterSha256": "b4f4804d330acd1947029efb2762ec7df8c06c5fa3c1dcb8acbd7cea6d90e4a3",
+      "addedLines": 6,
+      "removedLines": 6,
+      "findings": [
+        "LAB-CASCADE05 current runbook counts match source-owned step/probe tuples; historical evidence retained"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/phase2c_crop_pipeline_adapter.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "2db2626d30ac11978b38bf79b45bd006ddd352fe8a9d93904a997d451354f5ea",
+      "afterSha256": "91d24bda3228c0c5daa1ec3e7817f2608e901aa3b214683e8f091fccd4cb5ff3",
+      "addedLines": 0,
+      "removedLines": 1,
+      "findings": [
+        "LAB-P02 asdict already includes exact scalar"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/phase2e_provider_error_diagnostics.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "2cec2c56e674f488a5d922014c4602a41ebd8396e6b7c02d42bfdbf9b49c9ff1",
+      "afterSha256": "165cc579e05eecbd68d5558cbffd560d9760dd1a1cb497904e8f34023b97544d",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "LAB-P01 sanitizer always returns a nonempty safe key"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/phase2g_texteller_review_adapter.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "14360fd62154dc14a393c815578a4013bed0f3a28de4d2d65eb3bd3c8ba4b226",
+      "afterSha256": "3da16614697dce414f70eadd9f641eae7b8c0827030e93a31483a7bef7e7971c",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "LAB-P05 impossible negative brace depth after first zero-depth break"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_answer_mode_patch_package.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "5fa28147a2cf37376fca4f812e7bc8b33c889896465a5267a44f3b398f9711e9",
+      "afterSha256": "44d9af4e998051c098e342c61e81f7ef757102a5ce28c330a5e33dd365935909",
+      "addedLines": 0,
+      "removedLines": 2,
+      "findings": [
+        "LAB-SUP-01 unreachable overlap rejection after exact coverage"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_overwritten_ambiguity_artifact_schema.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "d0a228c56ba8110915750f269b0c9120f7bec20eb668185d66310d1c8d775227",
+      "afterSha256": "20774c841ffa4a959ba5378890942847c37eec1a0a9714a7a8804abf7aa8fefd",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "LAB-P04 accurate count of ten unchanged negative schema cases"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_post_chain_operator_summary.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "281c6bf39d3949011e962994dc031f97f008a16a4049b32d23319068ba8a808f",
+      "afterSha256": "99e3e20946a07537418be11773e34cd22acde18a5db2d38631749d1293c7814b",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "LAB-SUP-02 strict zip already proves equal row cardinality"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_preflight_operator_runbook_rendered_summary.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "ea8c7d2ce82589282c2d453bd608589610ec6d63debbefc3e16d535af75d26e6",
+      "afterSha256": "28d9cf6d80bfde46d49e8c88681f65ddc914e063aa9a060c7dc95fdcb14c668a",
+      "addedLines": 3,
+      "removedLines": 3,
+      "findings": [
+        "LAB-CASCADE05 independent literal current expectations; no downstream imports or gate removal"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_provider_free_gate_chain_rendered_steps.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "7a08e0a05fd128b79b35d0911f9e4313cf63d9f0e937e82c5d4fe0db553b26c0",
+      "afterSha256": "44f4b0825eb57280456a074158645d7c07f889a79594231d16918735cae80f72",
+      "addedLines": 1,
+      "removedLines": 1,
+      "findings": [
+        "LAB-SUP-03 required snippets imply missing steps; diagnostics retained"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_provider_free_manual_qa_handoff_refresh_serial_guard.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "46cd8a1f93c439ee3acbaa9f089efd633d8ad7d00c0d4ad7c4610a1b1f927de8",
+      "afterSha256": "90366bd643a719638eab87946c6f31d6b8c39b1f37a819afbe82092bb069bb3c",
+      "addedLines": 6,
+      "removedLines": 7,
+      "findings": [
+        "LAB-CASCADE06 reuse existing atomic exclusive lock and ownership cleanup",
+        "LAB-CASCADE06 no check/write race or unowned lock deletion; report/probe shapes retained"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_training_pack_evidence_missing_blocker_snapshot_guard.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "948e2bbf870f74a53ead44dcd8f734b3e0a9b798d0056e1766c3ad6e968cbcaf",
+      "afterSha256": "f47629cc246fa9b65eaef64e4063604d74a56b316b7a3d37bd98423d6d5b1c32",
+      "addedLines": 3,
+      "removedLines": 2,
+      "findings": [
+        "LAB-SUP-04 construct fixed independent probe tuple once",
+        "LAB-SUP-04 preserve strict per-probe result oracle"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_ocr_training_pack_replacement_sandbox.py",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "1aee813407ecbd3c7e681a95d117339cdb6d2763ba09dfa3fdf40ffc1e9b247f",
+      "afterSha256": "f1cf932f7c07b9f5d31769d47486e299e035c9e789bcb0bbff66fbfa30b51103",
+      "addedLines": 4,
+      "removedLines": 3,
+      "findings": [
+        "LAB-SUP-05 reuse pure five-case decision result",
+        "LAB-SUP-05 preserve literal five/one/four counts"
+      ],
+      "trackedByGit": false
+    },
+    {
+      "path": "tools/subjective_sheet_lab/verify_student_ocr_cached_fixture_qa.js",
+      "area": "lab",
+      "newFile": false,
+      "beforeSha256": "2631174ed258beababbcd44079514cf2bc516d40f195197161c16df1f8dd4d97",
+      "afterSha256": "0354cc1fe6f52ee12e33750310253cdec125ce8e03bdb30049da507677be9ec8",
+      "addedLines": 0,
+      "removedLines": 11,
+      "findings": [
+        "LAB-SUP-06 uncalled private historical verifier helper"
+      ],
+      "trackedByGit": false
+    }
+  ],
+  "reportAndManifestAreSeparateOutputs": true,
+  "runtimeFilesIncluded": false,
+  "productionBackendReloaded": false,
+  "preservedSemanticFindings": [
+    "LAB-P06",
+    "LAB-CASCADE08",
+    "LAB-CASCADE09"
+  ],
+  "policyBlockedFinding": "DV-10",
+  "generalFullTextFiles": 692,
+  "generalStructurallyParsedMaps": 3,
+  "labFullTextFiles": 603,
+  "labPartialTextFiles": 264,
+  "lineCountMethod": "UTF-8 decoded splitlines; difflib.SequenceMatcher(autojunk=False), relative to task-entry bytes",
+  "verification": {
+    "fullDefaultNonSmokeLog": "full-non-smoke-root-final4.log",
+    "exitCode": 0,
+    "unitGroupsPassed": 105,
+    "unitGroupsFailed": 0,
+    "finalPythonASTFiles": 62,
+    "finalJavaScriptSyntaxFiles": 48,
+    "postFullSuiteAppIsolationModesPassed": 2,
+    "unchangedAcademyChecks": 25,
+    "finalAuditEventCases": 18,
+    "windowsGuardCleanupCases": 6,
+    "browserEvidenceScope": "sampled 8004 synthetic QA views; not all page states"
+  }
+}

@@ -1,0 +1,598 @@
+학생·시험·파일·영상 UI 성능 범위 조사 / 2026-10-01 (Asia/Seoul)
+담당: HUB (동훈) 후속 작업의 단계 3 사전 source 조사
+순서: 1 인증 적용 → 3 전체 UI 성능 점검·개선 → 2 최종 격리 검증 → 4 운영 반영
+
+이 보고서는 현 작업 트리의 기능 inventory와 계측 후보를 정리한다.
+활성 기능 경로 141개: / 13, /student/<sid> 41, /tests 33, /file-manage 35, /video-manage 19.
+별도 상태/경계 12개는 활성 기능 총수에 넣지 않았다. 반복된 학생/파일/시험 행과
+동일 handler에 연결된 버튼·키보드·메뉴는 기능 경로로 묶었다. 실제 DOM 버튼 개수,
+테스트 case 개수 또는 전수 브라우저 PASS 개수가 아니다.
+
+기존 문서로 연결되는 실제 동작 QA는 6행(부분 범위), navigation은 4행,
+upload API/목록 표시만 확인된 것은 1행이다. 나머지 130행은 기능별 실제 QA 기록을
+이 조사에서 연결하지 못했다. 이번 채팅의 신규 브라우저 QA/성능 계측은 0회다.
+VM/순수 행동 검사와 연결되는 행은 81, temp 서버 검사와 연결되는 행은 45이며
+두 집합의 중복은 29행이다. source-contract 검사만 연결되는 행은 10,
+기능별 focused 검사 연결을 찾지 못한 행은 34이다. 연결이 있는 행도 그 행의
+모든 버튼/입력/실패 branch가 검사되었다는 뜻은 아니다.
+
+작업 경계
+- 루트 AGENTS.md를 먼저 읽고 Git 상태 확인. static, JS, all, shared, routes,
+  core, scripts와 관련 admin 지침 및 정본 규칙/기존 보고서로 계약을 대조했다.
+- 최초 Git: staged 0 / unstaged 152 / untracked 58. 기존 dirty를 본 작업으로
+  귀속하지 않는다. 이 보고서 경로는 작성 전 존재하지 않았다.
+- 허용된 편집은 이 새 txt 한 파일이다. 소스·runtime·Git index/commit·서버·브라우저
+  상태를 변경하지 않았다. 운영 JSON/SQLite/자료·credential/config 값은 읽지 않았다.
+- app import, compileall, safety suite, live GET/smoke, manager Status/Start/Refresh/Stop,
+  브라우저/CDP, 운영 health 요청은 실행하지 않았다. 실제 UI와 lifecycle은 Hub 소유다.
+- 하위 agent를 만들거나 다른 채팅에 메시지를 보내지 않았다.
+- 현재 소스와 이전 QA snapshot/실행 중 backend는 같은 상태라고 가정하지 않는다.
+  Hub의 인증 단계 완료와 source freeze 후 이 inventory/candidate를 다시 대조해야 한다.
+
+경로와 표면
+routes/pages.py:108의 /는 static/index.html 학생 로그인이다.
+학생 관리 명단은 /students → static/all.html이며 /all은 정식 경로가 아니다.
+따라서 /를 /students로 바꾸어 세거나, 과거 /all 404의 8.8ms를 성능으로 쓰지 않았다.
+/student/<sid>, /tests, /file-manage, /video-manage는 pages.py의 정식 static shell이다.
+관리자 보호 페이지의 생산 브라우저 지원은 Chrome이다. 격리 두 브라우저 회귀는 유지한다.
+파일 관리에는 현재 독립 텍스트 검색 input이 없고, 영상 관리에는 파일 업로드가 없다.
+시험 CSV 가져오기는 로컬 CSV 읽기 뒤 catalog 저장이며 파일관리 upload와 다르다.
+
+증거 읽는 법
+QA=N: 이전 보고서의 실제 navigation/초기 화면 관찰만.
+QA=B(...): 이전 보고서에 적힌 실제 사용자 동작. 괄호의 fixture/실패 범위만 인정.
+QA=A(...): API 처리와 목록 표시; file picker/drop 사용자 동작 증거는 없음.
+QA=-: 이 조사에서 해당 기능의 실제 QA 기록을 연결하지 못함.
+V: 실제 entrypoint VM 또는 DOM/transport-free 행동 oracle. 실제 layout/paint 증거 아님.
+T: temp Flask/store/worker 계약. 실제 브라우저 클릭 증거 아님.
+S: shell/source 문자열·DOM 구조 계약. 행동 실행 PASS로 확대하지 않음.
+gate=-: 아래 focused 검사에서 대응 증거를 찾지 못함; 저장소 전체에 검사가 없다는 단정 아님.
+검사 소스를 읽고 연결했으며 재실행하지 않았다. 기존 PASS는 아래 보고서의 역사적 기록이다.
+
+기존 실제 QA / 중복 개선 제외
+근거: docs/SERVER_BROWSER_LATENCY_2026-10-01.txt,
+docs/SERVER_PROJECT_FOLLOWUP_2026-10-01.txt,
+docs/SERVER_PROJECT_REVIEW_2026-10-01.txt,
+docs/SERVER_FRONTEND_FETCH_FOLLOWUP_2026-10-01.txt.
+
+- 기존 7페이지 및 legacy login 주요 QA는 완료 기록으로 재사용한다. five-page inventory의
+  모든 버튼으로 확대하지 않는다. /all 404 측정은 제외, /students 정정은 이미 완료다.
+- Chrome 변경 후 3회 document responseEnd(ms): /tests 9.1/629.6/11.3,
+  /file-manage 642.5/9.9/9.8, /video-manage 8.5/8.2/6.3,
+  /student/QAHUB1001329 10.7/10.9/11.2. TTL warm/cold가 섞인 참고 sample이다.
+  /(index)의 성공 로그인·추천·변경 팝업 지연값은 없다. responseEnd/FCP는 data-ready가 아니다.
+- 현재 admin 성공 verdict HMAC/generation/절대 5초 TTL/64-entry/inflight 공유는 완료 항목이다.
+  cold/wrong credential의 KDF 강도를 성능 목적으로 낮추는 제안은 하지 않는다.
+- 학생 bootstrap의 요청 SID/숫자 별칭 scope 축소와 watch/bootstrap 병렬은 이미 완료다.
+- 영상 빈 검색의 key 정규화 생략과 원본 ID→첫 index Map은 이미 완료다.
+  3,000행 drawVid 92.1→3.1ms p50의 기존 수치는 synthetic HTML projection이며 DOM/paint를 제외했다.
+- 시험 빈 catalog 검색 최적화, pure catalog/editor/statistics 및 assigned-test 경계 추출,
+  상세 test/category/period/close version 방어는 완료다. stats의 초기 deferred load도 현재 이미 존재한다.
+- 파일 독립 GET 3개 병렬, refresh/save scope, 손상/실패 시 배정 잠금,
+  box-select listener 누적 제거와 filesystem/material crash recovery는 완료다.
+- 학생 공지 reply/survey/ack freeze·dedup·timer ownership·allowMultiple draft 보존은 완료다.
+  로그인 offline spinner·401/503 token 처리·중복 요청 방어 역시 완료다.
+- today single-flight, popup pending/완료 TTL, 시험 popup hydration, 자동 watch scope,
+  관리자 공지 compose overflow, roster shared-profile rollback 등 followup 26항목은 새 개선으로 세지 않는다.
+- 실제 기록: legacy login offline 후 spinner none/버튼 사용 가능,
+  학생 reply POST 22.1ms·저장/읽음/reload, 시험 상세 GET 52ms·빈 기록/닫기,
+  파일 upload 200·파일관리 목록 표시. 통합 admin popup 3회 ready/두 브라우저/세 폭,
+  manual none/reload 및 두 log endpoint는 외부 연결 면의 보존 증거로만 쓴다.
+- 기존 synthetic 데이터는 67명·catalog 1,600 등의 조건이다. 이 조사에서 runtime을
+  열어 크기나 실제 내용을 확인하지 않았다. 운영 p50/p95나 backend rollout 증거는 없다.
+
+소스 약어(행의 숫자는 1-based line, 함수명 표기는 그 module의 symbol)
+R=static/js/auth.js
+S=static/js/student.js
+T=static/js/tests.js
+F=static/js/file-manage.js
+V=static/js/video-manage.js
+SH=static/student.html, TH=static/tests.html, FH=static/file-manage.html, VH=static/video-manage.html
+BS=static/js/student/bootstrapState.js, PB=static/js/student/playback.js
+WS=static/js/student/watchState.js, CS=static/js/tests/catalogState.js
+CE=static/js/tests/catalogEditorState.js, SS=static/js/tests/catalogStatisticsState.js
+
+검사 참조
+A1 scripts/verify_roster_auth_attendance_async.mjs: legacy auth 실제 VM 네 흐름의 offline,
+   autoLogin 503/401, 중복 login. 성공 curris/추천/modal/logout 전수 VM이 아니다.
+A2 scripts/verify_legacy_auth_storage.py: temp auth 계정 lock/손상/경합 및 credential 계약.
+   인증 정책 단계의 최신 증거와 합쳐야 하며 이전 보고서의 미결 선택을 현재 미결로 단정하지 않는다.
+S1 scripts/verify_student_bootstrap_state.mjs, scripts/verify_student_bootstrap_routes.py,
+   scripts/verify_student_bootstrap_projection_scope.py: nine-slot/병렬/실패 종료·SID/date/public/access.
+S2 scripts/verify_student_playback.mjs, scripts/verify_student_watch_autosave.mjs,
+   scripts/verify_student_watch_timestamp.mjs, scripts/verify_watch_timestamp_guard.py,
+   scripts/verify_video_progress_matrix.py, scripts/verify_video_watch_rearm.mjs, scripts/verify_video_watch_rearm.py:
+   controller/active MID/resume/90%·timestamp/retry·manual 소유권; native player 실기동 아님.
+S3 scripts/verify_student_review_playlist.mjs, scripts/verify_student_previous_video_review.js:
+   done-only/local key/prune/registration/order/reload/현재 auto done·DOM 계약.
+S4 scripts/verify_student_test_presentation.mjs, scripts/verify_student_answer_mobile.js,
+   scripts/verify_student_material_access_scope.js: read-only card/answer gate/mobile navigation.
+S5 scripts/verify_student_material_access_scope.js: 실제 entrypoint의 제한·배정 자료 folder/download VM.
+   matSearch/flat/scroll/실제 파일 열림·다운로드 성공 전체를 검증하지 않는다.
+S6 scripts/verify_student_announcement_state.mjs, scripts/verify_student_announcement_async_scope.mjs:
+   state/board/pending/reply-limit + 실제 closure 21-case async scope. short 설문 fixture 중심이며
+   single/multiple/long의 실제 모든 입력·image gesture·focus trap은 별도 브라우저 gap이다.
+S7 scripts/verify_student_mobile_app.mjs 및 scripts/student_mobile_app_checks/{shell,dashboard,
+   homework,homework-student,board,notifications}.mjs, scripts/verify_announcement_image_access.py:
+   shell·dashboard·공지 API/public app 전용 계약. 별도 App 기능의 PASS를 local web 실사용으로 합치지 않는다.
+S8 scripts/verify_youtube_video_feature.mjs, scripts/verify_youtube_video_feature.py: URL/provider/기출엄선/SID·watch 없음/재생 branch.
+T1 scripts/verify_test_catalog_state.mjs, scripts/verify_test_catalog_search_and_sort.mjs:
+   catalog normalization/search/sort/reorder/locks/revision/rollback·실제 Save 일부와 source guards.
+T2 scripts/verify_test_catalog_editor_state.mjs, scripts/verify_test_answer_modes.py:
+   answers/modes/round/CSV template/parser/aliases·hash. 실제 file picker→import 저장 전수는 아님.
+T3 scripts/verify_test_catalog_statistics_state.mjs: rows/summary/search/sort/detail literal oracle.
+T4 scripts/verify_tests_config_write_safety.py, scripts/verify_tests_config_metadata.py,
+   scripts/verify_admin_tests_record_details.py, scripts/verify_test_shared_services.py,
+   scripts/verify_test_projection_boundaries.py: temp revision/write/answer/역사 record 계약.
+T5 scripts/verify_tests_stylesheet_extraction.mjs: stylesheet/shell hash/cascade; computed-style/paint 아님.
+T6 scripts/verify_admin_tests_record_details_ui.js, scripts/verify_admin_tests_record_detail_answer_link_ui.js,
+   scripts/verify_admin_popup_async_scope.mjs: records HTML/answer·실제 tests detail late/close VM 범위.
+F1 scripts/verify_file_manager_state.mjs: refresh 병렬·실패·stale·frozen items·single save·listener.
+   renderTree/renderList/필터/union을 stub하고 querySelectorAll=[]인 fixture다.
+   geometry hit-test/실제 정렬/tree/list/drag/drop 사용자 상태가 통과했다고 말할 수 없다.
+F2 scripts/verify_material_routes.py, scripts/verify_file_reference_routes.py,
+   scripts/verify_file_transaction_routes.py, scripts/verify_file_transaction_ownership.py,
+   scripts/verify_file_transaction_crash.py: temp revision/참조/unknown/rollback/crash/degraded access.
+V1 scripts/verify_video_catalog_render.mjs: 실제 drawVid + synthetic innerHTML, querySelectorAll=[].
+   index/order/filter/빈 검색/HTML 동등. DOM insertion/listener 실행/layout/paint 제외.
+V2 scripts/verify_video_manage_ids.mjs: nextVideoId·correction draft/summary의 pure literal + browser source guards.
+   contenteditable/auto-save/queued save/Blob download의 실제 사용자 행동 oracle은 아니다.
+V3 scripts/verify_video_mid_change_guard.py: 실제 temp GET/POST·같은 MID/신규 성공·삭제/MID 409 무쓰기.
+V4 scripts/verify_video_catalog_correction.py: temp/pure 네 store correction·stale/참조/rollback.
+   offline 운영 apply나 브라우저 다운로드 실동작 증거 아님.
+
+기능 inventory
+형식: ID | 사용자 동작/화면 | 동작·저장 계약 | source | QA | 기존 gate
+
+/ (학생 로그인): 13개
+R01 | 초기 세션 복원 | 저장 토큰이 있을 때 GET /api/auth/me; curris 병합, 401 종료, 통신/5xx는 기존 토큰 유지 | R:432 | - | V:A1(실패)
+R02 | 로그인 버튼·비밀번호 Enter | 필수 입력 후 POST /api/auth/login; 성공 토큰/curris 표시, 중복 요청 방지·오류 표시 | R:485,603 | B(offline만) | V:A1(실패/중복)
+R03 | 커리 선택 select | curiSelect 값 선택; 이동 전까지 서버 변경 없음 | R:220,639 | - | -
+R04 | 선택한 커리로 이동·이 커리로 이동 | goBtn/curiGoBtn 공통 POST /api/auth/switch; 성공 때 active token/SID를 갱신하고 /student/<sid> 이동 | R:259,610,640 | - | V:A1(실패)
+R05 | 커리 새로고침 | curiReloadBtn→autoLogin 성공 뒤 갱신 메시지; master/active token 의미 보존 | R:646 | - | V:A1(autoLogin 실패만)
+R06 | 오늘 추천 표시 | GET /api/students로 연결 SID 일정 판정; 현재 SID·오늘1 우선·한국어 순서; 실패 시 추천 숨김 | R:351,402 | - | -
+R07 | 추천 커리로 이동 | 추천 dataset SID로 공통 switchAndGo; 서버가 허용한 SID만 전환 | R:650 | - | V:A1(공통 전환 실패만)
+R08 | 추천 숨김 | sessionStorage hideCuriReco=1; 해당 탭에서 추천 숨김 | R:655 | - | -
+R09 | 아이디/비번 변경 팝업 열기 | 현재 비밀번호/새 ID/새 비번 입력을 초기화한 뒤 modalBack 표시 | R:44,620 | - | -
+R10 | 변경 저장 | curPw 필수, newId/newPw 중 하나 이상; POST /api/auth/change→me→추천; 성공 후 300ms 닫기 | R:541 | - | V:A1(실패만);T:A2
+R11 | 변경 팝업 닫기 | 닫기 버튼·배경 클릭·Escape; 서버 저장을 발생시키지 않음 | R:54,621,623,627 | - | -
+R12 | 로그아웃 | master/active token·SID 제거, 로그인 UI 복원; 서버 logout endpoint 호출 없음 | R:534,617 | - | -
+R13 | 다른 탭의 SID 변경 반영 | storage studentSid 이벤트는 커리 select 표시를 동기화 | R:633 | - | -
+
+/student/<sid> (local web 활성 표면): 41개
+S01 | 초기 학습 페이지 로딩 | 비공개 web은 watch/latest와 bootstrap 병렬; bootstrap 실패 시 7-endpoint fallback 없음; nine-slot·top-level assignedTests 보존 | S:1320,2089;BS:54 | N | V:S1;T:S1
+S02 | SID 복원·학생 없음 처리 | bootstrap redirectSid 또는 저장 SID/허용된 me 후보로 location.replace; 실패 시 오류, public session은 별도 실패 처리 | S:1913,2089 | - | T:S1(bootstrap redirect);S:S1(클라이언트 일부)
+S03 | 설정 열기 | setBtn→open/aria-hidden/aria-expanded 변경 | S:1258,1264 | - | -
+S04 | 설정 닫기 | 닫기 버튼·바깥 클릭·Escape, 버튼 포커스 복원 | S:1268,1272,1278 | - | -
+S05 | 다크 모드 | body.dark + localStorage.theme; 서버 요청 없음 | S:1284 | - | -
+S06 | 건너뛰기·숙제/영상/테스트 요약 링크 | 본문 anchor 이동; 공지 보기 shortcut은 noticeBtn click 공통 경로 | SH:35,164;S:2080 | - | S:S7(shell)
+S07 | 오늘 학습 요약 | bootstrap dashboard·영상/테스트/공지 pending 수 표시; 저장 기능 없음 | S:1954,2014 | - | V:S7(dashboard);V:S4(count)
+S08 | 첫 영상·마지막 MID 이어보기 | 현재 배정 목록의 허용된 firstMid 선택; academy 통과 시 get-url/공유 player, 기존 resume query 보존 | S:2476,2602;PB:play | - | V:S2;V:S3(현재 목록)
+S09 | 재생 목록 행 전환 | vidList li[data-mid] 클릭→active/player 복원→play; 이전 Kollus watch flush | S:2171;PB:play | - | V:S2;V:S3
+S10 | 진행률·완료 배지 자동 갱신 | active MID의 watch만 변경; 오늘 auto done은 목록 유지, 수동 재개 cycle·epoch-ms 보존 | S:2628;WS:createController | - | V:S2;T:S2
+S11 | 숨김·종료 시 watch 저장 | visibilitychange/pagehide/beforeunload→keepalive flush; 중복·실패 재시도·1500ms debounce 보존 | S:1019;WS:createController | - | V:S2
+S12 | 배정 변경 알림으로 reload | storage updPing 변경 시 페이지 reload; bootstrap 권위 유지 | S:2470 | - | S:S3
+S13 | 영상 복습 펼치기·접기 | bootstrap done-only chooser; 단일 player, 별도 등록 버튼·권한/수업 상태로 disabled | S:1511,1521 | - | V:S3;S:S3
+S14 | 복습 체크 선택 | 허용 MID를 로컬 pending 집합에만 추가/해제; 제목/체크 클릭은 재생하지 않음 | S:1616 | - | V:S3
+S15 | 복습 영상 등록 | 선택 MID를 SID/date 로컬 playlist에 추가, 성공한 신규 등록 후 1회 reload; assignment POST 없음 | S:1488,1530 | - | V:S3;S:S3
+S16 | 등록한 복습 취소 | 등록된 체크 해제→local unregister·재렌더; 운영 배정/진도 삭제 없음 | S:1499,1616 | - | V:S3
+S17 | 영상 권한·결석·archive·수업 제한 표시 | outside academy는 재생/URL/watch 없음; review title-only, course/ghost/absence 제한 보존 | S:1456,1574,2490 | - | V:S3;V:S5;T:S1
+S18 | YouTube 재생·fallback 링크 | academy-gated YouTube iframe 또는 외부 YouTube 열기; Kollus watch/callback·resume 적용 없음 | S:966,2674;PB:play | - | V:S8;T:S8
+S19 | 배정 시험 카드 표시 | assignedTests 서버 projection의 status·이름·난이도 표시, 제출/채점 버튼 없음 | S:1864 | - | V:S4
+S20 | 시험 답지 열기 | 서버 answerUrl 권위; 휴대/태블릿은 같은 탭, desktop 새 탭/rel; 클라이언트 answer-map fallback 없음 | S:1831,1850 | - | V:S4;T:T4
+S21 | 제한/미연결 답지 버튼 | restricted 클릭은 학원망 안내, 답지 없는 항목은 disabled; URL 유출/새 fetch 없음 | S:1900 | - | V:S4;V:S5
+S22 | 숙제·교재 목록 보기 | bootstrap homeworkBooks/기존 log에서 읽기 전용 표시; public canonical 숙제 쓰기는 별도범위 | S:1662,1674 | - | V:S7(homework 일부)
+S23 | 자료 폴더·breadcrumb 이동 | 배정된 자료로만 로컬 tree 구성; 루트/상위/폴더 이동, mpath URL 보존 | S:2192,2313,2331,2423 | - | V:S5(폴더 이동 일부)
+S24 | 자료 폴더/전체 보기 전환 | matMode tree↔flat, mmode URL·aria-pressed 갱신; assignment 변경 없음 | S:2307,2444 | - | -
+S25 | 자료 검색 | matSearch input→현재 folder 또는 전체파일 검색; 한글 초성/영타/AND, tree와 flat의 검색 필드 차이 보존 | S:2403,2443 | - | -
+S26 | 자료 다운로드 | 배정된 file 링크 download 속성; academy 밖 자료 접근도 현행 계약대로 허용 | S:2372 | - | V:S5;T:F2
+S27 | 건의사항 보내기 | name/text를 POST /api/feedback; 성공 알림·입력 clear; 현행 then은 HTTP 상태를 따로 판정하지 않음 | S:2451;routes/api_basic.py:758 | - | -
+S28 | 학원 로그인 페이지 이동 | goLogin 클릭→https://5a-math.com/; public mode에서는 이 설정 숨김 | SH:378;S:1051 | - | S:S7(shell)
+S29 | 공지 초기 로딩·30초 visible poll | announcements/status 병렬·pending 공유·mutation 재조회; 공지 정책과 별개인 bootstrap을 대체하지 않음 | S:3409,3883,3889 | - | V:S6
+S30 | 학습 게시판/공지 목록 열기 | noticeBtn 및 요약 공지 버튼→목록 최신 조회 후 history modal; 로컬 web에서는 공지 목록만 | S:3726,2080 | - | V:S6(로드/state 일부)
+S31 | 목록 공지 선택 | data-ann-history-id click/Enter/Space→해당 공지 팝업; 목록 상태에서 읽음 강제 저장 없음 | S:3717,3740,3751 | - | V:S6
+S32 | 공지 목록 닫기 | 닫기 버튼·배경·Escape, inert 해제·이전 포커스 복원 | S:2884,3732,3736,3853 | - | S:S7(shell);V:S6(세션 일부)
+S33 | 공지 팝업 표시·미완료 순서 | 현재 공지 제목/본문/기간/이미지/설문/답장 표시; 완료 뒤 pending 다음 항목 | S:3307,3329 | B(답장 fixture) | V:S6
+S34 | 읽었습니다·배경 읽음 처리 | 필수 설문 미완료는 차단; POST /api/announce-ack 성공을 원래 항목에 기록하고 같은 세션만 닫기/다음 | S:3443,3860,3864 | B(읽음/reload) | V:S6;T:S7
+S35 | 공지 Escape 닫기 | history 또는 이미 완료된 자동 팝업만 Escape 허용; 미완료 필수 공지를 우회하지 않음 | S:3844 | - | V:S6(닫기 세션 일부);S:S7
+S36 | 공지 모달 키보드·포커스 | Tab/Shift+Tab trap, student-shell inert, open/close rAF focus 복원 | S:2814,2840 | - | S:S7(shell)
+S37 | 공지 이미지 버튼·키보드 전환 | prev/next/dot/ArrowLeft/ArrowRight, 카운터·ratio 갱신 | S:3181,3249,3771,3838 | - | V:S6(이미지 정규화만)
+S38 | 공지 이미지 제스처·이미지 실패 | pointer/mouse/touch swipe, 클릭 중복 차단, load/error 후 실제 slide/dot 정리 | S:3220,3283,3789 | - | -
+S39 | 설문 입력·필수 검증 | single/multiple/short/long, 필수 표시·focus invalid; 1회 제출은 readonly | S:3093,3497 | - | V:S6(정규화/short 중심)
+S40 | 설문 제출·추가 제출 | POST /api/announce-submit; allowMultiple draft 보존, item/session/650ms timer 소유권·실패 retry | S:3534 | - | V:S6;T:S7
+S41 | 답장·익명·Ctrl/Cmd+Enter | 빈 답장 차단, reply/anonymous freeze, POST /api/announce-submit, 3회 제한·원항목 저장·reload 반영 | S:3600,3875 | B(답장 저장/reload) | V:S6;T:S7
+
+/tests: 33개
+T01 | 카탈로그·통계 초기 표시 | GET tests-config+revision으로 목록 먼저, 0ms yield 후 include_wrong=0 통계; config/stat/detail 계약 분리 | T:1151 | N | V:T1;T:T4
+T02 | 다크 모드 | localStorage.theme/body.dark; 저장 API 없음 | TH:293 | - | S:T5
+T03 | 목록 분류 선택 | cfgType 4개 shell 선택, 상태/필터/선택 초기화; editor/state는 TRAINING_PACK도 존재 | T:1504;TH:65;CS:4 | - | V:T1(분류 projection)
+T04 | 목록 과목 선택 | cfgCur→subject·term/round/selection 초기화, 목록/편집/규칙 재렌더 | T:1522 | - | V:T1(과목 projection)
+T05 | 난이도 필터 | 난이도 선택→고사/회차/선택 초기화 후 표시 | T:1536 | - | V:T1
+T06 | 고사 필터 | 기출 분류에서만 cfgTermFilter, 선택 해제·reorder 제한 유지 | T:1574;CS:310 | - | V:T1
+T07 | 회차 필터 | UNIT/TRAINING의 cfgRoundFilter, 선택 해제·reorder 제한 유지 | T:1548;CS:310 | - | V:T1
+T08 | 목록 검색·검색 비우기 | input마다 목록 재렌더; 초성/영타/AND·source ID 포함, 좁혀진 목록에서는 순서 저장 차단 | T:1582;CS:286 | - | V:T1
+T09 | 시험 선택 | test-select-button→selectedId·전체 목록/편집 재렌더; readonly source 메타 유지 | T:475,741 | - | V:T1(편집 저장 경로 일부)
+T10 | 순서 위로 | 동일 그룹에서 원배열 슬롯/sortOrder 이동 후 revisioned 전체 POST; 경계·검색·저장 잠금 | T:483,728 | - | V:T1;T:T4
+T11 | 순서 아래로 | 동일 공통 순서 저장, 선택/버튼 focus·실패 rollback 유지 | T:483,728 | - | V:T1;T:T4
+T12 | 드래그 순서 변경 | handle drag/drop before/after; 그룹 밖 이동 금지, POST 성공·409 재조회·rollback | T:570,672 | - | V:T1;T:T4
+T13 | 새 시험 초안 | btnNewTest→20문항 editor draft; 저장 전 cat.tests에 넣지 않음 | T:1630 | - | S:T1(new handler)
+T14 | 편집 분류 전환 | editor cfgEditType는 5분류; 실제 이동은 Save PATCH에서, source/untouched tests 보존 | T:1556,1709 | - | V:T1(이동 경계 일부);T:T4
+T15 | 이름·과목·난이도·고사 편집 | editor dirty만 표시, Save 전 transport 없음; 고사 삭제는 term/examTerm clearFields | T:1492,1660 | - | V:T1;V:T2;T:T4
+T16 | 편집 회차 전환 | cfgRound→answer mode editor; 저장 시 해당 회차의 answers/modes만 merge | T:1566,1660 | - | V:T2
+T17 | 문항 수 편집 | cfgProblems input→문항별 mode slots; 저장 시 parsing/validation | T:1562 | - | V:T2(개수 projection)
+T18 | 정답 텍스트 편집 | 구분자 계약·round별 answerKey/answerKeys; compact는 단일 토큰+padding 의미 보존 | T:1668;CE:projectAnswerRound | - | V:T2;V:T1(실제 Save 일부)
+T19 | 문항별 답안 방식 | choice_number/answer_value/manual_review 등 option, summary·consistency 검증; OCR 활성화와 무관 | T:177,1570;CE:ANSWER_MODE_OPTIONS | - | V:T2;T:T4
+T20 | 개별 시험 저장 | revisioned PATCH tests-config/test; optimistic snapshot·409/428 재조회·일반 오류 rollback, unknown/source/다른 회차 유지 | T:1660,969 | - | V:T1;T:T4
+T21 | 시험 정의 삭제 | confirm 후 전체 POST __removedTestIds; 역사 응시 기록 유지, revision conflict 재조회 | T:1779,943 | - | T:T4;S:T1(클라이언트 삭제)
+T22 | CSV 양식 다운로드 | 로컬 BOM/CSV Blob→test_catalog_template.csv; 서버 변경 없음 | T:989 | - | V:T2(내용);S:T1(click)
+T23 | CSV 가져오기 | 로컬 file.text/aliases/rounds/validation→전체 POST 1회·config/stats reload·추가/갱신/건너뜀 알림 | T:1021,1604,1612 | - | V:T2(parser);T:T4(write);S:T1(file handler)
+T24 | 배정 기준 체크·자동 저장 | ruleGrid checkbox→350ms debounce·save queue/locks→revisioned 전체 POST; 실제 학생 자동 배정 자체를 실행하는 버튼 아님 | T:782,903,930,1804 | - | V:T1(경합/잠금);T:T4
+T25 | 통계 분류 카드 선택 | summary button→statsCategory·detail reset·해당 분류 테이블; 서버 쓰기 없음 | T:1218,1241 | - | V:T3(projection)
+T26 | 통계 기간 변경 | statRecent→GET tests-stats recent_days/include_wrong=0; version이 오래된 결과 무시 | T:1200,1813 | - | V:T3(projection);S:T1(transport)
+T27 | 통계 새로고침 | btnReloadStats는 stats-only GET; catalog draft를 reload하지 않음, mutation 중 잠금 | T:1809,1200 | - | S:T1;T:T4
+T28 | 통계 검색 | 검색 input→detail close/reset·rows 재투영/정렬/DOM; 한글 초성/영타/AND | T:1588 | - | V:T3
+T29 | 통계 정렬 | default/name/taken_desc/taken_asc/avg_desc/avg_asc/round; stable tie 의미 보존 | T:1597;SS:projectStatsRows | - | V:T3
+T30 | 통계 행 상세 팝업 열기 | row click→loading·GET tests-records test_id/recent_days; 최신 test/category/period/open version만 적용 | T:1304,1316,1398 | B(빈 기록) | V:T3;V:T6;T:T4
+T31 | 통계 상세 결과·틀린 답 펼치기 | metrics/역사 응시/오답 비교 details; 빈 기록·legacy 미비교 상태 표시, 기존 record 읽기 전용 | T:1332,1454 | - | V:T3(내용);V:T6(escaped HTML)
+T32 | 통계 상세 답지 링크 | detail API answerUrl만 anchor 제공; source metadata나 로컬 map을 직접 fallback하지 않음 | T:1465;SS:projectStatsDetail | - | V:T3;V:T6;T:T4
+T33 | 통계 상세 닫기 | 닫기 ×·backdrop·Escape, version 증가로 늦은 응답 취소 | T:1376,1385 | B | V:T6(close/late)
+
+/file-manage: 35개
+F01 | 파일 관리 초기 로딩 | tree/students/mat-assign 독립 GET 병렬; coherent 성공 전 배정 버튼 disabled·실패 무쓰기 | F:370,928 | N | V:F1;T:F2
+F02 | 새로고침 | assignment commit 대기·requestId 최신 결과만 적용, 전체 tree/list/필터/대상/담기 재렌더 | F:370,441 | - | V:F1
+F03 | 왼쪽 폴더 트리 이동 | tree-row click→CUR 변경·updateAll; 이동모드일 때는 대상 폴더로 commit | F:182,212 | - | -
+F04 | 중앙 폴더 열기 | folder dblclick/context open→CUR 변경·tree/list 재렌더; 파일 doubleclick 별도 handler 없음 | F:277,917 | - | -
+F05 | 이름 정렬 | thName 방향 toggle; DOM row 재배치, 현재 name/dir 판정 계약 보존 | F:326 | - | -
+F06 | 크기 정렬 | thSize→getNodeByPath(size) comparator·행 재배치 | F:326 | - | -
+F07 | 수정시각 정렬 | thMtime→getNodeByPath(mtime) comparator·행 재배치 | F:326 | - | -
+F08 | 체크박스·복수 선택 | 현재 목록 SELECTED/sel/checkbox 일치; drag/context 단일 선택 재설정 | F:263,287,307 | - | -
+F09 | 박스 선택 | 빈/비입력 영역 mousedown→mousemove rect 교차·mouseup 정리; modifier/스크롤 동작은 실제 QA 필요 | F:521 | - | V:F1(listener/box 1개만)
+F10 | 우클릭 메뉴·닫기 | 파일/폴더와 단일선택에 따라 open/download 표시; 외부 click/Escape close | F:863,897,508 | - | -
+F11 | 파일 열기·다운로드 | file anchor 또는 단일 context download→/files URL 새 탭; 배정 변경 없음 | F:262,918 | - | T:F2(file route만)
+F12 | 새 폴더 만들기 | newFolderName·btnMake/context newdir→POST fs/folder {path}→refresh | F:405,921 | - | T:F2
+F13 | 이름 변경 | 정확히 1개 선택·prompt→POST fs/rename {src,new_name}→refresh; segment-aware 자료 참조 이동 | F:412 | - | T:F2
+F14 | 이동 모드 시작 | btnMove/context move→선택 path 고정·destination toast; 아직 쓰기 없음 | F:159 | - | -
+F15 | 이동 대상 선택·루트 이동 | 트리/목록 폴더/mvRoot→POST fs/move {paths,dst}; 성공 후 종료+refresh | F:170,320,151 | - | T:F2
+F16 | 이동 취소 | mvCancel·Escape→이동 상태/토스트 정리, 서버 쓰기 없음 | F:165,512 | - | -
+F17 | 드래그로 폴더 이동 | 현재 selection을 application/x-paths로 드래그→왼쪽 tree drop→POST fs/move→refresh | F:198,287 | - | T:F2(서버만)
+F18 | 선택 파일·폴더 삭제 | confirm 뒤 POST fs/delete {paths}; 파일/metadata/assignment/page-folder transaction·오류/partial 결과 확인 필요 | F:422;routes/api_fs.py:344 | - | T:F2
+F19 | 파일 선택 업로드 | fileInput multiple→FormData dst/files POST fs/upload→refresh; picker/중복명·error rows는 실제 QA 필요 | F:428,448 | A(upload API/목록만) | T:F2
+F20 | 드롭 업로드 | drop-zone 파일 drag/drop→동일 uploadFiles; 실패 alert, 현재 CUR 대상 | F:454 | - | T:F2(서버만)
+F21 | 배정 모드 | modeAdd→add 패널/담은 목록 표시; 쓰기 없음 | F:645,487 | - | -
+F22 | 해제 모드 | modeRemove→현재 filter SID의 token union; 빈 대상은 전체 union | F:645,693 | - | -
+F23 | 배정 대상 커리 필터 | amCur→sub options/학생 목록/해제 union; 아직 assignment 저장 없음 | F:474,602 | - | V:F1(실행 대상 freeze 일부)
+F24 | 배정 대상 세부과정 필터 | amSub→학생 목록/union 갱신 | F:475,616 | - | V:F1(실행 대상 freeze 일부)
+F25 | 배정 대상 레벨 체크 | lvChk 여러 선택; 빈 레벨 '(빈값)' 지원; 0개 선택은 레벨 제한 없음 | F:581,611,480 | - | -
+F26 | 레벨 전체 선택 | amLvAll→모든 level 체크·학생 목록/union 갱신 | F:476 | - | -
+F27 | 배정 목록 담기 | 목록 drag→amMatList 또는 context pick; file URL/dir DIR:path 중복 억제·로컬 PICKED | F:465,655,924 | - | V:F1(PICKED freeze 일부)
+F28 | 담은 항목 하나 제거 | chip 삭제 버튼→PICKED splice·재렌더; 실제 파일 삭제 없음 | F:669 | - | -
+F29 | 담은 목록 비우기 | amPickClear→PICKED=[]·재렌더; 서버 배정은 유지 | F:491 | - | -
+F30 | 해제할 token 체크 | rmItem에 union token 원문 보존; 현재 선택만 로컬 변경 | F:693,733 | - | -
+F31 | 해제 목록 전체 선택 | rmAll→rmItem checked=true; 저장 없음 | F:494 | - | -
+F32 | 해제 목록 선택 비우기 | rmNone→checked=false; 배정 해제와 구분 | F:495 | - | -
+F33 | 배정 실행 | fresh GET revision→전체 POST If-Match; target 추가·비대상 같은 token 제거, filter 0명은 global cancel; 첫 await 전 item/대상 freeze | F:737,756 | - | V:F1;T:F2
+F34 | 해제 실행 | fresh snapshot→선택 SID 제거, 0명은 전원 제거; 409/428 재실행 안내·503 recovery block; 중복 저장 금지 | F:812,61 | - | T:F2;V:F1(공통 잠금)
+F35 | 관리·전체학생·영상관리 이동 | 정식 /admin·/students·/video-manage anchor; 이동 자체로 배정 저장 없음 | FH:187 | - | -
+
+/video-manage: 19개
+V01 | 영상 카탈로그 초기 표시 | GET /api/videos·X-Video-Providers로 capability; saved body/normal/correction controls 준비 | V:373 | N | V:V1(render);T:V3(GET)
+V02 | 목록 커리큘럼 필터 | curriculumFilter→drawVid, 원본 id 첫-index Map과 정렬 유지 | V:386,530 | - | V:V1
+V03 | 목록 세부과정 필터 | subCurriculumFilter→drawVid; 저장/신규입력의 subVidSel과 별도 | V:386,533 | - | V:V1
+V04 | 영상 검색·Escape 비우기 | input/search/compositionend→drawVid; 초성/영타/AND, id/title/url/mid/exNum 포함; Escape는 전체 재렌더 | V:406,520 | - | V:V1(결과);S:V2
+V05 | 신규 커리/세부과정 선택 | vCur change→subVidSel 옵션(A:Ble/APEX/기출엄선); 아직 catalog 쓰기 없음 | V:314,335 | - | S:S8
+V06 | 신규 영상 입력 | 챕터/제목/Kollus·YouTube URL/상·중·하 exNum 필드; DOM draft | VH:27;V:540 | - | S:V2
+V07 | 영상 추가 | 필수값/provider 지원/중복 YouTube 검증→안정 숫자 ID·row push/draw→800ms autosave | V:540,596 | - | V:V2(ID helper);V:S8;T:V3
+V08 | 챕터 셀 편집 | contenteditable blur→행 metadata 반영·autosave; id/기존 MID 고정 | V:445,472,86 | - | S:V2;T:V3
+V09 | 상·중·하 서술형 번호 편집 | exNum 세 셀을 동기화, 모두 빈 값이면 exNum 삭제; 저장은 정상 identity guard 통과 필요 | V:447,86 | - | S:V2;T:V3
+V10 | 제목 셀 편집 | blur→visible rows 전체 sync·autosave; unknown row metadata 유지 | V:450,472 | - | S:V2;T:V3
+V11 | URL 셀 편집 | 같은 Kollus MID의 signed URL/metadata 편집 가능; MID 변경은 정상 저장 복원+409, YouTube는 승인 provider 규칙 | V:104,451,236 | - | T:V3;V:S8;S:V2
+V12 | 행 삭제 × | 로컬 splice 후 autosave; 기존 saved ID 삭제는 정상 모드 보호·복원, 미저장 새 row는 별도 | V:460,269,236 | - | T:V3;S:V2
+V13 | 자동 저장 | blur/add/delete 800ms debounce, no-op body 억제·단일 in-flight/후속 mode, 성공/실패 토스트 | V:251,601 | - | S:V2
+V14 | 명시적 저장 | visible DOM sync→전체 POST /api/videos, no-op/guard·queued manual/auto 보존; 서버 성공을 saved body로 확정 | V:601 | - | T:V3;S:V2
+V15 | 수정 모드 켜기 | confirm·lastSaved clone 복원 후 normal Save disabled; in-flight 진입 차단·자동 POST 억제 | V:162 | - | V:V2(helper);S:V2
+V16 | 수정 모드의 추가·편집·삭제 | 동일 UI에서 로컬 draft+MID/삭제/신규/metadata 요약만; 서버 미반영 | V:153,251,601 | - | V:V2(helper);S:V2
+V17 | 수정안 다운로드 | versioned JSON Blob(baseVideos,nextVideos) 다운로드; full URL 포함, 브라우저 apply/localStorage 없음 | V:208 | - | V:V2(helper);S:V2;T:V4
+V18 | 수정 취소 | 변경 있으면 discard confirm→saved catalog 복원·일반모드/토스트; 서버 변동 없음 | V:191 | - | S:V2
+V19 | 관리자 화면 돌아가기 | /admin anchor; catalog 저장과 별도 navigation | VH:12 | - | -
+
+활성화하지 않은 상태/별도 경계: 12개
+X01 | default-OFF 집중 기록 | studentFocusStart/minimize/end/cancel/confirm·timer/visibility.
+      S:564에서 public mode만 init; core/student_app_config.py:219의 focus 기본값 false와
+      routes/api_student_focus.py:87의 public/flag gate. local web 활성 흐름으로 세지 않음.
+X02 | default-OFF 새 학생 OCR | student-test-ocr-launcher capabilities enabled+cameraOnly 뒤에만
+      버튼 추가. camera launch/token/capture/retake/teacher pending은 §21·D-09의 별도 rollout/
+      품질 검증. capability 읽기·flag 활성화·카메라/provider/worker 실행 없음.
+X03 | disabled 공통 시험 기록 상세 | shared/testRecordDetails.js:19의
+      TEST_RECORD_DETAILS_UI_ENABLED=false. /tests의 자체 statsDetailModal(T30~T33)은 활성이다.
+X04 | retired 학생 시험 제출/OCR | /student-test/<sid>, /api/submit-test, /api/ocr-test-sheet*.
+      retired-submission/assignment 검사로 부재 유지. 새 X02를 이 레거시와 합치거나 복원하지 않음.
+X05 | public 학생 앱 계정/설정 | mobile/auth/session·switch·logout, curriculum dropdown,
+      /app 복귀와 session rotation. S:31,1189,1221,1244의 public mode branch; 별도 App 범위.
+X06 | public 알림 환경설정/푸시 | schedule/homework/progress/announcement checkbox·retry,
+      revision 충돌 reload. S:1109,1140. preference 저장과 실제 push delivery는 별개;
+      permission/worker/delivery 활성화 없음. default flags는 실제 운영 상태 증거가 아니다.
+X07 | public canonical 숙제 | load/retry/deep-link·자료 및 제출 상태 서비스.
+      S:1795,2084와 student_app_config의 homework 기본 OFF. local homeworkBooks 읽기(S22)와 분리.
+X08 | public board | notice/video/all filter, 더 보기 cursor, board/deep-link 탐색, 영상 읽음/재생.
+      S:2942,3017,3378,3759. local S30/S31은 일반 공지 history이며 public board 전수 QA 아님.
+X09 | admin demo | tests/video shell의 admin/demo/bootstrap 선행 module은 조건부 synthetic API/
+      session/navigation sandbox. /demo/rh3123/*는 요청된 실제 관리 경로와 별개.
+X10 | 없는 shell hook | 영상 toggleVid·curSel/subCurSel/mCur와 root clearBtn은 해당 shell에
+      현재 DOM control 없음. JS 방어 hook을 활성 버튼으로 세거나 제거 제안하지 않음.
+X11 | 연결 화면/전체학생 | /admin, /students, /school-cal 및 all의 unified popup/.showProg dormant
+      legacy editor는 다섯 요청 표면 밖이다. 다른 담당의 admin coverage와 합산하지 않음.
+      실제 의도가 /students였다면 Hub가 별도 범위를 추가해야 하며 /의 의미를 몰래 바꾸지 않음.
+X12 | retired page-folders HTTP | /api/fs/page-folders GET/POST UI는 없음. internal page-folder
+      reference는 file/material transaction의 세 store 보존 계약으로 남아 있다.
+
+우선순위 계측·개선 후보: 9개 (P1 4, P2 4, P3 1)
+공통 상태: 전부 source 기반 미측정 후보. 실제 지연 재현/반증 후 수정 여부를 결정한다.
+기존 개선을 다시 하자는 제안이 아니며 backend 전체 리팩터링/새 framework/기능 활성화 제안도 아니다.
+
+C01 P1 /tests 검색·선택·필터의 반복 projection/전체 DOM 생성
+- action: T08 목록에 한글/영타/AND를 입력·지우기, T09 다른 시험 선택,
+  T03~T07 분류/과목/난이도/고사/회차 전환, T28 통계 검색.
+- evidence: tests.js:135는 getCategoryTests 호출마다 normalize map,
+  :145는 UNIT display-name resolver 재생성. :455→updateChrome(:434)→getVisibleTests,
+  fillEditor(:741)→updateChrome이 같은 action에서 투영을 다시 만든다.
+  :472는 목록 전체 innerHTML와 행별 선택/순서/drag listeners를 재생성한다.
+  :1582/:1588은 input마다 즉시 재렌더. 통계 :1263도 rows/listeners 전체 생성,
+  catalogStatisticsState.js:100은 빈 stats query에도 statsSearchText를 평가한다.
+- candidate: 한 render action 안의 normalized rows/resolver/visible 결과 재사용,
+  config revision·filter·stats generation이 바뀔 때만 무효화. 클릭 선택은 active row만
+  바꾸는 경로를 검토한다. IME input batching/이벤트 위임은 real trace가 비용을 보일 때만.
+  이미 완료된 빈 catalog 검색 생략을 다시 성과로 세지 않는다.
+- contract: 한국어 초성/영타/AND·ID/source/표시명, 정렬·동일 그룹 순서,
+  raw _catalogIndex/선택, 검색 중 reorder 차단·revision 잠금/rollback 보존.
+  stats arrival가 선택·editor draft를 덮지 않고 개별 PATCH와 전체 POST 의미가 유지돼야 한다.
+- measurement: synthetic 1,600/5,000 catalog, 한 과목 집중 fixture와 분산 fixture 둘 다.
+  input→정확한 결과 DOM→다음 paint, render/projection/resolver 호출 수·DOM 교체 수,
+  long task/메인 thread 시간을 before/after로 비교. 통계 empty/nonempty와 cold/warm 분리.
+- gates: T1/T2/T3/T4/T5/T6 + 실제 두 브라우저/한국어 IME/답지/저장 후 reload.
+
+C02 P1 /video-manage 비어 있지 않은 검색과 대량 렌더
+- action: V04 한글 조합·영타·AND/URL/MID 검색, compositionend/search/Escape, V02/V03 필터.
+- evidence: video-manage.js:406은 query가 있을 때 각 row마다 join/JSON.stringify(exNum)/
+  searchKeyForText; :428 이후 전체 정렬·innerHTML, :460/:472 각 버튼/셀 listener를 재생성.
+  :520~523은 input/search/compositionend 각각 drawVid를 호출한다.
+- candidate: saved/draft generation 기준 검색 key 재사용·관련 row 편집 시만 갱신,
+  동일 query/filter 연속 이벤트의 렌더 병합, DOM 삽입/이벤트 위임을 trace 이후 검토.
+  완료된 first-index Map과 빈 검색 최적화는 그대로 보존한다.
+- contract: filter 밖 행·unknown metadata·stable ID/원본 첫-index·챕터 순서 유지.
+  search 전후 수정 draft/blur/auto-save가 손실되지 않고 composition 중 focus가 유지돼야 한다.
+  normal 보호/correction no-POST/provider capability 규칙은 바꾸지 않는다.
+- measurement: synthetic 3,000/10,000 catalog, IME/fast typing/Escape 및 결과가 많거나 적은 검색.
+  input→결과 row/paint·draw 횟수·searchKey 호출 수·listener bind·long task를 계측.
+  기존 HTML-only 3.1ms와 실제 브라우저의 DOM/layout/paint를 구분.
+- gates: V1/V2/V3/V4/S8 + 실제 search→편집→저장→reload/correction regression.
+
+C03 P1 /video-manage 셀 blur의 전체 행 읽기·중복 동기화
+- action: V08~V11 한 셀만 수정 후 blur, 이어 다른 셀을 편집하고 800ms 자동 저장,
+  V14 명시 저장, V16 correction 입력과 요약 갱신.
+- evidence: :86 syncVisibleVideoRowsFromTable는 모든 visible row의 최대 8개 innerText와
+  URL/provider를 읽는다. :472 blur가 이를 수행하고 :601 save에서 다시 수행한다.
+  correction :153도 다시 sync 후 whole-catalog summary를 계산한다.
+  DOM row가 많은 경우 한 셀 편집 비용이 전체 목록 크기를 따른다.
+- candidate: 변경된 row의 동기화·dirty index를 먼저 검토하고, full sync/serialization은
+  명시 저장·export에서 필요한 contract를 확인해 최소화한다. DOM draft 유실 방지 우선.
+- contract: chapter coercion/빈 exNum 삭제/URL MID 보정·unknown fields 보존,
+  filtered hidden rows 미변경, 마지막 saved snapshot·no-op POST 억제,
+  in-flight 중 뒤의 edit/manual 우선 queue·실패 복원·normal identity 409·correction no-POST.
+- measurement: 50/3,000 visible row에서 한 셀 blur→feedback/main task,
+  sync 호출 수/DOM row·innerText 읽기 수/URL parse 수·stringify 시간,
+  실제 POST 수와 최종 payload/reload를 synthetic fixture로 확인.
+  800ms debounce 대기 자체와 실제 CPU/network/feedback 시간을 분리한다.
+- gates: V1/V2/V3/V4/S8. 현재 V2는 source guard가 많아 actual entrypoint의
+  blur→queued save/실패/correction VM 및 두 브라우저 측정이 보완돼야 한다.
+
+C04 P1 /file-manage 박스 선택의 mousemove layout/쓰기 반복
+- action: F09 100/1,000/5,000 행 위에서 박스 drag, scroll/resize/정렬 뒤 다시 선택.
+- evidence: file-manage.js:554 이후 매 mousemove에서 박스 style 쓰기 뒤 모든 tr의
+  getBoundingClientRect를 읽고 각 행 class/checkbox/SELECTED를 바꾼다.
+  rect 읽기와 style 쓰기를 교차하므로 frame/layout 비용의 후보다.
+  listener 누적은 이미 수정됐으며 F1의 querySelectorAll=[]은 실제 행 geometry를 검증하지 않는다.
+- candidate: 한 frame에 마지막 pointer 적용, 행/rect 읽기와 변경된 selection 쓰기 분리.
+  cached rect는 scroll/resize/목록 변경 시 무효화해야 한다. 이전 bug인 listener 누적 개선과 구분.
+- contract: input/anchor에서 drag 시작 금지, 선택 Set·class·checkbox 일치,
+  현재 modifier 동작·mouseup box cleanup, 이어지는 move/pick/delete의 정확한 path.
+- measurement: rAF frame 수·event 대비 처리 횟수·layout/read/write·long task·drag-to-paint;
+  선택된 실제 path/checkbox는 외부 literal rect oracle와 DOM으로 대조.
+- gates: F1/F2 + 실제 mouse/scroll/modifier/drag destination/삭제 없이 선택 확인.
+  기존 listener 1개 PASS만으로 hit-test PASS를 주장하지 않는다.
+
+C05 P2 /file-manage 폴더 이동·정렬의 불필요한 전체 트리/경로 탐색
+- action: F03/F04 큰 tree에서 형제/깊은 폴더 열기, F05~F07 이름/크기/mtime 정렬.
+- evidence: :363 updateAll은 단순 CUR 변경마다 renderTree(:182)로 모든 directory를 재생성,
+  renderList(:238)에서 SELECTED를 clear한다. :326 sort comparator가 size/mtime마다
+  :100 getNodeByPath의 segment/children.find를 반복한다.
+  서버 api_fs.py:75는 tree GET마다 os.walk와 모든 파일 stat을 수행한다.
+- candidate: tree snapshot generation 기준 path→node/정렬 key index, CUR selection만 변경,
+  comparator 밖에서 정렬 값 준비. 전체 tree GET의 I/O가 실제 bottleneck인지 먼저 분리.
+  외부 파일 변경/복구를 놓치는 TTL cache나 새 endpoint/pagination은 즉시 도입하지 않는다.
+- contract: 새 폴더·rename/move/delete/upload 후 fresh tree/material revision,
+  경로/한국어 이름·dir 우선/정렬 방향의 현행 의미, 폴더 이동 때 선택 clear,
+  이동모드 대상 클릭·refresh/save scope·journal/degraded reads 유지.
+- measurement: 1,000 directory/5,000 file synthetic tree의 클릭→CUR/list ready/paint,
+  rebuild node/bind 수·comparator lookup 수. refresh는 3GET 각각 response/body/parse와
+  DOM 비용을 분리하며 production files를 열어 fixture를 만들지 않는다.
+- gates: F1/F2 + 실제 tree/dblclick/context/sort/move-mode/refresh QA.
+
+C06 P2 /student 자료 검색·초기 중복 render
+- action: S23~S26 큰 배정 자료 folder/flat 전환·한글 검색·breadcrumb·다운로드.
+- evidence: student.js:2403은 tree query마다 key/filter/sort/DOM/crumb를 새로 만들고,
+  flat은 전체 walk와 path 조합/key/sort를 반복한다. :2445~2446의 setMode(state.mode),
+  setPath(state.curPath)는 같은 초기 자료 UI를 연속 두 번 render한다.
+- candidate: bootstrap-authorized immutable 자료의 folder/flat 정렬/search index 재사용,
+  초기 render 통합. public 자료 authorizer/배정 token을 클라이언트에서 확대하지 않는다.
+- contract: ID/URL/파일명 title precedence·UUID 표기 정리, tree와 flat의 검색 필드 차이,
+  한국어 초성/영타/AND, folder/crumb·mpath/mmode/hash, download 속성·academy 밖 자료 허용.
+  자료 캐시가 SID/session/curriculum 경계를 넘지 않아야 한다.
+- measurement: synthetic 100/1,000/5,000 배정 파일, folder와 flat 각각
+  input→정확한 path 결과/paint·key/walk/DOM/initial render 횟수.
+  S5가 하지 않는 search/flat/실제 file navigation을 보완.
+- gates: S1/S5 + 실제 두 브라우저/URL restore/외부망 허용 자료/제한 답지 혼합.
+
+C07 P2 /tests 대량 CSV import의 선형 lookup 누적·main thread 점유
+- action: T23 template 또는 multi-round CSV 1,000/5,000행 가져오기, 기존 ID update와 append 혼합.
+- evidence: :1021 file.text 뒤 parseCsv·rows.forEach·rounds.forEach를 동기 실행한다.
+  매 round :1002 findExistingTest는 ID tests.find 다음 normalized signature tests.find.
+  처리된 새 row로 catalog가 커지므로 전체 lookup 비용이 누적될 수 있다.
+  full POST·reload는 현재 writer 계약이며 parser pure PASS는 전체 import UI PASS가 아니다.
+- candidate: 동일 ID 우선/정규화 signature collision 순서를 보존하는 disposable index,
+  main thread chunk/yield는 저장 잠금과 마지막 1회 commit을 유지한 채 trace 이후 검토.
+  CSV 의미/implicit replacement/paired registration 정책을 성능 수정으로 바꾸지 않는다.
+- contract: header alias/BOM/quoted CSV, row sourceOrder, round sourceId/ID, unknown/sourceFiles/
+  solution link/untouched rounds 유지, 오류·건너뜀 counter, revision conflict 후 reload,
+  전역 rule/catalog locks·단일 POST. UNIT answer map/quick-printer 연결 gate는 관련 owner로 확인.
+- measurement: 파일 읽기→parse→merge→POST 전/후→reload ready를 구분,
+  lookup/normalize 수·long task·버튼 feedback·최종 config와 count를 독립 literal로 대조.
+  parser 결과를 자체 expected로 재사용하지 않고 synthetic sourceIds/answers 기대값 사용.
+- gates: T1/T2/T4 + 실제 picker/UTF-8·CRLF·escape·same-file retry/503/409와
+  student answer/material mapping QA. 다른 작업의 metadata 보존 수정은 새 개선으로 세지 않는다.
+
+C08 P2 /student 공지 목록 열기의 최초 feedback
+- action: S30 공지 버튼 또는 요약 shortcut을 느린 상태에서 누른 뒤 닫기/다시 열기.
+- evidence: student.js:3726은 await loadAnnouncements({showPopup:false})가 끝나야
+  openHistoryDialog를 호출한다. :3419/:3420 두 GET이 느리면 팝업 최초 표시도 기다린다.
+  pending 요청 공유와 reply/survey/ack session 안전성은 이미 구현됐다.
+- candidate: 클릭 직후 loading 상태의 history를 표시할지 측정 후 검토.
+  stale 내용 ready를 미리 표시하는 방식이나 기존 in-flight 공유 제거는 제안하지 않는다.
+- contract: fresh announcements/status 권위·poll/쓰기 mutation 재조회,
+  필수 설문/읽음 의미·reply/allowMultiple draft·inert/focus/return target,
+  사용자가 로딩 중 닫은 창을 늦은 완료가 다시 열지 않는 session 소유권.
+- measurement: 격리 synthetic GET 100/500/2,000ms 지연에서 click→첫 loading paint,
+  정확한 목록 ready/close focus와 요청 수를 따로 기록. native alert dismiss 시간 제외.
+- gates: S6/S7 + 실제 두 브라우저 30초 poll/close/reopen/late write/필수 설문 검증.
+  새 loading/close intent는 현재 oracle의 coverage 범위를 확인해 보완해야 한다.
+
+C09 P3 / 로그인 추천 보조 요청이 완료 문구·변경 팝업 종료에 미치는 영향
+- action: R02 로그인 성공, R05 커리 새로고침, R10 변경 저장의 성공 feedback.
+- evidence: auth.js:351은 추천을 위해 전체 /api/students GET; :432/:485/:541은
+  showRecommendation을 await한다. curris/로그인 UI는 이미 표시할 수 있지만
+  최종 성공 문구 또는 saveChange의 300ms close는 이 보조 작업 뒤에 온다.
+- candidate: 인증 단계의 최신 정책/재로그인 sequence 확정 후 최종 문구/닫기와 추천 로딩을
+  분리할 수 있는지 재판정. 로그인 요청 spinner 실패 방어/Basic TTL은 이미 완료다.
+  추천을 없애거나 허용 안 된 학생 API를 공개하는 제안이 아니다.
+- contract: 서버가 허용한 curris/SID만 전환, master/active token 역할·이전 token 정책,
+  현재 비밀번호 검증, 서버 실패 token 보존/401 종료, 추천 일정 우선순위/숨김 캐시 유지.
+- measurement: synthetic 로그인에서 auth response→curris ready→완료 문구/modal close→추천 ready,
+  /api/students의 status/body/parse 비용 분리; Authorization/body/password를 로그에 넣지 않음.
+- gates: 인증 담당의 최신 temp auth 검사+A1/A2, 성공·ID-only/PW-only/동시 변경·기존
+  session 회귀와 실제 허용된 synthetic login QA. 현재 source 판단만으로 성능 문제 확정하지 않음.
+
+낮은 우선순위/이번 새 개선 제외
+- 학생 복습 등록의 강제 1회 reload는 canonical §9의 승인된 동작이다. 성능을 이유로 제거하지 않는다.
+- watch polling/debounce/90%·manual 권위 또는 native player attach loop는 임의 변경하지 않는다.
+  일반 배정 수는 작고 native 측정이 없으므로 주기적 배지의 Map 개선을 근거 없이 우선순위에 넣지 않는다.
+- stats의 모든 record를 client에 미리 가져오거나 tests detail answer fallback을 추가하지 않는다.
+- file refresh 학생 GET 생략/assignment revision 캐시는 coherent/fresh 저장 계약을 먼저 검증해야 한다.
+- auth/backend/fan-out, public App/PWA/OCR/default-OFF 활성화나 retired UI 재도입은 이 후보의 범위가 아니다.
+
+Coverage gap과 Hub의 실제 QA 순서
+1) 정상 표면 전수 141행의 사용자 action·예상 DOM/저장 state를 inventory로 확인.
+   읽기 전용/로컬 storage 동작은 실제 서버 POST가 없음을 확인하고, mutator는 synthetic
+   격리 데이터에서만 수행. 같은 handler alias도 버튼/키보드/메뉴의 실제 연결은 확인한다.
+2) R: 성공 login·autoLogin·추천/숨김·select/switch·change open/close 및 성공 변경/logout/
+   cross-tab이 부족하다. A1은 실패 위주다. phase 1 인증 정책 완료 뒤 synthetic 계정으로
+   id-only/pw-only/both·old JWT/재로그인 결과와 페이지 reload를 확인해야 한다.
+3) S: settings/dark/anchors, review open/select/register/unregister, player·외부 제한·answer
+   link/disable, 자료 search/flat/crumb/download와 feedback 성공/HTTP 실패가 부족하다.
+   공지는 short만으로 four input types·allowMultiple/readonly·reply anonymous/limit·keyboard/
+   image 1장/다장/오류·swipe·Tab/inert·list close/late fetch를 검증했다고 할 수 없다.
+   S27은 source에서 HTTP non-2xx도 then 성공 메시지로 갈 수 있는 형태다.
+   성능 pass 전에 503 fixture의 표시/입력 보존 결과를 별도로 확인한다.
+4) T: 실제 CSV 파일 선택·양식 다운로드·다중 round import, 새 draft/편집/Save/delete,
+   rules autosave·reload, 순서 drag/상하/검색 제한, stats period/search/sort/nonempty
+   history/wrong-details/answer link는 browser gap이다. 기존 실제 stats는 빈 기록이었다.
+   cfgType shell 4개와 editor/state TRAINING_PACK 5분류의 표시 차이를 QA에 포함하며
+   승인 없이 종류/정본 규칙을 바꾸지 않는다.
+5) F: initial/upload API의 기록만으로 refresh, checkbox/box geometry·context·sort,
+   create/rename/move-root/cancel/drag/delete·picker/drop upload, level/filter/PICKED,
+   add/remove/global-zero·409/428/503의 실제 button/DOM/reload를 PASS로 세지 않는다.
+   F1은 주요 rendering을 stub한다. 파일 upload/delete API는 HTTP 성공에도 per-item
+   error 정보를 줄 수 있어 actual UI 결과와 원하는 파일/참조 상태를 확인해야 한다.
+6) V: 기존 HTML benchmark는 실제 cell edit/focus/IME/blur/autosave/queued save·실패·
+   selected filter/검색 이후 draft·stable ID/MID 거부·신규 row·YouTube capability·
+   correction enter/edit/download/cancel 버튼 전수 증거가 아니다. correction draft는
+   full URL을 포함하므로 확인용 산출물은 local QA로만 다루고 Git에 넣지 않는다.
+7) native Kollus/academy playback, callback 실제 외부 delivery, public App/PWA/푸시/OCR은
+   loopback 8004에서 guard를 약화해 시험하지 않는다. D-10의 accepted evidence omission은
+   native player PASS가 아니다. 별도 승인 QA 배포/기존 scoped 예외로 Hub가 판정한다.
+8) focused verifier가 없는 34행:
+   R03,R06,R08,R09,R11,R12,R13;
+   S03,S04,S05,S24,S25,S27,S38;
+   F03,F04,F05,F06,F07,F08,F10,F14,F16,F21,F22,F25,F26,F28,F29,F30,F31,F32,F35;
+   V19.
+   source-only 10행과 partial V/T도 실제 UI gap을 별도로 보완해야 한다.
+
+계측 방법과 완료 조건 (Hub 실행 계획, 이 조사에서 실행하지 않음)
+- source freeze/인증 변경의 최종 revision을 기록하고 동일 fixture·브라우저·viewport·CPU 조건으로
+  before/after를 비교한다. fixture는 운영 roster/catalog/runtime을 복사하지 않은 synthetic 데이터.
+- 전수 정상 동작/관련 오류는 기능별 기록, 반복 지연 측정은 C01~C09 비용 중심으로 우선.
+  반복 표에는 warm-up 5회와 본 측정 30회 등 실제 sample 수를 명시하고 p50/p95를 계산.
+  cold/TTL-expired 인증/첫 import/cache warm을 섞지 않으며 작은 sample은 참고값으로만 표기.
+- 타임라인: document responseEnd/DOMContentLoaded/FCP, action 시작,
+  최초 loading/lock paint, 정확한 대상/내용 data-ready, POST 서버 성공 응답,
+  권위 GET·reload 유지, close/포커스 복원을 각각 기록한다.
+  request start/end/수·body 크기·parse/projection/DOM/layout/paint와 long task를 분리.
+  server commit은 브라우저 메시지만으로 증명하지 않고 isolated 권위 응답/유지 결과로 확인한다.
+- 브라우저의 Performance/Event Timing 또는 observer를 쓰되 full credentials/SID 실명/
+  signed URL/password/auth header는 기록하지 않는다. synthetic ID/title/count만 저장한다.
+  observer/network throttle/viewport/offline 주입은 확인 뒤 Hub가 복원한다.
+- 결과 동일성: 원문 ID·경로·순서·선택/초성/영타/IME·untouched/unknown 값,
+  revision/clearFields/status 코드·no-op/실패 무쓰기와 after-reload 값.
+  기능을 생략하거나 의미/저장 계약을 바꿔 얻은 지연 감소는 승인된 성능 개선으로 세지 않는다.
+- rendered 검증은 관리형 loopback 8004에서 Chrome+IAB 두 브라우저, desktop/mobile와
+  필요하면 기존 2560/1280/390 폭으로 수행. 생산 관리자 페이지는 Chrome 지원만 적용한다.
+- lifecycle은 Hub가 Status→필요시 Start/Refresh/Start -Restart로 관리.
+  backend 변경에 plain Refresh로 재로드했다고 표시하지 않는다.
+  start/restart 뒤 managed true/HTTP200·단일 loopback listener·8003 ping/public app 유지,
+  Refresh 뒤 양쪽 서버+변경 페이지 gate. shared/소유 불명 QA 서버는 임의 종료하지 않는다.
+- 변경 후 해당 focused oracle와 기본 verify_refactor_safety full non-smoke suite,
+  compile/syntax 및 실제 UI gate는 별도 기록. targeted 모드가 전체 suite를 대체하지 않는다.
+  report-only 현재 작업에는 app import/compile/full suite/서버 smoke를 억지로 실행하지 않는다.
+- assignment/log/progress와 연결되는 변경이면 두 log endpoint와 manual green→none/white
+  저장·reload·watch 이후 유지 browser 계약을 적용한다. 이때 GET의 runtime 부작용을
+  고려하며 production log GET smoke는 opt-in/maintenance backup 규칙을 우회하지 않는다.
+- 단계 3 완료 = 계측 후보의 재현/반증·필요한 최소 변경·전수 대상의 실제 결과 및 지연 범위 명시.
+  단계 2 완료 = 해당 source freeze의 격리 전체 검증/회귀·health/ownership 기록.
+  단계 4 운영 반영·운영 전체 UI 검증·Git 등록은 Hub의 승인 범위와 사용자 순서를 따라 따로 기록.
+
+보고서 자체 검증/인계
+보고서 전용 read-only 검사 PASS: UTF-8 strict decode·replacement text 없음,
+R01~R13/S01~S41/T01~T33/F01~F35/V01~V19 총 141 unique 행,
+X01~X12 12개, C01~C09 9개(P1 4/P2 4/P3 1), 참조 파일 79개 존재,
+숫자 source locator 155개 line 범위 정상, 아래 주요 source hash 15개 변경 없음.
+QA/gate 집계는 실제 inventory 행에서 독립적으로 다시 계산해 위 수치와 일치했다.
+이 PASS는 보고서 정합성에 한정하며 application/full suite/브라우저/운영 PASS가 아니다.
+
+최종 Git 관찰: staged 0 / unstaged 155 / untracked 61. 최초는 0/152/58.
+본 작업은 이 report 신규 1개만 작성했다. 동시에 새 dirty로 관찰된
+core/student_account_repository.py, core/student_app_auth_store.py,
+scripts/verify_auth_secret_safety.py 및 새 docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt,
+scripts/verify_legacy_auth_policy.py는 본 task의 편집이 아니다.
+기존 source/Git index·staging/commit/push·runtime/server/browser는 본 task에서 변경하지 않았다.
+운영 store hash 비교는 실행하지 않았으므로 운영 byte 불변 검증을 했다고 말하지 않는다.
+하위 agent/타 채팅 메시지 없음. Hub가 단계 1의 최신 인증 정책·source freeze와 통합해 사용한다.
+
+쓰기 기록: apply_patch가 동일 지정 경로에서 일반 write 오류를 반환했다.
+ACL 쓰기 허용을 read-only로 확인하고 명시적 권한 거부/auto-review 거부가 없는 상태에서,
+같은 지정 파일에만 CreateNew/UTF-8 일반 파일 I/O를 사용했다. 기존 파일 overwrite,
+다른 경로/권한 변경/우회·추가 산출물은 없으며 아래 검증으로 완전 저장을 확인했다.
+
+주요 source SHA-256 (조사 시 snapshot; 아래 값은 운영 rollout/브라우저 snapshot hash가 아님)
+static/index.html ffbc2ef608e8f6ed4dcf2650d6017979681dbd436e1fd4fe934fa8e2282d9f0e
+static/student.html 14c67c719176e1ccc589e2947d9dbf3fe2ec778dd20aa3822abb0e1d34e79b3a
+static/tests.html 3854fa605ef899c39bb9d8fd910a5f8089c40e21902469e32334267270a08332
+static/file-manage.html 104b7fdb91095c3ca4d69314e7f841b4ec8a9cc643a5cf5d1754e407f903cc96
+static/video-manage.html e7b1d08805ccb8c36221987b2d48faf52184d952284da4cd325480e49154ac2b
+static/js/auth.js 033ab14c7c5dfe0beb260a6d337653014e7d3eb9e2587829bc24a1fb8abe4862
+static/js/student.js 9de1f5b982f491f2ff2cb33ebd2f638a080ffb100365610f4be170ff5efa688d
+static/js/tests.js 14e2186e5cca39993c9c6e797e70ff9b0eb63e954989b0866a2f524d6274cb27
+static/js/file-manage.js 847b873372fe6a9a2bf24c37f6c3400597f90f54d96db2fae9f529e3f6db53b8
+static/js/video-manage.js 3498c22eeb2aebc9c15f9a5de59110ea281ea013def526a653ce60d2e7491858
+static/js/tests/catalogState.js 79a4bea12c7627b418acab74fef4d0be506b0c8a23e61dc17460ef789317a922
+static/js/tests/catalogStatisticsState.js 6706487343761cea1c559f0ae4eb490fc2aa6afc51eee404b2906276a79096f6
+routes/pages.py b7f68f2b46eb81c9097ddceb878401a40b885f2b16206f4a8fbf4a0bcfed826c
+routes/api_fs.py 4396e240fcac8cbaa20e75b9ff975f3d76d42d146bfd05125043ae8fa63d408d
+routes/api_videos.py 7d623b6b5c2deee615967c51d4cc53e9fe5de0fd9bdbf80518b4a7acdf2b2555

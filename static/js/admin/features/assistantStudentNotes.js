@@ -10,6 +10,65 @@ const AUTHOR_LABELS = {
   하영: '하영',
 };
 
+function escapeMarkup(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+export function assistantStudentNotesTemplate({ studentId = '', nextReminderDate = '', existingReadOnly = false } = {}) {
+  return `
+    <section id="assistantStudentNotes" class="assistant-student-notes"
+             data-student-id="${escapeMarkup(studentId)}"
+             data-next-reminder-date="${escapeMarkup(nextReminderDate)}"
+             data-existing-read-only="${existingReadOnly ? 'true' : 'false'}"
+             data-note-mode="general">
+      <div class="assistant-note-heading">
+        <h3>조교 메모</h3>
+        <div class="assistant-note-heading-actions" aria-label="조교 메모 창 작업">
+          <button type="button" class="assistant-note-heading-button assistant-note-save-close" data-note-save-close>저장</button>
+          <button type="button" class="assistant-note-heading-button assistant-note-close" data-note-close>닫기</button>
+        </div>
+      </div>
+      <div class="assistant-note-thread" data-note-list role="log" aria-label="조교 댓글 목록" aria-live="polite">
+        <p class="assistant-note-empty">불러오는 중...</p>
+      </div>
+      <div class="assistant-note-compose">
+        <div class="assistant-note-mode-tabs" role="tablist" aria-label="메모 종류">
+          <button type="button" class="assistant-note-mode-button is-selected" data-note-mode="general" role="tab" aria-selected="true">일반 메모</button>
+          <button type="button" class="assistant-note-mode-button" data-note-mode="reminder" role="tab" aria-selected="false">확인일 메모</button>
+        </div>
+        <div class="assistant-note-author-row" role="group" aria-label="댓글 작성자 선택">
+          <div class="assistant-note-author-buttons">
+            <button type="button" data-note-author="귤" aria-pressed="false">규리</button>
+            <button type="button" data-note-author="세빈" aria-pressed="false">세빈</button>
+            <button type="button" data-note-author="동훈" aria-pressed="false">동훈</button>
+            <button type="button" data-note-author="하영" aria-pressed="false">하영</button>
+          </div>
+        </div>
+        <div class="assistant-note-compose-reminder" data-note-reminder-fields hidden>
+          <label class="assistant-note-compose-reminder-label">
+            <span>확인일</span>
+            <input class="assistant-note-remind-input" data-note-remind-input type="date" aria-label="확인일">
+          </label>
+        </div>
+        <textarea class="assistant-note-input" data-note-input rows="3" maxlength="5000" placeholder="작성자를 선택한 뒤 새 댓글을 입력하세요."></textarea>
+        <div class="assistant-note-compose-actions">
+          <div class="assistant-note-save-info">
+            <span class="assistant-note-status is-loading" data-note-status role="status" aria-live="polite">불러오는 중...</span>
+          </div>
+          <button class="assistant-note-save" data-note-save type="button">댓글 등록</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+globalThis.assistantStudentNotesTemplate = assistantStudentNotesTemplate;
+
 function formatNoteDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || '');
@@ -67,7 +126,7 @@ function setNoteMode(root, mode, remindInput = null) {
     if (defaultDate) remindInput.value = defaultDate;
   }
 }
-function setComposerDisabled(input, saveButton, authorButtons, disabled, reminderInput = null, modeButtons = []) {
+function setComposerDisabled(input, saveButton, authorButtons, disabled, reminderInput = null, modeButtons = [], extraButtons = []) {
   input.disabled = disabled;
   saveButton.disabled = disabled;
   authorButtons.forEach((button) => {
@@ -76,6 +135,9 @@ function setComposerDisabled(input, saveButton, authorButtons, disabled, reminde
   if (reminderInput) reminderInput.disabled = disabled;
   modeButtons.forEach((button) => {
     button.disabled = disabled;
+  });
+  extraButtons.forEach((button) => {
+    if (button) button.disabled = disabled;
   });
 }
 
@@ -130,12 +192,10 @@ function getReminderInfo(note, today = localDateKey()) {
   const writtenOn = formatNoteDay(note?.created_at || note?.updated_at);
   const targetDate = formatReminderDate(remindOn);
   return {
-    date: remindOn,
     state,
     prefix,
     writtenOn,
     targetDate,
-    label: `[${prefix}] ${writtenOn ? `${writtenOn} \u2192 ` : ''}${targetDate}`,
   };
 }
 
@@ -146,6 +206,19 @@ function reminderRank(note, today) {
   if (info.state === 'upcoming') return 1;
   return 3;
 }
+
+function noteCreatedTimestamp(note) {
+  const raw = String(note?.created_at || note?.updated_at || '').trim();
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareNewestNoteFirst(left, right) {
+  const timeDiff = noteCreatedTimestamp(right) - noteCreatedTimestamp(left);
+  if (timeDiff) return timeDiff;
+  return Number(right?.id || 0) - Number(left?.id || 0);
+}
+
 function renderNotes(
   root,
   notes,
@@ -155,14 +228,13 @@ function renderNotes(
     onDelete = null,
     onTogglePin = null,
     onEdit = null,
+    pinFeedbackNoteId = null,
   } = {},
 ) {
   const list = root.querySelector('[data-note-list]');
-  const count = root.querySelector('[data-note-count]');
-  if (!list || !count) return;
+  if (!list) return;
 
   list.replaceChildren();
-  count.textContent = `댓글 ${notes.length}개`;
 
   if (!notes.length) {
     const empty = document.createElement('p');
@@ -173,11 +245,7 @@ function renderNotes(
   }
 
   const today = localDateKey();
-  const chronological = notes.slice().reverse();
-  const displayNotes = [
-    ...chronological.filter((note) => isNotePinned(note)),
-    ...chronological.filter((note) => !isNotePinned(note)),
-  ].sort((left, right) => {
+  const displayNotes = notes.slice().sort((left, right) => {
     const leftReminderRank = reminderRank(left, today);
     const rightReminderRank = reminderRank(right, today);
     const leftDue = leftReminderRank === 0;
@@ -190,7 +258,7 @@ function renderNotes(
     const leftDate = normalizeRemindOn(left.remind_on);
     const rightDate = normalizeRemindOn(right.remind_on);
     if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
-    return 0;
+    return compareNewestNoteFirst(left, right);
   });
 
   displayNotes.forEach((note) => {
@@ -203,6 +271,11 @@ function renderNotes(
     article.dataset.notePinned = pinned ? 'true' : 'false';
     article.classList.toggle('is-pinned', pinned);
     article.classList.toggle('has-reminder', Boolean(reminderInfo));
+    article.classList.toggle(
+      'is-pin-feedback',
+      String(pinFeedbackNoteId ?? '') !== ''
+        && String(pinFeedbackNoteId) === String(note.id || ''),
+    );
     if (AUTHORS.includes(author)) article.dataset.noteAuthor = author;
 
     const header = document.createElement('div');
@@ -216,6 +289,7 @@ function renderNotes(
     const pinButton = document.createElement('button');
     pinButton.type = 'button';
     pinButton.className = 'assistant-note-pin';
+    pinButton.disabled = root.dataset.existingReadOnly === 'true';
     pinButton.dataset.notePin = String(note.id || '');
     pinButton.setAttribute('aria-pressed', pinned ? 'true' : 'false');
     pinButton.setAttribute('aria-label', pinned ? `${authorLabel} 메모 고정 해제` : `${authorLabel} 메모 고정`);
@@ -242,6 +316,7 @@ function renderNotes(
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
     deleteButton.className = 'assistant-note-delete';
+    deleteButton.disabled = root.dataset.existingReadOnly === 'true';
     deleteButton.dataset.noteDelete = String(note.id || '');
     deleteButton.setAttribute('aria-label', `${authorLabel} 댓글 삭제`);
     deleteButton.title = '댓글 삭제';
@@ -251,6 +326,7 @@ function renderNotes(
     const editButton = document.createElement('button');
     editButton.type = 'button';
     editButton.className = 'assistant-note-edit';
+    editButton.disabled = root.dataset.existingReadOnly === 'true';
     editButton.dataset.noteEdit = String(note.id || '');
     editButton.setAttribute('aria-label', `${authorLabel} \uB313\uAE00 \uC218\uC815`);
     editButton.title = '\uB313\uAE00 \uC218\uC815';
@@ -259,8 +335,7 @@ function renderNotes(
 
     const actionGroup = document.createElement('div');
     actionGroup.className = 'assistant-note-action-group';
-    if (reminderInfo) actionGroup.append(deleteButton, editButton);
-    else actionGroup.append(editButton, deleteButton);
+    actionGroup.append(editButton, deleteButton);
 
     const meta = document.createElement('div');
     meta.className = 'assistant-note-item-meta';
@@ -294,10 +369,13 @@ function renderNotes(
       targetDate.textContent = reminderInfo.targetDate;
       reminderDates.append(writtenDate, arrow, targetDate);
       reminderInfoRow.append(reminderBadge, reminderDates);
+      authorGroup.append(reminderInfoRow);
 
-      header.classList.add('is-reminder');
-      header.append(reminderInfoRow, actionGroup);
-      article.append(header, authorGroup, content);
+      const reminderBody = document.createElement('div');
+      reminderBody.className = 'assistant-note-reminder-body is-stacked';
+      reminderBody.append(authorGroup, content, actionGroup);
+
+      article.append(reminderBody);
     } else {
       header.append(authorGroup, meta);
       article.append(header, content);
@@ -310,27 +388,17 @@ function renderNotes(
       if (list.isConnected) list.scrollTop = Number(scrollTop);
     });
   } else if (scrollToLatest) {
-    const hasCurrentOrUpcomingReminder = displayNotes.some((note) => {
-      const remindOn = normalizeRemindOn(note.remind_on);
-      return remindOn && remindOn >= today;
-    });
     requestAnimationFrame(() => {
       if (!list.isConnected) return;
-      if (hasCurrentOrUpcomingReminder) {
-        list.scrollTop = 0;
-      } else {
-        list.scrollTop = list.scrollHeight;
-      }
+      list.scrollTop = 0;
     });
   }
 }
 
 function renderLoadError(root) {
   const list = root.querySelector('[data-note-list]');
-  const count = root.querySelector('[data-note-count]');
-  if (!list || !count) return;
+  if (!list) return;
   list.replaceChildren();
-  count.textContent = '불러오기 실패';
   const message = document.createElement('p');
   message.className = 'assistant-note-empty is-error';
   message.textContent = '댓글을 불러오지 못했습니다.';
@@ -343,6 +411,8 @@ async function mountMemo(root, studentId) {
   root.dataset.mountKey = mountKey;
   const input = root.querySelector('[data-note-input]');
   const saveButton = root.querySelector('[data-note-save]');
+  const saveCloseButton = root.querySelector('[data-note-save-close]');
+  const closeButton = root.querySelector('[data-note-close]');
   const authorButtons = [...root.querySelectorAll('[data-note-author]')];
   const modeButtons = [...root.querySelectorAll('[data-note-mode]')];
   const remindInput = root.querySelector('[data-note-remind-input]');
@@ -350,10 +420,16 @@ async function mountMemo(root, studentId) {
   let selectedAuthor = '';
   let selectedMode = 'general';
 
-  if (!input || !saveButton || authorButtons.length !== AUTHORS.length) return;
+  if (!input || !saveButton || !saveCloseButton || !closeButton || authorButtons.length !== AUTHORS.length) return;
   setNoteMode(root, selectedMode, remindInput);
-  setComposerDisabled(input, saveButton, authorButtons, true, remindInput, modeButtons);
+  setComposerDisabled(input, saveButton, authorButtons, true, remindInput, modeButtons, [saveCloseButton]);
   const isCurrent = () => root.isConnected && root.dataset.mountKey === mountKey;
+  const requestClose = ({ saveAll = false } = {}) => {
+    root.dispatchEvent(new CustomEvent('admin:assistant-notes-close', {
+      bubbles: true,
+      detail: { saveAll },
+    }));
+  };
 
   const deleteNote = async (note, deleteButton) => {
     const noteId = Number(note?.id);
@@ -400,6 +476,7 @@ async function mountMemo(root, studentId) {
         onDelete: deleteNote,
         onTogglePin: togglePin,
         onEdit: editNote,
+        pinFeedbackNoteId: noteId,
       });
       setStatus(root, nextPinned ? '메모를 고정했습니다.' : '메모 고정을 해제했습니다.', 'success');
     } catch (error) {
@@ -417,6 +494,8 @@ async function mountMemo(root, studentId) {
     const article = editButton?.closest?.('.assistant-note-item');
     const content = article?.querySelector('.assistant-note-item-content');
     if (!article || !content || article.querySelector('.assistant-note-edit-input')) return;
+    const reminderBody = article.querySelector('.assistant-note-reminder-body');
+    reminderBody?.classList.add('is-stacked');
 
     const editor = document.createElement('textarea');
     editor.className = 'assistant-note-edit-input';
@@ -526,22 +605,22 @@ async function mountMemo(root, studentId) {
     });
   });
 
-  saveButton.addEventListener('click', async () => {
+  const saveNote = async ({ closeAfter = false } = {}) => {
     const content = input.value.trim();
     if (!AUTHORS.includes(selectedAuthor)) {
       setStatus(root, '작성자를 선택해 주세요.', 'error');
       authorButtons[0].focus();
-      return;
+      return false;
     }
     if (!content) {
       setStatus(root, '댓글 내용을 입력해 주세요.', 'error');
       input.focus();
-      return;
+      return false;
     }
     if (content.length > MAX_NOTE_LENGTH) {
       setStatus(root, '댓글은 5,000자까지 등록할 수 있습니다.', 'error');
       input.focus();
-      return;
+      return false;
     }
 
     const remindOn = selectedMode === 'reminder'
@@ -551,11 +630,12 @@ async function mountMemo(root, studentId) {
       setStatus(root, '\uD655\uC778\uC77C\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.', 'error');
       setNoteMode(root, selectedMode, remindInput);
       remindInput?.focus();
-      return;
+      return false;
     }
 
-    setComposerDisabled(input, saveButton, authorButtons, true, remindInput, modeButtons);
+    setComposerDisabled(input, saveButton, authorButtons, true, remindInput, modeButtons, [saveCloseButton]);
     setStatus(root, '댓글 등록 중...', 'saving');
+    let saved = false;
     try {
       const data = await sendRequest('/api/assistant-student-notes', 'POST', {
         student_id: studentId,
@@ -563,7 +643,7 @@ async function mountMemo(root, studentId) {
         author: selectedAuthor,
         remind_on: remindOn,
       });
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       notes = [data.note, ...notes.filter((note) => note.id !== data.note?.id)];
       renderNotes(root, notes, { onDelete: deleteNote, onTogglePin: togglePin, onEdit: editNote });
       input.value = '';
@@ -572,14 +652,32 @@ async function mountMemo(root, studentId) {
       selectedAuthor = '';
       setSelectedAuthor(root, '');
       setStatus(root, '새 댓글이 등록되었습니다.', 'success');
+      saved = true;
     } catch (error) {
       if (isCurrent()) setStatus(root, '댓글 등록 실패. 다시 시도해 주세요.', 'error');
     } finally {
       if (isCurrent()) {
-        setComposerDisabled(input, saveButton, authorButtons, false, remindInput, modeButtons);
+        setComposerDisabled(input, saveButton, authorButtons, false, remindInput, modeButtons, [saveCloseButton]);
       }
     }
+    if (saved && closeAfter && isCurrent()) requestClose({ saveAll: true });
+    return saved;
+  };
+
+  saveButton.addEventListener('click', async () => {
+    await saveNote();
   });
+  saveCloseButton.addEventListener('click', async () => {
+    const hasDraft = Boolean(
+      String(input.value || '').trim() || String(selectedAuthor || '').trim(),
+    );
+    if (!hasDraft) {
+      requestClose({ saveAll: true });
+      return;
+    }
+    await saveNote({ closeAfter: true });
+  });
+  closeButton.addEventListener('click', requestClose);
 
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return;
@@ -601,7 +699,7 @@ async function mountMemo(root, studentId) {
     selectedAuthor = '';
     setSelectedAuthor(root, '');
     setStatus(root, '');
-    setComposerDisabled(input, saveButton, authorButtons, false, remindInput, modeButtons);
+    setComposerDisabled(input, saveButton, authorButtons, false, remindInput, modeButtons, [saveCloseButton]);
   } catch (error) {
     if (!isCurrent()) return;
     renderLoadError(root);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import uuid
@@ -22,6 +23,7 @@ WAITRESS_RUNNER = ROOT / "scripts" / "run_waitress_server.ps1"
 DOC = ROOT / "docs" / "student-mobile-app-deploy.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "refactor-safety.yml"
 POWERSHELL = "powershell.exe"
+RUNTIME_ISOLATION: Final = "temporary fixtures and dry-run subprocesses only"
 
 
 def _check(state: list[int], condition: bool, message: str) -> None:
@@ -123,7 +125,10 @@ def _verify_args(paths: dict[str, Path], phase: str = "Preflight") -> list[str]:
 def _backup_contract(state: list[int], temp_root: Path) -> None:
     runtime = temp_root / "runtime"
     _write(runtime / "auth_accounts.json", "{}")
-    _write(runtime / "app.sqlite", "db")
+    con = sqlite3.connect(runtime / "app.sqlite")
+    con.execute("CREATE TABLE backup_fixture (id INTEGER)")
+    con.commit()
+    con.close()
     _write(runtime / "instance" / "student-app-vapid-private.pem", "secret")
     _write(runtime / "instance" / "student-app-vapid-private.pem.tmp", "secret-sidecar")
     _write(runtime / "instance" / "student-app-vapid-public.txt", "public")
@@ -236,7 +241,12 @@ def run_portable_checks() -> dict[str, object]:
     _static_contract(state)
     with tempfile.TemporaryDirectory(prefix="student-app-deploy-portable-") as directory:
         _backup_contract(state, Path(directory))
-    return {"name": "deployment-portable", "assertions": state[0], "passed": True}
+    return {
+        "name": "deployment-portable",
+        "assertions": state[0],
+        "passed": True,
+        "runtimeIsolation": RUNTIME_ISOLATION,
+    }
 
 
 def run_checks() -> dict[str, object]:
@@ -348,7 +358,12 @@ def run_checks() -> dict[str, object]:
         _write(paths["env"], original_env)
         _write(paths["health"], '{"host":"app.5a-math.com","scheme":"https","status":404,"cacheControl":""}')
         result = _run(*_verify_args(paths)); _check(state, result.returncode == 0, "flag-off rollback preflight did not return to 404")
-    return {"name": "deployment", "assertions": state[0], "passed": True}
+    return {
+        "name": "deployment",
+        "assertions": state[0],
+        "passed": True,
+        "runtimeIsolation": RUNTIME_ISOLATION,
+    }
 
 
 if __name__ == "__main__":

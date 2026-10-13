@@ -103,6 +103,22 @@ def normalize_homework_rows_for_compare(rows: Any) -> list:
     return out
 
 
+def normalize_sleeping_homework_books(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        book = str(raw or "").strip()
+        book_key = "".join(book.split()).lower()
+        if not book or not book_key or book_key in seen:
+            continue
+        seen.add(book_key)
+        out.append(book)
+    return out
+
+
 def extract_homework_rows_for_compare(entry: dict) -> list:
     if not isinstance(entry, dict):
         return []
@@ -185,6 +201,12 @@ def log_entry_conflicts_with_base(current: dict, base: dict) -> bool:
         current_rows = extract_homework_rows_for_compare(current_entry)
         base_rows = normalize_homework_rows_for_compare(base.get("homeworkTable"))
         if current_rows != base_rows:
+            return True
+
+    if "sleepingHomeworkBooks" in base:
+        current_books = normalize_sleeping_homework_books(current_entry.get("sleepingHomeworkBooks"))
+        base_books = normalize_sleeping_homework_books(base.get("sleepingHomeworkBooks"))
+        if current_books != base_books:
             return True
 
     return False

@@ -6,11 +6,13 @@
   <title>관리자 운영판</title>
 
   <link rel="stylesheet" href="/css/main.css?v=20260417a">
-  <link rel="stylesheet" href="/css/admin.css?v=20260814phase19">
+  <link rel="stylesheet" href="/css/admin.css?v=20260831-quick-print-filter2-warning-visual2&amp;leaveLabel=20260905b&amp;calendarCell=20260927&amp;leaveDetails=20261011-layout1&amp;examContrast=20261012&amp;stabilityBase=20261013">
+  <link rel="stylesheet" href="/css/admin-export-logs.css?v=20260829-export-split1">
+  <link rel="stylesheet" href="/css/student-work-light.css?v=20260906-exam-pending-color1">
+  <link rel="stylesheet" href="/css/student-test-ocr-admin.css?v=20260828-1">
 
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 </head>
 <body class="admin">
   <div class="admin-shell">
@@ -67,12 +69,13 @@
       </nav>
 
       <div class="global-links" aria-label="관리 링크">
-        <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/10cpoU0OxFx7DwGO3VBAFhPJx68kHIX_ugRzOong9IGs/edit?gid=1803596204#gid=1803596204" class="btn secondary link-ledger" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원출석부</a>
+        <a id="attendanceLedgerLink" href="https://docs.google.com/spreadsheets/d/1KeNedUJtZRTMsSPOQh__RMQF9vwzbzzEkjlAucn5Hfs/edit?gid=1803596204#gid=1803596204" class="btn secondary link-ledger" target="_blank" rel="noopener noreferrer" title="우클릭으로 링크 수정">학원출석부</a>
         <a href="/students" class="btn secondary link-students" target="_blank" rel="noopener noreferrer">전체학생</a>
         <a href="/school-cal" class="btn secondary link-school" target="_blank" rel="noopener noreferrer">학교일정</a>
         <a href="/video-manage" class="btn secondary link-video" target="_blank" rel="noopener noreferrer">영상관리</a>
         <a href="/tests" class="btn secondary link-tests" target="_blank" rel="noopener noreferrer">테스트관리</a>
         <a href="/file-manage" class="btn secondary link-files" target="_blank" rel="noopener noreferrer">파일관리</a>
+        <button id="studentTestOcrReviewOpen" class="btn secondary student-test-ocr-review-open" type="button" hidden>OCR 보류</button>
         <button id="studentAccountsOpen" class="btn secondary link-student-accounts" type="button">학생앱 계정</button>
         <button id="studentFocusOpen" class="btn secondary link-student-focus" type="button">집중 기록</button>
         <button id="attendanceLedgerSettings" class="btn secondary link-ledger link-ledger-settings" type="button" title="학원출석부 시트 링크 수정">시트 설정</button>
@@ -87,6 +90,7 @@
             <span class="count-unit">명</span>
           </div>
           <p id="todaySlotCounts" class="hero-sub muted"></p>
+          <div id="todayOperationWarnings" class="hero-warning-stack" aria-label="운영 확인" hidden></div>
         </div>
 
         <div class="hero-metrics-grid" aria-label="오늘 운영 지표">
@@ -150,9 +154,11 @@
           <button id="absentRegisterBtn" class="btn danger" type="button">결석등록</button>
           <button id="exportLogs" class="btn secondary" type="button">로그 내보내기</button>
           <button id="exportRoster" class="btn secondary" type="button">명단 내보내기</button>
+          <button id="exportQuickPrinterTests" class="btn secondary" type="button">테스트 인쇄</button>
         </div>
 
-        <article id="adminOperationNotes" class="card admin-operation-notes" aria-labelledby="adminOperationNotesTitle">
+        <div class="hero-note-rail">
+          <article id="adminOperationNotes" class="card admin-operation-notes" aria-labelledby="adminOperationNotesTitle">
           <header class="admin-operation-notes-head">
             <h3 id="adminOperationNotesTitle">관리자 메모</h3>
             <p>오늘 신경 쓸 목표를 간단히 남겨두세요.</p>
@@ -165,7 +171,28 @@
             <input id="adminOperationNoteInput" type="text" maxlength="300" autocomplete="off" aria-label="관리자 메모 내용" placeholder="신경 쓸 목표를 입력하세요">
             <button id="adminOperationNoteSubmit" class="btn" type="submit" disabled>등록</button>
           </form>
-        </article>
+          </article>
+
+          <article id="studentLogPanel" class="card student-log-panel" aria-labelledby="studentLogTitle">
+            <header class="student-log-head">
+              <div>
+                <div class="student-log-title-row">
+                  <h3 id="studentLogTitle">숙제 미흡 알림</h3>
+                  <span id="studentLogCount" class="student-log-count">0건</span>
+                </div>
+              </div>
+              <button id="studentLogClear" class="btn secondary" type="button">전체 정리</button>
+            </header>
+            <div class="student-log-filters" role="group" aria-label="숙제 미흡 알림 기간">
+              <button class="student-log-filter is-selected" type="button" data-student-log-filter="today" aria-pressed="true">오늘</button>
+              <button class="student-log-filter" type="button" data-student-log-filter="all" aria-pressed="false">전체</button>
+            </div>
+            <ul id="studentLogList" class="student-log-list" aria-live="polite" aria-label="숙제 미흡 알림 목록">
+              <li class="student-log-empty">숙제 미흡 알림을 불러오는 중입니다.</li>
+            </ul>
+            <p id="studentLogStatus" class="student-log-status" role="status" aria-live="polite"></p>
+          </article>
+        </div>
 
         <article id="announcementSection" class="card announcement-section" aria-labelledby="announcement-title">
           <div class="card-head between announcement-head">
@@ -452,6 +479,50 @@
     </div>
   </div>
 
+  <div id="quickPrinterExportModal" class="modal-backdrop quick-printer-export-modal" hidden>
+    <section class="modal-panel quick-printer-export-panel" role="dialog" aria-modal="true"
+      aria-labelledby="quickPrinterExportTitle" aria-describedby="quickPrinterExportDescription">
+      <button id="quickPrinterExportClose" class="modal-close" type="button" aria-label="테스트 인쇄 내보내기 닫기">×</button>
+      <header class="quick-printer-export-heading">
+        <p class="quick-printer-export-kicker">QUICK PRINTER EXPORT</p>
+        <h3 id="quickPrinterExportTitle">테스트 인쇄 대상 선택</h3>
+        <p id="quickPrinterExportDescription"><strong id="quickPrinterExportDate">선택 날짜</strong> 운영판에서 내보낼 학생 타임을 선택합니다.</p>
+      </header>
+      <form id="quickPrinterExportForm" class="quick-printer-export-form">
+        <fieldset>
+          <legend>인쇄할 타임</legend>
+          <div class="quick-printer-time-grid">
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeSlot1" type="checkbox" value="slot1" checked>
+              <span><strong>1타임</strong><small id="quickPrinterTimeSlot1Count">0명</small></span>
+            </label>
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeConsecutive" type="checkbox" value="consecutive" checked>
+              <span><strong>1·2타임 (연강)</strong><small id="quickPrinterTimeConsecutiveCount">0명</small></span>
+            </label>
+            <label class="quick-printer-time-option">
+              <input id="quickPrinterTimeSlot2" type="checkbox" value="slot2" checked>
+              <span><strong>2타임</strong><small id="quickPrinterTimeSlot2Count">0명</small></span>
+            </label>
+          </div>
+        </fieldset>
+        <p class="quick-printer-export-note">선택한 타임 학생의 현재 과목 초록색 테스트만 운영판 순서대로 CSV에 포함됩니다.</p>
+        <p id="quickPrinterCarryoverExclusionSummary" class="quick-printer-carryover-summary" aria-live="polite">결석 이월 재배정 자동 제외: 확인 중…</p>
+        <label class="quick-printer-reprint-option">
+          <input id="quickPrinterIncludeReprints" type="checkbox" checked>
+          <span>이미 출력한 결석 이월 항목도 포함(재인쇄)</span>
+        </label>
+        <p id="quickPrinterExportStatus" class="quick-printer-export-status" role="status" aria-live="polite"></p>
+        <div class="quick-printer-export-actions">
+          <button id="quickPrinterExportSelectAll" class="btn secondary" type="button">전체 선택</button>
+          <span class="quick-printer-export-action-spacer"></span>
+          <button id="quickPrinterExportCancel" class="btn secondary" type="button">취소</button>
+          <button id="quickPrinterExportSubmit" class="btn" type="submit">선택 타임 CSV 내보내기</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <div id="exportLogsModal" class="modal-backdrop export-logs-modal" hidden>
     <section class="modal-panel export-logs-panel" role="dialog" aria-modal="true"
       aria-labelledby="exportLogsTitle" aria-describedby="exportLogsDescription">
@@ -459,9 +530,28 @@
       <header class="export-logs-heading">
         <p class="export-logs-kicker">CLASS LOG EXPORT</p>
         <h3 id="exportLogsTitle">수업 기록 내보내기 설정</h3>
-        <p id="exportLogsDescription">파일 형식과 TXT에 담을 내용을 선택합니다. CSV 열 구조는 기존 연동을 위해 고정됩니다.</p>
+        <p id="exportLogsDescription">내보낼 기록과 파일 형식을 선택합니다. CSV 열 구조는 기존 연동을 위해 고정됩니다.</p>
       </header>
       <form id="exportLogsForm" class="export-logs-form">
+        <fieldset class="export-logs-targets">
+          <legend>내보낼 기록</legend>
+          <div class="export-logs-target-grid">
+            <label class="export-logs-option">
+              <input id="exportLogsTargetDone" name="exportLogsTarget" type="radio" value="done" checked>
+              <span>
+                <strong>하원 완료·미정리</strong>
+                <small>기존 방식 그대로 학생별 최신 완료 기록을 내보냅니다.</small>
+              </span>
+            </label>
+            <label class="export-logs-option">
+              <input id="exportLogsTargetDate" name="exportLogsTarget" type="radio" value="date">
+              <span>
+                <strong>선택일 숙검 완료</strong>
+                <small><span id="exportLogsTargetDateLabel">선택 날짜</span> · 하원하지 않아도 숙검 완료된 기록만 포함합니다.</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
         <div class="export-logs-option-grid">
           <fieldset>
             <legend>파일 형식</legend>
@@ -504,24 +594,6 @@
         </div>
       </form>
     </section>
-  </div>
-
-  <div id="logModal" class="modal-backdrop">
-    <div class="modal-panel wide">
-      <h3 id="logTitle" class="mt-0"></h3>
-      <label>상담 기록:
-        <textarea id="logNotes" rows="2" placeholder=""></textarea>
-      </label>
-      <div id="logProgress" class="progress-grid mt-8"></div>
-      <label>숙제:
-        <textarea id="logHw" rows="2"></textarea>
-      </label>
-      <div class="modal-actions">
-        <button id="logSave" class="btn" type="button">저장</button>
-        <button id="logdoneBtn" class="btn" type="button">완료</button>
-        <button id="logClose" class="btn secondary" type="button">닫기</button>
-      </div>
-    </div>
   </div>
 
   <div id="yoilModal" class="modal-backdrop">
@@ -592,7 +664,33 @@
     </section>
   </div>
 
-  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
-  <script type="module" src="/js/admin/main.js?v=20260814-phase19"></script>
+  <div id="studentTestOcrReviewModal" class="modal-backdrop student-test-ocr-admin-modal" hidden>
+    <section class="modal-panel wide student-test-ocr-admin-panel" role="dialog" aria-modal="true" aria-labelledby="studentTestOcrReviewTitle">
+      <header class="student-test-ocr-admin-heading">
+        <div>
+          <p>STUDENT TEST OCR</p>
+          <h3 id="studentTestOcrReviewTitle">OCR 보류 문항 확인</h3>
+          <span id="studentTestOcrReviewDate"></span>
+        </div>
+        <button id="studentTestOcrReviewClose" class="modal-close" type="button" aria-label="OCR 보류 문항 확인 닫기">×</button>
+      </header>
+      <div class="student-test-ocr-admin-layout">
+        <aside class="student-test-ocr-admin-list-panel" aria-label="보류 제출 목록">
+          <div class="student-test-ocr-admin-list-head">
+            <strong>확인 대기</strong>
+            <button id="studentTestOcrReviewRefresh" class="btn secondary" type="button">새로고침</button>
+          </div>
+          <p id="studentTestOcrReviewStatus" role="status" aria-live="polite"></p>
+          <div id="studentTestOcrReviewList" class="student-test-ocr-admin-list"></div>
+        </aside>
+        <section id="studentTestOcrReviewDetail" class="student-test-ocr-admin-detail" aria-live="polite">
+          <p class="student-test-ocr-admin-empty">왼쪽에서 학생 제출을 선택해 주세요.</p>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260830-missing-leave-roster1&amp;quickPrinter=1&amp;watchRearm=20260912&amp;threadPreview=1"></script>
+  <script type="module" src="/js/admin/main.js?v=20260907-ilsan-level-r1&amp;linkedLeave=1&amp;homeworkOrder=1&amp;sheetSync=3&amp;saveFeedback=2&amp;bookSleep=4&amp;homeworkOpenStable=1&amp;notePin=3&amp;quickPrint=4&amp;testClearOrder=1&amp;videoSnapshot=1&amp;makeupRoster=1&amp;latency=4&amp;missingLeave=2&amp;warningVisual=1&amp;blankHomeworkCheck=1&amp;leaveLabel=20260905b&amp;doneWhiteReview=20260912&amp;watchRearm=20260912&amp;youtube=20260913&amp;scheduleOverride=20260927&amp;schoolExamSubject=20260927b&amp;calendarCell=20260927&amp;missingLeaveRefresh=20260927&amp;whiteRetest=20260928&amp;schoolSearch=20260929&amp;escSearch=20260929&amp;retiredExtra=20260929&amp;hubSave=20261001&amp;testSaveReady=20261002&amp;uiPerf=20261002&amp;manualOrder=20261002&amp;adminSpeed=20261003&amp;dragScroll=20261007&amp;escScope=20261009&amp;leaveDetails=20261011&amp;examTextbook=20261012b&amp;stabilityBase=20261013"></script>
 </body>
 </html>

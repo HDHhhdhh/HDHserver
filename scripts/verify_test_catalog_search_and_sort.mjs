@@ -6,9 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TESTS_JS_PATH = path.join(ROOT, 'static', 'js', 'tests.js');
+const CATALOG_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogState.js');
+const CATALOG_EDITOR_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogEditorState.js');
+const CATALOG_STATISTICS_STATE_PATH = path.join(ROOT, 'static', 'js', 'tests', 'catalogStatisticsState.js');
 const TESTS_HTML_PATH = path.join(ROOT, 'static', 'tests.html');
 
 const testsHtml = fs.readFileSync(TESTS_HTML_PATH, 'utf8');
+const catalogStateSource = fs.readFileSync(CATALOG_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogEditorStateSource = fs.readFileSync(CATALOG_EDITOR_STATE_PATH, 'utf8').replace(/^export\s+/gm, '');
+const catalogStatisticsStateSource = fs.readFileSync(CATALOG_STATISTICS_STATE_PATH, 'utf8')
+  .replace(/import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/catalogState\.js(?:\?[^'"]*)?['"];\s*/, '')
+  .replace(/^export\s+/gm, '');
 const source = fs
   .readFileSync(TESTS_JS_PATH, 'utf8')
   .replace(/import\s+\{[^}]+\}\s+from\s+['"]\.\/shared\/search\.js['"];\s*/, `
@@ -26,6 +34,18 @@ function matchesSearchKey(key, query) {
   .replace(
     /import\s+\{\s*createUnitTestDisplayNameResolver\s*\}\s+from\s+['"]\.\/shared\/testCatalogDisplay\.js['"];\s*/,
     "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');\n",
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogEditorState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogEditorStateSource}\n`,
+  )
+  .replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\/tests\/catalogStatisticsState\.js(?:\?[^'"]*)?['"];\s*/,
+    `${catalogStatisticsStateSource}\n`,
   );
 
 class ElementStub {
@@ -38,6 +58,7 @@ class ElementStub {
     this.disabled = false;
     this.dataset = {};
     this.style = {};
+    this.handlers = {};
     this.classList = {
       add() {},
       remove() {},
@@ -45,7 +66,7 @@ class ElementStub {
     };
   }
 
-  addEventListener() {}
+  addEventListener(type, handler) { this.handlers[type] = handler; }
   setAttribute(name, value) { this[name] = String(value); }
   querySelector() { return null; }
   querySelectorAll() { return []; }
@@ -118,6 +139,7 @@ const context = {
         status: 200,
         headers: { get: name => String(name).toLowerCase() === 'x-tests-config-revision' ? 'b'.repeat(64) : '' },
         text: async () => '{}',
+        json: async () => ({ test: init.body ? JSON.parse(init.body).test : { id: 'patch-check', saved: true } }),
       }
       : { ok: false, status: 500, headers: { get: () => '' }, text: async () => 'failure' };
   },
@@ -350,11 +372,80 @@ window.__catalogSortScenario = (async () => {
   check(catalogMutationSaveInFlight === false, 'catalog mutation in-flight state was not cleared');
   check(document.querySelector('#btnNewTest').disabled === false, 'catalog controls were not restored after mutation save');
 
+  TEST_CFG = {
+    categories: {
+      UNIT: {
+        label: '단원평가',
+        tests: [{ id: 'rollback-test', name: '서버 값', unknownMetadata: { preserve: true } }],
+      },
+    },
+  };
+  TEST_CFG_REVISION = 'd'.repeat(64);
+  ui.category = 'UNIT';
+  ui.subject = '공수1';
+  ui.difficulty = 'Lv.3';
+  ui.selectedId = 'rollback-test';
+  const mutationSnapshot = captureTestCatalogMutationSnapshot();
+  TEST_CFG.categories.UNIT.tests[0].name = '저장 실패 초안';
+  TEST_CFG.categories.UNIT.tests.push({ id: 'unsaved-new', name: '미저장 신규' });
+  TEST_CFG_REVISION = 'e'.repeat(64);
+  ui.selectedId = 'unsaved-new';
+  restoreTestCatalogMutationSnapshot(mutationSnapshot);
+  check(TEST_CFG.categories.UNIT.tests.length === 1, 'single-test failure snapshot kept an unsaved record');
+  check(TEST_CFG.categories.UNIT.tests[0].name === '서버 값', 'single-test failure snapshot kept an unsaved edit');
+  check(TEST_CFG.categories.UNIT.tests[0].unknownMetadata.preserve === true, 'single-test rollback dropped unknown metadata');
+  check(TEST_CFG_REVISION === 'd'.repeat(64), 'single-test rollback did not restore the base revision');
+  check(ui.selectedId === 'rollback-test', 'single-test rollback did not restore the prior selection');
+
+  setFetchMode('success');
+  await saveTestDefinition(
+    { id: 'patch-check', name: '분류 이동' },
+    'UNIT',
+    '단원평가',
+    ['term', 'examTerm'],
+  );
+  const definitionPatch = fetchCalls.at(-1);
+  check(definitionPatch.method === 'PATCH', 'single-test save did not use PATCH');
+  check(
+    definitionPatch.body?.clearFields?.join('|') === 'term|examTerm',
+    'single-test save omitted explicit term clears',
+  );
+
+  const compoundAnswers = ['1', '-1/7', 'M = 44, m = 3', '(9/7, 50/7)'];
+  const compoundModes = ['choice_number', 'answer_value', 'answer_value', 'answer_value'];
+  const compound = {
+    id: 'ilsan-compound', name: '서술형 보존', curriculum: '공수2', difficulty: '상',
+    term: '중간고사', round: '1', problems: 4, answerKey: compoundAnswers.slice(),
+    answerKeys: { '1': compoundAnswers.slice() }, answerModes: { '1': compoundModes.slice() },
+    sourceFiles: { solutionFileId: 'synthetic-solution', futureMetadata: 'preserve' },
+  };
+  TEST_CFG = ensureConfig({ categories: { ILSAN_PAST: { label: '일산 기출', tests: [compound] } } });
+  ui.category = 'ILSAN_PAST'; ui.subject = '공수2'; ui.difficulty = '상';
+  ui.term = '중간고사'; ui.selectedId = compound.id;
+  document.querySelectorAll = selector => selector === '#cfgAnswerModes select[data-question-no]'
+    ? compoundModes.map(value => ({ value })) : [];
+  bindUI();
+  fillEditor();
+  check(JSON.stringify(JSON.parse($('#cfgAnswers').value)) === JSON.stringify(compoundAnswers), 'editor split a compound answer on load');
+  $('#cfgName').value = '이름만 변경';
+  await $('#btnSaveTest').handlers.click();
+  const compoundPatch = fetchCalls.at(-1);
+  check(compoundPatch.method === 'PATCH' && compoundPatch.body.test.id === compound.id, 'editor did not save the selected synthetic test');
+  check(compoundPatch.body.test.difficulty === '상', 'editor collapsed high difficulty');
+  check(JSON.stringify(compoundPatch.body.test.answerKey) === JSON.stringify(compoundAnswers), 'rename/save changed compound answers');
+  check(compoundPatch.body.test.sourceFiles.futureMetadata === 'preserve', 'rename/save dropped source metadata');
+  const writesBeforeInvalid = fetchCalls.length;
+  $('#cfgAnswers').value = '["1",';
+  await $('#btnSaveTest').handlers.click();
+  check(fetchCalls.length === writesBeforeInvalid, 'invalid answer JSON reached transport');
+  check($('#testSaveStatus').textContent.includes('JSON 배열'), 'invalid answer JSON did not show editor feedback');
+
   return {
     successfulPosts: fetchCalls.filter(call => call.method === 'POST').length - 1,
     rollbackVerified: true,
     searchAndScopeGuardsVerified: true,
     rawMetadataVerified: true,
+    compoundAnswerEditorRoundTripVerified: true,
   };
 })();
 `, context, { filename: 'verify_test_catalog_search_and_sort.scenario.js' });
@@ -364,14 +455,21 @@ const result = await context.window.__catalogSortScenario;
 assert.match(testsHtml, /<label class="toolbar-label" for="cfgCatalogSearch">목록 검색<\/label>/);
 assert.match(testsHtml, /id="cfgCatalogSearch"[^>]*type="search"/);
 assert.match(testsHtml, /id="catalogOrderHint"[^>]*role="status"[^>]*aria-live="polite"/);
+assert.match(testsHtml, /id="testSaveStatus"[^>]*role="status"[^>]*aria-live="polite"/);
 assert.match(testsHtml, /id="statSearch"[^>]*type="search"/);
-assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260813p9r3" type="module"><\/script>/);
+assert.match(testsHtml, /<script src="\/js\/tests\.js\?v=20260907-ilsan-level-r1&hub=20261001-detail1" type="module"><\/script>/);
 assert.doesNotMatch(testsHtml, /sortable(?:\.min)?\.js|jquery-ui/i);
 assert.match(source, /\.test-drag-handle\[draggable="true"\]/);
 assert.match(source, /data-move="up"/);
 assert.match(source, /data-move="down"/);
 assert.match(source, /await saveConfig\(\);/);
-assert.match(source, /headers\['X-Tests-Config-Revision'\] = TEST_CFG_REVISION/);
+assert.match(source, /const clearFields = term \? \[\] : \['term', 'examTerm'\];/);
+assert.match(source, /await saveTestDefinition\([\s\S]*clearFields,[\s\S]*\);/);
+assert.match(source, /restoreTestCatalogMutationSnapshot\(catalogSnapshot\);/);
+assert.match(source, /await loadConfigAndStats\(\);[\s\S]*목록 변경 감지/);
+assert.match(source, /setTestSaveStatus\('success', `저장 완료 · \$\{testSaveClock\(\)\}`\)/);
+assert.match(source, /wholeConfigWriteRequest\(TEST_CFG, TEST_CFG_REVISION, removedTestIds\)/);
+assert.match(source, /testDefinitionWriteRequest\([\s\S]*TEST_CFG_REVISION,[\s\S]*\)/);
 assert.match(source, /if \(res\.status === 409 \|\| res\.status === 428\) await loadConfigAndStats\(\);/);
 assert.match(source, /if \(catalogOrderSaveInFlight \|\| catalogMutationSaveInFlight\) \{\s*ruleSavePending = true;/);
 assert.match(source, /const locked = catalogOrderSaveInFlight \|\| catalogMutationSaveInFlight;/);

@@ -1,5 +1,5 @@
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
-const GRADE_PHASE_DELIM = '::';
+export const GRADE_PHASE_DELIM = '::';
 const SCHEDULE_KEYS = [
   'textbook',
   'semesterStart',
@@ -34,7 +34,7 @@ function firstNonBlank(...values) {
   return '';
 }
 
-function pickScheduleFields(entry = {}) {
+export function pickScheduleFields(entry = {}) {
   const out = {};
   for (const key of SCHEDULE_KEYS) {
     out[key] = String(entry?.[key] ?? '').trim();
@@ -42,11 +42,11 @@ function pickScheduleFields(entry = {}) {
   return out;
 }
 
-function hasAnyScheduleValue(entry = {}) {
+export function hasAnyScheduleValue(entry = {}) {
   return SCHEDULE_KEYS.some((key) => String(entry?.[key] ?? '').trim());
 }
 
-function parseGradeToken(rawKey, gradeEntry = {}) {
+export function parseGradeToken(rawKey, gradeEntry = {}) {
   const key = String(rawKey ?? '').trim();
   const explicitGrade = String(gradeEntry?.__grade ?? '').trim();
   const explicitPhase = String(gradeEntry?.__phase ?? '').trim();
@@ -91,6 +91,20 @@ export function normalizeGradeLabel(value) {
   return gradeMatch ? `${gradeMatch[1]}학년` : compact;
 }
 
+export function normalizeSchoolCalendarSubject(value) {
+  const compact = String(value ?? '')
+    .trim()
+    .replace(/\s*[\(\[][^()\[\]]+[\)\]]\s*$/u, '')
+    .replace(/\s+/g, '');
+
+  if (/^공통수학(?:2|II|Ⅱ)$/iu.test(compact)) return '공수2';
+  if (/^공통수학(?:1|I|Ⅰ)$/iu.test(compact)) return '공수1';
+  if (/^미적분(?:2|II|Ⅱ)$/iu.test(compact)) return '미적분2';
+  if (/^미적분(?:1|I|Ⅰ)?$/iu.test(compact)) return '미적분1';
+  if (/^확률과통계$/u.test(compact)) return '확통';
+  return compact;
+}
+
 export function getActiveSchoolCalendarYear(payload) {
   if (!isSchoolCalendarV2(payload)) return '';
 
@@ -104,10 +118,32 @@ export function getActiveSchoolCalendarYear(payload) {
   return keys.sort((a, b) => String(a).localeCompare(String(b), 'ko')).at(-1) || active;
 }
 
-export function getSchoolCalendarSchoolMap(payload, year = getActiveSchoolCalendarYear(payload)) {
+export function getActiveSchoolCalendarSemester(payload, year = getActiveSchoolCalendarYear(payload)) {
+  if (!isSchoolCalendarV2(payload)) return '';
+
+  const yearKey = String(year || '');
+  const bundle = payload.years?.[yearKey] || {};
+  const rootSemester = yearKey === String(payload.activeYear || '')
+    ? String(payload.activeSemester || '')
+    : '';
+  const selected = String(bundle.activeSemester || rootSemester || '1');
+  return selected === '2' ? '2' : '1';
+}
+
+export function getSchoolCalendarSchoolMap(
+  payload,
+  year = getActiveSchoolCalendarYear(payload),
+  semester = getActiveSchoolCalendarSemester(payload, year),
+) {
   if (isSchoolCalendarV2(payload)) {
     const bundle = payload.years?.[String(year)] || {};
-    return isObject(bundle.schools) ? bundle.schools : {};
+    const semesterKey = String(semester || '1');
+    const semesterBundle = isObject(bundle.semesters?.[semesterKey])
+      ? bundle.semesters[semesterKey]
+      : {};
+    if (isObject(semesterBundle.schools)) return semesterBundle.schools;
+    if (semesterKey === '1' && isObject(bundle.schools)) return bundle.schools;
+    return {};
   }
 
   return isObject(payload) ? payload : {};

@@ -72,6 +72,7 @@ async function loadAbsentPayload(options = {}) {
     const response = await fetch('/api/absent', { cache: 'no-store' });
     if (!response.ok) throw new Error(`/api/absent ${response.status}`);
     const payload = await response.json();
+    if (options.isCurrent && !options.isCurrent()) return null;
     absenceRevision = String(response.headers.get('X-Absence-Revision') || '').trim();
     applyAbsentPayload(payload);
     return payload;
@@ -85,9 +86,10 @@ async function loadAbsentPayload(options = {}) {
   }
 }
 
-async function loadExtraAttendMap() {
+async function loadExtraAttendMap(options = {}) {
   try {
     const extra = await fetch('/api/extra-attend', { cache: 'no-store' }).then(r => r.json());
+    if (options.isCurrent && !options.isCurrent()) return null;
     if (extra && typeof extra === 'object') state.extra = extra;
   } catch { /* keep state.extra */ }
   return state.extra || {};
@@ -294,6 +296,9 @@ export function initAbsentRegister() {
   const hint = $('absentSearchHint');
   const btn = $('absentRegisterBtn');
   if (!btn) return;
+  let openSequence = 0;
+  let ready = false;
+  let saving = false;
 
   const getRows = () => Array.from(document.querySelectorAll('#absentZone .row'));
   applySearchPlaceholder(search, '학생 이름 검색');
@@ -354,10 +359,20 @@ export function initAbsentRegister() {
   pick?.addEventListener('click', pickSearchStudent);
 
   btn.addEventListener('click', async () => {
+    if (saving) return;
+    const sequence = ++openSequence;
+    const isCurrent = () => sequence === openSequence;
     const dateKey = getAdminDate();
+    ready = false;
+    modal.querySelectorAll('.absent-save').forEach(button => { button.disabled = true; });
+    zone.innerHTML = '<p role="status">결석 후보를 불러오는 중입니다.</p>';
+    modal.style.display = 'flex';
+    const [, extraMap] = await Promise.all([
+      loadAbsentPayload({ isCurrent }),
+      loadExtraAttendMap({ isCurrent }),
+    ]);
+    if (!isCurrent()) return;
     modal.dataset.date = dateKey;
-    await loadAbsentPayload();
-    const extraMap = await loadExtraAttendMap();
     const candidates = collectAbsenceCandidates(dateKey, extraMap);
 
     if (!candidates.length) {
@@ -377,20 +392,31 @@ export function initAbsentRegister() {
     }
 
     if (search) search.value = '';
-    applySearchFilter();
-    modal.style.display = 'flex';
-    requestAnimationFrame(() => search?.focus());
+    if (pick) pick.disabled = true;
+    if (hint) hint.textContent = '';
+    ready = true;
+    modal.querySelectorAll('.absent-save').forEach(button => { button.disabled = false; });
+    requestAnimationFrame(() => {
+      if (isCurrent() && modal.style.display !== 'none') search?.focus();
+    });
   });
 
+  const closeAbsentModal = () => {
+    if (saving) return;
+    openSequence += 1;
+    ready = false;
+    modal.style.display = 'none';
+  };
+  window.closeAbsentRegistrationPopup = closeAbsentModal;
   document.body.addEventListener('click', (e) => {
     const closeBtn = e.target.closest?.('#absentRegisterModal .absent-close');
-    if (closeBtn) modal.style.display = 'none';
+    if (closeBtn) closeAbsentModal();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
+    if (e.key !== 'Escape' || saving) return;
     if (modal.style.display === 'none') return;
-    modal.style.display = 'none';
+    closeAbsentModal();
   });
 
   document.body.addEventListener('change', (e) => {
@@ -401,7 +427,7 @@ export function initAbsentRegister() {
 
   document.body.addEventListener('click', async (e) => {
     const saveBtn = e.target.closest?.('#absentRegisterModal .absent-save');
-    if (!saveBtn) return;
+    if (!saveBtn || saveBtn.disabled || saving || !ready) return;
 
     const dateKey = String(modal.dataset.date || '').trim();
     if (!dateKey) {
@@ -419,7 +445,14 @@ export function initAbsentRegister() {
       return;
     }
 
-    saveBtn.disabled = true;
+    saving = true;
+    const saveButtons = Array.from(modal.querySelectorAll('.absent-save'));
+    const saveLabels = saveButtons.map(button => button.textContent);
+    saveButtons.forEach(button => {
+      button.disabled = true;
+      button.textContent = '처리 중…';
+      button.setAttribute('aria-busy', 'true');
+    });
     try {
       for (const sid of selectedIds) {
         await patchFlagRemote('att', dateKey, sid, false);
@@ -470,7 +503,12 @@ export function initAbsentRegister() {
       console.error(err);
       alert('결석 등록 실패');
     } finally {
-      saveBtn.disabled = false;
+      saving = false;
+      saveButtons.forEach((button, index) => {
+        button.disabled = false;
+        button.textContent = saveLabels[index];
+        button.removeAttribute('aria-busy');
+      });
     }
   });
 }

@@ -28,19 +28,6 @@ def _utc(value: dt.datetime | float | int) -> dt.datetime | None:
     return parsed.astimezone(dt.timezone.utc)
 
 
-def _parse_time(value: object) -> dt.datetime | None:
-    raw = value.strip() if isinstance(value, str) else ""
-    if not raw:
-        return None
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    try:
-        parsed = dt.datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
 
 
 def _visible_announcement(

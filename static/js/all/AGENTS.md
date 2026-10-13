@@ -9,7 +9,7 @@ The all-students page is a standalone static frontend with its own core wrapper 
 | Entry point | `main.js` | Calls `loadAll()`, renders, then mounts features. |
 | API wrapper | `core/api.js` | Same-origin/no-store wrapper around `../../shared/api.js`. |
 | Shared state | `core/state.js` | Students, videos, progress, calendar, and linked homework-book runtime maps. |
-| Table controller | `features/table.js` | Roster DOM, inline edits, search, and active mini progress editor. |
+| Table controller | `features/table.js` | Roster DOM, inline edits, search, and the lazy unified student-popup launcher. |
 | Add/delete/clone | `features/addStudent.js`, `deleteButtons.js`, `cloneButtons.js` | Mutating student actions. |
 | Roster export | `features/chatRosterExport.js` | Chat/export helper. |
 
@@ -20,8 +20,7 @@ The all-students page is a standalone static frontend with its own core wrapper 
 - `core/state.js` lazy-loads progress once per SID and merges date/SID entries. Do not mark failed loads as cached or replace the map.
 - Field edits preserve unknown student keys through `/api/update`; clone intentionally copies identity fields and clears curriculum/schedule fields.
 - The former student `subBook*` inputs are retired. The table reads `/api/homework-books`, derived from each student's latest registered `homeworkTable[].book`.
-- The row counseling button reuses the admin log modal in `all-students-readonly` mode: notes/homework are read-only and progress accepts right-click skip edits only.
-- `all/main.js` eagerly bridges only the lightweight shared admin hover tooltip and the already-loaded roster state so student-name links work by pointer and keyboard. Keep the full admin popup graph lazy behind the counseling button.
+- The row counseling button reuses the admin log modal in `all-students-readonly` mode: class-log notes/homework are read-only, the separate assistant-note thread supports list/create only, and progress accepts right-click skip edits only.
 - Direct fetch remains in add/clone/delete/progress compatibility paths; do not mass-convert without preserving fallbacks and payloads.
 
 ## Anti-Patterns

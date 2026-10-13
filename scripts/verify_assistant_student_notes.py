@@ -77,6 +77,7 @@ def route_checks() -> None:
             app.register_blueprint(api_assistant_notes.bp_api_assistant_notes)
             client = app.test_client()
             admin_headers = {"Referer": "http://localhost/admin"}
+            all_students_headers = {"Referer": "http://localhost/students"}
 
             denied = client.get("/api/assistant-student-notes?student_id=student-a")
             check(denied.status_code == 403, "request outside admin surface must return 403")
@@ -85,6 +86,36 @@ def route_checks() -> None:
                 headers={"Referer": "http://localhost/student/student-a"},
             )
             check(denied_student.status_code == 403, "student page request must return 403")
+
+            all_students_list = client.get(
+                "/api/assistant-student-notes?student_id=student-a",
+                headers=all_students_headers,
+            )
+            check(all_students_list.status_code == 200, "all-students page must be allowed to list notes")
+            all_students_created = client.post(
+                "/api/assistant-student-notes",
+                json={"student_id": "student-a", "content": "전체학생 신규 메모", "author": "귤"},
+                headers=all_students_headers,
+            )
+            check(all_students_created.status_code == 201, "all-students page must be allowed to create notes")
+            all_students_note = all_students_created.get_json()["note"]
+            all_students_update = client.patch(
+                f"/api/assistant-student-notes/{all_students_note['id']}",
+                json={"student_id": "student-a", "content": "수정 차단", "author": "세빈"},
+                headers=all_students_headers,
+            )
+            check(all_students_update.status_code == 403, "all-students page must not update existing notes")
+            all_students_delete = client.delete(
+                f"/api/assistant-student-notes/{all_students_note['id']}",
+                json={"student_id": "student-a"},
+                headers=all_students_headers,
+            )
+            check(all_students_delete.status_code == 403, "all-students page must not delete existing notes")
+            cross_origin_all_students = client.get(
+                "/api/assistant-student-notes?student_id=student-a",
+                headers={"Referer": "http://example.test/students"},
+            )
+            check(cross_origin_all_students.status_code == 403, "cross-origin all-students referer must be rejected")
 
             empty = client.post(
                 "/api/assistant-student-notes",
@@ -220,23 +251,74 @@ def source_boundary_checks() -> None:
     check("assistantStudentNotes" not in export_source, "assistant notes must not enter export projection")
 
     tooltip_source = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8-sig")
+    log_modal_source = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8-sig")
     notes_source = (ROOT / "static/js/admin/features/assistantStudentNotes.js").read_text("utf-8-sig")
+    all_students_popup_source = (ROOT / "static/js/all/features/studentRecordPopup.js").read_text("utf-8-sig")
     admin_css = (ROOT / "static/css/admin.css").read_text("utf-8-sig")
-    check("assistantStudentNotes" in tooltip_source, "student sidebar must mount assistant notes")
-    check("<h3>조교 메모</h3>" in tooltip_source, "assistant memo title is missing")
-    check("조교 메모방" not in tooltip_source, "legacy assistant memo title remains")
-    check("data-note-remind-input" in tooltip_source and "assistant-note-compose-reminder" in tooltip_source, "confirmation-date composer is missing")
+    light_css = (ROOT / "static/css/student-work-light.css").read_text("utf-8-sig")
+    check("assistantStudentNotes" not in tooltip_source, "student info/homework popup must not retain assistant notes")
+    check(
+        "'#logModal.student-work-layout .assistant-note-compose'" not in all_students_popup_source,
+        "all-students popup must allow composing a new assistant note",
+    )
+    check(
+        "'#logModal.student-work-layout .assistant-note-pin'" in all_students_popup_source
+        and "'#logModal.student-work-layout .assistant-note-action-group'" in all_students_popup_source,
+        "all-students popup must keep existing-note mutation actions locked",
+    )
+    check("assistantStudentNotesTemplate" in log_modal_source, "main popup must mount assistant notes")
+    check("existingReadOnly: isContextMenuOnlyAccess()" in log_modal_source,
+          "read-only ownership must follow the note mount, not a movable parent selector")
+    for button in ("pinButton", "deleteButton", "editButton"):
+        check(f"{button}.disabled = root.dataset.existingReadOnly === 'true'" in notes_source,
+              "existing note actions must stay disabled on all-students mounts")
+    check('id="logTitle"' not in log_modal_source and "메모 쓰레드" not in log_modal_source, "thread popup must not render the oversized student-name title")
+    check(
+        'class="log-header-row"' not in log_modal_source
+        and 'id="logClose"' not in log_modal_source
+        and "body.admin #logModal .log-card" in admin_css
+        and "padding: 0 !important;" in admin_css,
+        "thread popup must remove the empty white header and outer padding",
+    )
+    check("<h3>조교 메모</h3>" in notes_source, "assistant memo title is missing")
+    check(
+        "data-note-count" not in notes_source
+        and "assistant-note-count" not in notes_source
+        and "댓글 ${notes.length}개" not in notes_source,
+        "thread popup must not render a comment-count badge",
+    )
+    check(
+        "data-note-save-close" in notes_source
+        and ">저장</button>" in notes_source
+        and "data-note-close" in notes_source
+        and ">닫기</button>" in notes_source
+        and "assistant-note-heading-actions" in admin_css
+        and "assistant-note-heading-button" in admin_css,
+        "assistant memo heading must expose save-and-close and close actions",
+    )
+    check(
+        "await saveNote({ closeAfter: true })" in notes_source
+        and "admin:assistant-notes-close" in notes_source
+        and "logModal.addEventListener('admin:assistant-notes-close', close)" in log_modal_source,
+        "save-and-close must reuse comment creation and close only through the popup owner",
+    )
+    check(
+        "window.showStudentPopupSaveResult('저장 완료')" in log_modal_source,
+        "successful thread-popup saves must reuse the video popup's save-complete graphic",
+    )
+    check("조교 메모방" not in notes_source, "legacy assistant memo title remains")
+    check("data-note-remind-input" in notes_source and "assistant-note-compose-reminder" in notes_source, "confirmation-date composer is missing")
 
-    check('data-note-list role="log"' in tooltip_source, "scrollable assistant comment thread is missing")
-    check("댓글 등록" in tooltip_source and "data-note-save" in tooltip_source, "comment composer is missing")
-    check('data-note-author="귤" aria-pressed="false">규리</button>' in tooltip_source, "gyuri author button label is missing")
+    check('data-note-list role="log"' in notes_source, "scrollable assistant comment thread is missing")
+    check("댓글 등록" in notes_source and "data-note-save" in notes_source, "comment composer is missing")
+    check('data-note-author="귤" aria-pressed="false">규리</button>' in notes_source, "gyuri author button label is missing")
     check(
         "content.textContent = String(note.content || '')" in notes_source,
         "note text must use safe text rendering",
     )
     check("localStorage" not in notes_source and "sessionStorage" not in notes_source, "assistant notes must not use browser storage")
     for author in ("귤", "세빈", "동훈", "하영"):
-        check(f'data-note-author="{author}"' in tooltip_source, f"missing author button: {author}")
+        check(f'data-note-author="{author}"' in notes_source, f"missing author button: {author}")
         check(f'button[data-note-author="{author}"]' in admin_css, f"missing author color style: {author}")
         check(
             f'.assistant-student-notes[data-note-selected-author="{author}"] .assistant-note-input' in admin_css,
@@ -251,8 +333,43 @@ def source_boundary_checks() -> None:
         and "color: var(--assistant-note-item-color);" in admin_css,
         "comment content must retain its author's assigned color",
     )
+    check(
+        "--assistant-note-body-font-size: 26px;" in admin_css
+        and "font-size: var(--assistant-note-body-font-size);" in admin_css,
+        "assistant note content and inputs must use the doubled 26px type scale",
+    )
+    check(
+        "--assistant-note-author-font-size: 28px;" in admin_css
+        and "font-size: var(--assistant-note-author-font-size);" in admin_css
+        and "font-weight: 900;" in admin_css,
+        "assistant note author names must stay larger and bolder at the doubled 28px scale",
+    )
+    check(
+        "body.admin #logModal .assistant-note-heading h3" in admin_css
+        and "body.admin #logModal .assistant-note-mode-button" in admin_css
+        and "font-size: 24px;" in admin_css
+        and "font-size: 21px;" in admin_css
+        and "font-size: 22px;" in admin_css
+        and "font-size: 20px;" in admin_css,
+        "all assistant-note text roles must use the doubled type scale",
+    )
+    check(
+        "font-size:72px;" not in log_modal_source
+        and "font-size:40px;" not in log_modal_source
+        and "font-size:48px;" not in log_modal_source
+        and "font-size:32px;" not in log_modal_source,
+        "thread popup must not restore the removed oversized title or close-button type scales",
+    )
+    check(
+        "@media (max-width: 600px)" in admin_css
+        and ".assistant-note-reminder-body > .assistant-note-item-content" in admin_css
+        and "grid-column: 1 / -1;" in admin_css,
+        "larger reminder-note text must use the full mobile card width",
+    )
     check("author: selectedAuthor" in notes_source, "selected author must be included in save requests")
     check("root.dataset.noteSelectedAuthor" in notes_source, "selected author must drive the pressed author button")
+    check("body.admin #logModal .assistant-student-notes" in admin_css, "assistant notes styles must be scoped to the main popup")
+    check("body.admin #adminSchoolTip .assistant-student-notes" not in admin_css, "tooltip assistant-note styles must be removed")
     check(
         ".assistant-note-author-buttons [data-note-author]" in notes_source,
         "author selection must not treat rendered comment cards as author buttons",
@@ -279,8 +396,36 @@ def source_boundary_checks() -> None:
     check("notes = notes.filter((item) => Number(item.id) !== noteId)" in notes_source, "delete must remove only one comment")
     check("assistant-note-delete" in admin_css and ":disabled" in admin_css, "delete button needs scoped and pending styles")
     check("assistant-note-pin" in admin_css and ".assistant-note-item.is-pinned" in admin_css, "pinned comments need scoped styles")
-    check("displayNotes = [" in notes_source and "isNotePinned(note)" in notes_source, "pinned comments must render before regular comments")
-    check("notes.slice().reverse()" in notes_source, "existing notes must render from oldest to newest")
+    check(
+        "assistant-note-pin-badge" not in notes_source
+        and "assistant-note-pin-badge-icon" not in notes_source
+        and "assistant-note-pin-badge" not in admin_css
+        and "assistant-note-pin-badge" not in light_css,
+        "pinned comments must not duplicate the interactive pin with a status badge",
+    )
+    check(
+        "pinFeedbackNoteId: noteId" in notes_source
+        and "is-pin-feedback" in notes_source
+        and "assistant-note-pin-feedback 240ms" in admin_css
+        and "@media (prefers-reduced-motion: reduce)" in admin_css,
+        "pin toggles must provide immediate motion feedback with a reduced-motion fallback",
+    )
+    check(
+        "border-left: 3px solid var(--assistant-note-item-color);" in admin_css
+        and "linear-gradient(180deg" in admin_css
+        and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .92)" in admin_css
+        and "background: rgba(var(--assistant-note-item-rgb), .16);" in admin_css,
+        "dark pinned cards must retain author-colored rails and pin emphasis",
+    )
+    check("const pinDiff = Number(isNotePinned(right)) - Number(isNotePinned(left));" in notes_source
+          and "if (pinDiff) return pinDiff;" in notes_source,
+          "pinned comments must retain their comparator priority; literal DOM ordering is verified separately")
+    check(
+        "const displayNotes = notes.slice().sort(" in notes_source
+        and "compareNewestNoteFirst(left, right)" in notes_source
+        and "notes.slice().reverse()" not in notes_source,
+        "existing notes must render from newest to oldest",
+    )
     check(
         "remind_on" in notes_source
         and "assistant-note-reminder-info" in notes_source
@@ -302,17 +447,54 @@ def source_boundary_checks() -> None:
     )
     check(
         ".assistant-note-item.has-reminder .assistant-note-action-group" in admin_css
-        and "flex-direction: column;" in admin_css,
-        "reminder edit button must stack below delete when dates need the row",
+        and ".assistant-note-reminder-body.is-stacked" in admin_css
+        and "reminderBody.className = 'assistant-note-reminder-body is-stacked';" in notes_source
+        and "scheduleReminderBodyLayout" not in notes_source
+        and "authorGroup.append(reminderInfoRow);" in notes_source
+        and "reminderBody.append(authorGroup, content, actionGroup);" in notes_source
+        and "header.append(reminderInfoRow);" not in notes_source,
+        "reminder metadata must stay on the first row while memo content always starts on the second row",
     )
     check("assistant-note-compose-reminder" in admin_css, "confirmation-date composer style is missing")
-    check("list.scrollTop = list.scrollHeight" in notes_source, "comment thread must scroll to the latest note")
+    check("list.scrollTop = 0" in notes_source, "newest-first comment thread must stay scrolled to the top")
     check("notes = [data.note, ...notes.filter" in notes_source, "new comments must be added to the loaded thread")
     check("if (!content)" in notes_source, "blank comments must be blocked in the composer")
     check("input.value = ''" in notes_source, "the composer must stay separate from saved comments")
     check("max-height: 210px" in admin_css and "overflow-y: auto" in admin_css, "comment thread must be scrollable")
     check("white-space: pre-wrap" in admin_css, "comment line breaks must be preserved")
+    check(
+        "min-height: 18px !important;" in light_css
+        and "height: 26px !important;" in light_css
+        and "font-size: 13px !important;" in light_css,
+        "light-theme saved-note author row and edit/delete controls must stay compact",
+    )
 
+    check(
+        light_css.count("border-left-color: #d4a72c !important;") == 0
+        and "border-left: 4px solid var(--assistant-note-item-color) !important;" in light_css
+        and "#assistantStudentNotesHost .assistant-note-edit-input" in light_css
+        and "font-size: 18px !important;" in light_css,
+        "pinned memo rails must retain the author color and saved memo copy must use the compact type size",
+    )
+    check(
+        "border: 1px solid rgba(var(--assistant-note-item-rgb), .42) !important;" in light_css
+        and "linear-gradient(180deg" in light_css
+        and "inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .72)" in light_css
+        and ".assistant-note-item.is-pinned .assistant-note-pin" in light_css
+        and "background: rgba(var(--assistant-note-item-rgb), .12) !important;" in light_css
+        and "color: var(--assistant-note-item-color) !important;" in light_css,
+        "light pinned cards must use each author's outline and filled interactive pin",
+    )
+    check(
+        "padding: 6px 8px 8px 12px !important;" in light_css
+        and "width: 30px !important;" in light_css
+        and "min-height: 24px !important;" in light_css
+        and "font-size: 17px !important;" in light_css
+        and "margin-top: 2px !important;" in light_css
+        and "padding-top: 3px !important;" in light_css
+        and "white-space: pre-wrap !important;" in light_css,
+        "reminder memo metadata rows must stay vertically compact without changing wrapping",
+    )
 
 def main() -> int:
     repository_checks()

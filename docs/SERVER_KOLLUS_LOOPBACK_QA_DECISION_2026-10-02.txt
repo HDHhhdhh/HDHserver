@@ -1,0 +1,58 @@
+Kollus 8004 영상 전용 QA 승인·실행 기록 / 2026-10-02
+
+현재 확인한 결과
+공식 플레이어 설치와 Chrome의 provider 권한 허용 뒤 실제 영상이 재생됐다.
+재생 시간은 0.16 → 44.13 → 113.46초로 자연 증가했고 전체 길이는 2143.97초다.
+학생 SID나 학생 watch writer를 사용하지 않은 확인이므로 학생 기록은 시험하지 않았다.
+합성 학생을 쓰는 코드·임시 저장소 회귀는 통과했다.
+
+현재 관리형 테스트 서버의 주소는 127.0.0.1:8004다.
+이 서버는 실제 학원망에 속하지 않는다. D-18에 승인된 한 학생·영상만 예외를 적용하며 다른 쌍은 계속 403으로 거부한다.
+Chrome의 8004 기기 앱 권한은 실제 조회에서 granted로 확인했다.
+provider 단독 영상 재생과 테스트 학생의 자동 저장은 별개의 결과로 관리한다.
+
+승인된 선택: 현재 8004에 영상 전용 QA 예외 추가
+합성 학생 QAHUBNATIVE1002와 기존 provider 영상 3FWqGfJP 한 쌍만 대상으로 한다.
+새 기능은 기본 OFF다. 승인 후 검증하는 동안에만 켜고, 끝나면 다시 끈다.
+공식 manager가 확인한 복사 코드 경로·포트·현재 PID·시작 시각, 정상 loopback 요청,
+비공개 요청, 지정 SID와 MID가 모두 맞아야 재생과 browser watch를 허용한다.
+조건이 없거나 확인이 실패하면 기존 제한을 유지한다.
+
+전체 academy 권한을 true로 바꾸지 않는다. 별도의 영상 권한만 사용한다.
+시험 답지·자료 제한, 실제 학원 IP 판정, 신뢰 proxy, Basic 인증은 유지한다.
+provider URL에는 QA SID나 callback 토큰을 넣지 않는다.
+public 앱, 외부/LAN 공개, 실제 push와 Kollus callback은 켜지 않는다.
+운영 JSON·SQLite·학생 배정을 QA 초기 데이터로 복사하지 않는다.
+운영 8003을 재시작하거나 운영 학생 기록을 변경하지 않는다.
+
+실행·검증 범위
+1. 조건을 하나씩 누락한 요청과 다른 학생·영상은 기존처럼 거부되고 저장되지 않는지 확인한다.
+2. 실제 iframe 재생 → 자동 POST200 → QA watch/progress 저장 → 재조회·reload를 확인한다.
+3. 밀리초 시각, 수동 none 보존, 배정 snapshot 불변을 확인한다.
+4. 시험·자료·인증 제한과 기존 관련 회귀, 전체 non-smoke suite를 확인한다.
+5. QA 예외를 끄고 두 서버의 가용성을 확인한다. QA 데이터는 운영에 병합하지 않는다.
+
+대안: 실제 학원망에 별도 격리 QA 배포 연결
+새 host·runner·배포 범위가 필요하다. 현재 8004를 외부에 노출하는 것으로 대체하지 않는다.
+
+사용자가 ‘8004 영상 전용 QA 예외 승인’이라고 명시 승인했다. D-18과 core/isolated_kollus_qa.py에 경계를 기록하고 manager -KollusVideoQa로 검증 중에만 활성화했다. 합성 학생은 격리 저장소의 기존 저장 함수를 사용해 추가했고 운영 add-student의 ID 생성 규칙은 변경하지 않았다. 영상·배정·초기 progress는 QA의 정상 API로 설정했다.
+6.1 Sol/max 병렬 검토에서 QA 판정을 두 번 검사할 때 조건이 바뀌면 provider에 SID를 발행하는 레이스를 재현했다. 판정을 요청 안에 보존해 수정했고 실제 temp route의 True→False oracle을 포함한 103 assertions가 통과했다. 최종 독립 검토의 추가 finding은 없다.
+
+실기동에서 발견·수정한 저장 문제
+공식 legacy SDK 2.0.2에는 getPosition/getDuration/seek가 없다. 실제 prototype과 공식 문서에 맞춰 get_progress()/set_current_time()을 사용하고 VM fixture도 해당 계약으로 정렬했다.
+실제 1초 progress 이벤트가 1500ms debounce를 계속 미뤄 재생 중 저장되지 않고 reload/pagehide 때만 저장됐다. 기존 trailing debounce와 함께 MID별 고정 10초 저장 시도를 추가했다. flush/reset/cycle 변경 시 두 timer를 취소하며 실패 재시도·중복 제거·접근 제한은 유지한다.
+실제 연속 재생에서 약 10초 간격의 자동 POST200을 확인했다. 340초/2143초 저장과 interrupted·epoch-ms·배정 marker 보존, 새로고침의 16%/이어보기 복원도 확인했다. Chrome와 IAB의 학생 표시·재조회는 확인했으며 native 재생은 Chrome의 증거다. 완료·수동 none 검증은 아래 최종 결과에 기록한다.
+최종 소스의 non-smoke 전체105그룹, board/notifications22assertions, focused SDK/watch/timestamp/rearm 및 QA103assertions/실제 entrypoint 검증이 통과했다.
+운영PID13448/ping200/공개HTTPS app200 유지. 실제 manager는 QA만 재시작했으며 QA listener65324/127.0.0.1/managed200, liveRuntimeCopied:false를 확인했다. 다른 SID/MID의 URL·watch403, callback403, QA admin 비인증401도 확인했다.
+
+Chrome 테스트 사이트 권한 설정
+주소창: chrome://settings/content/siteDetails?site=http%3A%2F%2F127.0.0.1%3A8004
+‘기기에 있는 앱’(구버전 ‘로컬 네트워크 액세스’)을 ‘허용’으로 바꾼다.
+Chrome 설정을 여는 동작은 도구 보안 정책으로 차단되어 사용자가 직접 처리해야 한다.
+이 안내에 따른 현재 권한은 granted다. 추가 권한 설정은 실행하지 않았다.
+
+최종 결과 (2026-10-02)
+Chrome에서 실제 자연 재생과 지원되는 2배속으로 90%를 넘었다. watch last1929/dur2143/completed:true, updatedAt1790931021209 및 자동 progress done을 확인했다. 이후 QA 정상 API로 수동 none을 지정하고 재생을 다시 시작했다. 실제 후속 POST200(last171/181 등) 뒤에도 __manualProgressMids:true와 none이 그대로이며 watch 관찰 시각은 증가하고 최초 배정 snapshot은 동일했다. reload와 OFF 후 재조회에서도 none을 확인했다.
+CDP에 확보한 POST200은23건이다. 오래된 event가 유실되어90%의 개별 network event는 남지 않았지만, native의 자연 시간 증가·실제90% QA 저장소와 done, 후속 수동none의 실제 network/storage/reload 증거는 각각 보존했다. provider callback이나 실제 학원망 배포 검증으로 표기하지 않는다.
+manager Status→Start -Restart(예외 switch 없음)→Status로 종료했다. QA PID69464/managed200/loopback listener1/flag:false, 운영PID13448/ping200/공개app200. 지정 쌍의 get-url/watch도 다시403이며 두 거부 요청 전후 QA watch/progress/updates의 mtime_ns·size·SHA 동일. 기존 QA service와 테스트 기록은 보존하고 검증용 Chrome/IAB 탭은 닫았다.
+사진과 비밀 없는 JSON 증거: generated/kollus-qa-20261002/native-manual-none-175451.jpg 및 native-evidence.json (Git ignored). 사진은90% 완료 후 수동none을 지정해 새로 재생한 장면이며90% 완료 화면으로 표기하지 않는다.

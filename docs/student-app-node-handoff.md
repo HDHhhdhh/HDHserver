@@ -1,5 +1,7 @@
 # 학생 앱 개발 PC ↔ 운영 서버컴 인수인계
 
+아래 고정된 `20260809` release·hash·영수증과 진행 상태는 당시 인수인계 예시로 보존한다. 현재 적용 승인이나 새 배포 지시가 아니며, 실제 실행 전에는 대상 노드의 현행 release·영수증·사용자 승인 범위를 다시 확인한다. 이 저장소의 현행 8004는 [관리형 격리 서버](isolated-design-server.md)를 따른다.
+
 ## 원칙
 
 - 개발 PC는 `dev-app.5a-math.com`, 운영 서버컴은 `app.5a-math.com`만 담당한다.
@@ -66,7 +68,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 1. 운영 Waitress와 Push worker 상태를 기록한다.
 2. 운영 runtime을 `scripts/backup_runtime_data.py`로 백업하고 archive SHA-256을 기록한다.
 3. ZIP과 `.sha256.txt`를 운영 PC의 별도 staging 폴더에 내려받는다.
-4. `prepare_student_app_production_stage.ps1`을 실행해 운영 root 밖에서 ZIP hash, release manifest, runtime 제외, compileall, backend/frontend focused all을 검증한다. backend 검증용 빈 runtime은 staging 내부에만 생성하며 운영 process/runtime을 읽거나 변경하지 않는다.
+4. `prepare_student_app_production_stage.ps1`을 실행해 운영 root 밖에서 ZIP hash, release manifest, runtime 제외, compileall, backend/frontend focused all을 검증한다. `stage-path-declarations`는 `import core.paths`로 경로 선언만 확인하며 runtime을 생성하지 않는다(`stageRuntimeSeeded=false`). 검증은 staging 내부에서 수행하며 운영 process/runtime을 읽거나 변경하지 않는다.
 5. `prod-stage-preflight.json`의 `readyForApply=true`를 확인하고 `receipts-prod/`에 업로드한다.
 6. 별도 승인 후 `apply_student_app_production.ps1`로 코드만 배포한다. 이 스크립트는 Waitress를 멈춘 상태에서 runtime ZIP과 기존 코드 rollback 사본을 만들고, manifest의 코드만 적용한 뒤 Waitress를 재시작한다. `removedPaths`는 rollback 폴더로 이동하며 즉시 삭제하지 않는다.
 7. 필요한 SQLite migration은 코드 복사와 별도 단계에서 하나씩 적용한다.

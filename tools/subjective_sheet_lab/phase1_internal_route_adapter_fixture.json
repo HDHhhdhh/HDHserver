@@ -1,0 +1,38 @@
+{
+  "fixture": "phase1_internal_route_adapter_v1",
+  "happy_request": {
+    "featureEnabled": true,
+    "mode": "phase1_internal_only",
+    "sid": "phase1_fake_student",
+    "testId": "mock_subjective_test",
+    "round": "2",
+    "inputKind": "prepared_local_fixture",
+    "imagePath": "local_fixture://subjective_review_dry_run_fixture.json"
+  },
+  "disabled_request": {
+    "featureEnabled": false,
+    "mode": "phase1_internal_only",
+    "sid": "phase1_fake_student",
+    "testId": "mock_subjective_test",
+    "round": "2",
+    "inputKind": "prepared_local_fixture",
+    "imagePath": "local_fixture://subjective_review_dry_run_fixture.json"
+  },
+  "missing_image_request": {
+    "featureEnabled": true,
+    "mode": "phase1_internal_only",
+    "sid": "phase1_fake_student",
+    "testId": "mock_subjective_test",
+    "round": "2",
+    "inputKind": "prepared_local_fixture"
+  },
+  "wrong_mode_request": {
+    "featureEnabled": true,
+    "mode": "student_page_live",
+    "sid": "phase1_fake_student",
+    "testId": "mock_subjective_test",
+    "round": "2",
+    "inputKind": "prepared_local_fixture",
+    "imagePath": "local_fixture://subjective_review_dry_run_fixture.json"
+  }
+}

@@ -1,19 +1,19 @@
-﻿// static/js/all/main.js
+// static/js/all/main.js
 import { $ } from './core/utils.js';
-import { loadAll, state } from './core/state.js';
+import { loadAll, loadHomeworkBooks, state } from './core/state.js';
 import { renderYoilStats } from './features/yoilStats.js';
-import { renderTable } from './features/table.js';
+import { dedupKeyForStudent, renderHomeworkBooks, renderTable } from './features/table.js?v=20260907-ilsan-level-r1&watchRearm=20260912&youtube=20260913&bookSleep=4&homeworkOpenStable=1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&scheduleTab=20261002&uiPerf=20261002&dragScroll=20261007';
 import './features/progressModal.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
 import { hookDeleteButtons } from './features/deleteButtons.js';
 import { hookCloneButtons } from './features/cloneButtons.js';
-import './features/escClose.js';
+import './features/escClose.js?v=20260929-search-visibility1';
 import { mountNewStudentBar } from './features/addStudent.js';
 import { mountChatRosterExport } from './features/chatRosterExport.js';
 import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 import { state as adminTooltipState } from '../admin/core/state.js';
-import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260813-phase11';
+import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
 
 function syncAdminTooltipState() {
   adminTooltipState.students = state.students;
@@ -21,34 +21,6 @@ function syncAdminTooltipState() {
   adminTooltipState.progress = state.progress;
   adminTooltipState.schoolCal = state.schoolCal;
   adminTooltipState.homeworkBooksBySid = state.homeworkBooksBySid;
-}
-
-/** 이름+학교 기준으로 학생 dedup용 키 (table.js와 동일 로직) */
-function dedupKeyForStudent(s) {
-  const name = (s.name || '').trim();
-
-  const high =
-    s.highSchool ||
-    s.schoolHigh ||
-    s.high ||
-    s.highschool ||
-    s.high_school ||
-    s.고등학교 ||
-    '';
-
-  const middle =
-    s.middleSchool ||
-    s.schoolMiddle ||
-    s.middle ||
-    s.middleschool ||
-    s.middle_school ||
-    s.중학교 ||
-    s.school ||
-    '';
-
-  const school = s.school || high || middle || '';
-
-  return `${name}::${school}`;
 }
 
 /** 전체 학생 수 라벨 갱신 (state.students 기준) */
@@ -97,11 +69,17 @@ document.addEventListener('all:student-deleted', (event) => {
 
 (async function init() {
   try {
-    await loadAll();
+    await loadAll({ waitForHomeworkBooks: false });
     syncAdminTooltipState();
     initAdminHoverTooltip();
     initStudentTestRecordDetails(document);
     renderAll();
+
+    void loadHomeworkBooks().then(() => {
+      syncAdminTooltipState();
+      renderHomeworkBooks();
+      document.dispatchEvent(new CustomEvent('all:homework-books-loaded'));
+    });
 
     document.addEventListener('admin:refresh', () => {
       updateAllCount();

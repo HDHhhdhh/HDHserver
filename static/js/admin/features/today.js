@@ -1,30 +1,30 @@
-// /js/admin/features/today.js
-// today.js 엔트리(조립본)
-// - loadTodayAndRender 공개
-// - alpha sort 토글 포함
-// - computeTodayList + render 호출
-//
-// ✅ CHANGE
-// - ✅ 정렬 그룹 고정: 1타임(위) > 연강(중간) > 2타임(아래)
-//   - 기준: labelFor(dateStr, sid) 텍스트에서 슬롯 숫자 추출
-//   - 평일: [1,2], 주말: [1,2,3]
-//   - alphaSortOnly(가나다 모드)에서는 예외 없이 이름만 정렬
-
 import { state } from '../core/state.js';
 import { api } from '../core/api.js';
-import { getAdminDate } from '../core/adminDate.js';
+import { getAdminDate, setAdminDate } from '../core/adminDate.js';
 import { todayLocalKey } from '../core/utils.js';
 import {
   applySearchPlaceholder,
   matchesSearchKey,
-  normalizeSearch as normalizeSharedSearch,
-  searchKeyForText as sharedSearchKeyForText,
-  studentSearchKey as sharedStudentSearchKey,
+  normalizeSearch,
+  searchKeyForText,
 } from '../../shared/search.js';
-import { countPendingMakeupsBySid } from './makeupPending.js';
-import { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
+import { todayStudentSearchKey } from './todaySearch.js?v=20260929-school-initials1';
+import {
+  countPendingMakeupsBySid,
+  scheduledMakeupStudentIdsForDate,
+} from './makeupPending.js';
+import {
+  doneEntriesFromUnarchivedSummary,
+  missingLeaveWarningText,
+  missingLeaveWarningRows,
+  recordCleanupWarningText,
+} from './todayDoneSummary.js?v=20260830-warning-boundary1&leaveDetails=20261011';
 
-export { doneEntriesFromUnarchivedSummary } from './todayDoneSummary.js';
+export {
+  doneEntriesFromUnarchivedSummary,
+  missingLeaveWarningText,
+  recordCleanupWarningText,
+} from './todayDoneSummary.js?v=20260830-warning-boundary1&leaveDetails=20261011';
 
 import {
   loadWeekendSlots,
@@ -34,6 +34,7 @@ import {
   collectUnarchivedLogsByDate,
   loadOrderMap,
   applySavedOrder,
+  getSavedOrder,
   hasWeekday,
   yoilOf,
   plannedMinutesFor,
@@ -44,13 +45,14 @@ import {
   hwCheckRequestedAt,
   truthy,
   labelFor,
+  withStudentLookup,
 } from './today.state.js';
 
 import {
   renderToday,
   renderDone,
   bindTodayTableEvents,
-} from './today.render.js?v=20260814-phase17';
+} from './today.render.js?v=20260912-done-white-review1&youtube=20260913&adminSpeed=20261003&stabilityBase=20261013';
 
 function dateQuery(dateKey) {
   return new URLSearchParams({ date: String(dateKey || '') }).toString();
@@ -121,31 +123,6 @@ async function ensureLogsForDate(dateKey, options = {}) {
       window.logs = state.logs;
     }
   } catch {}
-}
-
-const logHistoryLoadedSids = new Set();
-
-async function ensureLogHistoryForSids(sids, options = {}) {
-  const keys = Array.from(new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean)));
-  if (!keys.length) return;
-
-  const pending = keys.filter(sid => options.forceHistory || !logHistoryLoadedSids.has(sid));
-  if (!pending.length) return;
-
-  for (const sid of pending) {
-    try {
-      const q = new URLSearchParams({ sid }).toString();
-      const res = await fetch(`/api/logs?${q}`, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data && typeof data === 'object') {
-        state.logs = state.logs || {};
-        mergeDateSidMap(state.logs, data);
-        window.logs = state.logs;
-        logHistoryLoadedSids.add(sid);
-      }
-    } catch {}
-  }
 }
 
 async function ensureProgressForDate(dateKey, options = {}) {
@@ -286,60 +263,130 @@ async function refreshAbsencesIfNeeded(options = {}) {
   } catch {}
 }
 
-function ensureStaleDoneWarningStyle() {
-  if (document.getElementById('staleDoneWarningStyle')) return;
-  const s = document.createElement('style');
-  s.id = 'staleDoneWarningStyle';
-  s.textContent = `
-    #staleDoneWarning{
-      display:block;margin:8px 0 0;padding:7px 9px;border-radius:8px;
-      border:1px solid rgba(245,158,11,.45);
-      background:rgba(245,158,11,.12);
-      color:#92400e;font-weight:700;line-height:1.35;
-    }
-    body.dark #staleDoneWarning{
-      border-color:rgba(251,191,36,.5);
-      background:rgba(251,191,36,.13);
-      color:#fde68a;
-    }
-    #staleDoneWarning[hidden]{display:none}
-  `;
-  document.head.appendChild(s);
+function todayOperationWarningStack() {
+  return document.getElementById('todayOperationWarnings');
+}
+
+function syncTodayOperationWarningStack() {
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
+  stack.hidden = !Array.from(stack.children).some(child => !child.hidden);
+}
+
+function createOperationWarningIcon() {
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(svgNs, 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('fill', 'none');
+  icon.setAttribute('stroke', 'currentColor');
+  icon.setAttribute('stroke-width', '2');
+  icon.setAttribute('stroke-linecap', 'round');
+  icon.setAttribute('stroke-linejoin', 'round');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+
+  const triangle = document.createElementNS(svgNs, 'path');
+  triangle.setAttribute('d', 'M10.3 3.2 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0Z');
+  const stem = document.createElementNS(svgNs, 'path');
+  stem.setAttribute('d', 'M12 9v4');
+  const dot = document.createElementNS(svgNs, 'path');
+  dot.setAttribute('d', 'M12 17h.01');
+  icon.append(triangle, stem, dot);
+  return icon;
+}
+
+function setOperationWarningMessage(el, message) {
+  const text = String(message || '').trim();
+  el.hidden = !text;
+  let label = el.querySelector('.hero-warning-label');
+  if (!text) {
+    if (label) label.textContent = '';
+    return;
+  }
+  if (!label) {
+    const icon = document.createElement('span');
+    icon.className = 'hero-warning-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.appendChild(createOperationWarningIcon());
+    label = document.createElement('span');
+    label.className = 'hero-warning-label';
+    el.replaceChildren(icon, label);
+  }
+  label.textContent = text;
 }
 
 function renderStaleDoneWarning(summary) {
-  const anchor = document.getElementById('todaySlotCounts');
-  if (!anchor) return;
-
-  ensureStaleDoneWarningStyle();
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
 
   let el = document.getElementById('staleDoneWarning');
   if (!el) {
     el = document.createElement('p');
     el.id = 'staleDoneWarning';
-    el.className = 'hero-sub';
+    el.className = 'hero-sub hero-operation-warning hero-operation-warning--cleanup';
     el.setAttribute('aria-live', 'polite');
-    anchor.insertAdjacentElement('afterend', el);
+    stack.appendChild(el);
   }
 
-  const byDateRows = Array.isArray(summary?.byDate) ? summary.byDate : [];
-  const total = Number(summary?.total || 0);
-  if (!total || !byDateRows.length) {
-    el.hidden = true;
-    el.textContent = '';
+  const message = recordCleanupWarningText(summary);
+  setOperationWarningMessage(el, message);
+  syncTodayOperationWarningStack();
+}
+
+function renderMissingLeaveWarning(summary) {
+  const stack = todayOperationWarningStack();
+  if (!stack) return;
+  let el = document.getElementById('missingLeaveWarning');
+  if (!el) {
+    el = document.createElement('section');
+    el.id = 'missingLeaveWarning';
+    el.className = 'hero-sub hero-operation-warning hero-operation-warning--leave';
+    el.setAttribute('role', 'alert');
+    el.setAttribute('aria-live', 'assertive');
+    stack.appendChild(el);
+  }
+
+  const rows = missingLeaveWarningRows(summary, { today: todayLocalKey(), excludeDate: getAdminDate() });
+  el.hidden = rows.length === 0;
+  if (!rows.length) {
+    el.replaceChildren();
+    syncTodayOperationWarningStack();
     return;
   }
-
-  const preview = byDateRows
-    .slice(0, 3)
-    .map((row) => `${row.date} ${row.count}건`)
-    .join(', ');
-  const more = byDateRows.length > 3 ? ` 외 ${byDateRows.length - 3}일` : '';
-  const students = Number(summary?.students || 0);
-  const studentText = students && students !== total ? `/${students}명` : '';
-
-  el.hidden = false;
-  el.textContent = `정리 필요: 어제까지 하원 ${total}건${studentText} (${preview}${more}). 내보내기 전 확인`;
+  const heading = document.createElement('div');
+  heading.className = 'missing-leave-heading';
+  const icon = document.createElement('span');
+  icon.className = 'hero-warning-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.className = 'hero-warning-label';
+  label.textContent = `과거 하원 기록 확인 · ${rows.length}건`;
+  heading.append(icon, label);
+  const list = document.createElement('ul');
+  list.className = 'missing-leave-list';
+  const students = new Map((state.students || []).map(student => [String(student.id), student]));
+  for (const row of rows) {
+    const name = String(students.get(row.sid)?.name || row.sid);
+    const item = document.createElement('li');
+    const info = document.createElement('div');
+    const title = document.createElement('span');
+    title.className = 'missing-leave-student';
+    title.textContent = `${row.date} · ${name} · 등원 ${row.arriveTime}`;
+    const reason = document.createElement('span');
+    reason.className = 'missing-leave-reason';
+    reason.textContent = '하원 완료로 저장되지 않음';
+    info.append(title, reason);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'missing-leave-open';
+    open.textContent = '날짜 확인';
+    open.setAttribute('aria-label', `${row.date} ${name} 하원 기록 확인`);
+    open.addEventListener('click', () => setAdminDate(row.date));
+    item.append(info, open);
+    list.appendChild(item);
+  }
+  el.replaceChildren(heading, list);
+  syncTodayOperationWarningStack();
 }
 
 async function fetchUnarchivedDoneSummary(dateKey) {
@@ -355,73 +402,30 @@ async function fetchUnarchivedDoneSummary(dateKey) {
   }
 }
 
+async function fetchMissingLeaveSummary(dateKey) {
+  try {
+    const qs = new URLSearchParams({ exclude_date: String(dateKey || '') });
+    const res = await fetch(`/api/arrive-time/missing-leave-summary?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && typeof data === 'object' ? data : null;
+  } catch (err) {
+    console.warn('[today] missing leave summary failed:', err);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────
 // 오늘 학생 도구/검색
 // ─────────────────────────────────────────────
 const LS_SEARCH_FIELD = 'todaySearchField';
 const TODAY_SEARCH_FIELDS = new Set(['all', 'name', 'school', 'curriculum']);
-let _alphaSortOnly = false;
 let _todaySearchField = TODAY_SEARCH_FIELDS.has(localStorage.getItem(LS_SEARCH_FIELD))
   ? localStorage.getItem(LS_SEARCH_FIELD)
   : 'all';
 let _makeupCarryover = null;
 
-function normalizeSearch(value) {
-  return normalizeSharedSearch(value);
-}
-
-const HANGUL_BASE = 0xac00;
-const HANGUL_END = 0xd7a3;
-const HANGUL_INITIALS_COMPAT = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
-const HANGUL_INITIALS_LEAD = [
-  0x1100, 0x1101, 0x1102, 0x1103, 0x1104, 0x1105, 0x1106, 0x1107, 0x1108,
-  0x1109, 0x110a, 0x110b, 0x110c, 0x110d, 0x110e, 0x110f, 0x1110, 0x1111, 0x1112,
-].map(code => String.fromCharCode(code));
-
-function hangulInitials(value, initials = HANGUL_INITIALS_COMPAT) {
-  return Array.from(String(value || '')).map(ch => {
-    const code = ch.charCodeAt(0);
-    if (code < HANGUL_BASE || code > HANGUL_END) return ch;
-    return initials[Math.floor((code - HANGUL_BASE) / 588)] || ch;
-  }).join('');
-}
-
-function searchKeyForText(value) {
-  return sharedSearchKeyForText(value);
-}
-
-function studentFieldValues(stu, field) {
-  const school = [
-    stu?.school,
-    stu?.schoolName,
-    stu?.highSchool,
-    stu?.middleSchool,
-    stu?.high,
-    stu?.middle,
-    stu?.schoolHigh,
-    stu?.schoolMiddle,
-  ];
-  const curriculum = [
-    stu?.curriculum,
-    stu?.subCurriculum,
-    stu?.subject,
-    stu?.course,
-  ];
-
-  if (field === 'name') return [stu?.name, stu?.id];
-  if (field === 'school') return school;
-  if (field === 'curriculum') return curriculum;
-  return [stu?.name, stu?.id, ...school, ...curriculum];
-}
-
-function studentSearchKey(stu, field) {
-  if (field === 'all') return sharedStudentSearchKey(stu);
-  if (field === 'name') return sharedStudentSearchKey({ name: stu?.name, id: stu?.id });
-  return searchKeyForText(studentFieldValues(stu, field).filter(Boolean).join(' '));
-}
-
 function updateAlphaSortBtn() {
-  _alphaSortOnly = false;
   document.getElementById('todayAlphaSortBtn')?.remove();
 }
 
@@ -568,6 +572,25 @@ if (document.readyState === 'loading') {
   ensureAlphaSortBtn();
 }
 
+const todaySearchKeyMemo = new WeakMap();
+
+function todayRowSearchKey(row, stu, mode) {
+  const texts = !stu && mode === 'all'
+    ? Array.from(row.cells || [], cell => cell.textContent || '')
+    : [];
+  const buildKey = () => stu
+    ? todayStudentSearchKey(stu, mode)
+    : texts.map(searchKeyForText).join('|');
+  let signature;
+  try { signature = JSON.stringify([mode, !!stu, stu || texts]); }
+  catch { return buildKey(); }
+  const cached = todaySearchKeyMemo.get(row);
+  if (cached?.signature === signature) return cached.key;
+  const key = buildKey();
+  todaySearchKeyMemo.set(row, { signature, key });
+  return key;
+}
+
 function applyTodaySearchFilter() {
   const host = document.getElementById('todayWrap');
   const doneHost = document.getElementById('doneWrap');
@@ -586,7 +609,7 @@ function applyTodaySearchFilter() {
 
   if (!normalizeSearch(queryText)) {
     for (const row of rows) {
-      if (!row.hidden && !row.classList.contains('is-search-hidden')) continue;
+      if (!row.hidden && !row.classList.contains('is-search-hidden') && row.getAttribute('aria-hidden') !== 'true') continue;
       row.hidden = false;
       row.classList.remove('is-search-hidden');
       row.setAttribute('aria-hidden', 'false');
@@ -602,11 +625,17 @@ function applyTodaySearchFilter() {
   for (const row of rows) {
     const sid = String(row.dataset.sid || '');
     const stu = studentsById.get(sid);
-    const key = stu ? studentSearchKey(stu, mode) : searchKeyForText(row.textContent || '');
+    const key = todayRowSearchKey(row, stu, mode);
     const matches = matchesSearchKey(key, queryText);
-    row.hidden = !matches;
-    row.classList.toggle('is-search-hidden', !matches);
-    row.setAttribute('aria-hidden', matches ? 'false' : 'true');
+    const hidden = !matches;
+    if (row.hidden !== hidden) row.hidden = hidden;
+    if (row.classList.contains('is-search-hidden') !== hidden) {
+      row.classList.toggle('is-search-hidden', hidden);
+    }
+    const ariaHidden = matches ? 'false' : 'true';
+    if (row.getAttribute('aria-hidden') !== ariaHidden) {
+      row.setAttribute('aria-hidden', ariaHidden);
+    }
     if (matches && row.closest('#doneWrap')) doneVisible += 1;
     else if (matches) todayVisible += 1;
   }
@@ -695,41 +724,67 @@ function homeworkRequestRank(dateStr, stu) {
   return requested ? 0 : 1;
 }
 
-function compareTodayStudents(dateStr, baseOrder) {
+function compareTodayStudents(dateStr, baseOrder, manualOrder) {
+  const collator = new Intl.Collator('ko-KR', { sensitivity: 'base', numeric: true });
+  const keys = new WeakMap();
+  const keyFor = student => {
+    let key = keys.get(student);
+    if (!key) {
+      const sid = student.id;
+      const self = isSelfStudy(dateStr, sid) ? 1 : 0;
+      const checked = isHwChecked(dateStr, sid) ? 1 : 0;
+      key = {
+        group: timeGroupRank(dateStr, sid),
+        attended: isAttended(dateStr, sid) ? 1 : 0,
+        self,
+        status: self ? 2 : checked ? 1 : 0,
+        request: homeworkRequestRank(dateStr, student),
+        requestedAt: hwCheckRequestedAt(dateStr, sid) || '9999-99-99T99:99:99.999Z',
+        minutes: plannedMinutesFor(dateStr, sid),
+        name: String(student.name || ''),
+        sid: String(sid),
+      };
+      keys.set(student, key);
+    }
+    return key;
+  };
   return (a, b) => {
-    const ga = timeGroupRank(dateStr, a.id);
-    const gb = timeGroupRank(dateStr, b.id);
+    const ka = keyFor(a);
+    const kb = keyFor(b);
+    const ga = ka.group;
+    const gb = kb.group;
     if (ga !== gb) return ga - gb;
 
-    const attA = isAttended(dateStr, a.id) ? 1 : 0;
-    const attB = isAttended(dateStr, b.id) ? 1 : 0;
-    const hwcA = isHwChecked(dateStr, a.id) ? 1 : 0;
-    const hwcB = isHwChecked(dateStr, b.id) ? 1 : 0;
-    const selfA = isSelfStudy(dateStr, a.id) ? 1 : 0;
-    const selfB = isSelfStudy(dateStr, b.id) ? 1 : 0;
-    const statusA = selfA ? 2 : hwcA ? 1 : 0;
-    const statusB = selfB ? 2 : hwcB ? 1 : 0;
-    const reqA = homeworkRequestRank(dateStr, a);
-    const reqB = homeworkRequestRank(dateStr, b);
-    const ta = plannedMinutesFor(dateStr, a.id);
-    const tb = plannedMinutesFor(dateStr, b.id);
+    const attA = ka.attended;
+    const attB = kb.attended;
+    const selfA = ka.self;
+    const selfB = kb.self;
+    const statusA = ka.status;
+    const statusB = kb.status;
+    const reqA = ka.request;
+    const reqB = kb.request;
+    const ta = ka.minutes;
+    const tb = kb.minutes;
 
     if (selfA !== selfB) return selfA - selfB;
     if (attA !== attB) return attA - attB;
     if (reqA !== reqB) return reqA - reqB;
     if (reqA === 0 && reqB === 0) {
-      const atA = hwCheckRequestedAt(dateStr, a.id) || '9999-99-99T99:99:99.999Z';
-      const atB = hwCheckRequestedAt(dateStr, b.id) || '9999-99-99T99:99:99.999Z';
+      const atA = ka.requestedAt;
+      const atB = kb.requestedAt;
       const atCmp = atA.localeCompare(atB);
       if (atCmp !== 0) return atCmp;
     }
     if (statusA !== statusB) return statusA - statusB;
     if (ta !== tb) return ta - tb;
 
-    const nameCmp = String(a.name || '').localeCompare(String(b.name || ''), 'ko-KR', {
-      sensitivity: 'base',
-      numeric: true,
-    });
+    if (manualOrder) {
+      const ai = manualOrder.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER;
+      const bi = manualOrder.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+    }
+
+    const nameCmp = collator.compare(ka.name, kb.name);
     if (nameCmp !== 0) return nameCmp;
 
     if (baseOrder) {
@@ -738,19 +793,21 @@ function compareTodayStudents(dateStr, baseOrder) {
       if (ai !== bi) return ai - bi;
     }
 
-    return String(a.id).localeCompare(String(b.id), 'ko-KR', {
-      sensitivity: 'base',
-      numeric: true,
-    });
+    return collator.compare(ka.sid, kb.sid);
   };
 }
 
-function sortTodayStudents(list, dateStr, { preserveCurrentOrder = false } = {}) {
+function sortTodayStudents(list, dateStr, { preserveCurrentOrder = false, savedOrder = [] } = {}) {
   const out = Array.isArray(list) ? list : [];
   const baseOrder = preserveCurrentOrder
     ? new Map(out.map((stu, idx) => [String(stu?.id), idx]))
     : null;
-  out.sort(compareTodayStudents(dateStr, baseOrder));
+  const manualOrder = new Map();
+  for (const id of savedOrder) {
+    const sid = String(id);
+    if (!manualOrder.has(sid)) manualOrder.set(sid, manualOrder.size);
+  }
+  out.sort(compareTodayStudents(dateStr, baseOrder, manualOrder));
   return out;
 }
 
@@ -771,22 +828,26 @@ async function loadExtraAttendMap() {
   }
 }
 
-async function computeTodayList(dateKey) {
+function computeTodayList(dateKey, extraMap = state.extra || {}) {
   const dateStr = dateKey || getAdminDate();
   const wchr = yoilOf(dateStr);
   const studs = state.students || [];
   const absentByDate = state.absentByDate || {};
 
-  const extraMap = await loadExtraAttendMap();
-
   const regular = studs.filter(s => hasWeekday(s, wchr));
   const extraIds = (extraMap[dateStr] || []).map(x => String(x).trim());
-  const extraStudents = extraIds
+  const scheduledMakeupIds = scheduledMakeupStudentIdsForDate({
+    students: studs,
+    carryover: _makeupCarryover || {},
+    date: dateStr,
+  });
+  const supplementalIds = Array.from(new Set([...extraIds, ...scheduledMakeupIds]));
+  const supplementalStudents = supplementalIds
     .map(id => studs.find(s => String(s.id) === id))
     .filter(Boolean);
 
   const seen = new Set();
-  let list = [...regular, ...extraStudents].filter(s => {
+  let list = [...regular, ...supplementalStudents].filter(s => {
     const id = String(s.id);
     if (seen.has(id)) return false;
     seen.add(id);
@@ -802,18 +863,6 @@ async function computeTodayList(dateKey) {
     return !(truthy(e.done));
   });
 
-  // 가나다 모드면 이름만 (그룹 정렬 적용 X)
-  if (_alphaSortOnly) {
-    list.sort((a, b) => {
-      const an = String(a.name || '');
-      const bn = String(b.name || '');
-      const c = an.localeCompare(bn, 'ko');
-      if (c !== 0) return c;
-      return String(a.id).localeCompare(String(b.id));
-    });
-    return { dateStr, list };
-  }
-
   // 정렬 우선순위:
   // 그룹 > 출석 확인 > 숙검요청(요청 빠른 순) > 숙제 검사 완료 > 등원시간 > 가나다
   return { dateStr, list };
@@ -822,7 +871,11 @@ async function computeTodayList(dateKey) {
 // ─────────────────────────────────────────────
 // 공개: 로드 + 렌더
 // ─────────────────────────────────────────────
+let todayRefreshFlight = null;
+let todayRefreshTail = Promise.resolve();
+let assignmentBoundaryFlight = null;
 let todayRenderSeq = 0;
+let missingLeaveWarningDateKey = '';
 let lastAutoAssignmentBoundaryDate = todayLocalKey();
 
 function renderDoneSummaryWhenIdle(entries, seq, dateKey) {
@@ -834,7 +887,7 @@ function renderDoneSummaryWhenIdle(entries, seq, dateKey) {
       wrap.addEventListener('focusout', () => queueMicrotask(apply), { once: true });
       return;
     }
-    renderDone(sortDoneEntries(entries));
+    withStudentLookup(() => renderDone(sortDoneEntries(entries)));
     applyTodaySearchFilter();
   };
   apply();
@@ -844,28 +897,45 @@ async function refreshUpdatesAtAssignmentBoundary(reason = '') {
   const realDate = todayLocalKey();
   const boundary = reason === 'date' || realDate !== lastAutoAssignmentBoundaryDate;
   if (!boundary) return;
-
-  try {
-    const updates = await api.get('/api/updates', { cache: 'no-store' });
-    if (updates && typeof updates === 'object') state.updates = updates;
-    lastAutoAssignmentBoundaryDate = realDate;
-  } catch {
-    // Rendering can continue with the last stable snapshot; retry on the next
-    // date/visibility refresh rather than creating a client-side assignment.
-  }
+  if (assignmentBoundaryFlight?.realDate === realDate) return assignmentBoundaryFlight.promise;
+  const flight = { realDate, promise: null };
+  flight.promise = (async () => {
+    try {
+      const updates = await api.get('/api/updates', { cache: 'no-store' });
+      if (assignmentBoundaryFlight !== flight || todayLocalKey() !== realDate) return;
+      if (updates && typeof updates === 'object') state.updates = updates;
+      lastAutoAssignmentBoundaryDate = realDate;
+    } catch {}
+  })();
+  assignmentBoundaryFlight = flight;
+  try { return await flight.promise; }
+  finally { if (assignmentBoundaryFlight === flight) assignmentBoundaryFlight = null; }
 }
 
 export async function loadTodayAndRender(options = {}) {
+  const force = !!options.force;
+  const dateKey = getAdminDate();
+  const forceDatePayloads = !!(force && (options.reason === 'date' || options.forceDatePayloads));
+  const key = JSON.stringify([dateKey, force, forceDatePayloads, options.reason === 'date', todayLocalKey()]);
+  const share = options.reason !== 'event' && options.reason !== 'mutation';
+  if (share && todayRefreshFlight?.key === key) return todayRefreshFlight.promise;
+  const seq = ++todayRenderSeq;
+  const pendingBoundary = assignmentBoundaryFlight?.promise;
+  if (!share) assignmentBoundaryFlight = null;
+  const previous = Promise.all([todayRefreshTail, pendingBoundary]);
+  const flight = { key, promise: null };
+  flight.promise = (async () => {
+    await previous;
+    if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
+
   ensureAlphaSortBtn();
   updateAlphaSortBtn();
 
   await refreshUpdatesAtAssignmentBoundary(options.reason || '');
+  if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
-  const force = !!options.force;
-  const seq = ++todayRenderSeq;
-  const dateKey = getAdminDate();
-  const forceDatePayloads = !!(force && (options.reason === 'date' || options.forceDatePayloads));
 
+  const extraAttendPromise = loadExtraAttendMap();
   await Promise.all([
     refreshStudentsIfNeeded({ force }),
     refreshAbsencesIfNeeded({ force }),
@@ -876,18 +946,21 @@ export async function loadTodayAndRender(options = {}) {
     ensureContactLoaded(dateKey, { force }),
     ensureArriveLoaded(dateKey, { force }),
     loadMakeupCarryoverMap({ force }),
+    extraAttendPromise,
+    loadOrderMap({ force }),
   ]);
 
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
 
   const localDoneEntries = sortDoneEntries(collectUnarchivedLogsByDate(dateKey));
+  const extraMap = await extraAttendPromise;
 
-  const [{ list: raw }] = await Promise.all([
-    computeTodayList(dateKey),
-    loadOrderMap({ force }),
-  ]);
+  const { list: raw } = await computeTodayList(dateKey, extraMap);
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
-  const list = sortTodayStudents(applySavedOrder(raw, dateKey), dateKey, { preserveCurrentOrder: true });
+  const list = withStudentLookup(() => sortTodayStudents(applySavedOrder(raw, dateKey), dateKey, {
+    preserveCurrentOrder: true,
+    savedOrder: getSavedOrder(dateKey),
+  }));
 
   await ensureProgressHistoryForSids(list.map(s => s.id), { forceHistory: forceDatePayloads });
   if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
@@ -905,30 +978,52 @@ export async function loadTodayAndRender(options = {}) {
   const wrap = document.getElementById('todayWrap');
   if (wrap) wrap.dataset.alpha = '0';
 
-  renderDone(localDoneEntries);
-  renderToday(list, dateKey, false, makeupCounts);
+  withStudentLookup(() => {
+    renderDone(localDoneEntries);
+    renderToday(list, dateKey, false, makeupCounts);
+  });
   applyTodaySearchFilter();
   renderStaleDoneWarning({ total: 0, byDate: [] });
+  // Keep the last authoritative warning through same-date auto refreshes.
+  // Clear it only when switching dates so an old date never leaks into the new view.
+  if (missingLeaveWarningDateKey !== dateKey) {
+    renderMissingLeaveWarning({ total: 0, rowsAvailable: true, rows: [] });
+    missingLeaveWarningDateKey = dateKey;
+  }
   document.dispatchEvent(new CustomEvent('today:rendered', {
     detail: { dateKey, students: list },
   }));
 
   void (async () => {
-    const unarchivedSummary = await fetchUnarchivedDoneSummary(dateKey);
+    const [unarchivedSummary, missingLeaveSummary] = await Promise.all([
+      fetchUnarchivedDoneSummary(dateKey),
+      fetchMissingLeaveSummary(dateKey),
+    ]);
     if (seq !== todayRenderSeq || !isCurrentAdminDate(dateKey)) return;
     const summaryDoneEntries = doneEntriesFromUnarchivedSummary(unarchivedSummary);
     if (summaryDoneEntries !== null) renderDoneSummaryWhenIdle(summaryDoneEntries, seq, dateKey);
     renderStaleDoneWarning(unarchivedSummary || { total: 0, byDate: [] });
+    renderMissingLeaveWarning(missingLeaveSummary || { total: 0, rowsAvailable: false, rows: [] });
   })();
+
+  })();
+  todayRefreshFlight = flight;
+  todayRefreshTail = flight.promise.catch(() => {});
+  try { return await flight.promise; }
+  finally { if (todayRefreshFlight === flight) todayRefreshFlight = null; }
+}
+
+function refreshAfterTodayMutation(options = {}) {
+  return loadTodayAndRender({ ...options, reason: 'mutation' });
 }
 
 // 이벤트 바인딩(1회)
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    bindTodayTableEvents(loadTodayAndRender);
+    bindTodayTableEvents(refreshAfterTodayMutation);
   }, { once: true });
 } else {
-  bindTodayTableEvents(loadTodayAndRender);
+  bindTodayTableEvents(refreshAfterTodayMutation);
 }
 
 function isElementEditing(el) {

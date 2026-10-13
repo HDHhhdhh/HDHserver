@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
+from human_transcription_eval import answers_match, normalize as normalize_answer
 from ocr_relation_ambiguity import ARROW_TOKENS, RELATION_OPERATOR_WARNING_NAMES, relation_ambiguity_warnings
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -46,6 +47,7 @@ class RecognizedItem:
     question: int
     recognized: str
     warnings: tuple[str, ...]
+    needs_review: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +89,7 @@ def main() -> int:
     rows = evaluate(expected, recognized)
     write_reports(config.out_dir, rows)
     print(json.dumps({"ok": True, "items": len(rows), "out_dir": str(config.out_dir)}, ensure_ascii=False))
-    return 0
+    return 0 if len(rows) == 20 and not any(row.status == "missing" for row in rows) else 1
 
 
 def parse_args() -> EvalConfig:
@@ -99,44 +101,70 @@ def parse_args() -> EvalConfig:
     return EvalConfig(args.expected, args.recognized, args.out_dir)
 
 
-def load_expected(path: Path) -> tuple[ExpectedItem, ...]:
+def load_expected(path: Path, *, require_complete: bool = True) -> tuple[ExpectedItem, ...]:
     payload = read_json_object(path)
     items = json_items(payload, path)
     parsed: list[ExpectedItem] = []
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             raise EvaluateOcrError(f"{path} item {index} must be an object")
-        question = int(item.get("question", item.get("no", index)))
-        expected = str(item.get("expected", item.get("answer", item.get("canonical_answer", "")))).strip()
+        question = strict_question(item.get("question", item.get("no")), path)
+        expected = item.get("expected", item.get("answer", item.get("canonical_answer")))
+        if not isinstance(expected, str):
+            raise EvaluateOcrError(f"{path} question {question} requires a string expected answer")
+        expected = expected.strip()
         accepted = accepted_answers(item, expected)
         parsed.append(ExpectedItem(question, expected, accepted))
+    validate_question_items(parsed, path, require_complete=require_complete)
     return tuple(sorted(parsed, key=lambda item: item.question))
 
 
-def load_recognized(path: Path) -> tuple[RecognizedItem, ...]:
+def load_recognized(path: Path, *, require_complete: bool = True) -> tuple[RecognizedItem, ...]:
     payload = read_json_object(path)
     parsed: list[RecognizedItem] = []
     for index, item in enumerate(json_items(payload, path), start=1):
         if not isinstance(item, dict):
             raise EvaluateOcrError(f"{path} item {index} must be an object")
-        question = int(item.get("question", item.get("no", index)))
-        recognized = str(item.get("recognized", item.get("answer", ""))).strip()
-        parsed.append(RecognizedItem(question, recognized, warning_tuple(item.get("warnings", ()))))
+        question = strict_question(item.get("question", item.get("no")), path)
+        recognized = item.get("recognized", item.get("answer"))
+        needs_review = item.get("needs_review", False)
+        uncertainty = item.get("uncertainty", "clear")
+        if not isinstance(uncertainty, str):
+            raise EvaluateOcrError(f"{path} question {question} has invalid uncertainty")
+        if not isinstance(recognized, str) or not isinstance(needs_review, bool):
+            raise EvaluateOcrError(f"{path} question {question} requires text and boolean needs_review")
+        parsed.append(RecognizedItem(question, recognized.strip(), warning_tuple(item.get("warnings", [])), needs_review or uncertainty not in {"none", "clear"}))
+    validate_question_items(parsed, path, require_complete=require_complete)
     return tuple(sorted(parsed, key=lambda item: item.question))
 
 
 def accepted_answers(item: dict[str, JsonValue], expected: str) -> tuple[str, ...]:
     raw = item.get("accepted_answers", item.get("accepted", ()))
-    values = [expected]
-    if isinstance(raw, list):
-        values.extend(str(value).strip() for value in raw if str(value).strip())
+    values = [expected] if expected not in {"", "?"} else []
+    if not isinstance(raw, (list, tuple)) or any(not isinstance(value, str) for value in raw):
+        raise EvaluateOcrError("accepted answers must be a list of strings")
+    values.extend(value.strip() for value in raw if value.strip() not in {"", "?"})
     return tuple(dict.fromkeys(values))
 
 
 def warning_tuple(value: JsonValue) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        return ()
-    return tuple(str(item) for item in value if str(item))
+    if not isinstance(value, (list, tuple)) or any(not isinstance(item, str) for item in value):
+        raise EvaluateOcrError("warnings must be a list of strings")
+    return tuple(item for item in value if item)
+
+
+def strict_question(value: object, path: Path) -> int:
+    if type(value) is not int or not 1 <= value <= 20:
+        raise EvaluateOcrError(f"{path} question must be an integer in 1..20 (bool is invalid)")
+    return value
+
+
+def validate_question_items(items: tuple | list, path: Path, *, require_complete: bool) -> None:
+    questions = [strict_question(item.question, path) for item in items]
+    if len(set(questions)) != len(questions):
+        raise EvaluateOcrError(f"{path} contains duplicate questions")
+    if require_complete and sorted(questions) != list(range(1, 21)):
+        raise EvaluateOcrError(f"{path} must contain exactly question 1..20 once")
 
 
 def read_json_object(path: Path) -> dict[str, JsonValue]:
@@ -154,6 +182,10 @@ def json_items(payload: dict[str, JsonValue], path: Path) -> list[JsonValue]:
 
 
 def evaluate(expected: tuple[ExpectedItem, ...], recognized: tuple[RecognizedItem, ...]) -> tuple[EvalItem, ...]:
+    validate_question_items(expected, Path("expected"), require_complete=False)
+    validate_question_items(recognized, Path("recognized"), require_complete=False)
+    if {item.question for item in recognized} - {item.question for item in expected}:
+        raise EvaluateOcrError("recognized questions are outside expected coverage")
     recognized_by_question = {item.question: item for item in recognized}
     rows: list[EvalItem] = []
     for item in expected:
@@ -163,10 +195,12 @@ def evaluate(expected: tuple[ExpectedItem, ...], recognized: tuple[RecognizedIte
 
 
 def evaluate_item(expected: ExpectedItem, recognized: RecognizedItem) -> EvalItem:
-    exact_match = expected.expected.strip() == recognized.recognized.strip()
-    normalized_match = normalize(expected.expected) == normalize(recognized.recognized)
-    accepted_match = any(normalize(answer) == normalize(recognized.recognized) for answer in expected.accepted)
-    warnings = merge_warnings(recognized.warnings, derived_warnings(expected.expected, recognized.recognized, accepted_match))
+    present = expected.expected.strip() not in {"", "?"} and recognized.recognized.strip() not in {"", "?"}
+    exact_match = present and expected.expected.strip() == recognized.recognized.strip()
+    normalized_match = answers_match(expected.expected, recognized.recognized)
+    accepted_match = any(answers_match(answer, recognized.recognized) for answer in expected.accepted)
+    model_warnings = merge_warnings(recognized.warnings, ("model_needs_review",) if recognized.needs_review else ())
+    warnings = merge_warnings(model_warnings, derived_warnings(expected.expected, recognized.recognized, accepted_match))
     review_policy = policy_for(warnings, accepted_match)
     status = status_for(recognized.recognized, accepted_match)
     return EvalItem(
@@ -217,7 +251,7 @@ def policy_for(warnings: tuple[str, ...], accepted_match: bool) -> str:
     warning_set = frozenset(warnings)
     if warning_set & DATA_CHECK_WARNINGS:
         return "data_check_required"
-    if warning_set & REVIEW_WARNINGS:
+    if warning_set:
         return "review_required"
     return "safe_auto_grade" if accepted_match else "review_required"
 
@@ -229,7 +263,7 @@ def status_for(recognized: str, accepted_match: bool) -> str:
 
 
 def normalize(value: str) -> str:
-    return "".join(value.split()).lower()
+    return normalize_answer(value)
 
 
 def write_reports(out_dir: Path, rows: tuple[EvalItem, ...]) -> None:

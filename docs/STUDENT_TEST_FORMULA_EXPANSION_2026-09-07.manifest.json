@@ -1,0 +1,131 @@
+{
+  "schema": "student_test_formula_expansion_registration_v1",
+  "status": "prepared_verified_uploaded_not_executed",
+  "dateKst": "2026-09-07",
+  "artifactRoot": "C:/server/generated/free_ocr_expansion_20260907_02",
+  "packetPath": "C:/server/generated/free_ocr_expansion_20260907_02/packet_release_r3",
+  "driveFolder": {
+    "id": "1OgIMX4r6t4IwshIbBhuGRBhQ-Wk0If51",
+    "url": "https://drive.google.com/drive/folders/1OgIMX4r6t4IwshIbBhuGRBhQ-Wk0If51",
+    "parentId": "13s77ZSxoOsnxsuvdaAHlaeueI6mAcpzo",
+    "shared": false
+  },
+  "archive": {
+    "name": "student_test_formula_expansion_GPU_20260907_r3.zip",
+    "bytes": 182062136,
+    "sha256": "0fc19a0a72ad6949e0cb3a63fc90c635ff41f79eb64941a1e84a11d2661f9142",
+    "uploadedAsWholeZip": false,
+    "localReassemblyVerified": true,
+    "filesIncludingManifest": 10868,
+    "manifestEntriesVerified": 10867,
+    "packetManifestSha256": "cadbe6ca840160e4e3810b4a0aef9d14a1c59faf1b0b82f453ccb75a68bb75e0"
+  },
+  "partsManifest": {
+    "driveId": "1PaKyzsgxHNIuvqClSv0C2JH0MG7obO1o",
+    "bytes": 863,
+    "sha256": "c258f9ae5ca4951dd70e5051c0e0e996ba80865ffdf1cab6acb9198a729d8b40"
+  },
+  "parts": [
+    {
+      "name": "student_test_formula_expansion_GPU_20260907_r3.zip.part001",
+      "driveId": "1YprDqdgz8kLf3V5SyMzl5yEteQgRTx-P",
+      "bytes": 83886080,
+      "sha256": "d3a5b4b2a2e32e49e659b00fd936dd0eeb95830b0a83bcecda644d8589c646ca",
+      "mimeType": "application/x-zip"
+    },
+    {
+      "name": "student_test_formula_expansion_GPU_20260907_r3.zip.part002",
+      "driveId": "1KnaPXNykok58HeFFDl5HDTZSWBD5GgG7",
+      "bytes": 83886080,
+      "sha256": "76806a97f220a9703a303604741d113b7153a2a014e78a21c201c60d4906890a",
+      "mimeType": "application/octet-stream"
+    },
+    {
+      "name": "student_test_formula_expansion_GPU_20260907_r3.zip.part003",
+      "driveId": "1BIc1hJY1NzsUGDGLfhlAqZWkdglHtTX7",
+      "bytes": 14289976,
+      "sha256": "c7bbac38c9b89e67ca460c37eda133e9221c120d5eee59c7c96a7e1343a78b46",
+      "mimeType": "application/octet-stream"
+    }
+  ],
+  "helper": {
+    "driveId": "1yavyqhnmtH2iio8qqVRj6094gnwQOrks",
+    "name": "student_test_gpu_archive_80MiB.py",
+    "bytes": 9209,
+    "sha256": "9e4ef9dd18be4101f1d09b517c0c3a44a1561b2b823cc999efffe6326792862b",
+    "partBytesLimit": 83886080
+  },
+  "prompt": {
+    "driveId": "1Ls48QocBFldSq3KX6dMNoPVQVv4mVl3-",
+    "url": "https://drive.google.com/file/d/1Ls48QocBFldSq3KX6dMNoPVQVv4mVl3-/view?usp=drivesdk",
+    "localPath": "C:/server/generated/free_ocr_expansion_20260907_02/GPU_ONE_SHOT_20260907.txt",
+    "bytes": 21395,
+    "sha256": "4d4031dc9531cda69c66676190dc994f00b00bc2a70cbc8b043966e937d94dcb",
+    "driveTextReadbackMatched": true,
+    "comparisonNormalization": "CRLF to LF, trim trailing whitespace only"
+  },
+  "deliveryManifest": {
+    "driveId": "10pjcTTkU7qhmgqsNqfNYqciREYLDVRfM",
+    "localPath": "C:/server/generated/free_ocr_expansion_20260907_02/GPU_ONE_SHOT_20260907.manifest.json",
+    "bytes": 2511,
+    "sha256": "79864ded9659c6b6b81bc4b52c53c54238ce44107e3e596aaa078bc79ec04662"
+  },
+  "dataEvidence": {
+    "inputsPath": "C:/server/generated/free_ocr_expansion_20260907_02/data/EXPANSION_INPUTS.json",
+    "inputsSha256": "479849e40b319dc289967790f05bc9c3179f664fa843db239419b59e5f665e42",
+    "auditPath": "C:/server/generated/free_ocr_expansion_20260907_02/data/SELECTION_AUDIT.json",
+    "auditSha256": "59a213514af94b7b0b3bcb078e0a6beaca221b29dcbc3758e0dee043433cdd3f",
+    "profiles": {
+      "m3_h1": {"expanded": 1922, "focused": 967, "auxiliary": 955, "validation": 1459, "phaseAMicrobatches": 2000, "phaseBMicrobatches": 1000},
+      "m3_h1_h2_h3": {"expanded": 3245, "focused": 1757, "auxiliary": 1488, "validation": 1473, "phaseAMicrobatches": 3000, "phaseBMicrobatches": 1000}
+    },
+    "materializedTrainingPairsSourceCompared": 7891,
+    "trainingValidationWriterSourceExactImageOverlap": 0,
+    "historicalValidationFingerprintsMatched": true,
+    "transcriptionsRewritten": 0,
+    "visualMismatchQuarantined": 1,
+    "allTranscriptionsVisuallyVerified": false,
+    "includesStudentPhotos": false,
+    "includesModelWeights": false,
+    "includesRuntimeDatabase": false
+  },
+  "verification": {
+    "packetSnapshotUnitTestsPassed": 9,
+    "existingConfigRunnerContractAssertionsPassed": 20,
+    "defaultRegressionSuitePassed": true,
+    "compileAllPassedWithNewApprovedCachePath": true,
+    "driveMetadataNameTypeSizeParentVerified": true,
+    "remoteBinaryRedownloadShaVerified": false,
+    "gpuIntakeShaCheckRequired": true,
+    "subagentReadOnlyReviewCompleted": true
+  },
+  "execution": {
+    "trainingStageRunsPlanned": 8,
+    "mandatoryEvaluationsPlanned": 6,
+    "optionalHistoricalEvaluationsPlanned": 2,
+    "trainingRunsExecutedHere": 0,
+    "inferenceEvaluationsExecutedHere": 0,
+    "seed": 20260907,
+    "batchSize": 4,
+    "accumGradIters": 2,
+    "minimumGpuFreeDiskGiB": 60,
+    "baseSha256": "6f7608624e2d7549c7f0f05fcfbe073ae521328cf70f1d46374d96f9881d7371"
+  },
+  "limitations": [
+    "Existing public development validation reused, not a new untouched holdout",
+    "Common validation: 1459 crops / 3 grade-scoped writer hashes",
+    "Upper validation: 1473 crops / 6 grade-scoped writer hashes",
+    "H_G2 validation has 14 crops; H_G3 validation has 0 crops",
+    "Writer identity and near-duplicate independence are not fully proven",
+    "Source converted Training already has writer cap 200 and is not all original AI Hub data",
+    "No actual camera accuracy, improvement, completed training, or deployment GO claim"
+  ],
+  "preservedDrafts": ["free_ocr_expansion_20260907_01", "free_ocr_expansion_20260907_02/packet", "free_ocr_expansion_20260907_02/packet_release", "first ZIP and r2 ZIP"],
+  "supersededDriveHelperIdDoNotUse": "1zpsPy9RsZMRm9WwCvGSQueEkWFjPrtV9",
+  "priorReturnCheckpointIntakeStillBlocked": true,
+  "trainingExecuted": false,
+  "providerCallCount": 0,
+  "deploymentReady": false,
+  "productionChanged": false,
+  "committedOrStaged": false
+}

@@ -171,8 +171,6 @@ def decode_cursor(value: str | None):
             raise ValueError
         return tuple(parts)
     except Exception as exc:
-        if isinstance(exc, HomeworkValidationError):
-            pass
         raise HomeworkValidationError("invalid_cursor", "invalid homework cursor") from exc
 
 def public_page(repository, *, sid: str, status: str = "open", cursor: str | None = None,

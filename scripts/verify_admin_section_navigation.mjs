@@ -191,7 +191,7 @@ function transformModule(source) {
   const transformed = source
     .replace("import { $ } from '../core/utils.js';", 'const $ = id => document.getElementById(id);')
     .replace(
-      "import { initAttendanceLedgerLink } from './attendanceLedgerLink.js';",
+      /import \{ initAttendanceLedgerLink \} from '\.\/attendanceLedgerLink\.js(?:\?[^']*)?';/,
       'const initAttendanceLedgerLink = () => {};',
     )
     .replace('export function initAdminUiEnhance()', 'function initAdminUiEnhance()');

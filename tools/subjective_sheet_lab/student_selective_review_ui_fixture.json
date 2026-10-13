@@ -1,0 +1,31 @@
+{
+  "fixture": "student_selective_review_ui_v1",
+  "payload": {
+    "test_id": "t_unit_daesu_01_lv3_r1",
+    "round": "1",
+    "case_id": "qa-selective-review-001",
+    "item_count": 20,
+    "items": [
+      { "question_no": 1, "status": "auto_confirm", "candidate": "2", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 2, "status": "auto_confirm", "candidate": "12", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 3, "status": "auto_confirm", "candidate": "4", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 4, "status": "auto_confirm", "candidate": "64", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 5, "status": "auto_confirm", "candidate": "1", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 6, "status": "auto_confirm", "candidate": "9", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 7, "status": "auto_confirm", "candidate": "30", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 8, "status": "auto_confirm", "candidate": "81", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 9, "status": "auto_confirm", "candidate": "3", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 10, "status": "auto_confirm", "candidate": "6", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 11, "status": "auto_confirm", "candidate": "42", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 12, "status": "auto_confirm", "candidate": "3", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 13, "status": "auto_confirm", "candidate": "5", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": false, "allow_edit": true },
+      { "question_no": 14, "status": "review_recommended", "candidate": "2", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 15, "status": "review_recommended", "candidate": "16", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 16, "status": "review_recommended", "candidate": "7", "warning": ["unclear_final_answer"], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 17, "status": "review_recommended", "candidate": "4", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 18, "status": "review_recommended", "candidate": "90", "warning": [], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 19, "status": "direct_input", "candidate": "2", "warning": ["multiple_answer_candidates"], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true },
+      { "question_no": 20, "status": "retake_required", "candidate": null, "warning": ["crop_quality_blurry"], "crop_preview": "data:image/png;base64,iVBORw0KGgo=", "requires_action": true, "allow_edit": true }
+    ]
+  }
+}

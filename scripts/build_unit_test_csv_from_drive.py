@@ -8,7 +8,14 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
-import fitz
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.build_unit_test_csv_from_link_map import (
+    cell_answer,
+    extract_quick_answers as extract_quick_answers_robust,
+)
 
 
 SUBJECT_ALIASES = {
@@ -28,6 +35,7 @@ CIRCLED = {
     "④": "4",
     "⑤": "5",
 }
+EXPECTED_PROBLEMS = 20
 
 
 def clean_token(text: str) -> str:
@@ -68,6 +76,7 @@ def clean_test_name(path: Path, level: str, round_no: str) -> str:
     name = re.sub(r"^\s*\d{1,2}\s*[.)]\s*", "", name)
     name = re.sub(rf"\s*{re.escape(round_no)}\s*(?:회차|차)\s*$", "", name)
     name = re.sub(r"\s+", " ", name).strip()
+    name = re.sub(r"\s+Lv\.?\s*$", "", name, flags=re.IGNORECASE).strip()
 
     lv = level_from_name(name, level)
     name = re.sub(r"lv\.?\s*([3-6])", lambda m: f"Lv.{m.group(1)}", name, flags=re.IGNORECASE)
@@ -76,94 +85,8 @@ def clean_test_name(path: Path, level: str, round_no: str) -> str:
     return name
 
 
-def cell_answer(tokens: list[tuple[float, float, float, float, str]]) -> str:
-    cleaned = []
-    for x0, y0, x1, y1, text in tokens:
-        token = clean_token(text)
-        if not token:
-            continue
-        cleaned.append((x0, y0, x1, y1, token))
-
-    if not cleaned:
-        return ""
-
-    cleaned.sort(key=lambda item: (item[1], item[0]))
-
-    if len(cleaned) == 2:
-        a, b = cleaned
-        same_x = abs(((a[0] + a[2]) / 2) - ((b[0] + b[2]) / 2)) <= 6
-        separated_y = abs(((a[1] + a[3]) / 2) - ((b[1] + b[3]) / 2)) >= 7
-        simple = all(re.fullmatch(r"-?\d+", item[4]) for item in cleaned)
-        if same_x and separated_y and simple:
-            top, bottom = sorted(cleaned, key=lambda item: item[1])
-            return f"{top[4]}/{bottom[4]}"
-
-    same_line = max(item[3] for item in cleaned) - min(item[1] for item in cleaned) <= 18
-    if same_line:
-        return "".join(item[4] for item in sorted(cleaned, key=lambda item: item[0]))
-
-    return "/".join(item[4] for item in cleaned)
-
-
 def extract_quick_answers(pdf_path: Path) -> list[str]:
-    doc = fitz.open(str(pdf_path))
-    if doc.page_count < 1:
-        return []
-
-    page = doc[0]
-    words = page.get_text("words")
-
-    # The APEX quick-answer table is a 4 x 5 grid near the top-left of the
-    # first page. Digit labels and answer text can be emitted in separate text
-    # blocks, so coordinates are safer than plain-text order.
-    col_starts = [46.0, 104.0, 163.0, 221.0]
-    ans_starts = [63.0, 121.0, 179.0, 238.0]
-    col_ends = [104.0, 163.0, 221.0, 300.0]
-
-    centers = []
-    for x0, y0, x1, y1, text, *_ in words:
-        token = clean_token(text)
-        if not token:
-            continue
-        yc = (y0 + y1) / 2
-        if 95 <= yc <= 220 and 35 <= x0 <= 280:
-            if re.fullmatch(r"\d{1,2}", token) or token in CIRCLED.values() or token == "해설참조":
-                centers.append(yc)
-
-    if not centers:
-        return []
-
-    centers.sort()
-    row_centers: list[float] = []
-    for y in centers:
-        if not row_centers or abs(y - row_centers[-1]) > 8:
-            row_centers.append(y)
-        else:
-            row_centers[-1] = (row_centers[-1] + y) / 2
-    row_centers = row_centers[:5]
-
-    if len(row_centers) < 5:
-        first = row_centers[0]
-        row_centers = [first + 18.75 * i for i in range(5)]
-
-    answers: list[str] = []
-    for row_index, row_y in enumerate(row_centers):
-        for col_index in range(4):
-            y_min = row_y - 10.5
-            y_max = row_y + 10.5
-            x_min = ans_starts[col_index] - 1.0
-            x_max = col_ends[col_index] - 2.0
-            tokens = []
-            for x0, y0, x1, y1, text, *_ in words:
-                yc = (y0 + y1) / 2
-                xc = (x0 + x1) / 2
-                if y_min <= yc <= y_max and x_min <= xc <= x_max:
-                    tokens.append((x0, y0, x1, y1, text))
-            answers.append(cell_answer(tokens))
-
-    while answers and answers[-1] == "":
-        answers.pop()
-    return answers
+    return extract_quick_answers_robust(pdf_path, expected=EXPECTED_PROBLEMS)
 
 
 def iter_round_dirs(root: Path):

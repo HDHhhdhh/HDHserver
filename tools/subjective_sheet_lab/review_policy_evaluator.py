@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
+from human_transcription_eval import answers_match, normalize as normalize_answer
+
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 JAMO_CHOICES: Final[frozenset[str]] = frozenset({"ㄱ", "ㄴ", "ㄷ", "ㄹ"})
@@ -26,6 +28,8 @@ class PolicyInput:
 class AnswerItem:
     question: int
     text: str
+    needs_review: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +64,7 @@ def main() -> int:
     recognized = load_items(inputs.recognized_path, "recognized")
     rows = evaluate_items(expected, recognized)
     write_reports(inputs.out_dir, rows)
-    return 0
+    return 0 if len(rows) == 20 and not any(row.recognized.strip() in {"", "?"} for row in rows) else 1
 
 
 def parse_args() -> PolicyInput:
@@ -74,7 +78,7 @@ def parse_args() -> PolicyInput:
     return PolicyInput(expected_path=args.expected, recognized_path=args.recognized, out_dir=args.out_dir)
 
 
-def load_items(path: Path, value_key: str) -> dict[int, AnswerItem]:
+def load_items(path: Path, value_key: str, *, require_complete: bool = True) -> dict[int, AnswerItem]:
     payload = parse_json_file(path)
     items_value = payload.get("items")
     if not isinstance(items_value, list):
@@ -85,11 +89,22 @@ def load_items(path: Path, value_key: str) -> dict[int, AnswerItem]:
             raise ReviewPolicyError(f"{path} contains a non-object item")
         question_value = raw_item.get("question")
         answer_value = raw_item.get(value_key)
-        if not isinstance(question_value, int):
+        if type(question_value) is not int or not 1 <= question_value <= 20:
             raise ReviewPolicyError(f"{path} contains an item without integer question")
         if not isinstance(answer_value, str):
             raise ReviewPolicyError(f"{path} question {question_value} lacks {value_key}")
-        items[question_value] = AnswerItem(question=question_value, text=answer_value.strip())
+        if question_value in items:
+            raise ReviewPolicyError(f"{path} contains duplicate question {question_value}")
+        needs_review = raw_item.get("needs_review", False)
+        uncertainty = raw_item.get("uncertainty", "clear")
+        if not isinstance(uncertainty, str):
+            raise ReviewPolicyError(f"{path} question {question_value} has invalid uncertainty")
+        warnings = raw_item.get("warnings", [])
+        if not isinstance(needs_review, bool) or not isinstance(warnings, list) or any(not isinstance(w, str) for w in warnings):
+            raise ReviewPolicyError(f"{path} question {question_value} has invalid review metadata")
+        items[question_value] = AnswerItem(question_value, answer_value.strip(), needs_review or uncertainty not in {"none", "clear"}, tuple(warnings))
+    if require_complete and sorted(items) != list(range(1, 21)):
+        raise ReviewPolicyError(f"{path} must contain exactly question 1..20 once")
     return items
 
 
@@ -104,14 +119,14 @@ def evaluate_items(expected: dict[int, AnswerItem], recognized: dict[int, Answer
     rows: list[ReviewResult] = []
     for question in sorted(expected):
         expected_text = expected[question].text
-        recognized_text = recognized.get(question, AnswerItem(question=question, text="?")).text
-        rows.append(evaluate_item(question, expected_text, recognized_text))
+        hit = recognized.get(question, AnswerItem(question=question, text="?"))
+        rows.append(evaluate_item(question, expected_text, hit.text, needs_review=hit.needs_review, model_warnings=hit.warnings))
     return rows
 
 
-def evaluate_item(question: int, expected: str, recognized: str) -> ReviewResult:
-    exact_match = compact(expected) == compact(recognized)
-    warnings = warning_codes(expected, recognized, exact_match)
+def evaluate_item(question: int, expected: str, recognized: str, *, needs_review: bool = False, model_warnings: tuple[str, ...] = ()) -> ReviewResult:
+    exact_match = answers_match(expected, recognized)
+    warnings = list(dict.fromkeys((*model_warnings, *(("model_needs_review",) if needs_review else ()), *warning_codes(expected, recognized, exact_match))))
     status = status_for(exact_match, warnings)
     review_policy = review_policy_for(warnings, status)
     return ReviewResult(
@@ -173,7 +188,7 @@ def has_jamo_confusion(expected: str, recognized: str) -> bool:
 
 
 def compact(value: str) -> str:
-    return "".join(value.split()).lower()
+    return normalize_answer(value)
 
 
 def write_reports(out_dir: Path, rows: list[ReviewResult]) -> None:

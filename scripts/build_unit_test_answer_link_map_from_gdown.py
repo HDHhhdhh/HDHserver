@@ -39,6 +39,8 @@ ANSWER_NAME_ALIASES = {
 }
 
 
+NON_FATAL_ISSUE_TYPES = frozenset({"unmatched_answer_file", "expected_missing_round"})
+
 def read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
@@ -84,6 +86,11 @@ def answer_name_keys(value: str) -> list[str]:
     return [key, *ANSWER_NAME_ALIASES.get(key, [])]
 
 
+def source_order_from_title(title: str) -> int | None:
+    name = clean_text(Path(str(title or "")).stem)
+    match = re.match(r"^\s*(\d{1,3})\s*[.)]\s*", name)
+    return int(match.group(1)) if match else None
+
 def clean_answer_title(title: str, level: str, round_no: str) -> str:
     name = Path(str(title or "")).stem
     name = clean_text(name.replace("_", " "))
@@ -110,6 +117,12 @@ def build_config_index(config: dict) -> dict[tuple[str, str, str], dict]:
         source_id = str(test.get("sourceId") or "").strip() or re.sub(r"_r[123]$", "", str(test.get("id") or "").strip())
         if not source_id:
             continue
+        source_order_raw = test.get("sourceOrder", test.get("source_order"))
+        try:
+            source_order = int(source_order_raw) if source_order_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            source_order = None
+        status = str(test.get("answerLinkStatus") or test.get("answer_link_status") or "").strip().casefold()
         item = by_source.setdefault(
             source_id,
             {
@@ -117,17 +130,28 @@ def build_config_index(config: dict) -> dict[tuple[str, str, str], dict]:
                 "subject": clean_text(test.get("curriculum")),
                 "level": normalize_level(test.get("difficulty") or test.get("level")),
                 "name": clean_text(test.get("name")),
+                "sourceOrder": source_order,
+                "answerLinkStatus": status,
             },
         )
         if not item["name"] and test.get("name"):
             item["name"] = clean_text(test.get("name"))
+        if item.get("sourceOrder") is None and source_order is not None:
+            item["sourceOrder"] = source_order
+        if status:
+            item["answerLinkStatus"] = status
 
     index = {}
     for item in by_source.values():
         key = (item["subject"], item["level"], compact_key(item["name"]))
+        previous = index.get(key)
+        if previous is not None and previous["sourceId"] != item["sourceId"]:
+            raise ValueError(
+                "ambiguous config key "
+                f"{key!r}: {previous['sourceId']} and {item['sourceId']}"
+            )
         index[key] = item
     return index
-
 
 def iter_drive_answer_files(folder_id: str):
     files = gdown.download_folder(id=folder_id, quiet=True, skip_download=True)
@@ -152,6 +176,7 @@ def iter_drive_answer_files(folder_id: str):
             "round": round_no,
             "name": name,
             "title": title,
+            "sourceOrder": source_order_from_title(title),
             "fileId": file_id,
         }
 
@@ -160,44 +185,84 @@ def build_link_map(config: dict, folder_id: str) -> tuple[dict, list[dict]]:
     config_index = build_config_index(config)
     link_map: dict[str, dict] = {}
     issues: list[dict] = []
-    seen = set()
+    seen: set[tuple[str, str]] = set()
+    file_owners: dict[str, tuple[str, str]] = {}
 
     for answer_file in iter_drive_answer_files(folder_id):
-        config_items = [
-            config_index[(answer_file["subject"], answer_file["level"], name_key)]
-            for name_key in answer_name_keys(answer_file["name"])
-            if (answer_file["subject"], answer_file["level"], name_key) in config_index
-        ]
+        config_items = []
+        candidate_ids = set()
+        for name_key in answer_name_keys(answer_file["name"]):
+            config_item = config_index.get((answer_file["subject"], answer_file["level"], name_key))
+            if not config_item or config_item["sourceId"] in candidate_ids:
+                continue
+            candidate_ids.add(config_item["sourceId"])
+            config_items.append(config_item)
         if not config_items:
             issues.append({"type": "unmatched_answer_file", **answer_file})
             continue
 
-        for config_item in config_items:
-            source_id = config_item["sourceId"]
-            round_no = answer_file["round"]
-            duplicate_key = (source_id, round_no)
-            if duplicate_key in seen:
-                issues.append({"type": "duplicate_answer_file", "sourceId": source_id, **answer_file})
+        if len(config_items) > 1:
+            answer_source_order = answer_file.get("sourceOrder")
+            ordered_items = [
+                item for item in config_items
+                if answer_source_order is not None and item.get("sourceOrder") == answer_source_order
+            ]
+            if len(ordered_items) != 1:
+                issues.append(
+                    {
+                        "type": "ambiguous_answer_file",
+                        "candidateSourceIds": sorted(item["sourceId"] for item in config_items),
+                        **answer_file,
+                    }
+                )
                 continue
-            seen.add(duplicate_key)
+            config_items = ordered_items
 
-            unit_name = answer_file["name"]
-            link_map.setdefault(source_id, {})[round_no] = {
-                "answerUrl": drive_url(answer_file["fileId"]),
-                "fileId": answer_file["fileId"],
-                "label": f"{unit_name} {round_no}회차 해설",
-                "subject": config_item["subject"],
-                "unitName": unit_name,
-            }
+        config_item = config_items[0]
+        source_id = config_item["sourceId"]
+        round_no = answer_file["round"]
+        duplicate_key = (source_id, round_no)
+        if duplicate_key in seen:
+            issues.append({"type": "duplicate_answer_file", "sourceId": source_id, **answer_file})
+            continue
+
+        file_id = answer_file["fileId"]
+        existing_owner = file_owners.get(file_id)
+        if existing_owner is not None and existing_owner != duplicate_key:
+            issues.append(
+                {
+                    "type": "reused_answer_file",
+                    "sourceId": source_id,
+                    "existingSourceId": existing_owner[0],
+                    "existingRound": existing_owner[1],
+                    **answer_file,
+                }
+            )
+            continue
+
+        seen.add(duplicate_key)
+        file_owners[file_id] = duplicate_key
+        unit_name = answer_file["name"]
+        link_map.setdefault(source_id, {})[round_no] = {
+            "answerUrl": drive_url(file_id),
+            "fileId": file_id,
+            "label": f"{unit_name} {round_no}회차 해설",
+            "subject": config_item["subject"],
+            "unitName": unit_name,
+        }
 
     for item in config_index.values():
         rounds = link_map.get(item["sourceId"], {})
+        missing_type = (
+            "expected_missing_round"
+            if item.get("answerLinkStatus") == "missing"
+            else "missing_round"
+        )
         for round_no in ("1", "2", "3"):
             if round_no not in rounds:
-                issues.append({"type": "missing_round", "sourceId": item["sourceId"], "round": round_no})
+                issues.append({"type": missing_type, "sourceId": item["sourceId"], "round": round_no})
 
     return dict(sorted(link_map.items())), issues
-
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
@@ -223,7 +288,7 @@ def main(argv: list[str]) -> int:
         args.issues.write_text(json.dumps(issues, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     linked_rounds = sum(len(rounds) for rounds in link_map.values())
-    fatal_issues = [issue for issue in issues if issue.get("type") != "unmatched_answer_file"]
+    fatal_issues = [issue for issue in issues if issue.get("type") not in NON_FATAL_ISSUE_TYPES]
     print(f"source_ids={len(link_map)} linked_rounds={linked_rounds} issues={len(issues)}")
     print(f"output={args.output}")
     if args.issues:

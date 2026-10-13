@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+from urllib.parse import parse_qs, urlparse
 
 from flask import Flask, g, request
 
@@ -69,8 +70,6 @@ def _isolated_routes(root: Path):
             def __enter__(self): return self
             def __exit__(self, *_args): return False
 
-        class Logs:
-            def append_record(self, *_args): return True
 
         basic._InterProcessFileLock = Lock
         basic._progress_lock = nullcontext
@@ -78,7 +77,6 @@ def _isolated_routes(root: Path):
         basic._save_progress_strict = lambda data, path=paths.PRG_PATH: _write(Path(path), data)
         basic._notification_progress_snapshot = lambda _progress, _sid: None
         basic._notification_progress_commit = lambda _before, _after, _sid: 0
-        basic.get_log_repository = lambda: Logs()
         sys.modules["routes.api_basic"] = basic
         setattr(routes_package, "api_basic", basic)
         yield watch, kollus, tests, fs, pages, paths
@@ -200,22 +198,51 @@ def _handler_defense(state: list[int], modules) -> None:
     watch_body = {"date": DATE, "sid": "sid-b", "mid": "mid-1234", "status": "done"}
     _check(state, client.get("/api/get-url?mid=mid-1234&sid=sid-b", headers=academy).status_code == 403, "get-url handler accepted SID mismatch")
     _check(state, client.post("/api/watch-status", json=watch_body, headers=academy).status_code == 403, "watch handler accepted SID mismatch")
-    _check(state, client.post("/api/submit-test", json={"sid": "sid-b", "name": "시험"}, headers=academy).status_code == 403, "submit handler accepted SID mismatch")
     _check(state, client.get("/api/get-url?mid=mid-1234&sid=sid-a").status_code == 403, "get-url handler accepted external network")
-    _check(state, client.post("/api/submit-test", json={"sid": "sid-a", "name": "시험"}).status_code == 403, "submit handler accepted external network")
     _check(state, client.get("/api/tests-config", headers={"X-No-Session": "1"}).status_code == 401, "tests-config handler accepted missing session context")
-    _check(state, client.post("/api/ocr-test-sheet", data={"sid": "sid-a"}, headers=academy).status_code == 404, "OCR handler lacks public-host defense")
+    for route in ("/api/submit-test", "/api/ocr-test-sheet", "/api/ocr-test-sheet-review"):
+        _check(state, client.post(route, json={"sid": "sid-a"}, headers=academy).status_code == 404, f"retired route is still registered: {route}")
+    _check(state, client.post("/api/tests", json={"sid": "sid-a"}, headers=academy).status_code == 405, "test catalog still accepts writes")
 
 
 def _kollus_url_contract(state: list[int], modules) -> None:
     _watch, kollus, _tests, _fs, _pages, _paths = modules
     source = Path(kollus.__file__).read_text(encoding="utf-8")
-    _check(
-        state,
-        kollus.kollus_signed_url("mid-1234", "192.168.1.20", "sid-a")
-        == "https://v.kr.kollus.com/mid-1234?uservalue0=sid-a",
-        "Kollus URL refactor changed the student binding query",
-    )
+    secret = "academy-gates-kollus-callback-secret"
+    fixed_now = 1_787_487_150
+    original_callback_secret = kollus._callback_secret
+    original_time = kollus.time.time
+    kollus._callback_secret = lambda: secret
+    kollus.time.time = lambda: fixed_now
+    try:
+        signed_url = kollus.kollus_signed_url("mid-1234", "192.168.1.20", "sid-a")
+        parsed = urlparse(signed_url)
+        token = (parse_qs(parsed.query).get("uservalue0") or [""])[0]
+        decoded_sid, token_valid = kollus._decode_callback_token(token, "mid-1234", secret)
+        _check(
+            state,
+            parsed.scheme == "https"
+            and parsed.netloc == "v.kr.kollus.com"
+            and parsed.path == "/mid-1234"
+            and token.startswith("v1.")
+            and token != "sid-a"
+            and secret not in signed_url,
+            "Kollus URL must carry an opaque signed student binding token",
+        )
+        _check(
+            state,
+            decoded_sid == "sid-a" and token_valid is True,
+            "Kollus signed student binding token did not verify",
+        )
+        _wrong_mid_sid, wrong_mid_valid = kollus._decode_callback_token(token, "mid-other", secret)
+        _check(
+            state,
+            wrong_mid_valid is False,
+            "Kollus student binding signature is not scoped to the media MID",
+        )
+    finally:
+        kollus._callback_secret = original_callback_secret
+        kollus.time.time = original_time
     _check(
         state,
         "jwt.encode" not in source and "KOLLUS_POLICY_KEY" not in source and "KOLLUS_SERVICE_KEY" not in source,
@@ -233,7 +260,6 @@ def _run_matrix(state: list[int], root: Path, modules) -> None:
     academy = {"CF-Connecting-IP": "192.168.1.20"}
     write_external = external | {"Origin": "https://app.5a-math.com", "X-CSRF-Token": "csrf"}
     write_academy = academy | {"Origin": "https://app.5a-math.com", "X-CSRF-Token": "csrf"}
-    submit = {"sid": "sid-a", "name": "안전 시험", "score": "1/1", "progressStatusMode": "skip"}
 
     _check(state, client.get("/api/get-url?mid=mid-1234&sid=sid-a", base_url="https://app.5a-math.com", headers=external).status_code == 403, "external signed video URL was not blocked")
     _check(state, client.get("/api/get-url?mid=mid-1234&sid=sid-a", base_url="https://app.5a-math.com", headers=academy).status_code == 200, "academy session could not obtain signed video URL")
@@ -242,10 +268,10 @@ def _run_matrix(state: list[int], root: Path, modules) -> None:
     _check(state, forged.status_code == 403, "untrusted peer forged academy CF address")
 
     before_tests = paths.TESTS_PATH.read_bytes()
-    _check(state, client.post("/api/submit-test", json=submit, base_url="https://app.5a-math.com", headers=write_external).status_code == 403 and paths.TESTS_PATH.read_bytes() == before_tests, "external test submission reached storage")
-    _check(state, client.post("/api/submit-test", json={**submit, "sid": "sid-b"}, base_url="https://app.5a-math.com", headers=write_academy).status_code == 403 and paths.TESTS_PATH.read_bytes() == before_tests, "mismatched test submission reached storage")
-    progress_before = paths.PRG_PATH.read_bytes()
-    _check(state, client.post("/api/submit-test", json=submit, base_url="https://app.5a-math.com", headers=write_academy).status_code == 200 and paths.PRG_PATH.read_bytes() == progress_before, "academy test submit changed top-level assignment status")
+    for route in ("/api/submit-test", "/api/ocr-test-sheet", "/api/ocr-test-sheet-review"):
+        response = client.post(route, json={"sid": "sid-a"}, base_url="https://app.5a-math.com", headers=write_academy)
+        _check(state, response.status_code == 404 and paths.TESTS_PATH.read_bytes() == before_tests, f"retired route is still exposed: {route}")
+    _check(state, client.post("/api/tests", json={"sid": "sid-a"}, base_url="https://app.5a-math.com", headers=write_academy).status_code == 404 and paths.TESTS_PATH.read_bytes() == before_tests, "public test catalog write route is still exposed")
 
     watch_body = {"date": DATE, "sid": "sid-a", "mid": "mid-1234", "last": 20, "dur": 100}
     _check(state, client.post("/api/watch", json=watch_body, base_url="https://app.5a-math.com", headers=write_external).status_code == 403, "external watch write was not blocked")
@@ -269,8 +295,6 @@ def _run_matrix(state: list[int], root: Path, modules) -> None:
     _check(state, client.get("/files/answers/secret.pdf", base_url="https://app.5a-math.com", headers=academy).status_code == 404, "public arbitrary answer file was exposed")
     _check(state, client.get("/files/announcements/%252e%252e/answers/secret.pdf", base_url="https://app.5a-math.com", headers=external).status_code == 404, "encoded file traversal was exposed")
 
-    for route in ("/api/ocr-test-sheet", "/api/ocr-test-sheet-review"):
-        _check(state, client.post(route, json={"sid": "sid-a"}, base_url="https://app.5a-math.com", headers=write_academy).status_code == 404, f"public OCR route exposed: {route}")
     _handler_defense(state, modules)
 
     answer_external = client.get("/js/test_answer_link_map.json", base_url="https://app.5a-math.com", headers=external)
@@ -284,8 +308,12 @@ def _run_matrix(state: list[int], root: Path, modules) -> None:
     _check(state, local_file.status_code == 200, "local file route changed")
     local_file.close()
     _check(state, client.get("/api/tests-config", base_url="http://127.0.0.1", environ_overrides={"REMOTE_ADDR": "192.168.1.20"}).get_json() == original_config, "local academy catalog changed")
-    _check(state, client.post("/api/submit-test", json=submit, base_url="http://127.0.0.1").status_code == 200, "local legacy test submission changed")
-    _check(state, client.post("/api/ocr-test-sheet-review", json={}, base_url="http://127.0.0.1").status_code != 404, "local legacy OCR route was removed")
+    registered_rules = {rule.rule for rule in app.url_map.iter_rules()}
+    for route in ("/api/submit-test", "/api/ocr-test-sheet", "/api/ocr-test-sheet-review"):
+        _check(state, route not in registered_rules, f"local retired route is still registered: {route}")
+        response = client.post(route, json={"sid": "sid-a"}, base_url="http://127.0.0.1")
+        _check(state, response.status_code in {404, 405}, f"local retired route is unexpectedly callable: {route}")
+    _check(state, client.post("/api/tests", json={"sid": "sid-a"}, base_url="http://127.0.0.1").status_code == 405, "local test catalog still accepts writes")
 
 
 def run_checks() -> dict[str, object]:

@@ -1,14 +1,14 @@
-﻿// table.js — 전체 학생 테이블 렌더
+// table.js — 전체 학생 테이블 렌더
 // - "학교" 인라인 편집(자동 저장, 빈칸에서도 추가 가능)
 // - "학년" 인라인 편집(자동 저장)
 // - "커리큘럼/세부커리큘럼" 수정 가능 (고정 옵션 셀렉트)
 // - "요일" 밑 "등원시간" 행 추가 (월1~일1=13:00 / 월2~일2=18:00 기본, 수정 가능)
 // - "독스(docUrl)" 인라인 입력/저장 + 새 탭 열기 버튼
-// - 테이블에서 관리자 상담 기록 팝업(기록 읽기 전용, 영상 진도 우클릭 수정)
+// - 테이블에서 관리자 학생 운영 팝업(메모/숙제 읽기 전용, 영상 제외 상태 우클릭 수정)
 // - 커리별 학생 수(이름+학교 기준으로 중복 제거)
 
 import { $, toast } from '../core/utils.js';
-import { patchField } from '../core/api.js';
+import { patchField, getJSON } from '../core/api.js';
 import { state } from '../core/state.js';
 import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';
 import { SELF_STUDY_DAYS_FIELD, isSelfStudyDayField, nextSelfStudyDays } from '../../shared/selfStudy.js';
@@ -19,18 +19,97 @@ const EMPTY_SCHOOL_LABEL = '학교 입력';
 const AUTO_VIDEO_ASSIGN_FIELD = 'autoVideoAssignCount';
 const ABLE_AUTO_VIDEO_ASSIGN_COUNT = 1;
 const ABLE_CURRICULUM_KEY = 'a:ble';
+const rosterSaves = new Set();
+const SHARED_PROFILE_FIELDS = new Set(['school', 'grade', 'docUrl']);
 
-// 다양한 응답 형태를 '성공'으로 인정
-const ok = (r) =>
-  r == null ||                                                // ✅ 204/빈 응답(undef/null)도 성공으로 취급
-  r?.ok === true ||                                           // fetch Response 2xx
-  (typeof r?.status === 'number' && r.status >= 200 && r.status < 400) || // 3xx 포함
-  r?.redirected === true ||                                   // 리다이렉트 추종
-  r?.type === 'opaqueredirect' ||                             // CORS 리다이렉트
-  r === true || r === 'ok' || r?.success === true ||          // 커스텀 성공 패턴
-  r?.status === 'ok' || r?.status === 'success' ||            // ✅ {status:"ok"} 류
-  r?.result === 'ok' || r?.result === 'success' ||            // ✅ {result:"ok"} 류
-  r?.message === 'ok' || r?.message === 'success';            // ✅ {message:"ok"} 류
+function rosterSaveKey(student, sid) {
+  return student?.personId ? `person:${student.personId}` : `sid:${sid}`;
+}
+
+function syncRosterRow(student, fields) {
+  const row = Array.from(document.querySelectorAll('#allWrap tr[data-id]'))
+    .find(item => String(item.dataset.id) === String(student.id));
+  if (!row) return;
+  const school = row.querySelector('.cell-school');
+  if (fields.has('school') && school && !school.isContentEditable) setSchoolCellDisplay(school, student.school || '');
+  const grade = row.querySelector('.cell-grade');
+  if (fields.has('grade') && grade && !grade.isContentEditable) grade.textContent = student.grade || '\u00a0';
+  [['.curSelect', 'curriculum'], ['.subCurrSelect', 'subCurriculum'], ['.levelSelect', 'level'], ['.docUrlInput', 'docUrl']]
+    .forEach(([selector, field]) => { const input = row.querySelector(selector); if (fields.has(field) && input) input.value = student[field] || ''; });
+  row.querySelectorAll('.dayInput').forEach(input => {
+    if (!fields.has(input.dataset.day) && !fields.has(SELF_STUDY_DAYS_FIELD)) return;
+    input.value = student[input.dataset.day] || '';
+    const enabled = isSelfStudyDayField(student, input.dataset.day);
+    input.dataset.selfStudy = enabled ? '1' : '0';
+    input.title = enabled ? '자습' : '';
+  });
+  row.querySelectorAll('.timeInput').forEach(input => { if (fields.has(input.dataset.field)) input.value = student[input.dataset.field] || ''; });
+  row.dataset.curriculum = student.curriculum || '';
+  row.dataset.subcurriculum = student.subCurriculum || '';
+  row.dataset.searchKey = tableSearchKeyForStudent(student);
+}
+
+async function saveRosterFields(el, changes, message) {
+  const sid = String(el.dataset.id || '');
+  const student = state.students.find(row => String(row.id) === sid);
+  if (!student) return false;
+  const key = rosterSaveKey(student, sid);
+  if (rosterSaves.has(key)) return false;
+  const linked = student.personId
+    ? state.students.filter(row => row.personId === student.personId)
+    : [student];
+  const ids = new Set(linked.map(row => String(row.id)));
+  const controls = Array.from(document.querySelectorAll('#allWrap input[data-id], #allWrap select[data-id]'))
+    .filter(input => ids.has(String(input.dataset.id)));
+  const previousDisabled = controls.map(input => input.disabled);
+  const scheduleControls = controls.filter(input =>
+    input.classList.contains('dayInput') || input.classList.contains('timeInput'));
+  const previousReadOnly = scheduleControls.map(input => input.readOnly);
+  rosterSaves.add(key);
+  // Keep schedule inputs in the native Tab order while their save is pending.
+  controls.forEach(input => {
+    if (scheduleControls.includes(input)) input.readOnly = true;
+    else input.disabled = true;
+  });
+  let saved = false;
+  try {
+    for (const [field, value] of Object.entries(changes)) {
+      await patchField(sid, field, value);
+      const targets = student.personId && SHARED_PROFILE_FIELDS.has(field) ? linked : [student];
+      targets.forEach(row => {
+        const wasAble = usesAbleCurriculum(row);
+        row[field] = value;
+        if (field === 'curriculum' || field === 'subCurriculum') syncAbleAutoVideoAssignDefault(row, wasAble, value);
+      });
+    }
+    toast(message);
+    saved = true;
+    return true;
+  } catch (error) {
+    try {
+      const authoritative = await getJSON('/api/students');
+      if (!Array.isArray(authoritative)) throw new Error('invalid-roster');
+      linked.forEach(row => {
+        const fresh = authoritative.find(item => String(item.id) === String(row.id));
+        if (fresh) Object.assign(row, fresh);
+      });
+    } catch (refreshError) {
+      console.warn('[students] save recovery refresh failed', refreshError);
+    }
+    alert('저장하지 못한 항목이 있습니다. 표시된 값을 확인하고 다시 시도해 주세요.');
+    return false;
+  } finally {
+    const fields = new Set(Object.keys(changes));
+    linked.forEach(row => syncRosterRow(row, fields));
+    controls.forEach((input, index) => { input.disabled = previousDisabled[index]; });
+    scheduleControls.forEach((input, index) => { input.readOnly = previousReadOnly[index]; });
+    rosterSaves.delete(key);
+    const refreshStats = !saved || fields.size !== 1 || !fields.has('docUrl');
+    if (refreshStats) renderCurStats();
+    applyAllStudentSearch();
+    if (refreshStats) void renderYoilStatsSafe().catch(error => console.warn('[students] schedule counts refresh failed', error));
+  }
+}
 
 function escapeHtml(s = '') {
   return String(s)
@@ -61,12 +140,24 @@ function syncAbleAutoVideoAssignDefault(stu, wasAble, changedValue) {
 }
 
 // 이름+학교로 중복 학생 묶기용 키
-function dedupKeyForStudent(s) {
+export function dedupKeyForStudent(s) {
   const name = (s.name || '').trim();
   const high = s.highSchool || s.schoolHigh || s.high || s.highschool || s.high_school || s.고등학교 || '';
   const middle = s.middleSchool || s.schoolMiddle || s.middle || s.middleschool || s.middle_school || s.중학교 || s.school || '';
   const school = s.school || high || middle || '';
   return `${name}::${school}`;
+}
+
+function linkedHomeworkBooksMarkup(books = []) {
+  if (state.homeworkBooksStatus === 'loading' || state.homeworkBooksStatus === 'idle') {
+    return '<span class="linkedHomeworkBook is-empty">불러오는 중…</span>';
+  }
+  if (state.homeworkBooksStatus === 'error') {
+    return '<span class="linkedHomeworkBook is-empty">불러오기 실패</span>';
+  }
+  return books.length
+    ? books.map(book => `<span class="linkedHomeworkBook">${escapeHtml(book)}</span>`).join('')
+    : '<span class="linkedHomeworkBook is-empty">미등록</span>';
 }
 
 /** 요일 문자열 -> 기본 등원시간
@@ -167,7 +258,7 @@ export function renderTable() {
     const grade = s.grade ?? s.gradeLevel ?? s.studentGrade ?? s.학년 ?? '';
     const high = s.highSchool || s.schoolHigh || s.high || s.highschool || s.high_school || s.고등학교 || '';
     const middle = s.middleSchool || s.schoolMiddle || s.middle || s.middleschool || s.middle_school || s.중학교 || s.school || '';
-    const schoolText = s.school || high || middle || '';
+    const schoolText = s.personId ? (s.school || '') : (s.school || high || middle || '');
     const schoolValue = normalizeInlineCellText(schoolText);
     const doc = s.docUrl || '';
     const cur = s.curriculum || '';
@@ -253,6 +344,9 @@ export function renderTable() {
             ).join('')}
           </select>
         </div>
+        <label title="다음 새 자동배정부터 기출엄선만 배정합니다. 오늘 배정과 기존 과정 진도는 유지됩니다.">
+          <input type="checkbox" class="gichulOverlayToggle" data-id="${escapeHtml(s.id)}"${s.gichulSelectionEnabled === true ? ' checked' : ''}> 기출엄선 병행
+        </label>
       </td>
 
       <!-- 요일 + 등원시간 -->
@@ -267,10 +361,8 @@ export function renderTable() {
 
       <!-- 부교재 -->
       <td>
-        <div class="sbBox linkedHomeworkBooks" title="관리자운영판 숙제 교재 등록과 연동">
-          ${homeworkBooks.length
-            ? homeworkBooks.map(book => `<span class="linkedHomeworkBook">${escapeHtml(book)}</span>`).join('')
-            : '<span class="linkedHomeworkBook is-empty">미등록</span>'}
+        <div class="sbBox linkedHomeworkBooks" data-id="${escapeHtml(s.id)}" title="관리자운영판 숙제 교재 등록과 연동">
+          ${linkedHomeworkBooksMarkup(homeworkBooks)}
         </div>
       </td>
 
@@ -281,7 +373,7 @@ export function renderTable() {
                  placeholder="https://docs.google.com/..."
                  value="${escapeHtml(doc)}">
           <button type="button" class="docOpen" title="새 탭에서 열기" data-id="${s.id}">🔗</button>
-          <button type="button" class="miniProgBtn" title="상담 기록 및 영상 진도 보기" data-id="${s.id}">상담</button>
+          <button type="button" class="miniProgBtn" title="학생 운영 팝업 보기" data-id="${s.id}">운영</button>
           <button type="button" class="studentTestRecordBtn" title="테스트 기록 보기" data-test-result-sid="${escapeHtml(s.id)}" data-test-result-name="${escapeHtml(s.name || s.id)}">기록</button>
         </div>
       </td>
@@ -323,11 +415,11 @@ export function renderTable() {
       #allWrap .studentsTable col.col-name       { width:6%; }
       #allWrap .studentsTable col.col-school     { width:7%; }
       #allWrap .studentsTable col.col-grade      { width:5%; }
-      #allWrap .studentsTable col.col-level      { width:6%; }
+      #allWrap .studentsTable col.col-level      { width:7%; }
       #allWrap .studentsTable col.col-curriculum { width:14%; }
       #allWrap .studentsTable col.col-schedule   { width:20%; }
       #allWrap .studentsTable col.col-books      { width:16%; }
-      #allWrap .studentsTable col.col-docs       { width:16%; }
+      #allWrap .studentsTable col.col-docs       { width:15%; }
       #allWrap .studentsTable col.col-del        { width:4%; }
       #allWrap .studentsTable col.col-clone      { width:6%; }
 
@@ -391,6 +483,10 @@ export function renderTable() {
         min-width:0;
         padding-left:8px;
         padding-right:22px;
+      }
+      #allWrap .studentsTable .levelSelect{
+        padding-left:5px;
+        padding-right:14px;
       }
 
       /* 요일 / 등원시간 행 스타일 */
@@ -619,6 +715,22 @@ export function renderTable() {
 
 }
 
+export function renderHomeworkBooks() {
+  const studentsBySid = new Map(state.students.map(student => [String(student?.id || ''), student]));
+  document.querySelectorAll('#allWrap tr[data-sid]').forEach(row => {
+    const sid = String(row.dataset.sid || '');
+    const student = studentsBySid.get(sid);
+    if (!student) return;
+    const books = Array.isArray(state.homeworkBooksBySid?.[sid])
+      ? state.homeworkBooksBySid[sid]
+      : [];
+    const target = row.querySelector('.linkedHomeworkBooks');
+    if (target) target.innerHTML = linkedHomeworkBooksMarkup(books);
+    row.dataset.searchKey = tableSearchKeyForStudent(student);
+  });
+  applyAllStudentSearch();
+}
+
 function bindAllStudentSearch() {
   const input = document.getElementById('allStudentSearchInput');
   if (!input || input.dataset.bound === '1') return;
@@ -659,6 +771,27 @@ function applyAllStudentSearch() {
    이벤트(요일/커리/세부/레벨/부교재/독스/등원시간)
 ────────────────────────────────────────── */
 document.addEventListener('change', (e) => {
+  if (e.target.classList.contains('gichulOverlayToggle')) {
+    const input = e.target;
+    const sid = input.dataset.id;
+    const student = state.students.find(row => String(row.id) === String(sid));
+    const previous = student?.gichulSelectionEnabled === true;
+    const value = input.checked;
+    input.disabled = true;
+    getJSON('/api/video-capabilities').catch(() => {
+      throw new Error('기출엄선 기능의 서버 반영 여부를 확인하지 못했습니다. 새로고침 후 다시 시도하세요.');
+    }).then(capabilities => {
+      if (capabilities?.gichulOverlay !== true) throw new Error('기출엄선 기능의 서버 반영이 필요합니다.');
+      return patchField(sid, 'gichulSelectionEnabled', value);
+    }).then(() => {
+      if (student) student.gichulSelectionEnabled = value;
+      toast('기출엄선 설정 저장됨 · 오늘 배정은 유지됩니다.');
+    }).catch(error => {
+      input.checked = previous;
+      alert(error?.message || '기출엄선 설정 저장 실패');
+    }).finally(() => { input.disabled = false; });
+    return;
+  }
   // 요일
   if (e.target.classList.contains('dayInput')) {
     saveDayInput(e.target);
@@ -671,48 +804,13 @@ document.addEventListener('change', (e) => {
     return;
   }
 
-  // 커리큘럼
-  if (e.target.classList.contains('curSelect')) {
-    const sid = e.target.dataset.id;
-    const value = (e.target.value || '').trim();
-    const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) {
-      const wasAble = usesAbleCurriculum(stu);
-      stu.curriculum = value;
-      syncAbleAutoVideoAssignDefault(stu, wasAble, value);
-    }
-    patchField(sid, 'curriculum', value)
-      .then(r => ok(r) ? toast('커리큘럼 저장됨') : Promise.reject(r))
-      .then(() => { renderCurStats(); })
-      .catch(() => alert('커리큘럼 저장 실패'));
-    return;
-  }
-
-  // 세부과정
-  if (e.target.classList.contains('subCurrSelect')) {
-    const sid = e.target.dataset.id;
-    const value = e.target.value;
-    const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) {
-      const wasAble = usesAbleCurriculum(stu);
-      stu.subCurriculum = value;
-      syncAbleAutoVideoAssignDefault(stu, wasAble, value);
-    }
-    patchField(sid, 'subCurriculum', value)
-      .then(r => ok(r) ? toast('저장됨') : Promise.reject(r))
-      .catch(() => alert('저장 실패'));
-    return;
-  }
-
-  // 레벨
-  if (e.target.classList.contains('levelSelect')) {
-    const sid = e.target.dataset.id;
-    const value = e.target.value;
-    const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) stu.level = value;
-    patchField(sid, 'level', value)
-      .then(r => ok(r) ? toast('레벨 저장됨') : Promise.reject(r))
-      .catch(() => alert('레벨 저장 실패'));
+  for (const [className, field, message] of [
+    ['curSelect', 'curriculum', '커리큘럼 저장됨'],
+    ['subCurrSelect', 'subCurriculum', '세부과정 저장됨'],
+    ['levelSelect', 'level', '레벨 저장됨'],
+  ]) {
+    if (!e.target.classList.contains(className)) continue;
+    void saveRosterFields(e.target, { [field]: (e.target.value || '').trim() }, message);
     return;
   }
 
@@ -754,13 +852,7 @@ document.addEventListener('click', (e) => {
 });
 
 function saveDocUrl(el) {
-  const sid = el.dataset.id;
-  const value = (el.value || '').trim();
-  const stu = state.students.find(s => String(s.id) === String(sid));
-  if (stu) stu.docUrl = value;         // 로컬 상태 반영
-  patchField(sid, 'docUrl', value)     // 서버 반영
-    .then(r => ok(r) ? toast('독스 URL 저장됨') : Promise.reject(r))
-    .catch(() => alert('독스 URL 저장 실패'));
+  return saveRosterFields(el, { docUrl: (el.value || '').trim() }, '독스 URL 저장됨');
 }
 
 function tableSearchKeyForStudent(s) {
@@ -807,100 +899,33 @@ async function toggleSelfStudyDay(el) {
   const sid = el.dataset.id;
   const field = el.dataset.day;
   if (!sid || !field) return;
-
-  const value = (el.value || '').trim();
-  if (!value) {
+  if (!(el.value || '').trim()) {
     alert('요일을 먼저 입력하세요.');
     return;
   }
-
-  const stu = state.students.find(s => String(s.id) === String(sid));
-  const prevRaw = stu ? stu[SELF_STUDY_DAYS_FIELD] : undefined;
-  const prevEnabled = stu ? isSelfStudyDayField(stu, field) : el.dataset.selfStudy === '1';
-  const nextEnabled = !prevEnabled;
-  const nextMap = nextSelfStudyDays(stu || {}, field, nextEnabled);
-
-  if (stu) stu[SELF_STUDY_DAYS_FIELD] = nextMap;
-  el.dataset.selfStudy = nextEnabled ? '1' : '0';
-  el.title = nextEnabled ? '자습' : '';
-
-  try {
-    const res = await patchField(sid, SELF_STUDY_DAYS_FIELD, nextMap);
-    if (!ok(res)) throw res;
-    await renderYoilStatsSafe();
-    toast(nextEnabled ? '자습으로 표시됨' : '자습 해제됨');
-  } catch {
-    if (stu) stu[SELF_STUDY_DAYS_FIELD] = prevRaw;
-    el.dataset.selfStudy = prevEnabled ? '1' : '0';
-    el.title = prevEnabled ? '자습' : '';
-    alert('자습 저장 실패');
-  }
+  const student = state.students.find(row => String(row.id) === String(sid));
+  const enabled = !isSelfStudyDayField(student || {}, field);
+  return saveRosterFields(el, { [SELF_STUDY_DAYS_FIELD]: nextSelfStudyDays(student || {}, field, enabled) },
+    enabled ? '자습으로 표시됨' : '자습 해제됨');
 }
 
 async function saveDayInput(el) {
-  const sid = el.dataset.id;
   const field = el.dataset.day;
-  if (!sid || !field) return;
-
+  if (!el.dataset.id || !field) return;
   const value = (el.value || '').trim();
   const timeField = getVisitTimeFieldForDayField(field);
-  const autoTime = baseTimeForDayValue(value);
-  const stu = state.students.find(s => String(s.id) === String(sid));
-
-  if (stu) {
-    stu[field] = value;
-    if (timeField) stu[timeField] = autoTime;
-    if (!value && isSelfStudyDayField(stu, field)) {
-      stu[SELF_STUDY_DAYS_FIELD] = nextSelfStudyDays(stu, field, false);
-      el.dataset.selfStudy = '0';
-      el.title = '';
-    }
-  }
-
-  const timeInput = timeField
-    ? document.querySelector(`.timeInput[data-id="${sid}"][data-field="${timeField}"]`)
-    : null;
-  if (timeInput) timeInput.value = autoTime;
-
-  try {
-    const dayRes = await patchField(sid, field, value);
-    if (!ok(dayRes)) throw dayRes;
-
-    if (timeField) {
-      const timeRes = await patchField(sid, timeField, autoTime);
-      if (!ok(timeRes)) throw timeRes;
-    }
-    if (!value && stu) {
-      const selfStudyRes = await patchField(sid, SELF_STUDY_DAYS_FIELD, stu[SELF_STUDY_DAYS_FIELD] || {});
-      if (!ok(selfStudyRes)) throw selfStudyRes;
-    }
-
-    toast('요일/등원시간 저장됨');
-    await renderYoilStatsSafe();
-  } catch {
-    alert('저장 실패');
-  }
+  const changes = { [field]: value };
+  if (timeField) changes[timeField] = baseTimeForDayValue(value);
+  const student = state.students.find(row => String(row.id) === String(el.dataset.id));
+  if (!value && student) changes[SELF_STUDY_DAYS_FIELD] = nextSelfStudyDays(student, field, false);
+  return saveRosterFields(el, changes, '요일/등원시간 저장됨');
 }
 
 function saveTimeInput(el) {
-  const sid = el.dataset.id;
   const field = el.dataset.field;
-  if (!sid || !field) return;
-  const raw = (el.value || '').trim();
-  const value = normalizeTimeInput(raw);
-
-  el.value = value;
-
-  const stu = state.students.find(s => String(s.id) === String(sid));
-  if (stu) stu[field] = value;
-
-  patchField(sid, field, value)
-    .then(() => {
-      toast('등원시간 저장됨');
-    })
-    .catch(() => {
-      alert('등원시간 저장 실패');
-    });
+  if (!el.dataset.id || !field) return;
+  const value = normalizeTimeInput((el.value || '').trim());
+  return saveRosterFields(el, { [field]: value }, '등원시간 저장됨');
 }
 
 /* ─────────────────────────────────────────
@@ -932,6 +957,8 @@ function focusEditableEnd(el) {
 
 function startSchoolEdit(el) {
   if (!el || el.isContentEditable) return;
+  const student = state.students.find(row => String(row.id) === String(el.dataset.id));
+  if (rosterSaves.has(rosterSaveKey(student, el.dataset.id))) return;
 
   const prev = getSchoolCellValue(el);
   el.dataset.orig = prev;
@@ -963,7 +990,6 @@ function initSchoolInlineEdit() {
 
   // 저장(commit)
   const commit = async (el) => {
-    const sid = el.dataset.id;
     const next = normalizeInlineCellText(el.textContent || '');
     const prev = normalizeInlineCellText(el.dataset.orig || '');
     el.contentEditable = 'false';
@@ -975,22 +1001,7 @@ function initSchoolInlineEdit() {
       return;
     }
 
-    const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) {
-      stu.school = next;
-    }
-
-    try {
-      const res = await patchField(sid, 'school', next);
-      if (!ok(res)) throw new Error(res?.status || 'save-failed');
-      setSchoolCellDisplay(el, next);
-      toast('학교 저장됨');
-      renderCurStats();
-    } catch (err) {
-      if (stu) stu.school = prev;
-      setSchoolCellDisplay(el, prev);
-      alert('학교 저장 실패');
-    }
+    await saveRosterFields(el, { school: next }, '학교 저장됨');
   };
 
   // 취소(rollback)
@@ -1040,21 +1051,17 @@ function initGradeInlineEdit() {
   tbody.addEventListener('dblclick', (e) => {
     const el = e.target.closest('.cell-grade'); if (!el) return;
     if (el.isContentEditable) return;
+    const student = state.students.find(row => String(row.id) === String(el.dataset.id));
+    if (rosterSaves.has(rosterSaveKey(student, el.dataset.id))) return;
 
     el.dataset.orig = (el.textContent || '').trim();
     el.contentEditable = 'true';
     el.classList.add('editing');
 
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges(); sel.addRange(range);
-    el.focus();
+    focusEditableEnd(el);
   });
 
   const commit = async (el) => {
-    const sid = el.dataset.id;
     const next = (el.textContent || '').trim();
     const prev = (el.dataset.orig || '').trim();
 
@@ -1064,20 +1071,7 @@ function initGradeInlineEdit() {
 
     if (next === prev) return;
 
-    const stu = state.students.find(s => String(s.id) === String(sid));
-    if (stu) {
-      stu.grade = next;
-    }
-
-    try {
-      const res = await patchField(sid, 'grade', next);
-      if (!ok(res)) throw new Error(res?.status || 'save-failed');
-      toast('학년 저장됨');
-    } catch (err) {
-      if (stu) stu.grade = prev;
-      el.textContent = prev || '\u00a0';
-      alert('학년 저장 실패');
-    }
+    await saveRosterFields(el, { grade: next }, '학년 저장됨');
   };
 
   const cancel = (el) => {
@@ -1108,7 +1102,7 @@ function initGradeInlineEdit() {
   });
 }
 
-/* 행의 상담 기록 팝업 날짜는 실제 로컬 오늘을 사용한다. */
+/* 행의 학생 운영 팝업 날짜는 실제 로컬 오늘을 사용한다. */
 function todayLocalKey() {
   if (typeof window.todayLocalKey === 'function') return window.todayLocalKey();
   const d = new Date();
@@ -1122,7 +1116,7 @@ let studentRecordPopupModulePromise = null;
 
 async function ensureStudentRecordPopupReady() {
   if (!studentRecordPopupModulePromise) {
-    studentRecordPopupModulePromise = import('./studentRecordPopup.js').catch((error) => {
+    studentRecordPopupModulePromise = import('./studentRecordPopup.js?v=20260912-watch-rearm1&youtube=20260913&bookSleep=4&homeworkOpenStable=1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007').catch((error) => {
       studentRecordPopupModulePromise = null;
       throw error;
     });
@@ -1131,7 +1125,7 @@ async function ensureStudentRecordPopupReady() {
   await initAllStudentsRecordPopup(state);
 }
 
-// 관리자 통합 팝업은 첫 상담 클릭 때만 불러와 전체학생 초기 렌더를 막지 않는다.
+// 관리자 통합 팝업은 첫 운영 클릭 때만 불러와 전체학생 초기 렌더를 막지 않는다.
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.miniProgBtn');
   if (!btn) return;

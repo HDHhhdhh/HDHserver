@@ -27,7 +27,7 @@ export function renderTodayActionButtons({ sid = '', name = '', date = '', inclu
     : '';
 
   return `<div class="today-actions" role="group" aria-label="${groupLabel}">
-      <button type="button" class="openStudentPopups" title="상담 기록" aria-label="${safeLabel} 상담 기록">상담</button>
+      <button type="button" class="openStudentPopups" title="학생 운영 팝업" aria-label="${safeLabel} 학생 운영 팝업">운영</button>
       <button type="button" class="studentTestRecordBtn" data-test-result-sid="${safeSid}" data-test-result-name="${safeLabel}" title="테스트 기록 보기" aria-label="${safeLabel} 테스트 기록 보기">기록</button>
       <button type="button" class="markAbsent" title="결석 처리" aria-label="${safeLabel} 결석 처리">결석</button>
       <button type="button" class="markLeave" title="하원 처리" aria-label="${safeLabel} 하원 처리">하원</button>${doneActions}

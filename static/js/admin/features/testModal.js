@@ -5,65 +5,64 @@
 import { $, CT, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
+import { createAssignmentDragAutoScroll } from './assignmentDragAutoScroll.js?v=20261007';
 import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';
 
-const ILSAN_GRAPH_DIFFICULTY = '그래프 포함';
-const LEGACY_ILSAN_GRAPH_DIFFICULTY = '삼각함수 그래프 포함';
-const CATEGORY_DEFS = [
-  { key: 'REVIEW', label: '복습 테스트', short: '복습', difficulties: ['상', '중상'] },
-  { key: 'UNIT', label: '단원평가', short: '단원', difficulties: ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'] },
-  { key: 'SCHOOL_PAST', label: '학군지 기출', short: '학군지', difficulties: ['상', '중상'] },
-  { key: 'ILSAN_PAST', label: '일산 기출', short: '일산', difficulties: ['중', '중상', ILSAN_GRAPH_DIFFICULTY] },
-];
-const CATEGORY_BY_KEY = Object.fromEntries(CATEGORY_DEFS.map(x => [x.key, x]));
-const CATEGORY_KEYS = CATEGORY_DEFS.map(x => x.key);
-const SUBJECTS = ['공수1', '공수2', '대수', '미적분1', '미적분2', '기하', '확통'];
-const STUDENT_LEVELS = ['하', '중', '중상', '상'];
-const ROUND_OPTIONS = ['1', '2', '3'];
-const TERM_OPTIONS = ['중간고사', '기말고사'];
-const DEFAULT_TERM = TERM_OPTIONS[1] || TERM_OPTIONS[0];
+import {
+  CATEGORY_DEFS, CATEGORY_BY_KEY,
+  CATEGORY_KEYS, ROUND_OPTIONS,
+  TERM_OPTIONS, DEFAULT_TERM,
+  isUnitCategory, isTermCategory, canonText, normalizeSubject,
+  categoryLabel, canonicalCategoryKey, isIlsanGraphDifficultyText,
+  normalizeRound, roundLabel, normalizeTerm, normalizeAssignmentStatus,
+  testStatusLabel, nextStatusOf, nextExcludedStatusOf, nextKeyboardStatusOf,
+  isInProgressTestStatus, isResolvedTestStatus, isExplicitBlankTestStatus,
+  normalizeConfig, collectTestCatalog,
+} from './testAssignmentRules.js?v=20260907-ilsan-level-r1';
 const SCHOOL_CAL_PAGE_STORAGE_KEY = 'schoolCal.selectedPage.v1';
 const TEST_ASSIGN_CLEAR_KEY = '__testsClearedAt';
+const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
+const TEST_ASSIGN_TOUCHED_KEYS_KEY = '__testAssignmentTouchedKeys';
 const TEST_ASSIGN_DAILY_ITEMS_KEY = 'testAssignmentDailyTests';
-const TEST_STATUS_LABELS = {
-  assigned: '배정',
-  done: '완료',
-  interrupted: '배부',
-  skip: '제외',
-};
+const STUDENT_TEST_LEVEL_DEFAULTS_FIELD = 'testLevelDefaults';
+const STUDENT_LEVEL_SETTING_CATEGORY = 'UNIT';
+const TEST_RECENT_VIEW_STORAGE_PREFIX = 'admin.testAssignment.recentView.v1';
 
 let initialized = false;
 let editingSid = null;
 let editingDate = null;
+let testModalReady = false;
+const testSaveFlights = new Map();
 let activeStudent = null;
 let activeCategory = 'UNIT';
 let activeSubject = '공수1';
 let activeDifficulty = 'Lv.3';
 let activeRound = '1';
 let activeTerm = DEFAULT_TERM;
+let levelSettingOpen = false;
 let activeCatalog = [];
 let catalogByKey = new Map();
 let initialTestMap = {};
-let selectedKeys = new Set();
 let selectedStatuses = new Map();
+let multiSelectedKeys = new Set();
 let explicitBlankKeys = new Set();
+let touchedTestKeys = new Set();
+let testChangeOrderByKey = {};
+let pendingCenteredTestKey = '';
 let submittedIds = new Set();
 let submittedNames = new Set();
 let testSelectionTouched = false;
 let testOpenSeq = 0;
+let stopTestAssignmentDrag = () => {};
 
-function isUnitCategory(categoryKey) {
-  return String(categoryKey || '') === 'UNIT';
-}
-
-function isTermCategory(categoryKey) {
-  const key = String(categoryKey || '');
-  return key === 'SCHOOL_PAST' || key === 'ILSAN_PAST';
-}
 
 function isLockConflictResponse(status, text) {
   const body = String(text || '').toLowerCase();
-  return status === 409 && (body.includes('lock timeout') || body.includes('.lock'));
+  return status === 409 && (
+    body.includes('lock timeout')
+    || body.includes('lock_timeout')
+    || body.includes('.lock')
+  );
 }
 
 function sleep(ms) {
@@ -92,16 +91,51 @@ async function fetchJSONSafe(url, init = {}) {
   throw new Error(`[testModal] ${fetchInit.method || 'GET'} ${url} failed after lock retries`);
 }
 
+function requireTestPopupDocument(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false) {
+    throw new Error('시험 조회 응답이 올바르지 않습니다.');
+  }
+  return value;
+}
+
 async function fetchJSONCached(url, ttlMs = 2500) {
   const cache = window.__studentWorkFetchCache || (window.__studentWorkFetchCache = new Map());
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  const readEpoch = epochs.get(url) || 0;
   const now = Date.now();
   const hit = cache.get(url);
-  if (hit && (now - hit.ts) < ttlMs) return hit.promise;
+  if (hit && (hit.pending || (now - hit.ts) < ttlMs)) {
+    return hit.promise.then(requireTestPopupDocument).catch(error => {
+      if (cache.get(url)?.promise === hit.promise) cache.delete(url);
+      throw error;
+    });
+  }
 
-  const promise = fetchJSONSafe(url).catch(() => ({}));
-  cache.set(url, { ts: now, promise });
+  const pending = fetchJSONSafe(url).then(requireTestPopupDocument);
+  const promise = pending.then(value => {
+    if ((epochs.get(url) || 0) !== readEpoch) {
+      throw new Error('팝업 데이터가 변경되었습니다. 다시 열어 주세요.');
+    }
+    return value;
+  });
+  cache.set(url, { ts: now, promise, pending: true });
+  promise.then(() => {
+    if (cache.get(url)?.promise === promise) {
+      cache.set(url, { ts: Date.now(), promise, pending: false });
+    }
+  }, () => {});
+  promise.catch(() => {
+    if (cache.get(url)?.promise === promise) cache.delete(url);
+  });
   return promise;
 }
+
+function invalidateStudentWorkFetchCache(url) {
+  const epochs = window.__studentWorkFetchEpochs || (window.__studentWorkFetchEpochs = new Map());
+  epochs.set(url, (epochs.get(url) || 0) + 1);
+  window.__studentWorkFetchCache?.delete?.(url);
+}
+
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (m) => ({
@@ -113,87 +147,6 @@ function escapeHtml(s) {
   }[m]));
 }
 
-function canonText(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ');
-}
-
-function normalizeSubject(value) {
-  const compact = String(value || '').trim().replace(/\s+/g, '');
-  const aliases = {
-    '공통수학1': '공수1',
-    '공통수학2': '공수2',
-    '미적1': '미적분1',
-    '미적분Ⅰ': '미적분1',
-    '미적분I': '미적분1',
-    '미적2': '미적분2',
-    '미적분Ⅱ': '미적분2',
-    '미적분II': '미적분2',
-    '확률과통계': '확통',
-  };
-  return aliases[compact] || compact || '공수1';
-}
-
-function categoryLabel(key) {
-  return CATEGORY_BY_KEY[key]?.label || key || '';
-}
-
-function canonicalCategoryKey(key, label = '') {
-  const raw = `${key || ''} ${label || ''}`.toUpperCase();
-  const ko = `${key || ''} ${label || ''}`.replace(/\s+/g, '');
-  if (raw.includes('REVIEW') || ko.includes('복습')) return 'REVIEW';
-  if (raw.includes('SCHOOL') || ko.includes('학군지')) return 'SCHOOL_PAST';
-  if (raw.includes('ILSAN') || ko.includes('일산')) return 'ILSAN_PAST';
-  if (raw.includes('UNIT') || ko.includes('단원')) return 'UNIT';
-  return String(key || '').trim();
-}
-
-function isIlsanGraphDifficultyText(source) {
-  const text = String(source || '');
-  return text.includes(ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes(LEGACY_ILSAN_GRAPH_DIFFICULTY) ||
-    text.includes('그래프');
-}
-
-function normalizeDifficulty(categoryKey, raw, name = '') {
-  const text = String(raw || '').trim();
-  const source = `${text} ${name}`;
-  if (categoryKey === 'ILSAN_PAST' && isIlsanGraphDifficultyText(source)) return ILSAN_GRAPH_DIFFICULTY;
-  const def = CATEGORY_BY_KEY[categoryKey];
-  if (def?.difficulties.includes(text)) return text;
-
-  const lv = source.match(/(?:Lv\.?|LV\.?|레벨)\s*\.?\s*([3-6])/);
-  if (lv) return `Lv.${lv[1]}`;
-  if (source.includes('중상')) return '중상';
-  if (source.includes('상')) return categoryKey === 'ILSAN_PAST' ? '중상' : '상';
-  if (categoryKey === 'ILSAN_PAST' && source.includes('중')) return '중';
-
-  return def?.difficulties?.[0] || '';
-}
-
-function normalizeRound(value, name = '') {
-  const raw = String(value || '').trim();
-  const source = `${raw} ${name}`;
-  const m = source.match(/(\d{1,2})\s*(?:회차|회)/);
-  if (m) return m[1];
-  if (/^\d{1,2}$/.test(raw)) return raw;
-  return raw || '1';
-}
-
-function roundLabel(value) {
-  const r = String(value || '').trim();
-  if (!r) return '';
-  return /회/.test(r) ? r : `${r}회차`;
-}
-
-function normalizeTerm(value, name = '') {
-  const source = `${value || ''} ${name || ''}`.trim();
-  if (!source) return DEFAULT_TERM;
-  if (TERM_OPTIONS.includes(source)) return source;
-  const lower = source.toLowerCase();
-  if (lower.includes('final') || lower.includes('end') || source.includes(TERM_OPTIONS[1])) return TERM_OPTIONS[1] || DEFAULT_TERM;
-  if (lower.includes('mid') || lower.includes('middle') || source.includes(TERM_OPTIONS[0])) return TERM_OPTIONS[0] || DEFAULT_TERM;
-  return DEFAULT_TERM;
-}
 
 function readSchoolCalendarPageSelection() {
   try {
@@ -224,50 +177,11 @@ function defaultTermFromSchoolCalendar() {
   return termFromSchoolCalendarExam(stored.exam || cal.activeExam || yearBundle.activeExam) || DEFAULT_TERM;
 }
 
-function normalizeAssignmentStatus(status) {
-  const raw = status && typeof status === 'object' ? status.status : status;
-  const s = String(raw || '').trim();
-  if (!s || s === 'none') return '';
-  if (s === 'assigned' || s === 'done' || s === 'interrupted' || s === 'skip') return s;
-  return 'assigned';
-}
-
-function testStatusLabel(status, submitted = false) {
-  if (submitted) return '완료';
-  const s = normalizeAssignmentStatus(status);
-  return s ? (TEST_STATUS_LABELS[s] || '배정') : '';
-}
-
-function nextStatusOf(status) {
-  const s = normalizeAssignmentStatus(status);
-  if (!s || s === 'skip') return 'assigned';
-  if (s === 'assigned') return 'interrupted';
-  if (s === 'interrupted') return 'done';
-  return '';
-}
-
-function nextExcludedStatusOf(status) {
-  return normalizeAssignmentStatus(status) === 'skip' ? '' : 'skip';
-}
 
 function statusForKey(key) {
   return normalizeAssignmentStatus(selectedStatuses.get(key));
 }
 
-function isInProgressTestStatus(status) {
-  const normalized = normalizeAssignmentStatus(status);
-  return normalized === 'assigned' || normalized === 'interrupted';
-}
-
-function isResolvedTestStatus(status) {
-  const normalized = normalizeAssignmentStatus(status);
-  return normalized === 'done' || normalized === 'skip';
-}
-
-function isExplicitBlankTestStatus(status) {
-  if (!status || typeof status !== 'object') return false;
-  return normalizeAssignmentStatus(status) === '' && status.explicitBlank === true;
-}
 
 function setTestStatus(key, status) {
   const k = String(key || '').trim();
@@ -275,60 +189,17 @@ function setTestStatus(key, status) {
   const normalized = normalizeAssignmentStatus(status);
   if (normalized) {
     selectedStatuses.set(k, normalized);
-    selectedKeys.add(k);
     explicitBlankKeys.delete(k);
   } else {
     selectedStatuses.delete(k);
-    selectedKeys.delete(k);
   }
 }
 
-function testKey(test) {
-  return [
-    categoryLabel(test.categoryKey),
-    test.curriculum,
-    test.difficulty,
-    isTermCategory(test.categoryKey) ? test.term : '',
-    roundLabel(test.round),
-    test.name,
-  ].filter(Boolean).join(' / ');
+function markTestTouched(key) {
+  const normalizedKey = String(key || '').trim();
+  if (normalizedKey) touchedTestKeys.add(normalizedKey);
 }
 
-function normalizeConfig(cfg) {
-  const out = (cfg && typeof cfg === 'object') ? cfg : {};
-  if (!out.categories || typeof out.categories !== 'object') out.categories = {};
-
-  CATEGORY_DEFS.forEach(def => {
-    if (!out.categories[def.key] || typeof out.categories[def.key] !== 'object') {
-      out.categories[def.key] = { label: def.label, tests: [] };
-    }
-    if (!Array.isArray(out.categories[def.key].tests)) out.categories[def.key].tests = [];
-    out.categories[def.key].label = out.categories[def.key].label || def.label;
-  });
-
-  const ilsanRules = out.autoAssignRules?.ILSAN_PAST;
-  if (ilsanRules && typeof ilsanRules === 'object') {
-    Object.values(ilsanRules).forEach(subjectRules => {
-      if (!subjectRules || typeof subjectRules !== 'object') return;
-      const mergeLevels = (target, ...sources) => {
-        const current = Array.isArray(subjectRules[target]) ? subjectRules[target] : [];
-        const next = [...current];
-        sources.forEach(sourceKey => {
-          if (Array.isArray(subjectRules[sourceKey])) next.push(...subjectRules[sourceKey]);
-          if (sourceKey !== target) delete subjectRules[sourceKey];
-        });
-        subjectRules[target] = Array.from(new Set(next.map(String)));
-      };
-      mergeLevels('중상', '상');
-      mergeLevels(ILSAN_GRAPH_DIFFICULTY, LEGACY_ILSAN_GRAPH_DIFFICULTY);
-      CATEGORY_BY_KEY.ILSAN_PAST.difficulties.forEach(difficulty => {
-        subjectRules[difficulty] = STUDENT_LEVELS.slice();
-      });
-    });
-  }
-
-  return out;
-}
 
 function ruleDefaultDifficulty(categoryKey, subject, student = activeStudent) {
   const hits = ruleDefaultDifficulties(categoryKey, subject, student);
@@ -353,6 +224,8 @@ function autoAssignRuleAllowsDifficulty(categoryKey, subject, difficulty, studen
 function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) {
   const def = CATEGORY_BY_KEY[categoryKey] || CATEGORY_BY_KEY.UNIT;
   const difficulties = def?.difficulties || [];
+  const studentDefault = studentTestLevelDefault(categoryKey, subject, student);
+  if (studentDefault) return [studentDefault];
   if (categoryKey === 'ILSAN_PAST') return difficulties.slice();
   const level = canonText(student?.level);
   const rules = state.testsConfig?.autoAssignRules?.[categoryKey]?.[subject];
@@ -363,6 +236,58 @@ function ruleDefaultDifficulties(categoryKey, subject, student = activeStudent) 
     if (hits.length) return hits;
   }
   return difficulties[0] ? [difficulties[0]] : [];
+}
+
+function studentTestLevelDefault(categoryKey, subject, student = activeStudent) {
+  const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
+  const stored = student?.[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  const categoryDefaults = stored && typeof stored === 'object' && !Array.isArray(stored)
+    ? stored[categoryKey]
+    : null;
+  const difficulty = categoryDefaults && typeof categoryDefaults === 'object'
+    ? String(categoryDefaults[normalizeSubject(subject)] || '').trim()
+    : '';
+  return difficulties.includes(difficulty) ? difficulty : '';
+}
+
+function copyStudentTestLevelDefaults(student = activeStudent) {
+  const stored = student?.[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  return Object.fromEntries(Object.entries(stored).map(([categoryKey, values]) => [
+    categoryKey,
+    values && typeof values === 'object' && !Array.isArray(values) ? { ...values } : values,
+  ]));
+}
+
+async function saveStudentTestLevelDefault(categoryKey, subject, difficulty) {
+  const sid = String(editingSid || '').trim();
+  const student = activeStudent;
+  if (!sid || !student) throw new Error('학생별 테스트 레벨 기본값을 저장할 학생이 없습니다.');
+
+  const previous = student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+  const next = copyStudentTestLevelDefaults(student);
+  const categoryDefaults = next[categoryKey] && typeof next[categoryKey] === 'object' && !Array.isArray(next[categoryKey])
+    ? { ...next[categoryKey] }
+    : {};
+  categoryDefaults[normalizeSubject(subject)] = difficulty;
+  next[categoryKey] = categoryDefaults;
+  student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD] = next;
+
+  try {
+    const { ensureOk, sendJson } = await import('../../shared/api.js');
+    const response = await sendJson('/api/update', {
+      id: sid,
+      field: STUDENT_TEST_LEVEL_DEFAULTS_FIELD,
+      value: next,
+    }, { cache: 'no-store' });
+    await ensureOk(response, '학생별 테스트 레벨 기본값 저장');
+  } catch (error) {
+    if (previous === undefined) delete student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD];
+    else student[STUDENT_TEST_LEVEL_DEFAULTS_FIELD] = previous;
+    throw error;
+  }
+
+  return next;
 }
 
 function visibleDifficultyValues() {
@@ -451,73 +376,7 @@ function applyRuleDefaults(categoryKey = activeCategory) {
 }
 
 function collectCatalog(cfg) {
-  const out = [];
-  const categories = cfg?.categories || {};
-
-  Object.entries(categories).forEach(([rawKey, cat]) => {
-    if (!cat || typeof cat !== 'object') return;
-    const categoryKey = canonicalCategoryKey(rawKey, cat.label);
-    if (!CATEGORY_BY_KEY[categoryKey]) return;
-
-    const tests = Array.isArray(cat.tests) ? cat.tests : [];
-    tests.forEach((rawTest, idx) => {
-      if (!rawTest || typeof rawTest !== 'object') return;
-      const name = canonText(rawTest.name || rawTest.title || `테스트 ${idx + 1}`);
-      const curriculum = normalizeSubject(rawTest.curriculum || rawTest.subject || rawTest.course || activeSubject);
-      const difficulty = normalizeDifficulty(categoryKey, rawTest.difficulty || rawTest.level, name);
-      const round = normalizeRound(rawTest.round || rawTest.session || rawTest.no, name);
-      const term = isTermCategory(categoryKey)
-        ? normalizeTerm(rawTest.term || rawTest.examTerm || rawTest.semesterTerm, name)
-        : '';
-      const id = canonText(rawTest.id) || `t_${categoryKey}_${curriculum}_${difficulty}_${idx}`;
-
-      const test = {
-        ...rawTest,
-        id,
-        name,
-        categoryKey,
-        curriculum,
-        difficulty,
-        round,
-        term,
-        problems: Number.isFinite(+rawTest.problems) ? Math.max(1, Number(rawTest.problems)) : 20,
-        _catalogIndex: idx,
-      };
-      test._key = testKey(test);
-      out.push(test);
-    });
-  });
-
-  const rankIn = (list, value) => {
-    const index = list.indexOf(value);
-    return index >= 0 ? index : list.length;
-  };
-  const orderValue = (test) => {
-    const raw = test?.sortOrder ?? test?.sourceOrder ?? test?.order ?? test?.sourceIndex ?? test?._catalogIndex;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 999999;
-  };
-
-  out.sort((a, b) => {
-    const aDifficulties = CATEGORY_BY_KEY[a.categoryKey]?.difficulties || [];
-    const bDifficulties = CATEGORY_BY_KEY[b.categoryKey]?.difficulties || [];
-    const base =
-      rankIn(CATEGORY_KEYS, a.categoryKey) - rankIn(CATEGORY_KEYS, b.categoryKey) ||
-      rankIn(SUBJECTS, a.curriculum) - rankIn(SUBJECTS, b.curriculum) ||
-      rankIn(aDifficulties, a.difficulty) - rankIn(bDifficulties, b.difficulty) ||
-      String(a.difficulty).localeCompare(String(b.difficulty), 'ko');
-    if (base) return base;
-    if (isUnitCategory(a.categoryKey) && isUnitCategory(b.categoryKey)) {
-      return Number(a.round || 0) - Number(b.round || 0) ||
-        orderValue(a) - orderValue(b) ||
-        String(a.name).localeCompare(String(b.name), 'ko');
-    }
-    return orderValue(a) - orderValue(b) ||
-      Number(a.round || 0) - Number(b.round || 0) ||
-      String(a.name).localeCompare(String(b.name), 'ko');
-  });
-
-  return out;
+  return collectTestCatalog(cfg, activeSubject);
 }
 
 function mergeDateSidMap(target, incoming) {
@@ -540,9 +399,7 @@ function entryForDateSid(source, date, sid) {
   const sidKey = String(sid || '').trim();
   const direct = bySid[sidKey];
   if (direct && typeof direct === 'object') return direct;
-  const matchedKey = Object.keys(bySid).find(key => String(key) === sidKey);
-  const matched = matchedKey ? bySid[matchedKey] : null;
-  return matched && typeof matched === 'object' ? matched : {};
+  return {};
 }
 
 function currentProgressEntry() {
@@ -568,9 +425,6 @@ function logAssignmentStatusMap(entry) {
   return out;
 }
 
-function hasCurrentTestClearMarker() {
-  return Boolean(currentProgressEntry()?.[TEST_ASSIGN_CLEAR_KEY]);
-}
 
 function pushSubmittedRecord(rec) {
   if (!rec || typeof rec !== 'object') return;
@@ -602,13 +456,33 @@ function collectSubmittedFromState(sid) {
   });
 }
 
-async function hydrateForTestPopup(date, sid) {
+function testPopupReadUrls(sid) {
+  const sidKey = String(sid || '').trim();
+  return [
+    '/api/tests-config',
+    `/api/logs?sid=${encodeURIComponent(sidKey)}`,
+    `/api/progress?sid=${encodeURIComponent(sidKey)}`,
+    '/api/tests',
+  ];
+}
+
+function prefetchTestModalDataForRow(row) {
+  const sid = String(row?.dataset?.sid || '').trim();
+  if (!sid) return Promise.resolve([]);
+  return Promise.allSettled(testPopupReadUrls(sid).map(url => fetchJSONCached(url)));
+}
+
+async function hydrateForTestPopup(date, sid, isCurrent = () => true) {
   const [cfg, logs, progress, testsJson] = await Promise.all([
-    fetchJSONSafe('/api/tests-config').catch(() => ({ categories: {} })),
+    fetchJSONCached('/api/tests-config'),
     fetchJSONCached(`/api/logs?sid=${encodeURIComponent(sid)}`),
     fetchJSONCached(`/api/progress?sid=${encodeURIComponent(sid)}`),
-    fetchJSONSafe('/api/tests').catch(() => ({})),
+    fetchJSONCached('/api/tests'),
   ]);
+  if (!isCurrent()) return false;
+  if ([cfg, logs, progress, testsJson].some(value => !value || typeof value !== 'object' || Array.isArray(value))) {
+    throw new Error('시험 조회 응답이 올바르지 않습니다.');
+  }
 
   state.testsConfig = normalizeConfig(cfg);
   window.testsConfig = state.testsConfig;
@@ -630,8 +504,12 @@ async function hydrateForTestPopup(date, sid) {
     });
   }
 
-  activeCatalog = collectCatalog(state.testsConfig);
+  const curriculumSubject = activeStudentCurriculumSubject();
+  activeCatalog = collectCatalog(state.testsConfig).filter(test =>
+    curriculumSubject && normalizeSubject(test.curriculum) === curriculumSubject
+  );
   catalogByKey = new Map(activeCatalog.map(test => [test._key, test]));
+  return true;
 }
 
 function getCurrentProgressTests() {
@@ -660,11 +538,50 @@ function getCurrentProgressTests() {
   for (const d of dates) {
     const entry = entryForDateSid(state.progress, d, sid);
     if (!entry || typeof entry !== 'object') continue;
-    if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
     const tests = entry.tests;
     if (tests && typeof tests === 'object' && Object.keys(tests).length) return tests;
+    if (entry[TEST_ASSIGN_CLEAR_KEY]) return {};
   }
   return {};
+}
+
+function progressEntryForCurrentTestHistory() {
+  const currentEntry = currentProgressEntry();
+  const currentTests = currentEntry?.tests;
+  if (currentTests && typeof currentTests === 'object' && Object.keys(currentTests).length) {
+    return currentEntry;
+  }
+  if (currentEntry && typeof currentEntry === 'object' && currentEntry[TEST_ASSIGN_CLEAR_KEY]) {
+    return null;
+  }
+  if (Object.keys(logAssignmentStatusMap(currentLogEntry())).length) return null;
+
+  const sid = String(editingSid || '').trim();
+  const date = String(editingDate || '').trim();
+  if (!sid || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const dates = Object.keys(state.progress || {})
+    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < date)
+    .sort()
+    .reverse();
+  for (const d of dates) {
+    const entry = entryForDateSid(state.progress, d, sid);
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry[TEST_ASSIGN_CLEAR_KEY]) return null;
+    if (entry.tests && typeof entry.tests === 'object' && Object.keys(entry.tests).length) return entry;
+  }
+  return null;
+}
+
+function currentTestChangeOrderMap() {
+  const raw = progressEntryForCurrentTestHistory()?.[TEST_ASSIGN_CHANGE_ORDER_KEY];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).flatMap(([key, value]) => {
+    const order = Number(value);
+    return String(key || '').trim() && Number.isFinite(order) && order > 0
+      ? [[String(key), order]]
+      : [];
+  }));
 }
 
 function isSubmitted(test) {
@@ -690,16 +607,84 @@ function visibleTests() {
 
 function syncSelectedFromProgress() {
   initialTestMap = { ...getCurrentProgressTests() };
-  selectedKeys = new Set();
+  testChangeOrderByKey = currentTestChangeOrderMap();
   selectedStatuses = new Map();
+  multiSelectedKeys = new Set();
   explicitBlankKeys = new Set();
+  touchedTestKeys = new Set();
+  pendingCenteredTestKey = '';
   Object.entries(initialTestMap).forEach(([key, status]) => {
-    if (isExplicitBlankTestStatus(status)) {
+    if (isExplicitBlankTestStatus(status) || status === '') {
       explicitBlankKeys.add(key);
       return;
     }
     setTestStatus(key, normalizeAssignmentStatus(status));
   });
+}
+
+function selectedTestCount() {
+  return Array.from(multiSelectedKeys).filter(key => {
+    const test = catalogByKey.get(key);
+    return test && !isSubmitted(test);
+  }).length;
+}
+
+function renderMultiSelectionMeta() {
+  const meta = $('testSelectionMeta');
+  if (!meta) return;
+  const count = selectedTestCount();
+  meta.textContent = count
+    ? `선택 ${count}개 · ←/→로 상태 변경`
+    : 'Ctrl+클릭으로 다중 선택 · ←/→로 상태 변경';
+}
+
+function applyTestRowSelection(row) {
+  if (!row) return;
+  const selected = multiSelectedKeys.has(row.dataset.testKey || '');
+  row.classList.toggle('is-multi-selected', selected);
+  row.dataset.selection = selected ? 'selected' : 'none';
+  row.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
+
+function toggleMultiSelection(row) {
+  if (!row || row.disabled) return;
+  const key = row.dataset.testKey || '';
+  if (!key) return;
+  rememberCurrentTestView(catalogByKey.get(key));
+  if (multiSelectedKeys.has(key)) multiSelectedKeys.delete(key);
+  else multiSelectedKeys.add(key);
+  applyTestRowSelection(row);
+  renderMultiSelectionMeta();
+}
+
+function clearMultiSelection() {
+  multiSelectedKeys.clear();
+  document.querySelectorAll('#testAssignList .test-row').forEach(applyTestRowSelection);
+  renderMultiSelectionMeta();
+}
+
+function applyKeyboardStatusToSelection(direction) {
+  const keys = Array.from(multiSelectedKeys).filter(key => {
+    const test = catalogByKey.get(key);
+    return test && !isSubmitted(test);
+  });
+  if (!keys.length) return false;
+
+  keys.forEach(key => {
+    const next = nextKeyboardStatusOf(statusForKey(key), direction);
+    setTestStatus(key, next);
+    if (next) explicitBlankKeys.delete(key);
+    else explicitBlankKeys.add(key);
+  });
+
+  document.querySelectorAll('#testAssignList .test-row').forEach(row => {
+    if (multiSelectedKeys.has(row.dataset.testKey || '') && !row.disabled) {
+      applyTestRowStatus(row, statusForKey(row.dataset.testKey || ''));
+    }
+  });
+  testSelectionTouched = true;
+  renderMultiSelectionMeta();
+  return true;
 }
 
 function renderCategories() {
@@ -712,26 +697,65 @@ function renderCategories() {
   `).join('');
 }
 
+function syncLevelSettingButton() {
+  const button = $('testDifficultyOverride');
+  if (!button) return;
+  button.disabled = false;
+  button.classList.toggle('is-active', levelSettingOpen);
+  button.setAttribute('aria-pressed', levelSettingOpen ? 'true' : 'false');
+  button.title = levelSettingOpen
+    ? '학생별 기본 레벨을 고르세요'
+    : '학생별 기본 테스트 레벨 설정';
+}
+
+function renderLevelSettingPanel() {
+  const panel = $('testLevelSettingPanel');
+  const optionsHost = $('testLevelSettingOptions');
+  if (!panel || !optionsHost) return;
+
+  const levels = CATEGORY_BY_KEY[STUDENT_LEVEL_SETTING_CATEGORY]?.difficulties || ['Lv.3', 'Lv.4', 'Lv.5', 'Lv.6'];
+  const stored = studentTestLevelDefault(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, activeStudent);
+  const effective = stored || ruleDefaultDifficulty(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, activeStudent);
+  panel.hidden = !levelSettingOpen;
+  optionsHost.innerHTML = levels.map(level => {
+    const active = level === effective;
+    return `
+      <button type="button" class="test-level-setting-option${active ? ' is-active' : ''}"
+        data-test-level-setting="${escapeHtml(level)}" aria-pressed="${active ? 'true' : 'false'}">
+        ${escapeHtml(level)}
+      </button>
+    `;
+  }).join('');
+
+  const current = $('testLevelSettingCurrent');
+  if (current) current.textContent = effective ? `현재 기본값: ${effective}` : '기본값을 선택하세요.';
+}
+
 function renderFilters() {
   const subjectSel = $('testSubject');
   const difficultySel = $('testDifficulty');
   const roundSel = $('testRound');
   const termSel = $('testTerm');
   if (subjectSel) {
-    subjectSel.innerHTML = SUBJECTS.map(subject =>
-      `<option value="${escapeHtml(subject)}"${subject === activeSubject ? ' selected' : ''}>${escapeHtml(subject)}</option>`
-    ).join('');
+    const curriculumSubject = activeStudentCurriculumSubject();
+    activeSubject = curriculumSubject || activeSubject;
+    subjectSel.innerHTML = activeSubject
+      ? `<option value="${escapeHtml(activeSubject)}" selected>${escapeHtml(activeSubject)}</option>`
+      : '<option value="">현재 커리큘럼 없음</option>';
+    subjectSel.disabled = true;
   }
 
   const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];
   if (!difficulties.includes(activeDifficulty)) {
-    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent);
+    activeDifficulty = ruleDefaultDifficulty(activeCategory, activeSubject, activeStudent) || difficulties[0] || '';
   }
   if (difficultySel) {
     difficultySel.innerHTML = difficulties.map(diff =>
       `<option value="${escapeHtml(diff)}"${diff === activeDifficulty ? ' selected' : ''}>${escapeHtml(diff)}</option>`
     ).join('');
   }
+
+  syncLevelSettingButton();
 
   const rounds = roundOptionsFor(activeCategory, activeSubject, activeDifficulty);
   if (roundSel) {
@@ -769,21 +793,57 @@ function renderFilters() {
 
   const metaEl = $('testStudentMeta');
   if (metaEl) metaEl.textContent = `학생 레벨: ${activeStudent?.level || '-'}`;
+  renderLevelSettingPanel();
 }
 
-function applyTestRowStatus(row, status) {
+function applyTestRowStatus(row, status, options = {}) {
   if (!row || row.disabled) return;
   const key = row.dataset.testKey || '';
   const next = normalizeAssignmentStatus(status);
   setTestStatus(key, next);
-  explicitBlankKeys.delete(key);
+  if (options.touch !== false) markTestTouched(key);
+  if (next) explicitBlankKeys.delete(key);
+  else if (options.touch !== false || isExplicitBlankTestStatus(initialTestMap[key]) || initialTestMap[key] === '') {
+    explicitBlankKeys.add(key);
+  }
   row.dataset.state = next || 'none';
   row.classList.toggle('is-selected', !!next);
   const statusEl = row.querySelector('.test-status');
   if (statusEl) statusEl.textContent = testStatusLabel(next);
+  if (options.remember !== false) rememberCurrentTestView(catalogByKey.get(key));
+}
+
+function centerTestRowInScroller(row, scroller) {
+  if (!row || !scroller) return false;
+  const scrollHeight = Number(scroller.scrollHeight) || 0;
+  const clientHeight = Number(scroller.clientHeight) || 0;
+  if (!clientHeight || scrollHeight <= clientHeight + 1) return false;
+
+  const rowRect = row.getBoundingClientRect?.();
+  const scrollerRect = scroller.getBoundingClientRect?.();
+  if (!rowRect || !scrollerRect) return false;
+  const rowHeight = Number(rowRect.height) || Math.max(0, Number(rowRect.bottom) - Number(rowRect.top));
+  const scrollerHeight = Number(scrollerRect.height) || clientHeight;
+  const currentTop = Number(scroller.scrollTop) || 0;
+  const targetTop = currentTop
+    + (Number(rowRect.top) + rowHeight / 2)
+    - (Number(scrollerRect.top) + scrollerHeight / 2);
+  scroller.scrollTop = Math.max(0, Math.min(scrollHeight - clientHeight, targetTop));
+  return true;
+}
+
+function centerPendingTestRow() {
+  const key = String(pendingCenteredTestKey || '').trim();
+  pendingCenteredTestKey = '';
+  if (!key) return false;
+  const list = $('testAssignList');
+  const rows = Array.from(list?.querySelectorAll?.('.test-row') || []);
+  const row = rows.find(candidate => String(candidate.dataset?.testKey || '') === key);
+  return centerTestRowInScroller(row, list);
 }
 
 function renderList() {
+  stopTestAssignmentDrag();
   const list = $('testAssignList');
   if (!list) return;
 
@@ -791,6 +851,7 @@ function renderList() {
   const count = $('testVisibleCount');
   if (count) count.textContent = `${tests.length}개`;
 
+  renderMultiSelectionMeta();
   if (!tests.length) {
     list.innerHTML = `
       <div class="test-empty">
@@ -807,6 +868,7 @@ function renderList() {
     const checked = done || !!rowStatus;
     const stateName = done ? 'done' : (rowStatus || 'none');
     const status = testStatusLabel(rowStatus, done);
+    const multiSelected = multiSelectedKeys.has(test._key);
     const baseMeta = [
       categoryLabel(test.categoryKey),
       test.curriculum,
@@ -817,10 +879,11 @@ function renderList() {
     ].filter(Boolean).join(' · ');
     const tone = difficultyBadgeTone(test.categoryKey, test.difficulty);
     return `
-      <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}"
+      <button type="button" class="test-row${checked ? ' is-selected' : ''}${done ? ' is-done' : ''}${multiSelected ? ' is-multi-selected' : ''}"
         data-test-key="${escapeHtml(test._key)}" data-state="${escapeHtml(stateName)}"
         data-category="${escapeHtml(test.categoryKey)}" data-curriculum="${escapeHtml(test.curriculum)}"
         data-difficulty="${escapeHtml(test.difficulty)}" data-term="${escapeHtml(test.term || '')}"
+        data-selection="${multiSelected ? 'selected' : 'none'}" aria-selected="${multiSelected ? 'true' : 'false'}"
         data-round="${escapeHtml(test.round || '')}" ${done ? ' disabled' : ''}>
         <span class="test-row-main">
           <strong>${escapeHtml(displayNameFor(test))}</strong>
@@ -830,10 +893,14 @@ function renderList() {
             ${tailMeta ? `<span class="test-meta-text">${escapeHtml(tailMeta)}</span>` : ''}
           </span>
         </span>
-        <span class="test-status">${escapeHtml(status)}</span>
+        <span class="test-row-statuses">
+          <span class="test-selection-status">선택</span>
+          <span class="test-status">${escapeHtml(status)}</span>
+        </span>
       </button>
     `;
   }).join('');
+  centerPendingTestRow();
 }
 
 function renderAll() {
@@ -871,7 +938,7 @@ function ensureStyles() {
       flex:0 0 auto; min-width:66px; height:38px; padding:0 14px; border-radius:10px;
       border:1px solid #2563eb; background:#2563eb; color:#fff; font-weight:900; cursor:pointer;
     }
-    #testModal .test-body{ flex:1 1 auto; min-height:0; overflow:auto; padding-top:10px; display:flex; flex-direction:column; gap:10px; }
+    #testModal .test-body{ flex:1 1 auto; min-height:0; overflow:hidden; padding-top:10px; display:flex; flex-direction:column; gap:10px; }
     #testModal .test-tabbar{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
     #testModal .test-tab{
       min-height:34px; border:1px solid #cbd5e1; border-radius:999px; background:#fff;
@@ -881,21 +948,66 @@ function ensureStyles() {
     body.dark #testModal .test-tab{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
     body.dark #testModal .test-tab.is-active{ background:#2563eb; color:#fff; border-color:#2563eb; }
     #testModal .test-filter-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
-    #testModal .test-field label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
-    body.dark #testModal .test-field label{ color:#94a3b8; }
+    #testModal .test-field label,
+    #testModal .test-field-label{ display:block; margin-bottom:3px; font-size:12px; color:#64748b; font-weight:800; }
+    body.dark #testModal .test-field label,
+    body.dark #testModal .test-field-label{ color:#94a3b8; }
     #testModal select{
       width:100%; height:34px; border-radius:8px; border:1px solid #cbd5e1;
       background:#fff; color:#0f172a; padding:0 8px; box-sizing:border-box;
     }
     body.dark #testModal select{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
+    #testModal .test-override-btn{
+      width:100%; height:34px; border-radius:8px; border:1px solid #cbd5e1;
+      background:#f8fafc; color:#334155; font-weight:900; cursor:pointer;
+    }
+    #testModal .test-override-btn.is-active{ border-color:#7c3aed; background:#7c3aed; color:#fff; }
+    body.dark #testModal .test-override-btn{ background:#0f172a; color:#e5e7eb; border-color:#475569; }
+    body.dark #testModal .test-override-btn.is-active{ background:#8b5cf6; border-color:#8b5cf6; color:#fff; }
+    #testModal .test-level-setting-panel{
+      display:flex; flex-direction:column; gap:7px; padding:9px 10px;
+      border:1px solid #c4b5fd; border-radius:9px; background:#f5f3ff;
+    }
+    #testModal .test-level-setting-panel[hidden]{ display:none; }
+    body.dark #testModal .test-level-setting-panel{ border-color:#6d28d9; background:#2e1065; }
+    #testModal .test-level-setting-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    #testModal .test-level-setting-head strong{ font-size:12px; }
+    #testModal .test-level-setting-options{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+    #testModal .test-level-setting-option{
+      height:32px; border:1px solid #c4b5fd; border-radius:8px; background:#fff;
+      color:#5b21b6; font-weight:900; cursor:pointer;
+    }
+    #testModal .test-level-setting-option.is-active{ border-color:#7c3aed; background:#7c3aed; color:#fff; }
+    #testModal .test-level-setting-option:disabled{ cursor:wait; opacity:.65; }
+    body.dark #testModal .test-level-setting-option{ border-color:#8b5cf6; background:#1e1b4b; color:#ddd6fe; }
+    body.dark #testModal .test-level-setting-option.is-active{ border-color:#8b5cf6; background:#8b5cf6; color:#fff; }
     #testModal .test-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
     #testModal .test-mini-actions{ display:flex; gap:6px; flex-wrap:wrap; }
+    #testModal .test-toolbar-copy{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+    #testModal .test-selection-meta{ color:#7c3aed; font-size:11px; font-weight:900; line-height:1.3; }
+    body.dark #testModal .test-selection-meta{ color:#c4b5fd; }
     #testModal .test-mini-actions button{
       min-height:30px; padding:0 9px; border:1px solid #cbd5e1; border-radius:8px;
       background:#f8fafc; color:#0f172a; font-weight:800; cursor:pointer; font-size:12px;
     }
     body.dark #testModal .test-mini-actions button{ background:#334155; color:#e5e7eb; border-color:#475569; }
-    #testModal .test-list{ display:flex; flex-direction:column; gap:6px; }
+    #testModal .test-list{ flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px; }
+    #testModal.student-work-layout .test-tabbar{
+      grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    #testModal.student-work-layout .test-filter-grid{
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:7px;
+    }
+    #testModal.student-work-layout .test-toolbar{
+      align-items:stretch;
+      flex-direction:column;
+    }
+    #testModal.student-work-layout .test-mini-actions{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    #testModal.student-work-layout .test-mini-actions button{ width:100%; padding:0 5px; }
     #testModal .test-row{
       display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; text-align:left;
       min-height:46px; padding:7px 8px; border:1px solid #e5e7eb; border-radius:9px;
@@ -913,6 +1025,7 @@ function ensureStyles() {
     #testModal .test-row[data-state="skip"]{ background:#ef444422; border-color:#ef444470; }
     #testModal .test-row.is-done{ background:#2563eb18; border-color:#2563eb70; }
     #testModal .test-row-main{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+    #testModal .test-row[data-selection="selected"]{ outline:2px solid #7c3aed; outline-offset:1px; }
     #testModal .test-row-main strong{ font-size:13px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #testModal .test-row-meta{
       min-width:0; display:flex; align-items:center; gap:5px; font-size:11px;
@@ -931,12 +1044,17 @@ function ensureStyles() {
     body.dark #testModal .test-difficulty-badge{ border-color:#475569; background:#111827; color:#cbd5e1; }
     body.dark #testModal .test-difficulty-badge.is-high{ border-color:#1d4ed8; background:#1e3a8a66; color:#bfdbfe; }
     body.dark #testModal .test-difficulty-badge.is-middle{ border-color:#c2410c; background:#7c2d1266; color:#fed7aa; }
+    #testModal .test-row-statuses{ justify-self:end; display:flex; align-items:center; gap:5px; }
+    #testModal .test-selection-status,
     #testModal .test-status{
       justify-self:end; padding:3px 7px; border-radius:999px; background:#f1f5f9; color:#334155;
       font-size:11px; font-weight:900; white-space:nowrap;
     }
     body.dark #testModal .test-status{ background:#1f2937; color:#cbd5e1; }
     #testModal .test-row[data-state="assigned"] .test-status{ background:#10b981; color:#fff; }
+    #testModal .test-selection-status{ display:none; background:#7c3aed; color:#fff; }
+    #testModal .test-row[data-selection="selected"] .test-selection-status{ display:inline-flex; }
+    body.dark #testModal .test-selection-status{ background:#8b5cf6; color:#fff; }
     #testModal .test-row[data-state="done"] .test-status{ background:#2563eb; color:#fff; }
     #testModal .test-row[data-state="interrupted"] .test-status{ background:#f59e0b; color:#111827; }
     #testModal .test-row[data-state="skip"] .test-status{ background:#ef4444; color:#fff; }
@@ -951,6 +1069,7 @@ function ensureStyles() {
     body.dark #testModal .test-empty{ border-color:#475569; color:#94a3b8; }
     @media (max-width:560px){
       #testModal .test-filter-grid{ grid-template-columns:1fr; }
+      #testModal .test-level-setting-options{ grid-template-columns:repeat(2,minmax(0,1fr)); }
     }
   `;
   document.head.appendChild(s);
@@ -971,6 +1090,7 @@ function ensureModal() {
               <span id="testVisibleCount">0개</span>
             </div>
           </div>
+          <input id="testAppendNotes" type="checkbox" hidden aria-hidden="true">
           <button id="testSave" class="test-save-btn" type="button">저장</button>
         </div>
 
@@ -994,22 +1114,32 @@ function ensureModal() {
               <label for="testRound">회차</label>
               <select id="testRound"></select>
             </div>
+            <div class="test-field">
+              <span class="test-field-label">학생 기본 레벨</span>
+              <button id="testDifficultyOverride" class="test-override-btn" type="button" aria-pressed="false" title="학생별 기본 테스트 레벨을 설정">레벨 설정</button>
+            </div>
+          </div>
+
+          <div id="testLevelSettingPanel" class="test-level-setting-panel" hidden>
+            <div class="test-level-setting-head">
+              <strong>학생별 기본 테스트 레벨</strong>
+              <span id="testLevelSettingCurrent" class="test-sub"></span>
+            </div>
+            <div id="testLevelSettingOptions" class="test-level-setting-options"></div>
           </div>
 
           <div class="test-toolbar">
-            <div class="test-sub">색상 표시된 항목이 오늘 선택 날짜에 배정됩니다.</div>
+            <div class="test-toolbar-copy">
+              <div class="test-sub">색상 표시된 항목이 오늘 선택 날짜에 배정됩니다.</div>
+              <div id="testSelectionMeta" class="test-selection-meta" aria-live="polite">Ctrl+클릭으로 다중 선택 · ←/→로 상태 변경</div>
+            </div>
             <div class="test-mini-actions">
               <button id="testPickAll" type="button">목록 전체 선택</button>
               <button id="testPickNone" type="button">선택 해제</button>
             </div>
           </div>
-
           <div id="testAssignList" class="test-list"></div>
 
-          <label class="test-note-option">
-            <input id="testAppendNotes" type="checkbox" checked>
-            <span>상담 기록에 테스트 배정 내역 추가</span>
-          </label>
         </div>
       </div>
     </div>
@@ -1024,6 +1154,7 @@ function setModalOpen(open, layout) {
 }
 
 function renderLoadingState(student) {
+  if ($('testModal')) { $('testModal').inert = false; $('testModal').removeAttribute('aria-busy'); }
   const title = $('testTitle');
   const meta = $('testStudentMeta');
   const count = $('testVisibleCount');
@@ -1031,7 +1162,13 @@ function renderLoadingState(student) {
   if (title) title.textContent = student ? `${student.name || ''} 테스트 배정` : '테스트 배정';
   if (meta) meta.textContent = '불러오는 중...';
   if (count) count.textContent = '';
-  if (save) save.disabled = true;
+  const selectionMeta = $('testSelectionMeta');
+  if (selectionMeta) selectionMeta.textContent = '';
+  if (save) {
+    save.disabled = true;
+    save.textContent = '저장';
+    save.removeAttribute('aria-busy');
+  }
   const tabs = $('testCategoryTabs');
   if (tabs) tabs.innerHTML = '<button type="button" class="test-tab is-active" disabled>불러오는 중</button>';
   ['testSubject', 'testDifficulty', 'testTerm', 'testRound'].forEach((id) => {
@@ -1040,23 +1177,37 @@ function renderLoadingState(student) {
     el.disabled = true;
     el.innerHTML = '<option>불러오는 중</option>';
   });
+  const overrideBtn = $('testDifficultyOverride');
+  if (overrideBtn) {
+    overrideBtn.disabled = true;
+    overrideBtn.classList.remove('is-active');
+    overrideBtn.setAttribute('aria-pressed', 'false');
+  }
+  levelSettingOpen = false;
+  renderLevelSettingPanel();
   const list = $('testAssignList');
   if (list) list.innerHTML = '<div class="test-empty">테스트 목록을 불러오는 중...</div>';
 }
 
 function closeModal() {
+  stopTestAssignmentDrag();
   testOpenSeq += 1;
+  testModalReady = false;
   const wasUnified = $('testModal')?.classList.contains('student-work-layout');
   setModalOpen(false);
   editingSid = null;
   editingDate = null;
   activeStudent = null;
   activeCatalog = [];
+  levelSettingOpen = false;
   catalogByKey = new Map();
   initialTestMap = {};
-  selectedKeys = new Set();
   selectedStatuses = new Map();
   explicitBlankKeys = new Set();
+  multiSelectedKeys = new Set();
+  touchedTestKeys = new Set();
+  testChangeOrderByKey = {};
+  pendingCenteredTestKey = '';
   testSelectionTouched = false;
   activeRound = '1';
   activeTerm = defaultTermFromSchoolCalendar();
@@ -1078,15 +1229,218 @@ function firstInProgressAssignmentTest(categoryKey = '') {
 function chooseInitialCategory() {
   const activeTest = firstInProgressAssignmentTest();
   if (activeTest?.categoryKey) return activeTest.categoryKey;
-  const hasUnit = activeCatalog.some(t => t.categoryKey === 'UNIT' && t.curriculum === activeSubject);
+  const hasUnit = activeCatalog.some(t =>
+    t.categoryKey === 'UNIT' && normalizeSubject(t.curriculum) === normalizeSubject(activeSubject)
+  );
   if (hasUnit) return 'UNIT';
-  const hit = CATEGORY_KEYS.find(key => activeCatalog.some(t => t.categoryKey === key && t.curriculum === activeSubject));
+  const hit = CATEGORY_KEYS.find(key => activeCatalog.some(t =>
+    t.categoryKey === key && normalizeSubject(t.curriculum) === normalizeSubject(activeSubject)
+  ));
   return hit || 'UNIT';
 }
 
+function activeStudentCurriculumSubject() {
+  const rawSubject = String(activeStudent?.curriculum || '').trim();
+  return rawSubject ? normalizeSubject(rawSubject) : '';
+}
+
+function recentTestViewStorageKey(sid = editingSid) {
+  const normalizedSid = String(sid || '').trim();
+  return normalizedSid
+    ? `${TEST_RECENT_VIEW_STORAGE_PREFIX}:${encodeURIComponent(normalizedSid)}`
+    : '';
+}
+
+function testViewFromTest(test) {
+  if (!test) return null;
+  const categoryKey = canonicalCategoryKey(test.categoryKey, test.categoryLabel);
+  return {
+    categoryKey,
+    subject: normalizeSubject(test.curriculum),
+    difficulty: String(test.difficulty || '').trim(),
+    term: isTermCategory(categoryKey) ? normalizeTerm(test.term, test.name) : '',
+    round: isUnitCategory(categoryKey) ? normalizeRound(test.round, test.name) : '',
+  };
+}
+
+function currentTestView() {
+  return {
+    categoryKey: activeCategory,
+    subject: activeSubject,
+    difficulty: activeDifficulty,
+    term: isTermCategory(activeCategory) ? activeTerm : '',
+    round: isUnitCategory(activeCategory) ? activeRound : '',
+  };
+}
+
+function testMatchesView(test, view) {
+  if (!test || !view) return false;
+  if (test.categoryKey !== view.categoryKey) return false;
+  if (normalizeSubject(test.curriculum) !== normalizeSubject(view.subject)) return false;
+  if (String(test.difficulty || '') !== String(view.difficulty || '')) return false;
+  if (isTermCategory(view.categoryKey) && normalizeTerm(test.term, test.name) !== view.term) return false;
+  if (isUnitCategory(view.categoryKey) && normalizeRound(test.round, test.name) !== view.round) return false;
+  return true;
+}
+
+function normalizeRecentTestView(rawView, requiredSubject = '') {
+  if (!rawView || typeof rawView !== 'object' || Array.isArray(rawView)) return null;
+  const categoryKey = canonicalCategoryKey(rawView.categoryKey || rawView.category, rawView.categoryLabel);
+  const rawSubject = String(rawView.subject || rawView.curriculum || '').trim();
+  const difficulty = String(rawView.difficulty || '').trim();
+  const difficulties = CATEGORY_BY_KEY[categoryKey]?.difficulties || [];
+  if (!CATEGORY_BY_KEY[categoryKey] || !rawSubject || !difficulties.includes(difficulty)) return null;
+
+  const subject = normalizeSubject(rawSubject);
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  if (curriculumSubject && subject !== curriculumSubject) return null;
+
+  const candidate = {
+    categoryKey,
+    subject,
+    difficulty,
+    term: isTermCategory(categoryKey) ? normalizeTerm(rawView.term, '') : '',
+    round: isUnitCategory(categoryKey) ? normalizeRound(rawView.round, '') : '',
+  };
+  const matchingTest = activeCatalog.find(test => testMatchesView(test, candidate));
+  return matchingTest ? testViewFromTest(matchingTest) : null;
+}
+
+function readRecentTestView(sid = editingSid, requiredSubject = '') {
+  const key = recentTestViewStorageKey(sid);
+  if (!key) return null;
+  try {
+    return normalizeRecentTestView(JSON.parse(localStorage.getItem(key) || 'null'), requiredSubject);
+  } catch {
+    return null;
+  }
+}
+
+function rememberCurrentTestView(test = null) {
+  const key = recentTestViewStorageKey();
+  if (!key) return;
+  const curriculumSubject = activeStudentCurriculumSubject();
+  const view = normalizeRecentTestView(
+    test ? testViewFromTest(test) : currentTestView(),
+    curriculumSubject,
+  );
+  if (!view) return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...view, updatedAt: new Date().toISOString() }));
+  } catch {}
+}
+
+function latestAssignmentTestFromHistory(requiredSubject = '', requiredCategory = '') {
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  const categoryKey = String(requiredCategory || '').trim()
+    ? canonicalCategoryKey(requiredCategory)
+    : '';
+  const orderedKeys = Array.from(new Set([
+    ...Object.keys(initialTestMap || {}),
+    ...Array.from(selectedStatuses.keys()),
+  ]));
+  const candidates = [];
+
+  orderedKeys.forEach((key, legacyIndex) => {
+    const rawStatus = Object.prototype.hasOwnProperty.call(initialTestMap, key)
+      ? initialTestMap[key]
+      : selectedStatuses.get(key);
+    const status = normalizeAssignmentStatus(rawStatus);
+    if (isExplicitBlankTestStatus(rawStatus) || status === 'skip' || !status) return;
+    const test = catalogByKey.get(key);
+    if (
+      test &&
+      (!curriculumSubject || normalizeSubject(test.curriculum) === curriculumSubject) &&
+      (!categoryKey || test.categoryKey === categoryKey)
+    ) {
+      const order = Number(testChangeOrderByKey?.[key]);
+      candidates.push({
+        test,
+        order: Number.isFinite(order) && order > 0 ? order : 0,
+        legacyIndex,
+      });
+    }
+  });
+  if (!candidates.length) return null;
+
+  const hasExplicitOrder = candidates.some(candidate => candidate.order > 0);
+  candidates.sort((left, right) => {
+    if (hasExplicitOrder && right.order !== left.order) return right.order - left.order;
+    if (
+      hasExplicitOrder
+      && left.order > 0
+      && left.order === right.order
+      && left.test.categoryKey !== right.test.categoryKey
+    ) {
+      if (left.test.categoryKey === 'UNIT') return -1;
+      if (right.test.categoryKey === 'UNIT') return 1;
+    }
+    return right.legacyIndex - left.legacyIndex;
+  });
+  return candidates[0].test;
+}
+
+function applyTestView(view, requiredSubject = '') {
+  if (!view) return false;
+  const viewSubject = normalizeSubject(view.subject);
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  if (curriculumSubject && viewSubject !== curriculumSubject) return false;
+  activeCategory = view.categoryKey;
+  activeSubject = curriculumSubject || viewSubject;
+  activeDifficulty = view.difficulty;
+  if (isTermCategory(activeCategory)) activeTerm = view.term;
+  activeRound = isUnitCategory(activeCategory) ? view.round : '';
+  return true;
+}
+
+function restorePreferredInitialTestView(requiredSubject = activeStudentCurriculumSubject()) {
+  const curriculumSubject = String(requiredSubject || '').trim()
+    ? normalizeSubject(requiredSubject)
+    : '';
+  const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);
+  if (recentAssignment) {
+    applyTestView(testViewFromTest(recentAssignment), curriculumSubject);
+    pendingCenteredTestKey = recentAssignment._key;
+    return 'assignment';
+  }
+
+  const storedView = readRecentTestView(editingSid, curriculumSubject);
+  if (storedView) {
+    applyTestView(storedView, curriculumSubject);
+    return 'stored';
+  }
+  return '';
+}
+
+function restorePreferredCategoryTestView(categoryKey, requiredSubject = activeSubject) {
+  const targetCategory = canonicalCategoryKey(categoryKey);
+  const subject = normalizeSubject(requiredSubject);
+  const recentAssignment = latestAssignmentTestFromHistory(subject, targetCategory);
+  if (recentAssignment) {
+    applyTestView(testViewFromTest(recentAssignment), subject);
+    pendingCenteredTestKey = recentAssignment._key;
+    return 'assignment';
+  }
+
+  const storedView = readRecentTestView(editingSid, subject);
+  if (storedView?.categoryKey === targetCategory) {
+    applyTestView(storedView, subject);
+    return 'stored';
+  }
+  return '';
+}
+
 async function openModalForRow(rowOrButton, opts = {}) {
+  stopTestAssignmentDrag();
   ensureModal();
   const openSeq = ++testOpenSeq;
+  testModalReady = false;
 
   const tr = rowOrButton?.closest?.('tr[data-sid]') || rowOrButton;
   editingSid = String(tr?.dataset?.sid || '').trim();
@@ -1097,28 +1451,49 @@ async function openModalForRow(rowOrButton, opts = {}) {
     return;
   }
 
-  activeSubject = normalizeSubject(activeStudent.curriculum);
+  const curriculumSubject = activeStudentCurriculumSubject();
+  activeSubject = curriculumSubject || normalizeSubject(activeStudent.curriculum);
   renderLoadingState(activeStudent);
+  levelSettingOpen = false;
   setModalOpen(true, opts.layout);
-  await hydrateForTestPopup(editingDate, editingSid);
-  if (openSeq !== testOpenSeq || editingSid !== String(tr?.dataset?.sid || '').trim()) return;
+  const targetSid = editingSid;
+  const targetDate = editingDate;
+  const isCurrent = () => openSeq === testOpenSeq && editingSid === targetSid && editingDate === targetDate;
+  try {
+    const hydrated = await hydrateForTestPopup(targetDate, targetSid, isCurrent);
+    if (!isCurrent() || hydrated === false) return;
+  } catch (error) {
+    if (!isCurrent()) return;
+    const message = '시험 데이터를 불러오지 못했습니다. 닫은 뒤 다시 열어 주세요.';
+    const meta = $('testStudentMeta');
+    if (meta) meta.textContent = message;
+    const list = $('testAssignList');
+    if (list) list.textContent = message;
+    toast(message);
+    return;
+  }
   activeTerm = defaultTermFromSchoolCalendar();
   syncSelectedFromProgress();
 
-  activeCategory = chooseInitialCategory();
-  applyRuleDefaults(activeCategory);
+  if (!restorePreferredInitialTestView(curriculumSubject)) {
+    activeCategory = chooseInitialCategory();
+    applyRuleDefaults(activeCategory);
+  }
   testSelectionTouched = false;
 
   renderAll();
-  ['testSubject', 'testDifficulty'].forEach((id) => {
-    const el = $(id);
-    if (el) el.disabled = false;
-  });
+  const subjectEl = $('testSubject');
+  if (subjectEl) subjectEl.disabled = true;
+  const difficultyEl = $('testDifficulty');
+  if (difficultyEl) difficultyEl.disabled = false;
   const termEl = $('testTerm');
+  const overrideBtn = $('testDifficultyOverride');
+  if (overrideBtn) overrideBtn.disabled = false;
   if (termEl) termEl.disabled = !isTermCategory(activeCategory);
   const roundEl = $('testRound');
   if (roundEl) roundEl.disabled = !isUnitCategory(activeCategory);
   const save = $('testSave');
+  testModalReady = true;
   if (save) save.disabled = false;
   setModalOpen(true, opts.layout);
 }
@@ -1154,8 +1529,7 @@ function isAssignmentNoteStatus(status) {
 
 export function shouldIncludeInAssignmentNote(item) {
   const rawStatus = item && Object.prototype.hasOwnProperty.call(item, 'status') ? item.status : 'assigned';
-  const status = normalizeAssignmentStatus(rawStatus);
-  return status === 'interrupted' || status === 'done';
+  return isAssignmentNoteStatus(rawStatus);
 }
 
 export function assignmentLabel(item) {
@@ -1293,10 +1667,10 @@ async function fetchLatestLogEntryForAssignment(date, sid) {
   return latest?.entry && typeof latest.entry === 'object' ? latest.entry : {};
 }
 
-async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], latestEntry = null) {
+async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], latestEntry = null, date = editingDate, sid = editingSid) {
   const entry = latestEntry && typeof latestEntry === 'object'
     ? latestEntry
-    : await fetchLatestLogEntryForAssignment(editingDate, editingSid);
+    : await fetchLatestLogEntryForAssignment(date, sid);
   const clear = [];
   const logItems = (items || []).filter(item => normalizeAssignmentStatus(item?.status) !== 'skip');
   const currentItemsByLabel = new Map(logItems.map(item => [assignmentLabel(item), item]).filter(([label]) => label));
@@ -1339,7 +1713,7 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
     }
   }
 
-  const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged);
+  const body = buildLogAssignmentPatchBody(date, sid, patchEntry, clear, entry, notesChanged);
 
   const saved = await fetchJSONSafe('/api/logs/patch', {
     method: 'POST',
@@ -1349,8 +1723,8 @@ async function patchLogAssignment(items, appendToNotes, newlyAddedItems = [], la
 
   if (saved?.entry && typeof saved.entry === 'object') {
     state.logs = state.logs || {};
-    state.logs[editingDate] = state.logs[editingDate] || {};
-    state.logs[editingDate][editingSid] = saved.entry;
+    state.logs[date] = state.logs[date] || {};
+    state.logs[date][sid] = saved.entry;
     window.logs = state.logs;
   }
 }
@@ -1383,12 +1757,16 @@ function ensureProgressEntryForTestSave(date, sid) {
 }
 
 function buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus) {
+  const touchedKeys = Array.from(touchedTestKeys).filter(key =>
+    Object.prototype.hasOwnProperty.call(patchTests || {}, key)
+  );
   return {
     date,
     sid,
     progress: {
       tests: patchTests,
       [TEST_ASSIGN_CLEAR_KEY]: hasAnyTestStatus ? '' : new Date().toISOString(),
+      ...(touchedKeys.length ? { [TEST_ASSIGN_TOUCHED_KEYS_KEY]: touchedKeys } : {}),
     },
   };
 }
@@ -1402,11 +1780,26 @@ function applyTestProgressPatchResult(date, sid, progressRes) {
   }
 }
 
+function showTestSaveSuccess() {
+  if (typeof window.showStudentPopupSaveResult === 'function') {
+    window.showStudentPopupSaveResult('저장 완료');
+  } else {
+    toast('저장 완료');
+  }
+}
+
 async function saveModal(options = {}) {
+  stopTestAssignmentDrag();
   if (!editingSid || !editingDate) return [];
+  if (!testModalReady) throw new Error('시험 데이터를 불러온 뒤 저장해 주세요.');
+  const sid = editingSid;
+  const date = editingDate;
+  const seq = testOpenSeq;
+  const flightKey = JSON.stringify([seq, date, sid]);
+  if (testSaveFlights.has(flightKey)) return testSaveFlights.get(flightKey);
   if (!testSelectionTouched) {
     const items = selectedAssignmentObjects();
-    if (options.showPopup !== false) toast('변경된 테스트 배정이 없습니다');
+    if (options.showPopup !== false) showTestSaveSuccess();
     return items;
   }
 
@@ -1415,25 +1808,58 @@ async function saveModal(options = {}) {
   const items = selectedAssignmentObjects();
   const newlyAddedItems = dailyAssignmentNoteItems(items, initialTestMap);
   const appendToNotes = Boolean($('testAppendNotes')?.checked);
-  const latestLogEntry = await fetchLatestLogEntryForAssignment(editingDate, editingSid);
-
-  ensureProgressEntryForTestSave(editingDate, editingSid);
-
-  const progressRes = await fetchJSONSafe('/api/progress/patch', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus)),
-  });
-
-  applyTestProgressPatchResult(editingDate, editingSid, progressRes);
-
-  await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry);
-
-  if (options.showPopup !== false) toast('테스트 배정 저장됨');
-  if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
-  initialTestMap = { ...getCurrentProgressTests() };
-  testSelectionTouched = false;
-  return items;
+  // Freeze the complete command, including touched keys, before the first await.
+  const progressBody = JSON.stringify(buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus));
+  const stillCurrent = () => testOpenSeq === seq && editingSid === sid && editingDate === date;
+  const modal = $('testModal');
+  const save = $('testSave');
+  const saveCaption = save?.textContent;
+  const saveWasDisabled = Boolean(save?.disabled);
+  if (save) {
+    save.textContent = '저장 중…';
+    save.disabled = true;
+    save.setAttribute('aria-busy', 'true');
+  }
+  if (modal) { modal.inert = true; modal.setAttribute('aria-busy', 'true'); }
+  const flight = (async () => {
+    let progressSaved = false;
+    try {
+      const latestLogEntry = await fetchLatestLogEntryForAssignment(date, sid);
+      ensureProgressEntryForTestSave(date, sid);
+      const progressRes = await fetchJSONSafe('/api/progress/patch', {
+        method: 'POST', headers: CT, body: progressBody,
+      });
+      progressSaved = true;
+      applyTestProgressPatchResult(date, sid, progressRes);
+      invalidateStudentWorkFetchCache(`/api/progress?sid=${encodeURIComponent(sid)}`);
+      window.invalidateVideoAssignmentPopupCache?.(date, sid);
+      await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry, date, sid);
+      if (stillCurrent()) {
+        initialTestMap = { ...getCurrentProgressTests() };
+        testChangeOrderByKey = currentTestChangeOrderMap();
+        touchedTestKeys = new Set();
+        testSelectionTouched = false;
+        if (options.showPopup !== false) showTestSaveSuccess();
+      }
+      if (options.refresh !== false) document.dispatchEvent(new CustomEvent('admin:refresh'));
+      return items;
+    } catch (error) {
+      if (progressSaved) throw new Error(`테스트 상태는 저장됐지만 상담 기록 저장에 실패했습니다. 다시 저장해 주세요. ${error?.message || ''}`);
+      throw error;
+    } finally {
+      invalidateStudentWorkFetchCache(`/api/logs?sid=${encodeURIComponent(sid)}`);
+      window.invalidateVideoAssignmentPopupCache?.(date, sid);
+      if (stillCurrent() && modal) { modal.inert = false; modal.removeAttribute('aria-busy'); }
+      if (stillCurrent() && save) {
+        save.textContent = saveCaption;
+        save.disabled = saveWasDisabled;
+        save.removeAttribute('aria-busy');
+      }
+      testSaveFlights.delete(flightKey);
+    }
+  })();
+  testSaveFlights.set(flightKey, flight);
+  return flight;
 }
 
 function bindEventsOnce() {
@@ -1450,35 +1876,76 @@ function bindEventsOnce() {
   let suppressContextOnce = false;
   let dragRows = [];
   let dragInitialStatuses = [];
+  let lastDragIndex = -1;
+  let dragAutoScroll = null;
+  let dragOpenSeq = 0;
+
+  function finishDrag(cancelled = false) {
+    dragAutoScroll?.stop();
+    if (!cancelled && pointerDown && dragActive) {
+      if (dragButton === 0) suppressClickOnce = true;
+      if (dragButton === 2) suppressContextOnce = true;
+    }
+    if (cancelled) suppressClickOnce = suppressContextOnce = false;
+    pointerDown = dragActive = false;
+    dragTarget = null;
+    dragButton = 0;
+    startStatus = '';
+    startIndex = lastDragIndex = -1;
+    dragRows = [];
+    dragInitialStatuses = [];
+  }
+  stopTestAssignmentDrag = () => finishDrag(true);
 
   const testRowFromTarget = (target) => target?.closest?.('#testAssignList .test-row');
   const rebuildDragRows = () => {
     dragRows = Array.from(document.querySelectorAll('#testAssignList .test-row:not(:disabled)'));
     dragInitialStatuses = dragRows.map(row => statusForKey(row.dataset.testKey));
+    lastDragIndex = -1;
   };
 
   function applyDragRange(currentRow) {
     if (!pointerDown || !dragActive) return;
     const curIndex = dragRows.indexOf(currentRow);
     if (curIndex === -1 || startIndex === -1) return;
+    if (curIndex === lastDragIndex) return;
+    lastDragIndex = curIndex;
 
     const lo = Math.min(startIndex, curIndex);
     const hi = Math.max(startIndex, curIndex);
+    let lastViewRow = null;
     dragRows.forEach((row, idx) => {
       const initial = dragInitialStatuses[idx] || '';
-      const next = (idx >= lo && idx <= hi) ? dragTarget : initial;
-      applyTestRowStatus(row, next);
+      const inRange = idx >= lo && idx <= hi;
+      const next = inRange ? dragTarget : initial;
+      applyTestRowStatus(row, next, { touch: inRange, remember: false });
+      if (!row.disabled && row.dataset.testKey) lastViewRow = row;
     });
+    if (lastViewRow) rememberCurrentTestView(catalogByKey.get(lastViewRow.dataset.testKey));
   }
 
   function handleDragMove(e) {
     if (!pointerDown) return;
-    const row = testRowFromTarget(e.target);
-    if (!row || row.disabled) return;
+    if (e.type === 'mousemove' && typeof e.buttons === 'number' && !(e.buttons & (dragButton === 2 ? 2 : 1))) {
+      finishDrag();
+      return;
+    }
+    const hit = testRowFromTarget(e.target);
+    if (dragActive && (!hit || hit.disabled)) return;
+    const row = hit && !hit.disabled ? hit : dragRows[startIndex];
+    if (!row) return;
 
     if (!dragActive) {
       dragActive = true;
       dragTarget = dragButton === 2 ? nextExcludedStatusOf(startStatus) : nextStatusOf(startStatus);
+      dragAutoScroll ||= createAssignmentDragAutoScroll({
+        rowSelector: '#testAssignList .test-row:not(:disabled)',
+        scrollerForRow: row => row.closest('#testAssignList'),
+        isActive: () => pointerDown && dragActive && dragOpenSeq === testOpenSeq && dragRows[startIndex]?.isConnected,
+        onRow: row => { applyDragRange(row); testSelectionTouched = true; },
+        onStop: () => finishDrag(),
+      });
+      dragAutoScroll.start(e, row, dragButton);
     }
     applyDragRange(row);
     testSelectionTouched = true;
@@ -1486,18 +1953,66 @@ function bindEventsOnce() {
   }
 
   document.body.addEventListener('click', async (e) => {
+    const levelSettingButton = e.target.closest('#testDifficultyOverride');
+    if (levelSettingButton) {
+      levelSettingOpen = !levelSettingOpen;
+      syncLevelSettingButton();
+      renderLevelSettingPanel();
+      return;
+    }
+
+    const levelOption = e.target.closest('#testLevelSettingOptions [data-test-level-setting]');
+    if (levelOption) {
+      const difficulty = String(levelOption.dataset.testLevelSetting || '').trim();
+      const levels = CATEGORY_BY_KEY[STUDENT_LEVEL_SETTING_CATEGORY]?.difficulties || [];
+      if (!levels.includes(difficulty)) return;
+
+      const settingOpenSeq = testOpenSeq;
+      const optionsHost = $('testLevelSettingOptions');
+      optionsHost?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      try {
+        await saveStudentTestLevelDefault(STUDENT_LEVEL_SETTING_CATEGORY, activeSubject, difficulty);
+        if (settingOpenSeq !== testOpenSeq) return;
+        levelSettingOpen = false;
+        syncLevelSettingButton();
+        renderLevelSettingPanel();
+        toast(`학생별 기본 테스트 레벨을 ${difficulty}로 저장했습니다.`);
+      } catch (error) {
+        if (settingOpenSeq !== testOpenSeq) return;
+        console.error(error);
+        toast('학생별 기본 테스트 레벨 저장에 실패했습니다.');
+        renderLevelSettingPanel();
+      } finally {
+        if (settingOpenSeq === testOpenSeq && levelSettingOpen) {
+          $('testLevelSettingOptions')?.querySelectorAll('button').forEach(button => {
+            button.disabled = false;
+          });
+        }
+      }
+      return;
+    }
+
     const categoryBtn = e.target.closest('#testCategoryTabs .test-tab');
     if (categoryBtn) {
       activeCategory = categoryBtn.dataset.category || activeCategory;
-      applyRuleDefaults(activeCategory);
+      levelSettingOpen = false;
+      clearMultiSelection();
+      if (!restorePreferredCategoryTestView(activeCategory, activeSubject)) {
+        applyRuleDefaults(activeCategory);
+      }
+      rememberCurrentTestView();
       renderAll();
       return;
     }
 
     if (e.target.closest('#testPickAll')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) setTestStatus(test._key, 'assigned');
+        if (!isSubmitted(test)) {
+          setTestStatus(test._key, 'assigned');
+          markTestTouched(test._key);
+        }
       });
+      rememberCurrentTestView();
       testSelectionTouched = true;
       renderList();
       return;
@@ -1505,8 +2020,12 @@ function bindEventsOnce() {
 
     if (e.target.closest('#testPickNone')) {
       visibleTests().forEach(test => {
-        if (!isSubmitted(test)) setTestStatus(test._key, 'skip');
+        if (!isSubmitted(test)) {
+          setTestStatus(test._key, 'skip');
+          markTestTouched(test._key);
+        }
       });
+      rememberCurrentTestView();
       testSelectionTouched = true;
       renderList();
       return;
@@ -1517,6 +2036,9 @@ function bindEventsOnce() {
         await saveModal();
       } catch (err) {
         console.error(err);
+        if (typeof window.showStudentPopupSaveResult === 'function') {
+          window.showStudentPopupSaveResult('저장 실패', true);
+        }
         alert(err?.message || '테스트 배정 저장 실패');
       }
       return;
@@ -1530,11 +2052,16 @@ function bindEventsOnce() {
 
     const row = testRowFromTarget(e.target);
     if (row && !row.disabled) {
+      if (e.ctrlKey || e.metaKey) {
+        toggleMultiSelection(row);
+        return;
+      }
       if (suppressClickOnce) {
         suppressClickOnce = false;
         return;
       }
       const key = row.dataset.testKey || '';
+      lastDragIndex = -1;
       applyTestRowStatus(row, nextStatusOf(statusForKey(key)));
       testSelectionTouched = true;
     }
@@ -1542,8 +2069,10 @@ function bindEventsOnce() {
 
   document.body.addEventListener('mousedown', (e) => {
     if (e.button !== 0 && e.button !== 2) return;
+    finishDrag(true);
     const row = testRowFromTarget(e.target);
     if (!row || row.disabled) return;
+    if (e.ctrlKey || e.metaKey) return;
     if (e.button === 2) e.preventDefault();
 
     rebuildDragRows();
@@ -1551,6 +2080,7 @@ function bindEventsOnce() {
     if (startIndex === -1) return;
 
     pointerDown = true;
+    dragOpenSeq = testOpenSeq;
     dragActive = false;
     dragTarget = null;
     dragButton = e.button;
@@ -1569,47 +2099,58 @@ function bindEventsOnce() {
       return;
     }
     const key = row.dataset.testKey || '';
+    lastDragIndex = -1;
     applyTestRowStatus(row, nextExcludedStatusOf(statusForKey(key)));
     testSelectionTouched = true;
   });
 
   document.addEventListener('mouseup', () => {
-    if (!pointerDown) return;
-    pointerDown = false;
-    if (dragActive && dragButton === 0) suppressClickOnce = true;
-    if (dragActive && dragButton === 2) suppressContextOnce = true;
-
-    dragActive = false;
-    dragTarget = null;
-    dragButton = 0;
-    startStatus = '';
-    startIndex = -1;
+    finishDrag();
   });
 
   document.body.addEventListener('change', (e) => {
     if (e.target?.id === 'testSubject') {
-      activeSubject = normalizeSubject(e.target.value);
-      applyRuleDefaults(activeCategory);
-      renderAll();
+      activeSubject = activeStudentCurriculumSubject();
+      e.target.value = activeSubject;
       return;
     }
 
     if (e.target?.id === 'testDifficulty') {
       activeDifficulty = e.target.value || activeDifficulty;
+      clearMultiSelection();
       activeRound = defaultRoundFor(activeCategory, activeSubject, activeDifficulty);
+      rememberCurrentTestView();
       renderAll();
       return;
     }
 
     if (e.target?.id === 'testTerm') {
       activeTerm = TERM_OPTIONS.includes(e.target.value) ? e.target.value : defaultTermFromSchoolCalendar();
+      clearMultiSelection();
+      rememberCurrentTestView();
       renderList();
       return;
     }
 
     if (e.target?.id === 'testRound') {
       activeRound = String(e.target.value || '1');
+      clearMultiSelection();
+      rememberCurrentTestView();
       renderList();
+    }
+  });
+
+  document.body.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const modal = $('testModal');
+    if (!modal || modal.style.display === 'none' || !multiSelectedKeys.size) return;
+    if (!modal.contains(document.activeElement)) return;
+    if (document.activeElement?.matches?.('#testModal select, #testModal input, #testModal textarea, #testModal button:not(.test-row), [contenteditable="true"]')) return;
+
+    if (applyKeyboardStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)) {
+      lastDragIndex = -1;
+      e.preventDefault();
+      e.stopPropagation();
     }
   });
 
@@ -1623,6 +2164,7 @@ export function initTestModal() {
   bindEventsOnce();
 
   window.openTestAssignmentPopupForRow = openModalForRow;
+  window.prefetchTestAssignmentPopupForRow = prefetchTestModalDataForRow;
   window.closeTestAssignmentPopup = closeModal;
   window.saveTestAssignmentPopup = saveModal;
   window._openTest = (sid) => {

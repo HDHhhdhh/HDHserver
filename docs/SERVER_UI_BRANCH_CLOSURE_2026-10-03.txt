@@ -1,0 +1,43 @@
+server 미검증 UI 분기 후속 마감 / 2026-10-03
+
+요청: 기존 server 전체 검토 계획의 미검증 UI 분기를 마무리한다. Hub가 source 수정·최종 검증·통합 기록을 소유하고, 실제 Codex 쓰레드 5개(gpt-6.1-sol/max)에 관리자 일반, 영상/시험 팝업, 공지/설문, 학생/관리, 전체학생/학교일정의 격리 QA를 나눴다. 독립 read-only reviewer는 source 경합과 회귀 검증을 확인했다.
+392는 관리자187 + 학생/관리141 + 전체학생38 + 학교일정26의 기능군 inventory다. 실제 native 입력 392개 전수 PASS나 운영 반영 완료 수치가 아니다. 이전 owner 원장을 보존하며 이번 증거와 조건부 미검증을 별도로 기록한다.
+
+현재 판정
+애플리케이션 11파일의 UI 오류 수정과 focused 회귀를 완료했다. 마지막 팝오버 취소 가드까지 포함한 전체 non-smoke는 2026-10-03 01:34:00 KST exit0/105unit ok/0unit failure/Python163파일 compile/JS88 syntax로 통과했다. CSS inventory/demo/initializer56, 테마 실제 initializer 정상·읽기차단·쓰기차단3case/18assertion 및 브라우저 QA는 별도 증거다. 관리형 QA와 최신 애플리케이션 SHA11/11 일치, compileall PASS, git diff --check PASS. 전담 원장 합성의 최종 상태는 아래 인계에 기록한다. 운영 app import/live smoke는 실행하지 않았다.
+
+이번 수정
+1. studentAccounts.js: Tab/ShiftTab 포커스 이탈, 늦은 목록 응답의 새 세션 덮어쓰기, 같은 세션 안 계정 작업/복사 응답 역전 방어. 실제 initializer·deferred 응답 43회귀 및 Chrome 필터/닫기/포커스 확인. 실제 비밀번호·권한 변경은 하지 않았다.
+2. videoModal.js: 필수 로드 실패·malformed 응답에서 저장/자동배정 설정 잠금, 고정 SID/date 재시도, 늦은 응답의 공유 상태 오염 방지, 자동배정 수 실패 시 해당 필드만 원복. 실제 모듈 69회귀 및 Chrome GET503→잠금→실제 GET 재시도 확인. 기존 signed MID/배정/watch 계약 유지.
+3. testModal.js: malformed HTTP200 문서를 fresh/shared cache 모두에서 거부하고 해당 Promise만 제거해 즉시 다시 열기 가능. 실제 팝업 20회귀, 다른 팝업이 예열한 오류 캐시 4종 독립 재현 및 native Chrome 확인.
+4. logModal.js: 양쪽 권위 로그 조회 실패 시 편집·숙제·완료·통합 저장 잠금과 고정 대상 재시도. 통합 저장은 영상/진도/시험 쓰기 전에 준비 상태를 검사한다. 마지막 교재 깨우기는 explicit empty + clear 표식을 저장하며 과거 잠금 재이월을 막는다. 실제 모듈 22case/71assertion과 순수 서버 merge 포함 21회귀. 실제 QA sleep→save→reload→wake→save→reload, 양쪽 로그 API 및 다른 SID/unknown fields 보존 확인.
+5. calendar.js: 학교 시험 범위·비고가 이벤트 투영에서 누락돼 팝업에 안 보이던 문제 수정. 실제 builder 8case/29assertion 및 합성 학교 일정 팝업 확인. 보강 타임 팝오버의 취소 버튼 입력을 배경 FullCalendar dateClick으로 중복 처리해 출결창이 열리던 경계는 해당 버튼 영역을 dateClick에서 제외했다. 실제 callback의 보강/수동결석/출결/legacy 경로와 수정 전 negative control까지 포함한 gate는15case/36assertion PASS. 기존 출결45 및 roster/auth/attendance도 PASS.
+6. file-manage.js: Ctrl/Meta/Shift 박스 선택 시 시작 전에 선택한 파일 유지, 박스를 줄이면 새 선택만 해제. 실제 event 회귀 및 native 선택 확인.
+7. student.css: 기존 ID의 nowrap 우선순위까지 해결해 긴 학생 이름/과목을 줄바꿈. Chrome와 IAB 읽기 렌더의 320/360/390, light/dark에서 client/scroll 폭 일치와 한글 유지 확인.
+8. student.js: 건의사항 실패를 성공으로 안내하며 초안을 지우던 문제 수정. pending 중복 차단, 오류 시 초안 보존, 늦은 성공 시 새 초안 보존. 실제 initializer 5회귀. 설문 제출 버튼 비활성화 전에 포커스를 기록하고 finally에서 컨트롤 잠금 해제 후 현재 세션으로 포커스를 복원한다. 실제 비동기 원장 29회귀 및 실제 설문 저장 후 INPUT focus/Escape 닫기 확인.
+9. announcements.js: 확대 필터 변경 시 작은 대상 요약 즉시 동기화, 익명 작성자 팝오버 Escape가 게시판의 document capture에 막히던 문제 수정. 삭제 commit 뒤 GET 실패는 완료+목록 갱신 경고로 안내하고 새 compose 세션을 보존한다. 실제 비동기 23회귀, initializer56 및 Chrome 재검증. 실제 DELETE는 하지 않았다.
+10. student-work-light.css: 작은 화면에서 확인일 메모의 날짜와 수정·삭제 버튼이 겹치던 문제를 단일 열 author/content/action 배치와 metadata 줄바꿈으로 수정했다. 기존 desktop 배치·18px 본문·readonly 동작을 유지하며 admin/all 동적 스킨을 별도로 확인한다. CSS inventory, assistant notes demo, initializer56 PASS. 후속 브라우저 결과는 최종 인계에 기록한다.
+11. admin/core/darkmode.js: 테마 저장소 읽기 차단이 초기화를 중단하거나 쓰기 실패가 처리되지 않은 예외로 남던 문제를 해당 읽기·쓰기만 보호해 수정했다. 화면/체크박스 전환은 계속되고 기존 theme key와 정상 저장·다시 열기 의미는 유지한다. 실제 initializer3case/18assertion과 수정 전 source negative control 실패를 확인했다. 브라우저 모의 Quota 실패 결과는 관리자 추가 인계에 기록한다.
+
+검증 및 계약
+새 지속 gate 6개: verify_student_accounts_ui_session.mjs, verify_video_modal_hydration.mjs, verify_homework_sleeping_clear.mjs, verify_calendar_school_exam_metadata.mjs, verify_log_popup_hydration.mjs, verify_student_feedback_save.mjs. 기본 safety registry에 연결했다.
+기존 시험 팝업·공지·학생 공지·파일 관리·initializer 검증도 현재 소스 동작으로 보강했다. 이전 순수 save-driver가 hydrated 상태를 주입하지 않던 점과 readOnly/isCurrent 호출 문자열 기대를 정정했다. 앱 잠금이나 readOnly 계약을 약화한 변경은 없다. 정본 PROJECT_FUNCTIONS_AND_LOGIC.md에는 필수 권위 로드 실패 잠금과 마지막 교재 깨우기 명시적 clear 의미를 정렬했다.
+중간 full-final/full-frozen/full-verified-final 검사는 오래된 source/fixture 기대 때문에 실패한 실행이다. 통과로 재표기하지 않는다. full-closure-final은9파일, full-mobile-closure-final은10파일, full-complete는테마까지 포함한11파일 검사다. 마지막 full-complete-guard-final.log 및 full-complete-guard-final-result.json이취소 가드까지 포함한11파일 최종 전체 gate이며 source-freeze-complete.json으로 root/QA 동일성을 연결한다. injected 오류/known impossible-date 500은 실제 test failure 수와 구분한다.
+
+증거와 전담 범위
+Hub audit: C:\Users\주인님\AppData\Local\Temp\server-ui-closure-20261002-192922d4
+관리자 일반: ui-closure-admin-20261002/closure.txt, closure.json, chrome-F05-fixed.json, chrome-fixed-regression.json, final-runtime.json. 초기 A001~137 마감의 새 분기 증거68에 남은 일반7분기 A003/A004/A008/A048/A086/A115/A117 재검증을 추가했다. artifact-verification.json은7분기·최신14소스 해시·자체25context 종료·fixture 원복을 확인한다. 오늘 날짜/슬라이더 양끝·drag/save/reload/상단 보강 저장/기존 예약 변경을 native Chrome으로 확인했다. 테마 오류 모의는 수정 후 uncaught0, 팝오버 native 취소1회는 추가 출결창 없음/관련request0/보강맵 불변이며 정상 슬롯 저장도 유지됐다. 원래 교재20%·로그/보강/등원시간/order와 다른SID 필드를 정상 좁은 API로 원복했고 지원API가 유지하는 빈 arrival 날짜 컨테이너3개만 격리에 남겼다. A057~81은 영상/시험 담당과 별도 합성한다.
+공지/설문: ui-closure-announcements-20261002-5b2734cc/closure.txt 및 closure.json. A143~173의30개 범위 완료, A173 native OS background visibility 조건부. normal QA 저장과 transport 오류/삭제/지연 모의를 구분한다.
+학생/관리: ui-closure-student-20261002-fad5f4c6/closure.txt 및 closure.json, student-final-regression.json, mobile-after-refresh.json, student-final-IAB.json. 최종141-ID 분류는 새 증거75/조건부가 남은 새 증거32/기존 부분 증거14/조건부·제외20이다. 제목/파일 선택/건의/설문 focus 수정은 최신 native Chrome 및 해당 읽기 렌더로 재검증했다. 이 분류를 전수141PASS로 확대하지 않는다. 배정·자료·기존 영상 원복과 final-api-verification을 확인했고 승인 합성 fixture는 유지했다. 전담 Chrome/IAB7·9는 종료했으며 IAB8은 debugger 오류로 종료 확인이 안 됐다. 루트의 IAB inventory는 비어 있어 다른 세션의 탭을 추측해 닫지 않았다.
+전체학생/학교: ui-closure-all-school-2abcc326의registry-64.json 및 QA_CLOSEOUT.txt, recover-results.json/recover-after.json/extra-school-baseline.json. 주 분류는 주요 경로47/범위제한11/비활성3/기존 미지원1/삭제 모의 실패복구2다. 후속 mobile-reminder-fix/QA_REMINDER_FIX.txt와 matrix.json은 Chrome /students320·360·390·1440 light/dark8조건 및 /admin390·1440 light2조건의 겹침0/본문18px/가로넘침 없음·실제320px 스크롤과 all readonly 잠금 유지, admin 정상 controls를 확인한다. IAB1280 desktop 정상 팝업도 읽기 렌더로 비교했다. desktop2조건의 screenshot timeout은 완성된 DOM/rect 근거와 구분했다. 이 후속은 S028 시각 관찰만 갱신하며64항목 전수PASS로 확대하지 않는다. 통합 팝업 scrim은 현재/HEAD 모두 클릭 닫기 listener가 없는 기존 미지원 동작이다. 명시적 닫기·Escape·상단 저장은 별도 소유자이며 이 관찰을 새 결함이나 승인된 no-op 계약으로 확대하지 않는다.
+영상/시험: popup-closure-20261002-01a0fd07/closure.txt 및 closure.json의25-ID 원장과 native Chrome 증거. Chrome25분기는 저장/재열기·오류/지연 모의를 구분해 확인했다. IAB CDP Runtime.evaluate Element.click/MouseEvent/KeyboardEvent 자료는 핸들러 모의이며 실제 native 입력 PASS에 합치지 않는다. 이 방식을 추가로 사용하지 않도록 중단했고 최종 native gate는 도구 제약으로 미통과다.
+
+환경 및 한계
+production8003 PID13448은 유지했다. 이번 production restart/backend source edit/운영 업무데이터 쓰기/QA 데이터 승격/Git staging·commit·push는0이다. 기존 dirty158/untracked81을 보존했다. 테스트는 관리형127.0.0.1:8004 PID69464, managed200, listener1, liveRuntimeCopiedfalse, D-18 OFF. source Refresh만 사용하고 공유 서버는 유지한다.
+정상 가역 QA 편집은 본인 합성 fixture에서 수행·원복했고 합성 학생/공지/파일 및 검증용 sentinel은 격리에 보존한다. 학교 삭제 모의 도구가 unload 저장을 차단하지 못해 본인 합성 학교/학년만 실제 삭제된 일이 있었다. 정상 UI로 복구 후 루트가 삭제 전/후 전체 문서 동등을 확인했다. 해당 모의 삭제는 FAIL/복구로 남기며 영구 삭제 PASS가 아니다.
+CUA IAB의 입력이 화면에 반영되지 않는 capability gap이 있었다. 현재 callable CUA/문서상 복구를 시도한 후 설치된 Chrome/Playwright native로 QA를 진행했다. IAB는 읽기 렌더·모의 핸들러 근거와 native 결과를 구분한다. Chrome와 IAB native 두 브라우저 전수 완료를 주장하지 않는다. 루트가 만든 Chrome326079998와 IAB7은 닫았다. 다른 사용자·기존 공유 탭은 보존한다.
+조건부 항목은 실제 credential 입력/계정 보안 작업, 영구 삭제, 외부 시트·push·정식 provider callback, default-OFF 기능 활성화, 실제 학원망 공개 학생 경로/답안 접근, 빠른 인쇄 CSV 성공 매핑 fixture, OS background visibility와 물리 IME를 포함한다. 기존8004 Kollus video-only D-18 완료를 새 대기로 되돌리지 않는다. 승인된 일반 QA를 이 항목으로 잘못 분류하지 않는다.
+
+최종 인계
+일반 로컬 UI 후속 검증·발견 결함 수정·필수 회귀와 전담5쓰레드 보고를 마감했다. 5개 app task는 idle이고 내부 독립 reviewer도 완료했다. 코드 소유는 Hub이며 전담들의 source edit은0이다. 최신 source11/QA11, 전체105/0fail, JS88, compileall, strictUTF-8 및 diff 검사를 연결했다. 운영8003과public/app200, 관리형8004/loopback/PID69464/D18OFF를 유지한다. Git staged0/unstaged160/untracked88이며 초기0/158/81의 기존 상태를 제거하지 않았다. 추가 status는 source2개(student-work-light.css/darkmode.js), 지속 gate6개, 이 보고서1개이며 기존 dirty 파일의 task delta와 분리한다. runtime tracked status 변화0이고 production 전체 fingerprint 동일이라는 주장은 하지 않는다. source/검증 등록과 운영 업무데이터·Git 등록은 별개다.
+재개 시 이 인계와 Hub 맨 앞 최신 상태를 먼저 읽는다. 중간 실패/오래된 제안 파일은 provenance로 유지하고 최신 fixed/native 결과로 덮어 읽지 않는다. fixture·브라우저·외부 조건이 필요한 항목은 위 조건과 owner 원장에 그대로 남긴다.

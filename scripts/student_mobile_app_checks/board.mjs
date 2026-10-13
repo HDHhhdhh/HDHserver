@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url';
 const root = path.resolve(import.meta.dirname, '..', '..');
 const files = Object.freeze({
   student: path.join(root, 'static', 'js', 'student.js'),
+  announcementState: path.join(root, 'static', 'js', 'student', 'announcementState.js'),
+  playback: path.join(root, 'static', 'js', 'student', 'playback.js'),
   app: path.join(root, 'static', 'js', 'student-app.js'),
   contract: path.join(root, 'static', 'js', 'student-app-contract.js'),
   html: path.join(root, 'static', 'student.html'),
@@ -61,16 +63,18 @@ function video(overrides = {}) {
   };
 }
 
-function loadContracts(studentSource) {
-  const board = extract(studentSource, '/* STUDENT_APP_BOARD_START */', '/* STUDENT_APP_BOARD_END */');
+function loadContracts(studentSource, announcementStateSource) {
   const links = extract(studentSource, '/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_START */', '/* STUDENT_APP_ANNOUNCEMENT_DEEP_LINK_END */');
-  const context = vm.createContext({
+  const sandbox = {
     Object, Set, Date, String, Array, Number, URLSearchParams, RegExp, JSON, Promise, Error,
-  });
-  vm.runInContext(`${links}\n${board}\n` + `
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  vm.runInContext(announcementStateSource, context, { filename: 'static/js/student/announcementState.js' });
+  vm.runInContext(`${links}\n` + `
     globalThis.boardContracts = {
-      normalizeBoardItem,
-      normalizeBoardPage,
+      normalizeBoardItem: StudentAnnouncementState.normalizeBoardItem,
+      normalizeBoardPage: StudentAnnouncementState.normalizeBoardPage,
       studentAppBoardDeepLink,
     };
   `, context, { filename: 'static/js/student.js#board-contracts' });
@@ -99,13 +103,17 @@ function loadBoardController(studentSource, mode) {
     StudentAppSessionError: FakeStudentAppSessionError,
     boardRequestId: 0,
     boardLoading: false,
-    boardItems: [],
-    boardNextCursor: null,
-    boardType: 'all',
+    announcementState: {
+      resetBoard() {},
+      boardCursor: () => null,
+      currentBoardType: () => 'all',
+      appendBoardPage: () => true,
+      boardItemByIdentifier: () => null,
+      boardItemList: () => [],
+    },
     renderStudentBoard: () => true,
     setBoardStatus: (message, state) => statuses.push({ message, state }),
     normalizeBoardPage: () => null,
-    boardItemByIdentifier: () => null,
     focusBoardItem: () => false,
     handleStudentAppSessionFailure: error => {
       if (!(error instanceof FakeStudentAppSessionError)) return false;
@@ -136,8 +144,10 @@ async function noticeFocusResult(studentSource) {
   let rendered = null;
   const context = vm.createContext({
     Promise,
-    boardItemByIdentifier: () => ({ id: 'ann-1', type: 'notice' }),
-    announcements: [{ id: 'ann-1' }],
+    announcementState: {
+      boardItemByIdentifier: () => ({ id: 'ann-1', type: 'notice' }),
+      findAnnouncement: () => ({ id: 'ann-1' }),
+    },
     historyReturnFocus: noticeButton,
     noticeBtn: noticeButton,
     closeHistoryDialog: () => {},
@@ -152,7 +162,7 @@ async function noticeFocusResult(studentSource) {
 
 export async function runChecks() {
   const sources = await Object.fromEntries(await Promise.all(Object.entries(files).map(async ([key, value]) => [key, await fs.readFile(value, 'utf8')])));
-  const contracts = loadContracts(sources.student);
+  const contracts = loadContracts(sources.student, sources.announcementState);
   const checks = [];
   const check = (name, fn) => { fn(); checks.push(name); };
   const checkAsync = async (name, fn) => { await fn(); checks.push(name); };
@@ -182,11 +192,11 @@ export async function runChecks() {
 
   check('student board fetch never sends SID and pagination is stale-safe', () => {
     const boardScope = extract(sources.student, '/* STUDENT_APP_BOARD_START */', '/* STUDENT_APP_BOARD_END */');
-    assert.match(boardScope, /\/api\/mobile\/student\/board\?type=\$\{encodeURIComponent\(boardType\)\}/);
+    assert.match(boardScope, /\/api\/mobile\/student\/board\?type=\$\{encodeURIComponent\(requestedType\)\}/);
     assert.doesNotMatch(boardScope, /[?&]sid=|localStorage|sessionStorage/);
     assert.match(boardScope, /requestId !== boardRequestId/);
-    assert.match(boardScope, /new Set\(boardItems\.map\(item => item\.id\)\)/);
-    assert.match(boardScope, /boardItems = \[\]|boardItems = boardItems\.concat/);
+    assert.match(boardScope, /announcementState\.resetBoard\(\)/);
+    assert.match(boardScope, /announcementState\.appendBoardPage\(page\)/);
   });
 
   check('locked video returns before playback and safe MID dispatch is single-owner', () => {
@@ -196,7 +206,7 @@ export async function runChecks() {
     assert.ok(scope.indexOf('if (item.locked)') >= 0);
     assert.ok(scope.indexOf("return false;", scope.indexOf('if (item.locked)')) < scope.indexOf("new CustomEvent('student-app:play-board-video'"));
     assert.match(sources.student, /document\.addEventListener\('student-app:play-board-video'/);
-    assert.match(sources.student, /async function play\(mid\)[\s\S]*\/api\/get-url\?mid=/);
+    assert.match(sources.playback, /async function play\(mid\)[\s\S]*\/api\/get-url\?mid=/);
   });
 
   check('board session failures and notice focus return use the public recovery boundary', () => {
@@ -235,7 +245,7 @@ export async function runChecks() {
 
   check('board rendering uses textContent and accessible focus controls', () => {
     const renderStart = sources.student.indexOf('  function renderStudentBoard()');
-    const renderEnd = sources.student.indexOf('  function boardItemByIdentifier', renderStart);
+    const renderEnd = sources.student.indexOf('  function focusBoardItem', renderStart);
     const scope = sources.student.slice(renderStart, renderEnd);
     assert.match(scope, /titleNode\.textContent = item\.title/);
     assert.match(scope, /contentNode\.textContent = item\.content/);

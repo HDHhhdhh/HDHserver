@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -19,10 +20,17 @@ from typing import Final, Iterator
 ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app import create_app  # noqa: E402
+from scripts.verify_app_runtime import configure_app, is_active  # noqa: E402
 from core.network_access import academy_network_allowed, client_ip_from_request  # noqa: E402
 
 TRUSTED_PROXY_CIDRS_ENV: Final = "TRUSTED_PROXY_CIDRS"
+
+
+def create_app():
+    if not is_active():
+        raise RuntimeError("Run this verifier through its CLI to install synthetic stores")
+    from app import create_app as actual_create_app
+    return configure_app(actual_create_app())
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,26 +53,20 @@ def trusted_proxy_cidrs(value: str) -> Iterator[None]:
 
 
 def test_direct_academy_client_is_allowed() -> None:
-    # Given
     req = RequestStub(remote_addr="192.168.0.44", headers={})
 
-    # When
     allowed = academy_network_allowed(req)
 
-    # Then
     if not allowed:
         raise AssertionError("direct academy Wi-Fi clients must retain answer access")
 
 
 def test_ipv4_mapped_academy_client_is_allowed_and_canonical() -> None:
-    # Given
     req = RequestStub(remote_addr="::ffff:110.14.147.14", headers={})
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "110.14.147.14":
         raise AssertionError(f"expected IPv4-mapped academy IP to canonicalize, got {client_ip!r}")
     if not allowed:
@@ -72,31 +74,26 @@ def test_ipv4_mapped_academy_client_is_allowed_and_canonical() -> None:
 
 
 def test_direct_private_academy_lan_clients_are_allowed() -> None:
-    # Given
     examples = (
         RequestStub(remote_addr="10.20.30.40", headers={}),
         RequestStub(remote_addr="172.16.5.44", headers={}),
         RequestStub(remote_addr="fd00::44", headers={}),
     )
 
-    # When / Then
     for req in examples:
         if not academy_network_allowed(req):
             raise AssertionError(f"private academy LAN client must be allowed: {req.remote_addr}")
 
 
 def test_trusted_loopback_proxy_uses_cf_connecting_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
         headers={"CF-Connecting-IP": "110.14.147.14"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "110.14.147.14":
         raise AssertionError(f"expected CF-Connecting-IP client, got {client_ip!r}")
     if not allowed:
@@ -104,17 +101,14 @@ def test_trusted_loopback_proxy_uses_cf_connecting_ip() -> None:
 
 
 def test_cloudflare_proxy_header_is_authoritative_with_forwarded_for_chain() -> None:
-    # Given
     req = RequestStub(
         remote_addr="172.71.0.10",
         headers={"CF-Connecting-IP": "110.14.147.14", "X-Forwarded-For": "110.14.147.14, 172.71.0.10"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "110.14.147.14":
         raise AssertionError(f"expected authoritative CF-Connecting-IP client, got {client_ip!r}")
     if not allowed:
@@ -122,7 +116,6 @@ def test_cloudflare_proxy_header_is_authoritative_with_forwarded_for_chain() -> 
 
 
 def test_cloudflare_pseudo_ipv4_uses_cf_connecting_ipv6() -> None:
-    # Given
     req = RequestStub(
         remote_addr="172.71.0.10",
         headers={
@@ -132,11 +125,9 @@ def test_cloudflare_pseudo_ipv4_uses_cf_connecting_ipv6() -> None:
         },
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "2a09:bac2:46d9::44":
         raise AssertionError(f"expected real IPv6 client from CF-Connecting-IPv6, got {client_ip!r}")
     if not allowed:
@@ -144,17 +135,14 @@ def test_cloudflare_pseudo_ipv4_uses_cf_connecting_ipv6() -> None:
 
 
 def test_cf_connecting_ip_takes_precedence_over_forwarded_for() -> None:
-    # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
         headers={"CF-Connecting-IP": "110.14.147.14", "X-Forwarded-For": "203.0.113.10"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "110.14.147.14":
         raise AssertionError(f"expected CF-Connecting-IP to override forwarded peer, got {client_ip!r}")
     if not allowed:
@@ -162,17 +150,14 @@ def test_cf_connecting_ip_takes_precedence_over_forwarded_for() -> None:
 
 
 def test_trusted_loopback_proxy_uses_leftmost_forwarded_for_client() -> None:
-    # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
         headers={"X-Forwarded-For": "192.168.0.44, 198.51.100.23"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "192.168.0.44":
         raise AssertionError(f"expected left-most forwarded client, got {client_ip!r}")
     if not allowed:
@@ -180,47 +165,38 @@ def test_trusted_loopback_proxy_uses_leftmost_forwarded_for_client() -> None:
 
 
 def test_trusted_loopback_proxy_uses_real_ip_without_forwarded_for() -> None:
-    # Given
     req = RequestStub(
         remote_addr="::1",
         headers={"X-Real-IP": "192.168.0.44"},
     )
 
-    # When
     allowed = academy_network_allowed(req)
 
-    # Then
     if not allowed:
         raise AssertionError("trusted local proxy must use X-Real-IP when X-Forwarded-For is absent")
 
 
 def test_forwarded_for_takes_precedence_over_real_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
         headers={"X-Forwarded-For": "not-an-ip", "X-Real-IP": "192.168.0.44"},
     )
 
-    # When
     allowed = academy_network_allowed(req)
 
-    # Then
     if allowed:
         raise AssertionError("X-Real-IP must not be trusted when X-Forwarded-For is present")
 
 
 def test_malformed_forwarded_for_does_not_skip_to_spoofed_academy_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="127.0.0.1",
         headers={"X-Forwarded-For": "not-an-ip, 192.168.0.44"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "127.0.0.1":
         raise AssertionError(f"malformed forwarded chain must fall back to remote proxy, got {client_ip!r}")
     if allowed:
@@ -228,17 +204,14 @@ def test_malformed_forwarded_for_does_not_skip_to_spoofed_academy_ip() -> None:
 
 
 def test_direct_public_client_cannot_spoof_forwarded_for() -> None:
-    # Given
     req = RequestStub(
         remote_addr="198.51.100.23",
         headers={"X-Forwarded-For": "192.168.0.44", "X-Real-IP": "192.168.0.44"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "198.51.100.23":
         raise AssertionError(f"direct public clients must not be replaced by headers, got {client_ip!r}")
     if allowed:
@@ -246,17 +219,14 @@ def test_direct_public_client_cannot_spoof_forwarded_for() -> None:
 
 
 def test_direct_public_client_cannot_spoof_cf_connecting_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="198.51.100.23",
         headers={"CF-Connecting-IP": "110.14.147.14"},
     )
 
-    # When
     client_ip = client_ip_from_request(req)
     allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "198.51.100.23":
         raise AssertionError(f"direct public clients must not be replaced by CF headers, got {client_ip!r}")
     if allowed:
@@ -264,18 +234,15 @@ def test_direct_public_client_cannot_spoof_cf_connecting_ip() -> None:
 
 
 def test_configured_public_proxy_uses_cf_connecting_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="203.0.113.10",
         headers={"CF-Connecting-IP": "110.14.147.14"},
     )
 
     with trusted_proxy_cidrs("203.0.113.10/32"):
-        # When
         client_ip = client_ip_from_request(req)
         allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "110.14.147.14":
         raise AssertionError(f"configured public proxy should use CF client IP, got {client_ip!r}")
     if not allowed:
@@ -283,18 +250,15 @@ def test_configured_public_proxy_uses_cf_connecting_ip() -> None:
 
 
 def test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip() -> None:
-    # Given
     req = RequestStub(
         remote_addr="203.0.113.11",
         headers={"CF-Connecting-IP": "110.14.147.14"},
     )
 
     with trusted_proxy_cidrs("203.0.113.10/32"):
-        # When
         client_ip = client_ip_from_request(req)
         allowed = academy_network_allowed(req)
 
-    # Then
     if client_ip != "203.0.113.11":
         raise AssertionError(f"unconfigured public proxy must stay authoritative, got {client_ip!r}")
     if allowed:
@@ -302,23 +266,49 @@ def test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip() -> None:
 
 
 def test_answer_map_allows_trusted_cf_connecting_ip() -> None:
-    # Given
     client = create_app().test_client()
 
-    # When
     response = client.get(
         "/js/test_answer_link_map.json",
         headers={"CF-Connecting-IP": "110.14.147.14"},
         environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
     )
 
-    # Then
     if response.status_code != 200:
         raise AssertionError(f"trusted CF-Connecting-IP answer map request failed: {response.status_code}")
 
 
+def test_legacy_answer_map_js_is_retired() -> None:
+    legacy_path = ROOT / "static" / "js" / "test_answer_link_map.js"
+    if legacy_path.exists():
+        raise AssertionError("retired test_answer_link_map.js must stay absent")
+
+    legacy_url_literals = (
+        '"/js/test_answer_link_map.js"',
+        "'/js/test_answer_link_map.js'",
+    )
+    for source_path in (ROOT / "app.py", ROOT / "core" / "student_app_config.py"):
+        source_text = source_path.read_text(encoding="utf-8")
+        if any(literal in source_text for literal in legacy_url_literals):
+            raise AssertionError(f"retired answer-map URL remains in {source_path.name}")
+
+    ignored_paths = {
+        line.strip()
+        for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if "/static/js/test_answer_link_map.js" in ignored_paths:
+        raise AssertionError("retired answer-map file remains ignored")
+
+    response = create_app().test_client().get(
+        "/js/test_answer_link_map.js",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    if response.status_code != 404:
+        raise AssertionError(f"retired answer-map URL must return 404, got {response.status_code}")
+
+
 def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
-    # Given
     import routes.api_kollus as api_kollus
 
     old_known_mid = api_kollus._known_mid
@@ -331,7 +321,6 @@ def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
     client = create_app().test_client()
 
     try:
-        # When
         response = client.get(
             "/api/get-url?mid=abcd1234&sid=student1",
             headers={
@@ -347,7 +336,6 @@ def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
         api_kollus._known_sid = old_known_sid
         api_kollus.kollus_signed_url = old_signed_url
 
-    # Then
     if response.status_code != 404:
         raise AssertionError(f"Cloudflare peer must not select the local-host route: {response.status_code}")
     if body or signed_calls:
@@ -355,7 +343,6 @@ def test_get_url_blocks_cloudflare_proxy_targeting_local_host() -> None:
 
 
 def test_get_url_blocks_configured_public_proxy_targeting_local_host() -> None:
-    # Given
     import routes.api_kollus as api_kollus
 
     old_known_mid = api_kollus._known_mid
@@ -369,7 +356,6 @@ def test_get_url_blocks_configured_public_proxy_targeting_local_host() -> None:
 
     try:
         with trusted_proxy_cidrs("203.0.113.10/32"):
-            # When
             response = client.get(
                 "/api/get-url?mid=abcd1234&sid=student1",
                 headers={
@@ -385,7 +371,6 @@ def test_get_url_blocks_configured_public_proxy_targeting_local_host() -> None:
         api_kollus._known_sid = old_known_sid
         api_kollus.kollus_signed_url = old_signed_url
 
-    # Then
     if response.status_code != 404:
         raise AssertionError(f"configured public proxy must not select the local-host route: {response.status_code}")
     if body or signed_calls:
@@ -393,7 +378,6 @@ def test_get_url_blocks_configured_public_proxy_targeting_local_host() -> None:
 
 
 def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> None:
-    # Given
     import routes.api_kollus as api_kollus
 
     old_known_mid = api_kollus._known_mid
@@ -407,7 +391,6 @@ def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> N
     client = create_app().test_client()
 
     try:
-        # When
         response = client.get(
             "/api/get-url?mid=abcd1234&sid=student1",
             headers={
@@ -427,7 +410,6 @@ def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> N
         else:
             os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
 
-    # Then
     if response.status_code != 200:
         raise AssertionError(f"ProxyFix trusted CF get-url request failed: {response.status_code} {body}")
     if body != "signed:110.14.147.14:student1":
@@ -435,7 +417,6 @@ def test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled() -> N
 
 
 def test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header() -> None:
-    # Given
     import routes.api_kollus as api_kollus
 
     old_known_mid = api_kollus._known_mid
@@ -449,7 +430,6 @@ def test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header() -> Non
     client = create_app().test_client()
 
     try:
-        # When
         response = client.get(
             "/api/get-url?mid=abcd1234&sid=student1",
             headers={
@@ -468,7 +448,6 @@ def test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header() -> Non
         else:
             os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
 
-    # Then
     if response.status_code != 200:
         raise AssertionError(f"Forwarded-For academy get-url request failed: {response.status_code} {body}")
     if body != "signed:110.14.147.14:student1":
@@ -476,7 +455,6 @@ def test_get_url_allows_academy_ip_from_forwarded_for_without_cf_header() -> Non
 
 
 def test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header() -> None:
-    # Given
     import routes.api_kollus as api_kollus
 
     old_known_mid = api_kollus._known_mid
@@ -490,7 +468,6 @@ def test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header() -> No
     client = create_app().test_client()
 
     try:
-        # When
         response = client.get(
             "/api/get-url?mid=abcd1234&sid=student1",
             headers={
@@ -509,7 +486,6 @@ def test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header() -> No
         else:
             os.environ["TRUST_PROXY_HEADERS"] = old_trust_proxy_headers
 
-    # Then
     if response.status_code != 403:
         raise AssertionError(f"Forwarded-For external get-url request should be blocked, got {response.status_code}")
     if body.get("error") != "academy_network_required":
@@ -517,33 +493,27 @@ def test_get_url_blocks_external_ip_from_forwarded_for_without_cf_header() -> No
 
 
 def test_answer_map_allows_trusted_cf_when_forwarded_for_has_public_peer() -> None:
-    # Given
     client = create_app().test_client()
 
-    # When
     response = client.get(
         "/js/test_answer_link_map.json",
         headers={"CF-Connecting-IP": "110.14.147.14", "X-Forwarded-For": "203.0.113.10"},
         environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
     )
 
-    # Then
     if response.status_code != 200:
         raise AssertionError(f"trusted CF answer map request should be allowed, got {response.status_code}")
 
 
 def test_answer_map_blocks_direct_public_spoofed_cf_connecting_ip() -> None:
-    # Given
     client = create_app().test_client()
 
-    # When
     response = client.get(
         "/js/test_answer_link_map.json",
         headers={"CF-Connecting-IP": "110.14.147.14"},
         environ_overrides={"REMOTE_ADDR": "198.51.100.23"},
     )
 
-    # Then
     if response.status_code != 404:
         raise AssertionError(f"direct public spoofed CF request should be blocked, got {response.status_code}")
     if response.get_data(as_text=True):
@@ -551,7 +521,6 @@ def test_answer_map_blocks_direct_public_spoofed_cf_connecting_ip() -> None:
 
 
 def test_file_download_route_is_not_academy_network_gated() -> None:
-    # Given
     import routes.api_fs as api_fs
 
     old_files_dir = api_fs.FILES_DIR
@@ -564,7 +533,6 @@ def test_file_download_route_is_not_academy_network_gated() -> None:
         client = create_app().test_client()
 
         try:
-            # When
             response = client.get(
                 "/files/worksheet.txt",
                 headers={"CF-Connecting-IP": "110.14.147.14", "X-Forwarded-For": "203.0.113.10"},
@@ -577,7 +545,6 @@ def test_file_download_route_is_not_academy_network_gated() -> None:
             api_fs.FILES_DIR = old_files_dir
             api_fs.FILES_ROOT = old_files_root
 
-    # Then
     if response.status_code != 200:
         raise AssertionError(f"file downloads must not use academy network gate, got {response.status_code}")
     if body != "academy material":
@@ -616,6 +583,7 @@ def main() -> None:
             test_configured_public_proxy_uses_cf_connecting_ip,
             test_unconfigured_public_proxy_cannot_spoof_cf_connecting_ip,
             test_answer_map_allows_trusted_cf_connecting_ip,
+            test_legacy_answer_map_js_is_retired,
             test_get_url_blocks_cloudflare_proxy_targeting_local_host,
             test_get_url_blocks_configured_public_proxy_targeting_local_host,
             test_get_url_allows_trusted_cf_connecting_ip_when_proxyfix_is_enabled,
@@ -630,4 +598,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if not is_active():
+        raise SystemExit(subprocess.call([sys.executable, "-I", "-B", str(ROOT / "scripts/verify_app_runtime.py"), "academy-proxy"]))
     main()

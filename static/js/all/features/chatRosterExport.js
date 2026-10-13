@@ -1,5 +1,6 @@
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { downloadTextFile } from '../../shared/download.js?v=20260828-1';
 
 const TARGET_LABELS = {
   all: '전체',
@@ -38,26 +39,8 @@ function csvCell(value) {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-function downloadTextFile(filename, contents, type) {
-  const blob = new Blob([contents], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 function schoolForRoster(stu = {}) {
-  const raw = normStr(
-    stu.school ?? stu.schoolName ?? stu.highSchool ?? stu.middleSchool ??
-    stu.high ?? stu.middle ?? stu.schoolHigh ?? stu.schoolMiddle ??
-    stu.highschool ?? stu.middleschool ?? stu.high_school ?? stu.middle_school ??
-    stu.고등학교 ?? stu.중학교 ?? ''
-  );
-  return raw.replace(/고등학교$/u, '').replace(/고$/u, '');
+  return studentSchool(stu).replace(/고등학교$/u, '').replace(/고$/u, '');
 }
 
 function gradeNumberForRoster(stu = {}) {

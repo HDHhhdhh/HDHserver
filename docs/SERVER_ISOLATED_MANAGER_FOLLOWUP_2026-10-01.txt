@@ -1,0 +1,106 @@
+격리 서버 매니저 후속 13 / 2026-10-01
+
+결과
+동시 Start와 unknown owner 경합을 실제 매니저 AST/functions/entrypoint로 재현했고, OS temp의 수정 후보와 verifier가 Windows PowerShell 5 및 PowerShell 7에서 각각 199개 oracle 조건을 통과했다.
+저장소 적용은 완료하지 않았다. apply_patch가 기존 파일을 읽는 단계에서 "path contains a reparse point"를 반환했다. 절대 경로 입력 후 정상 상대 경로 입력으로 바로잡아도 동일했다. Get-Item으로 본 C:\server, scripts, 두 파일은 reparse/link 속성이 없었지만, 도구 거부는 우회하지 않았다.
+Hub의 후속 지시에 따라 모든 최종 소스, 패치, 보고서 및 simulation I/O를 OS temp에 보존한다. Hub가 정상 권한 범위에서 검토·통합할 준비가 된 상태다.
+
+범위와 시작 상태
+읽은 문서: 루트 AGENTS.md, scripts/AGENTS.md, SERVER_RULES_INDEX.md, docs/isolated-design-server.md, docs/SERVER_PROJECT_REVIEW_2026-10-01.txt, docs/SERVER_PROJECT_FOLLOWUP_2026-10-01.txt.
+초기 Git: staged 0 / unstaged 137 / untracked 30. 전체 경로는 git-status-before.txt와 git-staged-before.txt에 기록.
+manager는 기존 dirty: Get-Listeners의 조회 실패 전파, 전체 listener-set 체크, occupied/running 판정 5 additions / 3 deletions. 모두 보존했다.
+기존 verifier는 untracked였으며 port filter/reuse/unknown listener/query failure 검사를 보존했다.
+app/core/routes/static/AGENTS/shared default harness를 편집하지 않았다. runtime seed/read/write, backup, app import, Git stage/commit/push, real 8003 및 shared 8004 lifecycle/포트 점유 변경은 수행하지 않았다.
+
+수정 후보
+scripts/manage_isolated_design_server.ps1용 manager-new.ps1:
+- Global named mutex를 포트별로 사용하여 Start/Restart/Stop/Refresh/Status 전체 실행을 직렬화한다. 서로 다른 snapshot root도 같은 포트를 관리하면 같은 잠금을 쓴다.
+- 잠금 timeout은 60초. operation 예외 시 finally에서 해제하며 abandoned mutex는 이미 획득한 상태로 처리한다. 접근 오류는 전파한다.
+- Start의 snapshot 뒤 launch 직전에 포트가 계속 비었는지 다시 확인한다.
+- 최초로 발견한 loopback listener를 무조건 receipt로 기록하지 않는다. 생성한 wrapper의 PID와 start time, CIM ParentProcessId/CreationDate 체인이 그 실행과 일치하는지 확인한다. 부모 PID 재사용과 순환 체인은 거부하며 깊이는 16으로 제한한다.
+- 정확히 1개의 loopback listener, HTTP 200, receipt 기록 직전 같은 PID/start time/lineage, 기록 후 managed:true 및 HTTP 200을 요구한다.
+- 시작 실패 정리는 현재 포트 소유자를 대상으로 하지 않는다. 기록한 launch-owned PID/start time/lineage가 여전히 일치하는 listener 및 wrapper만 종료 대상으로 선택한다. PID 재사용이면 종료하지 않는다.
+- 쓰인 실패 receipt는 이 호출의 identity와 맞을 때만 지운다. PowerShell 7의 ConvertFrom-Json DateTime 값도 round-trip UTC로 비교한다.
+- Status/Stop의 receipt 루트 검증에 sourceRoot를 명시한다. 기존 port/codeRoot/PID/start time 검증과 Stop의 Waitress command 검사도 유지한다.
+- 환경 주입/복원, isolation flags, 코드 snapshot 대상, receipt/status wire shape는 유지한다. receipt에 새 lineage 필드를 추가하지 않는다.
+
+scripts/verify_isolated_design_server_manager.ps1용 verifier-new.ps1:
+- 기존 검사를 유지하고 -ManagerSourcePath, -ExpectUnsafeBaseline을 추가했다.
+- 매니저 전체 실행 setup은 dot-source하지 않는다. 실제 source에서 function definitions와 마지막 entrypoint statement를 AST로 추출한다.
+- 실제 hidden PowerShell fixture worker 두 개와 실제 named mutex를 사용한다. network listener/CIM/process lifetime/HTTP/env transport/Waitress launch/stop은 fixture 관찰자이며 app 서버를 띄우지 않는다.
+- worker filesystem, synthetic receipt와 listener 상태, observation signals/logs는 모두 OS temp다. receipt 삭제 mock도 resolved path가 temp fixture 하위인지 검사한다.
+- producer helper로 expected ownership/revision을 만들지 않는다. start/stop 횟수, 고정 PID literals, 먼저 진입하지 않았다는 외부 signal, 최종 receipt owner 및 independent SHA256을 oracle로 쓴다.
+- Python default subprocess environment로도 실행했다. 실제 environment transport는 경합 oracle 밖이므로 fixture에서 mock하여 Windows PowerShell의 duplicate Path/PATH provider 오류에 결과가 종속되지 않게 했다. fixture worker는 .NET ProcessStartInfo/CreateNoWindow로 띄우며 자신의 프로세스만 기다리거나 정리한다.
+
+독립 관찰 및 negative control
+수정 전 원본은 기존 dirty fixes를 포함한 manager-before.ps1이다. 소스에서 guards를 임의 제거한 대체 구현이 아니다.
+- 두 Start: A가 실제 Sync-CodeSnapshot 호출 경계에서 기다릴 때 B도 진입했다. start 2회, 최종 receiptOwner 420002.
+- unknown-healthy: fake listener PID999999를 managed receipt로 기록하고 성공했다.
+- unknown-health-failure: 실제 Stop-ManagedServer 함수가 PID999999를 Stop-Process 대상으로 선택했다. 호출을 기록하는 mock만 실행했고 실제 unknown process는 종료하지 않았다.
+- mixed listener 및 receipt 직후 owner 교체: managed:false라도 HTTP 200이면 성공할 수 있었다.
+- launch 뒤 listener 조회 실패/receipt write 실패는 자신이 시작한 wrapper를 정리하지 않았다.
+- wrapper/listener PID reuse와 오래된 child chronology를 startup ownership으로 받아들였다.
+수정 후:
+- A의 관리 operation 동안 B는 snapshot 경계에 진입하지 않는다. start 1회, 두 요청 성공, receiptOwner 410002 유지.
+- 위 비정상 경합은 실패한다. unverified receipt를 남기지 않고 fake unknown PID999999는 어떤 Stop 대상으로도 선택하지 않는다.
+- mixed set의 launch-owned child만 정리한다. 재사용된 wrapper/listener PID는 종료하지 않는다.
+- CIM 및 listener query failure는 실패로 전파한다.
+- 정상 single-process 및 multi-hop wrapper/child launch는 성공한다.
+- Status/Stop/Refresh/Restart는 외부 mutex holder가 풀기 전 ownership query/snapshot operation을 실행하지 않는다.
+- 다른 root의 same-port contender timeout은 operation을 실행하지 않는다.
+- operation 예외 뒤 새 process가 획득한다. 실제 fixture process가 lock을 가진 채 종료한 뒤 대기 process가 abandoned mutex를 획득한다.
+
+기존 receipt 호환
+새 persisted lineage field는 없다. 기존 v1의 sourceRoot/codeRoot/port, wrapper/listener PID 및 UTC start time을 그대로 쓴다.
+lineage는 새 launch를 받아들일 때 CIM으로 즉시 확인하는 정보이며 기존 정상 receipt를 읽거나 재시작하기 위해 새로운 receipt field를 요구하지 않는다.
+실제 기존 v1 형태의 synthetic receipt에 unknown field도 넣어 검증했다:
+- legacy-status / legacy-reuse: managed:true, start 0회, stop 0회. 기존 receipt의 bytes/SHA256 및 unknown metadata 유지.
+- legacy-restart: 정상 receipt의 기존 listener 510002와 wrapper 510001만 stop 대상으로 선택하고 replacement 1회 launch, managed:true.
+- 잘못된 sourceRoot: 수정 전에는 restart되었지만 수정 후에는 launch/stop 0회, receipt SHA256 불변.
+- 잘못된 command 또는 start time: launch/stop 0회, receipt SHA256 불변. 기존 command/time ownership guard를 약화하지 않았다.
+Hub가 전달한 real PID37348 managed:true/http200 상태는 별도 증거다. 이 chat은 현재 real receipt bytes/command를 읽거나 real lifecycle을 실행하지 않았다. 따라서 현재 receipt의 실제 owner 재검증은 Hub가 수행한다. 필드 부재 때문에 정상 v1을 unknown으로 만드는 incompatibility는 temp contract에서 발생하지 않는다.
+Status는 기존 PID/start time과 root/port/listener-set 검증을 사용한다. Waitress command 검사는 실제 Stop/Restart 경계에서 기존대로 수행한다. 이 구분을 Status 자체가 command를 검사했다는 주장으로 바꾸지 않는다.
+
+정확한 최종 검증 실행
+python -X utf8 -u "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\record_verification.py"
+그 driver가 실행한 정확한 argv 및 exit codes는 verification-results.json에 보존했다. 출력은 UTF-8로 저장된다.
+각 argv는 powershell.exe 또는 pwsh.exe -NoProfile -ExecutionPolicy Bypass -Command를 사용하며 Console.OutputEncoding을 UTF-8로 설정한 뒤 아래 verifier file을 호출한다:
+1. verifier-new.ps1 -ManagerSourcePath manager-before.ps1 -ExpectUnsafeBaseline : exit 0 / 96 checks. unsafe baseline을 실제로 관찰한 결과이며 안전성 PASS라는 의미가 아니다.
+2. verifier-new.ps1 -ManagerSourcePath manager-new.ps1 (Windows PowerShell 5) : exit 0 / 199 checks.
+3. verifier-new.ps1 -ManagerSourcePath manager-new.ps1 (PowerShell 7) : exit 0 / 199 checks.
+AST ParseFile: manager-before.ps1, manager-new.ps1, verifier-new.ps1 모두 parse errors 0.
+git apply --check "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\isolated-manager-followup.patch" : exit 0. 읽기 전용 적용 가능성 검사이며 patch 적용은 하지 않았다.
+초기 저장소 verifier 직접 실행도 PASS였다.
+Hub source freeze 지시로 전체 default suite는 실행하지 않았다. compileall/JS/browser gate는 이번 PowerShell 후보의 검증을 대신하지 않으며 다른 소스 범위는 Hub가 통합 검증한다.
+
+Hub 재검증
+Temp candidate 재검증:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\verifier-new.ps1" -ManagerSourcePath "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\manager-new.ps1"
+pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\verifier-new.ps1" -ManagerSourcePath "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\manager-new.ps1"
+baseline negative control:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\verifier-new.ps1" -ManagerSourcePath "C:\Users\주인님\AppData\Local\Temp\server-isolated-manager-20261001-58f9d1e368ef430eaf3ff223c2e97929\manager-before.ps1" -ExpectUnsafeBaseline
+정상 권한 범위에서 Hub가 source를 검토·적용한 뒤:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify_isolated_design_server_manager.ps1
+source freeze 뒤 Hub의 전체 python scripts/verify_refactor_safety.py.
+real Status/CIM/receipt 검증은 Hub가 담당한다. 여기서 real8004 Restart/Refresh/Stop을 수행하지 않는다.
+
+한계와 보류
+- apply_patch 경로 검사 실패로 C:\server 두 소스 및 docs target에 후보를 적용하지 않았다. repository target의 SHA256은 pre-edit baseline과 정확히 같다.
+- 자신의 shell process에 대한 실제 Get-CimInstance Win32_Process 읽기도 이 sandbox에서 "액세스가 거부되었습니다"로 실패했다. 권한 변경이나 다른 실행 경로로 재시도하지 않았다. 그러므로 actual CIM ancestry/provider accuracy와 real Waitress wrapper process model은 미검증이다.
+- 이 후보는 CIM 조회가 실패하면 시작을 fail-closed 처리한다. 실제 정상 manager 실행 권한에서 CIM을 읽을 수 있는지 Hub가 확인해야 한다.
+- kernel mutex serialization/timeout/release/abandonment는 실제 process/OS evidence다. socket/Waitress/CIM/env는 simulation이며 live browser QA/rollout 증거가 아니다.
+- receipt의 OS-level partial write/crash 내구성, 한 PID를 조회하는 순간과 Stop-Process 사이의 OS-level atomic termination까지 새로 보증하는 작업은 범위 밖이다.
+- sip 검토와 mandela independence audit 수행. same-session verifier=designer 제한은 실제 CIM/Waitress 증거 부족으로 명시했다. literal outside observations와 archived-source negative control은 guard 검증을 뒷받침하지만 fresh reviewer/real provider evidence를 대체하지 않는다.
+- 추가 subagent를 만들지 않았다. 모든 fixture worker는 wait/cleanup 후 종료했다. runtime data와 Git 등록 변경은 없다.
+- 코드 변경 의미를 선택해야 할 미해결 사용자 분기는 발견하지 않았다. repository 적용과 실제 owner 검증은 도구/권한 및 Hub ownership에 따른 보류다.
+
+파일
+manager-before.ps1: 해당 파일의 pre-existing dirty 포함한 정확한 bytes baseline.
+verifier-before.ps1: pre-existing untracked verifier의 정확한 bytes baseline.
+manager-new.ps1: 최종 전체 manager source, 533 lines.
+verifier-new.ps1: 최종 전체 verifier source, 592 lines.
+isolated-manager-followup.patch: baseline 대비 두 파일만 포함한 unified patch.
+SERVER_ISOLATED_MANAGER_FOLLOWUP_2026-10-01.txt: 본 보고서의 Temp 사본. 저장소 docs에는 작성하지 않았다.
+source-checksums.json / handoff-manifest.json: 절대 경로, bytes, SHA256.
+before-powershell5.stdout.log, after-powershell5.stdout.log, after-powershell7.stdout.log 및 대응 stderr.
+verification-results.json, patch-stats.json, manager-pre-existing.diff, git-status-before/after.txt, git-staged-before/after.txt.

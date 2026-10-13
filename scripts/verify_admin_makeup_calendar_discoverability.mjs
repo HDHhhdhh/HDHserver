@@ -75,9 +75,9 @@ try {
   page.on('requestfailed', request => diagnostics.requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`));
   await page.addInitScript(installCalendarFallback);
   await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({ status: 200, body: '' }));
-  await page.route('**/arrive-time/patch', async route => {
+  await page.route('**/api/arrive-time/patch', async route => {
     const request = route.request();
-    diagnostics.directRequests.push({ phase: evidencePhase, method: request.method(), path: '/arrive-time/patch', fixture: true });
+    diagnostics.directRequests.push({ phase: evidencePhase, method: request.method(), path: '/api/arrive-time/patch', fixture: true });
     if (!allowScheduledCarryover) { await route.abort(); return; }
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
@@ -93,8 +93,17 @@ try {
         return;
       }
       if (path === '/api/extra-attend') {
-        fixtureExtra = JSON.parse(request.postData() || '{}');
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fixtureExtra) });
+        const patch = JSON.parse(request.postData() || '{}');
+        const dates = patch?.dates || (patch?.date ? { [patch.date]: patch.sids } : {});
+        for (const [date, sids] of Object.entries(dates)) {
+          if (Array.isArray(sids) && sids.length) fixtureExtra[date] = [...sids];
+          else delete fixtureExtra[date];
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, dates }),
+        });
         return;
       }
       if (path === '/api/weekend-slots') {
@@ -116,7 +125,14 @@ try {
       return;
     }
     const data = path === '/api/students' ? students : path === '/api/videos' ? [] : path === '/api/absent' ? { by_date: { '2026-07-02': ['pending-1'] }, by_student: {}, by_slot: {} } : path === '/api/makeup-carryover' ? carryover : path === '/api/extra-attend' ? fixtureExtra : path === '/api/weekend-slots' ? fixtureWeekend : path === '/api/attend' ? [] : {};
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: path === '/api/makeup-carryover'
+        ? { 'X-Makeup-Carryover-Revision': 'fixture-revision' }
+        : {},
+      body: JSON.stringify(data),
+    });
   });
   await page.goto(`${baseUrl}/admin`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#makeupStatus', { timeout: 8000 });
@@ -174,6 +190,7 @@ try {
   assert(carried?.scheduledMakeup?.originalAbsenceId === 'absence|2026-07-01|scheduled-1|1', 'scheduled makeup originalAbsenceId was not preserved.');
   assert(!(fixtureExtra['2026-07-10'] || []).includes('scheduled-1'), 'scheduled-1 remained in fixture extra-attend after carryover.');
   assert(!Object.prototype.hasOwnProperty.call(fixtureWeekend['2026-07-10'] || {}, 'scheduled-1'), 'scheduled-1 remained in fixture weekend-slots after carryover.');
+  assert(diagnostics.mutations.includes('PATCH /api/extra-attend'), 'PATCH /api/extra-attend was not recorded for scheduled carryover cleanup.');
   assert(diagnostics.mutations.includes('POST /api/weekend-slots'), 'POST /api/weekend-slots was not recorded for scheduled carryover cleanup.');
   assert(carried?.state === 'carried', '보강 현황 이월이 원본 결석을 이월 처리하지 않았습니다.');
   assert(carried?.scheduledMakeup?.status === 'cancelled', '보강 현황 이월이 기존 보강 일정을 해제하지 않았습니다.');

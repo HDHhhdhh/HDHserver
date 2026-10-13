@@ -1,0 +1,31 @@
+{
+  "fixture": "ocr_actionable_review_payload_ui_v1",
+  "valid_review_payload": {
+    "source": "actionable_review_payload_ui_fixture",
+    "test_id": "t_unit_daesu_01_lv3_r1",
+    "round": "1",
+    "problem_count": 20,
+    "items": [
+      { "question_no": 1, "status": "safe_auto_grade", "recognized": "4", "warnings": [], "candidates": [], "final_answer": "4", "source": "safe_auto_grade" },
+      { "question_no": 2, "status": "safe_auto_grade", "recognized": "12", "warnings": [], "candidates": [], "final_answer": "12", "source": "safe_auto_grade" },
+      { "question_no": 3, "status": "review_required", "recognized": "?", "warnings": ["multiple_answer_candidates"], "candidates": ["1", "3", "4"], "final_answer": null, "source": null },
+      { "question_no": 4, "status": "safe_auto_grade", "recognized": "64", "warnings": [], "candidates": [], "final_answer": "64", "source": "safe_auto_grade" },
+      { "question_no": 5, "status": "safe_auto_grade", "recognized": "2", "warnings": [], "candidates": [], "final_answer": "2", "source": "safe_auto_grade" },
+      { "question_no": 6, "status": "safe_auto_grade", "recognized": "9", "warnings": [], "candidates": [], "final_answer": "9", "source": "safe_auto_grade" },
+      { "question_no": 7, "status": "safe_auto_grade", "recognized": "30", "warnings": [], "candidates": [], "final_answer": "30", "source": "safe_auto_grade" },
+      { "question_no": 8, "status": "safe_auto_grade", "recognized": "81", "warnings": [], "candidates": [], "final_answer": "81", "source": "safe_auto_grade" },
+      { "question_no": 9, "status": "review_required", "recognized": "4", "warnings": ["multiple_answer_candidates"], "candidates": ["4", "2"], "final_answer": null, "source": null },
+      { "question_no": 10, "status": "safe_auto_grade", "recognized": "6", "warnings": [], "candidates": [], "final_answer": "6", "source": "safe_auto_grade" },
+      { "question_no": 11, "status": "safe_auto_grade", "recognized": "42", "warnings": [], "candidates": [], "final_answer": "42", "source": "safe_auto_grade" },
+      { "question_no": 12, "status": "safe_auto_grade", "recognized": "3", "warnings": [], "candidates": [], "final_answer": "3", "source": "safe_auto_grade" },
+      { "question_no": 13, "status": "safe_auto_grade", "recognized": "5", "warnings": [], "candidates": [], "final_answer": "5", "source": "safe_auto_grade" },
+      { "question_no": 14, "status": "review_required", "recognized": "?", "warnings": ["digit_shape_confusion"], "candidates": ["2", "4"], "final_answer": null, "source": null },
+      { "question_no": 15, "status": "safe_auto_grade", "recognized": "16", "warnings": [], "candidates": [], "final_answer": "16", "source": "safe_auto_grade" },
+      { "question_no": 16, "status": "review_required", "recognized": "21", "warnings": ["overwritten_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 17, "status": "retake_required", "recognized": "", "warnings": ["unclear_final_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 18, "status": "review_required", "recognized": "?", "warnings": ["answer_value_letter_confusion"], "candidates": ["90", "20"], "final_answer": null, "source": null },
+      { "question_no": 19, "status": "retake_required", "recognized": "", "warnings": ["crop_quality_blurry"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 20, "status": "retake_required", "recognized": "", "warnings": ["crop_quality_cutoff_risk"], "candidates": [], "final_answer": null, "source": null }
+    ]
+  }
+}

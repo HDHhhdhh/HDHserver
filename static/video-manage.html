@@ -13,6 +13,16 @@
   </header>
 
   <section id="videoSection">
+    <aside id="videoSafetyNotice" class="video-safety-notice" role="status" aria-live="polite" data-state="normal">
+      <strong>일반 모드 보호:</strong>
+      제목·챕터·같은 MID의 서명 URL 보정과 새 영상 추가는 가능하지만, 기존 영상의 MID 변경과 삭제는 저장되지 않습니다.
+    </aside>
+    <div class="video-correction-actions" aria-label="영상 수정 모드">
+      <button id="videoCorrectionMode" type="button" class="btn">수정 모드 켜기</button>
+      <button id="videoCorrectionDownload" type="button" class="btn" hidden>수정안 다운로드</button>
+      <button id="videoCorrectionCancel" type="button" class="btn" hidden>수정 취소</button>
+      <span id="videoCorrectionStatus">수정 모드는 운영 데이터를 즉시 바꾸지 않고 별도 파일만 만듭니다.</span>
+    </div>
     <div class="form-row">
       <select id="vCur" aria-label="커리큘럼"></select>
       <select id="subVidSel" aria-label="세부과정">
@@ -23,7 +33,7 @@
       <input type="number" id="exNumLow" placeholder="하">
       <input id="vChap" type="number" min="1" placeholder="챕터">
       <input type="text" id="vTitle" placeholder="제목">
-      <input type="text" id="vUrl" placeholder="Kollus URL">
+      <input type="text" id="vUrl" placeholder="Kollus / YouTube URL" aria-label="Kollus 또는 YouTube 영상·재생목록 URL">
       <button id="addVid" class="btn">추가</button>
       <button id="saveVid" class="btn">저장</button>
     </div>
@@ -47,7 +57,7 @@
     </table>
   </section>
 
-  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260617t3b"></script>
-  <script type="module" src="/js/video-manage.js"></script>
+  <script type="module" src="/js/admin/demo/bootstrap.js?v=20260828-calendar-revision1"></script>
+  <script type="module" src="/js/video-manage.js?v=20260913-youtube1&hub=20261001-render1&uiPerf=20261002"></script>
 </body>
 </html>

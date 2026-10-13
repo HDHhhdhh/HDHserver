@@ -155,7 +155,6 @@ body.admin .admin-workspace {
    Left rail
    ========================================= */
 body.admin .control-rail {
-  display: none !important;
   position: sticky;
   top: 12px;
   max-height: calc(100vh - 24px);
@@ -413,15 +412,6 @@ body.admin .hero-date-mount {
   min-width: 0;
 }
 
-body.admin .hero-panel.is-date-centered .hero-date-mount {
-  position: absolute;
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
-  left: var(--hero-date-left, 50%);
-  top: var(--hero-date-top, 50%);
-  transform: translate(-50%, -50%);
-  z-index: 1;
-}
 
 body.admin .hero-panel.is-date-centered .hero-date-mount {
   position: static !important;
@@ -797,68 +787,6 @@ body.admin #doneWrap .done-table .today-actions button {
   vertical-align: middle;
 }
 
-body.admin #todayWrap .today-table .today-actions,
-body.admin #doneWrap .done-table .today-actions {
-  gap: 4px;
-}
-
-body.admin #todayWrap .today-table .today-actions button,
-body.admin #doneWrap .done-table .today-actions button {
-  min-width: 40px;
-  min-height: 40px;
-  padding: 0 7px;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-body.admin #todayWrap .today-action-cell,
-body.admin #doneWrap .done-action-cell {
-  padding-right: 4px;
-  padding-left: 4px;
-}
-
-body.admin #doneWrap .done-action-date {
-  display: none;
-}
-
-@media (max-width: 640px) {
-  body.admin #todayWrap .today-action-cell,
-  body.admin #doneWrap .done-action-cell {
-    text-align: left !important;
-  }
-
-  body.admin #todayWrap .today-actions,
-  body.admin #doneWrap .today-actions {
-    display: inline-grid;
-    grid-template-columns: repeat(3, 44px);
-    grid-auto-rows: 44px;
-    justify-content: start;
-    gap: 4px;
-  }
-
-  body.admin #doneWrap .done-action-date {
-    display: block;
-    width: max-content;
-    margin: 0 0 4px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--brand) 14%, transparent);
-    color: var(--ink);
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.4;
-  }
-
-  body.admin #todayWrap .today-actions button,
-  body.admin #doneWrap .today-actions button {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0 4px;
-  }
-}
-
 body.admin #todayWrap .today-table .chk4,
 body.admin #todayWrap .today-table .today-actions,
 body.admin #doneWrap .done-table .today-actions {
@@ -1040,10 +968,20 @@ body.admin.dark #calendar .fc-col-header-cell-cushion {
 
 body.admin #calendar .fc-daygrid-day-frame {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: var(--calendar-cell-height, 96px);
   min-height: var(--calendar-cell-height, 96px);
-  padding-top: 22px;
+  padding-top: 30px;
   box-sizing: border-box;
+}
+
+body.admin #calendar .fc-daygrid-day-events {
+  order: 3;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 4px;
 }
 
 body.admin #calendar .fc-daygrid-day-top {
@@ -1108,10 +1046,13 @@ body.admin #calendar .fc-daygrid-day.fc-day-today .att-count-badge {
 }
 
 body.admin #calendar .att-count-badge {
-  position: absolute;
-  left: 50%;
-  top: 54%;
-  transform: translate(-50%, -50%);
+  position: static;
+  order: 2;
+  flex: 1 1 auto;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 15px;
   font-weight: 800;
   line-height: 1;
@@ -1128,10 +1069,10 @@ body.admin #calendar .fc-daygrid-day.cal-main-week .att-count-badge {
 }
 
 body.admin #calendar .makeup-conflict-list {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  top: calc(54% + 18px);
+  position: static;
+  order: 4;
+  flex: 0 0 auto;
+  margin: 2px 6px 4px;
   z-index: 5;
   display: grid;
   justify-items: center;
@@ -1437,42 +1378,24 @@ body.admin.dark .makeup-planner input[type="search"] {
   background: #0b1220;
 }
 
-@media (max-width: 640px) {
-  body.admin .makeup-planner-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  body.admin .makeup-planner-head > div,
-  body.admin .makeup-planner-control-group {
-    min-width: 0;
-    width: 100%;
-  }
-
-  body.admin .makeup-planner-control-group {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-
-  body.admin .makeup-export-btn {
-    flex: 1 1 92px;
-    height: 44px;
-    min-height: 44px;
-  }
-
-  body.admin .makeup-planner input[type="search"] {
-    width: 100%;
-    min-width: 0;
-    height: 44px;
-  }
-}
 
 body.admin .makeup-planner-list {
   display: grid;
   gap: 7px;
   max-height: 440px;
   overflow: auto;
+}
+
+body.admin #makeupStatusList {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: var(--muted) transparent;
+}
+
+body.admin #makeupStatusList:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
 }
 
 body.admin .makeup-row {
@@ -1533,14 +1456,10 @@ body.admin .makeup-scheduled-badge {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  border: 1px solid var(--makeup-accent-line);
-  border-radius: 999px;
-  background: var(--makeup-accent-soft);
   color: var(--makeup-accent-ink);
-  font-size: 12px;
+  font-size: inherit;
   font-weight: 900;
-  line-height: 1;
-  padding: 4px 8px;
+  line-height: inherit;
 }
 
 body.admin .makeup-actions {
@@ -2124,6 +2043,31 @@ body.admin .modal-panel.column {
   flex-direction: column;
 }
 
+body.admin #schoolExamInfoPopup {
+  --card: #fff;
+  --ink: #172033;
+  --ink-soft: #667085;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --brand-soft: #f7f8fa;
+  color: var(--ink);
+  color-scheme: light;
+}
+
+body.admin #schoolExamInfoPopup .school-exam-info-panel {
+  background: var(--card);
+  color: var(--ink);
+}
+
+body.admin #schoolExamInfoPopup .muted {
+  color: var(--ink-soft);
+}
+
+body.admin #schoolExamInfoPopup .modal-close {
+  background: #f7f8fa;
+  color: #475467;
+}
+
 body.admin .modal-close {
   position: absolute;
   top: 10px;
@@ -2153,6 +2097,221 @@ body.admin .modal-footer {
   padding-top: 12px;
   border-top: 1px solid var(--line);
   text-align: right;
+}
+
+body.admin.quick-printer-export-open {
+  overflow: hidden;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-panel {
+  position: relative;
+  width: min(650px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-heading {
+  display: grid;
+  gap: 5px;
+  padding-right: 38px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-heading h3,
+body.admin #quickPrinterExportModal .quick-printer-export-heading p {
+  margin: 0;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-kicker {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+body.admin #quickPrinterExportModal #quickPrinterExportDescription,
+body.admin #quickPrinterExportModal .quick-printer-export-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.admin #quickPrinterExportModal #quickPrinterExportDate {
+  color: var(--brand);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-form {
+  display: grid;
+  gap: 14px;
+}
+
+body.admin #quickPrinterExportModal fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin #quickPrinterExportModal legend {
+  padding: 0 5px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option {
+  min-height: 68px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 11px;
+  padding: 11px 9px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option:hover {
+  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option.is-empty {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 14px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-time-option small {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--brand-soft) 64%, var(--card));
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-note {
+  margin: 0;
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #0ea5e9 9%, var(--card));
+}
+
+body.admin #quickPrinterExportModal .quick-printer-carryover-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-reprint-option {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 8px 11px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-reprint-option input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status.is-error {
+  color: var(--danger);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-status.is-success {
+  color: var(--ok);
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-action-spacer {
+  flex: 1 1 auto;
+}
+
+body.admin #quickPrinterExportModal .quick-printer-export-actions .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  body.admin #quickPrinterExportModal {
+    padding: 6px;
+    align-items: stretch;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-panel {
+    width: 100%;
+    max-height: 96vh;
+    max-height: 96dvh;
+    align-self: center;
+    border-radius: 16px;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-time-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-time-option {
+    min-height: 54px;
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin #quickPrinterExportModal .quick-printer-export-action-spacer {
+    display: none;
+  }
+
+  body.admin #quickPrinterExportModal #quickPrinterExportSubmit {
+    grid-column: 1 / -1;
+  }
 }
 
 body.admin input[type="text"],
@@ -6014,7 +6173,8 @@ body.admin.tests-page .summary-card:active {
     align-self: stretch;
     align-content: start;
     gap: 5px 8px;
-    overflow: visible;
+    overflow: auto;
+    scrollbar-gutter: stable;
   }
 
   body.admin .hero-panel > .announcement-section .announcement-field {
@@ -6635,6 +6795,10 @@ body.admin.admin-simple .hero-actions #exportRoster {
   display: none !important;
 }
 
+body.admin.admin-simple .hero-actions #exportQuickPrinterTests {
+  display: none !important;
+}
+
 body.admin.admin-simple .hero-actions .btn {
   height: 42px !important;
   min-height: 42px !important;
@@ -7032,6 +7196,203 @@ body.admin .hero-panel {
 body.admin .hero-main {
   grid-column: 1;
   grid-row: 1;
+  min-width: 0;
+}
+
+body.admin .hero-warning-stack {
+  --hero-warning-amber: #b45309;
+  --hero-warning-red: var(--danger);
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  overflow: visible;
+}
+
+body.admin .hero-warning-stack[hidden] {
+  display: none;
+}
+
+body.admin .hero-warning-stack:has(#missingLeaveWarning:not([hidden])) {
+  margin-top: 0;
+}
+
+body.admin .hero-warning-stack:has(#missingLeaveWarning:not([hidden])) #staleDoneWarning {
+  padding-block: 0;
+}
+
+body.admin .hero-warning-stack:not(:has(> .hero-operation-warning:not([hidden]) ~ .hero-operation-warning:not([hidden])))
+  > .hero-operation-warning:not([hidden]) {
+  grid-column: 1 / -1;
+}
+
+body.admin .hero-warning-stack > .hero-operation-warning {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+body.admin #staleDoneWarning {
+  grid-column: 1 / -1;
+  border-color: var(--hero-warning-amber);
+  background: color-mix(in srgb, var(--card) 80%, #f59e0b 20%);
+  color: #78350f;
+  box-shadow: inset 3px 0 0 var(--hero-warning-amber), 0 2px 5px rgba(180, 83, 9, .16);
+}
+
+body.admin #staleDoneWarning .hero-warning-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.admin #missingLeaveWarning {
+  --hero-warning-red: #b42318;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 22px;
+  padding: 0;
+  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hero-warning-red);
+  box-shadow: none;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 22px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+body.admin .missing-leave-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin .missing-leave-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+body.admin .missing-leave-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+}
+
+body.admin .missing-leave-list li > div {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+body.admin .missing-leave-student,
+body.admin .missing-leave-reason {
+  display: block;
+}
+
+body.admin .missing-leave-reason {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body.admin .missing-leave-open {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (min-width: 1501px) {
+  body.admin:not(.admin-simple) .hero-panel:has(#missingLeaveWarning:not([hidden])) {
+    height: auto;
+    min-height: var(--admin-hero-command-height);
+  }
+
+  body.admin:not(.admin-simple) .hero-panel:has(#missingLeaveWarning:not([hidden])) > .hero-actions {
+    grid-row: 2;
+    margin-top: 0;
+  }
+}
+
+body.admin #missingLeaveWarning .hero-warning-icon {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+body.admin #missingLeaveWarning .hero-warning-icon svg {
+  display: none;
+}
+
+body.admin.dark .hero-warning-stack {
+  --hero-warning-amber: #fbbf24;
+  --hero-warning-red: #f87171;
+}
+
+body.admin.dark #staleDoneWarning {
+  background: color-mix(in srgb, var(--card) 78%, #f59e0b 22%);
+  color: #fde68a;
+}
+
+body.admin.dark #missingLeaveWarning {
+  color: #fecaca;
+}
+
+body.admin .hero-warning-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.admin .hero-warning-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+body.admin .hero-warning-label {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+body.admin .hero-warning-stack > .hero-operation-warning[hidden] {
+  display: none;
 }
 
 body.admin .hero-main h2 {
@@ -7055,6 +7416,16 @@ body.admin .hero-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: clamp(188px, 10.7vw, 214px);
+}
+
+@media (min-width: 1501px) {
+  body.admin .hero-actions {
+    column-gap: 8px;
+    row-gap: 0;
+    /* Keep all three 54px action rows inside the fixed desktop command board. */
+    margin-top: clamp(166px, 9vw, 172px);
+  }
+
 }
 
 body.admin .hero-metrics-grid {
@@ -7160,193 +7531,6 @@ body.admin .kpi-value-note {
 
 body.admin .progress-card .kpi-progress-track {
   height: 5px;
-}
-
-body.admin.export-logs-open {
-  overflow: hidden;
-}
-
-body.admin #exportLogsModal .export-logs-panel {
-  position: relative;
-  width: min(680px, calc(100vw - 24px));
-  display: grid;
-  gap: 16px;
-}
-
-body.admin #exportLogsModal .export-logs-heading {
-  display: grid;
-  gap: 5px;
-  padding-right: 38px;
-}
-
-body.admin #exportLogsModal .export-logs-heading h3,
-body.admin #exportLogsModal .export-logs-heading p {
-  margin: 0;
-}
-
-body.admin #exportLogsModal .export-logs-kicker {
-  color: var(--brand);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: .14em;
-}
-
-body.admin #exportLogsModal #exportLogsDescription,
-body.admin #exportLogsModal .export-logs-privacy {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-body.admin #exportLogsModal .export-logs-form {
-  display: grid;
-  gap: 14px;
-}
-
-body.admin #exportLogsModal .export-logs-option-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-body.admin #exportLogsModal fieldset {
-  min-width: 0;
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px;
-  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
-}
-
-body.admin #exportLogsModal fieldset.is-disabled {
-  opacity: .56;
-}
-
-body.admin #exportLogsModal fieldset.is-disabled .export-logs-option {
-  cursor: not-allowed;
-}
-
-body.admin #exportLogsModal fieldset.is-disabled .export-logs-option:hover {
-  background: transparent;
-}
-
-body.admin #exportLogsModal legend {
-  padding: 0 5px;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 900;
-}
-
-body.admin #exportLogsModal .export-logs-option {
-  min-height: 52px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border-radius: 11px;
-  padding: 9px;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-body.admin #exportLogsModal .export-logs-option:hover {
-  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
-}
-
-body.admin #exportLogsModal .export-logs-option.compact {
-  min-height: 42px;
-  align-items: center;
-  padding-block: 5px;
-}
-
-body.admin #exportLogsModal .export-logs-option input {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  margin: 1px 0 0;
-  accent-color: var(--brand);
-}
-
-body.admin #exportLogsModal .export-logs-option span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-  font-size: 14px;
-}
-
-body.admin #exportLogsModal .export-logs-option small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-body.admin #exportLogsModal .export-logs-privacy {
-  margin: 0;
-  border-radius: 11px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, #f59e0b 11%, var(--card));
-}
-
-body.admin #exportLogsModal .export-logs-status {
-  min-height: 20px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-body.admin #exportLogsModal .export-logs-status.is-error {
-  color: var(--danger);
-}
-
-body.admin #exportLogsModal .export-logs-status.is-success {
-  color: var(--ok);
-}
-
-body.admin #exportLogsModal .export-logs-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-body.admin #exportLogsModal .export-logs-action-spacer {
-  flex: 1 1 auto;
-}
-
-body.admin #exportLogsModal .export-logs-actions .btn {
-  min-height: 44px;
-}
-
-@media (max-width: 640px) {
-  body.admin #exportLogsModal {
-    padding: 6px;
-    align-items: stretch;
-  }
-
-  body.admin #exportLogsModal .export-logs-panel {
-    width: 100%;
-    max-height: 96vh;
-    max-height: 96dvh;
-    align-self: center;
-    border-radius: 16px;
-  }
-
-  body.admin #exportLogsModal .export-logs-option-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  body.admin #exportLogsModal .export-logs-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  body.admin #exportLogsModal .export-logs-action-spacer {
-    display: none;
-  }
-
-  body.admin #exportLogsModal #exportLogsSubmit {
-    grid-column: 1 / -1;
-  }
 }
 
 body.admin .admin-operation-notes {
@@ -8138,180 +8322,6 @@ body.admin :where(
   border-radius: 8px !important;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, .16);
-}
-
-body.admin #adminSchoolTip .assistant-note-heading h3 {
-  margin: 0 0 8px;
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-label {
-  flex: 0 0 auto;
-  color: rgba(248, 250, 252, .72);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons {
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button {
-  --assistant-note-author-color: #f8fafc;
-  --assistant-note-author-rgb: 248, 250, 252;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid rgba(255, 255, 255, .18);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, .72);
-  color: var(--assistant-note-author-color);
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="귤"] {
-  --assistant-note-author-color: #fbbf24;
-  --assistant-note-author-rgb: 251, 191, 36;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="세빈"] {
-  --assistant-note-author-color: #7dd3fc;
-  --assistant-note-author-rgb: 125, 211, 252;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="동훈"] {
-  --assistant-note-author-color: #86efac;
-  --assistant-note-author-rgb: 134, 239, 172;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="하영"] {
-  --assistant-note-author-color: #f9a8d4;
-  --assistant-note-author-rgb: 249, 168, 212;
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button:hover {
-  border-color: rgba(var(--assistant-note-author-rgb), .68);
-  background: rgba(var(--assistant-note-author-rgb), .12);
-}
-
-body.admin #adminSchoolTip .assistant-note-author-buttons button.is-selected {
-  border-color: var(--assistant-note-author-color);
-  background: rgba(var(--assistant-note-author-rgb), .20);
-  box-shadow: inset 0 0 0 1px rgba(var(--assistant-note-author-rgb), .30);
-}
-
-body.admin #adminSchoolTip .assistant-note-meta {
-  min-height: 16px;
-  margin: -1px 0 7px;
-  color: #f8fafc;
-  font-size: 11.5px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-input {
-  width: 100%;
-  min-height: 108px;
-  resize: vertical;
-  box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, .2);
-  border-radius: 8px;
-  padding: 8px 9px;
-  background: rgba(2, 6, 23, .5);
-  color: #f8fafc;
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
-  color: #fbbf24;
-  caret-color: #fbbf24;
-}
-
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
-  color: #7dd3fc;
-  caret-color: #7dd3fc;
-}
-
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
-  color: #86efac;
-  caret-color: #86efac;
-}
-
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
-  color: #f9a8d4;
-  caret-color: #f9a8d4;
-}
-
-body.admin #adminSchoolTip .assistant-note-input:focus {
-  outline: 2px solid rgba(96, 165, 250, .9);
-  outline-offset: 1px;
-}
-
-body.admin #adminSchoolTip .assistant-note-compose-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-body.admin #adminSchoolTip .assistant-note-save-info {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-
-body.admin #adminSchoolTip .assistant-note-status {
-  min-height: 16px;
-  color: rgba(255, 255, 255, .62);
-  font-size: 9px;
-  line-height: 1.35;
-}
-
-body.admin #adminSchoolTip .assistant-note-status.is-error {
-  color: #fca5a5;
-}
-
-body.admin #adminSchoolTip .assistant-note-status.is-success {
-  color: #86efac;
-}
-
-body.admin #adminSchoolTip .assistant-note-save {
-  min-height: 26px;
-  border: 1px solid rgba(96, 165, 250, .62);
-  border-radius: 7px;
-  padding: 4px 8px;
-  background: #2563eb;
-  color: #fff;
-  font: inherit;
-  font-size: 9px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-body.admin #adminSchoolTip .assistant-note-save:disabled {
-  cursor: wait;
-  opacity: .55;
-}
 
 body.admin .student-accounts-panel {
   position: relative;
@@ -8791,40 +8801,6 @@ body.admin .announcement-video-field small {
   line-height: 1.45;
 }
 
-@media (max-width: 1024px) {
-  body.admin :where(
-    button,
-    a.btn,
-    input:not([type="checkbox"]):not([type="radio"]),
-    select
-  ) {
-    min-height: 44px !important;
-  }
-
-  body.admin button {
-    min-width: 44px !important;
-  }
-
-  body.admin .modal-close,
-  body.admin .ann-survey-icon-btn,
-  body.admin .ann-reply-expand-close,
-  body.admin #calendar .makeup-slot-close,
-  body.admin #logModal .hw-del-btn {
-    width: 44px !important;
-    min-width: 44px !important;
-    height: 44px !important;
-    min-height: 44px !important;
-  }
-
-  body.admin .global-links .btn,
-  body.admin #absentRecoverBtn,
-  body.admin #homeworkLeaveBtn,
-  body.admin #clearAllBtn,
-  body.admin.admin-simple .hero-actions .btn {
-    height: 44px !important;
-    min-height: 44px !important;
-  }
-}
 
 /* Selected legacy-safe overlays from the verified retry2 server export. */
 /* Excludes student-app accounts/focus, canonical-homework, student-log, and announcement-video styles. */
@@ -8861,12 +8837,13 @@ body.admin .announcement-video-field small {
 }
 
 body.admin #adminSchoolTip .student-tooltip-identity-row {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: start;
-  column-gap: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 5px;
   margin-bottom: 6px;
 }
+
 
 body.admin #adminSchoolTip .student-tooltip-name-group {
   display: inline-flex;
@@ -8888,51 +8865,80 @@ body.admin #adminSchoolTip .student-tooltip-level-badge {
   line-height: 1.35;
 }
 
+body.admin #adminSchoolTip .student-tooltip-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+body.admin #adminSchoolTip .student-tooltip-school {
+  font-weight: 700;
+  opacity: .92;
+}
+
 body.admin #adminSchoolTip .student-tooltip-publisher {
+  flex: 0 0 auto;
   min-width: 0;
-  align-self: start;
+  max-width: 100%;
+  align-self: center;
+  flex-wrap: nowrap !important;
+  overflow: hidden;
+  font-size: 10.5px !important;
 }
 
 body.admin #adminSchoolTip .student-tooltip-publisher > span {
   min-width: 0;
   max-width: 100%;
+  gap: 3px !important;
+  padding: 2px 6px !important;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes {
+body.admin #adminSchoolTip .student-tooltip-publisher > span > span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+body.admin #logModal .assistant-student-notes {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, .16);
 }
 
-body.admin #adminSchoolTip .assistant-note-heading h3 {
+body.admin #logModal .assistant-note-heading h3 {
   margin: 0 0 8px;
   color: #fff;
   font-size: 13px;
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-row {
+body.admin #logModal .assistant-note-author-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-label {
+body.admin #logModal .assistant-note-author-label {
   flex: 0 0 auto;
   color: rgba(248, 250, 252, .72);
   font-size: 11px;
   font-weight: 700;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons {
+body.admin #logModal .assistant-note-author-buttons {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button {
+body.admin #logModal .assistant-note-author-buttons button {
   --assistant-note-author-color: #f8fafc;
   --assistant-note-author-rgb: 248, 250, 252;
   min-width: 0;
@@ -8946,38 +8952,38 @@ body.admin #adminSchoolTip .assistant-note-author-buttons button {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="귤"] {
+body.admin #logModal .assistant-note-author-buttons button[data-note-author="귤"] {
   --assistant-note-author-color: #fbbf24;
   --assistant-note-author-rgb: 251, 191, 36;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="세빈"] {
+body.admin #logModal .assistant-note-author-buttons button[data-note-author="세빈"] {
   --assistant-note-author-color: #7dd3fc;
   --assistant-note-author-rgb: 125, 211, 252;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="동훈"] {
+body.admin #logModal .assistant-note-author-buttons button[data-note-author="동훈"] {
   --assistant-note-author-color: #86efac;
   --assistant-note-author-rgb: 134, 239, 172;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button[data-note-author="하영"] {
+body.admin #logModal .assistant-note-author-buttons button[data-note-author="하영"] {
   --assistant-note-author-color: #f9a8d4;
   --assistant-note-author-rgb: 249, 168, 212;
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button:hover {
+body.admin #logModal .assistant-note-author-buttons button:hover {
   border-color: rgba(var(--assistant-note-author-rgb), .68);
   background: rgba(var(--assistant-note-author-rgb), .12);
 }
 
-body.admin #adminSchoolTip .assistant-note-author-buttons button.is-selected {
+body.admin #logModal .assistant-note-author-buttons button.is-selected {
   border-color: var(--assistant-note-author-color);
   background: rgba(var(--assistant-note-author-rgb), .20);
   box-shadow: inset 0 0 0 1px rgba(var(--assistant-note-author-rgb), .30);
 }
 
-body.admin #adminSchoolTip .assistant-note-meta {
+body.admin #logModal .assistant-note-meta {
   min-height: 16px;
   margin: -1px 0 7px;
   color: #f8fafc;
@@ -8986,7 +8992,7 @@ body.admin #adminSchoolTip .assistant-note-meta {
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-input {
+body.admin #logModal .assistant-note-input {
   width: 100%;
   min-height: 108px;
   resize: vertical;
@@ -9001,32 +9007,32 @@ body.admin #adminSchoolTip .assistant-note-input {
   line-height: 1.45;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-color-author="귤"] .assistant-note-input {
   color: #fbbf24;
   caret-color: #fbbf24;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-color-author="세빈"] .assistant-note-input {
   color: #7dd3fc;
   caret-color: #7dd3fc;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-color-author="동훈"] .assistant-note-input {
   color: #86efac;
   caret-color: #86efac;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-color-author="하영"] .assistant-note-input {
   color: #f9a8d4;
   caret-color: #f9a8d4;
 }
 
-body.admin #adminSchoolTip .assistant-note-input:focus {
+body.admin #logModal .assistant-note-input:focus {
   outline: 2px solid rgba(96, 165, 250, .9);
   outline-offset: 1px;
 }
 
-body.admin #adminSchoolTip .assistant-note-compose-actions {
+body.admin #logModal .assistant-note-compose-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -9034,28 +9040,28 @@ body.admin #adminSchoolTip .assistant-note-compose-actions {
   margin-top: 6px;
 }
 
-body.admin #adminSchoolTip .assistant-note-save-info {
+body.admin #logModal .assistant-note-save-info {
   min-width: 0;
   display: grid;
   gap: 1px;
 }
 
-body.admin #adminSchoolTip .assistant-note-status {
+body.admin #logModal .assistant-note-status {
   min-height: 16px;
   color: rgba(255, 255, 255, .62);
   font-size: 9px;
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-status.is-error {
+body.admin #logModal .assistant-note-status.is-error {
   color: #fca5a5;
 }
 
-body.admin #adminSchoolTip .assistant-note-status.is-success {
+body.admin #logModal .assistant-note-status.is-success {
   color: #86efac;
 }
 
-body.admin #adminSchoolTip .assistant-note-save {
+body.admin #logModal .assistant-note-save {
   min-height: 26px;
   border: 1px solid rgba(96, 165, 250, .62);
   border-radius: 7px;
@@ -9068,7 +9074,7 @@ body.admin #adminSchoolTip .assistant-note-save {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-save:disabled {
+body.admin #logModal .assistant-note-save:disabled {
   cursor: wait;
   opacity: .55;
 }
@@ -9107,7 +9113,7 @@ body.admin #adminSchoolTip .assistant-note-save:disabled {
     min-height: 44px !important;
   }
 }
-body.admin #adminSchoolTip .assistant-note-heading {
+body.admin #logModal .assistant-note-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -9115,7 +9121,7 @@ body.admin #adminSchoolTip .assistant-note-heading {
   margin-bottom: 8px;
 }
 
-body.admin #adminSchoolTip .assistant-note-count {
+body.admin #logModal .assistant-note-count {
   flex: 0 0 auto;
   border: 1px solid rgba(148, 163, 184, .3);
   border-radius: 999px;
@@ -9127,7 +9133,7 @@ body.admin #adminSchoolTip .assistant-note-count {
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-thread {
+body.admin #logModal .assistant-note-thread {
   display: grid;
   align-content: start;
   gap: 6px;
@@ -9143,7 +9149,7 @@ body.admin #adminSchoolTip .assistant-note-thread {
   background: rgba(2, 6, 23, .34);
 }
 
-body.admin #adminSchoolTip .assistant-note-empty {
+body.admin #logModal .assistant-note-empty {
   align-self: center;
   margin: 0;
   padding: 14px 6px;
@@ -9152,11 +9158,11 @@ body.admin #adminSchoolTip .assistant-note-empty {
   text-align: center;
 }
 
-body.admin #adminSchoolTip .assistant-note-empty.is-error {
+body.admin #logModal .assistant-note-empty.is-error {
   color: #fca5a5;
 }
 
-body.admin #adminSchoolTip .assistant-note-item {
+body.admin #logModal .assistant-note-item {
   --assistant-note-item-color: #e2e8f0;
   --assistant-note-item-rgb: 226, 232, 240;
   min-width: 0;
@@ -9167,27 +9173,27 @@ body.admin #adminSchoolTip .assistant-note-item {
   background: rgba(var(--assistant-note-item-rgb), .07);
 }
 
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="귤"] {
+body.admin #logModal .assistant-note-item[data-note-author="귤"] {
   --assistant-note-item-color: #fbbf24;
   --assistant-note-item-rgb: 251, 191, 36;
 }
 
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="세빈"] {
+body.admin #logModal .assistant-note-item[data-note-author="세빈"] {
   --assistant-note-item-color: #7dd3fc;
   --assistant-note-item-rgb: 125, 211, 252;
 }
 
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="동훈"] {
+body.admin #logModal .assistant-note-item[data-note-author="동훈"] {
   --assistant-note-item-color: #86efac;
   --assistant-note-item-rgb: 134, 239, 172;
 }
 
-body.admin #adminSchoolTip .assistant-note-item[data-note-author="하영"] {
+body.admin #logModal .assistant-note-item[data-note-author="하영"] {
   --assistant-note-item-color: #f9a8d4;
   --assistant-note-item-rgb: 249, 168, 212;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-header {
+body.admin #logModal .assistant-note-item-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -9195,41 +9201,96 @@ body.admin #adminSchoolTip .assistant-note-item-header {
   margin-bottom: 3px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-header.is-reminder {
-  align-items: flex-start;
-  gap: 5px;
+body.admin #logModal .assistant-note-item-header.is-reminder {
+  display: block;
+  margin-bottom: 4px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item.has-reminder > .assistant-note-item-author-group {
-  margin: 0 0 4px;
+body.admin #logModal .assistant-note-item-header.is-reminder > .assistant-note-reminder-info {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
-body.admin #adminSchoolTip .assistant-note-item.is-pinned {
-  border-color: rgba(250, 204, 21, .58);
-  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, .12), 0 0 0 1px rgba(250, 204, 21, .08);
+body.admin #logModal .assistant-note-reminder-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 6px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-author-group {
+body.admin #logModal .assistant-note-reminder-body > .assistant-note-item-author-group {
+  margin: 0;
+}
+
+body.admin #logModal .assistant-note-reminder-body > .assistant-note-item-content {
+  min-width: 0;
+}
+
+body.admin #logModal .assistant-note-reminder-body > .assistant-note-action-group {
+  justify-self: end;
+}
+
+body.admin #logModal .assistant-note-reminder-body.is-stacked {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+body.admin #logModal .assistant-note-reminder-body.is-stacked > .assistant-note-item-author-group {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+body.admin #logModal .assistant-note-reminder-body.is-stacked > .assistant-note-action-group {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+body.admin #logModal .assistant-note-reminder-body.is-stacked > .assistant-note-item-content,
+body.admin #logModal .assistant-note-reminder-body > .assistant-note-edit-input,
+body.admin #logModal .assistant-note-reminder-body > .assistant-note-edit-actions {
+  grid-column: 1 / -1;
+}
+
+body.admin #logModal .assistant-note-item.is-pinned {
+  position: relative;
+  margin: 4px 0 6px;
+  padding: 9px 9px 9px 11px;
+  border: 1px solid rgba(var(--assistant-note-item-rgb), .62);
+  border-left: 3px solid var(--assistant-note-item-color);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--assistant-note-item-rgb), .11), rgba(var(--assistant-note-item-rgb), 0) 36%),
+    rgba(var(--assistant-note-item-rgb), .07);
+  box-shadow:
+    inset 0 3px 0 rgba(var(--assistant-note-item-rgb), .92),
+    0 5px 16px rgba(0, 0, 0, .18);
+}
+
+body.admin #logModal .assistant-note-item-author-group {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-author {
+body.admin #logModal .assistant-note-item-author {
   min-width: 0;
   color: var(--assistant-note-item-color);
   font-size: 10.5px;
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin {
+body.admin #logModal .assistant-note-pin {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 22px !important;
+  min-width: 22px !important;
+  height: 22px !important;
+  min-height: 22px !important;
   border: 0;
   border-radius: 50%;
   padding: 0;
@@ -9238,7 +9299,7 @@ body.admin #adminSchoolTip .assistant-note-pin {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin-icon {
+body.admin #logModal .assistant-note-pin-icon {
   display: block;
   width: 16px;
   height: 16px;
@@ -9251,37 +9312,65 @@ body.admin #adminSchoolTip .assistant-note-pin-icon {
   transform-origin: center;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin:hover,
-body.admin #adminSchoolTip .assistant-note-pin:focus-visible {
+body.admin #logModal .assistant-note-pin:hover,
+body.admin #logModal .assistant-note-pin:focus-visible {
   background: rgba(255, 255, 255, .1);
   color: rgba(255, 255, 255, .86);
   outline: 1px solid rgba(255, 255, 255, .72);
   outline-offset: 1px;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] {
+body.admin #logModal .assistant-note-pin[aria-pressed="true"] {
   color: #fff;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin[aria-pressed="true"] .assistant-note-pin-icon {
+body.admin #logModal .assistant-note-pin[aria-pressed="true"] .assistant-note-pin-icon {
   fill: currentColor;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-time {
+body.admin #logModal .assistant-note-item.is-pinned .assistant-note-pin {
+  border: 1px solid rgba(var(--assistant-note-item-rgb), .62);
+  background: rgba(var(--assistant-note-item-rgb), .16);
+  color: var(--assistant-note-item-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .16);
+}
+
+body.admin #logModal .assistant-note-item.is-pin-feedback {
+  animation: assistant-note-pin-feedback 240ms cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes assistant-note-pin-feedback {
+  from {
+    transform: scale(.992);
+    opacity: .84;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.admin #logModal .assistant-note-item.is-pin-feedback {
+    animation: none;
+  }
+}
+
+body.admin #logModal .assistant-note-item-time {
   flex: 0 0 auto;
   color: rgba(203, 213, 225, .62);
   font-size: 8.5px;
   line-height: 1.35;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-meta {
+body.admin #logModal .assistant-note-item-meta {
   display: flex;
   align-items: flex-start;
   flex: 0 0 auto;
   gap: 6px;
 }
 
-body.admin #adminSchoolTip .assistant-note-action-group {
+body.admin #logModal .assistant-note-action-group {
   display: flex;
   flex: 0 0 auto;
   flex-direction: row;
@@ -9289,12 +9378,12 @@ body.admin #adminSchoolTip .assistant-note-action-group {
   gap: 3px;
 }
 
-body.admin #adminSchoolTip .assistant-note-item.has-reminder .assistant-note-action-group {
-  flex-direction: column;
-  align-items: stretch;
+body.admin #logModal .assistant-note-item.has-reminder .assistant-note-action-group {
+  flex-direction: row;
+  align-items: center;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit {
+body.admin #logModal .assistant-note-edit {
   min-height: 20px;
   border: 1px solid rgba(96, 165, 250, .45);
   border-radius: 5px;
@@ -9308,20 +9397,20 @@ body.admin #adminSchoolTip .assistant-note-edit {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit:hover,
-body.admin #adminSchoolTip .assistant-note-edit:focus-visible {
+body.admin #logModal .assistant-note-edit:hover,
+body.admin #logModal .assistant-note-edit:focus-visible {
   border-color: rgba(147, 197, 253, .78);
   background: rgba(37, 99, 235, .28);
   color: #eff6ff;
 }
-body.admin #adminSchoolTip .assistant-note-delete,
-body.admin #adminSchoolTip .assistant-note-edit {
+body.admin #logModal .assistant-note-delete,
+body.admin #logModal .assistant-note-edit {
   width: auto !important;
   min-width: 0 !important;
   height: 20px !important;
   min-height: 20px !important;
 }
-body.admin #adminSchoolTip .assistant-note-delete {
+body.admin #logModal .assistant-note-delete {
   min-height: 20px;
   border: 1px solid rgba(248, 113, 113, .42);
   border-radius: 5px;
@@ -9335,21 +9424,21 @@ body.admin #adminSchoolTip .assistant-note-delete {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-delete:hover {
+body.admin #logModal .assistant-note-delete:hover {
   border-color: rgba(248, 113, 113, .78);
   background: rgba(127, 29, 29, .42);
   color: #fecaca;
 }
 
-body.admin #adminSchoolTip .assistant-note-pin:disabled,
-body.admin #adminSchoolTip .assistant-note-delete:disabled,
-body.admin #adminSchoolTip .assistant-note-edit:disabled,
-body.admin #adminSchoolTip .assistant-note-author-buttons button:disabled {
+body.admin #logModal .assistant-note-pin:disabled,
+body.admin #logModal .assistant-note-delete:disabled,
+body.admin #logModal .assistant-note-edit:disabled,
+body.admin #logModal .assistant-note-author-buttons button:disabled {
   cursor: wait;
   opacity: .55;
 }
 
-body.admin #adminSchoolTip .assistant-note-item-content {
+body.admin #logModal .assistant-note-item-content {
   margin: 0;
   color: var(--assistant-note-item-color);
   font-size: 10.5px;
@@ -9358,7 +9447,7 @@ body.admin #adminSchoolTip .assistant-note-item-content {
   overflow-wrap: anywhere;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-input {
+body.admin #logModal .assistant-note-edit-input {
   display: block;
   width: 100%;
   min-height: 68px;
@@ -9375,14 +9464,14 @@ body.admin #adminSchoolTip .assistant-note-edit-input {
   box-sizing: border-box;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-actions {
+body.admin #logModal .assistant-note-edit-actions {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
   margin-top: 5px;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-actions button {
+body.admin #logModal .assistant-note-edit-actions button {
   min-width: 0 !important;
   height: 20px !important;
   min-height: 20px !important;
@@ -9394,49 +9483,49 @@ body.admin #adminSchoolTip .assistant-note-edit-actions button {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-cancel {
+body.admin #logModal .assistant-note-edit-cancel {
   border: 1px solid rgba(148, 163, 184, .36);
   background: rgba(148, 163, 184, .12);
   color: #cbd5e1;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-save {
+body.admin #logModal .assistant-note-edit-save {
   border: 1px solid rgba(96, 165, 250, .52);
   background: rgba(37, 99, 235, .2);
   color: #bfdbfe;
 }
 
-body.admin #adminSchoolTip .assistant-note-edit-actions button:disabled {
+body.admin #logModal .assistant-note-edit-actions button:disabled {
   cursor: wait;
   opacity: .55;
 }
-body.admin #adminSchoolTip .assistant-note-compose {
+body.admin #logModal .assistant-note-compose {
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid rgba(148, 163, 184, .18);
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="귤"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-selected-author="귤"] .assistant-note-input {
   color: #fbbf24;
   caret-color: #fbbf24;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="세빈"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-selected-author="세빈"] .assistant-note-input {
   color: #7dd3fc;
   caret-color: #7dd3fc;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="동훈"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-selected-author="동훈"] .assistant-note-input {
   color: #86efac;
   caret-color: #86efac;
 }
 
-body.admin #adminSchoolTip .assistant-student-notes[data-note-selected-author="하영"] .assistant-note-input {
+body.admin #logModal .assistant-student-notes[data-note-selected-author="하영"] .assistant-note-input {
   color: #f9a8d4;
   caret-color: #f9a8d4;
 }
 
-body.admin #adminSchoolTip .assistant-note-remind-input {
+body.admin #logModal .assistant-note-remind-input {
   width: 190px;
   flex: 1 1 190px;
   min-width: 0;
@@ -9452,14 +9541,14 @@ body.admin #adminSchoolTip .assistant-note-remind-input {
 }
 
 
-body.admin #adminSchoolTip .assistant-note-mode-tabs {
+body.admin #logModal .assistant-note-mode-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 8px;
 }
 
-body.admin #adminSchoolTip .assistant-note-mode-button {
+body.admin #logModal .assistant-note-mode-button {
   min-height: 30px;
   border: 1px solid rgba(148, 163, 184, .32);
   border-radius: 8px;
@@ -9471,28 +9560,28 @@ body.admin #adminSchoolTip .assistant-note-mode-button {
   cursor: pointer;
 }
 
-body.admin #adminSchoolTip .assistant-note-mode-button:hover,
-body.admin #adminSchoolTip .assistant-note-mode-button:focus-visible {
+body.admin #logModal .assistant-note-mode-button:hover,
+body.admin #logModal .assistant-note-mode-button:focus-visible {
   border-color: rgba(147, 197, 253, .72);
   color: #f8fafc;
 }
 
-body.admin #adminSchoolTip .assistant-note-mode-button.is-selected {
+body.admin #logModal .assistant-note-mode-button.is-selected {
   border-color: rgba(96, 165, 250, .88);
   background: #2563eb;
   color: #fff;
   box-shadow: inset 0 0 0 1px rgba(191, 219, 254, .2);
 }
 
-body.admin #adminSchoolTip .assistant-note-mode-button:disabled {
+body.admin #logModal .assistant-note-mode-button:disabled {
   cursor: wait;
   opacity: .55;
 }
 
-body.admin #adminSchoolTip .assistant-note-compose-reminder[hidden] {
+body.admin #logModal .assistant-note-compose-reminder[hidden] {
   display: none;
 }
-body.admin #adminSchoolTip .assistant-note-compose-reminder {
+body.admin #logModal .assistant-note-compose-reminder {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -9503,7 +9592,7 @@ body.admin #adminSchoolTip .assistant-note-compose-reminder {
   font-size: 11px;
 }
 
-body.admin #adminSchoolTip .assistant-note-compose-reminder-label {
+body.admin #logModal .assistant-note-compose-reminder-label {
   display: inline-flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -9514,7 +9603,7 @@ body.admin #adminSchoolTip .assistant-note-compose-reminder-label {
   white-space: nowrap;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-info {
+body.admin #logModal .assistant-note-reminder-info {
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -9522,7 +9611,7 @@ body.admin #adminSchoolTip .assistant-note-reminder-info {
   white-space: nowrap;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-badge {
+body.admin #logModal .assistant-note-reminder-badge {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -9536,7 +9625,7 @@ body.admin #adminSchoolTip .assistant-note-reminder-badge {
   line-height: 1.25;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-dates {
+body.admin #logModal .assistant-note-reminder-dates {
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -9548,37 +9637,569 @@ body.admin #adminSchoolTip .assistant-note-reminder-dates {
   white-space: nowrap;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-arrow {
+body.admin #logModal .assistant-note-reminder-arrow {
   color: #fbbf24;
   font-size: 11px;
   font-weight: 950;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-dates > span:last-child {
+body.admin #logModal .assistant-note-reminder-dates > span:last-child {
   color: #bfdbfe;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="due"] .assistant-note-reminder-badge {
+body.admin #logModal .assistant-note-reminder-info[data-reminder-state="due"] .assistant-note-reminder-badge {
   border-color: rgba(251, 191, 36, .72);
   color: #fbbf24;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="upcoming"] .assistant-note-reminder-badge {
+body.admin #logModal .assistant-note-reminder-info[data-reminder-state="upcoming"] .assistant-note-reminder-badge {
   border-color: rgba(96, 165, 250, .58);
   color: #93c5fd;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="past"] {
+body.admin #logModal .assistant-note-reminder-info[data-reminder-state="past"] {
   opacity: .8;
 }
 
-body.admin #adminSchoolTip .assistant-note-reminder-info[data-reminder-state="past"] .assistant-note-reminder-badge {
+body.admin #logModal .assistant-note-reminder-info[data-reminder-state="past"] .assistant-note-reminder-badge {
   color: #94a3b8;
 }
 @media (max-width: 600px) {
-  body.admin #adminSchoolTip .assistant-note-compose-reminder {
+  body.admin #logModal .assistant-note-compose-reminder {
     align-items: center;
     flex-direction: row;
+  }
+}
+
+/* Restored student-operation log rail. Keep the live announcement composer intact. */
+body.admin .hero-note-rail {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(230px, 3fr);
+  gap: 10px;
+}
+
+body.admin .hero-note-rail > .admin-operation-notes,
+body.admin .hero-note-rail > .student-log-panel {
+  grid-column: auto;
+  grid-row: auto;
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  height: 100%;
+}
+
+body.admin .student-log-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
+  overflow: hidden;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 94%, var(--brand-soft) 6%);
+}
+
+body.admin .student-log-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body.admin .student-log-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+body.admin .student-log-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1.2;
+  word-break: keep-all;
+}
+
+body.admin .student-log-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 21px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-soft) 80%, var(--card) 20%);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+body.admin .student-log-head p {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: keep-all;
+}
+
+body.admin .student-log-head .btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+body.admin .student-log-filters {
+  display: inline-flex;
+  justify-self: start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin .student-log-filter {
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin .student-log-filter.is-selected {
+  background: var(--brand);
+  color: #fff;
+}
+
+body.admin .student-log-filter:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin .student-log-list,
+body.admin .student-log-group-items {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.admin .student-log-list {
+  min-height: 0;
+  padding-right: 3px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+body.admin .student-log-group + .student-log-group {
+  margin-top: 8px;
+}
+
+body.admin .student-log-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 2px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+body.admin .student-log-group-label strong {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+body.admin .student-log-group-count {
+  font-weight: 750;
+}
+
+body.admin .student-log-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+body.admin .student-log-marker {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border: 2px solid var(--brand);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+body.admin .student-log-item-body {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+body.admin .student-log-item-head,
+body.admin .student-log-identity,
+body.admin .student-log-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body.admin .student-log-item-head {
+  justify-content: space-between;
+}
+
+body.admin .student-log-identity {
+  overflow: hidden;
+}
+
+body.admin .student-log-student {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.admin .student-log-kind {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--card) 90%);
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+body.admin .student-log-time {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.admin .student-log-delete {
+  min-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+body.admin .student-log-delete:hover {
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--line) 66%);
+  background: color-mix(in srgb, var(--card) 82%, var(--danger) 18%);
+  color: var(--danger);
+}
+
+body.admin .student-log-delete:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin .student-log-comment {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+body.admin .student-log-empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 14px 5px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+}
+
+body.admin .student-log-status {
+  min-height: 15px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+body.admin .student-log-status[data-state='error'] { color: var(--danger); }
+body.admin .student-log-status[data-state='success'] { color: var(--ok); }
+
+body.admin.admin-simple .hero-note-rail { display: none !important; }
+
+@media (max-width: 1500px) {
+  body.admin .hero-note-rail {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    height: auto;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+  }
+
+  body.admin .hero-note-rail > .admin-operation-notes,
+  body.admin .hero-note-rail > .student-log-panel {
+    height: var(--admin-note-responsive-height, 250px);
+    min-height: var(--admin-note-responsive-height, 250px);
+    max-height: var(--admin-note-responsive-height, 250px);
+  }
+}
+
+@media (max-width: 1120px) {
+  body.admin .hero-note-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  body.admin .hero-note-rail {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+/* Student log rail contract: keep memo and log boxes at an equal desktop width. */
+@media (min-width: 1121px) {
+  body.admin .hero-note-rail {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* The thread popup intentionally uses a 2x type scale across every text role. */
+body.admin #logModal {
+  --assistant-note-body-font-size: 26px;
+  --assistant-note-author-font-size: 28px;
+}
+
+body.admin #logModal .log-header-row {
+  justify-content: flex-end;
+}
+
+body.admin #logModal .assistant-student-notes {
+  --assistant-note-body-font-size: 26px;
+  --assistant-note-author-font-size: 28px;
+  font-size: var(--assistant-note-body-font-size);
+}
+
+body.admin #logModal .assistant-note-heading h3 {
+  font-size: var(--assistant-note-body-font-size);
+}
+
+body.admin #logModal .assistant-note-item-content,
+body.admin #logModal .assistant-note-input,
+body.admin #logModal .assistant-note-edit-input,
+body.admin #logModal .assistant-note-empty {
+  font-size: var(--assistant-note-body-font-size);
+  line-height: 1.5;
+}
+
+body.admin #logModal .assistant-note-item-author {
+  font-size: var(--assistant-note-author-font-size);
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+body.admin #logModal .assistant-note-author-buttons button {
+  height: 48px;
+  min-height: 48px;
+  font-size: var(--assistant-note-body-font-size);
+  font-weight: 900;
+}
+
+body.admin #logModal .assistant-note-mode-button {
+  min-height: 44px;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+body.admin #logModal .assistant-note-author-label,
+body.admin #logModal .assistant-note-meta,
+body.admin #logModal .assistant-note-compose-reminder,
+body.admin #logModal .assistant-note-remind-input {
+  font-size: 24px;
+}
+
+body.admin #logModal .assistant-note-count,
+body.admin #logModal .assistant-note-status,
+body.admin #logModal .assistant-note-item-time,
+body.admin #logModal .assistant-note-reminder-dates {
+  font-size: 21px;
+}
+
+body.admin #logModal .assistant-note-reminder-badge,
+body.admin #logModal .assistant-note-reminder-arrow,
+body.admin #logModal .assistant-note-save {
+  font-size: 22px;
+}
+
+body.admin #logModal .assistant-note-save {
+  min-height: 42px;
+}
+
+body.admin #logModal .assistant-note-delete,
+body.admin #logModal .assistant-note-edit,
+body.admin #logModal .assistant-note-edit-actions button {
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 3px 8px;
+  font-size: 20px;
+}
+
+@media (max-width: 600px) {
+  body.admin #logModal .assistant-note-reminder-body {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  body.admin #logModal .assistant-note-reminder-body > .assistant-note-item-author-group {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  body.admin #logModal .assistant-note-reminder-body > .assistant-note-action-group {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  body.admin #logModal .assistant-note-reminder-body > .assistant-note-item-content,
+  body.admin #logModal .assistant-note-reminder-body > .assistant-note-edit-input,
+  body.admin #logModal .assistant-note-reminder-body > .assistant-note-edit-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Thread popup header actions live inside the dark assistant-note surface. */
+body.admin #logModal .log-card {
+  padding: 0 !important;
+  border-color: #243047 !important;
+  background: #111827 !important;
+}
+
+body.admin #logModal .assistant-note-heading h3 {
+  margin: 0;
+}
+
+body.admin #logModal .assistant-note-heading-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+body.admin #logModal .assistant-note-heading-button {
+  width: auto;
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, .58);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .78);
+  color: #e5e7eb;
+  font-size: var(--assistant-note-body-font-size);
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+body.admin #logModal .assistant-note-save-close {
+  border-color: #60a5fa;
+  background: #2563eb;
+  color: #fff;
+}
+
+body.admin #logModal .assistant-note-save-close:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+body.admin #todayWrap .today-table .today-actions,
+body.admin #doneWrap .done-table .today-actions {
+  gap: 4px;
+}
+
+body.admin #todayWrap .today-table .today-actions button,
+body.admin #doneWrap .done-table .today-actions button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.admin #todayWrap .today-action-cell,
+body.admin #doneWrap .done-action-cell {
+  padding-right: 4px;
+  padding-left: 4px;
+}
+
+body.admin #doneWrap .done-action-date {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  body.admin #todayWrap .today-action-cell,
+  body.admin #doneWrap .done-action-cell {
+    text-align: left !important;
+  }
+
+  body.admin #todayWrap .today-actions,
+  body.admin #doneWrap .today-actions {
+    display: inline-grid;
+    grid-template-columns: repeat(3, 44px);
+    grid-auto-rows: 44px;
+    justify-content: start;
+    gap: 4px;
+  }
+
+  body.admin #doneWrap .done-action-date {
+    display: block;
+    width: max-content;
+    margin: 0 0 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--brand) 14%, transparent);
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  body.admin #todayWrap .today-actions button,
+  body.admin #doneWrap .today-actions button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 4px;
   }
 }
 

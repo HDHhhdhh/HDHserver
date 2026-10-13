@@ -58,7 +58,7 @@ const SCHOOL_PAST_TESTS = [
 ];
 
 const ILSAN_PAST_TESTS = [
-  ['demo-test-ilsan-001', '일산권 공통수학 대표기출', '공통수학1', '중', '1', '기말고사'],
+  ['demo-test-ilsan-001', '일산권 공통수학 대표기출', '공통수학1', '중상', '1', '기말고사'],
   ['demo-test-ilsan-002', '일산권 미적분 그래프 특강', '미적분', '그래프 포함', '1', '기말고사'],
 ];
 
@@ -629,6 +629,46 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
   const videos = createVideos();
   const dayMaps = createDayMaps(currentDate, nextDate, weekendDate, students);
   const logs = createLogs(currentDate, previousDate, students);
+  const missingLeaveStudent = students[1];
+  if (missingLeaveStudent) {
+    dayMaps.arriveTime[previousDate] = {
+      ...(dayMaps.arriveTime[previousDate] || {}),
+      [missingLeaveStudent.id]: '17:45',
+    };
+    logs[previousDate][missingLeaveStudent.id] = {
+      ...logs[previousDate][missingLeaveStudent.id],
+      done: false,
+    };
+    delete logs[previousDate][missingLeaveStudent.id].leaveTime;
+    delete logs[previousDate][missingLeaveStudent.id].archived;
+  }
+  const movedMakeupStudent = students[2];
+  if (movedMakeupStudent) {
+    dayMaps.arriveTime[previousDate] = {
+      ...(dayMaps.arriveTime[previousDate] || {}),
+      [movedMakeupStudent.id]: '17:50',
+    };
+    logs[previousDate][movedMakeupStudent.id] = {
+      ...logs[previousDate][movedMakeupStudent.id],
+      done: false,
+    };
+    delete logs[previousDate][movedMakeupStudent.id].leaveTime;
+    delete logs[previousDate][movedMakeupStudent.id].archived;
+    const originalAbsenceDate = addDays(previousDate, -7);
+    dayMaps.makeupCarryover.by_absence = {
+      [originalAbsenceDate]: {
+        [`${movedMakeupStudent.id}|1`]: {
+          scheduledMakeup: {
+            originalAbsenceId: `absence|${originalAbsenceDate}|${movedMakeupStudent.id}|1`,
+            studentId: movedMakeupStudent.id,
+            makeupDate: nextDate,
+            makeupTimes: [1],
+            status: 'scheduled',
+          },
+        },
+      },
+    };
+  }
   const homeworkAssignments = createHomeworkAssignments(logs, currentDate, students);
 
   return {
@@ -652,6 +692,7 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
     homeworkAssignments,
     homeworkOperations: {},
     progress: createProgress(currentDate, previousDate, students, videos),
+    quickPrinterExports: [],
     testsConfig: createTestsConfig(),
     tests: createTests(previousDate, currentDate),
     attendance: dayMaps.attendance,
@@ -674,6 +715,44 @@ export function buildInitialDemoData(now = DEFAULT_DEMO_NOW, schemaVersion = 1) 
         id: 1,
         content: '보강 일정 다시 점검',
         created_at: isoAt(currentDate, '09:10'),
+      },
+    ],
+    assistantStudentNotes: [
+      {
+        id: 3,
+        student_id: 'demo-s001',
+        content: '개념원리 STEP1까지 풀이를 확인하고, APEX는 오답 표시 후 다시 풀게 하기.',
+        created_by: '귤',
+        updated_by: '귤',
+        pinned: true,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(currentDate, '16:40'),
+        updated_at: isoAt(currentDate, '16:40'),
+      },
+      {
+        id: 2,
+        student_id: 'demo-s001',
+        content: '단원평가에서 부호 실수가 반복됨. 계산식을 한 줄씩 쓰고 마지막 검산까지 확인하기.',
+        created_by: '세빈',
+        updated_by: '세빈',
+        pinned: false,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(currentDate, '14:10'),
+        updated_at: isoAt(currentDate, '14:10'),
+      },
+      {
+        id: 1,
+        student_id: 'demo-s001',
+        content: '다음 수업 전에 백지복습 10분 진행. 질문 표시한 문제부터 같이 보기.',
+        created_by: '동훈',
+        updated_by: '동훈',
+        pinned: false,
+        remind_on: '',
+        completed_at: '',
+        created_at: isoAt(previousDate, '18:30'),
+        updated_at: isoAt(previousDate, '18:30'),
       },
     ],
   };

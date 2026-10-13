@@ -494,7 +494,9 @@ export async function runChecks() {
 
   check('settings markup and styles provide semantic labels, live feedback, mobile touch targets, dark tokens, and reduced motion', () => {
     assert.match(html, /student\.css\?v=20260809-focus-r1/);
-    assert.match(html, /student\.js\?v=20260809-focus-r1/);
+    assert.match(html, /student\/announcementState\.js\?v=20260828-announcement-state-r1/);
+    assert.match(html, /student\/testPresentation\.js\?v=20260907-ilsan-level-r1/);
+    assert.match(html, /student\.js\?v=20260907-ilsan-level-r1/);
     assert.match(html, /<fieldset[^>]+id="studentNotificationPreferences"[^>]+hidden>/);
     assert.match(html, /<legend>받을 알림<\/legend>/);
     for (const [category, label] of [['schedule', '수업'], ['homework', '숙제'], ['progress', '진도'], ['announcement', '공지']]) {

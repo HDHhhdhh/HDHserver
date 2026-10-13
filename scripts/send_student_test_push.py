@@ -124,10 +124,6 @@ def _required_schema(db: sqlite3.Connection) -> None:
         _block("schema_not_ready")
 
 
-def _queues_empty(db: sqlite3.Connection) -> bool:
-    return _queue_counts(db) == (0, 0, 0)
-
-
 def _queue_counts(db: sqlite3.Connection) -> tuple[int, int, int]:
     legacy = int(
         db.execute(
@@ -631,7 +627,7 @@ def _push_tasks_disabled() -> bool:
         for row in rows
         if isinstance(row, dict)
     }
-    return all(states.get(name) == (1, True) or states.get(name) == [1, True] for name in _PUSH_TASK_NAMES)
+    return all(states.get(name) == (1, True) for name in _PUSH_TASK_NAMES)
 
 
 @contextmanager

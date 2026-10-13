@@ -75,6 +75,9 @@ def migrate_today_order_store(
     canonical_path = Path(canonical_path)
     backup_dir = Path(backup_dir)
 
+    if legacy_path.resolve() == canonical_path.resolve():
+        raise ValueError("legacy and canonical today-order paths must differ")
+
     def inspect() -> tuple[dict[str, Any], dict[str, list[str]], dict[str, list[str]]]:
         legacy = _read_order_map(legacy_path)
         canonical = _read_order_map(canonical_path)
@@ -119,6 +122,11 @@ def main() -> int:
         description="Consolidate the legacy root today_order.json into data/today_order.json.",
     )
     parser.add_argument("--apply", action="store_true", help="Write the canonical store and archive the legacy file.")
+    parser.add_argument(
+        "--backup-confirmed",
+        action="store_true",
+        help="Required for --apply against the live repository after backup_runtime_data.py.",
+    )
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--backup-dir", type=Path)
@@ -127,6 +135,10 @@ def main() -> int:
     root = args.root.resolve()
     data_dir = (args.data_dir or Path(os.environ.get("DATA_DIR", root / "data"))).resolve()
     backup_dir = (args.backup_dir or root / "_runtime_backups").resolve()
+
+    if args.apply and root == ROOT.resolve() and not args.backup_confirmed:
+        print(json.dumps({"ok": False, "error": "live apply requires --backup-confirmed"}, ensure_ascii=False))
+        return 2
 
     try:
         result = migrate_today_order_store(

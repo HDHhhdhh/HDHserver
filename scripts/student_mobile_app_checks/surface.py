@@ -282,6 +282,30 @@ def _injected_checks(state: CheckState) -> None:
             environ_base={"REMOTE_ADDR": "198.51.100.9"},
         )
         _check(state, untrusted.status_code == 200 and seen_ips[-1] == "198.51.100.9", "untrusted forwarding does not alter request")
+        pseudo_ipv4_mobile = client.post(
+            "/api/mobile/auth/login",
+            base_url="https://app.5a-math.com",
+            headers={
+                "CF-Connecting-IP": "240.0.0.44",
+                "CF-Connecting-IPv6": "2a09:bac2:46d9::44",
+                **origin_only,
+            },
+        )
+        _check(
+            state,
+            pseudo_ipv4_mobile.status_code == 200 and seen_ips[-1] == "2a09:bac2:46d9::44",
+            "trusted Cloudflare Pseudo IPv4 mobile request restores its original IPv6 client",
+        )
+        mismatched_ipv6 = client.post(
+            "/api/mobile/auth/login",
+            base_url="https://app.5a-math.com",
+            headers={
+                "CF-Connecting-IP": "110.14.147.14",
+                "CF-Connecting-IPv6": "2a09:bac2:46d9::44",
+                **origin_only,
+            },
+        )
+        _check(state, mismatched_ipv6.status_code == 404, "non-pseudo CF address cannot inject a second IPv6 identity")
         malformed = client.get("/app/", base_url="https://app.5a-math.com", headers={"CF-Connecting-IP": "110.14.147.14, 198.51.100.8"})
         _check(state, malformed.status_code == 404, "multi-hop CF address fails closed")
         _check(state, client.get("/app/", base_url="https://app.5a-math.com.evil", headers=edge).status_code == 404, "host suffix confusion is denied")

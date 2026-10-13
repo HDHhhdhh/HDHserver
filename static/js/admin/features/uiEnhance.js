@@ -1,5 +1,5 @@
 import { $ } from '../core/utils.js';
-import { initAttendanceLedgerLink } from './attendanceLedgerLink.js';
+import { initAttendanceLedgerLink } from './attendanceLedgerLink.js?v=20260824-sheet-sync2';
 
 function clickById(id) {
   const el = $(id);

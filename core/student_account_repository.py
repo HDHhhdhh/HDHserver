@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import secrets
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -168,6 +169,7 @@ class StudentAccountRepository:
             "created_at": now,
             "updated_at": now,
             "credentials_updated_at": now,
+            "legacy_session_id": secrets.token_urlsafe(32),
         }
 
     def activate_unique(self, identifier: str, password: str = DEFAULT_ACTIVATION_PASSWORD) -> AccountLoginResult:

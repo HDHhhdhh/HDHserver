@@ -77,7 +77,6 @@ self.addEventListener('fetch', (event) => {
 
 const ANNOUNCEMENT_ID = /[A-Za-z0-9][A-Za-z0-9._:-]{0,127}/;
 const NOTIFICATION_EVENT_ID = /evt_[A-Za-z0-9_-]{32}/;
-const HOMEWORK_EVENT_ID = NOTIFICATION_EVENT_ID;
 const PUSH_TEST_HOST = 'dev-app.5a-math.com';
 
 const GENERIC_NOTIFICATION_TYPES = Object.freeze({
@@ -133,8 +132,7 @@ function safeAnnouncementId(value) {
 
 function safeNotificationEventId(value, view = '') {
   const id = typeof value === 'string' ? value : '';
-  const matcher = view === 'homework' ? HOMEWORK_EVENT_ID : NOTIFICATION_EVENT_ID;
-  const match = matcher.exec(id);
+  const match = NOTIFICATION_EVENT_ID.exec(id);
   return match?.index === 0 && match[0] === id ? id : '';
 }
 

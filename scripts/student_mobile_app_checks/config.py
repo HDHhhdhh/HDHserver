@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -46,15 +47,18 @@ def _expect_config_error(module, env: dict[str, str], count: list[int]) -> None:
 def run_checks() -> dict[str, object]:  # noqa: DICT_OK # noqa: OBJECT_OK -- dispatcher contract is intentionally generic
     """Run config checks without importing runtime paths or the Flask app."""
     count = [0]
-    before_module = set(ROOT.glob("__config_import_probe__*"))
     with tempfile.TemporaryDirectory(prefix="student-app-config-import-") as tmp:
         probe = Path(tmp)
-        before = tuple(probe.iterdir())
-        module = importlib.import_module("core.student_app_config")
-        importlib.reload(module)
-        after = tuple(probe.iterdir())
-    _assert(before == after, "isolated config import wrote to its working directory", count)
-    _assert(before_module == set(ROOT.glob("__config_import_probe__*")), "config import created a probe", count)
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", "import importlib, os, sys\nsys.path.insert(0, sys.argv[1])\nviolations = []\ndef prohibit_writes(event, args):\n    if event == 'open':\n        mode, flags = args[1], args[2]\n        if (isinstance(mode, str) and any(letter in mode for letter in 'wax+')) or flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):\n            violations.append(event)\n            raise AssertionError('configuration import attempted a file write')\n    if event in {'os.mkdir', 'os.remove', 'os.rmdir', 'os.rename', 'os.link', 'os.symlink', 'os.truncate'}:\n        violations.append(event)\n        raise AssertionError('configuration import attempted a filesystem mutation')\nsys.addaudithook(prohibit_writes)\nmodule = importlib.import_module('core.student_app_config')\nimportlib.reload(module)\nassert not violations, 'configuration import caught a blocked filesystem mutation'\nassert 'app' not in sys.modules and 'core.paths' not in sys.modules\n", str(ROOT)],
+            cwd=probe,
+            env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        _assert(result.returncode == 0, "isolated config import/reload attempted a write or imported runtime modules", count)
+        _assert(not tuple(probe.iterdir()), "isolated config import wrote to its working directory", count)
 
     env = _clean_env()
     module, default = _load_config(env)

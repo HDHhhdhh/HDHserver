@@ -1,0 +1,201 @@
+body.admin.export-logs-open {
+  overflow: hidden;
+}
+
+body.admin #exportLogsModal .export-logs-panel {
+  position: relative;
+  width: min(680px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+}
+
+body.admin #exportLogsModal .export-logs-heading {
+  display: grid;
+  gap: 5px;
+  padding-right: 38px;
+}
+
+body.admin #exportLogsModal .export-logs-heading h3,
+body.admin #exportLogsModal .export-logs-heading p {
+  margin: 0;
+}
+
+body.admin #exportLogsModal .export-logs-kicker {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+body.admin #exportLogsModal #exportLogsDescription,
+body.admin #exportLogsModal .export-logs-privacy {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body.admin #exportLogsModal .export-logs-form {
+  display: grid;
+  gap: 14px;
+}
+
+body.admin #exportLogsModal .export-logs-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+body.admin #exportLogsModal .export-logs-target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.admin #exportLogsModal #exportLogsTargetDateLabel {
+  color: var(--brand);
+  font-weight: 900;
+}
+
+body.admin #exportLogsModal fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand-soft) 8%);
+}
+
+body.admin #exportLogsModal fieldset.is-disabled {
+  opacity: .56;
+}
+
+body.admin #exportLogsModal fieldset.is-disabled .export-logs-option {
+  cursor: not-allowed;
+}
+
+body.admin #exportLogsModal fieldset.is-disabled .export-logs-option:hover {
+  background: transparent;
+}
+
+body.admin #exportLogsModal legend {
+  padding: 0 5px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+body.admin #exportLogsModal .export-logs-option {
+  min-height: 52px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 11px;
+  padding: 9px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+body.admin #exportLogsModal .export-logs-option:hover {
+  background: color-mix(in srgb, var(--brand-soft) 44%, transparent);
+}
+
+body.admin #exportLogsModal .export-logs-option.compact {
+  min-height: 42px;
+  align-items: center;
+  padding-block: 5px;
+}
+
+body.admin #exportLogsModal .export-logs-option input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+}
+
+body.admin #exportLogsModal .export-logs-option span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+
+body.admin #exportLogsModal .export-logs-option small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+body.admin #exportLogsModal .export-logs-privacy {
+  margin: 0;
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #f59e0b 11%, var(--card));
+}
+
+body.admin #exportLogsModal .export-logs-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.admin #exportLogsModal .export-logs-status.is-error {
+  color: var(--danger);
+}
+
+body.admin #exportLogsModal .export-logs-status.is-success {
+  color: var(--ok);
+}
+
+body.admin #exportLogsModal .export-logs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+body.admin #exportLogsModal .export-logs-action-spacer {
+  flex: 1 1 auto;
+}
+
+body.admin #exportLogsModal .export-logs-actions .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  body.admin #exportLogsModal {
+    padding: 6px;
+    align-items: stretch;
+  }
+
+  body.admin #exportLogsModal .export-logs-panel {
+    width: 100%;
+    max-height: 96vh;
+    max-height: 96dvh;
+    align-self: center;
+    border-radius: 16px;
+  }
+
+  body.admin #exportLogsModal .export-logs-option-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #exportLogsModal .export-logs-target-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin #exportLogsModal .export-logs-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin #exportLogsModal .export-logs-action-spacer {
+    display: none;
+  }
+
+  body.admin #exportLogsModal #exportLogsSubmit {
+    grid-column: 1 / -1;
+  }
+}

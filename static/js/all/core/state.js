@@ -6,9 +6,11 @@ export const state = {
   progress: {},
   schoolCal: {},
   homeworkBooksBySid: {},
+  homeworkBooksStatus: 'idle',
 };
 
 const progressLoadedSids = new Set();
+let homeworkBooksRequest = null;
 
 function mergeDateSidMap(target, source) {
   const out = (target && typeof target === 'object') ? target : {};
@@ -25,18 +27,44 @@ function mergeDateSidMap(target, source) {
   return out;
 }
 
-export async function loadAll() {
-  const [stu, vid, sch, homeworkBooks] = await Promise.all([
+export function loadHomeworkBooks({ force = false } = {}) {
+  if (!force && homeworkBooksRequest) return homeworkBooksRequest;
+
+  state.homeworkBooksStatus = 'loading';
+  const request = getJSON('/api/homework-books')
+    .then((homeworkBooks) => {
+      state.homeworkBooksBySid = homeworkBooks && typeof homeworkBooks === 'object'
+        ? homeworkBooks
+        : {};
+      state.homeworkBooksStatus = 'ready';
+      window.homeworkBooksBySid = state.homeworkBooksBySid;
+      return state.homeworkBooksBySid;
+    })
+    .catch((error) => {
+      console.warn('[students] homework books load failed', error);
+      state.homeworkBooksBySid = {};
+      state.homeworkBooksStatus = 'error';
+      window.homeworkBooksBySid = state.homeworkBooksBySid;
+      return state.homeworkBooksBySid;
+    });
+
+  homeworkBooksRequest = request;
+  return request;
+}
+
+export async function loadAll({ waitForHomeworkBooks = true } = {}) {
+  const homeworkBooksReady = loadHomeworkBooks();
+  const [stu, vid, sch] = await Promise.all([
     getJSON('/api/students'),
     getJSON('/api/videos'),
     getJSONOr('/api/school-calendar', {}),
-    getJSONOr('/api/homework-books', {}),
   ]);
   state.students  = Array.isArray(stu) ? stu : [];
   state.videos    = Array.isArray(vid) ? vid : [];
   state.progress  = state.progress || {};
   state.schoolCal = sch  || {};
-  state.homeworkBooksBySid = homeworkBooks || {};
+
+  if (waitForHomeworkBooks) await homeworkBooksReady;
 
   window.students     = state.students;
   window.videos       = state.videos;

@@ -1,0 +1,2 @@
+# The permanent printer mapping checks this catalog's exact byte hash.
+core/resources/quick_printer_registered_tests.csv -text whitespace=cr-at-eol

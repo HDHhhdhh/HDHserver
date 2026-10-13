@@ -16,11 +16,11 @@
 | private key | `instance\student-app-vapid-private.pem` |
 | public key 사본 | `instance\student-app-vapid-public.txt` |
 
-운영 장비에는 새 admin hostname, Caddy, hosts 파일, 두 번째 Flask 앱 또는 두 번째 listener를 만들지 않는다. 개발 listener는 별도 개발 장비와 `dev-app` exact host에서만 운영한다. private key, Tunnel credential, cookie, CSRF, subscription endpoint, 공지 본문과 학생 식별자는 Git·backup·evidence·로그에 남기지 않는다.
+운영 장비에는 새 admin hostname, Caddy, hosts 파일, 두 번째 Flask 앱 또는 두 번째 listener를 만들지 않는다. 개발 listener는 별도 개발 장비와 `dev-app` exact host에서만 운영한다. private key, Tunnel credential, cookie, CSRF, subscription endpoint, 공지 본문과 학생 식별자는 Git·공유 evidence·로그에 남기지 않는다. 승인된 runtime backup은 접근 제한된 별도 저장소에서 [RULE-DATA-001](SERVER_RULES_INDEX.md#rule-data-001)과 [정본 §14](PROJECT_FUNCTIONS_AND_LOGIC.md#백업-확정-경계)를 따른다. private key와 credential은 그 backup에서도 제외한다.
 
 ## 1. 운영 데이터 backup
 
-먼저 Push task를 disable하고 실행 중인 worker가 없음을 확인한다. 일관된 SQLite 복사본을 위해 짧은 점검 창에 `Academy Server Waitress`를 중지하고 8003 listener가 사라진 뒤 backup한다. 아래 `$backupRoot`는 저장소 밖의 접근 제한된 위치여야 한다.
+먼저 Push task를 disable하고 실행 중인 worker가 없음을 확인한다. 일관된 SQLite 복사본을 위해 짧은 점검 창에 `Academy Server Waitress`를 중지하고 8003 listener와 해당 runner의 shadow guard가 모두 종료된 뒤 backup한다. 아래 `$backupRoot`는 저장소 밖의 접근 제한된 위치여야 한다.
 
 ```powershell
 $serverRoot = (Resolve-Path .).Path
@@ -28,11 +28,12 @@ $backupRoot = 'D:\academy-runtime-backups'
 Stop-ScheduledTask -TaskName 'Academy Student Push Delivery' -ErrorAction SilentlyContinue
 Stop-ScheduledTask -TaskName 'Academy Server Waitress' -ErrorAction Stop
 if (Get-NetTCPConnection -LocalPort 8003 -State Listen -ErrorAction SilentlyContinue) { throw '8003 is still listening' }
+# 정본 §14에 따라 이 runner에 연결된 shadow guard의 종료도 확인한 뒤 진행한다.
 $archive = & "$serverRoot\venv\Scripts\python.exe" "$serverRoot\scripts\backup_runtime_data.py" --out $backupRoot
 if ($LASTEXITCODE -ne 0) { throw 'backup failed' }
 ```
 
-archive의 `MANIFEST.json`에서 현재 존재하는 `auth_accounts.json`, `app.sqlite`, `app.sqlite-wal`, `app.sqlite-shm`가 모두 포함됐는지 확인한다. `instance/student-app-vapid-private.pem`과 `instance/student-app-vapid-private.pem.*`는 archive와 manifest에 없어야 한다. `scripts/backup_runtime_data.py`가 이 exact exclusion을 적용하므로 key 생성 뒤에도 같은 backup 절차를 계속 사용할 수 있다. archive 이름과 SHA-256만 Todo 14 기록에 남기고 내용은 evidence로 복사하지 않는다.
+archive의 `MANIFEST.json`에서 현재 존재하는 `auth_accounts.json`과 독립 `app.sqlite` snapshot의 membership·크기·SHA-256을 확인하고, 임시 복원의 `integrity_check`가 `ok`인지 확인한다. 커밋된 WAL 내용은 native SQLite snapshot에 포함되며 WAL/SHM sidecar는 별도 복구 파일로 넣지 않는다. `instance/student-app-vapid-private.pem`과 `instance/student-app-vapid-private.pem.*`는 archive와 manifest에 없어야 한다. `scripts/backup_runtime_data.py`가 이 exact exclusion을 적용하므로 key 생성 뒤에도 같은 backup 절차를 계속 사용할 수 있다. archive 이름과 SHA-256만 Todo 14 기록에 남기고 내용은 evidence로 복사하지 않는다.
 
 ## 2. dependency 설치와 version 확인
 

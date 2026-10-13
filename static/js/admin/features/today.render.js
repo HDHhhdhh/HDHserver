@@ -4,14 +4,17 @@
 // Notes:
 // - Keep imported `state` and `window.state` aligned.
 // - Use patch endpoints for attendance, contact, and arrive-time writes.
-// - Move rows into `doneWrap` immediately, then sync remote state.
 // - Avoid custom setters for absence maps; update plain objects directly.
 
 import { $, toast } from '../core/utils.js';
 import { getAdminDate, getRealToday } from '../core/adminDate.js';
 import { state } from '../core/state.js';
 import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';
+import { ensureOk, sendJson } from '../../shared/api.js';
 import { renderTodayActionButtons, renderTodayDocumentButton } from './todayActionMarkup.js';
+
+const WHITE_REVIEW_PENDING_FIELD = 'whiteReviewPending';
+const whiteReviewSaves = new Set();
 
 import {
   yoilOf,
@@ -33,6 +36,7 @@ import {
   nowHHMM,
   nowISO,
   patchLog,
+  patchLogsBatch,
   truthy,
 } from './today.state.js';
 
@@ -137,6 +141,104 @@ function rowDateKey(tr) {
   return String(tr?.dataset?.date || getAdminDate() || '').trim();
 }
 
+function whiteReviewPendingForSid(sid) {
+  const student = (state.students || []).find(item => String(item?.id || '') === String(sid || ''));
+  return student?.[WHITE_REVIEW_PENDING_FIELD] === true;
+}
+
+function setWhiteReviewPendingLocal(sid, pending) {
+  const student = (state.students || []).find(item => String(item?.id || '') === String(sid || ''));
+  if (!student) return false;
+  student[WHITE_REVIEW_PENDING_FIELD] = pending === true;
+  window.students = state.students;
+  return true;
+}
+
+function renderWhiteReviewPendingCell(sid, name, pending = whiteReviewPendingForSid(sid)) {
+  const knownStudent = (state.students || []).some(student => String(student?.id) === String(sid));
+  return `<td class="today-white-review-cell">
+    <div class="chk4" aria-label="백지리뷰 검사 대기">
+      <label class="c" data-kind="check" data-on="${pending ? '1' : '0'}" title="백지리뷰 검사 대기">
+        <input type="checkbox" class="whiteReviewPendingChk" data-id="${escapeAttr(sid)}"
+               aria-label="${escapeAttr(`${name || sid} 백지리뷰 검사 대기`)}" ${pending ? 'checked' : ''}
+               ${!knownStudent || whiteReviewSaves.has(String(sid)) ? 'disabled' : ''}>
+      </label>
+    </div>
+  </td>`;
+}
+
+function syncWhiteReviewCheckboxes(sid, pending, trigger) {
+  const controls = new Set([trigger, ...document.querySelectorAll('.whiteReviewPendingChk')]);
+  for (const input of controls) {
+    const tr = closestTodayRow(input);
+    if (rowSid(tr) !== sid) continue;
+    input.checked = pending;
+    input.disabled = whiteReviewSaves.has(sid);
+    tr.dataset.whiteReviewPending = pending ? '1' : '';
+    const pill = input.closest('.c');
+    if (pill) pill.dataset.on = pending ? '1' : '0';
+  }
+}
+
+async function saveWhiteReviewCheckbox(input, refresh) {
+  const sid = rowSid(closestTodayRow(input));
+  if (!sid) return;
+  const previous = whiteReviewPendingForSid(sid);
+  if (whiteReviewSaves.has(sid)) {
+    syncWhiteReviewCheckboxes(sid, previous, input);
+    return;
+  }
+  const checked = input.checked === true;
+  whiteReviewSaves.add(sid);
+  setWhiteReviewPendingLocal(sid, checked);
+  syncWhiteReviewCheckboxes(sid, checked, input);
+  try {
+    await patchWhiteReviewPendingRemote(sid, checked);
+    setWhiteReviewPendingLocal(sid, checked);
+  } catch (error) {
+    console.error(error);
+    setWhiteReviewPendingLocal(sid, previous);
+    syncWhiteReviewCheckboxes(sid, previous, input);
+    alert('백지리뷰 검사 대기 저장 실패');
+    if (refresh) await refresh({ force: true });
+    else document.dispatchEvent(new CustomEvent('admin:refresh'));
+  } finally {
+    whiteReviewSaves.delete(sid);
+    syncWhiteReviewCheckboxes(sid, whiteReviewPendingForSid(sid), input);
+  }
+}
+
+function normalizeLeaveIdentityPart(value) {
+  const text = String(value ?? '');
+  try { return text.normalize('NFKC').trim(); }
+  catch { return text.trim(); }
+}
+
+function studentSchoolForLeaveIdentity(student) {
+  return normalizeLeaveIdentityPart(
+    student?.school ?? student?.schoolName ?? student?.highSchool ?? student?.middleSchool ??
+    student?.high ?? student?.middle ?? student?.schoolHigh ?? student?.schoolMiddle ?? '',
+  );
+}
+
+function studentLeaveIdentityKey(student) {
+  const sid = normalizeLeaveIdentityPart(student?.id);
+  const name = normalizeLeaveIdentityPart(student?.name);
+  const school = studentSchoolForLeaveIdentity(student);
+  const grade = normalizeLeaveIdentityPart(student?.grade);
+  if (!name || !school) return `sid:${encodeURIComponent(sid)}`;
+  return `person:${[name, school, grade].map(encodeURIComponent).join('|')}`;
+}
+
+function leaveIdentityForRow(row) {
+  const stored = String(row?.dataset?.studentIdentity || '').trim();
+  if (stored) return stored;
+
+  const sid = rowSid(row);
+  const student = (state.students || []).find(item => String(item?.id || '') === sid);
+  return studentLeaveIdentityKey(student || { id: sid });
+}
+
 async function markMakeupDemandOpen(dateKey, sid, slots) {
   const date = String(dateKey || '').trim();
   const studentId = String(sid || '').trim();
@@ -144,10 +246,13 @@ async function markMakeupDemandOpen(dateKey, sid, slots) {
   if (!date || !studentId) return;
 
   const latestRes = await fetch('/api/makeup-carryover', { cache: 'no-store' });
-  const latest = latestRes.ok ? await latestRes.json().catch(() => ({})) : {};
+  await ensureOk(latestRes, '보강 이월 불러오기');
+  const revision = String(latestRes.headers.get('X-Makeup-Carryover-Revision') || '').trim();
+  const latest = await latestRes.json();
   const next = latest && typeof latest === 'object' ? latest : {};
   const byAbsence = next.by_absence && typeof next.by_absence === 'object' ? next.by_absence : {};
   const dateRows = { ...(byAbsence[date] || {}) };
+  if (dateRows[studentId]?.state === 'self-study') return;
   const updatedAt = new Date().toISOString();
 
   (slotList.length ? slotList : ['']).forEach(slot => {
@@ -164,12 +269,13 @@ async function markMakeupDemandOpen(dateKey, sid, slots) {
   byAbsence[date] = dateRows;
   next.by_absence = byAbsence;
 
-  const res = await fetch('/api/makeup-carryover', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(next),
+  const res = await sendJson('/api/makeup-carryover', next, {
+    headers: revision ? { 'If-Match': revision } : {},
   });
-  if (!res.ok) throw new Error(`/api/makeup-carryover ${res.status}`);
+  if (res.status === 409 || res.status === 428) {
+    throw new Error('다른 관리자 화면에서 보강 정보가 변경됐습니다. 새로고침 후 다시 시도해 주세요.');
+  }
+  await ensureOk(res, '보강 이월 저장');
 }
 
 // Normalize absence maps once at module boot.
@@ -204,7 +310,16 @@ async function patchFlagRemote(kind, date, sid, checked) {
 }
 
 async function patchArriveTimeRemote(date, sid, hhmm) {
-  await _postJSON('/arrive-time/patch', { date, sid: String(sid), value: String(hhmm || '') });
+  await _postJSON('/api/arrive-time/patch', { date, sid: String(sid), value: String(hhmm || '') });
+}
+
+async function patchWhiteReviewPendingRemote(sid, pending) {
+  const res = await sendJson('/api/update', {
+    id: String(sid),
+    field: WHITE_REVIEW_PENDING_FIELD,
+    value: pending === true,
+  });
+  await ensureOk(res, '백지리뷰 검사 대기 저장');
 }
 
 function syncTodayRowVisual(tr) {
@@ -332,9 +447,11 @@ function attachSortable(dateKey, alphaSortOnly) {
     .chk4 .c:hover{filter:brightness(1.03)}
     .chk4 input{width:20px;height:20px;accent-color:#10b981;margin:0}
     .chk4 .c + .c{margin-left:6px}
+    .chk4 .c[data-kind="att"] input{accent-color:#10b981}
     .chk4 .c[data-kind="contact"] input{accent-color:#3b82f6}
     .chk4 .c[data-kind="check"] input{accent-color:#f59e0b}
     .chk4 .c[data-on="1"]{background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.45)}
+    .chk4 .c[data-kind="att"][data-on="1"]{background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.45)}
     .chk4 .c[data-kind="contact"][data-on="1"]{background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.45)}
     .chk4 .c[data-kind="check"][data-on="1"]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.55)}
     .chk4 .c:active{transform:scale(.98)}
@@ -356,12 +473,14 @@ function attachSortable(dateKey, alphaSortOnly) {
     #doneWrap table.done-table{min-width:880px;table-layout:fixed;font-size:15px}
     .today-table th,.today-table td,.done-table th,.done-table td{overflow:hidden;text-overflow:ellipsis}
     .done-table th,.done-table td{text-align:center;vertical-align:middle}
+    body.admin #doneWrap .done-table .today-white-review-cell,
+    body.admin #doneWrap .done-table .done-white-review-head{padding-left:1px;padding-right:1px;white-space:nowrap}
     .today-table th{font-size:14px}
     .today-table td{font-size:15px}
     .today-table .stuName,.done-table .stuName{font-size:15.5px}
-    .today-check-cell,.today-self-study-cell,.today-homework-request-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell,.today-progress-cell{text-align:center}
+    .today-check-cell,.today-self-study-cell,.today-homework-request-cell,.today-doc-cell,.today-action-cell,.makeup-count-cell,.today-progress-cell,.today-white-review-cell{text-align:center}
     .today-action-cell,.done-action-cell{white-space:nowrap;overflow:visible!important;text-overflow:clip!important}
-    .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
+    .today-actions{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
     .today-actions button{flex:0 0 auto}
     .homework-request-toggle{
       display:inline-flex;align-items:center;justify-content:center;
@@ -424,12 +543,9 @@ function attachSortable(dateKey, alphaSortOnly) {
 // - slot 1 => 13:00
 // - slot 2 => 18:00
 // - mixed slots use the earliest slot
-function _parseSlotNumsFromLabel(txt, dateKey = '') {
-  return parseSlotsFromText(txt, dateKey);
-}
 
 function _forcedArriveTimeBySlotLabel(dateKey, labelText) {
-  const nums = _parseSlotNumsFromLabel(labelText, dateKey);
+  const nums = parseSlotsFromText(labelText, dateKey);
   if (!nums.length) return '';
   const minSlot = Math.min(...nums);
   if (minSlot === 1) return '13:00';
@@ -438,7 +554,7 @@ function _forcedArriveTimeBySlotLabel(dateKey, labelText) {
 }
 
 function _slotGroupsFromLabelAndArrive(labelText, arriveTime, dateKey = '') {
-  let nums = _parseSlotNumsFromLabel(labelText, dateKey)
+  let nums = parseSlotsFromText(labelText, dateKey)
     .map(Number)
     .filter(n => n === 1 || n === 2 || n === 3);
 
@@ -467,14 +583,54 @@ function homeworkLeaveSlotNumbers(row) {
   )).sort((a, b) => a - b);
 }
 
-function shouldIncludeHomeworkLeaveRow(row, currentSlot = currentOpsSlot()) {
-  const homeworkChecked = row?.dataset?.hw === '1';
-  const selfStudy = row?.dataset?.selfStudy === '1';
-  if (!homeworkChecked && !selfStudy) return false;
+function homeworkLeaveRowsByStudent(rows) {
+  const grouped = new Map();
+  for (const row of Array.from(rows || [])) {
+    const sid = rowSid(row);
+    const dateKey = String(row?.dataset?.date || '').trim();
+    if (!sid || !dateKey) continue;
+    const key = `${dateKey}\u0000${leaveIdentityForRow(row)}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+  return Array.from(grouped.values());
+}
 
-  const slots = homeworkLeaveSlotNumbers(row);
-  const isConsecutive = slots.length >= 2 && slots.includes(1);
+function homeworkLeaveSlotNumbersForRows(rows) {
+  return Array.from(new Set(
+    Array.from(rows || []).flatMap(row => homeworkLeaveSlotNumbers(row)),
+  )).sort((a, b) => a - b);
+}
+
+function shouldIncludeHomeworkLeaveRows(rows, currentSlot = currentOpsSlot()) {
+  const group = Array.from(rows || []);
+  const canLeave = group.some(row => row?.dataset?.hw === '1' || row?.dataset?.selfStudy === '1');
+  if (!canLeave) return false;
+
+  const slots = homeworkLeaveSlotNumbersForRows(group);
+  const isConsecutive = slots.length >= 2;
   return !(currentSlot === 1 && isConsecutive);
+}
+
+function shouldIncludeHomeworkLeaveRow(row, currentSlot = currentOpsSlot()) {
+  return shouldIncludeHomeworkLeaveRows([row], currentSlot);
+}
+
+function homeworkLeaveTargetRows(rows, currentSlot = currentOpsSlot()) {
+  return homeworkLeaveRowsByStudent(rows)
+    .filter(group => shouldIncludeHomeworkLeaveRows(group, currentSlot))
+    .flat();
+}
+
+function linkedLeaveRows(sourceRow, rows, currentSlot = currentOpsSlot()) {
+  const sourceKey = `${String(sourceRow?.dataset?.date || '').trim()}\u0000${leaveIdentityForRow(sourceRow)}`;
+  const linked = Array.from(rows || []).filter(row => (
+    `${String(row?.dataset?.date || '').trim()}\u0000${leaveIdentityForRow(row)}` === sourceKey
+  ));
+  if (!linked.includes(sourceRow)) linked.unshift(sourceRow);
+
+  const isConsecutive = homeworkLeaveSlotNumbersForRows(linked).length >= 2;
+  return isConsecutive && currentSlot !== 1 ? linked : [sourceRow];
 }
 
 const PROGRESS_MANUAL_META_KEY = '__manualProgressMids';
@@ -513,9 +669,7 @@ function progressEntryForSid(day, sid) {
   const sidKey = String(sid || '');
   const direct = day[sidKey];
   if (direct && typeof direct === 'object') return direct;
-  const matchedSid = Object.keys(day).find(key => String(key) === sidKey);
-  const entry = matchedSid ? day[matchedSid] : null;
-  return (entry && typeof entry === 'object') ? entry : {};
+  return {};
 }
 
 function normalizeTestAssignmentStatus(status) {
@@ -569,6 +723,8 @@ function escapeRegExp(value) {
 
 function isIlsanGraphAssignmentItem(item) {
   const categoryKey = String(item?.categoryKey || item?.category || '').trim();
+  const difficulty = String(item?.difficulty || '').trim();
+  if (categoryKey === 'ILSAN_PAST' && (difficulty === '중상' || difficulty === '상')) return false;
   const source = `${item?.difficulty || ''} ${item?.name || ''} ${item?.label || ''}`;
   return categoryKey === 'ILSAN_PAST' && (
     source.includes(TEST_ASSIGN_ILSAN_GRAPH_DIFFICULTY) ||
@@ -582,7 +738,10 @@ function testAssignmentRecordPrefix(item) {
   const categoryKey = String(item?.categoryKey || item?.category || '').trim();
   const prefix = String(item?.categoryLabel || testAssignmentCategoryLabel(categoryKey) || '')
     .replace(/\s+/g, '') || categoryKey;
-  const difficulty = String(item?.difficulty || '').trim();
+  const rawDifficulty = String(item?.difficulty || '').trim();
+  const difficulty = item?.categoryKey === 'ILSAN_PAST' && rawDifficulty === '중'
+    ? '중상'
+    : rawDifficulty;
   return prefix && difficulty ? `${prefix}(${difficulty})` : prefix;
 }
 
@@ -680,31 +839,30 @@ function assignedTestCompletionPatch(progressEntry) {
   return patch;
 }
 
-function hasCleanupAssignmentItems(entry) {
-  return Array.isArray(entry?.[TEST_ASSIGN_DAILY_ITEMS_KEY]) || Array.isArray(entry?.assignedTests);
+function useLatestLogEntryForCleanup(dateKey, sid, entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('최신 하원 기록을 확인할 수 없습니다.');
+  }
+  if (!truthy(entry.done)) throw new Error('이미 하원이 취소된 기록입니다.');
+  if (truthy(entry.archived)) throw new Error('이미 정리된 기록입니다.');
+
+  state.logs = state.logs || {};
+  state.logs[dateKey] = state.logs[dateKey] || {};
+  state.logs[dateKey][String(sid)] = entry;
+  window.logs = state.logs;
+  ensureWindowStateAlias();
+  return entry;
 }
 
 async function fetchLogEntryForCleanup(dateKey, sid) {
-  const current = logEntryForSid(dateKey, sid);
-  if (hasCleanupAssignmentItems(current)) return current;
-
   const res = await fetch(`/api/logs/entry?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
     cache: 'no-store',
   });
-  if (!res.ok) return current;
-  const data = await res.json().catch(() => ({}));
-  const entry = data?.entry && typeof data.entry === 'object' ? data.entry : {};
-  if (Object.keys(entry).length) {
-    state.logs = state.logs || {};
-    state.logs[dateKey] = state.logs[dateKey] || {};
-    state.logs[dateKey][String(sid)] = entry;
-    window.logs = state.logs;
-    ensureWindowStateAlias();
-    return entry;
-  }
-  return current;
-}
+  if (!res.ok) throw new Error(`/api/logs/entry ${res.status}`);
 
+  const data = await res.json().catch(() => null);
+  return useLatestLogEntryForCleanup(dateKey, sid, data?.entry);
+}
 function recordCleanupLogTestPatch(entry) {
   const patch = {};
 
@@ -742,49 +900,111 @@ function completedTestLabelsFromLogPatch(logPatch) {
   return labels;
 }
 
-function hasProgressTestStatuses(entry) {
-  const tests = entry?.tests;
-  return !!(tests && typeof tests === 'object' && Object.keys(tests).some(label => String(label || '').trim()));
-}
-
-async function fetchProgressEntryForCleanup(dateKey, sid) {
-  const current = progressEntryForSid(state.progress?.[dateKey], sid);
-  if (hasProgressTestStatuses(current)) return current;
-
-  const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) return {};
-  const data = await res.json().catch(() => ({}));
-  const day = data?.[dateKey] && typeof data[dateKey] === 'object' ? data[dateKey] : {};
-  const entry = progressEntryForSid(day, sid);
-  if (Object.keys(entry).length) {
-    state.progress = state.progress || {};
-    state.progress[dateKey] = state.progress[dateKey] || {};
-    state.progress[dateKey][String(sid)] = entry;
-    window.progressData = state.progress;
-    ensureWindowStateAlias();
+function useLatestProgressEntryForCleanup(dateKey, sid, entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('최신 진행 기록을 확인할 수 없습니다.');
   }
+
+  const sidKey = String(sid);
+  state.progress = state.progress || {};
+  state.progress[dateKey] = state.progress[dateKey] || {};
+  state.progress[dateKey][sidKey] = entry;
+  window.progressData = state.progress;
+  ensureWindowStateAlias();
   return entry;
 }
 
-export async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
-  if (isSidAbsentOn(dateKey, sid)) return {};
+async function fetchProgressEntryForCleanup(dateKey, sid) {
+  const res = await fetch(`/api/progress?date=${encodeURIComponent(dateKey)}&sid=${encodeURIComponent(sid)}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`/api/progress ${res.status}`);
+  state.youtubeRecordCleanupSupported = res.headers?.get?.('X-YouTube-Record-Cleanup') === '1';
 
-  const logEntry = await fetchLogEntryForCleanup(dateKey, sid);
+  const data = await res.json().catch(() => null);
+  const day = data?.[dateKey];
+  const sidKey = String(sid);
+  if (!day || typeof day !== 'object' || Array.isArray(day)
+      || !Object.prototype.hasOwnProperty.call(day, sidKey)
+      || !day[sidKey] || typeof day[sidKey] !== 'object' || Array.isArray(day[sidKey])) {
+    throw new Error('최신 진행 기록을 확인할 수 없습니다.');
+  }
+  return useLatestProgressEntryForCleanup(dateKey, sid, progressEntryForSid(day, sid));
+}
+
+export async function preloadRecordCleanupEntries(targets) {
+  const groups = new Map();
+  (Array.isArray(targets) ? targets : []).forEach(([date, sid]) => {
+    const dateKey = String(date || '').trim();
+    const sidKey = String(sid || '').trim();
+    if (!dateKey || !sidKey) return;
+    if (!groups.has(dateKey)) groups.set(dateKey, []);
+    if (!groups.get(dateKey).includes(sidKey)) groups.get(dateKey).push(sidKey);
+  });
+
+  const latest = new Map();
+  await Promise.all(Array.from(groups.entries()).map(async ([dateKey, sids]) => {
+    const progressQuery = new URLSearchParams({ date: dateKey, sids: sids.join(',') });
+    const [logsRes, progressRes] = await Promise.all([
+      fetch(`/api/logs?date=${encodeURIComponent(dateKey)}`, { cache: 'no-store' }),
+      fetch(`/api/progress?${progressQuery.toString()}`, { cache: 'no-store' }),
+    ]);
+    if (!logsRes.ok) throw new Error(`/api/logs ${logsRes.status}`);
+    if (!progressRes.ok) throw new Error(`/api/progress ${progressRes.status}`);
+    state.youtubeRecordCleanupSupported = progressRes.headers?.get?.('X-YouTube-Record-Cleanup') === '1';
+
+    const [logsData, progressData] = await Promise.all([
+      logsRes.json().catch(() => null),
+      progressRes.json().catch(() => null),
+    ]);
+    if (!logsData || typeof logsData !== 'object' || Array.isArray(logsData)) {
+      throw new Error('최신 하원 기록 묶음을 확인할 수 없습니다.');
+    }
+    if (!progressData || typeof progressData !== 'object' || Array.isArray(progressData)) {
+      throw new Error('최신 진행 기록 묶음을 확인할 수 없습니다.');
+    }
+
+    const logDay = logsData[dateKey] && typeof logsData[dateKey] === 'object' ? logsData[dateKey] : {};
+    const progressDay = progressData[dateKey] && typeof progressData[dateKey] === 'object'
+      ? progressData[dateKey]
+      : {};
+    sids.forEach(sid => {
+      const key = `${dateKey}\u0000${sid}`;
+      latest.set(key, {
+        authoritative: true,
+        logEntry: Object.prototype.hasOwnProperty.call(logDay, sid) ? logDay[sid] : null,
+        progressEntry: Object.prototype.hasOwnProperty.call(progressDay, sid) ? progressDay[sid] : {},
+      });
+    });
+  }));
+  return latest;
+}
+
+export async function completeAssignedTestsForRecordCleanup(dateKey, sid, preloaded = null) {
+  const logEntry = preloaded?.authoritative
+    ? useLatestLogEntryForCleanup(dateKey, sid, preloaded.logEntry)
+    : await fetchLogEntryForCleanup(dateKey, sid);
   const logPatch = recordCleanupLogTestPatch(logEntry);
-  const progressEntry = await fetchProgressEntryForCleanup(dateKey, sid);
+  if (isSidAbsentOn(dateKey, sid)) return logPatch;
+
+  const progressEntry = preloaded?.authoritative
+    ? useLatestProgressEntryForCleanup(dateKey, sid, preloaded.progressEntry)
+    : await fetchProgressEntryForCleanup(dateKey, sid);
   const progressTests = assignedTestCompletionPatch(progressEntry);
   const currentProgressTests = progressEntry?.tests && typeof progressEntry.tests === 'object'
     ? progressEntry.tests
     : {};
   completedTestLabelsFromLogPatch(logPatch).forEach(label => {
-    if (!normalizeTestAssignmentStatus(currentProgressTests[label])) {
+    if (!Object.prototype.hasOwnProperty.call(currentProgressTests, label)) {
       progressTests[label] = 'done';
     }
   });
 
-  if (Object.keys(progressTests).length) {
+  const completeYouTube = state.youtubeRecordCleanupSupported === true;
+  if (!completeYouTube && (state.videos || []).some(video => video?.provider === 'youtube')) {
+    throw new Error('YouTube 기록정리 기능의 서버 반영 후 다시 시도하세요.');
+  }
+  if (Object.keys(progressTests).length || completeYouTube) {
     const res = await fetch('/api/progress/patch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -792,6 +1012,7 @@ export async function completeAssignedTestsForRecordCleanup(dateKey, sid) {
         date: dateKey,
         sid,
         progress: { tests: progressTests },
+        ...(completeYouTube ? { completeAssignedYouTube: true } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -942,37 +1163,6 @@ function buildProgressTestMarkerSet(dateKey, students) {
   return ready;
 }
 
-// Move completed rows into doneWrap immediately.
-function _ensureDoneTableIfMissing() {
-  const wrap = $('doneWrap');
-  if (!wrap) return null;
-
-  const tb = wrap.querySelector('tbody');
-  if (tb) return tb;
-
-  wrap.innerHTML = `
-    <table class="done-table">
-      <colgroup>
-        <col style="width:120px"><col style="width:268px"><col style="width:104px"><col style="width:72px"><col style="width:64px">
-        <col style="width:84px"><col style="width:112px"><col style="width:56px">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>이름</th>
-          <th>작업</th>
-          <th>날짜</th>
-          <th>구분</th>
-          <th title="등원시간">등원</th>
-          <th>학교</th>
-          <th>커리큘럼</th>
-          <th>문서</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  `;
-  return wrap.querySelector('tbody');
-}
 
 function _bindDoneWrapInlineEditOnce() {
   const wrap = $('doneWrap');
@@ -980,6 +1170,11 @@ function _bindDoneWrapInlineEditOnce() {
 
   if (wrap._doneDelegated) return;
   wrap._doneDelegated = true;
+
+  wrap.addEventListener('change', async (ev) => {
+    const input = ev.target.closest?.('.whiteReviewPendingChk');
+    if (input) await saveWhiteReviewCheckbox(input);
+  });
 
   wrap.addEventListener('wheel', handleArriveWheel, { passive: false });
 
@@ -1119,91 +1314,82 @@ function _bindDoneWrapInlineEditOnce() {
   });
 }
 
-function _isInTodayWrap(tr) { return !!tr?.closest?.('#todayWrap'); }
-function _isInDoneWrap(tr) { return !!tr?.closest?.('#doneWrap'); }
-
-function _moveTodayRowToDoneWrap(tr, dateKey) {
-  // Only move rows that still belong to the today list.
-  if (!_isInTodayWrap(tr)) return;
-
-  const tbDone = _ensureDoneTableIfMissing();
-  if (!tbDone) return;
-
-  _bindDoneWrapInlineEditOnce();
-
-  const label = (tr.querySelector('.slotLabel')?.textContent || '').trim();
-  const arrive = (tr.querySelector('.arriveLabel')?.textContent || '').trim();
-
-  const nameLink = tr.querySelector('a.stuName');
-  const name = (nameLink?.textContent || tr.querySelector('.stuName')?.textContent || tr.dataset.sid || '').trim();
-  const nameCellHtml = nameLink
-    ? nameLink.outerHTML
-    : `<span class="stuName">${escapeAttr((tr.querySelector('.stuName')?.textContent || '').trim())}</span>`;
-
-  const school = (tr.querySelector('.today-school-cell')?.textContent || '').trim();
-  const curLabel = (tr.querySelector('.today-curriculum-cell')?.textContent || '').trim();
-  const docBtn = tr.querySelector('.btn-doc');
-  const docUrl = docBtn?.dataset?.docUrl || '';
-
-  const sid = String(tr.dataset.sid || '');
-  const slotGroup = tr.dataset.slotGroup || _slotGroupsFromLabelAndArrive(label, arrive, dateKey);
-  const arriveTitle = (tr.dataset.att === '1' || isAttended(dateKey, sid)) ? ARRIVE_WHEEL_ATTENDED_HINT : ARRIVE_WHEEL_HINT;
-
-  const newRow = document.createElement('tr');
-  newRow.dataset.sid = sid;
-  newRow.dataset.date = dateKey;
-  if (slotGroup) newRow.dataset.slotGroup = slotGroup;
-  if (tr.dataset.hw === '1') newRow.dataset.hw = '1';
-  if (tr.dataset.selfStudy === '1') newRow.dataset.selfStudy = '1';
-  newRow.innerHTML = `
-    <td class="today-name-cell">${nameCellHtml}</td>
-    <td class="done-action-cell">
-      <span class="done-action-date">${escapeAttr(dateKey)}</span>
-      ${renderTodayActionButtons({ sid, name, date: dateKey, includeDoneActions: true })}
-    </td>
-    <td class="done-date-cell">${escapeAttr(dateKey)}</td>
-    <td class="today-slot-cell">${renderEditableSlotLabel(label)}</td>
-    <td class="att-time done-arrive-cell">
-      <span class="arriveLabel" contenteditable="true" spellcheck="false"
-            data-orig="${escapeAttr(arrive)}"
-            title="${arriveTitle}"
-            style="display:inline-block;min-width:44px;padding:2px 4px;border-radius:6px;border:1px solid transparent">
-        ${escapeAttr(arrive)}
-      </span>
-    </td>
-    <td class="today-school-cell">${escapeAttr(school || '')}</td>
-    <td class="today-curriculum-cell">${escapeAttr(curLabel || '')}</td>
-    <td class="today-doc-cell">${renderTodayDocumentButton({ docUrl, name, sid })}</td>
-  `;
-
-  tbDone.prepend(newRow);
-
-  tr.remove();
-
-  const cnt = $('todayCount');
-  if (cnt && tr.dataset.selfStudy !== '1') {
-    const cur = parseInt(cnt.textContent || '0', 10);
-    cnt.textContent = String(Math.max(0, (Number.isFinite(cur) ? cur : 0) - 1));
-  }
-
-  const wrapToday = $('todayWrap');
-  if (wrapToday) {
-    const remain = wrapToday.querySelectorAll('tr[data-sid]').length;
-    if (!remain) wrapToday.innerHTML = '오늘 학생 없음';
-  }
-}
 
 function ensureSelfStudyHeader(host) {
   const headRow = host?.querySelector?.('thead tr');
   if (!headRow || headRow.querySelector('.today-self-study-head')) return;
-  const homeworkRequestHead = headRow.querySelector('.today-homework-request-head');
   const th = document.createElement('th');
   th.className = 'today-self-study-head';
   th.textContent = '자습';
-  headRow.insertBefore(th, homeworkRequestHead || null);
+  headRow.insertBefore(th, headRow.children[5] || null);
 }
 
 // --- render ---
+function replaceStudentTable(host, markup, tableClass) {
+  const table = host.querySelector(`table.${tableClass}`);
+  const template = document.createElement('template');
+  if (!table || !template.content) { host.innerHTML = markup; return; }
+  template.innerHTML = markup;
+  const nextTable = template.content.querySelector(`table.${tableClass}`);
+  const body = table.tBodies?.[0];
+  const nextBody = nextTable?.tBodies?.[0];
+  if (!body || !nextBody) { host.innerHTML = markup; return; }
+
+  const syncAttributes = (current, next) => {
+    for (const attribute of Array.from(current.attributes)) {
+      if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+    }
+    for (const attribute of Array.from(next.attributes)) {
+      if (current.getAttribute(attribute.name) !== attribute.value) {
+        current.setAttribute(attribute.name, attribute.value);
+      }
+    }
+  };
+  syncAttributes(table, nextTable);
+  for (const selector of ['colgroup', 'thead']) {
+    const current = table.querySelector(selector);
+    const next = nextTable.querySelector(selector);
+    if (current && next && !current.isEqualNode(next)) current.replaceWith(next);
+  }
+  const rowsByKey = new Map();
+  const rowKey = row => JSON.stringify([row.dataset.date, row.dataset.sid]);
+  for (const row of Array.from(body.rows)) {
+    const key = rowKey(row);
+    if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+    rowsByKey.get(key).push(row);
+  }
+  const retained = new Set();
+  let cursor = body.firstElementChild;
+  for (const nextRow of Array.from(nextBody.rows)) {
+    const current = rowsByKey.get(rowKey(nextRow))?.shift();
+    let row = nextRow;
+    if (current && current.cells.length === nextRow.cells.length) {
+      row = current;
+      syncAttributes(row, nextRow);
+      const nextCells = Array.from(nextRow.cells);
+      for (let index = 0; index < row.cells.length; index += 1) {
+        const cell = row.cells[index], nextCell = nextCells[index];
+        if (!cell.isEqualNode(nextCell)) {
+          cell.replaceWith(nextCell);
+        } else {
+          // Checkbox properties can differ without changing their checked HTML attribute.
+          const inputs = cell.querySelectorAll('input');
+          const nextInputs = nextCell.querySelectorAll('input');
+          inputs.forEach((input, inputIndex) => {
+            if (input.checked !== nextInputs[inputIndex].checked) input.checked = nextInputs[inputIndex].checked;
+          });
+        }
+      }
+    }
+    retained.add(row);
+    if (row !== cursor) body.insertBefore(row, cursor);
+    cursor = row.nextElementSibling;
+  }
+  for (const row of Array.from(body.rows)) {
+    if (!retained.has(row)) row.remove();
+  }
+}
+
 export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   const host = $('todayWrap');
   const cnt = $('todayCount');
@@ -1221,6 +1407,7 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
     const hwChecked = isHwChecked(dateKey, s.id);
     const hwRequested = isHwCheckRequested(dateKey, s.id);
     const hwRequestAt = hwCheckRequestedAt(dateKey, s.id);
+    const whiteReviewPending = s?.[WHITE_REVIEW_PENDING_FIELD] === true;
 
     const arriveTime = plannedTimeFor(dateKey, s.id);
     const school =
@@ -1247,25 +1434,23 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
           : '';
 
     return `
-      <tr class="${rowClass}" data-sid="${s.id}" data-date="${dateKey}"
+      <tr class="${rowClass}" data-sid="${s.id}" data-date="${dateKey}" data-student-identity="${escapeAttr(studentLeaveIdentityKey(s))}"
+          ${s.curriculum ? `data-curriculum="${escapeAttr(s.curriculum)}"` : ''} ${s.subCurriculum ? `data-subcurriculum="${escapeAttr(s.subCurriculum)}"` : ''}
           ${attended ? 'data-att="1"' : ''} ${contacted ? 'data-contact="1"' : ''}
           ${selfStudy ? 'data-self-study="1"' : ''}
           ${hwChecked ? 'data-hw="1"' : ''} ${hwRequested ? 'data-hw-request="1"' : ''}
+          ${whiteReviewPending ? 'data-white-review-pending="1"' : ''}
           ${slotGroup ? `data-slot-group="${slotGroup}"` : ''}
           ${hwRequestAt ? `data-hw-request-at="${hwRequestAt}"` : ''}>
         <td class="drag-handle today-drag-cell" style="cursor:${alphaSortOnly ? 'default' : 'grab'};text-align:center">::</td>
+
+        <td class="today-slot-cell">${renderEditableSlotLabel(labelText)}</td>
 
         <td class="today-name-cell">
           <a href="/student/${s.id}" target="_blank" class="stuName" data-sid="${s.id}">
             ${s.name}
           </a>
         </td>
-
-        <td class="today-action-cell">
-          ${renderTodayActionButtons({ sid: s.id, name: s.name })}
-        </td>
-
-        <td class="today-slot-cell">${renderEditableSlotLabel(labelText)}</td>
 
         <td class="att-time" style="text-align:center;width:84px;">
           <span class="arriveLabel" contenteditable="true" spellcheck="false"
@@ -1306,6 +1491,11 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
         <td class="today-curriculum-cell">${curLabel}</td>
         <td class="today-progress-cell">${progressMarker}</td>
 
+        ${renderWhiteReviewPendingCell(s.id, s.name, whiteReviewPending)}
+
+        <td class="today-action-cell">
+          ${renderTodayActionButtons({ sid: s.id, name: s.name })}
+        </td>
         <td class="makeup-count-cell">
           <span class="makeup-count-badge ${makeupCount > 0 ? 'needs' : ''}">${makeupCount}</span>
         </td>
@@ -1315,32 +1505,33 @@ export function renderToday(list, dateKey, alphaSortOnly, makeupCounts = {}) {
   }).join('');
 
   detachSortableIfAny();
-  host.innerHTML = list.length ? `
+  replaceStudentTable(host, list.length ? `
       <table class="today-table">
       <colgroup>
-        <col style="width:32px"><col style="width:120px"><col style="width:188px"><col style="width:72px"><col style="width:84px">
+        <col style="width:32px"><col style="width:72px"><col style="width:120px"><col style="width:84px">
         <col style="width:168px"><col style="width:44px"><col style="width:84px"><col style="width:84px"><col style="width:112px">
-        <col style="width:36px"><col style="width:64px"><col style="width:56px">
+        <col style="width:36px"><col style="width:36px"><col style="width:232px"><col style="width:64px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
           <th></th>
-          <th>이름</th>
-          <th>작업</th>
           <th>구분</th>
+          <th>이름</th>
           <th>도착</th>
           <th>출석/연락/숙제</th>
-          <th class="today-homework-request-head">숙검요청</th>
+          <th>숙검요청</th>
           <th>학교</th>
           <th>커리큘럼</th>
           <th>진도</th>
+          <th>백지</th>
+          <th>작업</th>
           <th>보강</th>
           <th>문서</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-  ` : '오늘 학생 없음';
+  ` : '오늘 학생 없음', 'today-table');
 
   ensureSelfStudyHeader(host);
 
@@ -1392,49 +1583,51 @@ export function renderDone(doneEntries) {
       : `<span class="arriveLabelReadonly" title="${escapeAttr(arriveTitle)}">—</span>`;
 
     return `
-      <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
-        <td class="today-name-cell">
-          ${s ? `<a href="/student/${encodeURIComponent(String(s.id))}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${escapeAttr(name)}</a>`
-              : `<span class="stuName">${escapeAttr(name)}</span>`
-          }
-        </td>
-        <td class="done-action-cell">
-          <span class="done-action-date">${escapeAttr(dateKey)}</span>
-          ${renderTodayActionButtons({ sid: sidKey, name, date: dateKey, includeDoneActions: true })}
-        </td>
+      <tr data-sid="${escapeAttr(sidKey)}" data-date="${escapeAttr(dateKey)}" data-student-identity="${escapeAttr(studentLeaveIdentityKey(s || { id: sidKey }))}" ${s?.curriculum ? `data-curriculum="${escapeAttr(s.curriculum)}"` : ''} ${s?.subCurriculum ? `data-subcurriculum="${escapeAttr(s.subCurriculum)}"` : ''} ${slotGroup ? `data-slot-group="${escapeAttr(slotGroup)}"` : ''} ${hwChecked ? 'data-hw="1"' : ''} ${selfStudy ? 'data-self-study="1"' : ''}>
         <td class="done-date-cell">${escapeAttr(dateKey)}</td>
         <td class="today-slot-cell">${slotMarkup}</td>
         <td class="att-time done-arrive-cell">
           ${arriveMarkup}
         </td>
+        <td class="today-name-cell">
+          ${s ? `<a href="/student/${encodeURIComponent(String(s.id))}" target="_blank" class="stuName" data-sid="${escapeAttr(s.id)}">${escapeAttr(name)}</a>`
+              : `<span class="stuName">${escapeAttr(name)}</span>`
+          }
+        </td>
         <td class="today-school-cell">${escapeAttr(school || '')}</td>
         <td class="today-curriculum-cell">${escapeAttr(curLabel)}</td>
+        ${renderWhiteReviewPendingCell(sidKey, name)}
+        <td class="done-action-cell">
+          <span class="done-action-date">${escapeAttr(dateKey)}</span>
+          ${renderTodayActionButtons({ sid: sidKey, name, date: dateKey, includeDoneActions: true })}
+        </td>
         <td class="today-doc-cell">${renderTodayDocumentButton({ docUrl, name, sid: sidKey })}</td>
       </tr>
     `;
   }).join('');
 
-  wrap.innerHTML = `
+  replaceStudentTable(wrap, `
     <table class="done-table">
       <colgroup>
-        <col style="width:120px"><col style="width:268px"><col style="width:104px"><col style="width:72px"><col style="width:64px">
-        <col style="width:84px"><col style="width:112px"><col style="width:56px">
+        <col style="width:104px"><col style="width:72px"><col style="width:64px"><col style="width:120px"><col style="width:84px">
+        <col style="width:112px"><col style="width:36px"><col style="width:232px"><col style="width:56px">
       </colgroup>
       <thead>
         <tr>
-          <th>이름</th>
-          <th>작업</th>
           <th>날짜</th>
           <th>구분</th>
           <th title="등원시간">등원</th>
+          <th>이름</th>
           <th>학교</th>
           <th>커리큘럼</th>
+          <th class="done-white-review-head">백지</th>
+          <th>작업</th>
           <th>문서</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-  `;
+  `, 'done-table');
 
   _bindDoneWrapInlineEditOnce();
   decorateStudentTestRecordButtons(wrap).catch(console.warn);
@@ -1599,6 +1792,13 @@ export function bindTodayTableEvents(loadTodayAndRender) {
   });
 
   host.addEventListener('change', async (ev) => {
+    // This SID-scoped flag intentionally survives date changes, leave, and record cleanup.
+    const whiteReview = ev.target.closest?.('.whiteReviewPendingChk');
+    if (whiteReview) {
+      await saveWhiteReviewCheckbox(whiteReview, loadTodayAndRender);
+      return;
+    }
+
     // Attendance
     const att = ev.target.closest?.('.attendChk');
     if (att) {
@@ -1852,8 +2052,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const seen = new Set();
         const targets = [];
 
-        for (const tr of rows) {
-          if (!shouldIncludeHomeworkLeaveRow(tr, currentSlot)) continue;
+        for (const tr of homeworkLeaveTargetRows(rows, currentSlot)) {
           const sid = rowSid(tr);
           const dateKey = rowDateKey(tr);
           if (!sid || !dateKey) continue;
@@ -1871,43 +2070,37 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const prevText = homeworkLeaveBtn.textContent;
         const t = nowHHMM();
         const leaveAt = nowISO();
-        let ok = 0;
-        let failed = 0;
 
         homeworkLeaveBtn.disabled = true;
         homeworkLeaveBtn.textContent = '처리중';
+        homeworkLeaveBtn.setAttribute('aria-busy', 'true');
 
         try {
-          for (const target of targets) {
-            try {
-              await patchLog(target.dateKey, target.sid, {
-                done: true,
-                leaveTime: t,
-                leaveAt,
-              }, ['archived']);
-              ok += 1;
-            } catch (err) {
-              failed += 1;
-              console.error('[today] homework leave failed:', target, err);
-            }
-          }
+          await patchLogsBatch(targets.map(target => ({
+            date: target.dateKey,
+            sid: target.sid,
+            entry: {
+              done: true,
+              leaveTime: t,
+              leaveAt,
+            },
+            clearKeys: ['archived'],
+          })));
 
-          if (ok) document.dispatchEvent(new CustomEvent('attendance:updated'));
-          await loadTodayAndRender({ force: true });
-
-          if (failed) {
-            toast(`숙검하원 ${ok}/${targets.length}명 처리됨`);
-            if (!ok) alert('숙검하원 저장 실패');
-          } else {
-            toast(`숙검하원 ${ok}명 하원 처리됨 (${t})`);
-          }
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
+          await loadTodayAndRender();
+          toast(`숙검하원 ${targets.length}명 하원 처리됨 (${t})`);
+        } catch (err) {
+          console.error('[today] homework leave batch failed:', err);
+          alert('숙검하원 저장 실패');
+          await loadTodayAndRender({ force: true, forceDatePayloads: true });
         } finally {
           homeworkLeaveBtn.disabled = false;
           homeworkLeaveBtn.textContent = prevText || '숙검하원';
+          homeworkLeaveBtn.removeAttribute('aria-busy');
         }
         return;
       }
-
       const docBtn = e.target.closest('.btn-doc');
       if (docBtn) {
         const url = docBtn.dataset.docUrl;
@@ -2017,6 +2210,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
 
           if (!res.ok) throw new Error(`/api/absent ${res.status}`);
 
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
           // Prefer the server copy if it returns fresher absence maps.
           const byDate = data?.by_date || data?.absentByDate || (data?.ok ? data?.by_date : null);
           const byStu = data?.by_student || data?.absences || (data?.ok ? data?.by_student : null);
@@ -2030,6 +2224,7 @@ export function bindTodayTableEvents(loadTodayAndRender) {
             alert('결석은 저장됐지만 보강 잡기 명단 갱신에 실패했습니다.');
           }
 
+          document.dispatchEvent(new CustomEvent('attendance:updated'));
           toast('결석 처리됨');
           await loadTodayAndRender({ force: true });
 
@@ -2068,14 +2263,32 @@ export function bindTodayTableEvents(loadTodayAndRender) {
         const sid = rowSid(tr);
         const dateKey = rowDateKey(tr);
         if (!sid || !dateKey) return;
+        const activeRows = Array.from(document.querySelectorAll('#todayWrap tr[data-sid]'));
+        const targetRows = linkedLeaveRows(tr, activeRows, currentOpsSlot());
+        const seen = new Set();
+        const targets = [];
+        for (const row of targetRows) {
+          const targetSid = rowSid(row);
+          const targetDate = rowDateKey(row);
+          const key = `${targetDate}\u0000${targetSid}`;
+          if (!targetSid || !targetDate || seen.has(key)) continue;
+          seen.add(key);
+          targets.push({ sid: targetSid, dateKey: targetDate });
+        }
         const t = nowHHMM();
 
         try {
-          await patchLog(dateKey, sid, {
+          const leavePatch = {
             done: true,
             leaveTime: t,
             leaveAt: nowISO(),
-          }, ['archived']);
+          };
+          await patchLogsBatch(targets.map(target => ({
+            date: target.dateKey,
+            sid: target.sid,
+            entry: leavePatch,
+            clearKeys: ['archived'],
+          })));
 
           document.dispatchEvent(new CustomEvent('attendance:updated'));
 

@@ -1,0 +1,81 @@
+격리 Chrome 초기 표시 계측 / 2026-10-01
+
+대상: 관리형 127.0.0.1:8004, PID 37348의 후속 변경 전 source snapshot.
+데이터: 운영 seed를 복사하지 않은 persistent QA runtime, synthetic QAHUB1001329.
+관찰: Chrome CUA tab 326079780, CDP의 실제 Performance Navigation/Paint/Resource Timing.
+responseEnd는 document 요청 완료, FCP는 처음 내용이 그려진 시각이다.
+표나 팝업의 데이터 ready 시각, 서버 commit, click feedback과 같지 않다.
+
+1회 참고 관찰 (ms, 최종 p50/p95 벤치마크가 아님)
+페이지                   responseEnd    DOMContentLoaded     FCP
+/admin                     620.8            842.6           744
+/all                         8.8             18.1            60
+/tests                     699.5            816.0           808
+/file-manage               640.0            675.3           696
+/video-manage              618.9            741.1           716
+/school-cal                631.9            721.9           692
+/student/QAHUB1001329         7.6            281.5           292
+
+관리자 보호 페이지의 느린 document response와 반복 KDF 가능성을 전담 쓰레드
+01a0f5d2-4350-7210-98de-f3fa12e53067에 넘겼다. 실제 credential/hash 설정을
+읽지 않은 synthetic KDF 대조가 먼저 필요하며 위 수치만으로 원인을 확정하지 않는다.
+관리자 학생목록 GET 26.4ms, 최초 progress GET 84.2ms, 시험 통계 GET 113.2ms,
+파일 tree GET 28.1ms, 학생 bootstrap GET 73.9ms가 같은 참고 관찰에서 기록됐다.
+
+변경 후 반복·같은 fixture/브라우저 조건·요청 수·팝업 ready/feedback은 후속 통합 단계다.
+동시 전담 작업의 CPU 부하·초기 브라우저 인증 상태·작은 fixture 크기는 제약이다.
+위 수치를 운영 사용자 체감 개선이나 후속 source rollout 완료로 표시하지 않는다.
+
+Hub 변경 후 실제 QA / 2026-10-01
+manager Start -Restart: PID30940, managed true/HTTP200, 8004 loopback listener1.
+운영8003 PID27408 및 /api/ping, local /app, https://app.5a-math.com/app 200 유지.
+
+기준 정정: 위 /all의8.8ms는 404 페이지다. 전체학생 성능 비교에서 제외한다.
+정식 경로는 /students이며 CSS inventory의 잘못된 /all 표기도 정정했다.
+
+Chrome 실제 navigation3회 responseEnd(ms), TTL warm/cold가 섞인 참고 관찰:
+/admin 660.9 / 18.4 / 13.2
+/students 632.0 / 11.2 / 11.1
+/tests 9.1 / 629.6 / 11.3
+/file-manage 642.5 / 9.9 / 9.8
+/video-manage 8.5 / 8.2 / 6.3
+/school-cal 10.4 / 7.8 / 10.0
+/student/QAHUB1001329 10.7 / 10.9 / 11.2
+
+측정 조건: 동일 persistent synthetic QA runtime(전체학생67, 시험 catalog1600),
+같은 Chrome 탭의 실제 Navigation/Paint/Resource Timing. 전담 작업/검증 CPU부하,
+절대5초 인증TTL, browser cache와 페이지간 이동 조건을 완전히 통제하지 않은3개 sample이다.
+첫 요청/TTL 만료의 KDF 강도를 낮추지 않는다. 운영 p50/p95나 모든 버튼의 전수 지연값이 아니다.
+
+실제 click/MutationObserver 기반 통합 팝업 ready(ms), 3회:
+표시55.5 / 31.7 / 27.1
+영상180.5 / 109.1 / 123.2
+시험149.0 / 107.5 / 111.6
+숙제129.8 / 32.7 / 191.6
+같은 SID의 정확한 제목·disabled 해제·Escape close를 DOM으로 확인했다.
+공지 발행1건: 버튼 잠금11.7ms, 완료170ms/초안clear/목록확인.
+학생 답장 POST22.1ms, 저장·읽음·reload 유지. 기존 native reply-limit 알림의
+사용자 dismiss 대기시간은 UI ready 벤치마크에 넣지 않았다.
+시험 통계 상세 GET52ms, 빈 응시 기록과 닫기 확인.
+레거시 로그인: 실제 ERR_INTERNET_DISCONNECTED 뒤 spinner none, 버튼 사용 가능.
+임시 네트워크/MutationObserver/DOM/viewport 설정은 복원했다.
+
+두 브라우저: Chrome와 IAB의 통합팝업/대상 선택·정확한 SID/ready/close 확인.
+IAB2560 폭에서 compose overflow auto·card334px·today table1374.56px,
+Chrome2560에서 card333.33px(0.75DPR rounding). IAB1280/390 폭의 대상 선택도 확인.
+공지 compose의 fixed desktop height 내용이 목록 summary에 가려지던 실제 click 실패를
+overflow auto + stable scrollbar로 수정했다. 표의 폭/다른 패널 배치는 변경하지 않았다.
+
+수동 상태: QAWatch01을 done으로 저장 후 none으로 저장, /api/progress에서
+__manualProgressMids.QAWatch01=true 확인. reload/open/normal watch GET 뒤 none 유지.
+격리 /api/logs와 /api/logs/entry 200. 실제 academy playback/Kollus는 loopback guard를
+우회하지 않았으며 auto watch preservation의 writer 증거는 temp/default suite다.
+프로필: QA HUB 1001 학교를 격리 검증고로 저장, /students reload 및 /admin 표시 유지.
+관리자 계정 팝업67그룹, Focus default-OFF 안내, 날짜 출결 정확한 SID 목록/버튼 확인.
+
+캡처: generated/server-hub-review-20261001/popups-final.jpg.
+SHA256 2f17818f22e9b78dd4013734e56c0d3009389e4c64b007648c83c4cc3ea1e68c.
+브라우저의 direct screenshot/downloadMedia 파일 저장은 timeout이었다. 허용된 같은
+격리 origin의 파일 업로드 API로 캡처를 보존한 뒤 QA output만 generated에 추출했다.
+격리 QA_HUB_FOLLOWUP_20261001/server-hub-popups-final.jpg upload200/실제 파일 UI 표시 확인.
+production runtime seed/자료 배정 승격/학생 데이터 병합은 없다. 이 캡처는 Git 대상이 아니다.

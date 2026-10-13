@@ -1,0 +1,237 @@
+{
+  "schema": "student_test_formula_checkpoint_receive_followup_v1",
+  "checkedAtKst": "2026-10-04T01:48:34.6790845+09:00",
+  "phase": 3,
+  "status": "checkpoint_receive_blocked_original_part001_in_trash",
+  "previousManifest": "STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.manifest.json",
+  "preservedReceiveRoot": "C:/Users/주인님/Documents/OCR_returns/formula_expansion_20260907_review_01",
+  "partsFolderId": "1IYld40Z6PN4lEskfQcPfTNBaZuW7pGg6",
+  "driveFile": {
+    "id": "16D8SZgJfdj5o-LqJq3uEJcWQnNtMmEHj",
+    "url": "https://drive.google.com/file/d/16D8SZgJfdj5o-LqJq3uEJcWQnNtMmEHj/view?usp=drivesdk",
+    "metadataName": "formula_expansion_20260907_01_checkpoints.zip.part001",
+    "metadataMime": "application/x-zip",
+    "metadataBytes": 83886080,
+    "metadataParentIds": [
+      "1IYld40Z6PN4lEskfQcPfTNBaZuW7pGg6"
+    ],
+    "nameSizeParentMatch": true,
+    "metadataTrashedFieldExposed": false,
+    "browserMessage": "파일이 휴지통에 있습니다.",
+    "fileMenuActions": [
+      "세부정보 D",
+      "보안 제한사항"
+    ],
+    "downloadControlAvailable": false,
+    "downloadStarted": false
+  },
+  "storage": {
+    "freeBytesObserved": 32285356032,
+    "minimumRequiredBytes": 21474836480,
+    "sufficient": true
+  },
+  "localFilesReverified": [
+    {
+      "relativePath": "checkpoint_parts/ARCHIVE_PARTS.json",
+      "bytes": 9484,
+      "sha256": "df6aa03c6e430a04d8213611d97fd01e9759b0408a7b7650b46bc6f0cebd0a47",
+      "verified": true
+    },
+    {
+      "relativePath": "checkpoint_parts/formula_expansion_20260907_01_checkpoints.zip.part048",
+      "bytes": 41835768,
+      "sha256": "837dbbea68e09f6bda3ee16acba42f8251a987cf422e0542d60e2bf38f84dd35",
+      "verified": true
+    },
+    {
+      "relativePath": "downloads/formula_expansion_20260907_01_CHECKPOINT_RECEIPT.json",
+      "bytes": 14351,
+      "sha256": "6321d20538d63dced1fbacfb5a642a9a5d4813fede45275182de18cfff844272",
+      "verified": true
+    },
+    {
+      "relativePath": "downloads/formula_expansion_20260907_01_transport_helper.py",
+      "bytes": 9209,
+      "sha256": "9e4ef9dd18be4101f1d09b517c0c3a44a1561b2b823cc999efffe6326792862b",
+      "verified": true
+    },
+    {
+      "relativePath": "downloads/formula_expansion_20260907_01_evidence.zip",
+      "bytes": 7815422,
+      "sha256": "1e100ca90ec7fb49e2b31d8c7e08cab1d7dca780546eafb7ba914f5ff07750cf",
+      "verified": true
+    },
+    {
+      "relativePath": "evidence/model/config.json",
+      "bytes": 4915,
+      "sha256": "f85c55bd4ec5f73f1a59bc0cf133e9d9622941ad9dbc6c78504c75d80b46f267",
+      "verified": true
+    },
+    {
+      "relativePath": "evidence/model/preprocessor_config.json",
+      "bytes": 617,
+      "sha256": "d06c4b87fd6aa74b8b2cdbc4361227d8073ce37e8cfe9e6442802d0bee64da03",
+      "verified": true
+    },
+    {
+      "relativePath": "evidence/model/tokenizer_config.json",
+      "bytes": 4491,
+      "sha256": "fd4d94f8b9dbb7deeb3a3ef084ca0e16c43d45774a180730b7e9cfd6359a074b",
+      "verified": true
+    },
+    {
+      "relativePath": "evidence/model/tokenizer.json",
+      "bytes": 2140013,
+      "sha256": "02c318d9cfa95bf323371762b8f838a82709530274d36dba6eca880f0add6cc4",
+      "verified": true
+    }
+  ],
+  "wholeEvidenceInventory": "Previously verified 292 copiedFiles plus receipt; not rerun this phase",
+  "parts": {
+    "expectedCount": 48,
+    "existingVerifiedParts": [
+      48
+    ],
+    "missingParts": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47
+    ],
+    "newlyDownloadedParts": 0,
+    "manifestHashVerified": true
+  },
+  "archive": {
+    "expectedBytes": 3984481528,
+    "expectedSha256": "cab45213340591d9e95f42da1553b067ca38babea28666f246e4c7ad30d471a6",
+    "reassemblyPerformed": false,
+    "extractionPerformed": false,
+    "expectedInventoryFiles": 9,
+    "actualCheckpointInventoryVerified": 0
+  },
+  "candidates": [
+    {
+      "profile": "m3_h1",
+      "strategy": "focused_control",
+      "returnPath": "m3_h1/focused_control/checkpoint_best.pth",
+      "reportedBLocalBestIteration": 1000,
+      "iterationSource": "verified receipt; prior log review; not independent local checkpoint metadata",
+      "expectedBytes": 1289942468,
+      "expectedSha256": "3fdb1866df34bbfb34d40791ba9b99c1764665f38b759f53b5d4e3c2491b2bbf",
+      "localPath": null,
+      "binaryVerified": false,
+      "commonArchitecturePaths": [
+        "evidence/model/config.json",
+        "evidence/model/preprocessor_config.json",
+        "evidence/model/tokenizer_config.json",
+        "evidence/model/tokenizer.json"
+      ]
+    },
+    {
+      "profile": "m3_h1",
+      "strategy": "expanded_curriculum",
+      "returnPath": "m3_h1/expanded_curriculum/checkpoint_best.pth",
+      "reportedBLocalBestIteration": 1000,
+      "iterationSource": "verified receipt; prior log review; not independent local checkpoint metadata",
+      "expectedBytes": 1289942532,
+      "expectedSha256": "c99845a311558dbd31b46065032c6ae19902c79717cb6d8537be837539e98899",
+      "localPath": null,
+      "binaryVerified": false,
+      "commonArchitecturePaths": [
+        "evidence/model/config.json",
+        "evidence/model/preprocessor_config.json",
+        "evidence/model/tokenizer_config.json",
+        "evidence/model/tokenizer.json"
+      ]
+    },
+    {
+      "profile": "m3_h1_h2_h3",
+      "strategy": "focused_control",
+      "returnPath": "m3_h1_h2_h3/focused_control/checkpoint_best.pth",
+      "reportedBLocalBestIteration": 1000,
+      "iterationSource": "verified receipt; prior log review; not independent local checkpoint metadata",
+      "expectedBytes": 1289942532,
+      "expectedSha256": "8a1d8d8470083620e9581a5ca28cee3669308af784987d3938c4b14ea2757138",
+      "localPath": null,
+      "binaryVerified": false,
+      "commonArchitecturePaths": [
+        "evidence/model/config.json",
+        "evidence/model/preprocessor_config.json",
+        "evidence/model/tokenizer_config.json",
+        "evidence/model/tokenizer.json"
+      ]
+    },
+    {
+      "profile": "m3_h1_h2_h3",
+      "strategy": "expanded_curriculum",
+      "returnPath": "m3_h1_h2_h3/expanded_curriculum/checkpoint_best.pth",
+      "reportedBLocalBestIteration": 1000,
+      "iterationSource": "verified receipt; prior log review; not independent local checkpoint metadata",
+      "expectedBytes": 1289942532,
+      "expectedSha256": "7cb151d7d75ded3b78aa6fb134dca282c4144db8da4e397493434773184c1aa6",
+      "localPath": null,
+      "binaryVerified": false,
+      "commonArchitecturePaths": [
+        "evidence/model/config.json",
+        "evidence/model/preprocessor_config.json",
+        "evidence/model/tokenizer_config.json",
+        "evidence/model/tokenizer.json"
+      ]
+    }
+  ],
+  "checkpointsBinaryVerified": 0,
+  "checkpointMetadataReads": 0,
+  "sharedArchitectureEvidenceHashVerified": true,
+  "expandedAutomaticSelection": false,
+  "sourceOrSharingChanged": false,
+  "oldArtifactsModified": false,
+  "newTrainingRuns": 0,
+  "newInferenceEvaluations": 0,
+  "providerCallCount": 0,
+  "deploymentReady": false,
+  "productionChanged": false,
+  "nextRequired": "User restores original final parts or provides a local directory; then verify every part, reassemble only into fresh workspace folder, safe-extract and verify all 9 files"
+}

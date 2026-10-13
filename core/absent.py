@@ -115,23 +115,30 @@ def load_absent() -> Dict[str, Any]:
     return {"by_date": {}, "by_student": {}, "by_slot": {}}
 
 
-def _save_absent_unlocked(obj: Dict[str, Any]) -> None:
-    """
-    어떤 형태가 들어와도 표준 포맷으로 정규화해서 저장.
-    """
+def normalize_absent(
+    obj: Dict[str, Any],
+    *,
+    existing: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Normalize a proposed absence payload without writing it."""
     if not isinstance(obj, dict):
         obj = {}
+    if not isinstance(existing, dict):
+        existing = load_absent()
 
-    existing = load_absent()
     by_slot_source = obj.get("by_slot") if "by_slot" in obj else existing.get("by_slot")
-
-    out = {
+    return {
         "by_date": _norm_by_date(obj.get("by_date")),
         "by_student": _norm_by_student(obj.get("by_student")),
         "by_slot": _norm_by_slot(by_slot_source),
     }
 
-    save_atomic(ABS_PATH, out)
+
+def _save_absent_unlocked(obj: Dict[str, Any]) -> None:
+    """
+    어떤 형태가 들어와도 표준 포맷으로 정규화해서 저장.
+    """
+    save_atomic(ABS_PATH, normalize_absent(obj))
 
 
 def save_absent(obj: Dict[str, Any], *, locked: bool = False) -> None:

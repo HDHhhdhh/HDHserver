@@ -1,0 +1,83 @@
+{
+  "fixture": "subjective_review_pipeline_dry_run_v1",
+  "problem_count": 20,
+  "test_id": "mock_subjective_test",
+  "round": "2",
+  "expected_items": [
+    {"question": 1, "expected": "/"},
+    {"question": 2, "expected": "-3"},
+    {"question": 3, "expected": "x=2"},
+    {"question": 4, "expected": "0.5"},
+    {"question": 5, "expected": "1/2"},
+    {"question": 6, "expected": "ㄴ,ㄹ"},
+    {"question": 7, "expected": "5"},
+    {"question": 8, "expected": "2x+1"},
+    {"question": 9, "expected": "3sqrt(2)"},
+    {"question": 10, "expected": "0"},
+    {"question": 11, "expected": "256"},
+    {"question": 12, "expected": "a/2"},
+    {"question": 13, "expected": "1,3"},
+    {"question": 14, "expected": "1<=x<=3"},
+    {"question": 15, "expected": "-1<x<5"},
+    {"question": 16, "expected": "y=3"},
+    {"question": 17, "expected": "1/2,9/2"},
+    {"question": 18, "expected": "129/2"},
+    {"question": 19, "expected": "x+2=4"},
+    {"question": 20, "expected": "26sqrt(21)"}
+  ],
+  "recognized_items": [
+    {"question": 1, "recognized": "/"},
+    {"question": 2, "recognized": "-3"},
+    {"question": 3, "recognized": "x=n"},
+    {"question": 4, "recognized": "O.5", "warnings": ["digit_or_letter_confusion"]},
+    {"question": 5, "recognized": "1/2"},
+    {"question": 6, "recognized": "", "warnings": ["low_visibility"]},
+    {"question": 7, "recognized": "5"},
+    {"question": 8, "recognized": "2x+1"},
+    {"question": 9, "recognized": "3sqrt(2)"},
+    {"question": 10, "recognized": "6"},
+    {"question": 11, "recognized": "256"},
+    {"question": 12, "recognized": "a/2"},
+    {"question": 13, "recognized": "1,3"},
+    {"question": 14, "recognized": "14x63", "warnings": ["equation_part_missing"]},
+    {"question": 15, "recognized": "-145", "warnings": ["operator_missing"]},
+    {"question": 16, "recognized": "y=n"},
+    {"question": 17, "recognized": "1/2,9/2"},
+    {"question": 18, "recognized": "139/2"},
+    {"question": 19, "recognized": "x±2=4", "warnings": ["symbol_confusion"]},
+    {"question": 20, "recognized": "26??1", "warnings": ["sqrt_confusion"]}
+  ],
+  "retake_required_questions": [6],
+  "student_decisions": [
+    {"question_no": 3, "action": "direct_input", "final_answer": "x=2"},
+    {"question_no": 4, "action": "candidate_selected", "final_answer": "0.5"},
+    {"question_no": 10, "action": "candidate_selected", "final_answer": "0"},
+    {"question_no": 14, "action": "candidate_selected", "final_answer": "1<=x<=3"},
+    {"question_no": 15, "action": "direct_input", "final_answer": "-1<x<5"},
+    {"question_no": 16, "action": "direct_input", "final_answer": "y=3"},
+    {"question_no": 18, "action": "candidate_selected", "final_answer": "129/2"},
+    {"question_no": 19, "action": "direct_input", "final_answer": "x+2=4"},
+    {"question_no": 20, "action": "direct_input", "final_answer": "26sqrt(21)"}
+  ],
+  "retake_decisions": [
+    {
+      "question_no": 6,
+      "uploaded_status": "retake_uploaded",
+      "rerecognized": {
+        "status": "review_required",
+        "recognized": "4,2",
+        "warnings": ["jamo_choice_confusion"],
+        "candidates": ["ㄴ,ㄹ", "4,2"]
+      },
+      "action": "direct_input_after_retake",
+      "final_answer": "ㄴ,ㄹ"
+    }
+  ],
+  "data_check_blocker": {
+    "question_no": 3,
+    "status": "data_check_required",
+    "recognized": "x→n",
+    "warnings": ["possible_answer_key_or_crop_mismatch"]
+  },
+  "golden_answers_text": "/\n-3\nx=2\n0.5\n1/2\nㄴ,ㄹ\n5\n2x+1\n3sqrt(2)\n0\n256\na/2\n1,3\n1<=x<=3\n-1<x<5\ny=3\n1/2,9/2\n129/2\nx+2=4\n26sqrt(21)"
+}

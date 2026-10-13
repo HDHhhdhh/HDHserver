@@ -41,10 +41,7 @@ document.addEventListener('click', async (e)=>{
   if (!sid) { alert('학생 ID를 찾을 수 없습니다.'); return; }
   if (!confirm(`정말 "${name||sid}" 학생을 삭제할까요?\n(되돌릴 수 없습니다)`)) return;
   try{
-    let res = await fetch(`/api/students/${encodeURIComponent(sid)}`, { method:'DELETE' });
-    if (!res.ok) {
-      res = await fetch('/api/delete-student', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:sid }) });
-    }
+    const res = await fetch(`/api/students/${encodeURIComponent(sid)}`, { method:'DELETE' });
     if (!res.ok) throw new Error(`서버 응답 ${res.status}`);
     if (Array.isArray(window.students)) window.students = window.students.filter(s=>String(s.id)!==String(sid));
     tr.remove();

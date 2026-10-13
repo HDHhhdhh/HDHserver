@@ -52,6 +52,7 @@ export function initStudentAccounts() {
   const openButton = document.getElementById('studentAccountsOpen');
   const modal = document.getElementById('studentAccountsModal');
   if (!openButton || !modal) return;
+  if (modal.dataset.studentAccountsReady === '1') return;
 
   const closeButton = document.getElementById('studentAccountsClose');
   const search = document.getElementById('studentAccountsSearch');
@@ -63,9 +64,15 @@ export function initStudentAccounts() {
   const codeValue = document.getElementById('studentActivationCodeValue');
   const copyButton = document.getElementById('studentActivationCodeCopy');
   const codeDismiss = document.getElementById('studentActivationCodeDismiss');
+  if (!closeButton || !search || !filter || !refresh || !status || !list
+    || !codePanel || !codeValue || !copyButton || !codeDismiss) return;
+  modal.dataset.studentAccountsReady = '1';
   let groups = [];
   let pendingCode = '';
   let restoreFocus = null;
+  let requestId = 0;
+  let sessionId = 0;
+  let actionId = 0;
 
   const setStatus = (message, kind = '') => {
     status.textContent = message;
@@ -137,19 +144,22 @@ export function initStudentAccounts() {
   };
 
   const load = async () => {
+    const token = ++requestId;
     refresh.disabled = true;
     setStatus('계정 목록을 불러오는 중입니다.');
     try {
       const payload = await fetchJsonChecked(LIST_URL, '학생 앱 계정 조회', { cache: 'no-store', credentials: 'same-origin' });
+      if (token !== requestId) return;
       groups = normalizedGroups(payload);
       render();
       setStatus(`${groups.length}개 학생 식별 그룹을 확인했습니다.`, 'success');
     } catch {
+      if (token !== requestId) return;
       groups = [];
       render();
       setStatus('계정 목록을 불러오지 못했습니다.', 'error');
     } finally {
-      refresh.disabled = false;
+      if (token === requestId) refresh.disabled = false;
     }
   };
 
@@ -158,6 +168,8 @@ export function initStudentAccounts() {
     if (!aid) return;
     if (action === 'reset' && !globalThis.confirm(`${group.identity.name} 계정의 비밀번호를 1234로 초기화하고 모든 세션을 해제할까요?`)) return;
     if (action === 'disable' && !globalThis.confirm(`${group.identity.name} 계정을 비활성화하고 세션과 푸시를 모두 해제할까요?`)) return;
+    const session = sessionId;
+    const actionToken = ++actionId;
     button.disabled = true;
     clearActivationCode();
     setStatus('요청을 처리하는 중입니다.');
@@ -166,6 +178,7 @@ export function initStudentAccounts() {
       const response = await sendJson(`${LIST_URL}/${encodeURIComponent(aid)}/${action}`, body, { credentials: 'same-origin' });
       await ensureOk(response, `학생 앱 계정 ${action}`);
       const payload = await response.json();
+      if (session !== sessionId || actionToken !== actionId) return;
       if (action === 'activation-code') {
         pendingCode = String(payload.activationCode || '');
         if (!/^\d{6}$/.test(pendingCode)) throw new Error('invalid activation code response');
@@ -177,6 +190,7 @@ export function initStudentAccounts() {
         await load();
       }
     } catch {
+      if (session !== sessionId || actionToken !== actionId) return;
       setStatus('요청을 처리하지 못했습니다. 목록을 새로고침한 뒤 다시 시도해 주세요.', 'error');
     } finally {
       button.disabled = false;
@@ -184,6 +198,8 @@ export function initStudentAccounts() {
   };
 
   const close = () => {
+    sessionId += 1;
+    requestId += 1;
     clearActivationCode();
     document.body.classList.remove('student-accounts-open');
     modal.style.display = 'none';
@@ -192,6 +208,7 @@ export function initStudentAccounts() {
   };
 
   openButton.addEventListener('click', () => {
+    sessionId += 1;
     restoreFocus = document.activeElement;
     document.body.classList.add('student-accounts-open');
     modal.hidden = false;
@@ -205,14 +222,39 @@ export function initStudentAccounts() {
   search.addEventListener('input', render);
   filter.addEventListener('change', render);
   modal.addEventListener('click', event => { if (event.target === modal) close(); });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !modal.hidden) close(); });
+  modal.addEventListener('keydown', event => {
+    if (modal.hidden) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = [...modal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter(control => control.getClientRects().length);
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!controls.includes(document.activeElement)
+      || (event.shiftKey && document.activeElement === first)
+      || (!event.shiftKey && document.activeElement === last)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    }
+  });
   copyButton.addEventListener('click', async () => {
     if (!pendingCode) return;
+    const session = sessionId;
+    const code = pendingCode;
+    const actionToken = actionId;
     try {
-      await navigator.clipboard.writeText(pendingCode);
+      await navigator.clipboard.writeText(code);
+      if (session !== sessionId || actionToken !== actionId || pendingCode !== code) return;
       clearActivationCode();
       setStatus('활성화 코드를 복사했습니다. 화면에서는 즉시 지웠습니다.', 'success');
     } catch {
+      if (session !== sessionId || actionToken !== actionId || pendingCode !== code) return;
       setStatus('자동 복사가 차단되었습니다. 표시된 코드를 직접 복사해 주세요.', 'error');
     }
   });

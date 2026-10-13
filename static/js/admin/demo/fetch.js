@@ -1,12 +1,19 @@
-import { cloneDemoValue, loadDemoStore, saveDemoStore } from './store.js';
+import { cloneDemoValue as clone, loadDemoStore, saveDemoStore } from './store.js';
+import { applyAssistantStudentNotesRequest } from './assistantStudentNotesContract.js';
 import { applyDemoHomeworkRequest } from './homeworkContract.js';
 import { applyOperationNotesRequest } from './operationNotesContract.js';
+import { applyStudentLogsRequest } from './studentLogsContract.js';
+import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
+import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
+import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
 const PATCH_METHODS = new Set(['POST', 'PATCH']);
 const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const DEMO_UPLOAD_URL = '/demo-assets/images/uploaded-demo-image.png';
+const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';
+const TEST_ASSIGN_TOUCHED_KEYS_KEY = '__testAssignmentTouchedKeys';
 
 function getLocationOrigin(root) {
   const loc = root?.location || globalThis.location;
@@ -17,9 +24,6 @@ function getResponseCtor(root) {
   return root?.Response || globalThis.Response;
 }
 
-function clone(value) {
-  return cloneDemoValue(value);
-}
 
 function nowIso() {
   return new Date().toISOString();
@@ -30,6 +34,27 @@ function canonicalDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
   const parsed = new Date(`${date}T00:00:00Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : '';
+}
+
+function demoRevision(value) {
+  const text = JSON.stringify(value || {});
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `demo-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function schoolCalendarDemoRevision(value) {
+  return demoRevision(value).replace(/^demo-/, '').repeat(8);
+}
+
+function requestHeader(headers, name) {
+  if (headers?.get) return String(headers.get(name) || '');
+  const target = String(name || '').toLowerCase();
+  const found = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === target);
+  return String(found?.[1] || '');
 }
 
 function projectedDoneEntry(entry) {
@@ -186,11 +211,6 @@ function ensureDateMap(store, key, date) {
   return store[key][date];
 }
 
-function ensureArrayDateMap(store, key, date) {
-  store[key] = store[key] && typeof store[key] === 'object' ? store[key] : {};
-  store[key][date] = Array.isArray(store[key][date]) ? store[key][date] : [];
-  return store[key][date];
-}
 
 function removeEmptyDateMap(store, key, date) {
   if (store[key]?.[date] && typeof store[key][date] === 'object' && !Array.isArray(store[key][date]) && Object.keys(store[key][date]).length === 0) {
@@ -253,10 +273,54 @@ function mergeLogPatch(store, body) {
   return { entry: clone(next) };
 }
 
-function mergeProgressPatch(store, body) {
+function mergeLogPatchBatch(store, body) {
+  const patches = body?.patches;
+  if (!Array.isArray(patches) || patches.length < 1 || patches.length > 100) {
+    return { error: 'patches must contain 1 to 100 items' };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of patches) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'bad patch item' };
+    const date = canonicalDate(raw.date);
+    const sid = String(raw.sid || '').trim();
+    const entry = raw.entry == null ? {} : raw.entry;
+    const clear = raw.__clear;
+    if (!date || !sid || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { error: 'bad patch item' };
+    }
+    if (clear != null && !Array.isArray(clear)) return { error: 'bad clear list' };
+
+    const targetKey = `${date}\u0000${sid}`;
+    if (seen.has(targetKey)) return { error: 'duplicate patch target' };
+    seen.add(targetKey);
+    normalized.push({
+      date,
+      sid,
+      entry: clone(entry),
+      ...(Array.isArray(clear) ? { __clear: clone(clear) } : {}),
+    });
+  }
+
+  const draft = { ...store, logs: clone(store.logs || {}) };
+  normalized.forEach(patch => mergeLogPatch(draft, patch));
+  store.logs = draft.logs;
+  return { count: normalized.length };
+}
+
+export function mergeProgressPatch(store, body) {
   const date = String(body?.date || '').trim();
   const sid = String(body?.sid || '').trim();
   if (!date || !sid) return { error: 'missing date or sid' };
+  const rearms = body.resumeAutoWatch || {};
+  if (!rearms || typeof rearms !== 'object' || Array.isArray(rearms)) return { error: 'bad resumeAutoWatch' };
+  for (const [mid, command] of Object.entries(rearms)) {
+    if (!mid || mid.startsWith('__') || mid === 'tests' || !command?.token || typeof command.baseToken !== 'string'
+      || (body.source && body.source !== 'manual') || (body.progress?.[mid] && body.progress[mid] !== 'none')) return { error: 'bad resumeAutoWatch' };
+    const token = store.progress?.[date]?.[sid]?.__videoWatchCycles?.[mid]?.token || '';
+    if (token !== command.token && token !== command.baseToken) return { error: 'watch cycle conflict', status: 409 };
+  }
   const bySid = ensureDateMap(store, 'progress', date);
   const previous = bySid[sid] && typeof bySid[sid] === 'object' ? bySid[sid] : {};
   const patch = body.progress && typeof body.progress === 'object' ? body.progress : {};
@@ -264,10 +328,27 @@ function mergeProgressPatch(store, body) {
   const manualMeta = next.__manualProgressMids && typeof next.__manualProgressMids === 'object'
     ? { ...next.__manualProgressMids }
     : {};
+  const touchedTestKeys = new Set(
+    Array.isArray(patch[TEST_ASSIGN_TOUCHED_KEYS_KEY])
+      ? patch[TEST_ASSIGN_TOUCHED_KEYS_KEY].map(key => String(key || '').trim()).filter(Boolean)
+      : [],
+  );
+  const patchedTestKeys = new Set();
+  const changedTestKeys = new Set();
+  let sawTestsPatch = false;
+  const testStatusName = (value) => {
+    if (value && typeof value === 'object') {
+      if (value.remove === true) return '';
+      value = value.status;
+    }
+    const status = String(value ?? '').trim();
+    return status === 'none' ? '' : status;
+  };
 
   Object.entries(patch).forEach(([key, rawValue]) => {
     const mid = String(key || '').trim();
     if (!mid) return;
+    if (rearms[mid]) return;
 
     if (mid === '__testsClearedAt') {
       const marker = String(rawValue || '').trim();
@@ -278,10 +359,13 @@ function mergeProgressPatch(store, body) {
 
     if (mid === 'tests') {
       if (!rawValue || typeof rawValue !== 'object') return;
+      sawTestsPatch = true;
       const tests = next.tests && typeof next.tests === 'object' ? { ...next.tests } : {};
       Object.entries(rawValue).forEach(([testKey, testStatus]) => {
         const normalizedKey = String(testKey || '').trim();
         if (!normalizedKey) return;
+        patchedTestKeys.add(normalizedKey);
+        const beforeStatus = testStatusName(tests[normalizedKey]);
         if (testStatus == null || testStatus === false) {
           delete tests[normalizedKey];
         } else if (typeof testStatus === 'string') {
@@ -294,6 +378,7 @@ function mergeProgressPatch(store, body) {
         } else {
           tests[normalizedKey] = String(testStatus).trim();
         }
+        if (beforeStatus !== testStatusName(tests[normalizedKey])) changedTestKeys.add(normalizedKey);
       });
       if (Object.keys(tests).length) {
         next.tests = tests;
@@ -316,8 +401,42 @@ function mergeProgressPatch(store, body) {
     }
   });
 
+  if (Object.keys(rearms).length) {
+    next.__videoWatchCycles = clone(next.__videoWatchCycles || {});
+    next.__autoWatchProgressMids = { ...(next.__autoWatchProgressMids || {}) };
+    for (const [mid, command] of Object.entries(rearms)) {
+      if (next.__videoWatchCycles[mid]?.token === command.token) continue;
+      const now = Date.now();
+      next.__videoWatchCycles[mid] = { token: command.token, startedAt: now, watch: { last: 0, dur: 0, completed: false, updatedAt: now } };
+      next[mid] = 'none';
+      next.__autoWatchProgressMids[mid] = 'none';
+      delete manualMeta[mid];
+    }
+  }
   if (Object.keys(manualMeta).length) next.__manualProgressMids = manualMeta;
   else delete next.__manualProgressMids;
+  if (sawTestsPatch) {
+    const tests = next.tests && typeof next.tests === 'object' ? next.tests : {};
+    const rawOrder = next[TEST_ASSIGN_CHANGE_ORDER_KEY];
+    const orderByKey = {};
+    if (rawOrder && typeof rawOrder === 'object' && !Array.isArray(rawOrder)) {
+      Object.entries(rawOrder).forEach(([key, value]) => {
+        const order = Number(value);
+        if (String(key || '').trim() && Number.isInteger(order) && order > 0 && testStatusName(tests[key])) {
+          orderByKey[key] = order;
+        }
+      });
+    }
+    const orderedKeys = Array.from(touchedTestKeys.size ? touchedTestKeys : changedTestKeys)
+      .filter(key => patchedTestKeys.has(key) && testStatusName(tests[key]));
+    if (orderedKeys.length) {
+      const nextOrder = Math.max(0, ...Object.values(orderByKey)) + 1;
+      orderedKeys.forEach(key => { orderByKey[key] = nextOrder; });
+    }
+    if (Object.keys(orderByKey).length) next[TEST_ASSIGN_CHANGE_ORDER_KEY] = orderByKey;
+    else delete next[TEST_ASSIGN_CHANGE_ORDER_KEY];
+  }
+  delete next[TEST_ASSIGN_TOUCHED_KEYS_KEY];
   bySid[sid] = next;
   return { progress: clone(next) };
 }
@@ -476,7 +595,7 @@ function flatDemoTests(store) {
   return rows;
 }
 
-function statSeedForTest(test, index) {
+function statSeedForTest(index) {
   const count = 3 + (index % 5);
   const avg = 72 + ((index * 7) % 19);
   return {
@@ -506,7 +625,7 @@ function testsStatsResponse(root, store) {
   const byTest = {};
   const summaryBuckets = {};
   rows.forEach((test, index) => {
-    const stat = statSeedForTest(test, index);
+    const stat = statSeedForTest(index);
     if (test.id) byTestId[test.id] = stat;
     byTestSignature[testsSignature(test)] = stat;
     if (test.name) byTest[String(test.name).trim()] = stat;
@@ -536,7 +655,7 @@ function testsRecordsResponse(root, store, url) {
   const testId = String(url.searchParams.get('test_id') || '').trim();
   const tests = flatDemoTests(store);
   const index = Math.max(0, tests.findIndex(test => String(test.id || '') === testId));
-  const stat = statSeedForTest(tests[index] || {}, index);
+  const stat = statSeedForTest(index);
   const students = Array.isArray(store.students) ? store.students.slice(0, Math.min(6, store.students.length)) : [];
   const records = students.map((student, rowIndex) => {
     const pct = Math.max(45, Math.min(100, stat.avg_pct + (rowIndex - 2) * 4));
@@ -604,6 +723,23 @@ function mergeWholeMap(store, key, body) {
     });
   }
   return clone(store[key]);
+}
+
+function mergeWeekendSlotsPatch(store, body) {
+  store.weekendSlots = store.weekendSlots && typeof store.weekendSlots === 'object'
+    ? store.weekendSlots
+    : {};
+  Object.entries(body && typeof body === 'object' ? body : {}).forEach(([date, mapping]) => {
+    if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return;
+    const day = { ...(store.weekendSlots[date] || {}) };
+    Object.entries(mapping).forEach(([sid, value]) => {
+      if (value == null || value === false || (Array.isArray(value) && value.length === 0)) delete day[String(sid)];
+      else day[String(sid)] = clone(value);
+    });
+    if (Object.keys(day).length) store.weekendSlots[date] = day;
+    else delete store.weekendSlots[date];
+  });
+  return clone(store.weekendSlots);
 }
 
 function mergeAbsent(store, body) {
@@ -774,6 +910,46 @@ function unarchivedSummaryResponse(root, store, url) {
   });
 }
 
+function missingLeaveSummaryResponse(root, store, url) {
+  const excludeDate = String(
+    url.searchParams.get('exclude_date') || url.searchParams.get('excludeDate') || '',
+  ).trim();
+  const today = String(store.demoDate || store.dates?.current || '').trim();
+  const absentByDate = store.absent?.by_date || {};
+  const rows = [];
+
+  Object.entries(store.arriveTime || {}).forEach(([date, bySid]) => {
+    const dateKey = canonicalDate(date);
+    if (!dateKey || (today && dateKey >= today) || (excludeDate && dateKey === excludeDate)) return;
+    const absent = new Set(Array.isArray(absentByDate?.[dateKey]) ? absentByDate[dateKey].map(String) : []);
+    const rosterIds = effectiveDemoRosterStudentIds(store, dateKey);
+    Object.entries(bySid && typeof bySid === 'object' ? bySid : {}).forEach(([sid, arriveTime]) => {
+      const sidKey = String(sid || '').trim();
+      const arrive = String(arriveTime || '').trim();
+      if (!sidKey || !arrive || absent.has(sidKey) || !rosterIds.has(sidKey)) return;
+      const entry = store.logs?.[dateKey]?.[sidKey];
+      const done = entry?.done === true || entry?.done === 1 || entry?.done === '1' || entry?.done === 'true';
+      if (!done) rows.push({ date: dateKey, sid: sidKey, arriveTime: arrive });
+    });
+  });
+
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.sid).localeCompare(String(b.sid)));
+  const byDate = new Map();
+  rows.forEach(row => byDate.set(row.date, (byDate.get(row.date) || 0) + 1));
+  return responseJson(root, {
+    ok: true,
+    sinceDate: store.dates?.previous || '',
+    excludeDate,
+    total: rows.length,
+    students: new Set(rows.map(row => row.sid)).size,
+    rowsAvailable: true,
+    byDate: Array.from(byDate.entries())
+      .sort(([a], [b]) => String(b).localeCompare(String(a)))
+      .map(([date, count]) => ({ date, count })),
+    rows,
+  });
+}
+
 function normalizeAnnouncementPayload(payload, previous = {}) {
   const id = String(previous.id || payload.id || `demo-ann-${Date.now()}`).trim();
   const createdAt = previous.createdAt || nowIso();
@@ -807,15 +983,6 @@ function announcementIdFromPath(path) {
   const prefix = '/api/announcements/';
   if (!path.startsWith(prefix)) return '';
   return decodeURIComponent(path.slice(prefix.length));
-}
-
-function materialUploadResponse(root) {
-  return responseJson(root, {
-    ok: false,
-    demo: true,
-    error: 'demo upload disabled',
-    materials: {},
-  }, 200);
 }
 
 async function imageUploadResponse(root, ctx) {
@@ -893,6 +1060,26 @@ async function handleGet(root, ctx, store) {
     if (homeworkResult.changed) saveDemoStore(store);
     return responseJson(root, clone(homeworkResult.payload), homeworkResult.status);
   }
+  const studentLogsResult = applyStudentLogsRequest({
+    method: 'GET',
+    path,
+    store,
+    createdAt: nowIso,
+    today: store.demoDate,
+  });
+  if (studentLogsResult) {
+    return responseJson(root, clone(studentLogsResult.payload), studentLogsResult.status);
+  }
+  const assistantStudentNotesResult = applyAssistantStudentNotesRequest({
+    method: 'GET',
+    path,
+    params: url.searchParams,
+    store,
+    createdAt: nowIso,
+  });
+  if (assistantStudentNotesResult) {
+    return responseJson(root, clone(assistantStudentNotesResult.payload), assistantStudentNotesResult.status);
+  }
   if (path === '/api/student-accounts') return responseJson(root, { ok: true, groups: clone(store.studentAccounts || []) });
   if (path === '/api/admin/student-focus/summary') {
     const date = String(url.searchParams.get('date') || '').trim();
@@ -908,17 +1095,35 @@ async function handleGet(root, ctx, store) {
   if (path === '/api/logs') return responseJson(root, filterDateSidMap(store.logs, url));
   if (path === '/api/homework-books') return responseJson(root, homeworkBooksBySid(store.logs));
   if (path === '/api/logs/entry') return responseJson(root, { ok: true, entry: getLogEntry(store, url) });
-  if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url));
-  if (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all') return extraAttendResponse(root, store, url);
+  if (path === '/api/progress') return responseJson(root, filterDateSidMap(store.progress, url), 200, { 'X-Video-Watch-Cycles': '1' });
+  if (path === '/api/extra-attend') return extraAttendResponse(root, store, url);
   if (path === '/api/absent') return responseJson(root, clone(store.absent || { by_date: {}, by_student: {}, by_slot: {} }));
   if (path === '/api/attendance') return dayMapResponse(root, store, 'attendance', url);
   if (path === '/api/contact') return dayMapResponse(root, store, 'contact', url);
-  if (path === '/api/arrive-time' || path === '/arrive-time') return dayMapResponse(root, store, 'arriveTime', url);
+  if (path === '/api/arrive-time') return dayMapResponse(root, store, 'arriveTime', url);
   if (path === '/api/attend') return attendResponse(root, store, url);
   if (path === '/api/weekend-slots') return responseJson(root, clone(store.weekendSlots || {}));
   if (path === '/api/today_order') return responseJson(root, clone(store.todayOrder || {}));
-  if (path === '/api/makeup-carryover') return responseJson(root, clone(store.makeupCarryover || {}));
-  if (path === '/api/school-calendar') return responseJson(root, clone(store.schoolCalendar || {}));
+  if (path === '/api/makeup-sheet-sync/config') {
+    return responseJson(root, {
+      ok: true,
+      sheetUrl: String(store.makeupSheetSyncConfig?.sheetUrl || ''),
+    });
+  }
+  if (path === '/api/makeup-carryover') {
+    const payload = clone(store.makeupCarryover || {});
+    return responseJson(root, payload, 200, {
+      'X-Makeup-Carryover-Revision': demoRevision(payload),
+    });
+  }
+  if (path === '/api/school-calendar') {
+    const payload = clone(store.schoolCalendar || {});
+    const revision = schoolCalendarDemoRevision(payload);
+    return responseJson(root, payload, 200, {
+      'X-School-Calendar-Revision': revision,
+      ETag: `"${revision}"`,
+    });
+  }
   if (path === '/api/tests-config') return responseJson(root, testsFlatConfig(store));
   if (path === '/api/tests') return responseJson(root, clone(store.tests || {}));
   if (path === '/api/tests-stats') return testsStatsResponse(root, store, url);
@@ -939,18 +1144,31 @@ async function handleGet(root, ctx, store) {
   }
   if (path === '/api/watch/latest') return watchLatestResponse(root, store, url);
   if (path === '/api/logs/unarchived-summary') return unarchivedSummaryResponse(root, store, url);
+  if (path === '/api/arrive-time/missing-leave-summary') return missingLeaveSummaryResponse(root, store, url);
   return null;
 }
 
 async function handleWrite(root, ctx, store) {
   const { path, method } = ctx;
   let body = {};
-  if (path !== '/api/announcements/image' && path !== '/api/material-upload') {
+  if (path !== '/api/announcements/image') {
     try {
       body = await readJsonBody(ctx);
     } catch {
       return badRequest(root, 'invalid json body');
     }
+  }
+
+  const quickPrinterResult = applyDemoQuickPrinterRequest({
+    method,
+    path,
+    body,
+    store,
+    createdAt: nowIso,
+  });
+  if (quickPrinterResult) {
+    if (quickPrinterResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(quickPrinterResult.payload), quickPrinterResult.status);
   }
 
   const homeworkResult = applyDemoHomeworkRequest({
@@ -963,6 +1181,31 @@ async function handleWrite(root, ctx, store) {
   if (homeworkResult) {
     if (homeworkResult.changed) saveDemoStore(store);
     return responseJson(root, clone(homeworkResult.payload), homeworkResult.status);
+  }
+
+  const assistantStudentNotesResult = applyAssistantStudentNotesRequest({
+    method,
+    path,
+    body,
+    store,
+    createdAt: nowIso,
+  });
+  if (assistantStudentNotesResult) {
+    if (assistantStudentNotesResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(assistantStudentNotesResult.payload), assistantStudentNotesResult.status);
+  }
+
+  const studentLogsResult = applyStudentLogsRequest({
+    method,
+    path,
+    body,
+    store,
+    createdAt: nowIso,
+    today: store.demoDate,
+  });
+  if (studentLogsResult) {
+    if (studentLogsResult.changed) saveDemoStore(store);
+    return responseJson(root, clone(studentLogsResult.payload), studentLogsResult.status);
   }
 
   const accountRequest = method === 'POST' ? studentAccountAction(path) : null;
@@ -1014,13 +1257,6 @@ async function handleWrite(root, ctx, store) {
     return ok(root, { ok: true, ...result });
   }
 
-  if (method === 'POST' && path === '/api/delete-student') {
-    const result = deleteStudent(store, body?.id || body?.sid);
-    if (result.error) return badRequest(root, result.error);
-    saveDemoStore(store);
-    return ok(root, { ok: true, ...result });
-  }
-
   if (method === 'POST' && path === '/api/videos') {
     const videos = setVideos(store, body);
     saveDemoStore(store);
@@ -1028,15 +1264,47 @@ async function handleWrite(root, ctx, store) {
   }
 
   if (method === 'POST' && path === '/api/school-calendar') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return badRequest(root, 'invalid school calendar');
+    }
+    const current = clone(store.schoolCalendar || {});
+    const currentRevision = schoolCalendarDemoRevision(current);
+    const expectedRevision = requestHeader(ctx.headers, 'If-Match')
+      .trim()
+      .replace(/^W\//, '')
+      .replace(/^"|"$/g, '')
+      .toLowerCase();
+    if (!expectedRevision) {
+      return responseJson(root, { ok: false, code: 'school_calendar_revision_required' }, 428, {
+        'X-School-Calendar-Revision': currentRevision,
+      });
+    }
+    if (expectedRevision !== currentRevision) {
+      return responseJson(root, { ok: false, code: 'school_calendar_conflict' }, 409, {
+        'X-School-Calendar-Revision': currentRevision,
+      });
+    }
     const calendar = setSchoolCalendar(store, body);
     saveDemoStore(store);
-    return ok(root, calendar);
+    const revision = schoolCalendarDemoRevision(calendar);
+    return responseJson(root, calendar, 200, {
+      'X-School-Calendar-Revision': revision,
+      ETag: `"${revision}"`,
+    });
   }
 
   if (method === 'POST' && path === '/api/tests-config') {
     const config = setTestsConfig(store, body);
     saveDemoStore(store);
     return ok(root, config);
+  }
+
+  if (method === 'PATCH' && path === '/api/tests-config/test') {
+    const result = patchDemoTestConfig(store.testsConfig || { categories: {} }, body);
+    if (!result.ok) return responseJson(root, { ok: false, error: result.error }, result.status);
+    store.testsConfig = result.config;
+    saveDemoStore(store);
+    return ok(root, { ok: true, test: result.test });
   }
 
   if (method === 'POST' && path === '/api/watch') {
@@ -1067,9 +1335,16 @@ async function handleWrite(root, ctx, store) {
     return ok(root, { ok: true, entry: result.entry });
   }
 
+  if (method === 'POST' && path === '/api/logs/patch-batch') {
+    const result = mergeLogPatchBatch(store, body);
+    if (result.error) return badRequest(root, result.error);
+    saveDemoStore(store);
+    return ok(root, { ok: true, count: result.count });
+  }
+
   if (PATCH_METHODS.has(method) && path === '/api/progress/patch') {
     const result = mergeProgressPatch(store, body);
-    if (result.error) return badRequest(root, result.error);
+    if (result.error) return responseJson(root, { ok: false, error: result.error }, result.status || 400);
     saveDemoStore(store);
     return ok(root, { ok: true, progress: result.progress });
   }
@@ -1088,46 +1363,75 @@ async function handleWrite(root, ctx, store) {
     return ok(root, { ok: true, contact: result.map, date: result.date, sid: result.sid, value: result.value });
   }
 
-  if (PATCH_METHODS.has(method) && (path === '/api/arrive-time/patch' || path === '/arrive-time/patch')) {
+  if (PATCH_METHODS.has(method) && path === '/api/arrive-time/patch') {
     const result = upsertArriveTime(store, body);
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, arriveTime: result.map, date: result.date, sid: result.sid, value: result.value });
   }
 
-  if (PATCH_METHODS.has(method) && (path === '/api/arrive-time' || path === '/arrive-time')) {
+  if (PATCH_METHODS.has(method) && path === '/api/arrive-time') {
     const result = body?.sid ? upsertArriveTime(store, body) : { map: mergeWholeMap(store, 'arriveTime', body) };
     if (result.error) return badRequest(root, result.error);
     saveDemoStore(store);
     return ok(root, { ok: true, arriveTime: clone(store.arriveTime || {}) });
   }
 
-  if (method === 'POST' && (path === '/api/extra-attend' || path === '/api/extra' || path === '/api/extra_attend' || path === '/api/extra-attend/all')) {
-    if (body?.date && body?.sid) {
-      const date = String(body.date);
-      const sid = String(body.sid);
-      const rows = ensureArrayDateMap(store, 'extraAttend', date);
-      const set = new Set(rows.map(String));
-      if (body.value === false || body.remove === true) set.delete(sid);
-      else set.add(sid);
-      store.extraAttend[date] = Array.from(set);
-    } else {
-      store.extraAttend = body && typeof body === 'object' ? clone(body) : {};
+  if (method === 'PATCH' && path === '/api/extra-attend') {
+    const rawDates = body?.dates && typeof body.dates === 'object'
+      ? body.dates
+      : { [body?.date]: body?.sids };
+    const dates = {};
+    for (const [rawDate, rawSids] of Object.entries(rawDates)) {
+      const date = canonicalDate(rawDate);
+      if (!date || !Array.isArray(rawSids)) return badRequest(root, 'invalid date or sids');
+      dates[date] = Array.from(new Set(rawSids.map(sid => String(sid || '').trim()).filter(Boolean)));
     }
-    saveDemoStore(store);
-    return ok(root, { ok: true, extraAttend: clone(store.extraAttend || {}) });
+    if (!Object.keys(dates).length) return badRequest(root, 'date patch is required');
+
+    const latest = loadDemoStore();
+    latest.extraAttend = latest.extraAttend && typeof latest.extraAttend === 'object' ? latest.extraAttend : {};
+    Object.entries(dates).forEach(([date, sids]) => {
+      if (sids.length) latest.extraAttend[date] = sids;
+      else delete latest.extraAttend[date];
+    });
+    saveDemoStore(latest);
+    return ok(root, { ok: true, dates: clone(dates), changedDates: Object.keys(dates) });
   }
 
   if (method === 'POST' && path === '/api/weekend-slots') {
-    const next = mergeWholeMap(store, 'weekendSlots', body);
+    const next = mergeWeekendSlotsPatch(store, body);
     saveDemoStore(store);
     return ok(root, next);
   }
 
-  if (method === 'POST' && path === '/api/today_order') {
-    const next = setWholeMap(store, 'todayOrder', body);
-    saveDemoStore(store);
-    return ok(root, next);
+  if (method === 'POST' && path === '/api/makeup-sheet-sync/config') {
+    const sheetUrl = String(body?.sheetUrl || '').trim();
+    if (!sheetUrl.includes('docs.google.com/spreadsheets/d/')) {
+      return badRequest(root, 'Google Sheets link required');
+    }
+    const latest = loadDemoStore();
+    latest.makeupSheetSyncConfig = {
+      ...(latest.makeupSheetSyncConfig && typeof latest.makeupSheetSyncConfig === 'object'
+        ? latest.makeupSheetSyncConfig
+        : {}),
+      sheetUrl,
+    };
+    saveDemoStore(latest);
+    return ok(root, { ok: true, sheetUrl });
+  }
+
+  if (method === 'POST' && path === '/api/makeup-sheet-sync') {
+    return ok(root, {
+      ok: true,
+      mode: 'additive-only',
+      opened: 0,
+      added: 0,
+      skippedExisting: 0,
+      unmatchedStarredRows: 0,
+      months: [],
+      demo: true,
+    });
   }
 
   if (method === 'PATCH' && path === '/api/today_order') {
@@ -1153,9 +1457,26 @@ async function handleWrite(root, ctx, store) {
   }
 
   if (method === 'POST' && path === '/api/makeup-carryover') {
-    const next = setWholeMap(store, 'makeupCarryover', body);
-    saveDemoStore(store);
-    return ok(root, next);
+    const latest = loadDemoStore();
+    const current = clone(latest.makeupCarryover || {});
+    const currentRevision = demoRevision(current);
+    const expectedRevision = requestHeader(ctx.headers, 'If-Match').trim().replace(/^"|"$/g, '');
+    if (!expectedRevision) {
+      return responseJson(root, { ok: false, error: 'makeup_revision_required' }, 428, {
+        'X-Makeup-Carryover-Revision': currentRevision,
+      });
+    }
+    if (expectedRevision !== currentRevision) {
+      return responseJson(root, { ok: false, error: 'makeup_revision_conflict' }, 409, {
+        'X-Makeup-Carryover-Revision': currentRevision,
+      });
+    }
+
+    const next = setWholeMap(latest, 'makeupCarryover', body);
+    saveDemoStore(latest);
+    return responseJson(root, next, 200, {
+      'X-Makeup-Carryover-Revision': demoRevision(next),
+    });
   }
 
   if (method === 'POST' && path === '/api/absent') {
@@ -1181,13 +1502,6 @@ async function handleWrite(root, ctx, store) {
     return ok(root, store.matAssign);
   }
 
-  if (method === 'POST' && path === '/api/materials') {
-    store.materials = body && typeof body === 'object' ? clone(body) : {};
-    saveDemoStore(store);
-    return ok(root, store.materials);
-  }
-
-  if (method === 'POST' && path === '/api/material-upload') return materialUploadResponse(root);
 
   if (method === 'POST' && path === '/api/announcements/image') return imageUploadResponse(root, ctx);
 

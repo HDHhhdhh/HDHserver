@@ -110,7 +110,7 @@ export async function runChecks() {
   });
 
   check('feature is initialized from the admin entrypoint', () => {
-    assert.match(main, /import\s+\{\s*initStudentAccounts\s*\}.*studentAccounts\.js/);
+    assert.match(main, /import\(['"]\.\/features\/studentAccounts\.js['"]\)\.then\(module => module\.initStudentAccounts\(\)\)/);
     assert.match(main, /initStudentAccounts\(\)/);
     assert.match(feature, /export\s+function\s+initStudentAccounts/);
   });
@@ -144,7 +144,7 @@ export async function runChecks() {
   check('demo fixtures and schema include account state', () => {
     assert.match(demoData, /studentAccounts\s*:/);
     assert.match(demoData, /activationCodeRequired/);
-    assert.match(demoStore, /DEMO_SCHEMA_VERSION\s*=\s*3/);
+    assert.match(demoStore, /DEMO_SCHEMA_VERSION\s*=\s*5/);
     assert.match(demoStore, /Array\.isArray\(store\.studentAccounts\)/);
   });
 

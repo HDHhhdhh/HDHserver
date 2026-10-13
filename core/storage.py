@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import shutil
+import threading
 import time
 import uuid
 from typing import Any
@@ -16,6 +17,33 @@ from typing import Any
 from flask import jsonify, make_response
 
 log = logging.getLogger(__name__)
+
+
+_LOCAL_LOCK_TOKENS_GUARD = threading.Lock()
+_LOCAL_LOCK_TOKENS: dict[str, str] = {}
+
+
+def _local_lock_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _register_local_lock_token(path: str, token: str) -> None:
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        _LOCAL_LOCK_TOKENS[_local_lock_key(path)] = token
+
+
+def _unregister_local_lock_token(path: str, token: str) -> None:
+    key = _local_lock_key(path)
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        if _LOCAL_LOCK_TOKENS.get(key) == token:
+            _LOCAL_LOCK_TOKENS.pop(key, None)
+
+
+def _is_active_local_lock_token(path: str, token: str) -> bool:
+    if not token:
+        return False
+    with _LOCAL_LOCK_TOKENS_GUARD:
+        return _LOCAL_LOCK_TOKENS.get(_local_lock_key(path)) == token
 
 
 def utc_now_isoz() -> str:
@@ -148,7 +176,7 @@ def _mirror_copy(path) -> None:
         return
 
 
-def save_atomic(path, obj: Any, *, compact: bool = False) -> None:
+def save_atomic(path, obj: Any, *, compact: bool = False, mirror: bool = True) -> None:
     """
     원자적 쓰기(임시파일 → 교체).
     Windows에서 WinError 32(다른 프로세스가 파일 사용 중) 뜨는 케이스가 있어:
@@ -166,11 +194,9 @@ def save_atomic(path, obj: Any, *, compact: bool = False) -> None:
     for _ in range(10):
         try:
             os.replace(tmp, path)
-            _mirror_copy(path)
+            if mirror:
+                _mirror_copy(path)
             return
-        except PermissionError as e:
-            last_err = e
-            time.sleep(0.03)  # 30ms
         except OSError as e:
             last_err = e
             time.sleep(0.03)
@@ -283,20 +309,38 @@ class InterProcessFileLock:
         except Exception:
             return
 
-        if time.time() - float(st.st_mtime) < self.stale_sec:
-            return
+        age_sec = max(0.0, time.time() - float(st.st_mtime))
 
         txt = self._read_lock_text()
         pid = None
+        token = ""
         try:
             m = re.search(r"\bpid=(\d+)\b", txt)
             if m:
                 pid = int(m.group(1))
+            token_match = re.search(r"\btoken=([A-Za-z0-9_-]+)\b", txt)
+            if token_match:
+                token = token_match.group(1)
         except Exception:
             pid = None
+            token = ""
 
-        if pid is not None and self._pid_alive(pid):
-            return
+        if pid == os.getpid():
+            if _is_active_local_lock_token(self.lock_path, token):
+                return
+            # A same-process lock can survive a transient Windows sharing
+            # violation during release.  Give a just-created lock enough time
+            # to register its token, then recover only when no live local
+            # owner exists.  Genuine long-running local locks remain protected
+            # by the active-token registry above.
+            local_orphan_grace_sec = max(1.0, self.poll_sec * 10)
+            if age_sec < local_orphan_grace_sec:
+                return
+        else:
+            if age_sec < self.stale_sec:
+                return
+            if pid is not None and self._pid_alive(pid):
+                return
 
         try:
             os.remove(self.lock_path)
@@ -315,6 +359,7 @@ class InterProcessFileLock:
                 self._fd = fd
                 self._token = token
                 os.write(fd, f"pid={os.getpid()} time={time.time()} token={token}".encode("utf-8"))
+                _register_local_lock_token(self.lock_path, token)
                 return
             except FileExistsError:
                 self._try_break_stale_lock()
@@ -332,16 +377,35 @@ class InterProcessFileLock:
                     pass
             self._fd = None
             self._token = ""
-            if token:
-                txt = self._read_lock_text()
-                if f"token={token}" not in txt:
+            deadline = time.time() + max(0.2, self.poll_sec * 5)
+            last_error: OSError | None = None
+            while True:
+                try:
+                    with open(self.lock_path, "r", encoding="utf-8", errors="ignore") as handle:
+                        txt = handle.read()
+                except FileNotFoundError:
                     return
-            try:
-                os.remove(self.lock_path)
-            except FileNotFoundError:
-                pass
+                except OSError as exc:
+                    last_error = exc
+                else:
+                    if token and f"token={token}" not in txt:
+                        return
+                    try:
+                        os.remove(self.lock_path)
+                        return
+                    except FileNotFoundError:
+                        return
+                    except OSError as exc:
+                        last_error = exc
+
+                if time.time() >= deadline:
+                    log.warning("Failed to release owned lock file %s: %s", self.lock_path, last_error)
+                    return
+                time.sleep(self.poll_sec)
         except Exception:
             pass
+        finally:
+            _unregister_local_lock_token(self.lock_path, token)
 
     def __enter__(self):
         self.acquire()

@@ -316,6 +316,15 @@ body.student-page #player {
   display: block;
 }
 
+body.student-page #youtubeOpenLink:not([hidden]) {
+  display: block;
+  padding: 8px 12px;
+  background: var(--stu-card);
+  color: var(--stu-text);
+  font-size: 13px;
+  text-align: right;
+}
+
 body.student-page .playlist-wrap {
   border-radius: 14px;
   border: 1px solid var(--stu-line);
@@ -1183,7 +1192,6 @@ body.student-page #announceModal.has-image .announce-card {
 
 body.student-page #announceModal.has-image .announce-body {
   grid-template-rows: auto auto minmax(74px, auto) auto;
-  overflow: visible;
   overflow: auto;
   padding-right: 4px;
   overscroll-behavior: contain;
@@ -2677,7 +2685,7 @@ body.student-page.dark #announceHistoryModal .announce-history-item {
    Student control alignment normalization
    ========================================= */
 body.student-page :where(button, input, select, textarea),
-body.student-page :where(#testSubmitModal, #announceModal, #setPanel) {
+body.student-page :where(#announceModal, #setPanel) {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif !important;
   letter-spacing: 0 !important;
 }
@@ -2693,9 +2701,7 @@ body.student-page :where(
   .announce-actions button,
   #annSendReply,
   #annRead,
-  .announce-close,
-  #testSubmitModal .ts-submit,
-  #testSubmitModal .ts-close
+  .announce-close
 ) {
   display: inline-flex !important;
   align-items: center !important;
@@ -2710,13 +2716,6 @@ body.student-page :where(
 body.student-page .assigned-test-btn {
   display: grid !important;
   align-items: center !important;
-}
-
-body.student-page #testSubmitModal .ts-close {
-  width: 38px !important;
-  min-width: 38px !important;
-  height: 38px !important;
-  padding: 0 !important;
 }
 
 body.student-page {
@@ -2783,8 +2782,7 @@ body.student-page .playlist-wrap,
 body.student-page .mbox,
 body.student-page #setPanel,
 body.student-page .announce-modal .announce-card,
-body.student-page #announceHistoryModal .announce-history-card,
-body.student-page #testSubmitModal :where(.ts-card, .ts-panel, .ts-dialog, .modal-panel) {
+body.student-page #announceHistoryModal .announce-history-card {
   border-radius: 8px !important;
   box-shadow: var(--stu-shadow-soft);
 }
@@ -2809,9 +2807,7 @@ body.student-page :where(
   .announce-actions button,
   #annSendReply,
   #annRead,
-  .announce-close,
-  #testSubmitModal .ts-submit,
-  #testSubmitModal .ts-close
+  .announce-close
 ) {
   min-height: 40px;
   border-radius: 8px !important;
@@ -2828,6 +2824,12 @@ body.student-page .hero-bar {
 body.student-page .namebar-title {
   font-size: clamp(1.8rem, 3.2vw, 2.7rem);
   line-height: 1.08;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+body.student-page #stuName {
+  white-space: normal;
 }
 
 body.student-page .namebar-desc {
@@ -2868,8 +2870,7 @@ body.student-page .announce-created-card,
 body.student-page .announce-content,
 body.student-page .announce-reply,
 body.student-page .announce-history-item,
-body.student-page .announce-history-note,
-body.student-page #testSubmitModal :where(input, textarea, select, button, .ts-question, .ts-answer-row) {
+body.student-page .announce-history-note {
   border-radius: 8px !important;
 }
 
@@ -3234,24 +3235,16 @@ body.student-page.student-app-mobile-surface #setPanel {
 }
 
 /* Installed PWA overlays share the same safe, phone-shaped content boundary. */
-body.student-page.student-app-mobile-surface .announce-modal,
-body.student-page.student-app-mobile-surface #testSubmitModal,
-body.student-page.student-app-mobile-surface #testAnswerPreviewModal {
+body.student-page.student-app-mobile-surface .announce-modal {
   box-sizing: border-box;
   padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
 }
 
 body.student-page.student-app-mobile-surface #announceModal .announce-card,
-body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card,
-body.student-page.student-app-mobile-surface #testSubmitModal .ts-card,
-body.student-page.student-app-mobile-surface #testAnswerPreviewModal .ts-preview-card {
+body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card {
   width: min(100%, 32rem) !important;
   max-width: 32rem !important;
   max-height: 100% !important;
-}
-
-body.student-page.student-app-mobile-surface #testAnswerPreviewModal .ts-preview-card {
-  height: min(760px, 100%) !important;
 }
 
 body.student-page.student-app-mobile-surface #announceHistoryModal .announce-history-card,
@@ -4407,9 +4400,7 @@ body.student-page.student-app-mobile-surface :where(
   #setPanel input:not([type="checkbox"]):not([type="radio"]),
   .mbox input[type="search"],
   .mbox .toggle,
-  #announceModal button,
-  #testSubmitModal button,
-  #testAnswerPreviewModal button
+  #announceModal button
 ) {
   min-height: 44px;
 }
@@ -4420,8 +4411,6 @@ body.student-page.student-app-mobile-surface #setPanel input:not([type="checkbox
 body.student-page.student-app-mobile-surface .mbox input[type="search"],
 body.student-page.student-app-mobile-surface .mbox .toggle,
 body.student-page.student-app-mobile-surface #announceModal button,
-body.student-page.student-app-mobile-surface #testSubmitModal button,
-body.student-page.student-app-mobile-surface #testAnswerPreviewModal button,
 body.student-page.student-app-mobile-surface #announceModal .announce-survey-option,
 body.student-page.student-app-mobile-surface #announceModal .announce-anonymous {
   min-height: 44px !important;

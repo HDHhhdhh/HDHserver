@@ -12,6 +12,8 @@ from core.storage import load
 
 bp_api_assistant_notes = Blueprint("api_assistant_notes", __name__)
 ADMIN_REFERER_PATHS = {"/admin", "/dh1130"}
+ALL_STUDENTS_REFERER_PATHS = {"/students", "/all.html"}
+ALL_STUDENTS_ALLOWED_METHODS = {"GET", "POST"}
 MAX_NOTE_LENGTH = 5000
 ALLOWED_NOTE_AUTHORS = ("귤", "세빈", "동훈", "하영")
 
@@ -36,13 +38,16 @@ def _admin_surface_allowed() -> bool:
     host = (request.host or "").lower()
     if parsed.netloc and parsed.netloc.lower() != host:
         return False
-    return (parsed.path.rstrip("/") or "/") in ADMIN_REFERER_PATHS
+    path = parsed.path.rstrip("/") or "/"
+    if path in ADMIN_REFERER_PATHS:
+        return True
+    return path in ALL_STUDENTS_REFERER_PATHS and request.method in ALL_STUDENTS_ALLOWED_METHODS
 
 
 @bp_api_assistant_notes.before_request
 def require_admin_surface():
     if not _admin_surface_allowed():
-        return jsonify({"ok": False, "error": "assistant notes are only available from the admin page"}), 403
+        return jsonify({"ok": False, "error": "assistant notes are not available from this surface"}), 403
 
 
 def _request_body() -> dict:

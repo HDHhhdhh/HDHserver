@@ -1,5 +1,7 @@
 # 학생 앱 개발/운영 도메인 분리
 
+범위: 아래 별도 노드 분리 설계·전환 기록은 `C:/server`의 현행 테스트 서버 실행 절차가 아니다. 이 저장소의 8004는 [관리형 격리 서버](isolated-design-server.md)와 [정본 §18](PROJECT_FUNCTIONS_AND_LOGIC.md#18-운영배포-계약)을 따르며 loopback 전용·별도 runtime·public OFF를 유지한다. 아래 외부 hostname·노드 전환 상태는 새 실행 승인이나 현재 상태의 검증 증거로 사용하지 않는다.
+
 코드 번들 및 양쪽 장비 상태 영수증 교환 절차는 [student-app-node-handoff.md](student-app-node-handoff.md)를 따른다. runtime은 동기화하지 않는다.
 
 ## 고정 역할

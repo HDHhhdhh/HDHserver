@@ -92,6 +92,10 @@ _TEST_CONFIG_SECRET_PREFIXES = (
     "canonical",
 )
 
+_TEST_CONFIG_PUBLIC_ANSWER_FIELDS: Final[frozenset[str]] = frozenset(
+    {"answerlinkstatus", "answermode", "answermodes"}
+)
+
 
 class HeaderGetter(Protocol):
     def get(self, key: str, default: str | None = None) -> str | None:
@@ -233,6 +237,8 @@ def strip_answer_link_fields(value: Any) -> tuple[Any, bool]:
 def strip_tests_config_answer_links(config: Any) -> Any:
     def is_secret_field(key: Any) -> bool:
         normalized = re.sub(r"[^0-9a-z]", "", str(key or "").casefold())
+        if normalized in _TEST_CONFIG_PUBLIC_ANSWER_FIELDS:
+            return False
         return normalized.startswith(_TEST_CONFIG_SECRET_PREFIXES)
 
     def project(value: Any) -> Any:

@@ -196,8 +196,6 @@ def main() -> int:
     categories = ensure_category_scaffolding(cfg)
     unit_category = categories["UNIT"]
     unit_tests = unit_category.get("tests", [])
-    if not isinstance(unit_tests, list):
-        unit_tests = []
 
     generated = build_generated_tests(CSV_PATH)
     merged, added, updated, preserved = merge_unit_tests(unit_tests, generated)

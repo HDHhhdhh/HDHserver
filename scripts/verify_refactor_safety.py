@@ -10,6 +10,7 @@ import os
 import pathlib
 import py_compile
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -31,7 +32,7 @@ PYTHON_FILES = [
     ROOT / "scripts/verify_refactor_safety.py",
     ROOT / "scripts/admin_tests_record_detail_fixtures.py",
     ROOT / "scripts/verify_admin_tests_record_details.py",
-    ROOT / "scripts/verify_submit_test_assignment_round_matching.py",
+    ROOT / "scripts/verify_retired_test_submission.py",
     ROOT / "scripts/verify_assistant_student_notes.py",
 ]
 
@@ -46,43 +47,93 @@ JS_CHECK_FILES = [
     ROOT / "static/js/admin/main.js",
     ROOT / "static/js/all/main.js",
     ROOT / "static/js/admin/core/adminDate.js",
+    ROOT / "static/js/admin/core/saveConflict.js",
     ROOT / "static/js/admin/demo/bootstrap.js",
     ROOT / "static/js/admin/demo/fetch.js",
+    ROOT / "static/js/admin/demo/attendanceRosterContract.js",
+    ROOT / "static/js/admin/demo/assistantStudentNotesContract.js",
+    ROOT / "static/js/admin/demo/testConfigContract.js",
+    ROOT / "static/js/admin/demo/quickPrinterContract.js",
     ROOT / "static/js/admin/features/assistantStudentNotes.js",
     ROOT / "static/js/admin/features/absentRecovery.js",
     ROOT / "static/js/admin/features/absentRegister.js",
     ROOT / "static/js/admin/features/calendar.js",
-    ROOT / "static/js/admin/features/calendarSnapshotCoordinator.js",
     ROOT / "static/js/admin/features/exportLogFormat.js",
     ROOT / "static/js/admin/features/exportLogs.js",
     ROOT / "static/js/admin/features/extraModal.js",
     ROOT / "static/js/admin/features/logModal.js",
+    ROOT / "static/js/admin/features/quickPrinterExport.js",
+    ROOT / "static/js/admin/features/quickPrinterExportContract.js",
     ROOT / "static/js/admin/features/today.js",
-    ROOT / "static/js/admin/features/todayActionMarkup.js",
     ROOT / "static/js/admin/features/todayDoneSummary.js",
     ROOT / "static/js/admin/features/today.state.js",
     ROOT / "static/js/admin/features/today.render.js",
     ROOT / "static/js/admin/features/testModal.js",
+    ROOT / "static/js/admin/features/testAssignmentRules.js",
+    ROOT / "static/js/admin/features/assignmentDragAutoScroll.js",
     ROOT / "static/js/admin/features/videoModal.js",
     ROOT / "static/js/student-app-push.js",
     ROOT / "static/js/student-app.js",
+    ROOT / "static/js/student/bootstrapState.js",
+    ROOT / "static/js/student/watchState.js",
+    ROOT / "static/js/student/playback.js",
+    ROOT / "static/js/student/reviewPlaylist.js",
+    ROOT / "static/js/student/announcementState.js",
+    ROOT / "static/js/student/testPresentation.js",
     ROOT / "static/js/student.js",
+    ROOT / "static/js/tests.js",
+    ROOT / "static/js/tests/catalogState.js",
+    ROOT / "static/js/tests/catalogEditorState.js",
+    ROOT / "static/js/tests/catalogStatisticsState.js",
+    ROOT / "static/js/file-manage.js",
     ROOT / "static/js/shared/api.js",
     ROOT / "static/js/shared/testRecordData.js",
     ROOT / "static/js/shared/testRecordDetails.js",
     ROOT / "scripts/verify_student_material_access_scope.js",
-    ROOT / "scripts/verify_student_training_pack_round_filter.js",
+    ROOT / "scripts/verify_student_announcement_state.mjs",
+    ROOT / "scripts/verify_student_bootstrap_state.mjs",
+    ROOT / "scripts/verify_student_playback.mjs",
+    ROOT / "scripts/verify_student_review_playlist.mjs",
+    ROOT / "scripts/verify_student_test_presentation.mjs",
+    ROOT / "scripts/verify_student_watch_autosave.mjs",
+    ROOT / "scripts/verify_student_watch_timestamp.mjs",
+    ROOT / "scripts/verify_student_submission_retirement_and_assignment.js",
     ROOT / "scripts/verify_admin_tests_record_details_ui.js",
     ROOT / "scripts/verify_admin_tests_record_detail_answer_link_ui.js",
     ROOT / "scripts/verify_admin_date_session_storage.mjs",
+    ROOT / "scripts/verify_test_catalog_state.mjs",
+    ROOT / "scripts/verify_test_catalog_editor_state.mjs",
+    ROOT / "scripts/verify_test_catalog_statistics_state.mjs",
+    ROOT / "scripts/verify_tests_stylesheet_extraction.mjs",
+    ROOT / "scripts/verify_admin_css_inventory.mjs",
     ROOT / "scripts/verify_test_catalog_search_and_sort.mjs",
     ROOT / "scripts/verify_hover_tooltip_performance.mjs",
+    ROOT / "scripts/verify_exam_attendance.mjs",
+    ROOT / "static/js/admin/features/examAttendance.js",
+    ROOT / "scripts/verify_admin_latency_contracts.mjs",
+    ROOT / "scripts/verify_auth_recommendation_feedback.mjs",
+    ROOT / "scripts/verify_assignment_drag_reuse.mjs",
+    ROOT / "scripts/verify_admin_escape_search.mjs",
+    ROOT / "scripts/verify_today_manual_order.mjs",
+    ROOT / "scripts/verify_student_accounts_ui_session.mjs",
+    ROOT / "scripts/verify_video_modal_hydration.mjs",
+    ROOT / "scripts/verify_homework_sleeping_clear.mjs",
+    ROOT / "scripts/verify_calendar_school_exam_metadata.mjs",
+    ROOT / "scripts/verify_log_popup_hydration.mjs",
+    ROOT / "scripts/verify_student_feedback_save.mjs",
+    ROOT / "scripts/verify_test_assignment_rules.mjs",
     ROOT / "scripts/verify_export_log_format.mjs",
+    ROOT / "scripts/verify_quick_printer_export.mjs",
+    ROOT / "scripts/verify_extra_attendance_merge.mjs",
     ROOT / "scripts/verify_absence_recovery_sort.mjs",
     ROOT / "scripts/verify_phase16_demo_contract.mjs",
+    ROOT / "scripts/verify_legacy_consumer_cleanup.mjs",
     ROOT / "scripts/verify_today_unarchived_done.mjs",
     ROOT / "scripts/verify_admin_today_action_reachability.mjs",
     ROOT / "scripts/verify_admin_section_navigation.mjs",
+    ROOT / "scripts/verify_today_search_fields.mjs",
+    ROOT / "scripts/verify_record_cleanup_test_status.mjs",
+    ROOT / "scripts/verify_admin_assistant_notes_demo.mjs",
     ROOT / "scripts/student_mobile_app_checks/pwa-flow.mjs",
     ROOT / "scripts/student_mobile_app_checks/shell.mjs",
 ]
@@ -184,14 +235,14 @@ REFACTOR_CONTRACT_EVIDENCE: Final[tuple[tuple[int, str, tuple[str, ...], tuple[s
         (
             "run_admin_test_modal_persistence_bridge_source_checks",
             "run_admin_test_modal_assignment_behavior_checks",
-            "run_submit_test_assignment_round_matching_checks",
+            "run_retired_test_submission_assignment_boundary_checks",
         ),
         (
             "test modal save must build /api/progress/patch body through the persistence bridge",
             "progress patch preserves existing test authority",
             "assignedTests remain in log patch",
             "daily metadata is not cleared on success",
-            "wrongRoundMatched",
+            "adminAssignmentPreserved",
         ),
     ),
     (
@@ -291,7 +342,7 @@ CORE_IMPORT_RUNTIME_FILES = [
     "materials.json",
     "mat_assign.json",
     "updates.json",
-    "today_order.json",
+    "data/today_order.json",
     "extra_attend.json",
     "logs.json",
     "tests.json",
@@ -326,6 +377,7 @@ SKIP_DIR_NAMES = {".git", ".pytest_cache", "__pycache__", "venv", "_data_mirror"
 SQLITE_TRANSIENT_SUFFIXES = (".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm")
 SQLITE_MAIN_SUFFIXES = (".sqlite", ".db")
 SQLITE_OBSERVED_SUFFIXES = SQLITE_MAIN_SUFFIXES + SQLITE_TRANSIENT_SUFFIXES
+UNREADABLE_RUNTIME_DIGEST = "<metadata-only>"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -342,6 +394,20 @@ def sha256_file(path: pathlib.Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def runtime_file_fingerprint(path: pathlib.Path) -> str:
+    """Hash readable runtime files and fall back to non-secret metadata."""
+    try:
+        return sha256_file(path)
+    except PermissionError:
+        stat = path.stat()
+        return f"{UNREADABLE_RUNTIME_DIGEST}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def verification_temporary_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    """Create an auto-cleaned fixture directory without relying on legacy ROOT/tmp ACLs."""
+    return tempfile.TemporaryDirectory(prefix=f".{prefix}", dir=ROOT)
 
 
 def iter_runtime_paths() -> Iterable[pathlib.Path]:
@@ -375,7 +441,11 @@ def iter_runtime_paths() -> Iterable[pathlib.Path]:
 def runtime_fingerprints() -> dict[str, str | None]:
     out: dict[str, str | None] = {}
     for path in iter_runtime_paths():
-        out[rel(path)] = sha256_file(path) if path.exists() and path.is_file() else None
+        try:
+            out[rel(path)] = runtime_file_fingerprint(path) if path.exists() and path.is_file() else None
+        except FileNotFoundError:
+            # A live SQLite sidecar can disappear between enumeration and hashing.
+            out[rel(path)] = None
     return out
 
 
@@ -416,6 +486,18 @@ def _sqlite_file_metadata(path: pathlib.Path) -> dict[str, int | str]:
     }
 
 
+def _runtime_file_metadata(path: pathlib.Path) -> dict[str, int | str]:
+    try:
+        return _sqlite_file_metadata(path)
+    except PermissionError:
+        stat = path.stat()
+        return {
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+            "sha256": UNREADABLE_RUNTIME_DIGEST,
+        }
+
+
 def sqlite_runtime_metadata(root: pathlib.Path = ROOT) -> dict[str, dict[str, int | str]]:
     observations: dict[str, dict[str, int | str]] = {}
     for path in iter_sqlite_runtime_paths(root):
@@ -432,10 +514,19 @@ def runtime_metadata_fingerprints() -> dict[str, dict[str, int | str]]:
     observations: dict[str, dict[str, int | str]] = {}
     for path in iter_runtime_paths():
         try:
-            observations[rel(path)] = _sqlite_file_metadata(path)
+            observations[rel(path)] = _runtime_file_metadata(path)
         except FileNotFoundError:
             continue
     return observations
+
+
+def _local_runtime_service_is_active(port: int = 8003) -> bool:
+    """Return whether the live local service can be a concurrent runtime writer."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except OSError:
+        return False
 
 
 def sqlite_change_observations(
@@ -517,13 +608,19 @@ def _run_captured(
 
 def run_python_compile() -> bool:
     ok = True
-    for path in PYTHON_FILES:
-        try:
-            py_compile.compile(str(path), doraise=True)
-            print(f"py_compile ok: {rel(path)}")
-        except Exception as exc:
-            ok = False
-            print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
+    with verification_temporary_directory("verify-pycompile-") as tmpdir:
+        temp_root = pathlib.Path(tmpdir)
+        for index, path in enumerate(PYTHON_FILES):
+            try:
+                py_compile.compile(
+                    str(path),
+                    cfile=str(temp_root / f"{index:04d}.pyc"),
+                    doraise=True,
+                )
+                print(f"py_compile ok: {rel(path)}")
+            except Exception as exc:
+                ok = False
+                print(f"py_compile failed: {rel(path)}: {exc}", file=sys.stderr)
     return ok
 
 
@@ -582,7 +679,60 @@ def run_admin_date_session_storage_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin selected-date sessionStorage contract failed")
 
 
+def run_admin_css_inventory_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_css_inventory.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin CSS ownership inventory contract failed")
+
+
 def run_test_catalog_search_sort_checks() -> None:
+    state_cmd = ["node", "scripts/verify_test_catalog_state.mjs"]
+    print("$ " + " ".join(state_cmd))
+    try:
+        proc = _run_captured(state_cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog state oracle failed")
+
+    editor_state_cmd = ["node", "scripts/verify_test_catalog_editor_state.mjs"]
+    print("$ " + " ".join(editor_state_cmd))
+    proc = _run_captured(editor_state_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog editor state oracle failed")
+
+    statistics_state_cmd = ["node", "scripts/verify_test_catalog_statistics_state.mjs"]
+    print("$ " + " ".join(statistics_state_cmd))
+    proc = _run_captured(statistics_state_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test catalog statistics state oracle failed")
+
+    stylesheet_cmd = ["node", "scripts/verify_tests_stylesheet_extraction.mjs"]
+    print("$ " + " ".join(stylesheet_cmd))
+    proc = _run_captured(stylesheet_cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test page stylesheet extraction oracle failed")
+
     node_cmd = ["node", "scripts/verify_test_catalog_search_and_sort.mjs"]
     print("$ " + " ".join(node_cmd))
     try:
@@ -619,9 +769,129 @@ def run_hover_tooltip_performance_checks() -> None:
     _assert_unit(proc.returncode == 0, "admin hover tooltip performance/accessibility contract failed")
 
 
+def run_admin_latency_contract_checks() -> None:
+    cmd = ["node", "scripts/verify_admin_latency_contracts.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "admin latency/save-conflict contract failed")
+
+
+def run_hub_projection_render_checks() -> None:
+    commands = (
+        [sys.executable, "scripts/verify_legacy_auth_storage.py"],
+        [sys.executable, "-X", "utf8", "scripts/verify_legacy_auth_policy.py"],
+        [sys.executable, "scripts/verify_admin_auth_latency.py"],
+        [sys.executable, "scripts/verify_watch_storage_safety.py"],
+        [sys.executable, "scripts/verify_isolated_kollus_qa.py"],
+        ["node", "scripts/verify_isolated_kollus_qa.mjs"],
+        [sys.executable, "scripts/verify_log_batch_partial_success.py"],
+        [sys.executable, "scripts/verify_request_date_barrier.py"],
+        [sys.executable, "scripts/verify_tests_config_metadata.py"],
+        [sys.executable, "-B", "scripts/verify_test_projection_boundaries.py", "--require-bootstrap-wiring"],
+        [sys.executable, "scripts/verify_file_transaction_crash.py"],
+        [sys.executable, "scripts/verify_file_transaction_routes.py"],
+        [sys.executable, "scripts/verify_file_transaction_ownership.py"],
+        [sys.executable, "-X", "utf8", "-B", "scripts/verify_makeup_payload_rules.py"],
+        [sys.executable, "scripts/verify_attendance_flag_storage.py"],
+        [sys.executable, "scripts/verify_student_bootstrap_projection_scope.py"],
+        ["node", "scripts/verify_video_catalog_render.mjs"],
+        ["node", "scripts/verify_video_catalog_interactions.mjs", "--expect-optimized"],
+        ["node", "scripts/verify_test_catalog_render_projection.mjs"],
+        ["node", "scripts/verify_test_catalog_selection_save.mjs"],
+        ["node", "scripts/verify_test_catalog_csv_index.mjs"],
+        ["node", "scripts/verify_student_material_render.mjs"],
+        ["node", "scripts/verify_school_calendar_render_projection.mjs"],
+        ["node", "scripts/verify_admin_popup_async_scope.mjs"],
+        ["node", "scripts/verify_roster_auth_attendance_async.mjs"],
+        ["node", "scripts/verify_auth_recommendation_feedback.mjs"],
+        ["node", "scripts/verify_assignment_drag_reuse.mjs"],
+        ["node", "scripts/verify_admin_escape_search.mjs"],
+        ["node", "scripts/verify_admin_announcement_async_scope.mjs"],
+        ["node", "scripts/verify_student_announcement_async_scope.mjs"],
+        ["node", "scripts/verify_admin_initializer_idempotence.mjs"],
+        ["node", "scripts/verify_test_popup_hydration.mjs"],
+        ["node", "scripts/verify_log_auto_watch_scope.mjs"],
+        ["node", "scripts/verify_today_refresh_flights.mjs"],
+        ["node", "scripts/verify_today_search_projection.mjs"],
+        ["node", "scripts/verify_today_manual_order.mjs"],
+        ["node", "scripts/verify_admin_startup_overlap.mjs"],
+        ["node", "scripts/verify_today_lookup_scope.mjs"],
+        ["node", "scripts/verify_today_table_reconciliation.mjs"],
+        [sys.executable, "scripts/verify_log_transform_batch.py"],
+        ["node", "scripts/verify_student_accounts_ui_session.mjs"],
+        ["node", "scripts/verify_video_modal_hydration.mjs"],
+        ["node", "scripts/verify_homework_sleeping_clear.mjs"],
+        ["node", "scripts/verify_calendar_school_exam_metadata.mjs"],
+        ["node", "scripts/verify_log_popup_hydration.mjs"],
+        ["node", "scripts/verify_student_feedback_save.mjs"],
+        ["node", "scripts/verify_popup_pending_cache.mjs"],
+        ["node", "scripts/verify_student_mobile_app.mjs", "--only", "homework,admin-accounts,focus"],
+        [sys.executable, "scripts/verify_static_repository_contracts.py"],
+    )
+    for command in commands:
+        proc = _run_captured(command)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "hub storage/projection/render contract failed")
+
+
+def run_file_manager_state_checks() -> None:
+    proc = _run_captured(["node", "scripts/verify_file_manager_state.mjs"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "file-manager load/save/drag contract failed")
+
+
+def run_assistant_note_http_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_assistant_student_notes.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "actual assistant-note repository/HTTP/access contracts failed")
+
+
+def run_runtime_initialization_contract_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_runtime_path_initialization.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "runtime-path initialization contract failed")
+    if sys.platform == "win32":
+        proc = _run_captured(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                              "-File", "scripts/verify_isolated_design_server_manager.ps1"])
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "isolated-server manager contract failed")
+
+
+def run_review_hardening_checks() -> None:
+    proc = _run_captured([sys.executable, "scripts/verify_review_hardening.py"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "backup/consistency hardening contracts failed")
+
+
 def run_export_log_format_checks() -> None:
     commands = [
         (["node", "scripts/verify_export_log_format.mjs"], "export log format contract failed"),
+        (["node", "scripts/verify_extra_attendance_merge.mjs"], "extra attendance merge contract failed"),
         (["node", "scripts/verify_roster_export_logic.js"], "roster export regression contract failed"),
     ]
     for cmd, failure_message in commands:
@@ -635,6 +905,35 @@ def run_export_log_format_checks() -> None:
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_quick_printer_export_checks() -> None:
+    commands = [
+        ([sys.executable, "scripts/verify_quick_printer_export.py"], "quick-printer backend/history contract failed"),
+        (["node", "scripts/verify_quick_printer_export.mjs"], "quick-printer frontend contract failed"),
+    ]
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("required quick-printer verifier runtime not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_today_order_store_migration_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_today_order_store_migration.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "today-order store migration contract failed")
 
 
 def run_today_completion_checks() -> None:
@@ -655,11 +954,21 @@ with tempfile.TemporaryDirectory(prefix="verify-today-order-") as tmpdir:
     client = app.test_client()
     path = pathlib.Path(tmpdir) / "today_order.json"
 
-    seeded = client.post("/api/today_order", json={
+    for retired_path in (
+        "/api/_legacy/attendance",
+        "/api/_legacy/contact",
+        "/api/_legacy/arrive-time",
+    ):
+        assert client.get(retired_path).status_code == 404
+        assert client.post(retired_path, json={}).status_code == 404
+
+    assert client.post("/api/today_order", json={"2026-08-13": ["overwrite"]}).status_code == 405
+    for date_key, order in {
         "2026-08-13": ["keep"],
         "2026-08-14": ["old"],
-    })
-    assert seeded.status_code == 200
+    }.items():
+        seeded = client.patch("/api/today_order", json={"date": date_key, "order": order})
+        assert seeded.status_code == 200
     patched = client.patch("/api/today_order", json={
         "date": "2026-08-14",
         "order": [" a ", "a", "b", ""],
@@ -684,13 +993,183 @@ with tempfile.TemporaryDirectory(prefix="verify-today-order-") as tmpdir:
 
 print("today order date-scoped mutation checks passed")
 """
+    arrive_time_driver = r"""
+import json
+import pathlib
+import tempfile
+
+from flask import Flask
+import routes.api_arrive_time as arrive_time
+
+with tempfile.TemporaryDirectory(prefix="verify-arrive-time-route-") as tmpdir:
+    path = pathlib.Path(tmpdir) / "arrive_time.json"
+    arrive_time.ARRIVE_TIME_PATH = path
+
+    app = Flask("verify-arrive-time-route")
+    app.register_blueprint(arrive_time.bp_api_arrive_time)
+    client = app.test_client()
+    date_key = "2026-08-23"
+
+    assert client.get(f"/api/arrive-time?date={date_key}").status_code == 200
+    assert client.post("/api/arrive-time", json={date_key: {"sid-a": "15:00"}}).status_code == 200
+    patched = client.post(
+        "/api/arrive-time/patch",
+        json={"date": date_key, "sid": "sid-a", "value": "16:30"},
+    )
+    assert patched.status_code == 200
+    assert client.get(f"/api/arrive-time?date={date_key}").get_json() == {"sid-a": "16:30"}
+    assert json.loads(path.read_text("utf-8"))[date_key] == {"sid-a": "16:30"}
+
+    before = path.read_bytes()
+    assert client.get(f"/arrive-time?date={date_key}").status_code == 404
+    assert client.post("/arrive-time", json={date_key: {"sid-a": "overwrite"}}).status_code == 404
+    assert client.post(
+        "/arrive-time/patch",
+        json={"date": date_key, "sid": "sid-a", "value": "overwrite"},
+    ).status_code == 404
+    assert path.read_bytes() == before
+
+print("canonical arrive-time route checks passed")
+"""
+    attendance_contact_driver = r"""
+import json
+import pathlib
+import tempfile
+
+from flask import Flask
+import routes.api_attend as attend
+
+with tempfile.TemporaryDirectory(prefix="verify-attendance-contact-routes-") as tmpdir:
+    root = pathlib.Path(tmpdir)
+    attend.ATTENDANCE_PATH = root / "attendance.json"
+    attend.CONTACT_PATH = root / "contact.json"
+    attend.STU_PATH = root / "students.json"
+    attend.EXTRA_PATH = root / "extra_attend.json"
+    attend.MAKEUP_CARRYOVER_PATH = root / "makeup_carryover.json"
+
+    date_key = "2026-08-23"
+    attend.STU_PATH.write_text(json.dumps([
+        {"id": "regular", "name": "Regular", "day1": "일1"},
+        {"id": "extra-only", "name": "Extra", "day1": "월1"},
+        {"id": "makeup-only", "name": "Makeup", "day1": "월1"},
+        {"id": "absent-makeup", "name": "Absent makeup", "day1": "월1"},
+        {"id": "idle", "name": "Idle", "day1": "월1"},
+    ]), encoding="utf-8")
+    attend.EXTRA_PATH.write_text(json.dumps({date_key: ["extra-only"]}), encoding="utf-8")
+    attend.MAKEUP_CARRYOVER_PATH.write_text(json.dumps({
+        "by_absence": {
+            "2026-08-01": {
+                "makeup-only|1": {
+                    "scheduledMakeup": {
+                        "originalAbsenceId": "absence|2026-08-01|makeup-only|1",
+                        "studentId": "makeup-only",
+                        "makeupDate": date_key,
+                        "makeupTimes": [1],
+                        "status": "scheduled",
+                    },
+                },
+                "absent-makeup|2": {
+                    "scheduledMakeup": {
+                        "originalAbsenceId": "absence|2026-08-01|absent-makeup|2",
+                        "studentId": "absent-makeup",
+                        "makeupDate": date_key,
+                        "makeupTimes": [2],
+                        "status": "scheduled",
+                    },
+                },
+            },
+        },
+    }), encoding="utf-8")
+    attend.load_absent = lambda: {
+        "by_date": {date_key: ["absent-makeup"]},
+        "by_student": {},
+        "by_slot": {},
+    }
+
+    app = Flask("verify-attendance-contact-routes")
+    app.register_blueprint(attend.bp_api_attend)
+    client = app.test_client()
+
+    roster = client.get(f"/api/attend?date={date_key}")
+    assert roster.status_code == 200
+    assert [row["id"] for row in roster.get_json()] == ["regular", "extra-only", "makeup-only"]
+
+    for base_path, patch_path, store_path in (
+        ("/api/attendance", "/api/attendance/patch", attend.ATTENDANCE_PATH),
+        ("/api/contact", "/api/contact/patch", attend.CONTACT_PATH),
+    ):
+        assert client.get(f"{base_path}?date={date_key}").get_json() == {}
+        assert client.post(base_path, json={date_key: {"sid-a": 1}}).status_code == 405
+        assert not store_path.exists()
+
+        saved = client.post(
+            patch_path,
+            json={"date": date_key, "sid": "sid-a", "value": True},
+        )
+        assert saved.status_code == 200
+        assert client.get(f"{base_path}?date={date_key}").get_json() == {"sid-a": 1}
+
+        before = store_path.read_bytes()
+        retired = client.post(
+            base_path,
+            json={"date": date_key, "map": {"sid-b": 1}, "replace": True},
+        )
+        assert retired.status_code == 405
+        assert store_path.read_bytes() == before
+
+        cleared = client.post(
+            patch_path,
+            json={"date": date_key, "sid": "sid-a", "value": False},
+        )
+        assert cleared.status_code == 200
+        assert client.get(f"{base_path}?date={date_key}").get_json() == {}
+
+print("attendance/contact GET-only base route checks passed")
+"""
+    updates_route_driver = r"""
+import pathlib
+import tempfile
+
+from flask import Flask
+import routes.api_updates as updates
+
+with tempfile.TemporaryDirectory(prefix="verify-updates-base-route-") as tmpdir:
+    path = pathlib.Path(tmpdir) / "updates.json"
+    updates.UPD_PATH = path
+
+    app = Flask("verify-updates-base-route")
+    app.register_blueprint(updates.bp_api_updates)
+    client = app.test_client()
+
+    read_only = client.get("/api/updates?readOnly=1")
+    assert read_only.status_code == 200
+    assert read_only.get_json() == {}
+    assert not path.exists()
+
+    retired = client.post(
+        "/api/updates",
+        json={"2026-08-23": {"sid-a": {"videos": ["mid-a"], "source": "manual"}}},
+    )
+    assert retired.status_code == 405
+    assert not path.exists()
+
+print("updates GET-only base route checks passed")
+"""
     command_groups = [
         ([sys.executable, "-X", "utf8", "-c", today_order_driver], "date-scoped today order contract failed"),
+        ([sys.executable, "-X", "utf8", "-c", arrive_time_driver], "canonical arrive-time route contract failed"),
+        ([sys.executable, "-X", "utf8", "-c", attendance_contact_driver], "attendance/contact route contract failed"),
+        ([sys.executable, "-X", "utf8", "-c", updates_route_driver], "updates base route contract failed"),
     ]
     commands = [
         (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
+        (["node", "scripts/verify_makeup_schedule_links.mjs"], "makeup schedule roster-link contract failed"),
+        (["node", "scripts/verify_makeup_projection_oracle.mjs"], "makeup pure projection oracle failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
+        (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
         (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
+        (["node", "scripts/verify_today_search_fields.mjs"], "today roster field-scoped search failed"),
+        (["node", "scripts/verify_record_cleanup_test_status.mjs"], "record cleanup latest-state and rendered-date contract failed"),
     ]
     for cmd, failure_message in [*command_groups, *commands]:
         print("$ " + " ".join(cmd))
@@ -706,21 +1185,17 @@ print("today order date-scoped mutation checks passed")
 
 
 def run_admin_today_action_reachability_checks() -> None:
-    cmd = ["node", "scripts/verify_admin_today_action_reachability.mjs"]
-    print("$ " + " ".join(cmd))
-    try:
-        proc = _run_captured(cmd)
-    except FileNotFoundError:
-        raise AssertionError("node not found") from None
-    if proc.stdout:
-        print(proc.stdout, end="")
-    if proc.stderr:
-        print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "admin today action reachability contract failed")
+    proc = subprocess.run(["node", "scripts/verify_admin_today_action_reachability.mjs"], cwd=ROOT, capture_output=True, text=True)
+    _assert_unit(proc.returncode == 0, "admin today action reachability contract failed: " + proc.stdout + proc.stderr)
 
 
 def run_admin_section_navigation_checks() -> None:
-    cmd = ["node", "scripts/verify_admin_section_navigation.mjs"]
+    proc = subprocess.run(["node", "scripts/verify_admin_section_navigation.mjs"], cwd=ROOT, capture_output=True, text=True)
+    _assert_unit(proc.returncode == 0, "admin section navigation contract failed: " + proc.stdout + proc.stderr)
+
+
+def run_legacy_consumer_cleanup_checks() -> None:
+    cmd = ["node", "scripts/verify_legacy_consumer_cleanup.mjs"]
     print("$ " + " ".join(cmd))
     try:
         proc = _run_captured(cmd)
@@ -730,8 +1205,59 @@ def run_admin_section_navigation_checks() -> None:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "admin section navigation contract failed")
+    _assert_unit(proc.returncode == 0, "legacy consumer cleanup contract failed")
 
+
+def run_person_identity_checks() -> None:
+    commands = (
+        ([sys.executable, "scripts/verify_person_identity.py"], "person identity rule/store contract failed"),
+        ([sys.executable, "scripts/verify_person_identity_routes.py"], "person identity route contract failed"),
+        (["node", "scripts/verify_admin_white_review_pending.mjs"], "admin white-review pending contract failed"),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_file_reference_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_file_reference_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "material/file reference integrity contract failed")
+
+
+def run_school_calendar_revision_checks() -> None:
+    commands = (
+        (
+            [sys.executable, "scripts/verify_school_calendar_revision.py"],
+            "school calendar revision route contract failed",
+        ),
+        (
+            ["node", "scripts/verify_school_calendar_state.mjs"],
+            "school calendar editable-state projection contract failed",
+        ),
+        (
+            ["node", "scripts/verify_school_calendar_save_queue.mjs"],
+            "school calendar serialized browser queue contract failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
 
 def run_student_material_access_scope_checks() -> None:
     cmd = ["node", "scripts/verify_student_material_access_scope.js"]
@@ -745,6 +1271,68 @@ def run_student_material_access_scope_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "student material access scope contract failed")
+
+
+def run_student_bootstrap_state_checks() -> None:
+    cmd = ["node", "scripts/verify_student_bootstrap_state.mjs"]
+    print("$ " + " ".join(cmd))
+    try:
+        proc = _run_captured(cmd)
+    except FileNotFoundError:
+        raise AssertionError("node not found") from None
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "student bootstrap browser-state contract failed")
+
+
+def run_student_announcement_state_checks() -> None:
+    commands = (
+        (
+            ["node", "scripts/verify_student_announcement_state.mjs"],
+            "student announcement state contract failed",
+        ),
+        (
+            ["node", "scripts/verify_student_mobile_app.mjs", "--only", "board,notifications"],
+            "student announcement board and notification integration contracts failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_student_test_presentation_checks() -> None:
+    commands = (
+        (
+            ["node", "scripts/verify_student_test_presentation.mjs"],
+            "student test presentation contract failed",
+        ),
+        (
+            ["node", "scripts/verify_student_answer_mobile.js"],
+            "student answer mobile presentation contract failed",
+        ),
+    )
+    for cmd, failure_message in commands:
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
 
 
 def run_video_manage_id_checks() -> None:
@@ -761,6 +1349,139 @@ def run_video_manage_id_checks() -> None:
     _assert_unit(proc.returncode == 0, "video manager ID allocation contract failed")
 
 
+def run_progress_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_progress_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "progress route boundary contract failed")
+
+
+def run_updates_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_updates_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "updates route boundary contract failed")
+
+
+def run_student_bootstrap_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_student_bootstrap_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student bootstrap route boundary contract failed",
+    )
+
+
+def run_student_video_assignment_rule_checks() -> None:
+    cmd = [
+        sys.executable,
+        "scripts/verify_student_video_assignment_rules.py",
+    ]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student video assignment pure-rule contract failed",
+    )
+
+
+def run_student_auto_assignment_service_checks() -> None:
+    cmd = [
+        sys.executable,
+        "scripts/verify_student_auto_assignment_service.py",
+    ]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(
+        proc.returncode == 0,
+        "student auto-assignment runtime service contract failed",
+    )
+
+
+def run_log_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_log_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "log route boundary contract failed")
+
+
+def run_material_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_material_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "material route boundary contract failed")
+
+
+def run_schedule_override_route_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_schedule_override_routes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "schedule override route boundary contract failed")
+
+
+def run_video_mid_change_guard_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_video_mid_change_guard.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "video MID change guard contract failed")
+    for command in ([sys.executable, "scripts/verify_youtube_video_feature.py"], ["node", "scripts/verify_youtube_video_feature.mjs"]):
+        print("$ " + " ".join(command))
+        result = _run_captured(command)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        _assert_unit(result.returncode == 0, "YouTube video and curriculum overlay contract failed")
+
+
+def run_video_catalog_correction_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_video_catalog_correction.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "offline video catalog correction contract failed")
+
+
 def run_mobile_touch_target_checks() -> None:
     cmd = ["node", "scripts/verify_mobile_touch_targets.mjs"]
     print("$ " + " ".join(cmd))
@@ -775,8 +1496,8 @@ def run_mobile_touch_target_checks() -> None:
     _assert_unit(proc.returncode == 0, "mobile touch target contract failed")
 
 
-def run_student_training_pack_round_filter_checks() -> None:
-    cmd = ["node", "scripts/verify_student_training_pack_round_filter.js"]
+def run_student_submission_retirement_and_assignment_checks() -> None:
+    cmd = ["node", "scripts/verify_student_submission_retirement_and_assignment.js"]
     print("$ " + " ".join(cmd))
     try:
         proc = _run_captured(cmd)
@@ -786,7 +1507,7 @@ def run_student_training_pack_round_filter_checks() -> None:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "student training-pack round filter contract failed")
+    _assert_unit(proc.returncode == 0, "student submission-retirement and admin assignment contract failed")
 
 
 def run_academy_proxy_network_access_checks() -> None:
@@ -798,6 +1519,59 @@ def run_academy_proxy_network_access_checks() -> None:
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     _assert_unit(proc.returncode == 0, "academy proxy network access contract failed")
+
+
+def run_test_answer_mode_contract_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_test_answer_modes.py"]
+    print("$ " + " ".join(cmd))
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test answer mode contract failed")
+
+
+def run_student_test_ocr_contract_checks() -> None:
+    commands = (
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_foundation"], "OCR foundation"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_repository"], "OCR repository"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_eligibility"], "OCR eligibility"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_assets"], "OCR assets"),
+        ([sys.executable, "-m", "scripts.verify_student_test_sheet_cropper"], "OCR sheet cropper"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_config"], "OCR config"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_engine"], "OCR engine"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_worker_contracts"], "OCR workers"),
+        ([sys.executable, "-m", "scripts.verify_student_test_choice_training"], "OCR choice training"),
+        ([sys.executable, "-m", "scripts.verify_student_test_aihub_validation"], "OCR AI Hub validation audit"),
+        ([sys.executable, "-m", "scripts.verify_student_test_aihub_choice_validation"], "OCR AI Hub choice validation"),
+        ([sys.executable, "-m", "scripts.verify_student_test_local_ocr_accuracy"], "OCR local accuracy benchmark"),
+        ([sys.executable, "-m", "scripts.verify_student_test_formula_training_config"], "OCR formula training config"),
+        ([sys.executable, "-m", "scripts.verify_student_test_formula_profile_training"], "OCR formula profile training"),
+        ([sys.executable, "-m", "scripts.verify_aihub_split_archive_unpack"], "OCR AI Hub archive unpack"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_job_runner"], "OCR job runner"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_lifecycle"], "OCR queue/recovery lifecycle"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_worker_pool"], "OCR resident worker transport"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_retention"], "OCR retention/lease/path boundaries"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_maintenance"], "OCR maintenance/overdue lifecycle"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_maintenance_wiring"], "OCR opt-in startup/admin inspection"),
+        ([sys.executable, "-m", "scripts.verify_student_test_camera_dataset"], "OCR camera collection/frozen saved-prediction contract"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_release_artifacts"], "OCR release frontend/runtime artifact binding"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_release_preflight"], "OCR NO_GO preflight/saved evidence review"),
+        ([sys.executable, "-m", "scripts.verify_student_test_solution_crop"], "OCR solution crop"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_service"], "OCR service"),
+        ([sys.executable, "-m", "scripts.verify_student_test_ocr_routes"], "OCR routes"),
+        (["node", "scripts/verify_student_test_ocr_frontend.mjs"], "OCR student frontend"),
+        (["node", "scripts/verify_student_test_ocr_admin.mjs"], "OCR admin frontend"),
+    )
+    for cmd, label in commands:
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, f"{label} contract failed")
 
 
 def _assert_unit(condition: bool, message: str) -> None:
@@ -898,6 +1672,32 @@ def run_smoke_sqlite_observation_unit_checks() -> None:
             "SQLite change output must contain only the redacted structured observation",
         )
 
+        protected = tmp / "protected-runtime.pem"
+        protected.write_bytes(b"private fixture")
+        original_open = pathlib.Path.open
+
+        def deny_protected_open(path, *args, **kwargs):
+            if path == protected:
+                raise PermissionError("fixture is metadata-only")
+            return original_open(path, *args, **kwargs)
+
+        pathlib.Path.open = deny_protected_open
+        try:
+            protected_metadata = _runtime_file_metadata(protected)
+            protected_fingerprint = runtime_file_fingerprint(protected)
+        finally:
+            pathlib.Path.open = original_open
+        _assert_unit(
+            protected_metadata["sha256"] == UNREADABLE_RUNTIME_DIGEST
+            and protected_metadata["size"] == len(b"private fixture"),
+            "runtime observers must use metadata for access-restricted files",
+        )
+        _assert_unit(
+            protected_fingerprint.startswith(f"{UNREADABLE_RUNTIME_DIGEST}:")
+            and protected_fingerprint.endswith(f":{len(b'private fixture')}"),
+            "runtime smoke fingerprints must not require access-restricted file contents",
+        )
+
     expected_log_paths = [
         ("log entry date/sid", "/api/logs/entry?date=2026-06-06&sid=student-1"),
         ("logs date/sid", "/api/logs?date=2026-06-06&sid=student-1"),
@@ -940,14 +1740,13 @@ def run_smoke_sqlite_observation_unit_checks() -> None:
 
 
 def run_app_import_smoke_checks() -> None:
-    import importlib
-
-    if not import_smoke_is_safe(report=False):
-        print("app import smoke skipped because importing app could create runtime files")
-        return
-
-    app_module = importlib.import_module("app")
-    _assert_unit(hasattr(app_module, "create_app"), "app import must expose create_app")
+    cmd = [sys.executable, "-I", "-B", "scripts/verify_app_runtime.py", "import-app"]
+    proc = _run_captured(cmd)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "synthetic app import verification failed")
 
 
 def run_log_rules_unit_checks() -> None:
@@ -955,6 +1754,7 @@ def run_log_rules_unit_checks() -> None:
         latest_homework_books_by_student,
         log_entry_conflicts_with_base,
         merge_log_entry_safe,
+        normalize_sleeping_homework_books,
     )
 
     current = {
@@ -973,6 +1773,25 @@ def run_log_rules_unit_checks() -> None:
     _assert_unit(
         log_entry_conflicts_with_base({"notes": "newer"}, {"notes": "base"}),
         "notes mismatch must be a log conflict",
+    )
+    _assert_unit(
+        normalize_sleeping_homework_books([" 라이트쎈 ", "라이트 쎈", "", None, "APEX"])
+        == ["라이트쎈", "APEX"],
+        "sleeping homework books must be trimmed and deduplicated",
+    )
+    _assert_unit(
+        not log_entry_conflicts_with_base(
+            {"sleepingHomeworkBooks": ["라이트쎈"]},
+            {"sleepingHomeworkBooks": [" 라이트쎈 "]},
+        ),
+        "equivalent sleeping homework books must not conflict",
+    )
+    _assert_unit(
+        log_entry_conflicts_with_base(
+            {"sleepingHomeworkBooks": ["라이트쎈"]},
+            {"sleepingHomeworkBooks": []},
+        ),
+        "concurrent sleeping homework book changes must conflict",
     )
 
     linked_books = latest_homework_books_by_student({
@@ -1004,15 +1823,31 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     record_popup_js = (ROOT / "static/js/all/features/studentRecordPopup.js").read_text("utf-8")
     admin_hover_js = (ROOT / "static/js/admin/features/hoverTooltip.js").read_text("utf-8")
     log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
+    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    student_work_light_css = (ROOT / "static/css/student-work-light.css").read_text("utf-8")
     add_student_js = (ROOT / "static/js/all/features/addStudent.js").read_text("utf-8")
+    esc_close_js = (ROOT / "static/js/all/features/escClose.js").read_text("utf-8")
 
     _assert_unit(
-        "getJSONOr('/api/homework-books', {})" in state_js,
-        "all-students bootstrap must load linked homework books",
+        "export function loadHomeworkBooks" in state_js
+        and "getJSON('/api/homework-books')" in state_js
+        and "homeworkBooksRequest" in state_js
+        and "loadAll({ waitForHomeworkBooks: false })" in main_js
+        and "void loadHomeworkBooks().then" in main_js
+        and "renderHomeworkBooks();" in main_js,
+        "all-students bootstrap must start one non-blocking linked-homework-books load and render its result",
     )
     _assert_unit(
         "state.homeworkBooksBySid" in table_js and "subBookInput" not in table_js,
         "all-students table must render linked homework books without legacy sub-book inputs",
+    )
+    _assert_unit(
+        "col.col-level      { width:7%; }" in table_js
+        and "col.col-docs       { width:15%; }" in table_js
+        and ".levelSelect{" in table_js
+        and "padding-left:5px;" in table_js
+        and "padding-right:14px;" in table_js,
+        "all-students level select must keep the two-character middle-high label visible",
     )
     _assert_unit(
         "state.homeworkBooksBySid" in hover_js and "stu.subBook" not in hover_js,
@@ -1027,9 +1862,21 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
     _assert_unit(
         "studentRecordPopup.js" not in main_js
         and "initAllStudentsRecordPopup(state)" not in main_js
-        and "import('./studentRecordPopup.js')" in table_js
+        and re.search(
+            r"import\((['\"])\./studentRecordPopup\.js(?:\?[^'\"]*)?\1\)",
+            table_js,
+        )
         and "await initAllStudentsRecordPopup(state)" in table_js,
         "all-students startup must defer the admin popup module graph until the counseling action",
+    )
+    _assert_unit(
+        "function focusAllStudentSearch()" in esc_close_js
+        and "document.getElementById('allStudentSearchInput')" in esc_close_js
+        and "input.dispatchEvent(new Event('input', { bubbles: true }))" in esc_close_js
+        and "input.focus({ preventScroll: true })" in esc_close_js
+        and "if (!hadOpenTarget)" in esc_close_js
+        and "requestAnimationFrame(focusAllStudentSearch)" in esc_close_js,
+        "Escape must clear and focus the all-students search only when no popup has priority",
     )
     _assert_unit(
         "ADMIN_POPUP_STYLESHEETS" in record_popup_js
@@ -1045,9 +1892,12 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
         "initializationPromise" in record_popup_js
         and "initializeAllStudentsRecordPopup().catch" in record_popup_js
         and "installReadOnlyAssignmentGuard" in record_popup_js
-        and "#vidModal.student-work-layout .vid-save-btn" in record_popup_js
-        and "#testModal.student-work-layout .test-save-btn" in record_popup_js,
-        "all-students popup initialization must be single-flight and assignment writes must remain blocked",
+        and "#vidModal.student-work-layout .vid-row" in record_popup_js
+        and "#vidModal.student-work-layout .vid-exclude-high-btn" in record_popup_js
+        and "#testModal.student-work-layout .test-save-btn" in record_popup_js
+        and "activeVideoAccessMode === 'all-students-readonly'" in video_modal_js
+        and "patchVideoProgressEntry(today, sid, progressPatch)" in video_modal_js,
+        "all-students popup initialization must be single-flight, block assignments, and save only video progress state",
     )
     _assert_unit(
         "initHoverTooltip as initAdminHoverTooltip" in record_popup_js
@@ -1063,13 +1913,74 @@ def run_all_students_linked_books_and_log_popup_source_checks() -> None:
         "the shared admin tooltip must preserve linked homework books on the all-students page",
     )
     _assert_unit(
+        "return scheduleEntries.filter(entry => !normalizeSubjectKey(entry?.phase));" in admin_hover_js
+        and "student-tooltip-exam-info" in admin_hover_js
+        and "escHtml(exam.note || '-')" in admin_hover_js,
+        "student tooltip must show school-calendar exam information for subject-neutral schedules",
+    )
+    _assert_unit(
+        'id="tooltipHomeworkActions"' in admin_hover_js
+        and "선택한 운영일 기준" not in admin_hover_js
+        and "complete.textContent = '숙검 완료';" in log_modal_js
+        and "addRow.textContent = '교재 추가';" in log_modal_js
+        and "reorderRows.textContent = '교재 순서';" in log_modal_js
+        and "removeRow.textContent = '교재 제거';" in log_modal_js
+        and 'id="hwRemoveRow"' in log_modal_js
+        and 'id="hwReorderRows"' in log_modal_js
+        and "actionHost.append(complete);" in log_modal_js
+        and log_modal_js.index("actionHost.append(complete);") < log_modal_js.index("actionHost.append(addRow);") < log_modal_js.index("actionHost.append(reorderRows);") < log_modal_js.index("actionHost.append(removeRow);")
+        and "if (save) save.hidden = true;" in log_modal_js
+        and not re.search(
+            r"#hwRemoveRow\s*,?[^{}]*\{[^{}]*display\s*:\s*none",
+            student_work_light_css,
+        ),
+        "tooltip homework header must expose compact complete/add/reorder/remove actions in order and hide the separate save control",
+    )
+    _assert_unit(
+        "const itemLabel = `${index + 1}번째 교재${book ? ` ${book}` : ''}`;" in log_modal_js
+        and "canonicalEditor.setAttribute('aria-label', `${index + 1}번째 숙제 상세`);" in log_modal_js
+        and "moveUp.setAttribute('aria-label', `${itemLabel} 위로 이동`);" in log_modal_js
+        and "moveDown.setAttribute('aria-label', `${itemLabel} 아래로 이동`);" in log_modal_js,
+        "homework reorder controls must keep unique position-aware labels and refresh canonical row numbering",
+    )
+    _assert_unit(
+        'class="hw-del-btn"' not in log_modal_js
+        and "function setHomeworkRemoveSelection(active)" in log_modal_js
+        and "function removeHomeworkRow(item)" in log_modal_js
+        and "button.hw-del-btn, button.hw-remove-choice" in log_modal_js
+        and "setHomeworkRemoveSelection(!homeworkRemoveSelectionActive);" in log_modal_js
+        and "ensureMinimumHomeworkRows(2);" in log_modal_js
+        and "removeLastHomeworkRow" not in log_modal_js
+        and "canonicalHomework.removedAssignmentIds.add(assignmentId);" in log_modal_js
+        and ".hw-remove-choice" in student_work_light_css
+        and "#hwBody.is-remove-selecting .hwItem" in student_work_light_css,
+        "homework removal must let the user choose a row, preserve canonical deletion, and restore the two default slots",
+    )
+    _assert_unit(
+        "const v = snap10(value);" in log_modal_js
+        and "bubble.style.left = `${v}%`;" in log_modal_js
+        and "bubble.style.transform = `translateX(${-v}%)`;" in log_modal_js
+        and "#adminSchoolTip .pctBubble{ max-width:100%; box-sizing:border-box;" in log_modal_js,
+        "homework progress bubbles must stay inside the tooltip at both range endpoints",
+    )
+    _assert_unit(
+        ".student-tooltip-homework-host" in log_modal_js
+        and "overflow-y:auto;" in log_modal_js
+        and ".student-tooltip-homework-actions button" in log_modal_js
+        and "height:20px !important;" in log_modal_js
+        and "#adminSchoolTip .hw-actions{ display:none !important; }" in log_modal_js
+        and "display:flex !important;" in video_modal_js
+        and "flex-direction:column !important;" in video_modal_js
+        and "overflow:hidden !important;" in video_modal_js,
+        "student tooltip must keep exam information fixed while only the compact homework area scrolls",
+    )
+    _assert_unit(
         "all-students-readonly" in log_modal_js
         and "isContextMenuOnlyAccess" in log_modal_js
         and "applyReadOnlyRecordAccess" in log_modal_js
         and "window.openStudentPopupsForRow = openStudentPopupsForRow" in log_modal_js,
         "admin unified popup launcher must preserve read-only records and context-menu-only progress edits",
     )
-    video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
     _assert_unit(
         "studentPopupMobileNav" in video_modal_js
         and "data-student-popup-active" in video_modal_js
@@ -1086,6 +1997,8 @@ def run_progress_rule_unit_checks() -> None:
     from core.progress_rules import (
         PROGRESS_ALL_STUDENTS_META_KEY,
         PROGRESS_MANUAL_META_KEY,
+        TEST_ASSIGN_CHANGE_ORDER_META_KEY,
+        TEST_ASSIGN_TOUCHED_KEYS_META_KEY,
         WATCH_AUTO_PROGRESS_META_KEY,
         merge_progress_day_sid,
         merge_watch_entry,
@@ -1153,6 +2066,50 @@ def run_progress_rule_unit_checks() -> None:
     _assert_unit(
         all_students.get(PROGRESS_ALL_STUDENTS_META_KEY, {}).get("m6") is True,
         "all-students progress should mark metadata",
+    )
+
+    unit_label = "단원평가 / 대수 / Lv.5 / 1회차 / 단원"
+    school_label = "학군지 기출 / 대수 / 중상 / 기말고사 / 학군지"
+    first_test_batch = merge_progress_day_sid(
+        {},
+        {
+            "tests": {unit_label: "assigned", school_label: "assigned"},
+            TEST_ASSIGN_TOUCHED_KEYS_META_KEY: [unit_label, school_label],
+        },
+    )
+    first_order = first_test_batch.get(TEST_ASSIGN_CHANGE_ORDER_META_KEY, {})
+    _assert_unit(
+        first_order.get(unit_label) == first_order.get(school_label) == 1,
+        "tests changed in one save must share one assignment-change order",
+    )
+    school_reassigned = merge_progress_day_sid(
+        first_test_batch,
+        {
+            "tests": {unit_label: "assigned", school_label: "assigned"},
+            TEST_ASSIGN_TOUCHED_KEYS_META_KEY: [school_label],
+        },
+    )
+    reassigned_order = school_reassigned.get(TEST_ASSIGN_CHANGE_ORDER_META_KEY, {})
+    _assert_unit(
+        reassigned_order.get(unit_label) == 1 and reassigned_order.get(school_label) == 2,
+        "reassigning an unchanged existing test must make only that test newest",
+    )
+    unit_completed = merge_progress_day_sid(
+        school_reassigned,
+        {"tests": {unit_label: "done", school_label: "assigned"}},
+    )
+    completed_order = unit_completed.get(TEST_ASSIGN_CHANGE_ORDER_META_KEY, {})
+    _assert_unit(
+        completed_order.get(unit_label) == 3 and completed_order.get(school_label) == 2,
+        "a later completion change must outrank an in-progress assignment",
+    )
+    unit_removed = merge_progress_day_sid(
+        unit_completed,
+        {"tests": {unit_label: "", school_label: "assigned"}},
+    )
+    _assert_unit(
+        unit_label not in unit_removed.get(TEST_ASSIGN_CHANGE_ORDER_META_KEY, {}),
+        "removed tests must not retain stale assignment-change ordering metadata",
     )
 
     _assert_unit(watch_auto_status({"last": 4, "dur": 100}) == "", "watch under threshold is not progress")
@@ -1374,6 +2331,7 @@ def run_student_previous_video_review_rule_unit_checks() -> None:
 def run_progress_batch_sids_unit_checks() -> None:
     from flask import Flask
     import routes.api_basic as api_basic
+    import routes.api_progress as api_progress
 
     progress_fixture = {
         "2026-06-01": {
@@ -1387,12 +2345,20 @@ def run_progress_batch_sids_unit_checks() -> None:
         },
     }
 
-    original_loader = api_basic._load_progress_strict
-    api_basic._load_progress_strict = lambda: progress_fixture
+    original_loader = api_progress._load_progress_strict
+    api_progress._load_progress_strict = lambda: progress_fixture
     try:
         app = Flask("verify-progress-batch-sids")
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_progress.bp_api_progress)
         client = app.test_client()
+
+        progress_rules = [rule for rule in app.url_map.iter_rules() if rule.rule == "/api/progress"]
+        _assert_unit(len(progress_rules) == 1, "progress GET must have one registered owner")
+        _assert_unit(
+            progress_rules[0].endpoint == "api_progress.api_progress",
+            "progress GET must be owned by the dedicated progress blueprint",
+        )
 
         response = client.get("/api/progress?sids=s1,s2")
         payload = response.get_json() or {}
@@ -1464,23 +2430,21 @@ def run_progress_batch_sids_unit_checks() -> None:
         _assert_unit(invalid.status_code == 400, "batch progress must preserve invalid date rejection")
         _assert_unit(invalid_payload.get("error") == "bad date", "invalid date error message must stay stable")
     finally:
-        api_basic._load_progress_strict = original_loader
+        api_progress._load_progress_strict = original_loader
 
 
 def run_progress_read_cache_unit_checks() -> None:
+    import core.progress_store as progress_store
     import routes.api_basic as api_basic
 
     original_path = api_basic.PRG_PATH
-    original_signature = api_basic._PROGRESS_CACHE_SIGNATURE
-    original_data = api_basic._PROGRESS_CACHE_DATA
 
     with tempfile.TemporaryDirectory(prefix="verify-progress-cache-") as tmp:
         progress_path = pathlib.Path(tmp) / "progress.json"
         progress_path.write_text('{"2026-06-01":{"s1":{"m1":"done"}}}', encoding="utf-8")
         try:
             api_basic.PRG_PATH = progress_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = None
-            api_basic._PROGRESS_CACHE_DATA = None
+            progress_store.reset_progress_cache()
 
             first = api_basic._load_progress_strict()
             second = api_basic._load_progress_strict()
@@ -1517,8 +2481,7 @@ def run_progress_read_cache_unit_checks() -> None:
 
             slow_path = SlowProgressPath(progress_path)
             api_basic.PRG_PATH = slow_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = None
-            api_basic._PROGRESS_CACHE_DATA = None
+            progress_store.reset_progress_cache()
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 concurrent_reads = list(pool.map(lambda _: api_basic._load_progress_strict(), range(2)))
             _assert_unit(
@@ -1528,7 +2491,7 @@ def run_progress_read_cache_unit_checks() -> None:
 
             api_basic.PRG_PATH = progress_path
             saved = {"2026-06-03": {"s4": {"tests": {"unit-1": "assigned"}}}}
-            api_basic._save_progress_strict(saved)
+            progress_store.save_progress_strict(progress_path, saved)
             saved_text = progress_path.read_text(encoding="utf-8")
             _assert_unit("\n" not in saved_text, "progress writes must use compact JSON on the hot path")
             _assert_unit(
@@ -1537,11 +2500,11 @@ def run_progress_read_cache_unit_checks() -> None:
             )
         finally:
             api_basic.PRG_PATH = original_path
-            api_basic._PROGRESS_CACHE_SIGNATURE = original_signature
-            api_basic._PROGRESS_CACHE_DATA = original_data
+            progress_store.reset_progress_cache()
 
 
 def run_video_completion_unit_checks() -> None:
+    from core.progress_rules import PROGRESS_MANUAL_META_KEY
     import routes.api_basic as api_basic
 
     date = "2026-06-06"
@@ -1568,7 +2531,61 @@ def run_video_completion_unit_checks() -> None:
 
     _assert_unit(
         api_basic._course_videos_completed(videos, "s1", latest),
-        "green done plus red skip video progress must finish the course",
+        "blue done plus red skip video progress must finish the course",
+    )
+
+    reopened_progress = {
+        "2026-06-04": {"007": {"m1": "done"}},
+        "2026-06-05": {
+            "7": {
+                "m1": "interrupted",
+                PROGRESS_MANUAL_META_KEY: {"m1": True},
+            },
+        },
+    }
+    reopened_watch = {
+        "2026-06-04": {"007": {"m1": {"last": 100, "dur": 100, "completed": True}}},
+    }
+    reopened_blocked = api_basic._build_auto_assignment_blocked_by_sid(
+        reopened_progress,
+        reopened_watch,
+    )
+    _assert_unit(
+        "m1" not in api_basic._blocked_mids_for_sid(reopened_blocked, "007")
+        and "m1" not in api_basic._blocked_mids_for_sid(reopened_blocked, "7"),
+        "a later manual interrupted state must reopen a completed video for every numeric SID alias",
+    )
+
+    reopened_none_progress = {
+        "2026-06-04": {"s1": {"m1": "done"}},
+        "2026-06-05": {
+            "s1": {
+                "m1": "none",
+                PROGRESS_MANUAL_META_KEY: {"m1": True},
+            },
+        },
+    }
+    reopened_none_watch = {
+        "2026-06-04": {"s1": {"m1": {"last": 100, "dur": 100, "completed": True}}},
+    }
+    _assert_unit(
+        "m1" not in api_basic._blocked_mids_for_sid(
+            api_basic._build_auto_assignment_blocked_by_sid(reopened_none_progress, reopened_none_watch),
+            "s1",
+        ),
+        "a later manual white state must reopen a completed video despite historical completed watch data",
+    )
+
+    automatic_interrupted = {
+        "2026-06-04": {"s1": {"m1": "done"}},
+        "2026-06-05": {"s1": {"m1": "interrupted"}},
+    }
+    _assert_unit(
+        "m1" in api_basic._blocked_mids_for_sid(
+            api_basic._build_auto_assignment_blocked_by_sid(automatic_interrupted, {}),
+            "s1",
+        ),
+        "an unmarked interrupted state must not silently reopen a completed video",
     )
 
     updates = {date: {"s1": {"videos": ["m1"], "source": "auto"}}}
@@ -1581,8 +2598,8 @@ def run_video_completion_unit_checks() -> None:
         watch={},
     )
     _assert_unit(
-        api_basic._sid_lookup(fixed.get(date, {}), "s1") == updates[date]["s1"],
-        "completed course must preserve the existing automatic video snapshot",
+        api_basic._sid_lookup(fixed.get(date, {}), "s1") == {"videos": ["m1"], "source": "auto"},
+        "completed progress must preserve the date-bound automatic video snapshot",
     )
 
     manual_updates = {date: {"s1": {"videos": ["m1"], "source": "manual"}}}
@@ -1658,32 +2675,31 @@ def run_video_completion_source_checks() -> None:
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
     log_modal_js = (ROOT / "static/js/admin/features/logModal.js").read_text("utf-8")
 
-    for path, source in [
-        ("static/js/admin/features/videoModal.js", video_modal_js),
-        ("static/js/admin/features/logModal.js", log_modal_js),
-    ]:
-        _assert_unit(
-            "VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip'])" in source,
-            f"{path} must define green/red finished video progress statuses",
-        )
-        _assert_unit(
-            "function isFinishedVideoProgressStatus" in source,
-            f"{path} must use a named finished progress predicate",
-        )
-
     _assert_unit(
-        "mids.every(mid => isFinishedVideoProgressStatus(latest[mid]))" in video_modal_js,
-        "video modal course completion must count green done plus red skip",
+        "VIDEO_PROGRESS_FINISHED_STATUSES = new Set(['done', 'skip'])" in video_modal_js,
+        "video modal must define green/red finished video progress statuses",
     )
     _assert_unit(
-        "cells.every(cell => isFinishedVideoProgressStatus(cell.dataset.state))" in log_modal_js,
-        "log modal cleanup must count green done plus red skip",
+        "function isFinishedVideoProgressStatus" in video_modal_js,
+        "video modal must use a named finished progress predicate",
+    )
+
+    _assert_unit(
+        "if (isFinishedVideoProgressStatus(st)) blocked[mid] = true;" in video_modal_js
+        and "activeBlockedMids = blockedMidsForAutoAssign(activeVideoProgress);" in video_modal_js,
+        "video modal automatic blocklist must count green done plus red skip",
+    )
+    _assert_unit(
+        "clearVideoAssignmentForDateSid" not in log_modal_js
+        and "allProgressDone" not in log_modal_js,
+        "log save must not delete a dated video snapshot when every row is finished",
     )
 
 
 def run_video_assignment_snapshot_unit_checks() -> None:
     from core.progress_rules import PROGRESS_MANUAL_META_KEY
     import routes.api_basic as api_basic
+    from core.update_assignment_rules import remove_future_auto_assignments
 
     date = "2026-06-06"  # Saturday
     videos = [
@@ -1700,7 +2716,7 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     not_today = {**scheduled, "id": "not-today", "day1": "월1"}
     makeup = {**scheduled, "id": "makeup", "day1": "월1"}
     consecutive_initial = {**scheduled, "id": "consecutive-initial", "day2": "토2"}
-    empty_absent = {"by_date": {}, "by_student": {}}
+    empty_absent = {"by_date": {}, "by_student": {}, "by_slot": {}}
 
     created = api_basic._ensure_today_auto_assign(
         {},
@@ -1737,7 +2753,7 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     )
     _assert_unit(
         api_basic._sid_lookup(makeup_consecutive[date], "makeup")["videos"] == ["m1", "m2", "m3", "m4"],
-        "makeup registration honors a date-specific consecutive slot override",
+        "makeup registration doubles the configured count across consecutive slots",
     )
     _assert_unit(
         api_basic._sid_lookup(created[date], "not-today") is None,
@@ -1745,7 +2761,29 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     )
     _assert_unit(
         len(api_basic._sid_lookup(created[date], "consecutive-initial")["videos"]) == 4,
-        "date initialization applies the double count to consecutive classes",
+        "date initialization doubles the configured count for consecutive classes",
+    )
+
+    partial_absence_initial = {}
+    api_basic._ensure_today_auto_assign(
+        partial_absence_initial,
+        [consecutive_initial],
+        videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent={
+            "by_date": {},
+            "by_student": {},
+            "by_slot": {date: {"consecutive-initial": [2]}},
+        },
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(partial_absence_initial[date], "consecutive-initial")["videos"] == ["m1", "m2"],
+        "a slot absence removes the consecutive multiplier during initial assignment",
     )
 
     weekend_initial = {}
@@ -1763,7 +2801,7 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     )
     _assert_unit(
         api_basic._sid_lookup(weekend_initial[date], "scheduled")["videos"] == ["m1", "m2", "m3", "m4"],
-        "date-specific consecutive slots double the first assignment count",
+        "date-specific consecutive slots double the configured count",
     )
 
     absent_updates = {}
@@ -1838,6 +2876,24 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         "completed watch history blocks candidates during initial assignment",
     )
 
+    future_history_updates = {}
+    api_basic._ensure_today_auto_assign(
+        future_history_updates,
+        [scheduled],
+        videos,
+        {"2026-06-07": {"scheduled": {"m1": "done"}}},
+        date_key=date,
+        watch={"2026-06-08": {"scheduled": {"m2": {"completed": True}}}},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        api_basic._sid_lookup(future_history_updates[date], "scheduled")["videos"] == ["m1", "m2"],
+        "future progress and watch records never block today's initial candidates",
+    )
+
     manual_clear_updates = {}
     api_basic._ensure_today_auto_assign(
         manual_clear_updates,
@@ -1883,8 +2939,149 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         weekend_slots={},
     )
     _assert_unit(
-        after_progress[date]["scheduled"] == stable_snapshot,
-        "progress/watch updates do not mutate an existing automatic snapshot",
+        after_progress[date]["scheduled"] == {
+            "videos": ["m1", "m2"],
+            "source": "auto",
+            "note": "keep metadata",
+        },
+        "normal assignment hydration preserves the original daily snapshot",
+    )
+
+    curriculum_change_videos = [
+        {"mid": "able-1", "curriculum": "CALC1", "subCurriculum": "A:Ble", "chapter": "1"},
+        {"mid": "able-2", "curriculum": "CALC1", "subCurriculum": "A:Ble", "chapter": "2"},
+        {"mid": "apex-1", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "1"},
+        {"mid": "apex-2", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "2"},
+        {"mid": "apex-3", "curriculum": "CALC1", "subCurriculum": "APEX", "chapter": "3"},
+        {"mid": "outside-1", "curriculum": "OTHER", "subCurriculum": "APEX", "chapter": "1"},
+    ]
+    apex_student = {
+        **scheduled,
+        "id": "apex-current",
+        "curriculum": "CALC1",
+        "subCurriculum": "APEX",
+    }
+    stale_previous_curriculum = {
+        date: {
+            "apex-current": {
+                "videos": ["able-1", "outside-1"],
+                "source": "auto",
+                "note": "keep auto metadata",
+            }
+        }
+    }
+    api_basic._ensure_today_auto_assign(
+        stale_previous_curriculum,
+        [apex_student],
+        curriculum_change_videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        stale_previous_curriculum[date]["apex-current"] == {
+            "videos": ["apex-1", "apex-2"],
+            "source": "auto",
+            "note": "keep auto metadata",
+        },
+        "curriculum changes rebase automatic snapshots onto the exact current curriculum only",
+    )
+
+    mixed_curriculum_snapshot = {
+        date: {
+            "apex-current": {
+                "videos": ["apex-1", "able-1", "apex-2"],
+                "source": "auto",
+                "note": "preserve valid slots",
+            }
+        }
+    }
+    api_basic._ensure_today_auto_assign(
+        mixed_curriculum_snapshot,
+        [apex_student],
+        curriculum_change_videos,
+        {date: {"apex-current": {"apex-1": "done"}}},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        mixed_curriculum_snapshot[date]["apex-current"] == {
+            "videos": ["apex-1", "apex-2", "apex-3"],
+            "source": "auto",
+            "note": "preserve valid slots",
+        },
+        "curriculum rebase keeps valid completed slots and replaces only stale slots without resizing",
+    )
+
+    manual_cross_curriculum = {
+        date: {
+            "apex-current": {
+                "videos": ["able-1", "outside-1"],
+                "source": "manual",
+            }
+        }
+    }
+    api_basic._ensure_today_auto_assign(
+        manual_cross_curriculum,
+        [apex_student],
+        curriculum_change_videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        manual_cross_curriculum[date]["apex-current"] == {
+            "videos": ["able-1", "outside-1"],
+            "source": "manual",
+        },
+        "manual cross-curriculum additions remain independent from automatic curriculum rebasing",
+    )
+
+    inactive_apex_student = {
+        **apex_student,
+        "id": "apex-not-today",
+        "day1": "월1",
+    }
+    inactive_stale_auto = {
+        date: {
+            "apex-not-today": {
+                "videos": ["apex-1", "able-1"],
+                "source": "auto",
+                "note": "inactive metadata",
+            }
+        }
+    }
+    api_basic._ensure_today_auto_assign(
+        inactive_stale_auto,
+        [inactive_apex_student],
+        curriculum_change_videos,
+        {},
+        date_key=date,
+        watch={},
+        logs={date: {}},
+        extra={},
+        absent=empty_absent,
+        weekend_slots={},
+    )
+    _assert_unit(
+        inactive_stale_auto[date]["apex-not-today"] == {
+            "videos": ["apex-1"],
+            "source": "auto",
+            "note": "inactive metadata",
+        },
+        "inactive automatic snapshots drop previous-curriculum MIDs without assigning new work",
     )
 
     makeup_snapshot = {"videos": ["m5"], "source": "auto", "note": "makeup snapshot"}
@@ -1921,8 +3118,8 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         weekend_slots={},
     )
     _assert_unit(
-        completed[date]["scheduled"] == completed_snapshot,
-        "course completion blocks new work without deleting today's snapshot",
+        api_basic._sid_lookup(completed.get(date, {}), "scheduled") == completed_snapshot,
+        "course completion preserves the already-created automatic snapshot",
     )
 
     completed_without_snapshot = {}
@@ -2006,10 +3203,10 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     )
     _assert_unit(
         self_study_auto[date]["self-study-unscheduled"] == {
-            "videos": ["m1", "m2"],
+            "videos": ["m1"],
             "source": "selfStudy",
         },
-        "self-study must reconcile an existing automatic snapshot even without a regular class registration",
+        "self-study must reconcile an existing automatic snapshot with completed videos only",
     )
 
     scheduled_self_study = {
@@ -2040,10 +3237,10 @@ def run_video_assignment_snapshot_unit_checks() -> None:
     )
     _assert_unit(
         scheduled_self_study_updates[date]["self-study-scheduled"] == {
-            "videos": ["m1", "m2"],
+            "videos": ["m1"],
             "source": "selfStudy",
         },
-        "scheduled self-study must use the same review replacement path without a daily log flag",
+        "scheduled self-study must use the same completed-only review path without a daily log flag",
     )
 
     self_study_no_history = {
@@ -2114,32 +3311,21 @@ def run_video_assignment_snapshot_unit_checks() -> None:
         watch={},
         weekend_slots=weekend_slots,
     )
-    _assert_unit(expanded, "consecutive transition expands an existing automatic assignment")
     _assert_unit(
-        consecutive_updates[date]["consecutive"] == {
-            "videos": ["m1", "m2", "m3", "m4"],
+        not expanded
+        and consecutive_updates[date]["consecutive"] == {
+            "videos": ["m1", "m2"],
             "source": "auto",
             "custom": "keep",
         },
-        "consecutive expansion preserves the prefix and appends unblocked videos",
+        "consecutive slot changes must preserve an existing automatic snapshot",
     )
+    reversed_slots = {
+        date: {"consecutive": {"videos": ["m1", "m2"], "source": "auto", "custom": "keep"}}
+    }
     _assert_unit(
         not api_basic._expand_consecutive_auto_assignment_in_updates(
-            consecutive_updates,
-            date,
-            "consecutive",
-            [consecutive_student],
-            videos,
-            {date: {"consecutive": {"m2": "done"}}},
-            watch={},
-            weekend_slots=weekend_slots,
-        ),
-        "repeated consecutive events are idempotent",
-    )
-    narrowed = {date: {"consecutive": dict(consecutive_updates[date]["consecutive"])}}
-    _assert_unit(
-        not api_basic._expand_consecutive_auto_assignment_in_updates(
-            narrowed,
+            reversed_slots,
             date,
             "consecutive",
             [consecutive_student],
@@ -2148,87 +3334,48 @@ def run_video_assignment_snapshot_unit_checks() -> None:
             watch={},
             weekend_slots={date: {"consecutive": [1]}},
         )
-        and narrowed == {date: {"consecutive": consecutive_updates[date]["consecutive"]}},
-        "reversing a consecutive schedule never shrinks the snapshot",
-    )
-    non_today_existing = {date: {"not-today": {"videos": ["m1"], "source": "auto"}}}
-    _assert_unit(
-        not api_basic._expand_consecutive_auto_assignment_in_updates(
-            non_today_existing,
-            date,
-            "not-today",
-            [not_today],
-            videos,
-            {},
-            watch={},
-            weekend_slots={date: {"not-today": [1, 2]}},
-        ),
-        "consecutive expansion remains limited to Today students",
+        and reversed_slots[date]["consecutive"]["videos"] == ["m1", "m2"],
+        "leaving a consecutive block must not shrink the existing snapshot",
     )
 
-    nonconsecutive_existing = {date: {"scheduled": {"videos": ["m1", "m2"], "source": "auto"}}}
+    cleanup_fixture = {
+        "2026-06-06": {"today-auto": {"videos": ["m1"], "source": "auto"}},
+        "2026-06-07": {
+            "future-auto": {"videos": ["m2"], "source": "auto"},
+            "future-manual": {"videos": ["m3"], "source": "manual"},
+            "future-self-study": {"videos": ["m4"], "source": "selfStudy"},
+        },
+        "2026-06-08": {"future-auto-only": {"videos": ["m5"], "source": "auto"}},
+    }
+    cleanup_summary = remove_future_auto_assignments(cleanup_fixture, today=date)
     _assert_unit(
-        not api_basic._expand_consecutive_auto_assignment_in_updates(
-            nonconsecutive_existing,
-            date,
-            "scheduled",
-            [scheduled],
-            videos,
-            {},
-            watch={},
-            weekend_slots={date: {"scheduled": [1, 3]}},
-            extra={},
-            absent=empty_absent,
-            logs={date: {}},
-        ),
-        "non-consecutive date slots do not trigger a double assignment",
+        cleanup_summary["removedAuto"] == 2
+        and cleanup_summary["affectedDates"] == ["2026-06-07", "2026-06-08"],
+        "future automatic cleanup reports only named source:auto removals",
+    )
+    _assert_unit(
+        cleanup_fixture == {
+            "2026-06-06": {"today-auto": {"videos": ["m1"], "source": "auto"}},
+            "2026-06-07": {
+                "future-manual": {"videos": ["m3"], "source": "manual"},
+                "future-self-study": {"videos": ["m4"], "source": "selfStudy"},
+            },
+        },
+        "future automatic cleanup preserves today, manual, and self-study assignments and removes empty dates",
     )
 
-    for protected_source in ("manual", "selfStudy"):
-        protected_updates = {
-            date: {"scheduled": {"videos": ["m1"], "source": protected_source}}
-        }
-        _assert_unit(
-            not api_basic._expand_consecutive_auto_assignment_in_updates(
-                protected_updates,
-                date,
-                "scheduled",
-                [scheduled],
-                videos,
-                {},
-                watch={},
-                weekend_slots={date: {"scheduled": [1, 2]}},
-                extra={},
-                absent=empty_absent,
-                logs={date: {}},
-            )
-            and protected_updates[date]["scheduled"]["videos"] == ["m1"],
-            f"{protected_source} assignments are protected from consecutive expansion",
-        )
-
-    legacy_updates = {date: {"scheduled": ["m1", "m2"]}}
-    _assert_unit(
-        api_basic._expand_consecutive_auto_assignment_in_updates(
-            legacy_updates,
-            date,
-            "scheduled",
-            [scheduled],
-            videos,
-            {},
-            watch={},
-            weekend_slots={date: {"scheduled": [1, 2]}},
-            extra={},
-            absent=empty_absent,
-            logs={date: {}},
-        )
-        and legacy_updates[date]["scheduled"] == ["m1", "m2", "m3", "m4"],
-        "legacy list assignments expand without changing their storage shape",
-    )
+    return
 
 
 def run_video_assignment_route_hook_unit_checks() -> None:
     from flask import Flask
     import routes.api_basic as api_basic
+    import routes.api_fs as api_fs
+    import routes.api_logs as api_logs
+    import routes.api_materials as api_materials
+    import routes.api_schedule_overrides as api_schedule_overrides
+    import routes.api_students as api_students
+    import routes.api_updates as api_updates
 
     extra_path = object()
     weekend_path = object()
@@ -2237,6 +3384,10 @@ def run_video_assignment_route_hook_unit_checks() -> None:
     store = {"extra": {}, "weekend": {}, "students": [], "updates": {}}
     init_calls = []
     expand_calls = []
+    notification_calls = []
+    lock_events = []
+    student_io_events = []
+    lock_state = {"depth": 0, "path": None}
     original = {
         "EXTRA_PATH": api_basic.EXTRA_PATH,
         "WEEKEND_SLOTS_PATH": api_basic.WEEKEND_SLOTS_PATH,
@@ -2244,17 +3395,47 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         "UPD_PATH": api_basic.UPD_PATH,
         "load": api_basic.load,
         "save_atomic": api_basic.save_atomic,
-        "load_updates": api_basic._load_updates_with_auto_assign,
-        "reconcile": api_basic._reconcile_consecutive_auto_assignment,
-        "today": api_basic._today_kst_iso,
+        "load_updates_strict": api_basic.load_updates_strict,
+        "save_updates_strict": api_basic.save_updates_strict,
+        "absence_barrier": api_basic._auto_assignment_absence_barrier,
+        "_load_updates_with_auto_assign": api_basic._load_updates_with_auto_assign,
+        "_reconcile_consecutive_auto_assignment": api_basic._reconcile_consecutive_auto_assignment,
+        "_today_kst_iso": api_basic._today_kst_iso,
+    }
+    student_original = {
+        "STU_PATH": api_students.STU_PATH,
+        "load": api_students.load,
+        "save_atomic": api_students.save_atomic,
+        "file_lock": api_students.file_lock,
+        "_today_kst_iso": api_students._today_kst_iso,
+        "enqueue_current_schedule_changes": api_students.enqueue_current_schedule_changes,
+        "_person_identity_configured": api_students._person_identity_configured,
+    }
+    schedule_original = {
+        "EXTRA_PATH": api_schedule_overrides.EXTRA_PATH,
+        "WEEKEND_SLOTS_PATH": api_schedule_overrides.WEEKEND_SLOTS_PATH,
+        "STU_PATH": api_schedule_overrides.STU_PATH,
+        "load": api_schedule_overrides.load,
+        "save_atomic": api_schedule_overrides.save_atomic,
+        "file_lock": api_schedule_overrides.file_lock,
+        "_today_kst_iso": api_schedule_overrides._today_kst_iso,
+        "enqueue_current_schedule_changes": api_schedule_overrides.enqueue_current_schedule_changes,
+    }
+    updates_original = {
+        "UPD_PATH": api_updates.UPD_PATH,
+        "load_updates_strict": api_updates.load_updates_strict,
+        "save_updates_strict": api_updates.save_updates_strict,
     }
 
     def fake_load(path):
         if path is extra_path:
+            _assert_unit(lock_state["depth"] == 1, "extra-attend read occurs inside the file lock")
             return store["extra"]
         if path is weekend_path:
+            _assert_unit(lock_state["depth"] == 1, "weekend slot read occurs inside the file lock")
             return store["weekend"]
         if path is students_path:
+            student_io_events.append(("load", lock_state["depth"]))
             return store["students"]
         if path is updates_path:
             return store["updates"]
@@ -2262,28 +3443,107 @@ def run_video_assignment_route_hook_unit_checks() -> None:
 
     def fake_save(path, value, **kwargs):
         if path is extra_path:
+            _assert_unit(lock_state["depth"] == 1, "extra-attend save occurs inside the file lock")
             store["extra"] = value
         elif path is weekend_path:
+            _assert_unit(lock_state["depth"] == 1, "weekend slot save occurs inside the file lock")
             store["weekend"] = value
         elif path is students_path:
+            student_io_events.append(("save", lock_state["depth"]))
             store["students"] = value
         elif path is updates_path:
             store["updates"] = value
 
+    @contextlib.contextmanager
+    def fake_file_lock(path):
+        _assert_unit(
+            path in {extra_path, weekend_path, students_path},
+            "route locks its own storage path",
+        )
+        if path is extra_path:
+            label = "extra"
+        elif path is weekend_path:
+            label = "weekend"
+        else:
+            label = "students"
+        lock_events.append(("enter", label))
+        lock_state["depth"] += 1
+        lock_state["path"] = path
+        try:
+            yield
+        finally:
+            lock_state["depth"] -= 1
+            lock_state["path"] = None
+            lock_events.append(("exit", label))
+
     try:
         api_basic.EXTRA_PATH = extra_path
         api_basic.WEEKEND_SLOTS_PATH = weekend_path
+        api_schedule_overrides.EXTRA_PATH = extra_path
+        api_schedule_overrides.WEEKEND_SLOTS_PATH = weekend_path
+        api_schedule_overrides.STU_PATH = students_path
         api_basic.STU_PATH = students_path
+        api_students.STU_PATH = students_path
         api_basic.UPD_PATH = updates_path
-        store["students"] = [{"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"}]
+        api_updates.UPD_PATH = updates_path
+        store["students"] = [
+            {"id": "s1", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"},
+            {"id": "s2", "day1": "토1", "curriculum": "ALG", "subCurriculum": "BASE"},
+        ]
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
+        api_basic.load_updates_strict = fake_load
+        api_basic.save_updates_strict = fake_save
+        api_basic._auto_assignment_absence_barrier = (
+            lambda: contextlib.nullcontext()
+        )
+        api_updates.load_updates_strict = fake_load
+        api_updates.save_updates_strict = fake_save
+        api_students.load = fake_load
+        api_students.save_atomic = fake_save
+        api_students.file_lock = fake_file_lock
+        api_schedule_overrides.load = fake_load
+        api_schedule_overrides.save_atomic = fake_save
+        api_schedule_overrides.file_lock = fake_file_lock
         api_basic._today_kst_iso = lambda: "2026-06-06"
+        api_students._today_kst_iso = lambda: "2026-06-06"
+        api_schedule_overrides._today_kst_iso = lambda: "2026-06-06"
+        store["updates"] = {
+            "2026-06-07": {"s1": {"videos": ["m1"], "source": "manual"}},
+        }
+        _assert_unit(
+            original["_load_updates_with_auto_assign"](date_key="2026-06-07") == store["updates"],
+            "a non-today automatic-assignment load is storage-only",
+        )
         api_basic._load_updates_with_auto_assign = lambda **kwargs: init_calls.append(kwargs) or {}
         api_basic._reconcile_consecutive_auto_assignment = lambda *args, **kwargs: expand_calls.append((args, kwargs)) or False
+        api_students.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
+        api_schedule_overrides.enqueue_current_schedule_changes = lambda sids: notification_calls.append(set(sids))
+        api_students._person_identity_configured = lambda: False
 
         app = Flask(__name__)
+        api_schedule_overrides.configure_schedule_override_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_schedule_change,
+            reconcile=api_basic.reconcile_auto_assignment_for_schedule_change,
+        )
+        api_students.configure_student_identity_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_student_identity_change,
+            reconcile_today=api_basic.reconcile_auto_assignment_for_student_identity_change,
+        )
+        api_updates.configure_updates_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_updates_read,
+            reconcile_self_study=api_basic.reconcile_self_study_assignment_for_updates,
+        )
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_updates.bp_api_updates)
+        app.register_blueprint(api_students.bp_api_students)
+        app.register_blueprint(api_fs.bp_api_fs)
+        app.register_blueprint(api_logs.bp_api_logs)
+        app.register_blueprint(api_materials.bp_api_materials)
+        app.register_blueprint(api_schedule_overrides.bp_api_schedule_overrides)
         client = app.test_client()
         date = "2026-06-06"
 
@@ -2296,27 +3556,99 @@ def run_video_assignment_route_hook_unit_checks() -> None:
         _assert_unit(response.status_code == 200 and init_calls, "the normal updates fetch keeps the date-boundary initializer")
         init_calls.clear()
 
-        response = client.post("/api/extra-attend", json={date: ["s1"]})
-        _assert_unit(response.status_code == 204, "extra-attend hook request succeeds")
+        _assert_unit(client.get("/api/students").status_code == 200, "student collection GET remains available")
+        _assert_unit(client.post("/api/students", json=[]).status_code == 405, "retired whole-student POST stays disabled")
+        _assert_unit(client.post("/api/materials", json={}).status_code == 405, "retired whole-material POST stays disabled")
+        _assert_unit(client.post("/api/logs", json={}).status_code == 405, "retired base log POST stays disabled")
+        _assert_unit(client.get("/api/fs/page-folders").status_code == 404, "retired page-folder GET stays unavailable")
+        _assert_unit(client.post("/api/fs/page-folders", json={}).status_code == 404, "retired page-folder POST stays unavailable")
+
+        lock_events.clear()
+        student_io_events.clear()
+        response = client.post("/api/add-student", json={"name": "잠금학생"})
+        added_sid = str((response.get_json() or {}).get("id") or "")
+        _assert_unit(response.status_code == 200 and added_sid, "student add keeps its response contract")
+        _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student add holds the student-store lock across read and save",
+        )
+        _assert_unit(
+            any(str(row.get("id")) == added_sid for row in store["students"]),
+            "student add persists the new row",
+        )
+
+        lock_events.clear()
+        student_io_events.clear()
+        response = client.delete(f"/api/students/{added_sid}")
+        _assert_unit(response.status_code == 204, "student delete keeps its response contract")
+        _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student delete holds the student-store lock across read and save",
+        )
+        _assert_unit(
+            all(str(row.get("id")) != added_sid for row in store["students"]),
+            "student delete removes only the selected row",
+        )
+
+        other_date = "2026-06-07"
+        store["extra"] = {other_date: ["other"]}
+        lock_events.clear()
+        response = client.patch("/api/extra-attend", json={"date": date, "sids": ["s1"]})
+        _assert_unit(response.status_code == 200, "date-scoped extra-attend patch succeeds")
+        _assert_unit(
+            lock_events == [("enter", "extra"), ("exit", "extra")],
+            "extra-attend read-merge-write holds one file lock",
+        )
+        _assert_unit(store["extra"][other_date] == ["other"], "extra-attend patch preserves another date")
+        _assert_unit(store["extra"][date] == ["s1"], "extra-attend patch stores only the requested date")
         _assert_unit(
             [call.get("date_key") for call in init_calls] == [date],
             "new makeup registration initializes that date exactly once",
         )
+        _assert_unit(notification_calls[-1] == {"s1"}, "extra-attend patch notifies the changed student")
 
         init_calls.clear()
-        response = client.post("/api/extra-attend", json={date: ["s1"]})
-        _assert_unit(response.status_code == 204 and not init_calls, "unchanged makeup registration is idempotent")
+        response = client.patch("/api/extra-attend", json={"date": date, "sids": ["s1", "s1"]})
+        _assert_unit(
+            response.status_code == 200
+            and [call.get("date_key") for call in init_calls] == [date],
+            "unchanged makeup retry replays the idempotent today initializer",
+        )
 
         init_calls.clear()
-        response = client.post("/api/extra-attend", json={})
-        _assert_unit(response.status_code == 204, "makeup removal hook request succeeds")
+        response = client.patch("/api/extra-attend", json={"date": date, "sids": []})
+        _assert_unit(response.status_code == 200 and date not in store["extra"], "empty date patch removes only that date")
         _assert_unit(
             [call.get("date_key") for call in init_calls] == [date],
             "removing a makeup registration rechecks that date without touching other dates",
         )
+        _assert_unit(store["extra"][other_date] == ["other"], "makeup removal preserves unrelated dates")
+        init_calls.clear()
+        response = client.patch("/api/extra-attend", json={"date": other_date, "sids": ["s1"]})
+        _assert_unit(response.status_code == 200 and not init_calls, "future makeup registration never initializes an automatic snapshot")
+        _assert_unit(client.post("/api/extra-attend", json={date: ["s1"]}).status_code == 405, "unsafe whole-map POST is disabled")
+        _assert_unit(
+            client.patch("/api/extra-attend", json={"date": "2026-02-30", "sids": ["s1"]}).status_code == 400,
+            "extra-attend patch rejects impossible dates",
+        )
+        _assert_unit(
+            client.patch("/api/extra-attend", json={"date": date, "sids": ["ghost-outside-test"]}).status_code == 403,
+            "extra-attend patch rejects the read-only ghost student",
+        )
 
+        store["weekend"] = {date: {"other": [1]}}
+        lock_events.clear()
         response = client.post("/api/weekend-slots", json={date: {"s1": [1, 2], "s2": None}})
         _assert_unit(response.status_code == 204, "weekend-slots hook request succeeds")
+        _assert_unit(
+            lock_events == [("enter", "weekend"), ("exit", "weekend")],
+            "weekend slot read-merge-write holds one file lock",
+        )
+        _assert_unit(store["weekend"][date]["other"] == [1], "student-scoped weekend patch preserves another student's slots")
+        _assert_unit(store["weekend"][date]["s1"] == [1, 2], "student-scoped weekend patch stores the requested slots")
+        _assert_unit("s2" not in store["weekend"][date], "empty weekend patch explicitly removes only its target student")
         _assert_unit(
             [args[:2] for args, _ in expand_calls] == [(date, "s1"), (date, "s2")],
             "weekend slot writes reconcile every affected student",
@@ -2324,19 +3656,214 @@ def run_video_assignment_route_hook_unit_checks() -> None:
 
         expand_calls.clear()
         init_calls.clear()
+        lock_events.clear()
+        student_io_events.clear()
         response = client.post(
             "/api/update",
             json={"id": "s1", "field": "day2", "value": "토2"},
         )
         _assert_unit(response.status_code == 200, "schedule update hook request succeeds")
         _assert_unit(
+            lock_events == [("enter", "students"), ("exit", "students")]
+            and student_io_events == [("load", 1), ("save", 1)],
+            "student field update holds the student-store lock across read and save",
+        )
+        _assert_unit(
             expand_calls and expand_calls[-1][0][:2] == (date, "s1"),
             "regular schedule edits reconcile the current student",
         )
         _assert_unit(init_calls and init_calls[-1].get("students") == store["students"], "schedule edits initialize newly eligible students")
+
+        init_calls.clear()
+        expand_calls.clear()
+        response = client.post(
+            "/api/update",
+            json={"id": "s1", "field": "subCurriculum", "value": "APEX"},
+        )
+        _assert_unit(response.status_code == 200, "curriculum update hook request succeeds")
+        _assert_unit(
+            init_calls and init_calls[-1].get("students") == store["students"],
+            "curriculum edits immediately rebase today's automatic snapshot",
+        )
+        _assert_unit(not expand_calls, "curriculum edits do not invoke schedule-only consecutive reconciliation")
+
+        init_calls.clear()
+        expand_calls.clear()
+        response = client.post(
+            "/api/update",
+            json={"id": "s1", "field": "autoVideoAssignCount", "value": 10},
+        )
+        _assert_unit(response.status_code == 200, "auto assignment count update hook request succeeds")
+        _assert_unit(store["students"][0]["autoVideoAssignCount"] == 6, "count update clamps the student setting to the approved cap")
+        _assert_unit(
+            not init_calls and not expand_calls,
+            "count updates persist only the setting and never initialize or reconcile assignments",
+        )
     finally:
         for name, value in original.items():
             setattr(api_basic, name, value)
+        for name, value in student_original.items():
+            setattr(api_students, name, value)
+        for name, value in schedule_original.items():
+            setattr(api_schedule_overrides, name, value)
+        for name, value in updates_original.items():
+            setattr(api_updates, name, value)
+
+def run_auto_assignment_progress_reconcile_unit_checks() -> None:
+    from copy import deepcopy
+    from flask import Flask
+
+    import routes.api_basic as api_basic
+    import routes.api_progress as api_progress
+
+    date = "2026-06-06"
+    sid = "progress-hook"
+    students_path = object()
+    videos_path = object()
+    weekend_path = object()
+    updates_path = object()
+    state = {
+        "students": [{
+            "id": sid,
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+            "autoVideoAssignCount": 2,
+        }],
+        "videos": [
+            {"mid": f"m{index}", "curriculum": "ALG", "subCurriculum": "BASE", "chapter": str(index)}
+            for index in range(1, 6)
+        ],
+        "weekend": {},
+        "updates": {
+            "2026-06-05": {
+                sid: {"videos": ["m1", "m2"], "source": "auto", "note": "past"},
+            },
+            date: {
+                sid: {"videos": ["m1", "m2"], "source": "auto", "note": "keep"},
+            },
+            "2026-06-07": {
+                sid: {"videos": ["m1", "m2"], "source": "auto", "note": "future"},
+            },
+            "2026-06-08": {
+                sid: {"videos": ["m1", "m2"], "source": "manual"},
+            },
+            "2026-06-09": {
+                sid: {"videos": ["m1", "m2"], "source": "selfStudy"},
+            },
+            "2026-06-10": {
+                sid: ["m1", "m2"],
+            },
+            "2026-06-11": {},
+        },
+        "save_count": 0,
+    }
+    progress = {date: {sid: {"m1": "done", "m2": "skip"}}}
+
+    original = {
+        "STU_PATH": api_basic.STU_PATH,
+        "VID_PATH": api_basic.VID_PATH,
+        "WEEKEND_SLOTS_PATH": api_basic.WEEKEND_SLOTS_PATH,
+        "UPD_PATH": api_basic.UPD_PATH,
+        "load": api_basic.load,
+        "save_atomic": api_basic.save_atomic,
+        "updates_lock": api_basic._updates_lock,
+        "load_progress": api_basic._load_progress_strict,
+        "reconcile": api_basic._reconcile_auto_assignment_after_progress,
+    }
+    progress_original = {
+        "load_progress": api_progress._load_progress_strict,
+        "save_progress": api_progress._save_progress_strict,
+        "progress_lock": api_progress._progress_lock,
+        "notification_snapshot": api_progress._notification_progress_snapshot,
+        "notification_commit": api_progress._notification_progress_commit,
+    }
+
+    def fake_load(path):
+        if path is students_path:
+            return deepcopy(state["students"])
+        if path is videos_path:
+            return deepcopy(state["videos"])
+        if path is weekend_path:
+            return deepcopy(state["weekend"])
+        if path is updates_path:
+            return deepcopy(state["updates"])
+        return {}
+
+    def fake_save(path, value, **_kwargs):
+        if path is updates_path:
+            state["updates"] = deepcopy(value)
+            state["save_count"] += 1
+
+    try:
+        api_basic.STU_PATH = students_path
+        api_basic.VID_PATH = videos_path
+        api_basic.WEEKEND_SLOTS_PATH = weekend_path
+        api_basic.UPD_PATH = updates_path
+        api_basic.load = fake_load
+        api_basic.save_atomic = fake_save
+        api_basic._updates_lock = lambda: contextlib.nullcontext()
+
+        baseline_updates = deepcopy(state["updates"])
+        changed = api_basic._reconcile_auto_assignment_after_progress(
+            date,
+            sid,
+            progress=progress,
+            watch={},
+        )
+        _assert_unit(
+            not changed
+            and state["updates"] == baseline_updates
+            and state["save_count"] == 0,
+            "progress reconciliation is a no-op and never rewrites automatic snapshots",
+        )
+
+        progress_store = {"value": {}}
+        reconcile_calls = []
+
+        def stable_save_progress(value, *_args, **_kwargs):
+            progress_store["value"] = deepcopy(value)
+
+        api_progress._load_progress_strict = lambda *_args, **_kwargs: deepcopy(progress_store["value"])
+        api_progress._save_progress_strict = stable_save_progress
+        api_progress._progress_lock = lambda: contextlib.nullcontext()
+        api_progress._notification_progress_snapshot = lambda *_args, **_kwargs: None
+        api_progress._notification_progress_commit = lambda *_args, **_kwargs: 0
+        api_basic._reconcile_auto_assignment_after_progress = (
+            lambda *args, **kwargs: reconcile_calls.append((args, kwargs)) or True
+        )
+
+        app = Flask("verify-auto-assignment-snapshot-immutability")
+        app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(api_progress.bp_api_progress)
+        client = app.test_client()
+        for mid, status in (("m1", "done"), ("m2", "skip"), ("m3", "interrupted")):
+            response = client.post(
+                "/api/progress/patch",
+                json={"date": date, "sid": sid, "progress": {mid: status}},
+            )
+            _assert_unit(response.status_code == 200, f"progress patch should persist {status}")
+
+        _assert_unit(
+            not reconcile_calls,
+            "progress writes must never call an automatic-assignment refill hook",
+        )
+        return
+    finally:
+        api_basic.STU_PATH = original["STU_PATH"]
+        api_basic.VID_PATH = original["VID_PATH"]
+        api_basic.WEEKEND_SLOTS_PATH = original["WEEKEND_SLOTS_PATH"]
+        api_basic.UPD_PATH = original["UPD_PATH"]
+        api_basic.load = original["load"]
+        api_basic.save_atomic = original["save_atomic"]
+        api_basic._updates_lock = original["updates_lock"]
+        api_basic._load_progress_strict = original["load_progress"]
+        api_basic._reconcile_auto_assignment_after_progress = original["reconcile"]
+        api_progress._load_progress_strict = progress_original["load_progress"]
+        api_progress._save_progress_strict = progress_original["save_progress"]
+        api_progress._progress_lock = progress_original["progress_lock"]
+        api_progress._notification_progress_snapshot = progress_original["notification_snapshot"]
+        api_progress._notification_progress_commit = progress_original["notification_commit"]
+
 
 
 def run_self_study_assignment_route_unit_checks() -> None:
@@ -2344,6 +3871,7 @@ def run_self_study_assignment_route_unit_checks() -> None:
     from flask import Flask
 
     import routes.api_basic as api_basic
+    import routes.api_updates as api_updates
 
     date = "2026-06-06"
     sid = "self-study-route"
@@ -2376,6 +3904,9 @@ def run_self_study_assignment_route_unit_checks() -> None:
         "UPD_PATH": api_basic.UPD_PATH,
         "load": api_basic.load,
         "save_atomic": api_basic.save_atomic,
+        "load_updates_strict": api_basic.load_updates_strict,
+        "save_updates_strict": api_basic.save_updates_strict,
+        "absence_barrier": api_basic._auto_assignment_absence_barrier,
         "load_absent": api_basic.load_absent,
         "_load_progress_strict": api_basic._load_progress_strict,
         "get_log_repository": api_basic.get_log_repository,
@@ -2408,38 +3939,60 @@ def run_self_study_assignment_route_unit_checks() -> None:
         api_basic.UPD_PATH = updates_path
         api_basic.load = fake_load
         api_basic.save_atomic = fake_save
+        api_basic.load_updates_strict = fake_load
+        api_basic.save_updates_strict = fake_save
+        api_basic._auto_assignment_absence_barrier = (
+            lambda: contextlib.nullcontext()
+        )
         api_basic.load_absent = lambda: deepcopy(state["absent"])
         api_basic._load_progress_strict = lambda *_args, **_kwargs: deepcopy(state["progress"])
         api_basic.get_log_repository = lambda: FakeLogRepository()
         api_basic._updates_lock = lambda: contextlib.nullcontext()
 
         app = Flask("verify-self-study-assignment-route")
-        app.register_blueprint(api_basic.bp_api_basic)
+        api_updates.configure_updates_assignment_hooks(
+            app,
+            initialize_today=api_basic.initialize_auto_assignment_for_updates_read,
+            reconcile_self_study=api_basic.reconcile_self_study_assignment_for_updates,
+        )
+        app.register_blueprint(api_updates.bp_api_updates)
         client = app.test_client()
 
         response = client.post("/api/updates/self-study", json={"date": date, "sid": sid})
         payload = response.get_json() or {}
         _assert_unit(response.status_code == 200 and payload.get("ok") is True, "self-study assignment route must return success")
         _assert_unit(
-            payload.get("assignment") == {"videos": ["m1", "m2"], "source": "selfStudy"}
+            payload.get("assignment") == {"videos": ["m1"], "source": "selfStudy"}
             and state["updates"][date][sid] == payload["assignment"],
-            "self-study route must replace an automatic snapshot with eligible review videos",
+            "self-study route must replace an automatic snapshot with completed review videos only",
         )
 
         state["updates"] = {date: {sid: {"videos": ["m1"], "source": "selfStudy"}}}
+        response = client.post(
+            "/api/updates/self-study",
+            json={"date": date, "sid": sid, "videos": ["m1"], "append": True},
+        )
+        payload = response.get_json() or {}
+        _assert_unit(
+            response.status_code == 200
+            and payload.get("assignment") == {"videos": ["m1"], "source": "selfStudy"}
+            and state["updates"][date][sid] == payload["assignment"],
+            "self-study route must append an eligible completed review video without duplicates",
+        )
+
+        persisted = deepcopy(state["updates"])
         response = client.post(
             "/api/updates/self-study",
             json={"date": date, "sid": sid, "videos": ["m2"], "append": True},
         )
         payload = response.get_json() or {}
         _assert_unit(
-            response.status_code == 200
-            and payload.get("assignment") == {"videos": ["m1", "m2"], "source": "selfStudy"}
-            and state["updates"][date][sid] == payload["assignment"],
-            "self-study route must append an eligible review video without losing existing selections",
+            response.status_code == 409
+            and payload.get("error") == "video is not eligible for self-study review"
+            and state["updates"] == persisted,
+            "self-study route must reject an interrupted orange video",
         )
 
-        persisted = deepcopy(state["updates"])
         response = client.post(
             "/api/updates/self-study",
             json={"date": date, "sid": sid, "videos": ["m3"], "append": True},
@@ -2449,7 +4002,7 @@ def run_self_study_assignment_route_unit_checks() -> None:
             response.status_code == 409
             and payload.get("error") == "video is not eligible for self-study review"
             and state["updates"] == persisted,
-            "self-study route must reject a video without completed/interrupted prior progress",
+            "self-study route must reject a video without completed prior progress",
         )
 
         response = client.post(
@@ -2516,7 +4069,7 @@ def run_video_assignment_boundary_source_checks() -> None:
         "admin date changes must enter the assignment boundary path",
     )
     _assert_unit(
-        "hydrateUpdates({ readOnly: true })" in video_modal_js
+        "hydrateUpdates({ readOnly: true, isCurrent })" in video_modal_js
         and "'/api/updates?readOnly=1'" in video_modal_js,
         "video progress popup hydration must use a read-only updates snapshot",
     )
@@ -2528,34 +4081,57 @@ def run_video_assignment_boundary_source_checks() -> None:
 
 def run_self_study_video_assignment_source_checks() -> None:
     api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+    bootstrap_projection_py = (
+        ROOT / "routes/student_bootstrap_projection.py"
+    ).read_text("utf-8")
+    student_video_projection_py = (
+        ROOT / "core/student_video_projection.py"
+    ).read_text("utf-8")
+    auto_assignment_service_py = (
+        ROOT / "routes/student_auto_assignment_service.py"
+    ).read_text("utf-8")
+    api_updates_py = (ROOT / "routes/api_updates.py").read_text("utf-8")
+    update_rules_py = (ROOT / "core/update_assignment_rules.py").read_text("utf-8")
     today_state_js = (ROOT / "static/js/admin/features/today.state.js").read_text("utf-8")
     export_logs_js = (ROOT / "static/js/admin/features/exportLogs.js").read_text("utf-8")
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    bootstrap_state_js = (
+        ROOT / "static/js/student/bootstrapState.js"
+    ).read_text("utf-8")
+    review_playlist_js = (
+        ROOT / "static/js/student/reviewPlaylist.js"
+    ).read_text("utf-8")
 
     _assert_unit(
-        "@bp_api_basic.post(\"/api/updates/self-study\")" in api_basic_py,
+        "@bp_api_updates.post(\"/api/updates/self-study\")" in api_updates_py
+        and "@bp_api_basic.post(\"/api/updates/self-study\")" not in api_basic_py,
         "self-study review assignment must have a dedicated updates endpoint",
     )
     _assert_unit(
-        "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in api_basic_py,
+        "SELF_STUDY_VIDEO_ASSIGN_SOURCE = \"selfStudy\"" in update_rules_py,
         "self-study review assignment must remain distinguishable from new automatic progress",
     )
     _assert_unit(
-        "def _student_eligible_review_video_mids" in api_basic_py
-        and "video is not eligible for self-study review" in api_basic_py,
+        "def student_eligible_review_video_mids" in student_video_projection_py
+        and "video is not eligible for self-study review"
+        in auto_assignment_service_py,
         "self-study review registration must be server-authorized by prior progress",
     )
     _assert_unit(
-        "_student_has_scheduled_self_study_on_date" in api_basic_py,
+        "student_is_self_study_on_date" in auto_assignment_service_py
+        and "_service_reconcile_self_study_assignment" in api_basic_py,
         "scheduled self-study must use the same backend automatic assignment path",
     )
     _assert_unit(
-        "if _student_absent_on_date(absent, date_key, sid):" in api_basic_py
-        and "if _student_is_self_study_on_date(logs, date_key, sid, stu):" in api_basic_py,
+        "if student_absent_on_date(absent, date_key, sid):"
+        in auto_assignment_service_py
+        and "if student_is_self_study_on_date(logs, date_key, sid, student):"
+        in auto_assignment_service_py,
         "self-study auto reconciliation must allow explicit self-study while keeping absence first",
     )
     _assert_unit(
-        "if (not registered_today and not self_study_day) or absent_today:" in api_basic_py,
+        "if (not registered_today and not self_study_day) or absent_today:"
+        in bootstrap_projection_py,
         "student bootstrap must allow self-study on a non-scheduled date but keep absence blocked",
     )
     student_js = (ROOT / "static/js/student.js").read_text("utf-8")
@@ -2564,10 +4140,15 @@ def run_self_study_video_assignment_source_checks() -> None:
         "student review surface must keep the absence/archive guard",
     )
     _assert_unit(
-        "selfStudy: b.selfStudy === true" in student_js
+        "selfStudy: bootstrap.selfStudy === true" in bootstrap_state_js
         and "function registerReviewVideos" in student_js
-        and "registeredReviewMids = normalizeStoredReviewMids" in student_js
-        and "saveRegisteredReviewMids();" in student_js
+        and "reviewPlaylistController.hydrate(reviewVideosCache.map(item => item.mid))"
+        in student_js
+        and "reviewPlaylistController.registerSelected()" in student_js
+        and "if (!authorized.has(mid) || registered.includes(mid)) return false;"
+        in review_playlist_js
+        and "storage.setItem(currentStorageKey(), JSON.stringify(registered));"
+        in review_playlist_js
         and "previousVideosRegister" in student_js,
         "student self-study review rows must register in the server-authorized local playlist",
     )
@@ -2598,46 +4179,92 @@ def run_self_study_video_assignment_source_checks() -> None:
 
 def run_watch_route_progress_unit_checks() -> None:
     from core.progress_rules import PROGRESS_MANUAL_META_KEY, WATCH_AUTO_PROGRESS_META_KEY
+    import core.watch_progress_writer as watch_writer
     from flask import Flask
     import routes.api_basic as api_basic
     import routes.api_watch as api_watch
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
+    watch_source = (ROOT / "routes/api_watch.py").read_text("utf-8")
+    kollus_source = (ROOT / "routes/api_kollus.py").read_text("utf-8")
+    _assert_unit(
+        "from routes.api_basic import" not in watch_source,
+        "watch route must not import private helpers from api_basic",
+    )
+    _assert_unit(
+        "from routes.api_watch import" not in kollus_source,
+        "Kollus route must not import private writers from api_watch",
+    )
+    _assert_unit(
+        "from core.watch_progress_writer import" in watch_source
+        and "from core.watch_progress_writer import" in kollus_source,
+        "watch and Kollus routes must share the public watch/progress writer",
+    )
+
     old_basic_progress = api_basic.PRG_PATH
     old_watch_progress = api_watch.PRG_PATH
     old_watch_path = api_watch.WATCH_PATH
+    old_watch_students = api_watch.STU_PATH
+    old_watch_videos = api_watch.VID_PATH
     old_network_allowed = api_watch.academy_network_allowed
+    old_reconcile = api_basic._reconcile_auto_assignment_after_progress
+    reconcile_calls = []
 
-    with tempfile.TemporaryDirectory(prefix="verify-watch-progress-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-watch-progress-") as tmpdir:
         progress_path = pathlib.Path(tmpdir) / "progress.json"
         watch_path = pathlib.Path(tmpdir) / "watch.json"
+        students_path = pathlib.Path(tmpdir) / "students.json"
+        videos_path = pathlib.Path(tmpdir) / "videos.json"
         progress_path.write_text("{}", "utf-8")
         watch_path.write_text("{}", "utf-8")
+        students_path.write_text("[]", "utf-8")
+        videos_path.write_text("[]", "utf-8")
 
         api_basic.PRG_PATH = progress_path
         api_watch.PRG_PATH = progress_path
         api_watch.WATCH_PATH = watch_path
+        api_watch.STU_PATH = students_path
+        api_watch.VID_PATH = videos_path
+        api_basic._reconcile_auto_assignment_after_progress = (
+            lambda *args, **kwargs: reconcile_calls.append((args, kwargs)) or True
+        )
         try:
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "interrupted")
+            merged = watch_writer.save_progress_status(
+                progress_path, students_path, videos_path, "2026-06-06", "007", "m1", "interrupted"
+            )
             _assert_unit(merged.get("m1") == "interrupted", "watch route should save auto interrupted")
             _assert_unit(
                 merged.get(WATCH_AUTO_PROGRESS_META_KEY, {}).get("m1") == "interrupted",
                 "watch route should persist auto interrupted metadata",
             )
 
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m1", "done")
+            merged = watch_writer.save_progress_status(
+                progress_path, students_path, videos_path, "2026-06-06", "007", "m1", "done"
+            )
             _assert_unit(merged.get("m1") == "done", "watch route should advance auto interrupted to done")
+            _assert_unit(
+                not reconcile_calls,
+                "watch completion must persist progress without refilling automatic assignments",
+            )
+
+
 
             current = json.loads(progress_path.read_text("utf-8-sig"))
             current["2026-06-06"]["007"].update({
                 "m2": "none",
-                PROGRESS_MANUAL_META_KEY: {"m2": True},
+                "m5": "skip",
+                "m6": "interrupted",
+                PROGRESS_MANUAL_META_KEY: {"m2": True, "m5": True, "m6": True},
             })
             progress_path.write_text(json.dumps(current, ensure_ascii=False), "utf-8")
 
-            merged = api_watch._save_progress_status("2026-06-06", "007", "m2", "done")
-            _assert_unit(merged.get("m2") == "none", "watch route must not overwrite manual white")
+            for mid, expected in (("m2", "none"), ("m5", "skip"), ("m6", "interrupted")):
+                merged = watch_writer.save_progress_status(
+                    progress_path, students_path, videos_path, "2026-06-06", "007", mid, "done"
+                )
+                _assert_unit(
+                    merged.get(mid) == expected,
+                    f"watch writer must not overwrite manual {expected}",
+                )
 
             app = Flask("verify_watch_status")
             app.register_blueprint(api_watch.bp_api_watch)
@@ -2709,16 +4336,67 @@ def run_watch_route_progress_unit_checks() -> None:
             api_basic.PRG_PATH = old_basic_progress
             api_watch.PRG_PATH = old_watch_progress
             api_watch.WATCH_PATH = old_watch_path
+            api_watch.STU_PATH = old_watch_students
+            api_watch.VID_PATH = old_watch_videos
             api_watch.academy_network_allowed = old_network_allowed
+            api_basic._reconcile_auto_assignment_after_progress = old_reconcile
+
+
+def run_video_progress_integration_matrix_checks() -> None:
+    from scripts.verify_video_progress_matrix import main as verify_video_progress_matrix
+    from scripts.verify_video_watch_rearm import main as verify_video_watch_rearm
+
+    _assert_unit(
+        verify_video_progress_matrix() == 0,
+        "watch and Kollus temp-route integration matrix must pass",
+    )
+    _assert_unit(verify_video_watch_rearm() == 0, "fresh-watch generation route gates must pass")
+    for script, failure_message in (
+        ("scripts/verify_video_watch_rearm.mjs", "fresh-watch browser generation contracts failed"),
+        (
+            "scripts/verify_student_watch_timestamp.mjs",
+            "student watch millisecond timestamp checks failed",
+        ),
+        (
+            "scripts/verify_student_watch_autosave.mjs",
+            "student watch state, debounce, and flush behavior checks failed",
+        ),
+        (
+            "scripts/verify_student_playback.mjs",
+            "student playback URL, active-MID bridge, and failure behavior checks failed",
+        ),
+        (
+            "scripts/verify_student_review_playlist.mjs",
+            "student review playlist storage, selection, and bootstrap-prune checks failed",
+        ),
+    ):
+        cmd = ["node", script]
+        print("$ " + " ".join(cmd))
+        try:
+            proc = _run_captured(cmd)
+        except FileNotFoundError:
+            raise AssertionError("node not found") from None
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, failure_message)
+
+
+def run_absence_makeup_integration_matrix_checks() -> None:
+    from scripts.verify_absence_makeup_matrix import main as verify_absence_makeup_matrix
+
+    _assert_unit(
+        verify_absence_makeup_matrix() == 0,
+        "absence and makeup temp-route integration matrix must pass or report only approved limitations",
+    )
 
 
 def run_log_repository_unit_checks() -> None:
     from core.log_repository import LogRepository
     from core.log_rules import log_entry_conflicts_with_base, merge_log_entry_safe
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-logrepo-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-logrepo-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         logs_path = tmp / "logs.json"
         db_path = tmp / "app.sqlite"
@@ -2746,7 +4424,8 @@ def run_log_repository_unit_checks() -> None:
         result = repo.patch_entry(date, sid, {"notes": "incoming"}, base)
         _assert_unit(result.sqlite_base_conflict, "sqlite base conflict must be reported")
         _assert_unit(not result.sqlite_ok, "sqlite conflict must not be reported as synced")
-        _assert_unit(result.merged.get("notes") == "incoming", "json side should still merge non-conflicting patch")
+        _assert_unit(not result.json_ok, "SQLite conflict must not write the compatibility JSON")
+        _assert_unit(json.loads(logs_path.read_text('utf-8'))[date][sid]['notes'] == 'base', "conflict leaves JSON unchanged")
 
         con = repo._connect()
         try:
@@ -2946,7 +4625,7 @@ def run_log_repository_unit_checks() -> None:
         )
 
         from flask import Flask
-        from routes import api_basic
+        from routes import api_logs
         from types import SimpleNamespace
 
         class FakeReadLogRepository:
@@ -2954,15 +4633,15 @@ def run_log_repository_unit_checks() -> None:
                 return SimpleNamespace(source="json", entry={})
 
         route_app = Flask("verify-log-entry-route")
-        route_app.register_blueprint(api_basic.bp_api_basic)
+        route_app.register_blueprint(api_logs.bp_api_logs)
         route_client = route_app.test_client()
 
-        original_get_log_repository = api_basic.get_log_repository
-        api_basic.get_log_repository = lambda: FakeReadLogRepository()
+        original_get_log_repository = api_logs.get_log_repository
+        api_logs.get_log_repository = lambda: FakeReadLogRepository()
         try:
             response = route_client.get("/api/logs/entry?date=2026-06-06&sid=__missing__")
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         payload = response.get_json()
         response_text = response.get_data(as_text=True)
@@ -2980,6 +4659,86 @@ def run_log_repository_unit_checks() -> None:
         _assert_unit(payload.get("ok") is False, "bad log patch date must return ok:false")
         _assert_unit(payload.get("error") == "bad date", "bad log patch date must return bad date error")
 
+        class FakeBatchLogRepository:
+            def __init__(self, *, sqlite_ok=True):
+                self.sqlite_ok = sqlite_ok
+                self.calls = []
+
+            def legacy_post(self, incoming):
+                self.calls.append(incoming)
+                return SimpleNamespace(
+                    sqlite_ok=self.sqlite_ok,
+                    sqlite_error=RuntimeError(r"C:\runtime\app.sqlite failed") if not self.sqlite_ok else None,
+                    json_ok=self.sqlite_ok,
+                )
+
+        fake_batch_repo = FakeBatchLogRepository()
+        api_logs.get_log_repository = lambda: fake_batch_repo
+        try:
+            batch_response = route_client.post(
+                "/api/logs/patch-batch",
+                json={"patches": [
+                    {
+                        "date": "2026-06-06",
+                        "sid": "student-a",
+                        "entry": {"done": True, "leaveTime": "14:00"},
+                        "__clear": ["archived"],
+                    },
+                    {
+                        "date": "2026-06-05",
+                        "sid": "student-b",
+                        "entry": {"archived": True},
+                    },
+                ]},
+            )
+            duplicate_response = route_client.post(
+                "/api/logs/patch-batch",
+                json={"patches": [
+                    {"date": "2026-06-06", "sid": "student-a", "entry": {"done": True}},
+                    {"date": "2026-06-06", "sid": "student-a", "entry": {"archived": True}},
+                ]},
+            )
+        finally:
+            api_logs.get_log_repository = original_get_log_repository
+
+        batch_payload = batch_response.get_json()
+        _assert_unit(batch_response.status_code == 200, "batch log patch must return HTTP 200")
+        _assert_unit(batch_payload.get("ok") is True, "batch log patch must return ok:true")
+        _assert_unit(batch_payload.get("count") == 2, "batch log patch must report its unique target count")
+        _assert_unit(len(fake_batch_repo.calls) == 1, "batch log patch must invoke one repository save")
+        saved_batch = fake_batch_repo.calls[0]
+        _assert_unit(
+            saved_batch["2026-06-06"]["student-a"].get("__clear") == ["archived"],
+            "batch log patch must preserve clear keys inside the merge entry",
+        )
+        _assert_unit(
+            saved_batch["2026-06-05"]["student-b"].get("archived") is True,
+            "batch log patch must preserve each date/sid entry",
+        )
+        _assert_unit(duplicate_response.status_code == 400, "duplicate batch target must fail before writing")
+        _assert_unit(len(fake_batch_repo.calls) == 1, "duplicate batch target must not invoke the repository")
+
+        failing_batch_repo = FakeBatchLogRepository(sqlite_ok=False)
+        api_logs.get_log_repository = lambda: failing_batch_repo
+        try:
+            batch_failure = route_client.post(
+                "/api/logs/patch-batch",
+                json={"patches": [{
+                    "date": "2026-06-06",
+                    "sid": "student-a",
+                    "entry": {"done": True},
+                }]},
+            )
+        finally:
+            api_logs.get_log_repository = original_get_log_repository
+
+        batch_failure_text = batch_failure.get_data(as_text=True)
+        _assert_unit(batch_failure.status_code == 409, "batch sqlite failure must return HTTP 409")
+        _assert_unit(
+            "C:" not in batch_failure_text and "runtime" not in batch_failure_text,
+            "batch sqlite failure must not expose local paths",
+        )
+
         class FakeLogRepository:
             def patch_entry(self, _date, _sid, _entry, _base):
                 return SimpleNamespace(
@@ -2992,7 +4751,7 @@ def run_log_repository_unit_checks() -> None:
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
                 )
 
-        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_logs.get_log_repository = lambda: FakeLogRepository()
         try:
             app = Flask("verify-logrepo-json-warning")
             with app.test_request_context(
@@ -3000,9 +4759,9 @@ def run_log_repository_unit_checks() -> None:
                 method="POST",
                 json={"date": fail_date, "sid": sid, "entry": {"notes": "saved"}},
             ):
-                response = api_basic.api_logs_patch()
+                response = api_logs.api_logs_patch()
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         status_code = response[1] if isinstance(response, tuple) else response.status_code
         response_obj = response[0] if isinstance(response, tuple) else response
@@ -3023,12 +4782,13 @@ def run_log_repository_unit_checks() -> None:
                     sqlite_ok=False,
                     sqlite_error=None,
                     sqlite_base_conflict=True,
+                    sqlite_conflict_entry={"notes": "latest"},
                     json_conflict_entry=None,
                     json_ok=False,
                     json_error=JsonSaveFailure(r"C:\runtime\logs.json write failed"),
                 )
 
-        api_basic.get_log_repository = lambda: FakeConflictJsonFailureRepository()
+        api_logs.get_log_repository = lambda: FakeConflictJsonFailureRepository()
         try:
             app = Flask("verify-logrepo-conflict-json-failure")
             with app.test_request_context(
@@ -3036,9 +4796,9 @@ def run_log_repository_unit_checks() -> None:
                 method="POST",
                 json={"date": fail_date, "sid": sid, "entry": {"notes": "unsaved"}},
             ):
-                response = api_basic.api_logs_patch()
+                response = api_logs.api_logs_patch()
         finally:
-            api_basic.get_log_repository = original_get_log_repository
+            api_logs.get_log_repository = original_get_log_repository
 
         status_code = response[1] if isinstance(response, tuple) else response.status_code
         response_obj = response[0] if isinstance(response, tuple) else response
@@ -3057,8 +4817,6 @@ def run_legacy_test_record_cache_unit_checks() -> None:
 
     from routes import api_basic, api_tests
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
     original_tests_path = api_tests.TESTS_PATH
     original_logs_path = api_tests.LOGS_PATH
     original_get_log_repository = api_basic.get_log_repository
@@ -3078,7 +4836,7 @@ def run_legacy_test_record_cache_unit_checks() -> None:
             "testMeta": {"type": "UNIT", "curriculum": "수학"},
         }
 
-    with tempfile.TemporaryDirectory(prefix="verify-test-record-cache-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-test-record-cache-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         tests_path = tmp / "tests.json"
         logs_path = tmp / "logs.json"
@@ -3413,8 +5171,71 @@ def run_student_assigned_tests_unit_checks() -> None:
 
 
 def run_absence_test_assignment_transition_unit_checks() -> None:
+    import core.absence_assignment_cleanup as cleanup
     import routes.api_attend as api_attend
     from flask import Flask
+    from core.progress_rules import TEST_ASSIGN_CHANGE_ORDER_META_KEY
+
+    cleanup_source = (ROOT / "core/absence_assignment_cleanup.py").read_text("utf-8")
+    transaction_source = (ROOT / "core/absence_transaction.py").read_text("utf-8")
+    app_source = (ROOT / "app.py").read_text("utf-8")
+    attendance_source = (ROOT / "routes/api_attend.py").read_text("utf-8")
+    makeup_source = (ROOT / "routes/api_makeup_carryover.py").read_text("utf-8")
+    sync_source = (ROOT / "scripts/sync_makeup_sheet_additive.py").read_text("utf-8")
+    _assert_unit(
+        "from routes.api_attend import" not in makeup_source
+        and "from routes.api_attend import" not in sync_source,
+        "makeup sync consumers must not import attendance private cleanup helpers",
+    )
+    _assert_unit(
+        all(
+            "from routes.absence_assignment_cleanup import" in source
+            for source in (attendance_source, makeup_source, sync_source)
+        ),
+        "absence writers must share the public transaction adapter",
+    )
+    _assert_unit(
+        all(
+            "absence_write_scope" in source
+            and "commit_new_absences_locked" in source
+            and "clear_assignments_for_new_absences(" not in source
+            for source in (attendance_source, makeup_source, sync_source)
+        ),
+        "live absence writers must use one journal transaction instead of legacy partial cleanup",
+    )
+    _assert_unit(
+        "from routes." not in cleanup_source
+        and "from routes." not in transaction_source,
+        "core absence planning and transaction modules must stay independent from Flask routes",
+    )
+    _assert_unit(
+        "recover_pending_absence_transactions()" in app_source
+        and "absence_read_barrier(shared=" in app_source
+        and "absence_barrier_mode(request.path, request.method, request.args)" in app_source,
+        "app startup recovery and request barrier must protect absence-related stores without re-locking owners",
+    )
+    _assert_unit(
+        all(
+            f'"{path}"' in (ROOT / 'core/request_consistency.py').read_text('utf-8')
+            for path in (
+                "/api/watch",
+                "/api/watch-status",
+                "/api/kollus/lms-callback",
+            )
+        ),
+        "watch, direct progress, and Kollus callback writes must wait for absence consistency",
+    )
+    _assert_unit(
+        "external_admin_api_auth_required(" in app_source
+        and "student_app_public_request" in app_source
+        and '"WWW-Authenticate": ADMIN_AUTH_CHALLENGE' in app_source,
+        "off-academy administrator APIs must require Basic auth without replacing public student gates",
+    )
+    _assert_unit(
+        "recover_material_state_if_needed(" in app_source
+        and 'app.config["MATERIAL_STATE_WRITES_DEGRADED"]' in app_source,
+        "material recovery failure must degrade file/material writes without preventing app startup",
+    )
 
     sid = "s1"
     date = "2026-06-07"
@@ -3424,22 +5245,22 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     skipped_label = "단원평가 / 대수 / Lv.3 / 2회차 / 제외"
 
     _assert_unit(
-        api_attend._absence_test_status_value("assigned") == "interrupted",
+        cleanup.absence_test_status_value("assigned") == "interrupted",
         "absence must turn assigned tests into 배부/interrupted",
     )
     _assert_unit(
-        api_attend._absence_test_status_value({"status": "assigned", "memo": "keep"}) == {
+        cleanup.absence_test_status_value({"status": "assigned", "memo": "keep"}) == {
             "status": "interrupted",
             "memo": "keep",
         },
         "absence must preserve dict test status metadata while changing assigned to 배부",
     )
     _assert_unit(
-        api_attend._absence_test_status_value("interrupted") == "interrupted",
+        cleanup.absence_test_status_value("interrupted") == "interrupted",
         "absence must keep existing 배부/interrupted tests",
     )
-    _assert_unit(api_attend._absence_test_status_value("done") == "done", "absence must preserve completed tests")
-    _assert_unit(api_attend._absence_test_status_value("skip") == "skip", "absence must preserve excluded tests")
+    _assert_unit(cleanup.absence_test_status_value("done") == "done", "absence must preserve completed tests")
+    _assert_unit(cleanup.absence_test_status_value("skip") == "skip", "absence must preserve excluded tests")
 
     entry = {
         "notes": "상담 메모\n\n[테스트 배정]\n- 기존 블록",
@@ -3455,7 +5276,7 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
             {"label": completed_label, "name": "완료", "status": "done"},
         ],
     }
-    next_entry, changed = api_attend._cleared_assignment_log_entry(entry, sid)
+    next_entry, changed = cleanup.cleared_assignment_log_entry(entry, sid)
     _assert_unit(changed, "absence log transition should report a change")
     next_daily = {item["label"]: item["status"] for item in next_entry["testAssignmentDailyTests"]}
     next_assigned = {item["label"]: item["status"] for item in next_entry["assignedTests"]}
@@ -3466,6 +5287,128 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
     _assert_unit(next_assigned[assigned_label] == "interrupted", "absence must turn cumulative assigned log tests into 배부")
     _assert_unit(next_assigned[completed_label] == "done", "absence must preserve cumulative completed log tests")
     _assert_unit("[테스트 배정]" not in str(next_entry.get("notes") or ""), "absence must still remove generated note blocks")
+
+    with tempfile.TemporaryDirectory(prefix="verify-absence-test-order-") as tmpdir:
+        progress_path = pathlib.Path(tmpdir) / "progress.json"
+        progress_path.write_text(
+            json.dumps({
+                date: {
+                    sid: {
+                        "tests": {
+                            assigned_label: "assigned",
+                            distributed_label: "interrupted",
+                        },
+                        TEST_ASSIGN_CHANGE_ORDER_META_KEY: {
+                            assigned_label: 3,
+                            distributed_label: 4,
+                        },
+                    },
+                },
+            }, ensure_ascii=False),
+            "utf-8",
+        )
+        cleanup.clear_absence_progress_tests({(date, sid)}, progress_path=progress_path)
+        progress_after = json.loads(progress_path.read_text("utf-8"))
+        progress_entry = progress_after[date][sid]
+        _assert_unit(
+            progress_entry["tests"][assigned_label] == "interrupted",
+            "absence progress transition must turn assigned into interrupted",
+        )
+        _assert_unit(
+            progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][assigned_label] == 5
+            and progress_entry[TEST_ASSIGN_CHANGE_ORDER_META_KEY][distributed_label] == 4,
+            "absence progress transition must make only the changed test newest",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="verify-absence-cleanup-service-") as tmpdir:
+        base = pathlib.Path(tmpdir)
+        updates_path = base / "updates.json"
+        progress_path = base / "progress.json"
+        updates_path.write_text(
+            json.dumps({
+                date: {
+                    sid: {"videos": ["m1"], "source": "auto"},
+                    "keep-sid": {"videos": ["m2"], "source": "manual"},
+                },
+                "2026-06-08": {sid: {"videos": ["m3"], "source": "auto"}},
+            }),
+            "utf-8",
+        )
+        progress_path.write_text(
+            json.dumps({
+                date: {sid: {"tests": {assigned_label: "assigned"}}},
+                "2026-06-08": {sid: {"tests": {assigned_label: "assigned"}}},
+            }, ensure_ascii=False),
+            "utf-8",
+        )
+
+        class ReadResult:
+            def __init__(self, entry):
+                self.entry = entry
+
+        class FakeLogRepository:
+            def __init__(self):
+                self.entries = {
+                    (date, sid): {
+                        "assignedTests": [
+                            {"label": assigned_label, "status": "assigned", "memo": "keep"},
+                        ],
+                        "notes": "상담 메모",
+                    },
+                    ("2026-06-08", sid): {"notes": "다른 날짜"},
+                }
+
+            def read_entry(self, date_key, student_id):
+                return ReadResult(json.loads(json.dumps(
+                    self.entries.get((date_key, student_id), {}),
+                    ensure_ascii=False,
+                )))
+
+            def transform_entries(self, pairs, transform):
+                for pair in pairs:
+                    current = self.entries.get(pair, {})
+                    next_entry, changed = transform(current, pair[1])
+                    if changed:
+                        self.entries[pair] = next_entry
+
+        repository = FakeLogRepository()
+        factory_calls = []
+
+        def repository_factory():
+            factory_calls.append(True)
+            return repository
+
+        cleanup.clear_assignments_for_new_absences(
+            {(date, sid)},
+            updates_path=updates_path,
+            progress_path=progress_path,
+            log_repository_factory=repository_factory,
+        )
+        updates_after = json.loads(updates_path.read_text("utf-8"))
+        progress_after = json.loads(progress_path.read_text("utf-8"))
+        log_after = repository.entries[(date, sid)]
+        _assert_unit(sid not in updates_after[date], "absence cleanup removes only the new date/SID video assignment")
+        _assert_unit(
+            updates_after[date]["keep-sid"]["videos"] == ["m2"]
+            and updates_after["2026-06-08"][sid]["videos"] == ["m3"],
+            "absence cleanup preserves other students and dates",
+        )
+        _assert_unit(
+            progress_after[date][sid]["tests"][assigned_label] == "interrupted"
+            and progress_after["2026-06-08"][sid]["tests"][assigned_label] == "assigned",
+            "absence cleanup changes only the new date/SID assigned test",
+        )
+        _assert_unit(
+            log_after["assignedTests"][0]["status"] == "interrupted"
+            and log_after["assignedTests"][0]["memo"] == "keep"
+            and log_after["testAssignmentAbsenceCarryover"]["assignedTests"][0]["label"] == assigned_label,
+            "absence cleanup preserves test metadata and records the carryover before clearing",
+        )
+        _assert_unit(
+            repository.entries[("2026-06-08", sid)] == {"notes": "다른 날짜"}
+            and len(factory_calls) == 2,
+            "absence cleanup preserves other log dates and the legacy two-repository-call sequence",
+        )
 
     runtime_absent = {
         "by_date": {
@@ -3542,6 +5485,52 @@ def run_absence_test_assignment_transition_unit_checks() -> None:
             api_attend.save_absent = original_save_absent
             api_attend.enqueue_current_schedule_changes = original_enqueue
 
+    from scripts.verify_absence_transaction import main as verify_absence_transaction
+    from scripts.verify_makeup_sheet_route_safety import main as verify_makeup_sheet_route
+
+    _assert_unit(
+        verify_absence_transaction() == 0,
+        "absence transaction failure injection and crash recovery checks must pass",
+    )
+    _assert_unit(
+        verify_makeup_sheet_route() == 0,
+        "makeup sheet route must delegate one atomic transaction before notifications",
+    )
+
+
+def run_test_shared_service_checks() -> None:
+    from scripts.verify_test_shared_services import main as verify_test_shared_services
+
+    _assert_unit(
+        verify_test_shared_services() == 0,
+        "test lock and answer-link shared-service checks must pass",
+    )
+
+
+def run_announcement_image_access_checks() -> None:
+    from scripts.verify_announcement_image_access import main as verify_image_access
+
+    _assert_unit(
+        verify_image_access() == 0,
+        "announcement image pure/store access matrix must pass",
+    )
+    for check_name in ("student-data", "academy-gates"):
+        cmd = [
+            sys.executable,
+            "scripts/verify_student_mobile_app.py",
+            "--only",
+            check_name,
+        ]
+        print("$ " + " ".join(cmd))
+        proc = _run_captured(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(
+            proc.returncode == 0,
+            f"announcement image actual-route check failed: {check_name}",
+        )
 
 def run_student_answer_link_precedence_unit_checks() -> None:
     import routes.api_basic as api_basic
@@ -3649,42 +5638,37 @@ def run_student_answer_link_precedence_unit_checks() -> None:
 
 
 def run_student_previous_video_review_bootstrap_unit_checks() -> None:
-    """Exercise the extracted bootstrap projection with isolated in-memory fixtures."""
-    import ast
-    import datetime as dt
+    """Exercise the shared core projection with isolated in-memory fixtures."""
     from copy import deepcopy
 
-    from core.video_review_rules import resolve_video_review_states_before_date
+    from core import student_schedule_rules as schedule_rules
+    from core import student_video_assignment_rules as assignment_rules
+    from core import student_video_projection as video_projection
+    from routes.student_bootstrap_projection import (
+        StudentBootstrapProjectionDependencies,
+        build_student_bootstrap_payload,
+    )
 
-    api_basic_py = (ROOT / "routes/api_basic.py").read_text("utf-8")
+    projection_py = (
+        ROOT / "routes/student_bootstrap_projection.py"
+    ).read_text("utf-8")
 
-    tree = ast.parse(api_basic_py)
-    names = {
-        "_sid_keys",
-        "_sid_lookup",
-        "_normalize_video_assign_list",
-        "_chap_num",
-        "_academy_restricted_student_videos",
-        "_student_completion_videos",
-        "_student_primary_video_mids",
-        "_student_review_states_before_date",
-        "_student_eligible_review_video_mids",
-        "_filter_self_study_assignment_for_response",
-        "_student_review_video_projection",
-        "_self_study_review_video_mids",
-        "_student_absent_on_date",
-    }
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    extracted = {node.name for node in nodes}
-    _assert_unit(extracted == names, "bootstrap fixture must extract every route review helper")
     namespace = {
-        "__name__": "student_previous_video_review_fixture",
-        "dt": dt,
-        "deepcopy": deepcopy,
-        "resolve_video_review_states_before_date": resolve_video_review_states_before_date,
-        "DEFAULT_AUTO_VIDEO_ASSIGN_COUNT": 3,
+        "_blocked_mids_for_sid": video_projection.blocked_mids_for_sid,
+        "_chap_num": video_projection.chapter_number,
+        "_academy_restricted_student_videos": video_projection.academy_restricted_student_videos,
+        "_student_completion_videos": video_projection.student_completion_videos,
+        "_student_primary_video_mids": video_projection.student_primary_video_mids,
+        "_student_review_states_before_date": video_projection.student_review_states_before_date,
+        "_student_review_states_through_date": video_projection.student_review_states_through_date,
+        "_student_current_curriculum_videos": video_projection.student_current_curriculum_videos,
+        "_student_eligible_review_video_mids": video_projection.student_eligible_review_video_mids,
+        "_filter_self_study_assignment_for_response": video_projection.filter_self_study_assignment_for_response,
+        "_filter_auto_assignment_for_current_curriculum": video_projection.filter_auto_assignment_for_current_curriculum,
+        "_student_review_video_projection": video_projection.student_review_video_projection,
+        "_self_study_review_video_mids": assignment_rules.self_study_review_video_mids,
+        "_student_absent_on_date": schedule_rules.student_absent_on_date,
     }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "routes/api_basic.py", "exec"), namespace)
 
     student = {
         "id": "007",
@@ -3738,6 +5722,13 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
             "watch": {"raw": "must-not-leak"},
         },
         {
+            "mid": "m-orange",
+            "title": "Watching",
+            "chapter": "8",
+            "curriculum": "ALG",
+            "subCurriculum": "BASE",
+        },
+        {
             "mid": "m-skip",
             "title": "Skipped",
             "chapter": "6",
@@ -3771,7 +5762,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
             },
         },
         "2026-05-30": {"7": {"m2": "done", "m3": "done"}},
-        "2026-05-31": {"007": {"m4": "done", "m-current": "done"}},
+        "2026-05-31": {"007": {"m4": "done", "m-current": "done", "m-orange": "interrupted"}},
         "2026-06-02": {"007": {"m5": "done"}},
         "malformed": {"007": {"m3": "done"}},
     }
@@ -3800,18 +5791,22 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         True,
     )
     _assert_unit(
-        [item.get("mid") for item in projection] == ["m3", "m5", "m2"],
-        "review projection must sort recent event date then chapter and MID descending",
+        [item.get("mid") for item in projection] == ["m2", "m3", "m5"],
+        "current-curriculum review projection must sort by chapter then MID ascending",
     )
     _assert_unit(
         {item.get("mid"): item.get("reviewStatus") for item in projection}
         == {"m5": "done", "m3": "done", "m2": "done"},
-        "review projection must expose only done/interrupted statuses",
+        "review projection must expose only completed blue statuses",
     )
     _assert_unit("m1" not in {item.get("mid") for item in projection}, "current assignment MID must be excluded")
-    _assert_unit("m-old" not in {item.get("mid") for item in projection}, "other curriculum MID must be excluded")
-    _assert_unit("m4" not in {item.get("mid") for item in projection}, "current-date MID must be excluded")
+    _assert_unit(
+        "m4" not in {item.get("mid") for item in projection}
+        and "m-old" not in {item.get("mid") for item in projection},
+        "other sub-curriculum and other curriculum videos must stay out of the review chooser",
+    )
     _assert_unit("m-skip" not in {item.get("mid") for item in projection}, "skip MID must be excluded")
+    _assert_unit("m-orange" not in {item.get("mid") for item in projection}, "interrupted orange MID must be excluded")
     _assert_unit("m-deleted" not in {item.get("mid") for item in projection}, "deleted MID must be excluded")
     _assert_unit(all("eventDate" not in item for item in projection), "review item must hide eventDate")
     _assert_unit(
@@ -3842,9 +5837,9 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "outside-academy review projection must strip playback fields last",
     )
 
-    fallback_student = {"id": "007", "curriculum": "ALG", "subCurriculum": "MISSING"}
-    fallback = namespace["_student_review_video_projection"](
-        fallback_student,
+    missing_sub_student = {"id": "007", "curriculum": "ALG", "subCurriculum": "MISSING"}
+    missing_sub_projection = namespace["_student_review_video_projection"](
+        missing_sub_student,
         videos,
         {"2026-05-30": {"007": {"m4": "done"}}},
         {},
@@ -3852,7 +5847,57 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         set(),
         True,
     )
-    _assert_unit([item.get("mid") for item in fallback] == ["m4"], "curriculum-only fallback must remain available")
+    _assert_unit(
+        missing_sub_projection == [],
+        "a missing exact sub-curriculum must not fall back to another sub-curriculum in video review",
+    )
+    missing_sub_eligible = namespace["_student_eligible_review_video_mids"](
+        missing_sub_student,
+        videos,
+        {"2026-05-30": {"007": {"m4": "done"}}},
+        {},
+        "2026-06-01",
+    )
+    _assert_unit(
+        missing_sub_eligible == set(),
+        "review registration authorization must not fall back to another sub-curriculum",
+    )
+
+    eligible_mids = namespace["_student_eligible_review_video_mids"](
+        student,
+        videos,
+        progress,
+        watch,
+        "2026-06-01",
+    )
+    _assert_unit(
+        eligible_mids == {"m1", "m2", "m3", "m5"},
+        "review registration authorization must allow only completed blue videos in the exact current curriculum",
+    )
+
+    mijeok_student = {"id": "007", "curriculum": "미적분1", "subCurriculum": "APEX"}
+    mijeok_videos = [
+        {"mid": "mijeok1-apex", "curriculum": "미적분1", "subCurriculum": "APEX", "chapter": "1"},
+        {"mid": "mijeok1-able", "curriculum": "미적분1", "subCurriculum": "A:Ble", "chapter": "2"},
+        {"mid": "mijeok2-apex", "curriculum": "미적분2", "subCurriculum": "APEX", "chapter": "3"},
+    ]
+    mijeok_projection = namespace["_student_review_video_projection"](
+        mijeok_student,
+        mijeok_videos,
+        {"2026-05-30": {"007": {
+            "mijeok1-apex": "done",
+            "mijeok1-able": "done",
+            "mijeok2-apex": "done",
+        }}},
+        {},
+        "2026-06-01",
+        set(),
+        True,
+    )
+    _assert_unit(
+        [item.get("mid") for item in mijeok_projection] == ["mijeok1-apex"],
+        "a 미적분1/APEX student must see only 미적분1/APEX completed videos in video review",
+    )
 
     assignment = {
         "videos": ["m1", "m5", "m-unwatched"],
@@ -3885,22 +5930,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     )
     _assert_unit(progress == progress_before and watch == watch_before, "bootstrap fixtures must remain immutable")
 
-    _assert_unit(api_basic_py.count('"reviewVideos": []') >= 2, "ghost and course-blocked bootstrap shapes must return empty review arrays")
+    _assert_unit(projection_py.count('"reviewVideos": []') >= 2, "ghost and course-blocked bootstrap shapes must return empty review arrays")
     _assert_unit(
-        "if not absent_today and not archived:" in api_basic_py,
+        "if not absent_today and not archived:" in projection_py,
         "absent and archived bootstrap shapes must return empty review arrays",
     )
-
-    route_node = next(
-        (
-            node for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "api_student_bootstrap"
-        ),
-        None,
-    )
-    _assert_unit(route_node is not None, "bootstrap fixture must extract the actual api_student_bootstrap route body")
-    route_node = deepcopy(route_node)
-    route_node.decorator_list = []
 
     from types import SimpleNamespace
 
@@ -3919,24 +5953,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         "WATCH_PATH": "fixture-watch",
     })
 
-    class FixtureRequest:
-        args: dict[str, str]
-
-        def __init__(self) -> None:
-            self.args = {}
-
-    route_namespace["request"] = FixtureRequest()
-    route_namespace["jsonify"] = lambda payload: payload
-    route_namespace["nocache_resp"] = lambda payload: payload
-    route_namespace["_today_kst_iso"] = lambda: "2099-01-01"
-    route_namespace["_is_ghost_student_sid"] = lambda sid: str(sid) == "ghost"
-    route_namespace["_ghost_student_bootstrap"] = lambda date: {
-        "ok": True,
-        "date": date,
-        "reviewVideos": [],
-        "ghostStudent": True,
-    }
-    route_namespace["_log_rules"] = SimpleNamespace(truthy=lambda value: bool(value))
+    route_namespace["_today_kst_iso"] = lambda: "2026-06-01"
     route_namespace["_build_latest_status_by_sid"] = lambda _progress: {}
     route_namespace["_student_dashboard_enabled"] = lambda: False
     route_namespace["_course_videos_completed"] = lambda *_args: False
@@ -3967,12 +5984,13 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         {"mid": "m-old", "title": "Old course", "chapter": "8", "curriculum": "OLD", "subCurriculum": "BASE"},
     ]
     base_progress = {
-        "2026-05-29": {base_sid: {"m1": "done", "m2": "interrupted", "m-old": "done", "m-deleted": "done", "m-skip": "skip"}},
+        "2026-05-29": {base_sid: {"m1": "done", "m2": "interrupted", "m-old": "done", "m-deleted": "done", "m-skip": "done"}},
         "2026-05-30": {"7": {"m3": "done"}},
-        base_date: {base_sid: {"m-current": "done"}},
+        base_date: {base_sid: {"m-current": "done", "m-skip": "skip"}},
         "2026-06-02": {base_sid: {"m5": "done"}},
     }
     base_watch = {"2026-05-30": {"7": {"m5": {"last": 100, "dur": 100}}}}
+    route_namespace["_build_auto_assignment_blocked_by_sid"] = lambda _progress, _watch: {base_sid: {"m1", "m-current"}}
 
     def make_route_state() -> dict:
         return {
@@ -3993,6 +6011,13 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         }
 
     route_state = make_route_state()
+    route_namespace["_load_material_state_for_read"] = lambda: (
+        deepcopy(route_state["materials"]),
+        deepcopy(route_state["assigns"]),
+        {},
+        False,
+    )
+
 
     def fixture_load(path):
         if path == route_namespace["STU_PATH"]:
@@ -4017,30 +6042,102 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         def read_json_map(self):
             return {route_state["date"]: {route_state["sid"]: deepcopy(route_state["log_entry"])}}
 
-    route_namespace["load"] = fixture_load
-    route_namespace["load_absent"] = lambda: deepcopy(route_state["absent"])
-    route_namespace["_load_progress_strict"] = lambda *_args, **_kwargs: deepcopy(route_state["progress"])
-    route_namespace["get_log_repository"] = lambda: FixtureRepository()
-    route_namespace["academy_network_allowed"] = lambda: bool(route_state["academy_allowed"])
     route_namespace["_student_is_registered_on_date"] = lambda *_args, **_kwargs: bool(route_state["registered"])
     route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
     route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
-    route_namespace["_is_public_student_request"] = lambda: False
-    route_namespace["_public_session_sid"] = lambda: None
-    route_namespace["_student_request_academy_allowed"] = lambda: bool(route_state["academy_allowed"])
-    route_namespace["_finalize_public_bootstrap"] = lambda payload, *_args: payload
     route_namespace["_active_student_alias_sid"] = lambda *_args: None
 
-    exec(compile(ast.Module(body=[route_node], type_ignores=[]), "routes/api_basic.py", "exec"), route_namespace)
-    route_fn = route_namespace["api_student_bootstrap"]
+    dependencies = StudentBootstrapProjectionDependencies(
+        students_path=route_namespace["STU_PATH"],
+        videos_path=route_namespace["VID_PATH"],
+        updates_path=route_namespace["UPD_PATH"],
+        watch_path=route_namespace["WATCH_PATH"],
+        load=fixture_load,
+        load_absent=lambda: deepcopy(route_state["absent"]),
+        load_progress=lambda: deepcopy(route_state["progress"]),
+        load_material_state=lambda: route_namespace[
+            "_load_material_state_for_read"
+        ](),
+        get_log_repository=lambda: FixtureRepository(),
+        homework_books_from_log=lambda entry: route_namespace[
+            "_student_homework_book_names_from_log"
+        ](entry),
+        student_is_registered=lambda *args, **kwargs: route_namespace[
+            "_student_is_registered_on_date"
+        ](*args, **kwargs),
+        student_is_self_study=lambda *args, **kwargs: route_namespace[
+            "_student_is_self_study_on_date"
+        ](*args, **kwargs),
+        student_absent=lambda *args, **kwargs: route_namespace[
+            "_student_absent_on_date"
+        ](*args, **kwargs),
+        active_alias_sid=lambda *args, **kwargs: route_namespace[
+            "_active_student_alias_sid"
+        ](*args, **kwargs),
+        dashboard_enabled=lambda: route_namespace[
+            "_student_dashboard_enabled"
+        ](),
+        dashboard_projection=lambda **_kwargs: {},
+        build_latest_status=lambda progress_value: route_namespace[
+            "_build_latest_status_by_sid"
+        ](progress_value),
+        student_completion_videos=lambda student_value, videos_value: route_namespace[
+            "_student_completion_videos"
+        ](student_value, videos_value),
+        course_videos_completed=lambda *args, **kwargs: route_namespace[
+            "_course_videos_completed"
+        ](*args, **kwargs),
+        load_updates_with_auto_assign=lambda **kwargs: route_namespace[
+            "_load_updates_with_auto_assign"
+        ](**kwargs),
+        build_auto_blocked=lambda progress_value, watch_value: route_namespace[
+            "_build_auto_assignment_blocked_by_sid"
+        ](progress_value, watch_value),
+        blocked_mids=route_namespace["_blocked_mids_for_sid"],
+        eligible_review_mids=route_namespace[
+            "_student_eligible_review_video_mids"
+        ],
+        filter_self_study_assignment=route_namespace[
+            "_filter_self_study_assignment_for_response"
+        ],
+        filter_auto_assignment=route_namespace[
+            "_filter_auto_assignment_for_current_curriculum"
+        ],
+        review_states_through_date=route_namespace[
+            "_student_review_states_through_date"
+        ],
+        student_primary_video_mids=route_namespace[
+            "_student_primary_video_mids"
+        ],
+        academy_restricted_videos=route_namespace[
+            "_academy_restricted_student_videos"
+        ],
+        review_video_projection=route_namespace[
+            "_student_review_video_projection"
+        ],
+        assigned_material_list=route_namespace["_assigned_material_list"],
+        filter_materials=route_namespace["_filter_materials_for_assignment"],
+        assigned_tests=route_namespace["_student_assigned_tests_for_date"],
+        filter_tests_for_curriculum=route_namespace[
+            "_filter_assigned_tests_for_student_curriculum"
+        ],
+        academy_restricted_tests=route_namespace[
+            "_academy_restricted_assigned_tests"
+        ],
+        today_iso=lambda: route_namespace["_today_kst_iso"](),
+        dashboard_course_block_message="course-blocked",
+    )
 
     def invoke_route(sid: str = base_sid) -> tuple[dict, int]:
-        route_namespace["request"].args = {"sid": sid, "date": route_state["date"]}
-        result = route_fn()
-        if isinstance(result, tuple):
-            body, status = result
-            return body, int(status)
-        return result, 200
+        return build_student_bootstrap_payload(
+            dependencies,
+            sid=sid,
+            date=route_state["date"],
+            public_request=False,
+            academy_allowed_resolver=lambda: bool(
+                route_state["academy_allowed"]
+            ),
+        )
 
     def assert_success_shape(label: str, payload: dict, status: int = 200) -> None:
         _assert_unit(status == 200 and payload.get("ok") is True, f"{label} route response must be successful")
@@ -4051,33 +6148,39 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     assert_success_shape("regular", regular_payload, regular_status)
     regular_review = regular_payload["reviewVideos"]
     regular_review_mids = {item.get("mid") for item in regular_review}
+    regular_videos_by_mid = {item.get("mid"): item for item in regular_payload["videos"]}
     _assert_unit(
-        "m-current" not in regular_review_mids,
-        "actual bootstrap route must exclude current-date review MID",
+        regular_videos_by_mid.get("m1", {}).get("todayAutoAssignmentStatus") == "done",
+        "actual bootstrap route must retain today's completed automatic assignment with blue status",
+    )
+    _assert_unit(
+        "m-current" in regular_review_mids,
+        "actual bootstrap route must include every current-date completed MID in video review",
     )
     _assert_unit(
         "m-skip" not in regular_review_mids,
         "actual bootstrap route must exclude skip review MID",
     )
     _assert_unit(
-        [item.get("mid") for item in regular_review] == ["m5", "m3", "m2"],
-        "actual bootstrap route must wire exact-curriculum review ordering and SID aliases",
+        [item.get("mid") for item in regular_review] == ["m3", "m5", "m-current"],
+        "actual bootstrap route must expose current-curriculum review videos in ascending chapter order",
     )
     _assert_unit(
-        [item.get("reviewStatus") for item in regular_review] == ["done", "done", "interrupted"],
-        "actual bootstrap route must preserve done/interrupted review status",
+        [item.get("reviewStatus") for item in regular_review] == ["done", "done", "done"],
+        "actual bootstrap route must expose completed blue review status only",
     )
     _assert_unit(
         "m1" not in regular_review_mids
-        and "m-current" not in regular_review_mids
+        and "m-current" in regular_review_mids
+        and "m2" not in regular_review_mids
         and "m-skip" not in regular_review_mids
         and "m-old" not in {item.get("mid") for item in regular_review}
         and "m-deleted" not in {item.get("mid") for item in regular_review},
-        "actual bootstrap route must exclude current assignment, current-date, skip, old-curriculum, and deleted MIDs",
+        "actual bootstrap route must keep today's completed assignment out of review while other completed MIDs remain eligible",
     )
     _assert_unit(
         all(
-            item.get("reviewStatus") in {"done", "interrupted"}
+            item.get("reviewStatus") == "done"
             and "eventDate" not in item
             and "progress" not in item
             and "watch" not in item
@@ -4088,6 +6191,33 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(regular_payload["updates"] == regular_persisted, "regular assignment response must remain unchanged")
     _assert_unit(route_state["log_reads"] == 1, "bootstrap route must reuse one date-log read")
 
+    route_state = make_route_state()
+    route_state["updates"] = {base_date: {base_sid: {"videos": ["m-current"], "source": "auto"}}}
+    current_done_payload, current_done_status = invoke_route()
+    _assert_unit(current_done_status == 200, "current-date completed assignment bootstrap must succeed")
+    current_done_playlist = {item.get("mid") for item in current_done_payload["videos"]}
+    current_done_review = {item.get("mid") for item in current_done_payload["reviewVideos"]}
+    current_done_video = next(
+        (item for item in current_done_payload["videos"] if item.get("mid") == "m-current"),
+        {},
+    )
+    _assert_unit(
+        "m-current" in current_done_playlist
+        and "m-current" not in current_done_review
+        and current_done_video.get("todayAutoAssignmentStatus") == "done",
+        "current-date completed automatic assignment must remain in the playlist with blue status",
+    )
+
+    route_namespace["_today_kst_iso"] = lambda: "2099-01-01"
+    historical_done_payload, historical_done_status = invoke_route()
+    _assert_unit(historical_done_status == 200, "historical completed assignment bootstrap must succeed")
+    _assert_unit(
+        "m-current" not in {item.get("mid") for item in historical_done_payload["videos"]}
+        and "m-current" in {item.get("mid") for item in historical_done_payload["reviewVideos"]},
+        "historical completed automatic assignment must keep the existing review-only projection",
+    )
+    route_namespace["_today_kst_iso"] = lambda: base_date
+
     route_state["academy_allowed"] = False
     restricted_payload, restricted_status = invoke_route()
     assert_success_shape("restricted", restricted_payload, restricted_status)
@@ -4096,6 +6226,51 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
         restricted_payload["reviewVideos"]
         and all(not restricted_keys.intersection(item) and item.get("playbackRestricted") is True for item in restricted_payload["reviewVideos"]),
         "actual bootstrap route must apply restricted playback stripping after review projection",
+    )
+
+    route_state = make_route_state()
+    route_state["updates"] = {
+        base_date: {
+            base_sid: {
+                "videos": ["m2", "m4", "m-old"],
+                "source": "auto",
+                "unknown": {"keep": True},
+            },
+        },
+    }
+    stale_auto_persisted = deepcopy(route_state["updates"])
+    stale_auto_payload, stale_auto_status = invoke_route()
+    assert_success_shape("stale auto curriculum", stale_auto_payload, stale_auto_status)
+    _assert_unit(
+        stale_auto_payload["updates"][base_date][base_sid] == {
+            "videos": ["m2"],
+            "source": "auto",
+            "unknown": {"keep": True},
+        }
+        and [item.get("mid") for item in stale_auto_payload["videos"]] == ["m2"],
+        "student bootstrap must expose only current-curriculum MIDs from an automatic assignment",
+    )
+    _assert_unit(
+        route_state["updates"] == stale_auto_persisted,
+        "student bootstrap automatic curriculum filtering must not rewrite historical snapshots",
+    )
+
+    route_state = make_route_state()
+    route_state["updates"] = {
+        base_date: {
+            base_sid: {
+                "videos": ["m2", "m4", "m-old"],
+                "source": "manual",
+                "unknown": {"keep": True},
+            },
+        },
+    }
+    manual_extra_payload, manual_extra_status = invoke_route()
+    assert_success_shape("manual cross curriculum", manual_extra_payload, manual_extra_status)
+    _assert_unit(
+        manual_extra_payload["updates"][base_date][base_sid]["videos"] == ["m2", "m4", "m-old"]
+        and {item.get("mid") for item in manual_extra_payload["videos"]} == {"m2", "m4", "m-old"},
+        "student bootstrap must preserve explicit manual cross-curriculum video additions",
     )
 
     route_state = make_route_state()
@@ -4115,11 +6290,11 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(
         self_study_payload["updates"][base_date][base_sid]["videos"] == ["m1"]
         and self_study_payload["updates"][base_date][base_sid]["unknown"] == {"keep": True}
-        and [item.get("mid") for item in self_study_payload["videos"]] == ["m1"],
+        and [item.get("mid") for item in self_study_payload["videos"]] == [],
         "actual bootstrap route must filter unwatched self-study response videos while preserving unknown fields",
     )
     _assert_unit(route_state["updates"] == self_study_persisted, "self-study response filtering must not mutate persisted updates")
-    _assert_unit("m1" not in {item.get("mid") for item in self_study_payload["reviewVideos"]}, "self-study response assignment MIDs must be excluded from review")
+    _assert_unit("m1" in {item.get("mid") for item in self_study_payload["reviewVideos"]}, "self-study completed assignment MID must remain available in review")
 
     route_state = make_route_state()
     route_state["log_entry"] = {"selfStudy": True}
@@ -4146,7 +6321,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(
         unscheduled_self_study_payload.get("courseBlocked") is not True
         and unscheduled_self_study_payload.get("selfStudy") is True
-        and [item.get("mid") for item in unscheduled_self_study_payload["videos"]] == ["m1"]
+        and [item.get("mid") for item in unscheduled_self_study_payload["videos"]] == []
         and unscheduled_self_study_payload["reviewVideos"],
         "self-study on a non-scheduled date must open the student page and expose assigned/review videos",
     )
@@ -4192,7 +6367,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     _assert_unit(blocked_payload.get("courseBlocked") is True and blocked_payload["reviewVideos"] == [], "course-blocked bootstrap must return empty reviewVideos")
 
     route_state = make_route_state()
-    ghost_payload, ghost_status = invoke_route("ghost")
+    ghost_payload, ghost_status = invoke_route("ghost-outside-test")
     assert_success_shape("ghost", ghost_payload, ghost_status)
     _assert_unit(ghost_payload.get("ghostStudent") is True and ghost_payload["reviewVideos"] == [], "ghost bootstrap must return empty reviewVideos")
 
@@ -4201,15 +6376,19 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
     route_state["videos"] = [{"mid": "fallback", "title": "Fallback", "chapter": "4", "curriculum": "ALG", "subCurriculum": "OTHER", "url": "https://v/fallback"}]
     route_state["progress"] = {"2026-05-30": {"7": {"fallback": "done"}}}
     route_state["updates"] = {base_date: {base_sid: []}}
-    fallback_payload, fallback_status = invoke_route()
-    assert_success_shape("fallback", fallback_payload, fallback_status)
-    _assert_unit([item.get("mid") for item in fallback_payload["reviewVideos"]] == ["fallback"], "actual bootstrap route must use curriculum-only fallback when exact sub-curriculum is absent")
+    missing_sub_payload, missing_sub_status = invoke_route()
+    assert_success_shape("missing sub-curriculum", missing_sub_payload, missing_sub_status)
+    _assert_unit(
+        missing_sub_payload["reviewVideos"] == [],
+        "actual bootstrap route must not expose another sub-curriculum when the exact current one is absent",
+    )
 
 
 def run_student_bootstrap_unit_checks() -> None:
     from flask import Flask
     from types import SimpleNamespace
     import routes.api_basic as api_basic
+    import routes.api_student_bootstrap as api_student_bootstrap
 
     run_student_assigned_tests_unit_checks()
 
@@ -4325,25 +6504,36 @@ def run_student_bootstrap_unit_checks() -> None:
     original_load = api_basic.load
     original_load_absent = api_basic.load_absent
     original_get_log_repository = api_basic.get_log_repository
-    original_academy_network_allowed = api_basic.academy_network_allowed
+    original_academy_network_allowed = (
+        api_student_bootstrap.academy_network_allowed
+    )
     original_student_is_registered_on_date = api_basic._student_is_registered_on_date
     original_progress_loader = api_basic._load_progress_strict
+    original_material_state_loader = api_basic._load_material_state_for_read
     original_config_loader = api_basic._load_tests_config_for_answer_links
     original_map_loader = api_basic._load_test_answer_link_map
 
     api_basic.load = fake_load
     api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
     api_basic.get_log_repository = lambda: FakeLogRepository()
-    api_basic.academy_network_allowed = lambda: True
+    api_student_bootstrap.academy_network_allowed = lambda: True
     api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
     api_basic._load_progress_strict = lambda *_args, **_kwargs: progress
+    api_basic._load_material_state_for_read = lambda: ({}, {}, {}, False)
     api_basic._load_tests_config_for_answer_links = lambda: tests_config
     api_basic._load_test_answer_link_map = lambda: {
         "review-config": {"1": {"answerUrl": "https://map.example/should-not-win"}}
     }
     try:
         app = Flask("verify-student-bootstrap-assigned-tests")
+        api_student_bootstrap.configure_student_bootstrap_projection(
+            app,
+            api_basic.create_student_bootstrap_projection_dependencies(),
+        )
         app.register_blueprint(api_basic.bp_api_basic)
+        app.register_blueprint(
+            api_student_bootstrap.bp_api_student_bootstrap
+        )
         client = app.test_client()
 
         response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
@@ -4373,7 +6563,7 @@ def run_student_bootstrap_unit_checks() -> None:
         )
         _assert_unit("C:" not in response_text and str(ROOT) not in response_text, "student bootstrap must not expose raw local paths")
 
-        api_basic.academy_network_allowed = lambda: False
+        api_student_bootstrap.academy_network_allowed = lambda: False
         restricted_response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
         restricted_payload = restricted_response.get_json() or {}
         restricted_items = restricted_payload.get("assignedTests") or []
@@ -4396,219 +6586,85 @@ def run_student_bootstrap_unit_checks() -> None:
         api_basic.load = original_load
         api_basic.load_absent = original_load_absent
         api_basic.get_log_repository = original_get_log_repository
-        api_basic.academy_network_allowed = original_academy_network_allowed
+        api_student_bootstrap.academy_network_allowed = (
+            original_academy_network_allowed
+        )
         api_basic._student_is_registered_on_date = original_student_is_registered_on_date
         api_basic._load_progress_strict = original_progress_loader
+        api_basic._load_material_state_for_read = original_material_state_loader
         api_basic._load_tests_config_for_answer_links = original_config_loader
         api_basic._load_test_answer_link_map = original_map_loader
 
 
-def run_submit_test_assignment_completion_unit_checks() -> None:
+def run_retired_test_submission_surface_checks() -> None:
+    """Regression guard: student test submission is intentionally retired."""
     from flask import Flask
-    from types import SimpleNamespace
-    import routes.api_basic as api_basic
-    import routes.api_tests as api_tests
-
-    sid = "submit-status-sid"
-    date = api_tests.dt.date.today().isoformat()
-    test_id = "unit-submit-status"
-    test_name = "제출 상태 테스트"
-    assigned_label = f"단원평가 / 공수1 / Lv.3 / 1회차 / {test_name}"
-    other_label = "단원평가 / 공수1 / Lv.3 / 1회차 / 다른 테스트"
-    log_entry = {
-        "assignedTests": [
-            {"id": test_id, "label": assigned_label, "name": test_name, "status": "assigned"},
-        ],
-        "testAssignmentDailyTests": [
-            {"id": test_id, "label": assigned_label, "name": test_name, "status": "assigned"},
-        ],
-    }
-    tests_config = {
-        "categories": {
-            "UNIT": {
-                "label": "단원평가",
-                "tests": [
-                    {
-                        "id": test_id,
-                        "name": test_name,
-                        "curriculum": "공수1",
-                        "difficulty": "Lv.3",
-                        "round": "1",
-                        "problems": 1,
-                        "answerKeys": {"1": ["1"]},
-                    },
-                ],
-            },
-        },
-    }
-
-    class FakeLogRepository:
-        def append_record(self, _date, _sid, _record, _merger):
-            return True
-
-        def read_entry(self, _date, _sid):
-            return SimpleNamespace(entry=log_entry)
-
-        def read_json_map(self):
-            return {date: {sid: log_entry}}
+    from routes import api_tests, pages  # noqa: PLC0415
 
     original_tests_path = api_tests.TESTS_PATH
-    original_tests_cfg_path = api_tests.TESTS_CFG_PATH
-    original_progress_path = getattr(api_tests, "PRG_PATH", None)
-    original_basic_progress_path = api_basic.PRG_PATH
-    original_basic_updates_path = api_basic.UPD_PATH
-    original_basic_progress_loader = api_basic._load_progress_strict
-    original_basic_load = api_basic.load
-    original_basic_load_absent = api_basic.load_absent
-    original_basic_get_log_repository = api_basic.get_log_repository
-    original_basic_academy_network_allowed = api_basic.academy_network_allowed
-    original_basic_student_is_registered_on_date = api_basic._student_is_registered_on_date
-    original_basic_config_loader = api_basic._load_tests_config_for_answer_links
-    original_basic_map_loader = api_basic._load_test_answer_link_map
-    protected_live_paths = {
-        pathlib.Path(path)
-        for path in (
-            original_tests_path,
-            original_tests_cfg_path,
-            original_progress_path,
-            original_basic_progress_path,
-            original_basic_updates_path,
+    with tempfile.TemporaryDirectory(prefix="retired-test-submission-") as tmp:
+        tests_path = pathlib.Path(tmp) / "tests.json"
+        tests_path.write_text(
+            json.dumps({"2026-08-23": [{"sid": "history-sid", "score": "3/5"}]}, ensure_ascii=False),
+            encoding="utf-8",
         )
-        if path is not None
-    }
-    protected_live_fingerprints = {
-        path: sha256_file(path) if path.is_file() else None
-        for path in protected_live_paths
-    }
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = pathlib.Path(tmp)
-        tests_path = tmp_dir / "tests.json"
-        tests_cfg_path = tmp_dir / "tests-config.json"
-        progress_path = tmp_dir / "progress.json"
-        updates_path = tmp_dir / "updates.json"
-        tests_path.write_text("{}", "utf-8")
-        tests_cfg_path.write_text(json.dumps(tests_config, ensure_ascii=False), "utf-8")
-        updates_path.write_text("{}", "utf-8")
-        progress_path.write_text(
-            json.dumps(
-                {
-                    date: {
-                        sid: {
-                            "tests": {
-                                assigned_label: "assigned",
-                                other_label: {"status": "assigned", "testId": "other-id"},
-                            },
-                        },
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            "utf-8",
-        )
-
-        def fake_load(path):
-            if path == api_basic.STU_PATH:
-                return [{"id": sid, "name": "제출상태학생", "day1": "월 13:00"}]
-            if path == api_basic.PRG_PATH:
-                return json.loads(progress_path.read_text("utf-8"))
-            if path == api_basic.VID_PATH:
-                return []
-            if path == api_basic.UPD_PATH:
-                return {}
-            if path == api_basic.ASN_PATH:
-                return {}
-            if path == api_basic.MAT_PATH:
-                return {}
-            return {}
-
         api_tests.TESTS_PATH = tests_path
-        api_tests.TESTS_CFG_PATH = tests_cfg_path
-        api_tests.PRG_PATH = progress_path
-        api_basic.PRG_PATH = progress_path
-        api_basic.UPD_PATH = updates_path
-        api_basic._load_progress_strict = lambda *_args, **_kwargs: json.loads(progress_path.read_text("utf-8"))
-        api_basic.load = fake_load
-        api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
-        api_basic.get_log_repository = lambda: FakeLogRepository()
-        api_basic.academy_network_allowed = lambda: True
-        api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
-        api_basic._load_tests_config_for_answer_links = lambda: tests_config
-        api_basic._load_test_answer_link_map = lambda: {}
-
         try:
-            app = Flask("verify-submit-test-assignment-completion")
+            app = Flask(
+                "verify-retired-test-submission-surface",
+                static_folder=str(ROOT / "static"),
+                static_url_path="",
+            )
             app.register_blueprint(api_tests.bp_api_tests)
-            app.register_blueprint(api_basic.bp_api_basic)
+            app.register_blueprint(pages.bp_pages)
             client = app.test_client()
+            before = tests_path.read_bytes()
 
-            response = client.post(
-                "/api/submit-test",
-                json={
-                    "sid": sid,
-                    "testId": test_id,
-                    "name": test_name,
-                    "round": 1,
-                    "answersText": "1",
-                },
-            )
-            payload = response.get_json() or {}
-            _assert_unit(response.status_code == 200, "submit-test fixture route must return 200")
-            _assert_unit(payload.get("ok") is True, "submit-test fixture route must return ok:true")
+            _assert_unit(client.get("/api/tests").status_code == 200, "historical test records must remain readable")
+            _assert_unit(tests_path.read_bytes() == before, "historical test record read must not rewrite storage")
+            _assert_unit(client.post("/api/tests", json={"sid": "history-sid"}).status_code == 405, "test history endpoint must be GET-only")
+            _assert_unit(tests_path.read_bytes() == before, "rejected test history write must not change storage")
 
-            progress_after = json.loads(progress_path.read_text("utf-8"))
-            tests_after = progress_after[date][sid]["tests"]
-            _assert_unit(
-                tests_after.get(assigned_label) == "done",
-                "submit-test must convert matching assigned progress test to done",
-            )
-            _assert_unit(
-                tests_after.get(other_label) == {"status": "assigned", "testId": "other-id"},
-                "submit-test must not alter unrelated assigned progress tests",
-            )
+            registered_rules = {rule.rule for rule in app.url_map.iter_rules()}
+            for route in ("/api/submit-test", "/api/ocr-test-sheet", "/api/ocr-test-sheet-review"):
+                _assert_unit(route not in registered_rules, f"retired submission route is still registered: {route}")
+                response = client.post(route, json={"sid": "history-sid"})
+                _assert_unit(response.status_code in {404, 405}, f"retired submission route is unexpectedly callable: {route}")
+                _assert_unit(tests_path.read_bytes() == before, f"retired route must not change storage: {route}")
 
-            bootstrap_response = client.get(f"/api/student/bootstrap?date={date}&sid={sid}")
-            bootstrap_payload = bootstrap_response.get_json() or {}
-            _assert_unit(bootstrap_response.status_code == 200, "post-submit bootstrap fixture route must return 200")
-            bootstrap_labels = [item.get("label") for item in bootstrap_payload.get("assignedTests") or []]
-            _assert_unit(
-                assigned_label not in bootstrap_labels,
-                "completed submitted tests must not remain active in bootstrap",
-            )
-            _assert_unit(
-                other_label in bootstrap_labels,
-                "unrelated assigned tests must remain visible in bootstrap",
-            )
+            _assert_unit(client.get("/student-test/history-sid").status_code == 404, "retired student-test page alias must stay absent")
+            _assert_unit(client.get("/student/history-sid").status_code == 200, "canonical student page must remain available")
         finally:
             api_tests.TESTS_PATH = original_tests_path
-            api_tests.TESTS_CFG_PATH = original_tests_cfg_path
-            if original_progress_path is None:
-                try:
-                    delattr(api_tests, "PRG_PATH")
-                except AttributeError:
-                    pass
-            else:
-                api_tests.PRG_PATH = original_progress_path
-            api_basic.PRG_PATH = original_basic_progress_path
-            api_basic.UPD_PATH = original_basic_updates_path
-            api_basic._load_progress_strict = original_basic_progress_loader
-            api_basic.load = original_basic_load
-            api_basic.load_absent = original_basic_load_absent
-            api_basic.get_log_repository = original_basic_get_log_repository
-            api_basic.academy_network_allowed = original_basic_academy_network_allowed
-            api_basic._student_is_registered_on_date = original_basic_student_is_registered_on_date
-            api_basic._load_tests_config_for_answer_links = original_basic_config_loader
-            api_basic._load_test_answer_link_map = original_basic_map_loader
-            changed_live_paths = [
-                str(path)
-                for path, before in protected_live_fingerprints.items()
-                if (sha256_file(path) if path.is_file() else None) != before
-            ]
-            _assert_unit(
-                not changed_live_paths,
-                f"submit-test fixture modified live runtime paths: {changed_live_paths}",
-            )
 
+    student_html = (ROOT / "static/student.html").read_text(encoding="utf-8")
+    student_js = (ROOT / "static/js/student.js").read_text(encoding="utf-8")
+    api_tests_source = (ROOT / "routes/api_tests.py").read_text(encoding="utf-8")
+    pages_source = (ROOT / "routes/pages.py").read_text(encoding="utf-8")
+    app_config_source = (ROOT / "core/student_app_config.py").read_text(encoding="utf-8")
+    log_repository_source = (ROOT / "core/log_repository.py").read_text(encoding="utf-8")
+
+    for retired_id in ("openTestSubmit", "testSubmitModal", "testAnswerPreviewModal"):
+        _assert_unit(retired_id not in student_html, f"retired submission HTML remains: {retired_id}")
+    for retired_client in (
+        "openAssignedTestSubmit",
+        "openAssignedTestAnswerLink",
+        "/api/submit-test",
+        "/api/ocr-test-sheet",
+        "testSubmissionBlocked",
+    ):
+        _assert_unit(retired_client not in student_js, f"retired submission client remains: {retired_client}")
+    for retired_route in (
+        '@bp_api_tests.post("/api/submit-test")',
+        '@bp_api_tests.post("/api/ocr-test-sheet")',
+        '@bp_api_tests.post("/api/ocr-test-sheet-review")',
+    ):
+        _assert_unit(retired_route not in api_tests_source, f"retired API decorator remains: {retired_route}")
+    _assert_unit('@bp_api_tests.get("/api/tests")' in api_tests_source, "historical test endpoint must remain readable")
+    _assert_unit('@bp_api_tests.post("/api/tests")' not in api_tests_source, "historical test endpoint must not accept writes")
+    _assert_unit('@bp_pages.get("/student-test/<sid>")' not in pages_source, "retired student-test page alias remains")
+    _assert_unit('/api/submit-test' not in app_config_source, "public student allowlist still exposes test submission")
+    _assert_unit("def append_record(" not in log_repository_source, "submission-only log append API remains")
 
 def run_admin_tests_record_detail_contract_checks() -> None:
     cmd = [sys.executable, "scripts/verify_admin_tests_record_details.py"]
@@ -4658,46 +6714,46 @@ def run_admin_tests_record_detail_answer_link_ui_checks() -> None:
         print(proc.stdout, end="")
 
 
-def run_submit_test_assignment_round_matching_checks() -> None:
-    cmd = [sys.executable, "scripts/verify_submit_test_assignment_round_matching.py"]
+def run_retired_test_submission_assignment_boundary_checks() -> None:
+    cmd = [sys.executable, "scripts/verify_retired_test_submission.py"]
     proc = _run_captured(cmd)
     if proc.returncode != 0:
         if proc.stdout:
             print(proc.stdout, end="")
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
-    _assert_unit(proc.returncode == 0, "submit-test assignment round matching contract failed")
+    _assert_unit(proc.returncode == 0, "retired submission and preserved assignment-boundary contract failed")
     if proc.stdout:
         print(proc.stdout, end="")
 
 
 def run_student_answer_link_render_source_checks() -> None:
     student_js = (ROOT / "static/js/student.js").read_text("utf-8")
+    presentation_js = (ROOT / "static/js/student/testPresentation.js").read_text("utf-8")
     render_start = student_js.index("function renderAssignedTests()")
     render_end = student_js.index("async function recoverStudentSid", render_start)
     render_block = student_js[render_start:render_end]
 
     for snippet in [
-        "function assignedTestAnswerUrl(test)",
-        "function isAssignedTestAnswerRestricted(test, answerUrl)",
-        "function canOpenAssignedTestAnswer(answerUrl)",
-        "function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl)",
+        "function answerUrl(test)",
+        "function isAnswerRestricted(test, resolvedAnswerUrl, academyAccessAllowed)",
+        "function canOpenAnswer(resolvedAnswerUrl, academyAccessAllowed)",
+        "function viewModel(test, { academyAccessAllowed = false } = {})",
     ]:
-        _assert_unit(snippet in student_js, f"student assigned-test answer rendering must keep helper seam: {snippet}")
+        _assert_unit(snippet in presentation_js, f"student test presentation must keep answer helper seam: {snippet}")
 
     for snippet in [
-        "const answerUrl = assignedTestAnswerUrl(test);",
-        "const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);",
-        "const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);",
-        "const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);",
-        "if (answerUrl) btn.dataset.answerUrl = answerUrl;",
-        "if (answerRestricted) btn.dataset.answerRestricted = '1';",
-        "showAcademyOnlyNotice();",
+        "const view = assignedTestViewModel(test, { academyAccessAllowed });",
+        "const btn = createAssignedTestActionElement(view.canOpenAnswerUrl, view.answerUrl);",
+        "if (view.answerUrl) btn.dataset.answerUrl = view.answerUrl;",
+        "if (view.answerRestricted) btn.dataset.answerRestricted = '1';",
+        "btn.addEventListener('click', showAcademyOnlyNotice);",
     ]:
         _assert_unit(snippet in render_block, f"student assigned-test render block must preserve answer-link behavior: {snippet}")
 
 
-def run_unit_test_grading_contract_checks() -> None:
+def run_unit_test_answer_material_contract_checks() -> None:
+    """Keep assigned-test answer materials working without submission grading."""
     from routes import api_basic, api_tests  # noqa: PLC0415
 
     test = {
@@ -4708,58 +6764,26 @@ def run_unit_test_grading_contract_checks() -> None:
         "difficulty": "Lv.3",
         "round": "2",
         "problems": 3,
-        "answerKeys": {
-            "1": ["1", "2", "3"],
-            "2": ["3", "2", "1"],
-            "3": ["2", "1", "3"],
-        },
+        "answerKeys": {"2": ["3", "2", "1"]},
     }
-    cfg = {
-        "categories": {
-            "UNIT": {
-                "label": "단원평가",
-                "tests": [test],
-            },
-        },
-    }
+    cfg = {"categories": {"UNIT": {"label": "단원평가", "tests": [test]}}}
     expected_answer_url = "https://drive.google.com/file/d/fixture-unit-solution/view?usp=drivesdk"
-    link_map = {
-        test["sourceId"]: {
-            test["round"]: {
-                "answerUrl": expected_answer_url,
-            },
-        },
-    }
+    link_map = {test["sourceId"]: {test["round"]: {"answerUrl": expected_answer_url}}}
 
-    test_id = test["id"]
-    source_id = test["sourceId"]
-    problems = test["problems"]
-    round_no = int(test["round"])
-    _assert_unit(test_id, "UNIT fixture must have id")
-    _assert_unit(source_id, f"UNIT fixture must have sourceId: {test_id}")
-    _assert_unit(problems > 0, f"UNIT fixture must have positive problems count: {test_id}")
+    api_tests_source = (ROOT / "routes/api_tests.py").read_text(encoding="utf-8")
+    _assert_unit("def _grade_answers(" not in api_tests_source, "student submission grading helper must stay removed")
+    _assert_unit('/api/submit-test' not in api_tests_source, "student submission route must stay removed")
 
-    test_def = api_tests._find_test_def_by_id(cfg, test_id)
-    _assert_unit(isinstance(test_def, dict), f"submit-test must find UNIT test by id: {test_id}")
-    key = api_tests._get_answer_key_for_round(test_def, problems, round_no)
-    _assert_unit(key is not None, f"UNIT test must expose answer key for grading: {test_id}")
-    _assert_unit(len(key) == problems, f"UNIT answer key length must match problems: {test_id}")
-    _assert_unit(all(str(answer).strip() for answer in key), f"UNIT answer key must not contain blanks: {test_id}")
-
-    correct, total, wrong, pct = api_tests._grade_answers(list(key), key)
-    _assert_unit(correct == problems and total == problems and wrong == [] and pct == 100.0, f"UNIT exact-answer grading must pass: {test_id}")
-
-    meta = api_tests._resolve_test_meta(test["name"], test_id, api_tests._build_test_catalog(cfg))
-    _assert_unit(meta.get("type") == "UNIT", f"UNIT submit metadata must resolve as UNIT: {test_id}")
-    _assert_unit(meta.get("source_id") == source_id, f"UNIT submit metadata must retain sourceId: {test_id}")
-    _assert_unit(meta.get("curriculum") == test["curriculum"], f"UNIT submit metadata must retain curriculum: {test_id}")
-    _assert_unit(meta.get("round") == test["round"], f"UNIT submit metadata must retain round: {test_id}")
+    test_def = api_tests._find_test_def_by_id(cfg, test["id"])
+    _assert_unit(isinstance(test_def, dict), "historical record detail lookup must still find UNIT definitions")
+    key = api_tests._get_answer_key_for_round(test_def, test["problems"], 2)
+    _assert_unit(key == ["3", "2", "1"], "historical record details must retain answer-key lookup")
 
     assigned_item = {
         "categoryLabel": "단원평가",
         "curriculum": test["curriculum"],
         "difficulty": test["difficulty"],
-        "round": f"{round_no}회차",
+        "round": "2회차",
         "name": test["name"],
     }
     original_config_loader = api_basic._load_tests_config_for_answer_links
@@ -4769,14 +6793,14 @@ def run_unit_test_grading_contract_checks() -> None:
     try:
         _assert_unit(
             api_basic._test_assignment_answer_url(assigned_item) == expected_answer_url,
-            f"UNIT label-only assignment must resolve the source answerUrl: {test_id}",
+            "assigned UNIT tests must still resolve the server-projected answer link",
         )
     finally:
         api_basic._load_tests_config_for_answer_links = original_config_loader
         api_basic._load_test_answer_link_map = original_map_loader
 
-
-def run_unit_test_grading_readiness_checks() -> None:
+def run_unit_test_answer_material_readiness_checks() -> None:
+    """Opt-in validation for UNIT answer materials; no submission or grading."""
     from routes import api_basic, api_tests  # noqa: PLC0415
 
     cfg = api_tests._load_tests_cfg()
@@ -4785,35 +6809,23 @@ def run_unit_test_grading_readiness_checks() -> None:
     unit_tests = unit_category.get("tests") if isinstance(unit_category, dict) else []
     _assert_unit(isinstance(unit_tests, list) and unit_tests, "tests-config UNIT category must contain tests")
 
+    api_tests_source = (ROOT / "routes/api_tests.py").read_text(encoding="utf-8")
+    _assert_unit("def _grade_answers(" not in api_tests_source, "student submission grading helper must stay removed")
+    _assert_unit('/api/submit-test' not in api_tests_source, "student submission route must stay removed")
+
     for test in unit_tests:
         _assert_unit(isinstance(test, dict), "UNIT test entry must be an object")
         test_id = str(test.get("id") or "").strip()
         source_id = str(test.get("sourceId") or test.get("source_id") or "").strip()
         _assert_unit(test_id, "UNIT test must have id")
         _assert_unit(source_id, f"UNIT test must have sourceId: {test_id}")
-        try:
-            problems = int(test.get("problems") or 0)
-        except (TypeError, ValueError):
-            problems = 0
-        _assert_unit(problems > 0, f"UNIT test must have positive problems count: {test_id}")
+        answer_link_status = str(
+            test.get("answerLinkStatus") or test.get("answer_link_status") or ""
+        ).strip().casefold()
+        _assert_unit(answer_link_status in {"", "missing"}, f"UNIT answerLinkStatus must be empty or missing: {test_id}")
 
         round_match = re.search(r"\d+", str(test.get("round") or "1"))
         round_no = int(round_match.group(0)) if round_match else 1
-        if round_no not in (1, 2, 3):
-            round_no = 1
-        test_def = api_tests._find_test_def_by_id(cfg, test_id)
-        _assert_unit(isinstance(test_def, dict), f"submit-test must find UNIT test by id: {test_id}")
-        key = api_tests._get_answer_key_for_round(test_def, problems, round_no)
-        _assert_unit(key is not None, f"UNIT test must expose answer key for grading: {test_id}")
-        _assert_unit(len(key) == problems, f"UNIT answer key length must match problems: {test_id}")
-        _assert_unit(all(str(answer).strip() for answer in key), f"UNIT answer key must not contain blanks: {test_id}")
-
-        correct, total, wrong, pct = api_tests._grade_answers(list(key), key)
-        _assert_unit(correct == problems and total == problems and wrong == [] and pct == 100.0, f"UNIT exact-answer grading must pass: {test_id}")
-
-        meta = api_tests._resolve_test_meta(str(test.get("name") or ""), test_id, api_tests._build_test_catalog(cfg))
-        _assert_unit(meta.get("type") == "UNIT", f"UNIT submit metadata must resolve as UNIT: {test_id}")
-
         assigned_item = {
             "categoryLabel": "단원평가",
             "curriculum": test.get("curriculum"),
@@ -4821,8 +6833,11 @@ def run_unit_test_grading_readiness_checks() -> None:
             "round": f"{round_no}회차",
             "name": test.get("name"),
         }
-        _assert_unit(api_basic._test_assignment_answer_url(assigned_item), f"UNIT label-only assignment must resolve answerUrl: {test_id}")
-
+        answer_url = api_basic._test_assignment_answer_url(assigned_item)
+        if answer_link_status == "missing":
+            _assert_unit(not answer_url, f"UNIT missing answer link must fail closed: {test_id}")
+        else:
+            _assert_unit(answer_url, f"UNIT assignment must resolve answerUrl: {test_id}")
 
 def run_catalog_script_safety_source_checks() -> None:
     link_map_py = (ROOT / "scripts/build_unit_test_answer_link_map_from_gdown.py").read_text("utf-8")
@@ -4876,9 +6891,7 @@ def run_catalog_script_temp_file_behavior_checks() -> None:
         live_map: fingerprint(live_map),
     }
 
-    temp_base = ROOT / "tmp"
-    temp_base.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="verify-catalog-safety-", dir=temp_base) as tmpdir:
+    with verification_temporary_directory("verify-catalog-safety-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         config_path = tmp / "tests-config.json"
         config_path.write_text(json.dumps({"categories": {}}, ensure_ascii=False), encoding="utf-8")
@@ -5028,8 +7041,12 @@ def _iter_css_selectors(source: str) -> Iterable[tuple[int, str]]:
             continue
         line_no = css.count("\n", 0, match.start(1)) + 1
         for selector in _split_css_selector_list(selector_group):
-            if selector and not selector.startswith("@"):
-                yield line_no, " ".join(selector.split())
+            normalized = " ".join(selector.split())
+            is_keyframe_step = normalized in {"from", "to"} or bool(
+                re.fullmatch(r"\d+(?:\.\d+)?%", normalized)
+            )
+            if normalized and not normalized.startswith("@") and not is_keyframe_step:
+                yield line_no, normalized
 
 
 def _admin_css_selector_is_scoped(selector: str) -> bool:
@@ -5057,7 +7074,6 @@ def _student_css_selector_is_scoped(selector: str) -> bool:
         "#assignedTestsPanel",
         "#announceModal",
         "#announceHistoryModal",
-        "#testSubmitModal",
     )
     return selector.startswith(stable_roots)
 
@@ -5150,8 +7166,9 @@ def run_shared_css_scope_source_checks() -> None:
         all(font in combined for font in ("--font-ui:", "--font-display:")),
         "shared CSS must expose shared font tokens",
     )
-    first_root_end = style_css.index("}\n\n/* ========== body")
-    first_root = style_css[:first_root_end]
+    root_match = re.search(r":root\s*\{([^{}]*)\}", _strip_css_comments_preserve_lines(style_css), re.S)
+    _assert_unit(root_match is not None, "style.css must retain the first root declaration block")
+    first_root = root_match.group(1)
     _assert_unit("--font-ui:" in first_root, "style.css must keep shared font tokens in the first root block")
     _assert_unit("--font-display:" in first_root, "style.css must keep shared display font token in the first root block")
     _assert_unit(
@@ -5278,14 +7295,14 @@ def run_verifier_execution_policy_source_checks() -> None:
         "strict frontend evidence validation must remain available through its explicit selector",
     )
     _assert_unit(
-        "run_unit_test_grading_readiness_checks," not in default_block
-        and "run_unit_test_grading_contract_checks," in default_block,
-        "the default suite must use a synthetic UNIT contract instead of ignored tests-config runtime data",
+        "run_unit_test_answer_material_readiness_checks," not in default_block
+        and "run_unit_test_answer_material_contract_checks," in default_block,
+        "the default suite must use a synthetic UNIT answer-material contract instead of ignored tests-config runtime data",
     )
     _assert_unit(
-        'if args.only_unit_test_grading_readiness:' in source
-        and "selected_checks.append(run_unit_test_grading_readiness_checks)" in source,
-        "live UNIT catalog readiness must remain available through its explicit selector",
+        'if args.only_unit_test_answer_material_readiness:' in source
+        and "selected_checks.append(run_unit_test_answer_material_readiness_checks)" in source,
+        "live UNIT answer-material readiness must remain available through its explicit selector",
     )
     _assert_unit(
         "ast.parse(source, filename=str(path), feature_version=(3, 11))" in source
@@ -5340,6 +7357,8 @@ def _execute_student_mobile_deployment_checker(
     expected_name: str,
     minimum_assertions: int,
     runtime_observer: Callable[[], object] = runtime_metadata_fingerprints,
+    allow_concurrent_runtime_changes: bool = False,
+    required_runtime_isolation: str = "",
 ) -> int:
     """Validate one receipt and restore process globals even when its checker fails."""
     from scripts import backup_runtime_data
@@ -5356,6 +7375,8 @@ def _execute_student_mobile_deployment_checker(
     backup_root_changed = False
     cwd_changed = False
     runtime_changed = False
+    runtime_allowed_changes: list[str] = []
+    runtime_disallowed_changes: list[str] = []
     try:
         result = checker()
     except BaseException as exc:  # restore shared verifier state before propagating any failure
@@ -5366,7 +7387,18 @@ def _execute_student_mobile_deployment_checker(
             environment_changed = os.environ != original_environment
             backup_root_changed = backup_runtime_data.ROOT != original_backup_root
             cwd_changed = pathlib.Path.cwd() != original_cwd
-            runtime_changed = runtime_observer() != runtime_before
+            runtime_after = runtime_observer()
+            if isinstance(runtime_before, dict) and isinstance(runtime_after, dict):
+                runtime_change_paths = runtime_diff_keys(runtime_before, runtime_after)
+                runtime_allowed_changes = [
+                    path for path in runtime_change_paths if is_sqlite_transient_sidecar(path)
+                ]
+                runtime_disallowed_changes = [
+                    path for path in runtime_change_paths if not is_sqlite_transient_sidecar(path)
+                ]
+                runtime_changed = bool(runtime_disallowed_changes)
+            else:
+                runtime_changed = runtime_after != runtime_before
         except BaseException as exc:
             observer_failure = exc
         finally:
@@ -5384,6 +7416,29 @@ def _execute_student_mobile_deployment_checker(
             raise invariant_error from failure
         raise invariant_error from observer_failure
 
+    if runtime_allowed_changes:
+        print(
+            "student deployment runtime observer allowed concurrent SQLite sidecar churn: "
+            + ", ".join(runtime_allowed_changes)
+        )
+
+    isolated_runtime_receipt = (
+        allow_concurrent_runtime_changes
+        and bool(required_runtime_isolation)
+        and failure is None
+        and isinstance(result, dict)
+        and result.get("name") == expected_name
+        and result.get("passed") is True
+        and result.get("runtimeIsolation") == required_runtime_isolation
+    )
+    if runtime_changed and runtime_disallowed_changes and isolated_runtime_receipt:
+        print(
+            "student deployment checker observed concurrent live-runtime writes: "
+            + ", ".join(runtime_disallowed_changes)
+        )
+        runtime_disallowed_changes = []
+        runtime_changed = False
+
     if environment_changed or backup_root_changed or cwd_changed or runtime_changed:
         changed = []
         if environment_changed:
@@ -5393,7 +7448,8 @@ def _execute_student_mobile_deployment_checker(
         if cwd_changed:
             changed.append("working directory")
         if runtime_changed:
-            changed.append("runtime metadata/content")
+            detail = ", ".join(runtime_disallowed_changes) or "unclassified observer state"
+            changed.append(f"runtime metadata/content ({detail})")
         invariant_error = AssertionError(
             "student deployment checker changed shared verifier state; restored: " + ", ".join(changed)
         )
@@ -5421,11 +7477,17 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
     original_environment = os.environ.copy()
     original_backup_root = backup_runtime_data.ROOT
     original_cwd = pathlib.Path.cwd()
+
+    def stable_runtime_observer() -> dict:
+        """Keep receipt/state unit cases independent from live server writes."""
+        return {}
+
     _assert_unit(
         _execute_student_mobile_deployment_checker(
             lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
             expected_name="deployment-fixture",
             minimum_assertions=3,
+            runtime_observer=stable_runtime_observer,
         ) == 3,
         "student deployment guard rejected a valid receipt",
     )
@@ -5441,6 +7503,7 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
                 lambda receipt=receipt: receipt,
                 expected_name="deployment-fixture",
                 minimum_assertions=3,
+                runtime_observer=stable_runtime_observer,
             )
         except AssertionError:
             continue
@@ -5456,6 +7519,7 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
             dirty_failure,
             expected_name="deployment-fixture",
             minimum_assertions=3,
+            runtime_observer=stable_runtime_observer,
         )
     except AssertionError as exc:
         _assert_unit("shared verifier state; restored" in str(exc), "deployment guard hid state restoration failure")
@@ -5476,6 +7540,61 @@ def run_student_mobile_deployment_guard_unit_checks() -> None:
         _assert_unit("runtime metadata/content" in str(exc), "deployment guard hid runtime mutation")
     else:
         raise AssertionError("deployment guard accepted runtime mutation")
+
+    sidecar_observations = iter((
+        {"app.sqlite-wal": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+        {"app.sqlite-wal": {"mtime_ns": 2, "size": 12, "sha256": "after"}},
+    ))
+    with contextlib.redirect_stdout(io.StringIO()):
+        sidecar_result = _execute_student_mobile_deployment_checker(
+            lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+            runtime_observer=lambda: next(sidecar_observations),
+        )
+    _assert_unit(sidecar_result == 3, "deployment guard must allow concurrent SQLite WAL/SHM churn")
+
+    isolation = "temporary fixtures and dry-run subprocesses only"
+    concurrent_observations = iter((
+        {"progress.json": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+        {"progress.json": {"mtime_ns": 2, "size": 12, "sha256": "after"}},
+    ))
+    with contextlib.redirect_stdout(io.StringIO()):
+        concurrent_result = _execute_student_mobile_deployment_checker(
+            lambda: {
+                "name": "deployment-fixture",
+                "assertions": 3,
+                "passed": True,
+                "runtimeIsolation": isolation,
+            },
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+            runtime_observer=lambda: next(concurrent_observations),
+            allow_concurrent_runtime_changes=True,
+            required_runtime_isolation=isolation,
+        )
+    _assert_unit(
+        concurrent_result == 3,
+        "isolated deployment guard must tolerate concurrent live-runtime writes",
+    )
+
+    unproven_observations = iter((
+        {"watch.json": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+        {"watch.json": {"mtime_ns": 2, "size": 12, "sha256": "after"}},
+    ))
+    try:
+        _execute_student_mobile_deployment_checker(
+            lambda: {"name": "deployment-fixture", "assertions": 3, "passed": True},
+            expected_name="deployment-fixture",
+            minimum_assertions=3,
+            runtime_observer=lambda: next(unproven_observations),
+            allow_concurrent_runtime_changes=True,
+            required_runtime_isolation=isolation,
+        )
+    except AssertionError as exc:
+        _assert_unit("watch.json" in str(exc), "deployment guard hid an unproven runtime change")
+    else:
+        raise AssertionError("deployment guard accepted concurrent runtime changes without isolation proof")
 
     observer_calls = [0]
 
@@ -5517,6 +7636,8 @@ def run_student_mobile_deployment_contract_checks() -> None:
         checker,
         expected_name="deployment" if full_windows_contract else "deployment-portable",
         minimum_assertions=118 if full_windows_contract else 92,
+        allow_concurrent_runtime_changes=_local_runtime_service_is_active(),
+        required_runtime_isolation=deployment.RUNTIME_ISOLATION,
     )
     mode = "windows-full" if full_windows_contract else "portable-static"
     print(f"student mobile deployment contract ({mode}): {assertions} assertions passed; process state restored")
@@ -5549,17 +7670,72 @@ def run_student_mobile_python_result_contract_checks() -> None:
         module.run_checks = lambda: {"name": "config", "assertions": 1, "passed": True}
         accepted = dispatcher._load_result("config")
         _assert_unit(accepted["assertions"] == 1, "Python dispatcher rejected a valid bound receipt")
+        sidecar_diff = dispatcher._snapshot_diff(
+            {"app.sqlite-wal": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+            {"app.sqlite-wal": {"mtime_ns": 2, "size": 12, "sha256": "after"}},
+        )
+        _assert_unit(
+            dispatcher._disallowed_snapshot_diff(sidecar_diff) == {},
+            "student mobile dispatcher must allow concurrent SQLite WAL/SHM churn",
+        )
+        main_db_diff = dispatcher._snapshot_diff(
+            {"app.sqlite": {"mtime_ns": 1, "size": 10, "sha256": "before"}},
+            {"app.sqlite": {"mtime_ns": 2, "size": 10, "sha256": "before"}},
+        )
+        _assert_unit(
+            set(dispatcher._disallowed_snapshot_diff(main_db_diff)) == {"app.sqlite"},
+            "student mobile dispatcher must still reject main SQLite database changes",
+        )
+        isolated_receipt = [{
+            "name": "academy-gates",
+            "assertions": 1,
+            "passed": True,
+            "runtimeIsolation": dispatcher.EXPECTED_RUNTIME_ISOLATION["academy-gates"],
+        }]
+        _assert_unit(
+            dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), isolated_receipt, service_active=True
+            ),
+            "student mobile dispatcher must tolerate live-service writes for a verified isolated receipt",
+        )
+        _assert_unit(
+            not dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), isolated_receipt, service_active=False
+            ),
+            "student mobile dispatcher must not waive runtime changes while the service is stopped",
+        )
+        tampered_receipt = [dict(isolated_receipt[0], runtimeIsolation="unverified")]
+        _assert_unit(
+            not dispatcher._isolated_results_allow_concurrent_runtime_changes(
+                ("academy-gates",), tampered_receipt, service_active=True
+            ),
+            "student mobile dispatcher must require the exact per-check isolation contract",
+        )
     finally:
         dispatcher.CHECK_MODULES["config"] = original
         sys.modules.pop(module_name, None)
 
 
 def run_refactor_notes_contract_source_checks() -> None:
-    refactor_notes_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
+    refactor_pointer_md = (ROOT / "scripts/refactor_notes_logs_progress.md").read_text("utf-8")
+    functions_md = (ROOT / "docs/PROJECT_FUNCTIONS_AND_LOGIC.md").read_text("utf-8")
+    root_agents_md = (ROOT / "AGENTS.md").read_text("utf-8")
+    scripts_agents_md = (ROOT / "scripts/AGENTS.md").read_text("utf-8")
 
-    required_note_groups = [
+    for snippet in [
+        "../docs/history/REFACTOR_NOTES_LOGS_PROGRESS_LEGACY.md",
+        "SERVER_RULES_INDEX.md#rule-log-001",
+        "SERVER_RULES_INDEX.md#rule-progress-001",
+    ]:
+        _assert_unit(
+            snippet in refactor_pointer_md,
+            f"legacy refactor-note pointer must resolve through canonical documentation: {snippet}",
+        )
+
+    required_canonical_groups = [
         (
             "assigned test answer-link notes",
+            functions_md,
             [
                 "progress[date][sid].tests",
                 "assignedTests[].answerUrl",
@@ -5569,21 +7745,26 @@ def run_refactor_notes_contract_source_checks() -> None:
         ),
         (
             "catalog writer safety notes",
+            scripts_agents_md,
             ["--backup-confirmed", "--config", "--csv", "--output", "--issues"],
         ),
         (
             "opt-in log GET smoke safety notes",
+            root_agents_md,
             [
                 "--smoke --smoke-log-gets",
-                "python scripts\\backup_runtime_data.py",
+                "python scripts/backup_runtime_data.py",
                 "`mtime_ns`, size, and SHA-256",
-                "including an mtime-only change, fails",
+                "including an mtime-only change",
             ],
         ),
     ]
-    for label, snippets in required_note_groups:
-        missing = [snippet for snippet in snippets if snippet not in refactor_notes_md]
-        _assert_unit(not missing, f"refactor notes must describe {label}; missing: {', '.join(missing)}")
+    for label, canonical_text, snippets in required_canonical_groups:
+        missing = [snippet for snippet in snippets if snippet not in canonical_text]
+        _assert_unit(
+            not missing,
+            f"canonical documentation must describe {label}; missing: {', '.join(missing)}",
+        )
 
 
 def run_admin_calendar_test_completion_source_checks() -> None:
@@ -5602,8 +7783,9 @@ def run_admin_calendar_test_completion_source_checks() -> None:
 
     _assert_unit(
         "const examSubject = phase || '수학';" in hover_tooltip_js
-        and "pill(`${examSubject} 시험일`, exam.math || '-', { big: true })" in hover_tooltip_js,
-        "admin hover tooltip must label exam dates with the row phase subject",
+        and "const subjectExamTimingKind = classifySubjectExamTiming(exam.math);" in hover_tooltip_js
+        and "`${examSubject} ${subjectExamTimingKind === 'date' ? '시험일' : '시험 기간'}`" in hover_tooltip_js,
+        "admin hover tooltip must label each row's subject and distinguish exam dates from ranges",
     )
 
     homework_start = today_render_js.index("if (homeworkLeaveBtn)")
@@ -5618,6 +7800,12 @@ def run_admin_calendar_test_completion_source_checks() -> None:
         "숙검하원 log patch must still mark the leave without test-completion metadata",
     )
 
+    _assert_unit(
+        "await patchLogsBatch(targets.map(target => ({" in homework_block
+        and "await patchLog(" not in homework_block
+        and "await loadTodayAndRender({ force: true });" not in homework_block,
+        "숙검하원 must use one batch log write and avoid force-refreshing unrelated data",
+    )
     leave_start = today_render_js.index("const leaveBtn = e.target.closest('.markLeave');")
     leave_end = today_render_js.index("const undoBtn = e.target.closest('.undoDone');", leave_start)
     leave_block = today_render_js[leave_start:leave_end]
@@ -5644,12 +7832,17 @@ def run_admin_wave_b_source_checks() -> None:
     today_js = (ROOT / "static/js/admin/features/today.render.js").read_text("utf-8")
 
     _assert_unit(
-        "return await api.getStrict(url, label);" in state_js,
+        all(snippet in state_js for snippet in (
+            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
+            "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
+        )),
         "admin bootstrap strict helper must use the admin API wrapper",
     )
     _assert_unit(
-        "async function getCriticalJson(url, label)" in state_js,
-        "admin bootstrap must have a narrow strict GET helper",
+        "api.getOr('/api/absent', {})" in state_js
+        and "api.getOr('/api/school-calendar', {})" in state_js,
+        "admin bootstrap optional reads must preserve their narrow fallback",
     )
     _assert_unit(
         "api.getOr('/api/updates', {})" not in state_js,
@@ -5664,28 +7857,49 @@ def run_admin_wave_b_source_checks() -> None:
         "critical /api/progress bootstrap GET must not use silent fallback",
     )
     for optional_call in [
-        "api.getOr('/api/materials', {})",
-        "api.getOr('/api/mat-assign', {})",
-        "api.getOr('/api/extra-attend', {})",
         "api.getOr('/api/absent', {})",
         "api.getOr('/api/school-calendar', {})",
-        "api.getOr('/api/tests-config', { categories: {} })",
     ]:
         _assert_unit(optional_call in state_js, f"optional bootstrap fallback must remain: {optional_call}")
+    bootstrap_start = state_js.index("export async function bootstrap()")
+    bootstrap_block = state_js[bootstrap_start:]
+    for deferred_url in [
+        "/api/materials",
+        "/api/mat-assign",
+        "/api/extra-attend",
+        "/api/tests-config",
+    ]:
+        _assert_unit(
+            deferred_url not in bootstrap_block,
+            f"noncritical endpoint must not block the first admin render: {deferred_url}",
+        )
+    for compatibility_default in [
+        "materials: {}",
+        "assigns: {}",
+        "extra: {}",
+        "testsConfig: { categories: {} }",
+    ]:
+        _assert_unit(
+            compatibility_default in state_js,
+            f"deferred bootstrap state must retain its compatibility default: {compatibility_default}",
+        )
     for critical_call in [
-        "getCriticalJson('/api/updates'",
-        "getCriticalJson(`/api/logs?date=${encodeURIComponent(today)}`",
-        "getCriticalJson(`/api/progress?date=${encodeURIComponent(today)}`",
+        "api.getStrict('/api/updates'",
+        "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`",
+        "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`",
     ]:
         _assert_unit(critical_call in state_js, f"critical bootstrap call must be strict: {critical_call}")
 
-    _assert_unit("try {\n  await bootstrap();" in main_js, "main bootstrap failure must be caught explicitly")
+    _assert_unit(
+        "try {\n  [, criticalInitializers] = await Promise.all([bootstrap(), loadCriticalAdminFeatures()]);" in main_js,
+        "bootstrap and required feature import failures must share the explicit readiness guard",
+    )
     _assert_unit(
         "alert('관리자 초기 데이터를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');" in main_js,
         "main bootstrap failure must be visible to the admin",
     )
 
-    marker = "// Homework completion is the single visible homework flag."
+    marker = "const hc = ev.target.closest?.('.hwCheckChk');"
     start = today_js.index(marker)
     end = today_js.index("  });", start)
     homework_block = today_js[start:end]
@@ -5721,7 +7935,8 @@ def run_admin_wave_b_source_checks() -> None:
         "await patchFlagRemote('att', dateKey, sid, checked);",
         "await patchFlagRemote('contact', dateKey, sid, checked);",
         "targets.push({ dateKey, sid });",
-        "await patchLog(target.dateKey, target.sid, {",
+        "await patchLogsBatch(targets.map(target => ({",
+        "date: target.dateKey,",
         "const absenceSlots = rowSlotsForAbsence(dateKey, sid, tr);",
         "setAttended(dateKey, sid, false);",
         "setContacted(dateKey, sid, false);",
@@ -5759,7 +7974,11 @@ def run_admin_api_wrapper_usage_source_checks() -> None:
         "admin bootstrap should not open-code critical JSON fetch",
     )
     _assert_unit(
-        "return await api.getStrict(url, label);" in state_js,
+        all(snippet in state_js for snippet in (
+            "api.getStrict('/api/updates', 'admin bootstrap /api/updates')",
+            "api.getStrict(`/api/logs?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/logs')",
+            "api.getStrict(`/api/progress?date=${encodeURIComponent(today)}`, 'admin bootstrap /api/progress')",
+        )),
         "admin bootstrap critical helper must delegate to api.getStrict",
     )
 
@@ -5810,7 +8029,7 @@ def run_all_page_progress_lazy_source_checks() -> None:
     table_js = (ROOT / "static/js/all/features/table.js").read_text("utf-8")
     hover_js = (ROOT / "static/js/all/features/hoverTooltip.js").read_text("utf-8")
 
-    load_all_start = state_js.index("export async function loadAll()")
+    load_all_start = state_js.index("export async function loadAll(")
     load_all_end = state_js.index("export async function ensureProgressForSid", load_all_start)
     load_all_block = state_js[load_all_start:load_all_end]
     _assert_unit(
@@ -6093,7 +8312,14 @@ ok(lastContactCall?.sid === 's3', 'contact fallback save still uses row sid');
 
 
 def run_admin_test_modal_assignment_source_checks() -> None:
+    proc = _run_captured(["node", "scripts/verify_test_assignment_rules.mjs"])
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    _assert_unit(proc.returncode == 0, "test assignment pure-rule oracle failed")
     test_modal_js = (ROOT / "static/js/admin/features/testModal.js").read_text("utf-8")
+    test_rules_js = (ROOT / "static/js/admin/features/testAssignmentRules.js").read_text("utf-8")
     patch_start = test_modal_js.index("async function patchLogAssignment")
     patch_end = test_modal_js.index("async function saveModal", patch_start)
     patch_block = test_modal_js[patch_start:patch_end]
@@ -6106,16 +8332,16 @@ def run_admin_test_modal_assignment_source_checks() -> None:
         "test assignment latest log read must not silently fall back to an empty entry",
     )
     _assert_unit(
-        "fetchLatestLogEntryForAssignment(editingDate, editingSid)" in save_block,
+        "fetchLatestLogEntryForAssignment(date, sid)" in save_block,
         "test assignment save must preflight latest log before progress patch",
     )
     _assert_unit(
-        save_block.index("fetchLatestLogEntryForAssignment(editingDate, editingSid)") <
+        save_block.index("fetchLatestLogEntryForAssignment(date, sid)") <
         save_block.index("fetchJSONSafe('/api/progress/patch'"),
         "latest log preflight must happen before /api/progress/patch",
     )
     _assert_unit(
-        "function nextExcludedStatusOf" in test_modal_js,
+        "function nextExcludedStatusOf" in test_rules_js,
         "test assignment modal must define a right-click none/제외 toggle helper",
     )
     _assert_unit(
@@ -6125,6 +8351,70 @@ def run_admin_test_modal_assignment_source_checks() -> None:
     _assert_unit(
         "applyTestRowStatus(row, nextExcludedStatusOf(statusForKey(key)))" in test_modal_js,
         "right-click must toggle 제외 back to none",
+    )
+    required_ui_contracts = [
+        ('id="testDifficultyOverride"', "test modal must render the 레벨 설정 button"),
+        ('id="testLevelSettingOptions"', "test modal must render the Lv.3-Lv.6 level picker"),
+        ("const difficulties = CATEGORY_BY_KEY[activeCategory]?.difficulties || [];", "normal difficulty selector must keep every category level visible"),
+        ("field: STUDENT_TEST_LEVEL_DEFAULTS_FIELD", "student level setting must patch only the student default field"),
+        ("sendJson('/api/update'", "student level setting must use the single-field student API"),
+        ("if (e.ctrlKey || e.metaKey) {", "Ctrl/Cmd-click multi-selection must remain wired"),
+        ("function activeStudentCurriculumSubject()", "test modal must derive the opening subject from the active student curriculum"),
+        ("function restorePreferredInitialTestView(requiredSubject = activeStudentCurriculumSubject())", "test modal must bind recent-view restoration to the curriculum subject"),
+        ("const storedView = readRecentTestView(editingSid, curriculumSubject);", "stored recent view must be filtered by the curriculum subject"),
+        ("const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);", "recent assignment priority must be filtered by the curriculum subject"),
+        ("function restorePreferredCategoryTestView(categoryKey, requiredSubject = activeSubject)", "category tabs must restore category-scoped recent assignment details"),
+        ("if (!restorePreferredCategoryTestView(activeCategory, activeSubject))", "category tab changes must prefer category-scoped assignment history before defaults"),
+        ("function invalidateStudentWorkFetchCache(url)", "test assignment saves must invalidate shared student-popup hydration cache entries"),
+        ("if (curriculumSubject && subject !== curriculumSubject) return null;", "cross-subject recent views must be rejected"),
+        ("TEST_RECENT_VIEW_STORAGE_PREFIX", "recent popup view must remain student-scoped in browser storage"),
+        ("const TEST_ASSIGN_CHANGE_ORDER_KEY = '__testAssignmentChangeOrder';", "test modal must read authoritative per-test change ordering"),
+        ("const TEST_ASSIGN_TOUCHED_KEYS_KEY = '__testAssignmentTouchedKeys';", "test modal must identify explicit reassignments in full-map patches"),
+        ("activeCatalog = collectCatalog(state.testsConfig).filter(test =>", "test modal catalog must be limited to the current curriculum subject"),
+        ("subjectSel.disabled = true;", "test modal subject selector must remain locked to the current curriculum"),
+        ("function centerTestRowInScroller(row, scroller)", "test modal must define exact-row scroll centering"),
+    ]
+    for snippet, message in required_ui_contracts:
+        _assert_unit(snippet in test_modal_js, message)
+    _assert_unit(
+        "const TEST_KEYBOARD_STATUS_ORDER = ['', 'interrupted', 'assigned', 'done', 'skip'];" in test_rules_js,
+        "keyboard status cycle must remain white-orange-green-blue-red",
+    )
+
+    _assert_unit(
+        "function showTestSaveSuccess()" in test_modal_js
+        and "window.showStudentPopupSaveResult('저장 완료')" in test_modal_js
+        and save_block.count("showTestSaveSuccess();") == 2
+        and "변경된 테스트 배정이 없습니다" not in save_block
+        and "toast('테스트 배정 저장됨')" not in save_block,
+        "test saves with or without assignment changes must reuse the video popup's save-complete graphic",
+    )
+    _assert_unit(
+        save_block.index("applyTestProgressPatchResult(date, sid, progressRes)")
+        < save_block.index("await patchLogAssignment(items, appendToNotes, newlyAddedItems, latestLogEntry, date, sid)")
+        < save_block.rindex("showTestSaveSuccess();"),
+        "completion requires both progress and compatibility-log persistence",
+    )
+
+    restore_start = test_modal_js.index("function restorePreferredInitialTestView")
+    restore_end = test_modal_js.index("function restorePreferredCategoryTestView", restore_start)
+    restore_block = test_modal_js[restore_start:restore_end]
+    _assert_unit(
+        restore_block.index("const recentAssignment = latestAssignmentTestFromHistory(curriculumSubject);") <
+        restore_block.index("const storedView = readRecentTestView(editingSid, curriculumSubject);"),
+        "popup open must prefer same-subject assignment history over the browser's recent view",
+    )
+
+    open_start = test_modal_js.index("async function openModalForRow")
+    open_end = test_modal_js.index("function selectedAssignmentObjects", open_start)
+    open_block = test_modal_js[open_start:open_end]
+    _assert_unit(
+        open_block.index("const curriculumSubject = activeStudentCurriculumSubject();") <
+        open_block.index("activeSubject = curriculumSubject || normalizeSubject(activeStudent.curriculum);") <
+        open_block.index("syncSelectedFromProgress();") <
+        open_block.index("restorePreferredInitialTestView(curriculumSubject)") <
+        open_block.index("activeCategory = chooseInitialCategory();"),
+        "popup open must lock the curriculum subject before same-subject recent view/history and defaults",
     )
 
 
@@ -6153,17 +8443,17 @@ def run_admin_test_modal_persistence_bridge_source_checks() -> None:
         _assert_unit(helper in bridge_block, f"test modal persistence bridge must define {helper}")
 
     _assert_unit(
-        "body: JSON.stringify(buildTestProgressPatchBody(editingDate, editingSid, patchTests, hasAnyTestStatus))"
+        "JSON.stringify(buildTestProgressPatchBody(date, sid, patchTests, hasAnyTestStatus))"
         in save_block,
         "test modal save must build /api/progress/patch body through the persistence bridge",
     )
     _assert_unit(
-        "const body = buildLogAssignmentPatchBody(editingDate, editingSid, patchEntry, clear, entry, notesChanged)"
+        "const body = buildLogAssignmentPatchBody(date, sid, patchEntry, clear, entry, notesChanged)"
         in bridge_block,
         "test modal log metadata patch must use a dedicated payload bridge",
     )
     _assert_unit(
-        "applyTestProgressPatchResult(editingDate, editingSid, progressRes)" in save_block,
+        "applyTestProgressPatchResult(date, sid, progressRes)" in save_block,
         "test modal save must apply progress patch results through the persistence bridge",
     )
 
@@ -6184,13 +8474,19 @@ const response = (payload, status = 200) => ({
   text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
 });
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/testModal.js');
+const rulesSource = fs.readFileSync(path.join(process.cwd(), 'static/js/admin/features/testAssignmentRules.js'), 'utf8');
+const rulesUrl = `data:text/javascript;base64,${Buffer.from(rulesSource).toString('base64')}`;
 const source = fs.readFileSync(sourcePath, 'utf8')
+  .replace(/from '\.\/testAssignmentRules\.js\?v=[^']+'/, `from '${rulesUrl}'`)
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-05';")
   .replace("import { createUnitTestDisplayNameResolver } from '../../shared/testCatalogDisplay.js';", "const createUnitTestDisplayNameResolver = () => (test) => String(test?.name || '');");
 const harness = `
 export function __setHarnessState(input) {
+  testOpenSeq += 1;
+  testModalReady = input.testModalReady !== false;
   editingDate = input.editingDate;
   editingSid = input.editingSid;
   activeStudent = input.activeStudent || { id: input.editingSid, name: '학생', curriculum: '대수', level: '중' };
@@ -6203,7 +8499,10 @@ export function __setHarnessState(input) {
   catalogByKey = new Map(activeCatalog.map(test => [test._key, test]));
   initialTestMap = input.initialTestMap || {};
   selectedStatuses = new Map(input.selectedStatuses || []);
-  selectedKeys = new Set(Array.from(selectedStatuses.keys()));
+  explicitBlankKeys = new Set(input.explicitBlankKeys || []);
+  touchedTestKeys = new Set(input.touchedTestKeys || []);
+  testChangeOrderByKey = input.testChangeOrderByKey || {};
+  pendingCenteredTestKey = '';
   testSelectionTouched = input.testSelectionTouched !== false;
 }
 export {
@@ -6211,6 +8510,16 @@ export {
   saveModal as __saveModal,
   nextStatusOf as __nextStatusOf,
   nextExcludedStatusOf as __nextExcludedStatusOf,
+  restorePreferredInitialTestView as __restorePreferredInitialTestView,
+  restorePreferredCategoryTestView as __restorePreferredCategoryTestView,
+  latestAssignmentTestFromHistory as __latestAssignmentTestFromHistory,
+  centerTestRowInScroller as __centerTestRowInScroller,
+  applyTestRowStatus as __applyTestRowStatus,
+  collectTestStatusPatch as __collectTestStatusPatch,
+  buildTestProgressPatchBody as __buildTestProgressPatchBody,
+  syncSelectedFromProgress as __syncSelectedFromProgress,
+  currentTestView as __currentTestView,
+  studentTestLevelDefault as __studentTestLevelDefault,
 };
 	`;
 const moduleSource = `${source}\n${harness}\n//# sourceURL=logModalCarriedReapplyHarness.js`;
@@ -6218,6 +8527,8 @@ const moduleUrl = `data:text/javascript;base64,${Buffer.from(moduleSource).toStr
 
 globalThis.window = globalThis;
 globalThis.__toasts = [];
+globalThis.__saveResults = [];
+globalThis.showStudentPopupSaveResult = (message) => globalThis.__saveResults.push(String(message));
 globalThis.__elements = { testAppendNotes: { checked: true } };
 globalThis.__state = {
   progress: {},
@@ -6225,7 +8536,19 @@ globalThis.__state = {
   testsConfig: {},
   schoolCal: {},
 };
-globalThis.localStorage = { getItem: () => null };
+globalThis.__studentWorkFetchCache = new Map();
+globalThis.localStorage = {
+  _values: new Map(),
+  getItem(key) {
+    return this._values.has(key) ? this._values.get(key) : null;
+  },
+  setItem(key, value) {
+    this._values.set(key, String(value));
+  },
+  removeItem(key) {
+    this._values.delete(key);
+  },
+};
 globalThis.document = { dispatchEvent: () => {} };
 globalThis.CustomEvent = class CustomEvent {
   constructor(type, init = {}) {
@@ -6235,6 +8558,17 @@ globalThis.CustomEvent = class CustomEvent {
 };
 
 	const mod = await import(moduleUrl);
+	mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [],
+  initialTestMap: {},
+  selectedStatuses: [],
+  testSelectionTouched: false,
+});
+await mod.__saveModal({ refresh: false });
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'unchanged test save still shows the shared save-complete graphic');
+	globalThis.__saveResults = [];
 	ok(mod.__nextStatusOf('') === 'assigned', 'left-click none becomes 배정/assigned');
 	ok(mod.__nextStatusOf('assigned') === 'interrupted', 'left-click 배정/assigned becomes 배부/interrupted');
 	ok(mod.__nextStatusOf('interrupted') === 'done', 'left-click 배부/interrupted becomes 완료/done');
@@ -6243,6 +8577,23 @@ globalThis.CustomEvent = class CustomEvent {
 	ok(mod.__nextExcludedStatusOf('') === 'skip', 'right-click none becomes 제외/skip');
 	ok(mod.__nextExcludedStatusOf('skip') === '', 'right-click 제외/skip becomes none');
 	ok(mod.__nextExcludedStatusOf('assigned') === 'skip', 'right-click assigned enters 제외/skip');
+	const scrollingHost = {
+  scrollHeight: 1000,
+  clientHeight: 400,
+  scrollTop: 100,
+  getBoundingClientRect: () => ({ top: 50, height: 400 }),
+};
+const centeredRow = { getBoundingClientRect: () => ({ top: 500, height: 40 }) };
+ok(mod.__centerTestRowInScroller(centeredRow, scrollingHost) === true, 'overflowing test list centers the requested row');
+ok(scrollingHost.scrollTop === 370, 'row center is aligned to the scroll viewport center');
+const shortHost = {
+  scrollHeight: 300,
+  clientHeight: 400,
+  scrollTop: 27,
+  getBoundingClientRect: () => ({ top: 0, height: 400 }),
+};
+ok(mod.__centerTestRowInScroller(centeredRow, shortHost) === false, 'non-scrolling test list skips centering');
+ok(shortHost.scrollTop === 27, 'non-scrolling list keeps its existing position');
 	const existingLabel = '단원평가 / 대수 / Lv.3 / 1회 / 기존';
 const newLabel = '단원평가 / 대수 / Lv.3 / 1회 / 신규';
 const existingTest = {
@@ -6264,6 +8615,61 @@ const newTest = {
   _key: newLabel,
 };
 
+const reopenedRow = {
+  disabled: false,
+  dataset: { testKey: existingLabel, state: 'done' },
+  classList: { toggle() {} },
+  querySelector: () => null,
+};
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [existingTest],
+  initialTestMap: { [existingLabel]: 'done' },
+  selectedStatuses: [[existingLabel, 'done']],
+});
+mod.__applyTestRowStatus(reopenedRow, '');
+const reopenedPatch = mod.__collectTestStatusPatch();
+ok(reopenedPatch[existingLabel]?.status === 'none' && reopenedPatch[existingLabel]?.explicitBlank === true,
+  'done-to-white must persist an explicit blank instead of deleting the old test key');
+const reopenedBody = mod.__buildTestProgressPatchBody('2026-06-05', 's1', reopenedPatch, false);
+globalThis.__state.progress = { '2026-06-05': { s1: reopenedBody.progress } };
+mod.__setHarnessState({ editingDate: '2026-06-06', editingSid: 's1', activeCatalog: [existingTest] });
+mod.__syncSelectedFromProgress();
+ok(mod.__collectTestStatusPatch()[existingLabel]?.explicitBlank === true,
+  'the next class must inherit the explicit white state rather than an older completion');
+reopenedRow.dataset.state = 'none';
+mod.__applyTestRowStatus(reopenedRow, 'assigned');
+ok(mod.__collectTestStatusPatch()[existingLabel] === 'assigned',
+  'a later reassignment must replace the explicit white marker');
+globalThis.__state.progress = {};
+
+for (const status of ['interrupted', 'skip']) {
+  reopenedRow.dataset.state = 'done';
+  mod.__setHarnessState({
+    editingDate: '2026-06-05',
+    editingSid: 's1',
+    activeCatalog: [existingTest],
+    initialTestMap: { [existingLabel]: 'done' },
+    selectedStatuses: [[existingLabel, 'done']],
+  });
+  mod.__applyTestRowStatus(reopenedRow, status);
+  const patch = mod.__collectTestStatusPatch();
+  ok(patch[existingLabel] === status,
+    `done-to-${status} must save the operator-selected status`);
+  const body = mod.__buildTestProgressPatchBody('2026-06-05', 's1', patch, true);
+  globalThis.__state.progress = { '2026-06-05': { s1: body.progress } };
+  globalThis.__state.logs = {
+    '2026-06-05': { s1: { assignedTests: [{ label: existingLabel, status: 'done' }] } },
+  };
+  mod.__setHarnessState({ editingDate: '2026-06-06', editingSid: 's1', activeCatalog: [existingTest] });
+  mod.__syncSelectedFromProgress();
+  ok(mod.__collectTestStatusPatch()[existingLabel] === status,
+    `the next class must keep ${status} ahead of the previous completed log`);
+}
+globalThis.__state.progress = {};
+globalThis.__state.logs = {};
+
 let calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
@@ -6272,12 +8678,213 @@ globalThis.fetch = async (url, init = {}) => {
   if (String(url) === '/api/logs/patch') return response({ entry: { saved: true } });
   return response({});
 };
+const storedViewLabel = '단원평가 / 미적분2 / Lv.5 / 3회 / 저장 보기';
+const curriculumAssignmentLabel = '단원평가 / 미적분2 / Lv.4 / 2회 / 최근 배정';
+const staleOtherSubjectLabel = '단원평가 / 대수 / Lv.6 / 4회 / 다른 과목 최근 배정';
+const storedViewTest = {
+  id: 'stored-view',
+  name: '저장 보기',
+  categoryKey: 'UNIT',
+  curriculum: '미적분2',
+  difficulty: 'Lv.5',
+  round: '3',
+  _key: storedViewLabel,
+};
+const curriculumAssignmentTest = {
+  id: 'curriculum-assignment',
+  name: '최근 배정',
+  categoryKey: 'UNIT',
+  curriculum: '미적분2',
+  difficulty: 'Lv.4',
+  round: '2',
+  _key: curriculumAssignmentLabel,
+};
+const staleOtherSubjectTest = {
+  id: 'other-subject-assignment',
+  name: '다른 과목 최근 배정',
+  categoryKey: 'UNIT',
+  curriculum: '대수',
+  difficulty: 'Lv.6',
+  round: '4',
+  _key: staleOtherSubjectLabel,
+};
+const curriculumStudent = {
+  id: 's1',
+  name: '학생',
+  curriculum: '미적분2',
+  level: '중',
+  testLevelDefaults: { UNIT: { 미적분2: 'Lv.5' } },
+};
+const recentViewStorageKey = 'admin.testAssignment.recentView.v1:s1';
+globalThis.localStorage.setItem(recentViewStorageKey, JSON.stringify({
+  categoryKey: 'UNIT',
+  subject: '미적분2',
+  difficulty: 'Lv.5',
+  round: '3',
+}));
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeStudent: curriculumStudent,
+  activeSubject: '미적분2',
+  activeCatalog: [storedViewTest, curriculumAssignmentTest, staleOtherSubjectTest],
+  initialTestMap: {
+    [storedViewLabel]: 'done',
+    [curriculumAssignmentLabel]: 'interrupted',
+    [staleOtherSubjectLabel]: 'assigned',
+  },
+  selectedStatuses: [
+    [storedViewLabel, 'done'],
+    [curriculumAssignmentLabel, 'interrupted'],
+    [staleOtherSubjectLabel, 'assigned'],
+  ],
+  testChangeOrderByKey: {
+    [storedViewLabel]: 10,
+    [curriculumAssignmentLabel]: 20,
+    [staleOtherSubjectLabel]: 30,
+  },
+});
+ok(mod.__studentTestLevelDefault('UNIT', '미적분2') === 'Lv.5', 'student UNIT subject default overrides management rules');
+ok(mod.__restorePreferredInitialTestView() === 'assignment', 'same-curriculum assignment history has first priority over the stored view');
+let restoredView = mod.__currentTestView();
+ok(restoredView.subject === '미적분2' && restoredView.difficulty === 'Lv.4' && restoredView.round === '2', 'assignment history restores level and round without changing the curriculum subject');
+
+const unitRecentLabel = '단원평가 / 미적분2 / Lv.5 / 1회 / 단원 최근 배정';
+const schoolRecentLabel = '학군지 기출 / 미적분2 / 중상 / 중간고사 / 1회 / 학군지 최근 배정';
+const unitDefaultLabel = '단원평가 / 미적분2 / Lv.6 / 1회 / 기존 기본 보기';
+const unitRecentTest = {
+  id: 'unit-recent',
+  name: '단원 최근 배정',
+  categoryKey: 'UNIT',
+  curriculum: '미적분2',
+  difficulty: 'Lv.5',
+  round: '1',
+  _key: unitRecentLabel,
+};
+const schoolRecentTest = {
+  id: 'school-recent',
+  name: '학군지 최근 배정',
+  categoryKey: 'SCHOOL_PAST',
+  curriculum: '미적분2',
+  difficulty: '중상',
+  term: '중간고사',
+  round: '1',
+  _key: schoolRecentLabel,
+};
+const unitDefaultTest = {
+  id: 'unit-default',
+  name: '기존 기본 보기',
+  categoryKey: 'UNIT',
+  curriculum: '미적분2',
+  difficulty: 'Lv.6',
+  round: '1',
+  _key: unitDefaultLabel,
+};
+globalThis.localStorage.setItem(recentViewStorageKey, JSON.stringify({
+  categoryKey: 'UNIT',
+  subject: '미적분2',
+  difficulty: 'Lv.6',
+  round: '1',
+}));
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeStudent: curriculumStudent,
+  activeSubject: '미적분2',
+  activeCatalog: [unitDefaultTest, unitRecentTest, schoolRecentTest],
+  initialTestMap: {
+    [unitRecentLabel]: 'assigned',
+    [schoolRecentLabel]: 'assigned',
+  },
+  selectedStatuses: [
+    [unitRecentLabel, 'assigned'],
+    [schoolRecentLabel, 'assigned'],
+  ],
+  testChangeOrderByKey: {
+    [unitRecentLabel]: 10,
+    [schoolRecentLabel]: 20,
+  },
+});
+ok(mod.__restorePreferredInitialTestView() === 'assignment', 'the most recently assigned category opens before an older stored category view');
+restoredView = mod.__currentTestView();
+ok(restoredView.categoryKey === 'SCHOOL_PAST' && restoredView.difficulty === '중상' && restoredView.term === '중간고사', 'school-past opens first when it was assigned after UNIT');
+ok(mod.__restorePreferredCategoryTestView('UNIT', '미적분2') === 'assignment', 'UNIT tab restores its own latest assignment');
+restoredView = mod.__currentTestView();
+ok(restoredView.categoryKey === 'UNIT' && restoredView.difficulty === 'Lv.5' && restoredView.round === '1', 'UNIT tab restores Lv.5 1회차 instead of the Lv.6 default');
+
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeStudent: curriculumStudent,
+  activeSubject: '미적분2',
+  activeCatalog: [unitRecentTest, schoolRecentTest],
+  initialTestMap: {
+    [unitRecentLabel]: 'assigned',
+    [schoolRecentLabel]: 'assigned',
+  },
+  selectedStatuses: [
+    [unitRecentLabel, 'assigned'],
+    [schoolRecentLabel, 'assigned'],
+  ],
+  testChangeOrderByKey: {
+    [unitRecentLabel]: 30,
+    [schoolRecentLabel]: 30,
+  },
+});
+ok(mod.__restorePreferredInitialTestView() === 'assignment', 'same-save test assignments still restore assignment history');
+restoredView = mod.__currentTestView();
+ok(restoredView.categoryKey === 'UNIT', 'UNIT opens first when multiple categories share the same save order');
+
+globalThis.localStorage.setItem(recentViewStorageKey, JSON.stringify({
+  categoryKey: 'UNIT',
+  subject: '대수',
+  difficulty: 'Lv.6',
+  round: '4',
+}));
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeStudent: curriculumStudent,
+  activeSubject: '미적분2',
+  activeCatalog: [storedViewTest, curriculumAssignmentTest, staleOtherSubjectTest],
+  initialTestMap: {
+    [curriculumAssignmentLabel]: 'interrupted',
+    [staleOtherSubjectLabel]: 'assigned',
+  },
+  selectedStatuses: [
+    [curriculumAssignmentLabel, 'interrupted'],
+    [staleOtherSubjectLabel, 'assigned'],
+  ],
+  testChangeOrderByKey: {
+    [curriculumAssignmentLabel]: 20,
+    [staleOtherSubjectLabel]: 30,
+  },
+});
+ok(mod.__restorePreferredInitialTestView() === 'assignment', 'cross-subject stored view falls back to same-curriculum assignment history');
+restoredView = mod.__currentTestView();
+ok(restoredView.subject === '미적분2' && restoredView.difficulty === 'Lv.4' && restoredView.round === '2', 'newer other-subject history cannot replace the curriculum subject');
+
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeStudent: curriculumStudent,
+  activeSubject: '미적분2',
+  activeCatalog: [staleOtherSubjectTest],
+  initialTestMap: { [staleOtherSubjectLabel]: 'assigned' },
+  selectedStatuses: [[staleOtherSubjectLabel, 'assigned']],
+});
+ok(mod.__restorePreferredInitialTestView() === '', 'cross-subject recent state is ignored when no same-subject history exists');
+restoredView = mod.__currentTestView();
+ok(restoredView.subject === '미적분2', 'popup keeps the student curriculum subject when all recent state belongs to another subject');
+globalThis.localStorage.removeItem(recentViewStorageKey);
+
 mod.__setHarnessState({
   editingDate: '2026-06-05',
   editingSid: 's1',
   activeCatalog: [existingTest, newTest],
   initialTestMap: {},
   selectedStatuses: [[newLabel, 'assigned']],
+  touchedTestKeys: [newLabel],
 });
 let failed = false;
 try {
@@ -6304,7 +8911,10 @@ const latestEntry = {
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
   if (String(url).startsWith('/api/logs/entry?')) return response({ ok: true, entry: latestEntry });
-  if (String(url) === '/api/progress/patch') return response({ progress: { tests: { [existingLabel]: 'interrupted', [newLabel]: 'interrupted' } } });
+  if (String(url) === '/api/progress/patch') return response({ progress: {
+    tests: { [existingLabel]: 'interrupted', [newLabel]: 'interrupted' },
+    __testAssignmentChangeOrder: { [existingLabel]: 1, [newLabel]: 2 },
+  } });
   if (String(url) === '/api/logs/patch') return response({ entry: { saved: true } });
   return response({});
 };
@@ -6314,7 +8924,10 @@ mod.__setHarnessState({
   activeCatalog: [existingTest, newTest],
   initialTestMap: { [existingLabel]: 'interrupted' },
   selectedStatuses: [[existingLabel, 'interrupted'], [newLabel, 'interrupted']],
+  touchedTestKeys: [newLabel],
 });
+globalThis.__studentWorkFetchCache.set('/api/progress?sid=s1', { ts: Date.now(), promise: Promise.resolve({ stale: true }) });
+globalThis.__studentWorkFetchCache.set('/api/logs?sid=s1', { ts: Date.now(), promise: Promise.resolve({ stale: true }) });
 await mod.__saveModal({ showPopup: false, refresh: false });
 const entryIndex = calls.findIndex(call => call.url.startsWith('/api/logs/entry?'));
 const progressIndex = calls.findIndex(call => call.url === '/api/progress/patch');
@@ -6325,6 +8938,11 @@ ok(progressPatch.body?.date === '2026-06-05', 'progress patch keeps date payload
 ok(progressPatch.body?.sid === 's1', 'progress patch keeps sid payload');
 ok(progressPatch.body?.progress?.tests?.[existingLabel] === 'interrupted', 'progress patch preserves existing test authority');
 ok(progressPatch.body?.progress?.tests?.[newLabel] === 'interrupted', 'progress patch writes new test authority');
+ok(
+  progressPatch.body?.progress?.__testAssignmentTouchedKeys?.length === 1
+  && progressPatch.body.progress.__testAssignmentTouchedKeys[0] === newLabel,
+  'progress patch marks only the explicitly assigned/reassigned test as newest',
+);
 ok(progressPatch.body?.progress?.__testsClearedAt === '', 'active progress patch does not set clear marker');
 ok(logPatch, '/api/logs/patch is called after successful latest log read');
 ok(logPatch.body?.date === '2026-06-05', 'log patch keeps date payload');
@@ -6342,6 +8960,89 @@ ok(logPatch.body?.base?.notes === latestEntry.notes, 'base notes use latest entr
 const clear = logPatch.body?.__clear || [];
 ok(!clear.includes('testAssignmentDailyTests'), 'daily metadata is not cleared on success');
 ok(!clear.includes('testAssignmentNote'), 'assignment note is not cleared on success');
+ok(!globalThis.__studentWorkFetchCache.has('/api/progress?sid=s1'), 'successful progress save invalidates the shared progress cache');
+ok(!globalThis.__studentWorkFetchCache.has('/api/logs?sid=s1'), 'successful log save invalidates the shared log cache');
+
+const feedbackOrder = [];
+globalThis.__saveResults = [];
+globalThis.showStudentPopupSaveResult = (message) => {
+  globalThis.__saveResults.push(String(message));
+  feedbackOrder.push('feedback');
+};
+globalThis.fetch = async (url, init = {}) => {
+  const value = String(url);
+  feedbackOrder.push(value);
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: latestEntry });
+  if (value === '/api/progress/patch') return response({ progress: { tests: { [newLabel]: 'assigned' } } });
+  if (value === '/api/logs/patch') return response({ entry: { saved: true } });
+  return response({});
+};
+mod.__setHarnessState({
+  editingDate: '2026-06-05',
+  editingSid: 's1',
+  activeCatalog: [newTest],
+  initialTestMap: {},
+  selectedStatuses: [[newLabel, 'assigned']],
+  touchedTestKeys: [newLabel],
+});
+await mod.__saveModal({ refresh: false });
+const feedbackIndex = feedbackOrder.indexOf('feedback');
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'changed test save shows the shared save-complete graphic');
+ok(
+  feedbackOrder.indexOf('/api/progress/patch') < feedbackOrder.indexOf('/api/logs/patch')
+  && feedbackOrder.indexOf('/api/logs/patch') < feedbackIndex,
+  'save-complete graphic appears after all persistence requests',
+);
+
+// Observe the real module's outgoing payloads across delayed I/O and remounts.
+const command = (sid, date = '2026-06-05') => ({
+  editingDate: date, editingSid: sid, activeCatalog: [newTest],
+  initialTestMap: {}, selectedStatuses: [[newLabel, 'assigned']], touchedTestKeys: [newLabel],
+});
+let releaseRead;
+const heldRead = new Promise(resolve => { releaseRead = resolve; });
+const raceWrites = [];
+globalThis.fetch = async (url, init = {}) => {
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) { await heldRead; return response({entry: {}}); }
+  raceWrites.push({url: value, body: JSON.parse(init.body || '{}')});
+  return response(value === '/api/progress/patch' ? {progress: {tests: {[newLabel]: 'assigned'}}} : {entry: {saved: true}});
+};
+mod.__setHarnessState(command('save-a'));
+const savingA = mod.__saveModal({refresh: false});
+const duplicateA = mod.__saveModal({refresh: false});
+mod.__setHarnessState(command('save-b', '2026-06-06'));
+globalThis.__saveResults = [];
+releaseRead();
+await Promise.all([savingA, duplicateA]);
+ok(raceWrites.length === 2, 'duplicate clicks issue one progress and one log command');
+ok(raceWrites.every(x => x.body.sid === 'save-a' && x.body.date === '2026-06-05'), 'late writes retain the original student and date');
+ok(globalThis.__saveResults.length === 0, 'old popup save does not announce completion in the new popup');
+await mod.__saveModal({refresh: false});
+ok(raceWrites.slice(2).length === 2 && raceWrites.slice(2).every(x => x.body.sid === 'save-b'), 'old response does not clear the new popup edits');
+
+let releaseLog;
+const heldLog = new Promise(resolve => { releaseLog = resolve; });
+let logStarted;
+const enteredLog = new Promise(resolve => { logStarted = resolve; });
+globalThis.__saveResults = [];
+globalThis.fetch = async (url) => {
+  const value = String(url);
+  if (value.startsWith('/api/logs/entry?')) return response({entry: {}});
+  if (value === '/api/logs/patch') { logStarted(); await heldLog; return response({error: 'injected log failure'}, 503); }
+  return response({progress: {tests: {[newLabel]: 'assigned'}}});
+};
+mod.__setHarnessState(command('save-c'));
+const failedSave = mod.__saveModal({refresh: false}).then(() => null, error => error);
+await enteredLog;
+ok(globalThis.__saveResults.length === 0, 'a pending log response is not save completion');
+releaseLog();
+const failure = await failedSave;
+ok(failure && /상담 기록 저장에 실패/.test(failure.message), 'partial success has an actionable error');
+ok(globalThis.__saveResults.length === 0, 'failed follow-up never displays completion');
+globalThis.fetch = async url => response(String(url).startsWith('/api/logs/entry?') ? {entry: {}} : {entry: {}, progress: {tests: {[newLabel]: 'assigned'}}});
+await mod.__saveModal({refresh: false});
+ok(globalThis.__saveResults.join('|') === '저장 완료', 'failed save evicts its flight and retains changes for retry');
 """
     cmd = ["node", "--input-type=module", "-e", driver]
     print("$ node --input-type=module -e <admin-test-modal-assignment-driver>")
@@ -6358,16 +9059,58 @@ ok(!clear.includes('testAssignmentNote'), 'assignment note is not cleared on suc
 
 def run_admin_video_modal_preflight_source_checks() -> None:
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    hydration_start = video_modal_js.index("async function hydrateProgressMaybe")
+    hydration_end = video_modal_js.index("async function hydrateForVideoModal", hydration_start)
+    hydration_block = video_modal_js[hydration_start:hydration_end]
     patch_start = video_modal_js.index("async function patchExtraVideoLogAssignment")
     patch_end = video_modal_js.index("function buildVideoAssignmentHtml", patch_start)
     patch_block = video_modal_js[patch_start:patch_end]
     save_start = video_modal_js.index("async function saveVideoAssignmentForCurrent")
     save_end = video_modal_js.index("window.saveVideoAssignmentPopup", save_start)
     save_block = video_modal_js[save_start:save_end]
+    updates_patch_start = video_modal_js.index("async function patchVideoAssignmentEntry")
+    updates_patch_end = video_modal_js.index("function updateVideoRowPresentation", updates_patch_start)
+    updates_patch_block = video_modal_js[updates_patch_start:updates_patch_end]
+
+    _assert_unit(
+        "window.showStudentPopupSaveResult = showSavePopup;" in video_modal_js
+        and "window.hideStudentPopupSaveResult = hideSavePopup;" in video_modal_js,
+        "video modal must expose its save-result graphic for the other student popups",
+    )
 
     _assert_unit(
         "async function fetchLatestExtraVideoLogEntry" in video_modal_js,
         "video assignment must have a strict latest log entry helper",
+    )
+    _assert_unit(
+        "function isHighDifficultyVideo" in video_modal_js
+        and "startsWith('[고] ')" in video_modal_js
+        and "function highDifficultyVideosForStudent" in video_modal_js
+        and "videoCurriculum(video).toLowerCase() === curriculumKey" in video_modal_js
+        and "videoSubCurriculum(video).toLowerCase() === 'apex'" in video_modal_js
+        and 'id="excludeHighDifficultyVideos"' in video_modal_js
+        and "data-high-difficulty=" in video_modal_js
+        and "isHighDifficultyVideo(v) ? '1' : '0'" in video_modal_js,
+        "video popup must identify exact [고] title-prefix videos in the student's subject APEX catalog and expose the bulk exclude control",
+    )
+    _assert_unit(
+        "function toggleHighDifficultyVideosForStudent" in video_modal_js
+        and "targets.every(({ stateValue }) => stateValue === 'skip')" in video_modal_js
+        and "? 'none'" in video_modal_js
+        and ": 'skip';" in video_modal_js
+        and "applyVideoRowState(row, nextState);" in video_modal_js
+        and "else setActiveVideoProgressState(mid, nextState);" in video_modal_js
+        and "기본(흰색) 상태" in video_modal_js
+        and "저장 버튼을 눌러 적용하세요" in video_modal_js,
+        "high-difficulty bulk action must toggle visible and hidden APEX matches between excluded and white while keeping save explicit",
+    )
+    _assert_unit(
+        "new URLSearchParams({ sid: sidKey })" in hydration_block
+        and "new URLSearchParams({ date: dateKey, sid: sidKey })" not in hydration_block
+        and "delete day[sidKey];" in hydration_block
+        and "state.progress[progressDate][sidKey] = entry;" in hydration_block
+        and "hydrateProgressMaybe(today, sid, isCurrent)" in video_modal_js,
+        "video popup open must refresh the selected student's full progress history without replacing other students",
     )
     _assert_unit(
         "latestEntry" in patch_block and "await getJSON(`/api/logs/entry?${q}`)" not in patch_block,
@@ -6379,25 +9122,30 @@ def run_admin_video_modal_preflight_source_checks() -> None:
     )
     _assert_unit(
         save_block.index("fetchLatestExtraVideoLogEntry(today, sid)") <
-        save_block.index("fetch('/api/updates/patch'"),
+        save_block.index("patchVideoAssignmentEntry("),
         "latest log preflight must happen before /api/updates/patch",
     )
     _assert_unit(
-        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry);" in save_block,
+        "await patchExtraVideoLogAssignment(today, sid, selected, latestLogEntry, extraVideoItems);" in save_block,
         "extra video log patch must receive the same latest entry used for preflight",
     )
     for snippet in [
-        "fetch('/api/updates/patch'",
-        "body: JSON.stringify(buildVideoAssignmentPatchBody(today, sid, selected, source))",
+        "patchVideoAssignmentEntry(",
+        "buildVideoAssignmentPatchBody(today, sid, selected, source)",
         "fetch('/api/updates?readOnly=1', { cache: 'no-store' })",
         "body.base = { notes: prevNotes.trim() };",
     ]:
         _assert_unit(snippet in save_block or snippet in patch_block, f"video assignment source shape must remain: {snippet}")
+    _assert_unit(
+        "fetch('/api/updates/patch'" in updates_patch_block
+        and "classifySaveConflict(data, '영상 배정')" in updates_patch_block
+        and "conflict.retryable && attempt < delays.length" in updates_patch_block,
+        "video assignment transport must retry only classified transient lock conflicts",
+    )
     for snippet in [
         "function latestAutoAssignStatusForSid",
         "function applyWatchStatusForAutoAssign",
         "function blockedMidsForAutoAssign",
-        "function shouldClearCompletedAutoAssignment",
         "function resolveVideoAssignmentSaveSource",
         "options.forceEmpty === true",
         "function applyVideoAssignmentState",
@@ -6411,6 +9159,18 @@ def run_admin_video_modal_preflight_source_checks() -> None:
 
 def run_admin_student_popup_scroll_source_checks() -> None:
     video_modal_js = (ROOT / "static/js/admin/features/videoModal.js").read_text("utf-8")
+    skip_style_start = video_modal_js.index('#vidModal .vid-row[data-state="skip"]')
+    assigned_style_start = video_modal_js.index('#vidModal .vid-row[data-state="assigned"]')
+    done_style_start = video_modal_js.index('#vidModal .vid-row[data-state="done"]', assigned_style_start)
+    interrupted_style_start = video_modal_js.index('#vidModal .vid-row[data-state="interrupted"]', done_style_start)
+    scroll_target_style_start = video_modal_js.index('#vidModal .vid-row.is-scroll-target', interrupted_style_start)
+    assigned_style = video_modal_js[assigned_style_start:done_style_start]
+    skip_style = video_modal_js[skip_style_start:assigned_style_start]
+    done_style = video_modal_js[done_style_start:interrupted_style_start]
+    interrupted_style = video_modal_js[interrupted_style_start:scroll_target_style_start]
+    assigned_scroll_start = video_modal_js.index("function scrollVideoPopupToFirstAssigned()")
+    assigned_scroll_end = video_modal_js.index("function ensureModal()", assigned_scroll_start)
+    assigned_scroll_block = video_modal_js[assigned_scroll_start:assigned_scroll_end]
 
     _assert_unit(
         "let studentPopupScrollPosition = null;" in video_modal_js,
@@ -6426,6 +9186,68 @@ def run_admin_student_popup_scroll_source_checks() -> None:
         and "studentPopupScrollPosition = null;" in video_modal_js
         and "window.scrollTo(scrollPosition.x, scrollPosition.y);" in video_modal_js,
         "student popup close must restore and clear the captured document scroll position",
+    )
+    _assert_unit(
+        "box-shadow:inset 3px 0 0 #10b981;" in assigned_style
+        and "box-shadow:inset" not in done_style
+        and "box-shadow:inset" not in interrupted_style,
+        "only the green assigned video row may keep the thick left status accent",
+    )
+    _assert_unit(
+        "border-color:#fb7185;" in skip_style
+        and "background:#fff8f9;" in skip_style
+        and "color:#be123c;" in skip_style
+        and "border-color:#60a5fa;" in done_style
+        and "background:#f7faff;" in done_style
+        and "color:#1d4ed8;" in done_style
+        and "border-color:#fb923c;" in interrupted_style
+        and "background:#fffaf5;" in interrupted_style
+        and "color:#c2410c;" in interrupted_style
+        and "border-color:#34d399;" in assigned_style
+        and "background:#ecfdf5;" in assigned_style,
+        "non-green video states must restore saturated hue cues on high-lightness surfaces while assigned green keeps the strongest accent",
+    )
+
+    _assert_unit(
+        "function nextExcludedVideoState(stateValue)" in video_modal_js
+        and ": 'none';\n}\n\nfunction nextExcludedVideoState" in video_modal_js
+        and "if (e.button !== 0 && e.button !== 2) return;" in video_modal_js
+        and "dragTargetState = dragButton === 2" in video_modal_js
+        and "? nextExcludedVideoState(startState)" in video_modal_js
+        and "applyVideoDragRange(row);" in video_modal_js
+        and "if (!cancelled && pointerDown && dragActive) {" in video_modal_js
+        and "if (dragButton === 2) suppressContextOnce = true;" in video_modal_js
+        and "finishVideoDrag();" in video_modal_js
+        and "applyVideoRowState(row, nextExcludedVideoState(row.dataset.state || 'none'));" in video_modal_js,
+        "video popup right-click drag must toggle a contiguous range between excluded and none without a duplicate context action",
+    )
+    _assert_unit(
+        "const VIDEO_KEYBOARD_STATUS_ORDER = ['none', 'interrupted', 'assigned', 'done', 'skip'];" in video_modal_js
+        and "function nextKeyboardVideoState(stateValue, direction = 1)" in video_modal_js
+        and "function applyKeyboardVideoStatusToSelection(direction)" in video_modal_js
+        and "if (e.ctrlKey || e.metaKey) return;" in video_modal_js
+        and "if (e.ctrlKey || e.metaKey) {" in video_modal_js
+        and "toggleVideoMultiSelection(row);" in video_modal_js
+        and "if (e.shiftKey) addVideoMultiSelectionRange(row);" in video_modal_js
+        and "function videoMultiSelectionRangeMids(rows, anchorMid, targetMid)" in video_modal_js
+        and "activeVideoMultiSelectionAnchorMid = mid;" in video_modal_js
+        and "activeVideoMultiSelectionAnchorMid = '';" in video_modal_js
+        and ": nextVideoRowState(startState);" in video_modal_js
+        and "data-selection=\"${multiSelected ? 'selected' : 'none'}\"" in video_modal_js
+        and "applyKeyboardVideoStatusToSelection(e.key === 'ArrowRight' ? 1 : -1)" in video_modal_js,
+        "video popup must support Ctrl/Cmd multi-selection, Ctrl/Cmd+Shift range selection, keyboard status changes, and orange/blue drag transitions",
+    )
+
+    _assert_unit(
+        "function scrollVideoPopupToFirstAssigned()" in video_modal_js
+        and "#chkZone .vid-row[data-state=" in assigned_scroll_block
+        and "assigned" in assigned_scroll_block
+        and "requestAnimationFrame(scrollVideoPopupToFirstAssigned);" in video_modal_js,
+        "video popup open must scroll to the first green assigned row",
+    )
+    _assert_unit(
+        "if (active === 'video') requestAnimationFrame(scrollVideoPopupToFirstAssigned);" in video_modal_js,
+        "mobile video tab activation must re-center the first green assigned row after the hidden layout becomes visible",
     )
 
 
@@ -6456,14 +9278,18 @@ const callRecord = (url, init = {}) => ({
 });
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/videoModal.js');
 const source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+  .replace("import { $, CT, toast, todayLocalKey } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));" + fs.readFileSync('static/js/admin/core/utils.js', 'utf8').split('export function todayLocalKey()')[1].replace(/^/, 'function todayLocalKey()'))
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-05';")
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
-  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;")
+  .replace("import { automaticVideoCourse, isYouTubeMid, videoInAssignmentScope } from '../../shared/videoSources.js';", fs.readFileSync('static/js/shared/videoSources.js', 'utf8').replace(/^export /gm, ''));
 const harness = `
 export function __setHarnessState(input) {
   editingSid = input.sid || 's1';
+  videoHydrated = input.hydrated !== false;
   editingVideoDate = input.date || '2026-06-05';
   activeVideoSelectionDirty = input.dirty !== false;
   activeAssignmentManual = input.assignmentManual === true;
@@ -6745,7 +9571,7 @@ const makeElement = (id) => ({
 });
 const ensureElement = (id) => globalThis.__elements[id] || (globalThis.__elements[id] = makeElement(id));
 const installVideoElements = () => {
-  for (const id of ['vidModal', 'mTitle', 'chkZone', 'mSave', 'vidSavePopup', 'autoAssignCountToggle', 'autoAssignCountLabel']) {
+  for (const id of ['vidModal', 'mTitle', 'chkZone', 'mSave', 'vidSavePopup', 'autoAssignCountToggle', 'autoAssignCountLabel', 'vidSelectionMeta']) {
     ensureElement(id);
   }
 };
@@ -6756,6 +9582,28 @@ const makeRow = (sid = '007', date = '2026-06-06') => ({
   },
 });
 const selectedCheckboxes = () => globalThis.__checkboxes.filter((checkbox) => checkbox.checked);
+const makeVideoSelectionRow = (mid) => {
+  const classes = new Set();
+  return {
+    dataset: { mid: String(mid), selection: 'none' },
+    attributes: {},
+    classList: {
+      toggle(name, force) {
+        if (force) classes.add(name);
+        else classes.delete(name);
+        return !!force;
+      },
+      contains: (name) => classes.has(name),
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    closest(selector) {
+      return selector === '.vid-row' ? this : null;
+    },
+  };
+};
+globalThis.__makeVideoSelectionRow = makeVideoSelectionRow;
 
 globalThis.window = globalThis;
 window.addEventListener = () => {};
@@ -6772,6 +9620,7 @@ globalThis.__alerts = [];
 globalThis.__toasts = [];
 globalThis.__dispatches = [];
 globalThis.__checkboxes = [];
+globalThis.__videoRows = [];
 globalThis.__elements = {};
 globalThis.__state = {
   students: [],
@@ -6789,13 +9638,14 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 globalThis.document = {
-  documentElement: { style: { setProperty: () => {} } },
+  documentElement: { style: { setProperty: () => {} }, classList: makeClassList(), dataset: {} },
   head: {
     appendChild(el) {
       if (el?.id) globalThis.__elements[el.id] = el;
     },
   },
   body: {
+    classList: makeClassList(),
     appendChild(el) {
       if (el?.id) globalThis.__elements[el.id] = el;
     },
@@ -6812,6 +9662,7 @@ globalThis.document = {
   querySelectorAll: (selector) => {
     if (selector === '#chkZone input[type="checkbox"]:checked') return selectedCheckboxes();
     if (selector === '#chkZone input[type="checkbox"]') return globalThis.__checkboxes;
+    if (selector === '#chkZone .vid-row[data-mid]') return globalThis.__videoRows;
     return [];
   },
   addEventListener: () => {},
@@ -6821,25 +9672,27 @@ installVideoElements();
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/videoModal.js');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, CT, toast } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
+  .replace("import { $, CT, toast, todayLocalKey } from '../core/utils.js';", "const CT = { 'Content-Type': 'application/json' }; const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));" + fs.readFileSync('static/js/admin/core/utils.js', 'utf8').split('export function todayLocalKey()')[1].replace(/^/, 'function todayLocalKey()'))
+  .replace(/import \{ createAssignmentDragAutoScroll \} from '\.\/assignmentDragAutoScroll\.js\?v=[^']+';/, fs.readFileSync('static/js/admin/features/assignmentDragAutoScroll.js', 'utf8').replace(/^export /gm, ''))
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-07';")
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
   .replace("import { applySearchPlaceholder, matchesSearchKey, searchKeyForText } from '../../shared/search.js';", "const applySearchPlaceholder = () => {}; const matchesSearchKey = () => true; const searchKeyForText = (value) => String(value || '').toLowerCase();")
-  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;");
+  .replace("import { isSelfStudyScheduledForDate } from '../../shared/selfStudy.js';", "const isSelfStudyScheduledForDate = () => false;")
+  .replace("import { automaticVideoCourse, isYouTubeMid, videoInAssignmentScope } from '../../shared/videoSources.js';", fs.readFileSync('static/js/shared/videoSources.js', 'utf8').replace(/^export /gm, ''));
 const harness = `
 export function __initHarness() {
   initVideoModal();
 }
 export function __setHarnessState(input) {
   editingSid = input.sid || '007';
+  videoHydrated = input.hydrated !== false;
   editingVideoDate = input.date || '2026-06-06';
   activeVideoSelectionDirty = input.dirty === true;
   activeAssignmentManual = input.assignmentManual === true;
   activePrimaryVideoMids = new Set((input.primaryVideoMids || []).map(String));
   activeVideoList = input.activeVideoList || [];
   activeBlockedMids = input.activeBlockedMids || {};
-  activeAllowAutoAssign = input.allowAutoAssign === true;
-  activeAutoGenerated = input.autoGenerated === true;
   activeExtraVideoSearchOpen = false;
   activeExtraSubject = '';
   activeExtraSubCurriculum = '';
@@ -6852,10 +9705,18 @@ export function __setHarnessState(input) {
   state.progress = input.progress || {};
   state.extra = input.extra || {};
   state.absentByDate = input.absentByDate || {};
+  state.absentSlotsByDate = input.absentSlotsByDate || {};
 }
 export async function __openHarness(row) {
   if (typeof window.openVideoAssignmentPopupForRow !== 'function') throw new Error('open harness not installed');
   return window.openVideoAssignmentPopupForRow(row);
+}
+export function __closeHarness() {
+  if (typeof window.closeVideoAssignmentPopup !== 'function') throw new Error('close harness not installed');
+  window.closeVideoAssignmentPopup();
+}
+export function __blockedMidsHarness() {
+  return { ...activeBlockedMids };
 }
 export async function __saveHarness(options = {}) {
   if (typeof window.saveVideoAssignmentPopup !== 'function') throw new Error('save harness not installed');
@@ -6869,8 +9730,45 @@ export function __renderAutoAssignControlHarness(stu, date) {
   renderAutoAssignControl(stu);
   return globalThis.__elements.autoAssignCountToggle.innerHTML;
 }
+export function __videoMultiSelectionRangeMidsHarness(mids, anchorMid, targetMid) {
+  const rows = (mids || []).map(mid => ({ dataset: { mid: String(mid) } }));
+  return videoMultiSelectionRangeMids(rows, anchorMid, targetMid);
+}
+export function __videoMultiSelectionClickHarness(mids, clicks) {
+  resetVideoMultiSelectionState();
+  globalThis.__videoRows = (mids || []).map(globalThis.__makeVideoSelectionRow);
+  globalThis.__elements.vidSelectionMeta.textContent = '';
+  const clickHandler = globalThis.__elements.chkZone.listeners.click;
+  if (typeof clickHandler !== 'function') throw new Error('video row click handler is missing');
+  for (const click of (clicks || [])) {
+    const row = globalThis.__videoRows.find(candidate => candidate.dataset.mid === String(click.mid));
+    if (!row) continue;
+    clickHandler({
+      target: row,
+      ctrlKey: click.ctrl === true,
+      metaKey: click.meta === true,
+      shiftKey: click.shift === true,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    });
+  }
+  return {
+    selected: (mids || []).map(String).filter(mid => activeVideoMultiSelectedMids.has(mid)),
+    anchor: activeVideoMultiSelectionAnchorMid,
+    meta: globalThis.__elements.vidSelectionMeta.textContent,
+    rows: globalThis.__videoRows.map(row => ({
+      mid: row.dataset.mid,
+      selection: row.dataset.selection,
+      ariaSelected: row.attributes['aria-selected'] || '',
+      selectedClass: row.classList.contains('is-multi-selected'),
+    })),
+  };
+}
 export function __pickAutoVideosHarness(videos, blocked, count) {
   return pickAutoVideos(videos, blocked, count);
+}
+export function __currentCurriculumVideosHarness(stu, videos) {
+  return currentCurriculumVideosForStudent(stu, videos).map(video => String(video.mid));
 }
 export async function __saveAutoAssignCountHarness(count) {
   return saveAutoAssignCountForCurrent(count);
@@ -6887,12 +9785,78 @@ try {
 }
 mod.__initHarness();
 
+ok(
+  mod.__videoMultiSelectionRangeMidsHarness(['m1', 'm2', 'm3', 'm4'], 'm2', 'm4').join('|') === 'm2|m3|m4',
+  'Ctrl+Shift range selection includes both endpoints in forward DOM order'
+);
+ok(
+  mod.__videoMultiSelectionRangeMidsHarness(['m1', 'm2', 'm3', 'm4'], 'm4', 'm2').join('|') === 'm2|m3|m4',
+  'Ctrl+Shift range selection supports a reverse anchor and target'
+);
+ok(
+  mod.__videoMultiSelectionRangeMidsHarness(['m1', 'm2', 'm3'], 'stale-mid', 'm2').join('|') === 'm2',
+  'Ctrl+Shift range selection falls back to the target when the anchor is not visible'
+);
+ok(
+  mod.__videoMultiSelectionRangeMidsHarness(['m1', 'm2', 'm3'], 'm1', 'missing-mid').length === 0,
+  'Ctrl+Shift range selection ignores a target outside the visible rows'
+);
+const forwardRange = mod.__videoMultiSelectionClickHarness(
+  ['m1', 'm2', 'm3', 'm4', 'm5'],
+  [{ mid: 'm2', ctrl: true }, { mid: 'm5', ctrl: true, shift: true }]
+);
+ok(forwardRange.selected.join('|') === 'm2|m3|m4|m5', 'actual Ctrl+Shift click selects the inclusive forward row range');
+ok(forwardRange.anchor === 'm2', 'range selection preserves the original Ctrl-click anchor');
+ok(forwardRange.meta.startsWith('선택 4개'), 'range selection updates the visible selection count');
+ok(
+  forwardRange.rows.filter(row => row.selectedClass && row.selection === 'selected' && row.ariaSelected === 'true').length === 4,
+  'range selection updates class, data-selection, and aria-selected on every selected row'
+);
+const additiveReverseRange = mod.__videoMultiSelectionClickHarness(
+  ['m1', 'm2', 'm3', 'm4', 'm5'],
+  [{ mid: 'm1', ctrl: true }, { mid: 'm5', ctrl: true }, { mid: 'm3', ctrl: true, shift: true }]
+);
+ok(
+  additiveReverseRange.selected.join('|') === 'm1|m3|m4|m5',
+  'Ctrl+Shift click adds a reverse range without clearing prior disjoint selections'
+);
+const noAnchorRange = mod.__videoMultiSelectionClickHarness(
+  ['m1', 'm2', 'm3'],
+  [{ mid: 'm2', ctrl: true, shift: true }]
+);
+ok(
+  noAnchorRange.selected.join('|') === 'm2' && noAnchorRange.anchor === 'm2',
+  'Ctrl+Shift click without a visible anchor selects the target and establishes a new anchor'
+);
+
 const students = [{ id: '007', name: '학생7', curriculum: 'ALG', subCurriculum: 'BASE', day1: '토 13:00' }];
 const videos = [
   { mid: 'm1', title: '일차함수', chapter: '1', curriculum: 'ALG', subCurriculum: 'BASE' },
   { mid: 'm2', title: '이차함수', chapter: '2', curriculum: 'ALG', subCurriculum: 'BASE' },
   { mid: 'extra-1', title: '확장 영상', chapter: '7', curriculum: 'ALG', subCurriculum: 'EXTRA' },
 ];
+const curriculumScopeVideos = [
+  { mid: 'able-1', title: '이전 A:ble 영상', chapter: '1', curriculum: 'CALC1', subCurriculum: 'A:Ble' },
+  { mid: 'apex-2', title: '현재 APEX 2', chapter: '2', curriculum: 'CALC1', subCurriculum: 'APEX' },
+  { mid: 'apex-1', title: '현재 APEX 1', chapter: '1', curriculum: 'calc1', subCurriculum: 'apex' },
+  { mid: 'outside-1', title: '커리 외 영상', chapter: '1', curriculum: 'OTHER', subCurriculum: 'APEX' },
+];
+const apexStudent = {
+  id: 'apex-current',
+  name: 'APEX 학생',
+  curriculum: 'CALC1',
+  subCurriculum: 'APEX',
+  autoVideoAssignCount: 2,
+  day1: '금1',
+};
+ok(
+  mod.__currentCurriculumVideosHarness(apexStudent, curriculumScopeVideos).join('|') === 'apex-1|apex-2',
+  'automatic candidates contain only the exact current curriculum in chapter order'
+);
+ok(
+  mod.__currentCurriculumVideosHarness(apexStudent, curriculumScopeVideos.filter(video => video.subCurriculum !== 'APEX' && video.subCurriculum !== 'apex')).length === 0,
+  'an empty APEX catalog never falls back to previous A:ble videos'
+);
 
 const regularStudent = { autoVideoAssignCount: 2, day1: '금1', day2: '월2' };
 const consecutiveStudent = { autoVideoAssignCount: 2, day1: '금1', day2: '금2' };
@@ -6904,7 +9868,13 @@ ok(mod.__effectiveAutoAssignCountHarness(consecutiveStudent, '2026-06-05') === 4
 ok(mod.__effectiveAutoAssignCountHarness(compactConsecutiveStudent, '2026-06-05') === 6, 'three configured videos become six for compact consecutive class labels');
 ok(mod.__effectiveAutoAssignCountHarness(nonConsecutiveStudent, '2026-06-05') === 3, 'non-consecutive slots do not increase auto assignment count');
 ok(mod.__effectiveAutoAssignCountHarness(maxConsecutiveStudent, '2026-06-05') === 12, 'six configured videos become twelve for consecutive classes');
+const partialAbsentStudent = { id: 'partial', autoVideoAssignCount: 2, day1: consecutiveStudent.day1, day2: consecutiveStudent.day2 };
+mod.__setHarnessState({ absentSlotsByDate: { '2026-06-05': { partial: [2] } } });
+ok(mod.__effectiveAutoAssignCountHarness(partialAbsentStudent, '2026-06-05') === 2, 'slot absence does not alter the daily cap');
+mod.__renderAutoAssignControlHarness(partialAbsentStudent, '2026-06-05');
+ok(globalThis.__elements.autoAssignCountLabel.textContent === '2\uac1c', 'slot absence renders the configured count without a consecutive label');
 const autoAssignControlHtml = mod.__renderAutoAssignControlHarness(consecutiveStudent, '2026-06-05');
+ok(globalThis.__elements.autoAssignCountLabel.textContent === '2개 설정 · 연강 자동 4개', 'consecutive classes render the doubled effective count');
 ok(!autoAssignControlHtml.includes('type="range"'), 'auto assignment count no longer uses a range control');
 ok((autoAssignControlHtml.match(/class="auto-count-btn/g) || []).length === 6, 'auto assignment count renders six choice buttons');
 ok(autoAssignControlHtml.includes('data-count="1"') && autoAssignControlHtml.includes('data-count="6"'), 'auto assignment buttons support one through six');
@@ -6937,8 +9907,16 @@ globalThis.__checkboxes = boundaryVideos.map(video => ({
 mod.__setHarnessState({
   sid: 'boundary-student',
   date: '2026-06-05',
-  students: [{ id: 'boundary-student', autoVideoAssignCount: 2, day1: '금1', day2: '금2' }],
+  students: [{
+    id: 'boundary-student',
+    curriculum: 'ALG',
+    subCurriculum: 'BASE',
+    autoVideoAssignCount: 2,
+    day1: '금1',
+    day2: '금2',
+  }],
   videos: boundaryVideos,
+  primaryVideoMids: boundaryVideos.map(video => video.mid),
   activeVideoList: boundaryVideos,
   activeBlockedMids: {},
   allowAutoAssign: true,
@@ -6952,7 +9930,15 @@ await mod.__saveAutoAssignCountHarness(6);
 const countUpdate = calls.find(call => call.url === '/api/update');
 const boundaryPatch = calls.find(call => call.url === '/api/updates/patch');
 ok(countUpdate?.body?.value === 6, 'button selection persists the configured maximum of six');
-ok(boundaryPatch?.body?.entry?.videos?.length === 12, 'button selection re-picks and saves twelve videos for consecutive classes');
+ok(!boundaryPatch, 'button selection never writes an assignment from the browser');
+ok(
+  !calls.some(call => call.url === '/api/updates?readOnly=1'),
+  'button selection never reads or refreshes a future automatic snapshot'
+);
+ok(
+  globalThis.__checkboxes.every(checkbox => checkbox.checked === false),
+  'button selection leaves the opened assignment unchanged'
+);
 
 calls = [];
 globalThis.fetch = async (url, init = {}) => {
@@ -6963,7 +9949,13 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
   if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-05': [] } });
-  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: { 'boundary-1': { completed: true } } });
+  if (value === '/api/progress?sid=auto-existing') {
+    return response({
+      '2026-06-01': { 'auto-existing': { 'boundary-1': 'done' } },
+      '2026-06-05': { 'auto-existing': { 'boundary-2': 'assigned' } },
+    });
+  }
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
   if (value === '/api/updates/patch') return response({ ok: true });
   return response({ ok: true });
 };
@@ -6984,8 +9976,116 @@ mod.__setHarnessState({
 await mod.__openHarness(makeRow('auto-existing', '2026-06-05'));
 const existingAutoRefreshPatch = calls.find(call => call.url === '/api/updates/patch');
 ok(!existingAutoRefreshPatch, 'opening an existing automatic assignment is read-only');
+ok(calls.some(call => call.url === '/api/progress?sid=auto-existing'), 'popup loads the student-wide progress history without a date filter');
+ok(mod.__blockedMidsHarness()['boundary-1'] === true, 'past completed video remains blocked after opening the popup');
 ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-1" checked'), 'existing automatic assignment keeps its first video checked');
 ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-2" checked'), 'existing automatic assignment keeps its second video checked');
+
+mod.__closeHarness();
+calls = [];
+await mod.__openHarness(makeRow('auto-existing', '2026-06-05'));
+ok(calls.some(call => call.url === '/api/progress?sid=auto-existing'), 'reopening reloads the same student-wide progress history');
+ok(!calls.some(call => call.url.startsWith('/api/progress?date=')), 'reopening never narrows auto-assignment history to only the popup date');
+ok(mod.__blockedMidsHarness()['boundary-1'] === true, 'reopening does not reset the past completed-video blocklist');
+ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-1" checked'), 'reopening keeps the persisted first automatic video checked');
+ok(globalThis.__elements.chkZone.innerHTML.includes('value="boundary-2" checked'), 'reopening keeps the persisted second automatic video checked');
+ok(!calls.some(call => call.url === '/api/updates/patch'), 'reopening an existing automatic assignment remains read-only');
+
+calls = [];
+globalThis.__checkboxes = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: {
+      '2026-06-05': {
+        'apex-current': { videos: ['apex-1', 'able-1'], source: 'auto' },
+      },
+    } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-05': [] } });
+  if (value === '/api/progress?sid=apex-current') return response({});
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: 'apex-current',
+  date: '2026-06-05',
+  students: [apexStudent],
+  videos: curriculumScopeVideos,
+  updates: {},
+  progress: {},
+});
+await mod.__openHarness(makeRow('apex-current', '2026-06-05'));
+const staleAutoCurriculumHtml = globalThis.__elements.chkZone.innerHTML;
+ok(staleAutoCurriculumHtml.includes('value="apex-1" checked'), 'current APEX automatic video remains selected');
+ok(!staleAutoCurriculumHtml.includes('value="able-1"'), 'stale automatic A:ble video is not presented as a cross-curriculum extra');
+ok(!calls.some(call => call.url === '/api/updates/patch'), 'filtering a stale automatic snapshot on open remains read-only');
+
+calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: {
+      '2026-06-05': {
+        'apex-current': { videos: ['able-1', 'outside-1'], source: 'manual' },
+      },
+    } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-05': [] } });
+  if (value === '/api/progress?sid=apex-current') return response({});
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: 'apex-current',
+  date: '2026-06-05',
+  students: [apexStudent],
+  videos: curriculumScopeVideos,
+  updates: {},
+  progress: {},
+});
+await mod.__openHarness(makeRow('apex-current', '2026-06-05'));
+const manualCrossCurriculumHtml = globalThis.__elements.chkZone.innerHTML;
+ok(manualCrossCurriculumHtml.includes('value="able-1" checked'), 'manual A:ble addition remains visible for an APEX student');
+ok(manualCrossCurriculumHtml.includes('value="outside-1" checked'), 'manual cross-subject addition remains visible and independent from automatic filtering');
+
+calls = [];
+const apexEmptyVideos = curriculumScopeVideos.filter(video => video.mid === 'able-1' || video.mid === 'outside-1');
+globalThis.fetch = async (url, init = {}) => {
+  calls.push(callRecord(url, init));
+  const value = String(url);
+  if (value === '/api/updates?readOnly=1') {
+    return response({ ok: true, updates: {
+      '2026-06-05': {
+        'apex-current': { videos: ['able-1'], source: 'auto' },
+      },
+    } });
+  }
+  if (value.startsWith('/api/logs/entry?')) return response({ ok: true, entry: {} });
+  if (value === '/api/extra-attend') return response({ ok: true, extra: { '2026-06-05': [] } });
+  if (value === '/api/progress?sid=apex-current') return response({});
+  if (value.startsWith('/api/watch/latest?')) return response({ ok: true, watch: {} });
+  return response({ ok: true });
+};
+mod.__setHarnessState({
+  sid: 'apex-current',
+  date: '2026-06-05',
+  students: [apexStudent],
+  videos: apexEmptyVideos,
+  updates: {},
+  progress: {},
+});
+await mod.__openHarness(makeRow('apex-current', '2026-06-05'));
+ok(!globalThis.__elements.chkZone.innerHTML.includes('value="able-1"'), 'empty APEX popup never falls back to an A:ble row');
+calls = [];
+await mod.__saveAutoAssignCountHarness(2);
+const emptyApexPatch = calls.find(call => call.url === '/api/updates/patch');
+ok(!emptyApexPatch, 'changing auto count never removes or rewrites today\'s stale snapshot');
+ok(calls.some(call => call.url === '/api/update'), 'changing auto count still persists the future daily cap');
 
 calls = [];
 globalThis.__checkboxes = [];
@@ -7268,11 +10368,15 @@ globalThis.document = {
 };
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.js');
+const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
+const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
+  .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js';", "const initTestModal = () => {};");
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{\s*placeSleepingHomeworkRowsLast,\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
+  .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 source = source.replace(
   "  logSave.addEventListener('click', async () => {",
   "  window.__logModalHarnessReapply = reapplyCarriedTestAssignmentForCurrent;\n\n  logSave.addEventListener('click', async () => {",
@@ -7458,7 +10562,8 @@ def run_admin_log_modal_save_policy_source_checks() -> None:
         "contentChanged ? { base } : {}",
         "await patchLogEntry(today, sid, entry, clearKeys",
         "applyLogSaveResult({ date: today, sid, entry, clearKeys, returned, doneFlag, prevDone });",
-        "setLogModalSnapshots(notesNow, hwRows);",
+        "const sleepingHomeworkBooks = collectSleepingHomeworkBooks();",
+        "setLogModalSnapshots(notesNow, hwRows, sleepingHomeworkBooks);",
     ]
     for snippet in save_snippets:
         _assert_unit(snippet in save_block, f"logModal save policy must keep merge-safe step: {snippet}")
@@ -7472,6 +10577,8 @@ def run_admin_log_modal_save_policy_source_checks() -> None:
         "function applyLogSaveResult",
         "if (!doneFlag && prevDone) next.done = true",
         "function setLogModalSnapshots",
+        "const HOMEWORK_SLEEPING_BOOKS_KEY = 'sleepingHomeworkBooks';",
+        "function syncHomeworkSleepingControls()",
     ]:
         _assert_unit(snippet in log_modal_js, f"logModal helper policy must keep merge-safe step: {snippet}")
 
@@ -7597,11 +10704,15 @@ const makeProgressCell = ({ mid, initial, state, explicitNone = '', cleared = ''
 });
 
 const sourcePath = path.join(process.cwd(), 'static/js/admin/features/logModal.js');
+const carryoverSourcePath = path.join(process.cwd(), 'static/js/admin/features/homeworkCarryover.js');
+const carryoverSource = fs.readFileSync(carryoverSourcePath, 'utf8').replace(/^export\s+/gm, '');
 let source = fs.readFileSync(sourcePath, 'utf8')
-  .replace("import { $, toast, postJSON } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg)); const postJSON = async () => ({});")
+  .replace("import { $, toast } from '../core/utils.js';", "const $ = (id) => globalThis.__elements?.[id] || null; const toast = (msg) => globalThis.__toasts.push(String(msg));")
   .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
   .replace("import { getAdminDate } from '../core/adminDate.js';", "const getAdminDate = () => globalThis.__adminDate || '2026-06-06';")
-  .replace("import { initTestModal } from './testModal.js';", "const initTestModal = () => {};");
+  .replace("import { classifySaveConflict } from '../core/saveConflict.js';", "const classifySaveConflict = (data, label) => ({ retryable: data?.retryable === true, message: data?.error || `${label} 저장 충돌` });")
+  .replace(/import \{\s*placeSleepingHomeworkRowsLast,\s*previousHomeworkText,\s*projectBlankHomeworkCheckCarryover,\s*\} from '\.\/homeworkCarryover\.js\?v=[^']+';/, carryoverSource)
+  .replace(/import \{ initTestModal \} from '\.\/testModal\.js\?v=[^']+';/, "const initTestModal = () => {};");
 const harness = `
 export function __initHarness() {
   globalThis.__installModalElements();
@@ -7725,6 +10836,46 @@ console.log('logModal save policy PASS');
 
 
 def run_admin_weekend_slot_behavior_checks() -> None:
+    calendar_source = (ROOT / "static/js/admin/features/calendar.js").read_text(encoding="utf-8")
+    extra_source = (ROOT / "static/js/admin/features/extraModal.js").read_text(encoding="utf-8")
+    demo_source = (ROOT / "static/js/admin/demo/fetch.js").read_text(encoding="utf-8")
+    _assert_unit(
+        "saveWeekendSlotsPatch" in calendar_source
+        and "JSON.stringify({ [dateStr]: perDate })" not in calendar_source,
+        "calendar weekend slot writers use student-scoped patches",
+    )
+    _assert_unit(
+        "saveWeekendSlotsPatch" in extra_source
+        and "JSON.stringify({ [today]: perDay })" not in extra_source,
+        "extra-attendance modal uses student-scoped weekend patches",
+    )
+    _assert_unit(
+        "mergeWeekendSlotsPatch(store, body)" in demo_source,
+        "admin demo mirrors the live nested weekend-slot patch contract",
+    )
+    _assert_unit(
+        "{ date: today, sids: selectedIds }" in extra_source
+        and "{ method: 'PATCH' }" in extra_source
+        and "JSON.stringify(state.extra)" not in extra_source,
+        "extra-attendance modal saves only its frozen date",
+    )
+    _assert_unit(
+        "patchExtraAttendDates" in calendar_source
+        and "postJson('/api/extra-attend'" not in calendar_source
+        and "postMakeupCarryoverSnapshot(next, revision)" in calendar_source
+        and "X-Makeup-Carryover-Revision" in calendar_source,
+        "calendar uses date-scoped extra-attend patches and revision-guarded makeup writes",
+    )
+    _assert_unit(
+        "method === 'PATCH'" in demo_source
+        and "const rawDates = body?.dates" in demo_source
+        and "makeup_revision_conflict" in demo_source,
+        "admin demo mirrors extra-attend patches and makeup revision conflicts",
+    )
+
+    from scripts.verify_makeup_schedule_links import test_makeup_revision_guard
+    test_makeup_revision_guard()
+
     driver = r"""
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7757,70 +10908,37 @@ globalThis.__state = {
 };
 
 let calls = [];
+const sunday = '2026-07-05';
+globalThis.__state = {
+  students: [{ id: 's1', day1: '일1', day2: '일2' }],
+  extra: {},
+  logs: {},
+  absentSlotsByDate: {},
+};
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } }, 503);
-  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
+  if (String(url) === '/api/weekend-slots' && !init.method) return response({ [sunday]: { s1: [1, 2], other: [1] } });
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('', 204);
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: true });
   return response({});
 };
-const stateGetNonOk = await loadStateModule('weekend-get-non-ok');
-let getNonOkRejected = false;
-try {
-  await stateGetNonOk.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
-} catch (err) {
-  getNonOkRejected = true;
-  ok(String(err?.message || '').includes('/api/weekend-slots'), 'GET non-ok error names weekend slots endpoint');
-}
-ok(getNonOkRejected, 'weekend slots GET non-ok rejects');
-ok(!calls.some(call => call.url === '/api/weekend-slots' && call.method === 'POST'), 'weekend slots GET non-ok must not POST');
+const stateSuccess = await loadStateModule('weekend-student-patch');
+await stateSuccess.loadWeekendSlots();
+calls = [];
+await stateSuccess.saveWeekendSlotsFromLabel('s1', '일2', sunday);
+const weekendPost = calls.find(call => call.url === '/api/weekend-slots' && call.method === 'POST');
+ok(weekendPost, 'weekend slots success posts');
+ok(JSON.stringify(weekendPost.body?.[sunday]) === JSON.stringify({ s1: [2] }), 'inline slot edit posts only the edited student');
+ok(!calls.some(call => call.url === '/api/weekend-slots' && call.method === 'GET'), 'inline slot edit does not perform a stale whole-map GET');
+ok(stateSuccess.labelFor(sunday, 's1') === '일2', '일1·일2 can narrow to 일2 immediately');
+ok(globalThis.__state.weekendSlots?.[sunday]?.other?.[0] === 1, 'local student patch preserves another student');
+const orderIndex = calls.findIndex(call => call.url.startsWith('/api/today_order') && call.method === 'DELETE');
+const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
+ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
 
 calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) throw new Error('offline');
-  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
-  return response({});
-};
-const stateGetReject = await loadStateModule('weekend-get-reject');
-let getRejectRejected = false;
-try {
-  await stateGetReject.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
-} catch {
-  getRejectRejected = true;
-}
-ok(getRejectRejected, 'weekend slots GET rejection rejects');
-ok(!calls.some(call => call.url === '/api/weekend-slots' && call.method === 'POST'), 'weekend slots GET rejection must not POST');
-
-calls = [];
-globalThis.fetch = async (url, init = {}) => {
-  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) return {
-    ok: true,
-    status: 200,
-    json: async () => { throw new Error('bad json'); },
-    text: async () => '',
-  };
-  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
-  if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
-  return response({});
-};
-const stateGetBadJson = await loadStateModule('weekend-get-bad-json');
-let getBadJsonRejected = false;
-try {
-  await stateGetBadJson.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
-} catch (err) {
-  getBadJsonRejected = true;
-  ok(String(err?.message || '').includes('/api/weekend-slots'), 'GET bad JSON error names weekend slots endpoint');
-}
-ok(getBadJsonRejected, 'weekend slots GET bad JSON rejects');
-ok(!calls.some(call => call.url === '/api/weekend-slots' && call.method === 'POST'), 'weekend slots GET bad JSON must not POST');
-
-calls = [];
-globalThis.fetch = async (url, init = {}) => {
-  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
   if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('save failed', 500);
   if (String(url).startsWith('/api/today_order')) return response({ ok: true, cleared: false });
   return response({});
@@ -7828,7 +10946,7 @@ globalThis.fetch = async (url, init = {}) => {
 const statePostNonOk = await loadStateModule('weekend-post-non-ok');
 let postNonOkRejected = false;
 try {
-  await statePostNonOk.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
+  await statePostNonOk.saveWeekendSlotsFromLabel('s1', '일2', sunday);
 } catch (err) {
   postNonOkRejected = true;
   ok(String(err?.message || '').includes('/api/weekend-slots'), 'POST non-ok error names weekend slots endpoint');
@@ -7837,29 +10955,61 @@ ok(postNonOkRejected, 'weekend slots POST non-ok rejects');
 ok(!calls.some(call => call.url.startsWith('/api/today_order')), 'weekend slots POST non-ok must not clear today order');
 
 calls = [];
+let resolveStaleLoad;
+globalThis.__state = {
+  students: [{ id: 's1', day1: '일1', day2: '일2' }],
+  extra: {},
+  logs: {},
+  absentSlotsByDate: {},
+};
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': { other: [1] } });
-  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
+  if (String(url) === '/api/weekend-slots' && !init.method) return new Promise(resolve => { resolveStaleLoad = resolve; });
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('', 204);
   if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: true });
   return response({});
 };
-const stateSuccess = await loadStateModule('weekend-success');
-await stateSuccess.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
-const weekendPost = calls.find(call => call.url === '/api/weekend-slots' && call.method === 'POST');
-ok(weekendPost, 'weekend slots success posts');
-ok(Array.isArray(weekendPost.body?.['2026-06-06']?.s1), 'weekend slots success writes sid slots');
-ok(weekendPost.body['2026-06-06'].s1[0] === 2, 'weekend slots success keeps parsed slot');
-ok(Array.isArray(weekendPost.body['2026-06-06'].other), 'weekend slots success preserves same-day existing sid');
-const orderIndex = calls.findIndex(call => call.url.startsWith('/api/today_order') && call.method === 'DELETE');
-const postIndex = calls.findIndex(call => call.url === '/api/weekend-slots' && call.method === 'POST');
-ok(postIndex >= 0 && orderIndex > postIndex, 'today order clears only after weekend slots POST success');
+const stateStaleLoad = await loadStateModule('weekend-stale-load');
+const staleLoad = stateStaleLoad.loadWeekendSlots();
+ok(typeof resolveStaleLoad === 'function', 'stale weekend load is pending before the inline edit');
+await stateStaleLoad.saveWeekendSlotsFromLabel('s1', '일1', sunday);
+resolveStaleLoad(response({ [sunday]: { s1: [1, 2] } }));
+await staleLoad;
+ok(stateStaleLoad.labelFor(sunday, 's1') === '일1', 'a load started before save cannot restore stale 일1·일2 after the 일1 edit');
+
+calls = [];
+const pendingPostResolvers = [];
+globalThis.__state = {
+  students: [{ id: 's1', day1: '일1', day2: '일2' }],
+  extra: {},
+  logs: {},
+  absentSlotsByDate: {},
+};
+globalThis.fetch = async (url, init = {}) => {
+  calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return new Promise(resolve => pendingPostResolvers.push(resolve));
+  if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ ok: true, cleared: true });
+  return response({});
+};
+const stateQueuedSaves = await loadStateModule('weekend-queued-saves');
+const firstSave = stateQueuedSaves.saveWeekendSlotsFromLabel('s1', '일1', sunday);
+const secondSave = stateQueuedSaves.saveWeekendSlotsFromLabel('s1', '일2', sunday);
+await new Promise(resolve => setImmediate(resolve));
+ok(pendingPostResolvers.length === 1, 'overlapping slot edits serialize the first POST');
+pendingPostResolvers[0](response('', 204));
+await new Promise(resolve => setImmediate(resolve));
+ok(pendingPostResolvers.length === 2, 'the second slot POST starts only after the first commits');
+pendingPostResolvers[1](response('', 204));
+await Promise.all([firstSave, secondSave]);
+const queuedPosts = calls.filter(call => call.url === '/api/weekend-slots' && call.method === 'POST');
+ok(queuedPosts[0].body[sunday].s1[0] === 1, 'first queued edit keeps its requested slot');
+ok(queuedPosts[1].body[sunday].s1[0] === 2, 'second queued edit keeps its requested slot');
+ok(stateQueuedSaves.labelFor(sunday, 's1') === '일2', 'last inline edit remains authoritative');
 
 calls = [];
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(String(init.body)) : null });
-  if (String(url) === '/api/weekend-slots' && !init.method) return response({ '2026-06-06': {} });
-  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response({ ok: true });
+  if (String(url) === '/api/weekend-slots' && init.method === 'POST') return response('', 204);
   if (String(url).startsWith('/api/today_order') && init.method === 'DELETE') return response({ error: 'busy' }, 503);
   if (String(url) === '/api/today_order' && !init.method) return response({ '2026-06-07': ['keep'] });
   return response({});
@@ -7869,7 +11019,7 @@ const originalWarn = console.warn;
 console.warn = () => {};
 let partialOrderResult;
 try {
-  partialOrderResult = await statePartialOrder.saveWeekendSlotsFromLabel('s1', '토2', '2026-06-06');
+  partialOrderResult = await statePartialOrder.saveWeekendSlotsFromLabel('s1', '일2', sunday);
 } finally {
   console.warn = originalWarn;
 }
@@ -7985,8 +11135,9 @@ const loadRenderModule = async () => {
     .replace("import { getAdminDate, getRealToday } from '../core/adminDate.js';", "const getAdminDate = () => '2026-06-06'; const getRealToday = () => '2026-06-06';")
     .replace("import { state } from '../core/state.js';", "const state = globalThis.__state;")
     .replace("import { decorateStudentTestRecordButtons } from '../../shared/testRecordDetails.js';", "const decorateStudentTestRecordButtons = async () => {};")
+    .replace("import { ensureOk, sendJson } from '../../shared/api.js';", "const ensureOk = async () => { throw new Error('unexpected JSON response'); }; const sendJson = async () => { throw new Error('unexpected JSON save'); };")
     .replace("import { renderTodayActionButtons, renderTodayDocumentButton } from './todayActionMarkup.js';", "const renderTodayActionButtons = () => ''; const renderTodayDocumentButton = () => '';")
-    .replace(/import \{[\s\S]*?\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
+    .replace(/import \{[^}]*\}\s+from '\.\/today\.state\.js';/, `const yoilOf = () => '토';
 const labelFor = () => '토1';
 const plannedTimeFor = () => '';
 const plannedTimeBase = () => '13:00';
@@ -8041,6 +11192,8 @@ globalThis.document = {
 };
 const host = {
   _listeners: {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
   addEventListener(type, callback) {
     (this._listeners[type] ||= []).push(callback);
   },
@@ -8094,6 +11247,8 @@ ok(reloads === 0, 'slot label failed save does not reload today table');
 
 const doneHost = {
   _listeners: {},
+  querySelector: () => null,
+  querySelectorAll: () => [],
   _html: '',
   set innerHTML(value) { this._html = String(value); },
   get innerHTML() { return this._html; },
@@ -8161,10 +11316,22 @@ def run_unit_checks() -> bool:
         run_admin_date_session_storage_checks,
         run_test_catalog_search_sort_checks,
         run_hover_tooltip_performance_checks,
+        run_admin_latency_contract_checks,
+        run_file_manager_state_checks,
+        run_hub_projection_render_checks,
+        run_assistant_note_http_checks,
+        run_runtime_initialization_contract_checks,
+        run_review_hardening_checks,
         run_export_log_format_checks,
+        run_quick_printer_export_checks,
         run_today_completion_checks,
         run_admin_today_action_reachability_checks,
         run_admin_section_navigation_checks,
+        run_legacy_consumer_cleanup_checks,
+        run_person_identity_checks,
+        run_file_reference_route_checks,
+        run_school_calendar_revision_checks,
+        run_today_order_store_migration_checks,
         run_app_import_smoke_checks,
         run_log_rules_unit_checks,
         run_all_students_linked_books_and_log_popup_source_checks,
@@ -8172,34 +11339,55 @@ def run_unit_checks() -> bool:
         run_student_previous_video_review_rule_unit_checks,
         run_progress_batch_sids_unit_checks,
         run_progress_read_cache_unit_checks,
+        run_progress_route_checks,
+        run_updates_route_checks,
+        run_student_auto_assignment_service_checks,
+        run_student_video_assignment_rule_checks,
         run_video_completion_unit_checks,
         run_video_assignment_snapshot_unit_checks,
         run_video_assignment_route_hook_unit_checks,
+        run_auto_assignment_progress_reconcile_unit_checks,
         run_self_study_assignment_route_unit_checks,
         run_video_assignment_boundary_source_checks,
         run_video_completion_source_checks,
         run_self_study_video_assignment_source_checks,
         run_watch_route_progress_unit_checks,
+        run_video_progress_integration_matrix_checks,
+        run_log_route_checks,
         run_log_repository_unit_checks,
+        run_material_route_checks,
+        run_schedule_override_route_checks,
         run_legacy_test_record_cache_unit_checks,
+        run_test_shared_service_checks,
+        run_announcement_image_access_checks,
         run_student_answer_link_precedence_unit_checks,
+        run_student_bootstrap_route_checks,
+        run_student_bootstrap_state_checks,
+        run_student_announcement_state_checks,
+        run_student_test_presentation_checks,
         run_student_previous_video_review_bootstrap_unit_checks,
         run_student_bootstrap_unit_checks,
-        run_submit_test_assignment_completion_unit_checks,
+        run_retired_test_submission_surface_checks,
         run_admin_tests_record_detail_contract_checks,
         run_admin_tests_record_detail_ui_checks,
         run_admin_tests_record_detail_answer_link_ui_checks,
-        run_submit_test_assignment_round_matching_checks,
+        run_retired_test_submission_assignment_boundary_checks,
         run_student_material_access_scope_checks,
         run_video_manage_id_checks,
+        run_video_mid_change_guard_checks,
+        run_video_catalog_correction_checks,
         run_mobile_touch_target_checks,
-        run_student_training_pack_round_filter_checks,
+        run_student_submission_retirement_and_assignment_checks,
         run_academy_proxy_network_access_checks,
+        run_test_answer_mode_contract_checks,
+        run_student_test_ocr_contract_checks,
         run_absence_test_assignment_transition_unit_checks,
+        run_absence_makeup_integration_matrix_checks,
         run_student_answer_link_render_source_checks,
-        run_unit_test_grading_contract_checks,
+        run_unit_test_answer_material_contract_checks,
         run_catalog_script_safety_source_checks,
         run_catalog_script_temp_file_behavior_checks,
+        run_admin_css_inventory_checks,
         run_admin_css_scope_source_checks,
         run_student_css_scope_source_checks,
         run_shared_css_scope_source_checks,
@@ -8232,15 +11420,7 @@ def run_unit_checks() -> bool:
         run_admin_log_modal_save_policy_behavior_checks,
         run_admin_weekend_slot_behavior_checks,
     ]
-    ok = True
-    for check in checks:
-        try:
-            check()
-            print(f"unit ok: {check.__name__}")
-        except Exception as exc:
-            ok = False
-            print(f"unit failed: {check.__name__}: {exc}", file=sys.stderr)
-    return ok
+    return run_selected_checks(checks)
 
 
 def run_selected_checks(checks: Iterable[Callable[[], None]]) -> bool:
@@ -8337,7 +11517,7 @@ def smoke_paths(date: str, sid: str) -> list[tuple[str, str]]:
         ("progress date/sid", f"/api/progress?{qs}"),
         ("attendance date", f"/api/attendance?{date_qs}"),
         ("contact date", f"/api/contact?{date_qs}"),
-        ("arrive-time date", f"/arrive-time?{date_qs}"),
+        ("arrive-time date", f"/api/arrive-time?{date_qs}"),
     ]
 
     if sid:
@@ -8453,19 +11633,14 @@ def main() -> int:
         help="Run only class-log export format customization and roster regression checks.",
     )
     parser.add_argument(
+        "--only-quick-printer-export",
+        action="store_true",
+        help="Run only quick-printer CSV, carryover history, and popup contract checks.",
+    )
+    parser.add_argument(
         "--only-today-completion",
         action="store_true",
         help="Run only absence recovery convergence and all-date unarchived done checks.",
-    )
-    parser.add_argument(
-        "--only-admin-today-actions",
-        action="store_true",
-        help="Run only admin today/done row action reachability and accessibility checks.",
-    )
-    parser.add_argument(
-        "--only-admin-section-navigation",
-        action="store_true",
-        help="Run only admin section navigation behavior and source checks.",
     )
     parser.add_argument(
         "--only-student-install-guide",
@@ -8533,9 +11708,9 @@ def main() -> int:
         help="Run only student assigned-test answer-link render source checks.",
     )
     parser.add_argument(
-        "--only-submit-test-assignment-completion",
+        "--only-retired-test-submission-surface",
         action="store_true",
-        help="Run only submit-test assignment completion checks.",
+        help="Run only retired student test-submission surface checks.",
     )
     parser.add_argument(
         "--only-admin-tests-record-details",
@@ -8543,14 +11718,14 @@ def main() -> int:
         help="Run only admin test-record wrong-answer detail contract checks.",
     )
     parser.add_argument(
-        "--only-unit-test-grading-contract",
+        "--only-unit-test-answer-material-contract",
         action="store_true",
-        help="Run only the synthetic UNIT grading and answer-link contract checks.",
+        help="Run only the synthetic UNIT answer-material contract checks.",
     )
     parser.add_argument(
-        "--only-unit-test-grading-readiness",
+        "--only-unit-test-answer-material-readiness",
         action="store_true",
-        help="Run only live UNIT catalog grading readiness checks.",
+        help="Run only live UNIT catalog answer-material readiness checks.",
     )
     parser.add_argument(
         "--only-catalog-script-safety-source",
@@ -8630,12 +11805,10 @@ def main() -> int:
         selected_checks.append(run_hover_tooltip_performance_checks)
     if args.only_export_log_format:
         selected_checks.append(run_export_log_format_checks)
+    if args.only_quick_printer_export:
+        selected_checks.append(run_quick_printer_export_checks)
     if args.only_today_completion:
         selected_checks.append(run_today_completion_checks)
-    if args.only_admin_today_actions:
-        selected_checks.append(run_admin_today_action_reachability_checks)
-    if args.only_admin_section_navigation:
-        selected_checks.append(run_admin_section_navigation_checks)
     if args.only_student_install_guide:
         selected_checks.append(run_student_mobile_pwa_flow_checks)
     if args.only_student_mobile_deployment:
@@ -8665,16 +11838,16 @@ def main() -> int:
         selected_checks.append(run_student_answer_link_precedence_unit_checks)
     if args.only_student_answer_link_render_source:
         selected_checks.append(run_student_answer_link_render_source_checks)
-    if args.only_submit_test_assignment_completion:
-        selected_checks.append(run_submit_test_assignment_completion_unit_checks)
+    if args.only_retired_test_submission_surface:
+        selected_checks.append(run_retired_test_submission_surface_checks)
     if args.only_admin_tests_record_details:
         selected_checks.append(run_admin_tests_record_detail_contract_checks)
         selected_checks.append(run_admin_tests_record_detail_ui_checks)
         selected_checks.append(run_admin_tests_record_detail_answer_link_ui_checks)
-    if args.only_unit_test_grading_contract:
-        selected_checks.append(run_unit_test_grading_contract_checks)
-    if args.only_unit_test_grading_readiness:
-        selected_checks.append(run_unit_test_grading_readiness_checks)
+    if args.only_unit_test_answer_material_contract:
+        selected_checks.append(run_unit_test_answer_material_contract_checks)
+    if args.only_unit_test_answer_material_readiness:
+        selected_checks.append(run_unit_test_answer_material_readiness_checks)
     if args.only_catalog_script_safety_source:
         selected_checks.append(run_catalog_script_safety_source_checks)
     if args.only_catalog_script_temp_behavior:

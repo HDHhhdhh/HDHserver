@@ -1,0 +1,59 @@
+{
+  "fixture": "gemini_first_actionable_review_ui_v1",
+  "raw_gemini_payload": {
+    "source": "phase2e_gemini_live",
+    "test_id": "t_unit_daesu_01_lv3_r1",
+    "round": "1",
+    "problem_count": 20,
+    "items": [
+      { "question_no": 1, "status": "review_required", "recognized": "4", "warnings": [], "candidates": ["4"], "final_answer": null, "source": null },
+      { "question_no": 2, "status": "review_required", "recognized": "12", "warnings": [], "candidates": ["12"], "final_answer": null, "source": null },
+      { "question_no": 3, "status": "review_required", "recognized": "3", "warnings": [], "candidates": ["3"], "final_answer": null, "source": null },
+      { "question_no": 4, "status": "review_required", "recognized": "64", "warnings": [], "candidates": ["64"], "final_answer": null, "source": null },
+      { "question_no": 5, "status": "review_required", "recognized": "2", "warnings": [], "candidates": ["2"], "final_answer": null, "source": null },
+      { "question_no": 6, "status": "review_required", "recognized": "9", "warnings": [], "candidates": ["9"], "final_answer": null, "source": null },
+      { "question_no": 7, "status": "review_required", "recognized": "30", "warnings": [], "candidates": ["30"], "final_answer": null, "source": null },
+      { "question_no": 8, "status": "review_required", "recognized": "81", "warnings": [], "candidates": ["81"], "final_answer": null, "source": null },
+      { "question_no": 9, "status": "review_required", "recognized": "4", "warnings": ["multiple_answer_candidates"], "candidates": ["4", "2"], "final_answer": null, "source": null },
+      { "question_no": 10, "status": "review_required", "recognized": "6", "warnings": [], "candidates": ["6"], "final_answer": null, "source": null },
+      { "question_no": 11, "status": "review_required", "recognized": "42", "warnings": [], "candidates": ["42"], "final_answer": null, "source": null },
+      { "question_no": 12, "status": "review_required", "recognized": "3", "warnings": [], "candidates": ["3"], "final_answer": null, "source": null },
+      { "question_no": 13, "status": "review_required", "recognized": "5", "warnings": ["multiple_answer_candidates"], "candidates": ["5", "3"], "final_answer": null, "source": null },
+      { "question_no": 14, "status": "review_required", "recognized": "?", "warnings": ["digit_shape_confusion"], "candidates": ["2", "4"], "final_answer": null, "source": null },
+      { "question_no": 15, "status": "review_required", "recognized": "16", "warnings": ["multiple_answer_candidates"], "candidates": ["16", "18"], "final_answer": null, "source": null },
+      { "question_no": 16, "status": "review_required", "recognized": "?", "warnings": ["overwritten_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 17, "status": "retake_required", "recognized": "?", "warnings": ["unclear_final_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 18, "status": "review_required", "recognized": "90", "warnings": ["multiple_answer_candidates"], "candidates": ["90", "20"], "final_answer": null, "source": null },
+      { "question_no": 19, "status": "retake_required", "recognized": "?", "warnings": ["crop_quality_blurry"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 20, "status": "retake_required", "recognized": "?", "warnings": ["crop_quality_cutoff_risk"], "candidates": [], "final_answer": null, "source": null }
+    ]
+  },
+  "teacher_confirmed_partial_payload": {
+    "source": "phase2e_gemini_live",
+    "test_id": "t_unit_daesu_01_lv3_r1",
+    "round": "1",
+    "problem_count": 20,
+    "items": [
+      { "question_no": 1, "status": "student_selected_candidate", "recognized": "4", "warnings": [], "candidates": [], "final_answer": "4", "source": "student_selected_candidate" },
+      { "question_no": 2, "status": "student_selected_candidate", "recognized": "12", "warnings": [], "candidates": [], "final_answer": "12", "source": "student_selected_candidate" },
+      { "question_no": 3, "status": "student_selected_candidate", "recognized": "3", "warnings": [], "candidates": [], "final_answer": "3", "source": "student_selected_candidate" },
+      { "question_no": 4, "status": "student_selected_candidate", "recognized": "64", "warnings": [], "candidates": [], "final_answer": "64", "source": "student_selected_candidate" },
+      { "question_no": 5, "status": "student_selected_candidate", "recognized": "2", "warnings": [], "candidates": [], "final_answer": "2", "source": "student_selected_candidate" },
+      { "question_no": 6, "status": "student_selected_candidate", "recognized": "9", "warnings": [], "candidates": [], "final_answer": "9", "source": "student_selected_candidate" },
+      { "question_no": 7, "status": "student_selected_candidate", "recognized": "30", "warnings": [], "candidates": [], "final_answer": "30", "source": "student_selected_candidate" },
+      { "question_no": 8, "status": "student_selected_candidate", "recognized": "81", "warnings": [], "candidates": [], "final_answer": "81", "source": "student_selected_candidate" },
+      { "question_no": 9, "status": "student_selected_candidate", "recognized": "4", "warnings": [], "candidates": [], "final_answer": "4", "source": "student_selected_candidate" },
+      { "question_no": 10, "status": "student_selected_candidate", "recognized": "6", "warnings": [], "candidates": [], "final_answer": "6", "source": "student_selected_candidate" },
+      { "question_no": 11, "status": "student_selected_candidate", "recognized": "42", "warnings": [], "candidates": [], "final_answer": "42", "source": "student_selected_candidate" },
+      { "question_no": 12, "status": "student_selected_candidate", "recognized": "3", "warnings": [], "candidates": [], "final_answer": "3", "source": "student_selected_candidate" },
+      { "question_no": 13, "status": "review_required", "recognized": "5", "warnings": ["multiple_answer_candidates"], "candidates": ["5", "3"], "final_answer": null, "source": null },
+      { "question_no": 14, "status": "review_required", "recognized": "?", "warnings": ["digit_shape_confusion"], "candidates": ["2", "4"], "final_answer": null, "source": null },
+      { "question_no": 15, "status": "review_required", "recognized": "16", "warnings": ["multiple_answer_candidates"], "candidates": ["16", "18"], "final_answer": null, "source": null },
+      { "question_no": 16, "status": "review_required", "recognized": "?", "warnings": ["overwritten_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 17, "status": "retake_required", "recognized": "?", "warnings": ["unclear_final_answer"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 18, "status": "review_required", "recognized": "90", "warnings": ["multiple_answer_candidates"], "candidates": ["90", "20"], "final_answer": null, "source": null },
+      { "question_no": 19, "status": "retake_required", "recognized": "?", "warnings": ["crop_quality_blurry"], "candidates": [], "final_answer": null, "source": null },
+      { "question_no": 20, "status": "retake_required", "recognized": "?", "warnings": ["crop_quality_cutoff_risk"], "candidates": [], "final_answer": null, "source": null }
+    ]
+  }
+}

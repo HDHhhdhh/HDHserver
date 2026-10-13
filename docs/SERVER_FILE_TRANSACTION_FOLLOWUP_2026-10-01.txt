@@ -1,0 +1,129 @@
+파일 filesystem / material journal 후속 보고 / 2026-10-01
+범위: Hub 후속 항목 12. 소스 수정과 OS Temp fixture 검증 완료. 운영 반영/통합 suite는 Hub 단계.
+
+결론
+rename, move, delete, upload 모두에서 filesystem 변경 직후, material journal 생성 전 os._exit(86)를 주입하면 파일만 바뀌고 세 JSON은 원래 바이트인 불일치를 재현했다.
+수정 후 동일 지점은 파일을 원상복구한다. durable committing marker 이후의 종료는 filesystem을 유지하고 세 JSON을 목표 상태로 완료한다.
+기존 pre-commit 동기 실패 rollback / metadata commit 이후 roll-forward 의미를 유지했다. 새 운영 정책 선택이 필요한 분기는 없었다.
+
+읽은 지침과 기준
+AGENTS.md, core/AGENTS.md, routes/AGENTS.md, scripts/AGENTS.md.
+docs/SERVER_RULES_INDEX.md RULE-MATERIAL-001, PROJECT_FUNCTIONS_AND_LOGIC.md §13, LOGIC_DECISION_LEDGER.md D-06A/D-07/D-08.
+SERVER_PROJECT_REVIEW_2026-10-01.txt와 SERVER_PROJECT_FOLLOWUP_2026-10-01.txt의 항목 12 및 소유권.
+작업 시작 git status --short: staged 없음, 기존 unstaged/untracked 다수. routes/api_fs.py와 core/material_state.py는 clean이었다.
+scripts/verify_file_reference_routes.py는 시작부터 1줄 변경 상태였으므로 수정하지 않았다. 다른 기존 dirty 파일을 되돌리거나 수정하지 않았다.
+개별 task 시작 git 상태는 이 chat의 첫 도구 출력에 기록되어 있다. Hub와 다른 전담 chat의 동시 변경은 이 작업 변경과 분리한다.
+
+이 작업에서 변경한 파일 (총 6개)
+1. routes/api_fs.py
+   - rename/move/delete/upload가 파일 변경 전 복구 intent를 기록한다.
+   - move/delete는 같은 filesystem의 원자 rename을 사용한다. copy/delete fallback은 사용하지 않는다.
+   - 업로드는 private staging에서 저장·fsync한 성공 파일만 publish한다. 부분 업로드 실패는 실제 files/와 DIR 배정에 남지 않는다.
+   - delete/upload의 per-item 오류 응답을 유지한다. 중복/하위 delete 대상은 같은 inode를 한 번만 staging한다.
+   - pre-commit rollback을 락 안에서 수행하며, committed 오류에는 파일을 복구하지 않는다.
+   - tree GET도 shared journal을 복구한 뒤 조회한다.
+2. core/material_state.py
+   - material_state_lock이 file-tree → 결정적으로 정렬된 세 store 락을 함께 소유한다.
+   - 기존 version 1 metadata journal / version 1 last-good snapshot을 계속 읽는다.
+   - 파일 거래는 같은 material_state_transaction.json의 version 2, prepared/committing phase로 기록한다.
+   - prepared는 원래 파일로 rollback하며 주 JSON 바이트를 다시 저장하지 않는다.
+   - committing은 세 store를 roll-forward하고 private staging을 정리한 뒤 journal을 지운다.
+   - intent 기록 후 primary store가 손상되어도 commit 직전 strict read가 거부하여 damaged bytes와 원래 파일을 보존한다.
+   - 읽기/저장/복구의 optional files_dir 인자를 제공하되 기본은 materials_path.parent/files이다.
+3. core/file_material_transaction.py (새 소형 모듈)
+   - Flask/core.paths import 없이 injected root/store 경로의 filesystem plan을 검증한다.
+   - store/root binding, segment 안전 경로, subtree 중복, device/inode/type identity를 검증한다.
+   - 교체된 파일, source/target 동시 존재, 누락 등의 모호한 상태에서 덮어쓰지 않고 fail closed한다.
+   - staging은 files root의 parent/instance/.file-delete-stage-<id> 또는 .file-upload-stage-<id>에 둔다.
+     기존 ignored instance namespace를 사용하며 새 runtime JSON filename이나 .gitignore 변경이 없다.
+4. scripts/verify_file_transaction_crash.py (새 전용 검증)
+5. scripts/verify_file_transaction_routes.py (새 전용 검증)
+6. docs/SERVER_FILE_TRANSACTION_FOLLOWUP_2026-10-01.txt (이 보고)
+
+보존한 계약
+교재/교재실 segment 분리, Korean 이름, query/fragment, material/assignment/page-folder unknown fields와 unknown tokens.
+materials + assignments + pageFolders coherent read/revision, If-Match 428/409, malformed store/journal의 last-good(없으면 empty read-only) 조회 및 mutation 503.
+public announcement 파일 gate를 수정하지 않았다. endpoint와 성공 응답 key를 변경하지 않았다.
+app.py, AGENTS, 공용 harness/기존 규칙 문서, 기존 전용 verifier, static 코드는 수정하지 않았다.
+
+재현 전/후와 독립 검증
+모든 fixture는 OS TemporaryDirectory에서 synthetic JSON/file bytes를 만들고 core.paths를 먼저 stub한다. app import, 실제 network listener, 운영 데이터 seed/read/write가 없다.
+기대 state는 production reference/revision helper에서 만들지 않는 hand-written literal이고, filesystem bytes와 stdlib SHA-256로 외부 관찰한다.
+실제 source의 Blueprint + Flask test_client, 실제 OS rename/save, abrupt subprocess exit와 새 process recovery를 실행한다.
+crash fixture lease는 종료된 해당 child PID 소유를 확인한 뒤 mtime을 60초 과거로 바꿔 실제 stale-lock recovery를 실행한다. 운영 lease와 storage의 grace/timeout 규칙은 바꾸지 않았다.
+
+전 source baseline:
+C:\Users\주인님\AppData\Local\Temp\server-file-transaction-before-20261001-9aa059ded19248b9b0e40545a97ddf0b
+첫 read에서 보관한 material_state.py/api_fs.py 두 source만 Temp에 저장했다. runtime data는 포함하지 않는다.
+
+명령 1 (negative control, 수정 후에도 전 source로 독립 재실행):
+python -X utf8 -u scripts/verify_file_transaction_crash.py --expect-gap --baseline-source-root "C:\Users\주인님\AppData\Local\Temp\server-file-transaction-before-20261001-9aa059ded19248b9b0e40545a97ddf0b"
+결과: exit 0, rename/move/delete/upload 모두 REPRO.
+관찰: changed files + original three-store bytes/hash + no recovery journal. 초기 수정 전에도 같은 4개 gap을 직접 재현했다.
+
+명령 2:
+python -X utf8 -u scripts/verify_file_transaction_crash.py
+결과: exit 0, 50 fixture scenarios PASS.
+42 phase/success cases: intent 생성 직후, 첫 filesystem 변경 직후, save 직전, committing marker 직후,
+각 1/2/3 store 저장 직후, after last-good, journal clear 직전, 정상 성공, upload partial stream/ready staging.
+8 repeated-recovery cases: 네 작업 각각 rollback 첫 변경 뒤 재종료 + forward recovery 두 번째 store 뒤 재종료.
+두 번째 새 process가 완료하며 이후 recovery도 idempotent다. 새 파일의 정확한 bytes, 기존 JSON bytes/hash 또는 literal 최종 state, staging/journal cleanup을 확인했다.
+
+명령 3:
+python -X utf8 -u scripts/verify_file_transaction_routes.py
+결과: exit 0, 41 실제 route fixture scenarios PASS.
+동기 pre-commit 실패 4개, RuntimeError/typed recovery-required post-commit 오류 8개, damaged store/journal 무쓰기 8개,
+intent 뒤 store 손상 4개, tree/material/assignment GET 복구 6개, delete/upload 부분 실패 2개,
+DIR membership 없는 upload 2개, malformed/root/store binding/traversal/inode replacement/phase fault 6개,
+외부 file-tree lease에 막힌 material reader가 metadata 락을 먼저 잡지 않는 실제 thread 관찰 1개.
+모호한 file intent는 read 200 + degraded header + literal last-good, 네 file writer 및 material POST는 503과 byte/hash 불변이다.
+
+기존 관련 회귀 (core.paths stub + Temp mirror 경로 설치 후 실행):
+python -X utf8 -
+실행 내용:
+import pathlib, tempfile
+from scripts.verify_file_transaction_crash import install_paths
+with tempfile.TemporaryDirectory(prefix='file-material-existing-gates-') as td:
+    install_paths(pathlib.Path(td))
+    from scripts.verify_file_reference_routes import main as verify_files
+    from scripts.verify_material_routes import main as verify_materials
+    assert verify_files() == 0
+    assert verify_materials() == 0
+결과: exit 0, 두 기존 main PASS (순수 참조/회복/한글/root move/unknown/old version 1 journal,
+If-Match/독립 revision/degraded GET/실패 byte hash gates 포함).
+예상 fault injection의 500/503 로그는 의도된 검사 결과다.
+
+구문/UTF-8/patch 검사:
+수정 Python source 5개에 ast.parse + compile(source, path, 'exec') + replacement character 부재: PASS.
+git diff --check -- routes/api_fs.py core/material_state.py: PASS.
+python -m py_compile core/material_state.py core/file_material_transaction.py routes/api_fs.py scripts/verify_file_transaction_crash.py:
+앞의 source compile 진행 뒤 scripts/__pycache__/verify_file_transaction_crash.cpython-313.pyc.<suffix>에 [Errno 13] Permission denied, 명령 exit 1.
+ACL 변경, cache 삭제, 다른 output 경로에 bytecode 쓰기 재시도는 하지 않았다. 대신 파일 쓰기 없는 in-memory compile과 실제 source route/process 실행을 완료했다.
+이 error를 py_compile PASS로 기록하지 않는다.
+
+Hub 통합에 필요한 사항
+- app.py의 기존 recover_material_state_if_needed(MAT_PATH, ASN_PATH, PAGE_FOLDERS_PATH) startup hook이 version 2도 복구한다.
+  현재 canonical FILES_DIR == MAT_PATH.parent/files라서 필수 app.py 변경은 없다.
+  별도 files root를 주입하는 fixture/향후 wiring이라면 optional files_dir 인자를 함께 전달한다.
+- material_state_lock은 이제 file-tree lease도 소유하므로 외부에서 동일 file_lock(FILES_DIR)을 중첩하지 않는다.
+  저장소 전체 rg에서 실제 기존 중첩 caller는 api_fs였으며 이 작업에서 제거했다.
+- Hub가 소유한 verify_refactor_safety.py 기본 suite에 새 두 verifier를 추가하고 full non-smoke suite를 실행할 것을 권한다.
+  Hub의 source-freeze 전 default suite 금지 지시를 따랐으므로 이 thread는 full suite를 실행하지 않았다.
+- 규칙 owner에서 D-07/§13 설명에 prepared undo intent → committing forward recovery 및 instance staging을 반영하면 된다.
+- 실제 app startup/관리형 8004/두-browser file manager와 운영 rollout은 Hub가 진행할 별도 gate다.
+  이 thread의 test_client PASS를 해당 gate 또는 운영 반영 완료로 간주하지 않는다.
+
+한계/운영 상태
+- 검증은 프로세스 crash/restart를 다룬다. 전원 손실과 volume corruption에 대한 hardware durability 보증은 아니다.
+- inode identity가 불안정한 filesystem, manual replacement, 잘못된 journal/path binding은 자동 복구 대신 관련 쓰기를 차단한다.
+- core.storage의 기존 30초 stale lease grace/15초 acquisition timeout은 그대로다. 실제 abrupt exit 직후에는 grace 동안 read degraded/write unavailable일 수 있다.
+- 이미 journal 없이 발생한 과거 rename/move/orphan staging 불일치를 이 패치가 소급 추정하여 수리하지 않는다. live repair는 별도 진단/승인된 maintenance/backup 대상이다.
+- source와 parent/instance staging 사이 rename이 같은 filesystem이어야 한다. cross-volume copy/delete를 조용히 시도하지 않으며 실패 시 prepared rollback/fail closed한다.
+- 운영 8003/8004 lifecycle, runtime data/DB/files, auth, commit/stage/push를 수행하지 않았다. 이 thread의 출력/쓰기 대상은 위 source/report, OS Temp synthetic fixtures/source baseline과 Python cache뿐이다.
+- 하위 에이전트는 사용하지 않았다.
+
+Git 구분
+최종 검증 시 전체 checkout 상태: staged 0 / unstaged 145 / untracked 39 (보고서 생성 직전, concurrent Hub 변경 포함).
+이 thread의 intended source: tracked 변경 routes/api_fs.py, core/material_state.py / new core/file_material_transaction.py, scripts/verify_file_transaction_crash.py, scripts/verify_file_transaction_routes.py / new 이 보고서.
+그 외 pre-existing/concurrent code 변경은 이 thread 소유가 아니며 staging/unstaging/revert하지 않았다.
+이 thread가 변경한 운영 runtime data는 없다. 진행 중인 운영/타 thread 전체 데이터 상태의 hash는 조사하지 않았다.

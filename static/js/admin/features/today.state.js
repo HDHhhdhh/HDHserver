@@ -8,9 +8,7 @@
 //   -> patch가 done을 명시(done:false 포함)하면 그 값을 존중
 //   -> 단, patch가 done을 언급하지 않을 때만(prev done/하원흔적) done 유지
 //
-// ✅ FIX (arrive-time URL)
-// - Flask bp_api_arrive_time가 url_prefix 없이 등록된 경우 실제 경로는 /arrive-time 이므로
-//   ARRIVE_URL을 /arrive-time 으로 맞춤 (기존 /api/arrive-time 불일치 가능성)
+// - 등원시간 API는 표준 `/api/arrive-time` 경로만 사용
 
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
@@ -47,7 +45,22 @@ export function nowHHMM() {
 export function nowISO() { return new Date().toISOString(); }
 
 export function yoilOf(dateStr) { return WCHR[new Date(dateStr).getDay()]; }
+let studentLookup = null;
+export function withStudentLookup(project) {
+  const previous = studentLookup;
+  const students = state.students || [];
+  const bySid = new Map();
+  for (const student of students) {
+    const sid = String(student.id);
+    if (!bySid.has(sid)) bySid.set(sid, student);
+  }
+  // The projection is synchronous; never retain a roster index across an await or refresh.
+  studentLookup = { students, bySid };
+  try { return project(); }
+  finally { studentLookup = previous; }
+}
 export function getStudent(sid) {
+  if (studentLookup?.students === state.students) return studentLookup.bySid.get(String(sid));
   return (state.students || []).find(x => String(x.id) === String(sid));
 }
 export function dayValues(stu) {
@@ -77,6 +90,35 @@ export function minutesFromTimeStr(str) {
 // ─────────────────────────────────────────────
 // logs.patch (유실 방지)
 // ─────────────────────────────────────────────
+function applyLogPatchLocal(dateKey, sid, entry, clearKeys = null, serverEntry = null) {
+  state.logs = state.logs || {};
+  state.logs[dateKey] = state.logs[dateKey] || {};
+  const ksid = String(sid);
+
+  const prev = state.logs[dateKey][ksid] || {};
+  const hasServerEntry = !!(serverEntry && typeof serverEntry === 'object');
+  const patch = hasServerEntry ? serverEntry : (entry || {});
+  const next = hasServerEntry ? { ...serverEntry } : { ...prev, ...patch };
+
+  if (Array.isArray(clearKeys)) {
+    for (const k of clearKeys) delete next[String(k)];
+  }
+
+  const clearsDone = Array.isArray(clearKeys) && clearKeys.map(String).includes('done');
+  const patchMentionsDone = Object.prototype.hasOwnProperty.call(patch, 'done');
+  const prevWasDone = truthy(prev?.done);
+  const hasLeaveHint =
+    !!(prev?.leaveTime || prev?.leaveAt || prev?.doneTime || next?.leaveTime || next?.leaveAt || next?.doneTime);
+
+  if (!clearsDone && !patchMentionsDone && (prevWasDone || hasLeaveHint)) next.done = true;
+
+  const patchMentionsArchived = Object.prototype.hasOwnProperty.call(patch, 'archived');
+  if (patchMentionsDone && truthy(next.done) && !patchMentionsArchived) delete next.archived;
+
+  state.logs[dateKey][ksid] = next;
+  return next;
+}
+
 export async function patchLog(dateKey, sid, entry, clearKeys = null) {
   const body = { date: dateKey, sid: String(sid), entry: entry || {} };
   if (Array.isArray(clearKeys) && clearKeys.length) body.__clear = clearKeys;
@@ -108,47 +150,33 @@ export async function patchLog(dateKey, sid, entry, clearKeys = null) {
     }
   } catch { /* ignore */ }
 
-  // 로컬 state 즉시 반영
-  state.logs = state.logs || {};
-  state.logs[dateKey] = state.logs[dateKey] || {};
-  const ksid = String(sid);
+  applyLogPatchLocal(dateKey, sid, entry, clearKeys, serverEntry);
+}
 
-  const prev = state.logs[dateKey][ksid] || {};
-  const hasServerEntry = !!(serverEntry && typeof serverEntry === 'object');
-  const patch = hasServerEntry ? serverEntry : (entry || {});
-  const next = hasServerEntry ? { ...serverEntry } : { ...prev, ...patch };
+export async function patchLogsBatch(patches) {
+  const rows = Array.isArray(patches) ? patches.filter(row => row && typeof row === 'object') : [];
+  if (!rows.length) return { ok: true, count: 0 };
 
-  // clearKeys 반영
-  if (Array.isArray(clearKeys)) {
-    for (const k of clearKeys) delete next[String(k)];
+  const payload = rows.map(row => ({
+    date: String(row.date || '').trim(),
+    sid: String(row.sid || '').trim(),
+    entry: row.entry && typeof row.entry === 'object' ? row.entry : {},
+    ...(Array.isArray(row.clearKeys) && row.clearKeys.length ? { __clear: row.clearKeys } : {}),
+  }));
+  const res = await fetch('/api/logs/patch-batch', {
+    method: 'POST',
+    headers: CT,
+    body: JSON.stringify({ patches: payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error || `logs/patch-batch failed: ${res.status}`);
   }
 
-  // ✅ 핵심: "done 상태에서 부분 patch"로 done이 사라지는 케이스 방지
-  // 단, "하원 취소(done:false)"를 지원하려면 done을 명시한 patch는 존중해야 함.
-  const clearsDone = Array.isArray(clearKeys) && clearKeys.map(String).includes('done');
-  const patchMentionsDone = Object.prototype.hasOwnProperty.call(patch, 'done');
-  const prevWasDone = truthy(prev?.done);
-
-  // 하원 흔적: prev 또는 merge된 next 둘 중 하나라도 있으면 "하원 상태로 봄"
-  const hasLeaveHint =
-    !!(prev?.leaveTime || prev?.leaveAt || prev?.doneTime || next?.leaveTime || next?.leaveAt || next?.doneTime);
-
-  // (A) patch가 done을 언급하지 않으면: 기존 done/하원흔적 있으면 done 유지
-  //     (부분 patch가 done을 떨어뜨리는 문제 방지)
-  if (!clearsDone && !patchMentionsDone) {
-    if (prevWasDone || hasLeaveHint) next.done = true;
-  }
-
-  const patchMentionsArchived = Object.prototype.hasOwnProperty.call(patch, 'archived');
-  if (patchMentionsDone && truthy(next.done) && !patchMentionsArchived) {
-    delete next.archived;
-  }
-
-  // (B) ✅ 하원 취소 지원:
-  //     patch가 done을 명시(done:false 포함)하면 그 값 그대로 둔다.
-  //     (기존처럼 done:false를 강제로 true로 바꾸지 않음)
-
-  state.logs[dateKey][ksid] = next;
+  rows.forEach(row => {
+    applyLogPatchLocal(row.date, row.sid, row.entry, row.clearKeys);
+  });
+  return data;
 }
 
 export function getLeaveTime(dateKey, sid) {
@@ -254,6 +282,9 @@ export async function setLogFlagRemote(dateKey, sid, field, checked) {
 // weekend-slots
 // ─────────────────────────────────────────────
 export let WEEKEND_SLOTS = {}; // { "YYYY-MM-DD": { sid: [1,2] | 1 } }
+let _weekendSlotsRevision = 0;
+let _weekendSlotsPendingWrites = 0;
+let _weekendSlotsWriteTail = Promise.resolve();
 
 function isWeekendDate(dateStr) {
   const w = yoilOf(dateStr);
@@ -275,13 +306,17 @@ function publishWeekendSlots() {
 }
 
 export async function loadWeekendSlots() {
+  const revision = _weekendSlotsRevision;
   try {
-    WEEKEND_SLOTS = await fetch('/api/weekend-slots', { cache: 'no-store' }).then(r => r.json());
-    if (!WEEKEND_SLOTS || typeof WEEKEND_SLOTS !== 'object') WEEKEND_SLOTS = {};
-  } catch {
-    WEEKEND_SLOTS = {};
-  }
-  publishWeekendSlots();
+    const response = await fetch('/api/weekend-slots', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`/api/weekend-slots load failed: ${response.status}`);
+    let next = await response.json();
+    if (!next || typeof next !== 'object' || Array.isArray(next)) next = {};
+    if (revision !== _weekendSlotsRevision || _weekendSlotsPendingWrites > 0) return WEEKEND_SLOTS;
+    WEEKEND_SLOTS = next;
+    publishWeekendSlots();
+  } catch {}
+  return WEEKEND_SLOTS;
 }
 
 export function parseSlotsFromText(txt, dateStr = '') {
@@ -302,6 +337,61 @@ function normalizeSlotValue(raw, dateStr = '') {
   const parsed = parseInt(String(raw ?? '').trim(), 10);
   if (Number.isInteger(parsed) && isAllowedSlotNumber(parsed, dateStr)) return [parsed];
   return [];
+}
+
+function applyWeekendSlotsPatch(dateStr, mapping) {
+  const next = { ...(WEEKEND_SLOTS || {}) };
+  const day = { ...(next[dateStr] || {}) };
+  Object.entries(mapping || {}).forEach(([sid, raw]) => {
+    const slots = normalizeSlotValue(raw, dateStr);
+    if (slots.length) day[String(sid)] = slots;
+    else delete day[String(sid)];
+  });
+  if (Object.keys(day).length) next[dateStr] = day;
+  else delete next[dateStr];
+  WEEKEND_SLOTS = next;
+  publishWeekendSlots();
+}
+
+export function saveWeekendSlotsPatch(dateKey, mapping) {
+  const dateStr = String(dateKey || '').trim();
+  if (!dateStr || !mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+    return Promise.reject(new Error('invalid weekend slots patch'));
+  }
+  const patch = {};
+  Object.entries(mapping).forEach(([sid, raw]) => {
+    const sidKey = String(sid || '').trim();
+    if (!sidKey) return;
+    const slots = normalizeSlotValue(raw, dateStr);
+    patch[sidKey] = slots.length ? slots : [];
+  });
+  if (!Object.keys(patch).length) return Promise.resolve({ saved: false });
+
+  const run = _weekendSlotsWriteTail.catch(() => {}).then(async () => {
+    _weekendSlotsPendingWrites += 1;
+    _weekendSlotsRevision += 1;
+    try {
+      const response = await fetch('/api/weekend-slots', {
+        method: 'POST',
+        headers: CT,
+        body: JSON.stringify({ [dateStr]: patch }),
+      });
+      if (!response.ok) {
+        let msg = '';
+        try { msg = await response.text(); } catch {}
+        throw new Error(`/api/weekend-slots save failed: ${response.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
+      }
+      _weekendSlotsRevision += 1;
+      applyWeekendSlotsPatch(dateStr, patch);
+      return { saved: true };
+    } finally {
+      _weekendSlotsPendingWrites -= 1;
+    }
+  });
+  _weekendSlotsWriteTail = run;
+  return run.finally(() => {
+    if (_weekendSlotsWriteTail === run) _weekendSlotsWriteTail = Promise.resolve();
+  });
 }
 
 function regularSlotsForStudent(dateStr, sid) {
@@ -469,15 +559,24 @@ export function plannedTimeSlotDefaultFromLabel(dateStr, sid, labelText) {
 // today_order (드래그 순서)
 // ─────────────────────────────────────────────
 let _orderMap = null; // { "YYYY-MM-DD": ["sid", ...] }
+let _orderMutationEpoch = 0;
 
 export async function loadOrderMap(options = {}) {
   if (_orderMap && !options.force) return _orderMap;
-  try { _orderMap = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json()); }
-  catch { _orderMap = {}; }
+  const epoch = _orderMutationEpoch;
+  try {
+    const loaded = await fetch('/api/today_order', { cache: 'no-store' }).then(r => r.json());
+    if (epoch === _orderMutationEpoch) _orderMap = loaded;
+  } catch {
+    if (epoch === _orderMutationEpoch) _orderMap = {};
+  }
   return _orderMap;
 }
+export function getSavedOrder(dateKey) {
+  return (_orderMap?.[dateKey] || []).map(String);
+}
 export function applySavedOrder(list, dateKey) {
-  const saved = (_orderMap?.[dateKey] || []).map(String);
+  const saved = getSavedOrder(dateKey);
   if (!saved.length) return list;
 
   const byId = new Map(list.map(s => [String(s.id), s]));
@@ -504,6 +603,7 @@ export async function saveOrder(dateKey, newOrderIds) {
   if (!response.ok) throw new Error(`/api/today_order save failed: ${response.status}`);
   const payload = await response.json();
   const savedOrder = Array.isArray(payload?.order) ? payload.order.map(String) : order;
+  _orderMutationEpoch++;
   if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
     _orderMap = { ..._orderMap, [date]: savedOrder };
   } else {
@@ -518,6 +618,7 @@ export async function clearTodayOrder(dateKey) {
   });
   if (!response.ok) throw new Error(`/api/today_order clear failed: ${response.status}`);
   const payload = await response.json();
+  _orderMutationEpoch++;
   if (_orderMap && typeof _orderMap === 'object' && !Array.isArray(_orderMap)) {
     _orderMap = { ..._orderMap };
     delete _orderMap[date];
@@ -527,35 +628,8 @@ export async function clearTodayOrder(dateKey) {
 
 export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
   const dateStr = dateKey || getAdminDate();
-
-  const latestRes = await fetch('/api/weekend-slots', { cache: 'no-store' });
-  if (!latestRes.ok) {
-    throw new Error(`/api/weekend-slots load failed: ${latestRes.status}`);
-  }
-  let weekend = {};
-  try { weekend = await latestRes.json(); } catch (e) {
-    throw new Error(`/api/weekend-slots bad JSON: ${e?.message || e}`);
-  }
-  if (!weekend || typeof weekend !== 'object') weekend = {};
-
-  const perDay = (weekend[dateStr] && typeof weekend[dateStr] === 'object')
-    ? { ...weekend[dateStr] }
-    : {};
   const slots = parseSlotsFromText(labelText, dateStr);
-
-  if (slots.length) perDay[String(sid)] = slots;
-  else delete perDay[String(sid)];
-
-  const saveRes = await fetch('/api/weekend-slots', {
-    method: 'POST',
-    headers: CT,
-    body: JSON.stringify({ [dateStr]: perDay }),
-  });
-  if (!saveRes.ok) {
-    let msg = '';
-    try { msg = await saveRes.text(); } catch {}
-    throw new Error(`/api/weekend-slots save failed: ${saveRes.status}${msg ? ` ${msg.slice(0, 200)}` : ''}`);
-  }
+  await saveWeekendSlotsPatch(dateStr, { [String(sid)]: slots });
 
   let orderReset = true;
   try {
@@ -564,7 +638,6 @@ export async function saveWeekendSlotsFromLabel(sid, labelText, dateKey) {
     orderReset = false;
     console.warn('[weekend slots] today order reset failed:', error);
   }
-  await loadWeekendSlots();
   await loadOrderMap({ force: true });
   return { saved: true, orderReset };
 }
@@ -660,8 +733,8 @@ export function isContacted(dateKey, sid) {
 // ─────────────────────────────────────────────
 // arrive-time override (서버 + 로컬백업)
 // ─────────────────────────────────────────────
-// ✅ 서버 bp_api_arrive_time 경로가 /arrive-time 로 등록된 경우에 맞춤
-const ARRIVE_URL = '/arrive-time';
+// 서버 표준 API 경로
+const ARRIVE_URL = '/api/arrive-time';
 const ARRIVE_PREFIX = 'arrive_time:';
 const _arriveCache = new Map();      // dateKey -> { sid:"HH:MM", ... }
 
@@ -725,11 +798,15 @@ export function getArriveOverride(dateKey, sid) {
   return m[String(sid)] ?? '';
 }
 export function setArriveOverride(dateKey, sid, value) {
+  setArriveOverrides(dateKey, { [String(sid)]: value });
+}
+export function setArriveOverrides(dateKey, patch) {
   const m = loadArriveMap(dateKey) || {};
-  const k = String(sid);
-  const v = (value || '').trim();
-  if (v) m[k] = v;
-  else delete m[k];
+  for (const [k, value] of Object.entries(patch)) {
+    const v = (value || '').trim();
+    if (v) m[k] = v;
+    else delete m[k];
+  }
 
   _arriveCache.set(dateKey, m);
   saveArriveMapLocal(dateKey, m);

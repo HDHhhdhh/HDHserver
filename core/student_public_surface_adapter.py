@@ -123,8 +123,6 @@ class StudentPublicSurface:
     def _session(self, decision: SurfaceDecision) -> SessionIdentity | None:
         token = request.cookies.get(self.config.session_cookie_name)
         session = self.session_resolver(token) if isinstance(token, str) else None
-        if decision.requires_session and session is None:
-            return None
         return session
 
     def before_request(self) -> Response | None:

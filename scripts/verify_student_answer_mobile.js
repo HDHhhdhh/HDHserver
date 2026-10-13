@@ -8,6 +8,8 @@ const sourcePath = process.env.STUDENT_JS_SOURCE
   ? path.resolve(root, process.env.STUDENT_JS_SOURCE)
   : path.join(root, "static", "js", "student.js");
 const source = fs.readFileSync(sourcePath, "utf8");
+const presentationPath = path.join(root, "static", "js", "student", "testPresentation.js");
+const presentationSource = fs.readFileSync(presentationPath, "utf8");
 
 function assertContract(condition, message) {
   if (!condition) {
@@ -42,24 +44,25 @@ function extractFunction(name) {
 
 const actionElement = extractFunction("createAssignedTestActionElement");
 const sameTabHelper = extractFunction("shouldOpenAssignedTestAnswerInSameTab");
-const fallbackStart = source.indexOf("window.openAssignedTestAnswerLink = async");
-assertContract(fallbackStart !== -1, "missing window.openAssignedTestAnswerLink async handler");
-const fallbackEnd = source.indexOf("function normalizeAnswerLinkMap", fallbackStart);
-assertContract(fallbackEnd !== -1, "missing end marker after window.openAssignedTestAnswerLink");
-const fallbackOpener = source.slice(fallbackStart, fallbackEnd);
 const renderStart = source.indexOf("function renderAssignedTests()");
 const renderEnd = source.indexOf("async function recoverStudentSid", renderStart);
 assertContract(renderStart !== -1 && renderEnd !== -1, "missing renderAssignedTests block");
 const renderBlock = source.slice(renderStart, renderEnd);
 
 for (const snippet of [
-  "function assignedTestAnswerUrl(test)",
-  "function isAssignedTestAnswerRestricted(test, answerUrl)",
-  "function canOpenAssignedTestAnswer(answerUrl)",
+  "function answerUrl(test)",
+  "function isAnswerRestricted(test, resolvedAnswerUrl, academyAccessAllowed)",
+  "function canOpenAnswer(resolvedAnswerUrl, academyAccessAllowed)",
+  "function shouldOpenAnswerInSameTab(",
+  "function viewModel(test, { academyAccessAllowed = false } = {})",
+]) {
+  assertContract(presentationSource.includes(snippet), `test presentation helper seam missing: ${snippet}`);
+}
+for (const snippet of [
   "function shouldOpenAssignedTestAnswerInSameTab()",
   "function createAssignedTestActionElement(canOpenAnswerUrl, answerUrl)",
 ]) {
-  assertContract(source.includes(snippet), `student answer helper seam missing: ${snippet}`);
+  assertContract(source.includes(snippet), `student answer DOM seam missing: ${snippet}`);
 }
 
 for (const snippet of [
@@ -76,30 +79,40 @@ for (const snippet of [
   "window.matchMedia('(pointer: coarse)')",
   "nav.maxTouchPoints || nav.msMaxTouchPoints",
   "window.innerWidth",
-  "<= 1024",
+  "shouldOpenAnswerInSameTab({",
 ]) {
-  assertContract(sameTabHelper.includes(snippet), `mobile/tablet same-tab detection missing: ${snippet}`);
+  assertContract(sameTabHelper.includes(snippet), `mobile/tablet environment projection missing: ${snippet}`);
+}
+for (const snippet of [
+  "viewportWidth > 0 && viewportWidth <= 1024",
+  "!!coarsePointer",
+  "Number(touchPoints || 0) > 0",
+]) {
+  assertContract(presentationSource.includes(snippet), `mobile/tablet same-tab rule missing: ${snippet}`);
 }
 
-for (const snippet of [
-  "window.location.assign(url)",
-  "window.open('about:blank', '_blank')",
-  "popup.location.replace(url)",
-]) {
-  assertContract(fallbackOpener.includes(snippet), `fallback opener contract missing: ${snippet}`);
-}
 
 for (const snippet of [
-  "const answerUrl = assignedTestAnswerUrl(test);",
-  "const answerRestricted = isAssignedTestAnswerRestricted(test, answerUrl);",
-  "const canOpenAnswerUrl = canOpenAssignedTestAnswer(answerUrl);",
-  "const btn = createAssignedTestActionElement(canOpenAnswerUrl, answerUrl);",
-  "if (answerUrl) btn.dataset.answerUrl = answerUrl;",
-  "if (answerRestricted) btn.dataset.answerRestricted = '1';",
-  "window.openAssignedTestAnswerLink(test)",
-  "showAcademyOnlyNotice();",
+  "const view = assignedTestViewModel(test, { academyAccessAllowed });",
+  "const btn = createAssignedTestActionElement(view.canOpenAnswerUrl, view.answerUrl);",
+  "if (view.answerUrl) btn.dataset.answerUrl = view.answerUrl;",
+  "if (view.answerRestricted) btn.dataset.answerRestricted = '1';",
+  "btn.disabled = true;",
+  "btn.setAttribute('aria-disabled', 'true');",
+  "btn.addEventListener('click', showAcademyOnlyNotice);",
 ]) {
   assertContract(renderBlock.includes(snippet), `assigned-test render contract missing: ${snippet}`);
+}
+
+for (const retiredSurface of [
+  'openAssignedTestSubmit',
+  'openAssignedTestAnswerLink',
+  '/api/submit-test',
+  '/api/ocr-test-sheet',
+  'testSubmitModal',
+  'testAnswerPreviewModal',
+]) {
+  assertContract(!(source + presentationSource).includes(retiredSurface), `retired submission surface remains: ${retiredSurface}`);
 }
 
 console.log("student answer mobile frontend contract ok");

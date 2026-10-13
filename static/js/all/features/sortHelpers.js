@@ -1,5 +1,4 @@
-﻿const CUR_ORDER = ['공수1','공수2','미적분1','미적분2','대수','기하','확통'];
-const LV = { '상': 0, '중상': 1, '중': 2, '하': 3 };
+﻿const LV = { '상': 0, '중상': 1, '중': 2, '하': 3 };
 function getWrap() {
   return document.getElementById('allWrap')
     || document.getElementById('studentsWrap')

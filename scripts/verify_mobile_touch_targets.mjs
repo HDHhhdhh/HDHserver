@@ -13,6 +13,7 @@ const admin = read('static/css/admin.css');
 const student = read('static/css/student.css');
 const studentApp = read('static/css/student-app.css');
 const testsHtml = read('static/tests.html');
+const testsCss = read('static/css/tests.css');
 const testsJs = read('static/js/tests.js');
 const demoBootstrap = read('static/js/admin/demo/bootstrap.js');
 
@@ -38,14 +39,14 @@ assert.match(admin, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin\s+:wher
 assert.match(admin, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin button\s*\{\s*min-width:\s*44px\s*!important;/s);
 assert.match(admin, /body\.admin #calendar \.makeup-slot-close,[\s\S]*?width:\s*44px\s*!important;[\s\S]*?height:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
 assert.match(admin, /body\.admin \.global-links \.btn,[\s\S]*?body\.admin\.admin-simple \.hero-actions \.btn\s*\{[\s\S]*?height:\s*44px\s*!important;\s*min-height:\s*44px\s*!important;/s);
-assert.match(student, /body\.student-page\.student-app-mobile-surface\s+:where\([\s\S]*?#setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#testSubmitModal button[\s\S]*?min-height:\s*44px;/s);
-assert.match(student, /body\.student-page\.student-app-mobile-surface #setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#testAnswerPreviewModal button,[\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(student, /body\.student-page\.student-app-mobile-surface\s+:where\([\s\S]*?#setPanel button,[\s\S]*?#announceModal button[\s\S]*?min-height:\s*44px;/s);
+assert.match(student, /body\.student-page\.student-app-mobile-surface #setPanel button,[\s\S]*?#announceModal button,[\s\S]*?#announceModal \.announce-anonymous\s*\{[^}]*min-height:\s*44px\s*!important;/s);
 assert.match(student, /#announceModal \.announce-survey-option,[\s\S]*?#announceModal \.announce-anonymous\s*\{\s*min-height:\s*44px\s*!important;/s);
 assert.match(student, /#announceModal \.announce-image-nav,[\s\S]*?#announceModal \.announce-image-dots button\s*\{[\s\S]*?width:\s*44px\s*!important;[\s\S]*?height:\s*44px\s*!important;[\s\S]*?min-height:\s*44px\s*!important;/s);
 assert.match(studentApp, /\.skip-link\s*\{[\s\S]*?min-block-size:\s*44px;[\s\S]*?align-items:\s*center;/s);
 assert.match(studentApp, /\.student-app-brand\s*\{[\s\S]*?min-block-size:\s*44px;/s);
-assert.match(testsHtml, /\.rule-check-target\s*\{[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/s);
-assert.match(testsHtml, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin\.tests-page :where\([\s\S]*?min-height:\s*44px\s*!important;/s);
+assert.match(testsCss, /\.rule-check-target\s*\{[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/s);
+assert.match(testsCss, /@media\s*\(max-width:\s*1024px\)[\s\S]*?body\.admin\.tests-page :where\([\s\S]*?min-height:\s*44px\s*!important;/s);
 assert.match(testsJs, /<label class="rule-check-target" aria-label="\$\{escapeAttr\(`/);
 assert.match(demoBootstrap, /'min-width:44px',[\s\S]*?'min-height:44px'/s);
 

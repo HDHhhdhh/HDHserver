@@ -2,7 +2,6 @@
 /*.json
 /*.sqlite
 /*.sqlite-*
-/*.db
 /*.db-*
 /*.csv
 /*.tmp
@@ -12,6 +11,7 @@ progress.json.*.tmp
 # Mirrored backups and generated/local data
 /_data_mirror/
 /_runtime_backups/
+/_runtime_backups_pin/
 /data/
 /files/
 /instance/
@@ -21,6 +21,8 @@ progress.json.*.tmp
 /.codex-remote-attachments/
 /.codex_drive_download/
 /generated/
+/tmp/
+/.re0/
 /.omo/evidence/
 /.omo/plans/
 /.omo/ulw-loop/
@@ -29,7 +31,6 @@ progress.json.*.tmp
 /.omo/drafts/
 /.omo/ultraresearch/
 /worktrees/
-/static/js/test_answer_link_map.js
 /.debug-journal.md
 
 # Local Codex, browser, and QA working artifacts
@@ -45,12 +46,10 @@ progress.json.*.tmp
 /browser-*.jpg
 /task-1-*.txt
 /design-qa.md
-/CHATGPT_PROJECT_CONTEXT.md
-/CODEX-HANDOFF.md
-/CODEX-REMOVALS.txt
 
 # Machine-local backups and one-off system remediation scripts
 /runtime_backup_*/
+/serverr.zip
 /scripts/admin_cleanup_unrelated.ps1
 /scripts/admin_security_finalize.ps1
 
@@ -65,6 +64,111 @@ progress.json.*.tmp
 /homework_excel_*.txt
 /homework_excel_*_notepad.md
 /tools/subjective_sheet_lab/*
+
+# Version reusable flat OCR source, contracts, and synthetic fixtures only.
+# Child folders, real captures/results, provider caches, and weights stay local.
+!/tools/subjective_sheet_lab/*.py
+!/tools/subjective_sheet_lab/*.js
+!/tools/subjective_sheet_lab/*.mjs
+!/tools/subjective_sheet_lab/*.ps1
+!/tools/subjective_sheet_lab/*.cmd
+!/tools/subjective_sheet_lab/*.html
+/tools/subjective_sheet_lab/gangyuhyun849_ocr_quality_ab_prepare.py
+/tools/subjective_sheet_lab/run_gangyuhyun849_live_ocr_one_call.py
+/tools/subjective_sheet_lab/run_partial_fill_no_provider_browser_qa.ps1
+/tools/subjective_sheet_lab/run_student_ocr_ui_browser_smoke.js
+/tools/subjective_sheet_lab/verify_cached_ocr_regression_suite.py
+/tools/subjective_sheet_lab/verify_ocr_postprocessing_gate_matrix.py
+/tools/subjective_sheet_lab/verify_submit_test_progress_status_policy.py
+/tools/subjective_sheet_lab/verify_student_test_result_summary_ui.js
+/tools/subjective_sheet_lab/verify_student_test_result_answer_preview.js
+/tools/subjective_sheet_lab/verify_student_ocr_unresolved_navigation_ui.js
+/tools/subjective_sheet_lab/verify_student_ocr_submit_guard.js
+/tools/subjective_sheet_lab/verify_student_ocr_self_review_auto_confirm_ui.js
+/tools/subjective_sheet_lab/verify_student_ocr_selective_review_ui.js
+/tools/subjective_sheet_lab/verify_student_ocr_route_progress_states.js
+/tools/subjective_sheet_lab/verify_student_ocr_review_prefill_policy.js
+/tools/subjective_sheet_lab/verify_student_ocr_review_confirmation_flow.js
+/tools/subjective_sheet_lab/verify_student_ocr_qa_date_override.js
+/tools/subjective_sheet_lab/verify_student_ocr_manual_submit_boundary.js
+/tools/subjective_sheet_lab/verify_student_ocr_local_candidate_review_ui.js
+/tools/subjective_sheet_lab/verify_student_ocr_live_cache_replay_ui.js
+/tools/subjective_sheet_lab/verify_student_ocr_gemini_first_ui_contract.js
+/tools/subjective_sheet_lab/verify_student_ocr_cached_fixture_qa.js
+/tools/subjective_sheet_lab/verify_student_ocr_answers_text_ui_bridge.js
+/tools/subjective_sheet_lab/verify_student_ocr_actionable_review_payload_ui.js
+/tools/subjective_sheet_lab/_tmp*
+!/tools/subjective_sheet_lab/README.md
+!/tools/subjective_sheet_lab/AGENTS.md
+!/tools/subjective_sheet_lab/ocr_review_payload_contract.md
+!/tools/subjective_sheet_lab/ocr_lab_artifact_retention_policy.md
+!/tools/subjective_sheet_lab/document_ai_adapter_contract.md
+!/tools/subjective_sheet_lab/server_integration_plan_v2.md
+!/tools/subjective_sheet_lab/minimal_integration_checklist_v2.md
+!/tools/subjective_sheet_lab/teacher_supervised_local_only_pilot_operations_plan.md
+!/tools/subjective_sheet_lab/teacher_supervised_pilot_intake_checklist.md
+!/tools/subjective_sheet_lab/ocr_preflight_env_split_operator_runbook.md
+!/tools/subjective_sheet_lab/pre_integration_go_no_go_checklist.md
+!/tools/subjective_sheet_lab/answer_sheet_v3_design_notes.md
+!/tools/subjective_sheet_lab/copied_sandbox_assignment_preflight_checklist.md
+!/tools/subjective_sheet_lab/feature_flag_integration_checklist.md
+!/tools/subjective_sheet_lab/feature_flag_integration_patch_plan.md
+!/tools/subjective_sheet_lab/gemini_first_paid_batch_approval_packet_template.md
+!/tools/subjective_sheet_lab/gemini_first_provider_benchmark_plan.md
+!/tools/subjective_sheet_lab/gemini_first_ten_user_pilot_operations_plan.md
+!/tools/subjective_sheet_lab/hidden_ocr_pre_integration_go_no_go_checklist.md
+!/tools/subjective_sheet_lab/human_transcription_eval_guide.md
+!/tools/subjective_sheet_lab/independent_case_intake_checklist.md
+!/tools/subjective_sheet_lab/limited_internal_rollout_decision_packet.md
+!/tools/subjective_sheet_lab/limited_internal_rollout_execution_plan.md
+!/tools/subjective_sheet_lab/limited_internal_rollout_execution_preparation.md
+!/tools/subjective_sheet_lab/limited_rollout_operator_checklist.md
+!/tools/subjective_sheet_lab/lowest_risk_phase1_integration_plan.md
+!/tools/subjective_sheet_lab/lowest_risk_phase1_preflight_checklist.md
+!/tools/subjective_sheet_lab/lowest_risk_phase1_test_matrix.md
+!/tools/subjective_sheet_lab/non_student_handwriting_provider_accuracy_plan.md
+!/tools/subjective_sheet_lab/ocr_allowlist_expansion_candidate_plan.md
+!/tools/subjective_sheet_lab/ocr_allowlist_expansion_plan.md
+!/tools/subjective_sheet_lab/ocr_answer_mode_runtime_wiring_patch_package.md
+!/tools/subjective_sheet_lab/ocr_answer_mode_runtime_wiring_plan.md
+!/tools/subjective_sheet_lab/ocr_chrome_upload_permission_runbook.md
+!/tools/subjective_sheet_lab/ocr_current_state_and_rollback_map.md
+!/tools/subjective_sheet_lab/ocr_internal_qa_operator_checklist.md
+!/tools/subjective_sheet_lab/ocr_provider_free_preflight_inclusion_plan_20260706.md
+!/tools/subjective_sheet_lab/ocr_retake_photo_guidance.md
+!/tools/subjective_sheet_lab/ocr_rollout_decision_checklist.md
+!/tools/subjective_sheet_lab/ocr_september_allowlist_production_roadmap.md
+!/tools/subjective_sheet_lab/ocr_status_glossary_for_ops.md
+!/tools/subjective_sheet_lab/ocr_student_writing_rule_guidance.md
+!/tools/subjective_sheet_lab/ocr_training_pack_crop_fixture_spec.md
+!/tools/subjective_sheet_lab/ocr_training_pack_manual_qa_checklist.md
+!/tools/subjective_sheet_lab/ocr_unit_representative_manual_qa_checklist.md
+!/tools/subjective_sheet_lab/phase1_hidden_integration_manual_qa_checklist.md
+!/tools/subjective_sheet_lab/phase2_internal_ocr_route_integration_plan.md
+!/tools/subjective_sheet_lab/phase2_internal_ocr_route_stub_plan.md
+!/tools/subjective_sheet_lab/phase2c_crop_pipeline_integration_plan.md
+!/tools/subjective_sheet_lab/phase2e_gemini_live_ocr_call_plan.md
+!/tools/subjective_sheet_lab/student_ocr_answer_writing_guide.md
+!/tools/subjective_sheet_lab/student_page_teacher_supervised_ocr_checklist.md
+!/tools/subjective_sheet_lab/final_review_payload_bridge_fixture.json
+!/tools/subjective_sheet_lab/non_student_gemini_server_contract_fixture.json
+!/tools/subjective_sheet_lab/ocr_actionable_review_payload_ui_fixture.json
+!/tools/subjective_sheet_lab/ocr_gemini_first_ui_fixture.json
+!/tools/subjective_sheet_lab/ocr_local_candidate_review_ui_fixture.json
+!/tools/subjective_sheet_lab/ocr_student_self_review_auto_confirm_fixture.json
+!/tools/subjective_sheet_lab/phase1_internal_contract_fixture.json
+!/tools/subjective_sheet_lab/phase1_internal_route_adapter_fixture.json
+!/tools/subjective_sheet_lab/review_ui_mock_sample.json
+!/tools/subjective_sheet_lab/review_ui_mock_sample_jamo.json
+!/tools/subjective_sheet_lab/review_ui_mock_sample_person02.json
+!/tools/subjective_sheet_lab/student_selective_review_ui_fixture.json
+!/tools/subjective_sheet_lab/subjective_review_dry_run_fixture.json
+!/tools/subjective_sheet_lab/phase1_internal_contract_review_payload.json
+!/tools/subjective_sheet_lab/phase1_internal_route_adapter_success.json
+!/tools/subjective_sheet_lab/subjective_review_dry_run_review_payload.json
+!/tools/subjective_sheet_lab/subjective_review_dry_run_final_payload.json
+!/tools/subjective_sheet_lab/final_review_payload_answersText.txt
+!/tools/subjective_sheet_lab/subjective_review_dry_run_answersText.txt
 
 # Python/runtime artifacts
 __pycache__/

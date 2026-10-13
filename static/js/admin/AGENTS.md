@@ -19,9 +19,9 @@ static/js/admin/
 ## Where To Look
 | Task | Location | Notes |
 |---|---|---|
-| Bootstrap | `main.js` | Initializes core and feature modules after `bootstrap()`. |
+| Bootstrap | `main.js` | Overlaps bootstrap and required imports, waits for both, preserves initializer order, renders today first, then initializes independent panels. |
 | Selected date | `core/adminDate.js` | Source of truth for `getAdminDate()` and `admin:date-change`. |
-| Shared admin data | `core/state.js` | Loads students/videos/logs/progress and compatibility globals. |
+| Shared admin data | `core/state.js` | Loads only first-render students/videos/updates/logs/absence/progress/calendar data and compatibility globals; popup-only catalogs load on demand. |
 | Admin API wrapper | `core/api.js` | Re-exports shared JSON helpers as `api.get`, `api.getOr`, `api.post`. |
 | Feature modules | `features/` | Today list, log modal, video modal, calendar, tests, and exports. |
 | Demo bootstrap | `demo/bootstrap.js` | Loaded before normal page modules on demo-capable shells. |

@@ -1,0 +1,1126 @@
+관리자 UI 성능 범위·coverage 인벤토리 / 2026-10-01 (Asia/Seoul)
+Hub 단계3 사전 read-only 조사
+보고서: C:\server\docs\SERVER_ADMIN_UI_PERFORMANCE_SCOPE_2026-10-01.txt
+
+판정 요약
+ - source 기반 기능군 251개: /admin 187, /students 38, /school-cal 26.
+ - popup/anchored menu/tooltip 표면 정의 26개. 현재 일반 graph에서 접근 가능한 22개,
+   OCR capability/default-OFF 표면1개, latent/disabled 표면3개. /school-cal에는 별도 custom dialog가 없다.
+   공유 통합 4표면은 /students에서 재사용하므로 정의를 중복 집계하지 않았다.
+ - 읽은 기존 기록에 연결되는 제한된 browser evidence가 있는 기능군 47개,
+   해당 기능군 조작/인접 rendered evidence를 찾지 못한 204개.
+   부분 evidence는 전체 하위 버튼/오류/단축키/조합 pass가 아니다. 전수 p50/p95 완료 기능군0개.
+ - 신규 후보8개. 우선 CAND01 캘린더 recalc 직렬4+4GET,
+   CAND02 학교 일정 search clone/merge/전체 tbody 재생성,
+   CAND03 roster field 저장 뒤 전역 controls/집계 재생성.
+ - 구현/런타임/browser/Git 등록 작업 없음. 이 보고서만 새로 작성한다.
+   서버 lifecycle·실제 UI/계측·최종 격리 gate·운영 반영은 Hub 소유다.
+
+업무 경계·수행 방식
+ 사용자 순서 1 인증 적용 → 3 전체 UI 성능 점검/개선 → 2 최종 격리 검증 → 4 운영 반영을 따른다.
+ 본 과제는 3의 조사 부분이다. 인증 정책 구현을 완료했다고 판정하거나 source 수정 권한으로 확대하지 않는다.
+ source/문서/검사 source만 읽었고, 운영 데이터·credential 설정·저장된 비밀번호·runtime JSON/SQLite는 읽지 않았다.
+ app import, compileall, full suite, smoke, HTTP GET, browser 조작, manager Status/Start/Refresh/Stop을 실행하지 않았다.
+ 검사 source에 test fixture/기본 UI 안내 문자열이 있다는 것과 실계정/실비밀번호 조회는 별개다.
+ 외부 시트/계정 작업이나 OCR/focus 기능 flag를 실행/활성화하지 않았다.
+ subagent는 사용하지 않았고 다른 chat에 메시지를 보내지 않았다.
+
+읽은 지침·정본
+ AGENTS.md를 먼저 읽고 git status --short를 기록했다.
+ static/AGENTS.md, static/js/AGENTS.md, static/js/admin/AGENTS.md,
+ static/js/admin/core/AGENTS.md, static/js/admin/features/AGENTS.md,
+ static/js/all/AGENTS.md, static/js/all/features/AGENTS.md, static/js/shared/AGENTS.md,
+ scripts/AGENTS.md를 읽었다. docs 하위 AGENTS.md는 rg inventory에서 발견되지 않았다.
+ 실제 route shell 연결은 routes/pages.py:157~179에서 /students→all.html, /school-cal→school-cal.html로 확인했다.
+ docs/SERVER_RULES_INDEX.md, LOGIC_DECISION_LEDGER.md D-06B/D-08,
+ CODE_FLOW_MAP.md의 source owner 위치를 대조했다.
+ 서버/캘린더/로그/영상/시험/백지/identity의 의미 정본은 기존 SERVER_RULES_INDEX이며 이 보고서는 제2정본이 아니다.
+
+완료 작업을 재발명하지 않는 기준
+ SERVER_BROWSER_LATENCY_2026-10-01.txt와 SERVER_PROJECT_FOLLOWUP_2026-10-01.txt 전체를 읽었다.
+ SERVER_FRONTEND_FETCH_FOLLOWUP_2026-10-01.txt와 SERVER_PROJECT_REVIEW_2026-10-01.txt의 해당 범위도 읽었다.
+ 이미 끝난 첫 today render 우선·deferred panels, today concurrent flight30→10/총38→16(VM),
+ popup pending2→1/성공2.5초TTL/표준 SID prefetch18→9(VM), failure-ready/epoch guard,
+ tooltip SID index/frame batching·count-span만 hydrate, 전체학생 popup lazy import/숙제 비차단,
+ initializer retry/idempotence, 공지 publish/session race와 desktop button overflow,
+ 학교 일정 검색 전에 draft 수집, Basic 성공 cache의5초 absolute TTL을 새 개선으로 세지 않았다.
+ 새 후보는 이 gate 이후 caller의 직렬 후속 load/검색/집계/DOM 빈도·drag hot path에 한정한다.
+ 기존 full suite/QA 상태는 evidence registry에서 출처·실행 수준을 구분한다.
+
+집계 규칙
+ 251은 기능군 수다. 버튼 DOM instance 수나 QA pass 수가 아니다.
+ 동일 action의 rail/main, 상단/하단 버튼은 한 항목에 모든 selector를 나열했다.
+ 반복 student/영상/시험/학년 행은 같은 action family 한 항목으로 센다.
+ 전환 옵션/작성자/타임/Lv 선택, 연관 save/cancel/close·keyboard 대안은 한 기능군 안에 명시했다.
+ popup 준비/자동 refresh/flush/읽기 전용 projection도 사용자 결과에 영향을 주므로 포함했다.
+ latent/hidden/flag OFF owner는 별도 state 표시로 inventory에 포함하되 신규 활성화 범위로 삼지 않는다.
+ S038은 미연결 대체 모듈을 발견했다는 항목이며 현재 UI action이라고 주장하지 않는다.
+ 모든 row의 U/B는 evidence coverage다. R은 기존 회귀의 연관 범위이며 모든 row별 브라우저 proof가 아니다.
+ line 번호는 owning markup/handler/call의 대표 one-based 위치다. 함수 시작 줄만을 뜻하지 않는다.
+
+source 별칭 (모든 상대경로는 C:\server 기준)
+H = static/admin.html
+AM = static/js/admin/main.js
+AS = static/js/admin/core/state.js
+AD = static/js/admin/core/adminDate.js
+AV = static/js/admin/core/viewMode.js
+AC = static/js/admin/core/darkmode.js
+T = static/js/admin/features/today.render.js
+TO = static/js/admin/features/today.js
+TS = static/js/admin/features/today.state.js
+D = static/js/admin/features/done.js
+UE = static/js/admin/features/uiEnhance.js
+TG = static/js/admin/features/timeGraph.js
+LL = static/js/admin/features/attendanceLedgerLink.js
+L = static/js/admin/features/logModal.js
+V = static/js/admin/features/videoModal.js
+X = static/js/admin/features/testModal.js
+XR = static/js/admin/features/testAssignmentRules.js
+HT = static/js/admin/features/hoverTooltip.js
+AN = static/js/admin/features/assistantStudentNotes.js
+EC = static/js/admin/features/escClose.js
+EX = static/js/admin/features/extraModal.js
+AR = static/js/admin/features/absentRegister.js
+RC = static/js/admin/features/absentRecovery.js
+CAL = static/js/admin/features/calendar.js
+MP = static/js/admin/features/makeupPending.js
+EL = static/js/admin/features/exportLogs.js
+QP = static/js/admin/features/quickPrinterExport.js
+ON = static/js/admin/features/adminOperationNotes.js
+SL = static/js/admin/features/studentLogs.js
+ANN = static/js/admin/features/announcements.js
+ACC = static/js/admin/features/studentAccounts.js
+FO = static/js/admin/features/studentFocus.js
+OCR = static/js/admin/features/studentTestOcrReview.js
+TR = static/js/shared/testRecordDetails.js
+SH = static/all.html
+SM = static/js/all/main.js
+SS = static/js/all/core/state.js
+ST = static/js/all/features/table.js
+SORT = static/js/all/features/sortHelpers.js
+ADD = static/js/all/features/addStudent.js
+CL = static/js/all/features/cloneButtons.js
+DEL = static/js/all/features/deleteButtons.js
+SP = static/js/all/features/studentRecordPopup.js
+YS = static/js/all/features/yoilStats.js
+CSV = static/js/all/features/chatRosterExport.js
+SEC = static/js/all/features/escClose.js
+LEG = static/js/all/features/progressModal.js
+LH = static/js/all/features/hoverTooltip.js
+CH = static/school-cal.html
+C = static/js/school-cal.js
+CP = static/js/school-calendar/persistence.js
+CQ = static/js/shared/schoolCalendarSaveQueue.js
+
+popup 표면 인벤토리 (위 26개 정의, 기능군 총수에는 재합산하지 않음)
+형식: ID | 페이지 | DOM/owner 표면 | entry/주요 action/close | source | browser evidence
+P01 | /admin, /students | adminSchoolTip | 이름 hover/focus/고정 정보, drag/학교 details; 닫기는 tooltip owner/Escape | HT:60,HT:80 | B02
+P02 | /admin, /students | logModal | 조교 thread / 저장·닫기; homework 실제 DOM은 정보 tooltip으로 이동 | L:1071,L:1203,AN:22 | B02
+P03 | /admin, /students | vidModal | 영상 배정/진도/검색/설정/저장; 공통 owner close | V:795,V:1989 | B02
+P04 | /admin, /students | testModal | 분류/필터/레벨/상태/저장; 공통 owner close | X:1076,X:1182 | B02
+P05 | /admin | extraModal | 보강 검색/학생·타임 선택, 상·하 저장/닫기 | EX:20 | U
+P06 | /admin | absentRegisterModal | 결석 검색/학생 선택, 상·하 저장/닫기 | AR:154 | U
+P07 | /admin | absentRecoverModal | 날짜/선택/복구/닫기 | RC:185 | U
+P08 | /admin | attendModal | 날짜 출결 loading→목록·그래프·보강 추가/결석 처리·닫기 | H:453,CAL:2710 | B04
+P09 | /admin | selectionModal | 날짜 출결의 extra/absent 대상 검색·slot·확인·닫기 | H:465,CAL:2959 | U
+P10 | /admin | manualMakeupModal | 수동 결석 학생 검색/radio/날짜 선택/닫기 | CAL:977 | U
+P11 | /admin | makeup-slot-popover | 선택한 날짜 slot 버튼/닫기 | CAL:2241 | U
+P12 | /admin | schoolExamInfoPopup | 학교 시험 event 정보/닫기/backdrop | CAL:2371 | U
+P13 | /admin | quickPrinterExportModal | preview·타임/reprints·select all·CSV·취소/닫기 | H:476,QP:260 | U
+P14 | /admin | exportLogsModal | 대상/형식/section·reset·submit·취소/닫기 | H:520,EL:1465 | U
+P15 | /admin | annTargetMenu | 7대상 모드/4필터·검색/선택·outside/Escape | H:243,ANN:2900 | B03
+P16 | /admin | annSurveyModal | 작은 설문 질문·옵션·메타·반영/reset·닫기 | H:314,ANN:1889 | U
+P17 | /admin | annComposeExpandModal | 작성 확대/preview/설문/대상/등록·작게 보기·닫기 | H:358,ANN:1333 | B03
+P18 | /admin | annReplyExpandModal | 목록·답장/결과·수정/삭제·이미지·닫기 | H:375,ANN:2869 | U
+P19 | /admin | anonymous reply name popover | 관리자 우클릭 reveal·외부 클릭/Escape/scroll/resize dismiss | ANN:135,ANN:192 | U
+P20 | /admin | studentAccountsModal | 계정 검색/filter/refresh/action·code copy/dismiss·닫기 | H:602,ACC:51 | B04
+P21 | /admin | studentFocusAdminModal | open/refresh/close/Tab trap; default-OFF 안내는 shell 동작 증거 | H:642,FO:67 | B04
+P22 | /admin (기본OFF) | studentTestOcrReviewModal | capability 있을 때 pending/select/crop/resolve/correct·닫기 | H:661,OCR:38 | U
+P23 | /students | yoilModal | 요일/난이도/학교학년 집계 명단, 닫기/backdrop/Escape | SH:100,YS:360 | U
+P24 | /students (잠재) | progModal | legacy .showProg 미생성; 진도 cell/save/close dormant | SH:110,LEG:26 | U
+P25 | 공유 (비활성) | studentTestRecordDetailsModal | TEST_RECORD_DETAILS_UI_ENABLED=false; 비교/닫기 latent | TR:19,TR:88 | U
+P26 | /admin (잠재) | yoilModal | shell과 닫기만 발견, 현재 admin graph opener 없음 | H:593 | U
+
+popup 접근성/가시성 해석
+ - P01~P21 및 P23은 데이터가 맞으면 일반 graph에서 접근 가능하다. P21은 shell/OFF 안내가
+   접근 가능하다는 의미이며 집중 원시/활성 수업 데이터 pass가 아니다.
+ - P22 OCR은 capabilities가 true일 때만 opener가 나타난다. P24 .showProg는 현재 renderer가 만들지 않는다.
+   P25 shared 기록 UI flag false, P26 admin 요일 modal의 current opener 미발견이다.
+ - #vidSavePopup은 role=status 성공 feedback이며 독립 입력 popup으로 집계하지 않았다.
+   #studentPopupScrim/#studentPopupMobileNav는 공유 backdrop/navigation이므로 별도 dialog 수에 넣지 않았다.
+ - hidden #logLegacyWorkspace/#logNotes/#logProgress, #testAppendNotes는 호환 hook이다.
+   숙제 #hwWrap/action DOM은 tooltip으로 이동하므로 hidden ancestor 문구만 보고 숙제 전체를 latent로 분류하지 않았다.
+ - 오늘 가나다 legacy #todayAlphaSortBtn은 현재 search가 생성되면 제거된다(TO:503~508).
+   현재 표의 drag 순서와 /students #stuSort를 이 retired toggle로 혼동하지 않는다.
+ - native confirm/prompt/alert는 해당 기능군의 취소/오류 경로에 포함하며 별도 custom popup 정의로 세지 않는다.
+
+기능군 인벤토리
+형식: ID | 기능 | 버튼/입력/저장/닫기/검색/전환·동작 | source | 기존 gate | browser evidence | 가시/권한 상태
+U row: 해당 실제 조작의 현재 rendered/오류/회복/반복 latency evidence를 추가해야 한다.
+B row: 색인에 적힌 제한된 evidence만 있고 나머지 하위 동작/조합/latency는 남는다.
+읽기전용·hidden·OFF 상태는 기능 보존 조건이며 QA를 위해 해제할 수 있는 권한이 아니다.
+
+/admin (187기능군)
+A001 | 첫 운영 표와 지연 패널 초기화 | /admin navigation; bootstrap→today→calendar/공지/메모/계정/집중/OCR | AM:24,AS:18 | R01,R20 | B01 | 활성
+A002 | 사이드 레일 위치 이동 | scroll-today / scroll-done / scroll-calendar | H:36,UE:147 | R20 | U | 활성
+A003 | Simple/Full 표시 전환 | #simpleModeToggle; localStorage 표시 모드 | AV:42 | R19 | U | 활성
+A004 | 관리자 테마 전환 | #darkToggle | H:59,AC:1 | R19 | U | 활성
+A005 | 관리 화면·외부 출석부 이동 | 전체학생 /students, 학교일정 /school-cal, 영상관리 /video-manage, 테스트관리 /tests, 파일관리 /file-manage; 출석부 새 탭 | H:66 | R20 | B01 | 활성
+A006 | 출석부 시트 설정 | 시트 설정 버튼 / 출석부 링크 우클릭→native prompt; 확인 저장/취소/빈 값 기본 링크; config POST | LL:48 | R10 | U | 활성
+A007 | 기준일 하루 전 | #adb_prev | AD:294 | R01 | U | 활성
+A008 | 기준일 오늘 | #adb_today; 실제 로컬 오늘 복귀 | AD:294 | R01 | U | 활성
+A009 | 기준일 하루 후 | #adb_next | AD:294 | R01 | U | 활성
+A010 | 오늘·하원 학생 검색 | #todaySearchInput; input/search/compositionend; native clear/입력 Escape | TO:460,TO:581 | R01 | U | 활성
+A011 | 오늘 검색 필드 전환 | #todaySearchField; 전체/이름/학교/과목, 선택 localStorage | TO:471 | R01 | U | 활성
+A012 | 팝업 없는 Escape 검색 복귀 | 검색 비우기→focus/select/scroll; 열린 popup이면 owner close 우선 | EC:66 | R02 | U | 활성
+A013 | 오늘 표 순서 드래그 | Sortable .drag-handle; 선택일 순서 저장 | T:396 | R01 | U | 활성
+A014 | 오늘·하원 타임 인라인 편집 | .slotLabel; blur/Enter 저장, Escape 원문 복구; slot 및 등원시간 조건 갱신 | T:1232,T:1732 | R08 | U | 활성
+A015 | 오늘·하원 등원시간 인라인 편집 | .arriveLabel; blur/Enter/Escape; 미출석·focus 상태 wheel 조정 | T:364,T:1305,T:1807 | R08,R17 | U | 활성
+A016 | 오늘·하원 하원시간 인라인 편집 | .leaveLabel; blur/Enter/Escape→로그 PATCH | T:1334,T:1839 | R05 | U | 활성
+A017 | 출석 체크 | .attendChk; 저장/실패 롤백 및 등원시각 연동 | T:1861 | R08 | U | 활성
+A018 | 연락 체크 | .contactChk; PATCH/실패 롤백 | T:1930 | R08 | U | 활성
+A019 | 선택일 자습 체크 | .selfStudyChk; 선택일 상태 변경; 숙검 요청 제약 | T:1950 | R06,R08 | U | 활성
+A020 | 숙제 검사 요청 체크 | .hwRequestChk; 검사 완료/자습일 때 잠금 | T:2005 | R06 | U | 활성
+A021 | 숙제 검사 완료 체크 | .hwCheckChk; 선택일 로그 저장/롤백 | T:2052 | R06 | U | 활성
+A022 | SID 백지리뷰 대기 체크 | .whiteReviewPendingChk; 오늘/하원 동일 SID 표시와 per-SID 잠금 | T:183,T:1211 | R07 | U | 활성
+A023 | 학생 이름 링크·이름 툴팁 | a.stuName 새 탭; pointer/focus 툴팁, blur/pointerout/Escape 숨김 | T:1506,HT:1161 | R04 | B02 | 활성
+A024 | 학생 운영 통합 팝업 열기 | .openStudentPopups/.editLog; row SID/date로 정보·조교메모·영상·시험 동시 open, hover/focus prefetch | L:3026,L:3083 | R01,R02 | B02 | 활성
+A025 | 학생 개별 문서 열기 | .btn-doc; 설정된 URL 새 탭 | T:2171 | R20 | U | 활성
+A026 | 행별 결석 처리 | .markAbsent; 확인/취소→출석·연락·결석·이월·순서 및 calendar 갱신 | T:2178 | R08,R10 | U | 활성
+A027 | 행별 하원 | .markLeave; 같은 사람 연결행/타임 제약, batch 로그→하원 표 | T:2325 | R05,R06,R07 | U | 활성
+A028 | 하원 되돌리기 | .undoDone; done false 및 archived clear | T:2375 | R05 | U | 활성
+A029 | 행별 기록 정리 | .clearDone; 최신 로그/진도→assigned test 완료→archived; 하원과 구별 | T:988,T:2375 | R05 | U | 활성
+A030 | 하원 표 전체 기록 정리 | #clearAllBtn; 실제 렌더 date/SID 중복 제거, date별 preload, 준비 동시수 제한 | D:8,D:49 | R05 | U | 활성
+A031 | 숙검하원 일괄 버튼 | #homeworkLeaveBtn; 실제 타임/연강·자습·숙검 조건, batch 후 렌더 | T:2115 | R06 | U | 활성
+A032 | 지난 하원·하원 미완료 경고 | 비동기 두 summary; 날짜/오류/empty 억제, 하원 미완료는 별도 action 없음 | TO:352,TO:963 | R05 | U | 활성
+A033 | 운영 KPI·시간대 그래프 | 읽기 전용 인원/출석/숙검 집계, 30초 refresh 및 날짜 출결 그래프 | UE:112,TG:1 | R20 | U | 활성
+A034 | 통합 팝업 닫기 | 조교메모 [data-note-close]/공유 backdrop/Escape; pending 저장이면 close/target 변경 잠금 | AN:686,L:3166,EC:66 | R02 | B02 | 활성
+A035 | 통합 팝업 모바일 표면 전환 | #studentPopupMobileNav: 영상 / 조교 메모 / 숙제·정보 / 테스트 | V:719 | R19 | B02 | 활성
+A036 | 고정 학생 정보 툴팁 이동·시험 상세 | 툴팁 pointer drag, 학교 기말 범위/특이사항 details summary 펼치기/접기 | HT:80,HT:893 | R04 | U | 활성
+A037 | 조교메모 종류 전환 | [data-note-mode] 일반 메모/확인일 메모 | AN:41,AN:592 | R13 | U | 활성
+A038 | 조교메모 작성자 선택 | [data-note-author] 규리/세빈/동훈/하영 | AN:46,AN:603 | R13 | U | 활성
+A039 | 조교메모 확인일 입력 | [data-note-remind-input] date; SID별 next reminder 기준 | AN:55 | R13 | U | 활성
+A040 | 조교메모 내용 입력·단축 등록 | [data-note-input]; Ctrl/Cmd+Enter→댓글 등록 | AN:58,AN:688 | R13 | U | 활성
+A041 | 조교메모 새 댓글 등록 | [data-note-save]; 불러오는 동안 잠금, per-mount stale suppress | AN:614,AN:673 | R13 | U | 활성
+A042 | 조교메모 상단 저장·통합 저장 | [data-note-save-close]; draft 있으면 댓글 저장 뒤 전체 저장, 없으면 전체 저장; 영상→로그→이월→시험 최종 | AN:676,L:3343 | R02,R06 | B02 | 활성
+A043 | 기존 조교메모 고정/해제 | [data-note-pin] | AN:295 | R13 | U | 활성
+A044 | 기존 조교메모 수정/저장/취소 | [data-note-edit], .assistant-note-edit-save / .assistant-note-edit-cancel | AN:332,AN:515 | R13 | U | 활성
+A045 | 기존 조교메모 삭제 | [data-note-delete]; 해당 SID thread DELETE | AN:322 | R13 | U | 활성
+A046 | 호환 class-log 메모 입력 | 숨겨진 #logLegacyWorkspace/#logNotes; 현재 조교 thread와 다른 기록 영역 | L:1075,L:3132 | R05 | U | 잠재/숨김
+A047 | 숙제 교재·이번 숙제·코멘트·다음 숙제 | .hwBook / .hwThis / .hwComment / .hwNext; tooltip으로 실제 같은 DOM 이동 | L:1203,L:1746 | R06 | B02 | 활성
+A048 | 숙제 진행률 조작 | .hwPctRange 0~100 step10; 보조 텍스트 동기화 | L:1760,L:2677 | R06 | U | 활성
+A049 | 숙제 교재 추가 | #hwAddRow; tooltip 표시명 교재 추가 | L:1223,L:2703 | R06 | U | 활성
+A050 | 숙제 교재 제거 모드·행 선택 | #hwRemoveRow / .hw-remove-choice / 호환 .hw-del-btn; 선택 제거/취소 | L:2647,L:2712 | R06 | U | 활성
+A051 | 숙제 교재 순서 모드·위/아래 이동 | #hwReorderRows / .hw-order-btn[data-direction=up/down] | L:1532,L:2717 | R06 | U | 활성
+A052 | 숙제 교재 재우기·깨우기 | .hw-book-sleep-toggle; 교재 입력과 잠금/표시 연동 | L:1749,L:2647 | R06 | U | 활성
+A053 | canonical 숙제 편집 | 지원 응답일 때 .hwTitle/.hwScope/.hwDueAt/.hwStatus(진행 중/완료/취소); 기한·초과 표시 | L:1559 | R06 | U | 조건부
+A054 | 숙제 개별 저장 | #logSave; tooltip 상단 재배치; 저장 성공 후 닫기 | L:3438 | R02,R06 | B02 | 활성
+A055 | 숙검 완료 저장 | #logCompleteBtn; tooltip 숙검 완료 표시; 로그 저장 후 닫기 | L:3456 | R02,R06 | U | 활성
+A056 | 호환 로그 진도 grid 조작 | #logProgress .progress-cell click/drag/right-click; none/done/interrupted/skip, manual ownership | L:2795,L:2999 | R05,R06 | B02 | 잠재/숨김
+A057 | 영상 표면 준비·단독 open seam | #vidModal; 통합 open 또는 .editVid(현재 표는 통합 launcher); row SID/date authoritative hydrate | V:1989,V:2116 | R01,R02 | B02 | 활성
+A058 | 학생 자동 영상 수 설정 | .auto-count-btn 1~6; 설정만 다음 새 snapshot에 반영 | V:1890,V:2122 | R09 | U | 활성
+A059 | 고난도 영상 제외/흰색 복귀 | #excludeHighDifficultyVideos; [고] 후보; 저장 전 UI 변경 | V:810,V:2134 | R09 | U | 활성
+A060 | 영상 배정/상태 클릭 | #chkZone checkbox/.vid-row; 배정과 progress 상태 분리 | V:2249,V:2279 | R09 | B02 | 활성
+A061 | 영상 우클릭 제외 상태 변경 | .vid-row contextmenu; 수동 skip/none ownership | V:2296 | R09 | B02 | 활성
+A062 | 영상 포인터 범위 드래그 | mousedown/mousemove/mouseover/mouseup; 기존 상태 복원·range | V:2198,V:2227 | R09 | U | 활성
+A063 | 영상 다중·가시 범위 선택 | Ctrl/Cmd click, Ctrl/Cmd+Shift visible range; 필터 변경 anchor 초기화 | V:2279 | R09 | U | 활성
+A064 | 영상 선택분 좌/우 상태 순환 | ArrowLeft/ArrowRight; 폼 입력/버튼에서 단축키 차단 | V:2325 | R09 | U | 활성
+A065 | 커리 외 영상 추가 검색 열기/닫기 | #extraVideoAddBtn | V:2145 | R09 | U | 활성
+A066 | 커리 외 영상 과목 선택 | #extraVideoSubject | V:2250 | R09 | U | 활성
+A067 | 커리 외 영상 세부과정 선택 | #extraVideoSubCurriculum | V:2259 | R09 | U | 활성
+A068 | 커리 외 영상 제목 검색 | #extraVideoSearch; shared 검색 placeholder; focus/caret 재설정 | V:2162 | R09 | U | 활성
+A069 | 영상 저장 | #mSave; assignments/progress/watch-rearm/log 순서, unified면 전체 저장 경유 | V:2415 | R02,R09 | B02 | 활성
+A070 | 시험 분류 탭 전환 | #testCategoryTabs .test-tab; 분류별 현재 과목 recent/default 복원 | X:1928 | R03 | U | 활성
+A071 | 시험 과목 표시 잠금 | #testSubject; activeStudent.curriculum 하나로 고정 | X:1097,X:2050 | R03 | U | 읽기전용
+A072 | 시험 난이도 선택 | #testDifficulty; UNIT Lv.3~6 전체 유지 | X:2056 | R03 | U | 활성
+A073 | 시험 고사 선택 | #testTerm | X:2065 | R03 | U | 활성
+A074 | 시험 회차 선택 | #testRound | X:2073 | R03 | U | 활성
+A075 | 학생 UNIT 기본 레벨 패널 열기/닫기 | #testDifficultyOverride 레벨 설정 | X:1889 | R03 | U | 활성
+A076 | 학생 UNIT 기본 Lv.3~6 저장 | [data-test-level-setting]; 현재 과목 testLevelDefaults만 update | X:1897 | R03 | U | 활성
+A077 | 시험 행 클릭·드래그·우클릭 상태 변경 | .test-row; submitted 잠금, explicitBlank 유지; 조작 키 touched 추적 | X:1859,X:2002,X:2023 | R03 | U | 활성
+A078 | 시험 Ctrl/Cmd 다중 선택 | .test-row modifier selection; 상태 변경과 별개 | X:1888 | R03 | U | 활성
+A079 | 시험 좌/우 상태 순환 | ArrowLeft/ArrowRight; none→interrupted→assigned→done→skip→none | X:2081,XR:1 | R03 | U | 활성
+A080 | 시험 목록 전체 선택/선택 해제 | #testPickAll / #testPickNone | X:1941 | R03 | U | 활성
+A081 | 시험 저장 | #testSave; required 4GET ready gate, SID/date/payload frozen, progress+log 성공 후 완료 | X:1780,X:1967 | R01,R02,R03 | U | 활성
+A082 | 보강 등록 팝업 열기 | #extraBtn / rail open-extra; 선택일 freeze, ready 전 저장 잠금 | EX:337,UE:147 | R02,R08 | U | 활성
+A083 | 보강 학생 검색·검색 결과 선택 | #exSearch/#exSearchPick; Enter pick, Escape clear, compositionend | EX:322 | R08 | U | 활성
+A084 | 보강 학생 선택 | #exZone .chk-sid; 퇴원 legacy 행은 잠금/보존 | EX:376,EX:434 | R08 | U | 활성
+A085 | 보강 타임 선택 | #exZone .slot-btn[data-n]; 일반·주말 slot 의미 | EX:387,EX:442 | R08 | U | 활성
+A086 | 보강 저장(상단/하단 동일 동작) | .ex-save 두 버튼; 최신 extra/slot 병합→slot/extra→arrive→order→refresh | EX:457 | R02,R08 | U | 활성
+A087 | 보강 닫기(상단/하단·backdrop·Escape) | .ex-close / owner closeExtraAttendancePopup; pending close 차단 | EX:415 | R02 | U | 활성
+A088 | 결석 등록 팝업 열기 | #absentRegisterBtn / rail open-absent; 선택일 freeze | AR:361,UE:147 | R02,R08 | U | 활성
+A089 | 결석 학생 검색·결과 선택 | #absentSearch/#absentSearchPick; Enter/Escape/IME | AR:347 | R08 | U | 활성
+A090 | 결석 학생 선택 | #absentZone .chk-sid | AR:385,AR:419 | R08 | U | 활성
+A091 | 결석 저장(상단/하단 동일 동작) | .absent-save 두 버튼; 출석/연락→최신 revision 결석→order→refresh | AR:425 | R02,R08 | U | 활성
+A092 | 결석 닫기(상단/하단·backdrop·Escape) | .absent-close / closeAbsentRegistrationPopup; 늦은 open 응답 무시 | AR:408,AR:413 | R02 | U | 활성
+A093 | 결석 복구 팝업 열기 | #absentRecoverBtn→#absentRecoverModal | RC:202,RC:281 | R08 | U | 활성
+A094 | 결석 복구 날짜 전환 | #arDate | RC:311 | R08 | U | 활성
+A095 | 복구할 학생 선택 | #arList .ar-chk | RC:234 | R08 | U | 활성
+A096 | 결석 복구 저장 | #arRestore; 선택 SID만 latest/revision recovery, order reset, calendar 갱신 | RC:247 | R08 | U | 활성
+A097 | 결석 복구 닫기 | #arClose / backdrop / 공유 Escape | RC:214,RC:309,EC:66 | R08 | U | 활성
+A098 | 캘린더 실제 오늘 주 복귀 | .fc-centerToday-button today; 가상 운영일과 다른 실제 오늘 | CAL:2513,CAL:2592 | R10 | U | 활성
+A099 | 캘린더 1주 이동 | wheel delta threshold24, 180ms lock; 5주 view | CAL:2652 | R10 | U | 활성
+A100 | 캘린더 날짜별 인원·시험·보강 표시 | 읽기 전용 slot count badges, school events/예약·결석 marks, active operating date | CAL:784,CAL:2580 | R10 | U | 활성
+A101 | 캘린더 날짜 출결 팝업 열기 | dateClick→#attendModal; loading shell 즉시, 필수 3GET 성공 후 액션 해제 | CAL:2558,CAL:2710 | R17 | B04 | 활성
+A102 | 날짜 출결 닫기 | #attendClose/backdrop/Escape owner; 늦은 응답 무시 | CAL:2704,CAL:2785 | R17 | B04 | 활성
+A103 | 날짜 출결의 보강 추가 | #addExtraBtn→openSelectionUI(extra) | CAL:2794 | R10 | B04 | 활성
+A104 | 날짜 출결의 결석 처리 | #markAbsentBtn→openSelectionUI(absent) | CAL:2795 | R10 | B04 | 활성
+A105 | 날짜 출결 대상 선택 검색 | #selectionSearchInput/#selectionSearchPick; input/search/compositionend/Enter/Escape | CAL:2849 | R10 | U | 활성
+A106 | 날짜 출결 대상 체크 | #selectionList .chk-sid; 모드별 정규/전체 후보 | CAL:2944,CAL:3010 | R10 | U | 활성
+A107 | 날짜 출결 대상 slot 버튼 | .slot-btn[data-slot] | CAL:2951,CAL:3032 | R10 | U | 활성
+A108 | 날짜 출결 대상 확인 저장 | #selectionSave; extra 또는 absence 저장 후 재계산 | CAL:3045 | R08,R10 | U | 활성
+A109 | 날짜 출결 대상 닫기 | #selectionClose / 공유 Escape | CAL:3193,EC:66 | R02,R10 | U | 활성
+A110 | 학교 시험 이벤트 정보 열기/닫기 | eventClick→#schoolExamInfoPopup; [data-school-exam-close]/backdrop | CAL:2371,CAL:2432,CAL:2569 | R10 | U | 활성
+A111 | 보강 미해결 목록 검색 | #makeupPlannerSearch; input/search/compositionend/Escape | CAL:1456,CAL:2122 | R10 | U | 활성
+A112 | 보강 예정 현황 검색 | #makeupStatusSearch; input/search/compositionend | CAL:1456,CAL:2122 | R10 | U | 활성
+A113 | 미해결 결석 취소 | [data-makeup-action=remove]; native confirm 경로, absence 관련 merge | CAL:1491,CAL:2188 | R08,R10 | U | 활성
+A114 | 미해결 보강 이월 | [data-makeup-action=carryover] | CAL:1499,CAL:2189 | R10 | U | 활성
+A115 | 보강 예약·예정 보강 변경 | [data-makeup-action=pick]; calendar date 선택 모드 | CAL:1507,CAL:1513 | R10 | U | 활성
+A116 | 예정 보강 이월 | [data-makeup-action=carryover-scheduled] | CAL:1518 | R10 | U | 활성
+A117 | 보강 날짜 타임 팝오버 선택/취소 | .makeup-slot-popover; button[data-slot], [data-makeup-action=cancel] | CAL:2231,CAL:2241 | R10 | U | 활성
+A118 | 등원일 확인 모드 열기 | #attendanceCheckToggle; 보강 선택 취소 후 학생 검색 | CAL:1448 | R10 | U | 활성
+A119 | 등원일 확인 대상·종료 | [data-makeup-action=check]; SID 선택 캘린더 표시; Escape 모드 종료 | CAL:1476,CAL:2630 | R10 | U | 활성
+A120 | 보강 목록 텍스트 복사 | makeupPlannerList/makeupStatusList copy handler; 날짜/시간 복사 포맷 | CAL:1471,MP:133 | R10 | U | 활성
+A121 | 수동 결석 추가 학생 팝업 열기 | #openManualMakeup→#manualMakeupModal | CAL:1318,CAL:1455 | R10 | U | 활성
+A122 | 수동 결석 학생 검색·선택 | #manualMakeupSearch/#manualMakeupPick; radio .chk-sid | CAL:1013,CAL:1098 | R10 | U | 활성
+A123 | 수동 결석 날짜 선택 시작·다중 날짜 지정 | #manualMakeupSave 날짜 선택→calendar pointer/date click | CAL:1037,CAL:1199,CAL:2618 | R10 | U | 활성
+A124 | 수동 결석 날짜 저장/취소 | #manualAbsenceSave/#manualAbsenceCancel; guide 저장/취소 | CAL:1139 | R08,R10 | U | 활성
+A125 | 수동 결석 학생 팝업 닫기 | #manualMakeupClose/backdrop/공유 Escape | CAL:1009,EC:66 | R10 | U | 활성
+A126 | 보강 시트 동기화 | #syncMakeupSheet; config/confirm→/api/makeup-sheet-sync; 외부 연결 포함 | CAL:1364,CAL:1447 | R10 | U | 활성
+A127 | 명단 CSV 내보내기 | #exportRoster/#exportRosterRail; 선택일 콘텐츠/명단·과목 규칙 | EL:1143 | R18 | U | 활성
+A128 | 로그 내보내기 팝업 열기/닫기 | #exportLogs→#exportLogsModal; Close/Cancel/backdrop/Escape/Tab focus | EL:1454,EL:1465 | R18 | U | 활성
+A129 | 로그 내보내기 대상 전환 | #exportLogsTargetDone/#exportLogsTargetDate | H:534,H:541 | R18 | U | 활성
+A130 | 로그 TXT/CSV 형식 선택 | #exportLogsFormatTxt/#exportLogsFormatCsv; TXT 비선택 section 잠금 | H:553,EL:1488 | R18 | U | 활성
+A131 | 로그 TXT 네 영역 선택 | #exportLogsSectionNotes/Tests/Progress/Homework | H:564 | R18 | U | 활성
+A132 | 로그 내보내기 기본값 복원 | #exportLogsReset | EL:1482 | R18 | U | 활성
+A133 | 로그 선택 형식 제출·파일 생성 | #exportLogsSubmit / form submit; busy 및 성공/실패/빈 대상 | EL:1518 | R18 | U | 활성
+A134 | 테스트 인쇄 팝업 열기/닫기 | #exportQuickPrinterTests→#quickPrinterExportModal; Close/Cancel/backdrop/Escape/Tab focus | QP:246,QP:260 | R18 | U | 활성
+A135 | 테스트 인쇄 타임 선택·전체 선택 | #quickPrinterTimeSlot1/Consecutive/Slot2, #quickPrinterExportSelectAll | QP:303,QP:312 | R18 | U | 활성
+A136 | 인쇄 재인쇄 포함 전환 | #quickPrinterIncludeReprints; 매 open default ON, preview refresh | QP:318 | R18 | U | 활성
+A137 | 테스트 인쇄 preview·CSV 제출 | #quickPrinterExportSubmit; frozen date/slots/reprints, zero-row 다운로드 억제 | QP:349 | R18 | U | 활성
+A138 | 운영 메모 입력·등록 | #adminOperationNoteInput/#adminOperationNoteSubmit/form; 300자, 빈 입력 잠금 | ON:104,ON:153 | R14 | U | 활성
+A139 | 운영 메모 제거 | 목록 제거 버튼→note ID DELETE | ON:59,ON:136 | R14 | U | 활성
+A140 | 숙제 미흡 알림 오늘/전체 전환 | [data-student-log-filter=today/all] | SL:401 | R14 | U | 활성
+A141 | 숙제 미흡 알림 개별 삭제 | [data-student-log-delete] | SL:349,SL:392 | R14 | U | 활성
+A142 | 숙제 미흡 알림 전체 정리 | #studentLogClear; native confirm, 전체 DELETE | SL:321,SL:391 | R14 | U | 활성
+A143 | 공지/설문/영상 모드 순환 | #annModeToggle/#annComposeModeToggle; announcement→survey→video | ANN:1889 | R12 | U | 활성
+A144 | 공지 제목·내용 입력 | #annTitle/#annContent; 확대 폼과 preview 동기화 | ANN:1839,ANN:2054 | R12 | B03 | 활성
+A145 | 영상 공지 MID 선택 | #annVideoMid; catalog select | ANN:443 | R12 | U | 활성
+A146 | 공지 대상 메뉴 열기/닫기 | #annTargetBtn/#annTargetMenu; 외부 클릭/Escape 메뉴 처리 | ANN:2900 | R12 | B03 | 활성
+A147 | 공지 대상 모드 선택 | today/slot1/slot2/all/curriculum/grade/direct; compact와 expanded | ANN:21,ANN:1596,ANN:2916 | R12 | B03 | 활성
+A148 | 공지 대상 상세 필터 | [data-ann-target-filter] curriculum/subCurriculum/level/grade | ANN:1691,ANN:2925 | R12 | B03 | 활성
+A149 | 공지 직접 대상 검색 | #annDirectSearch/[data-expanded-direct-search]; shared Korean 검색·IME | ANN:1734,ANN:2068,ANN:2939 | R12 | B03 | 활성
+A150 | 공지 직접 대상 SID 체크 | #annDirectList/[data-expanded-direct-list] input checkbox | ANN:2121,ANN:2970 | R12 | B03 | 활성
+A151 | 공지 보이는 학생 선택/선택 해제 | #annSelectAllVisible/#annClearSelected 및 expanded 대응 버튼 | ANN:2978,ANN:2987,ANN:2171 | R12 | U | 활성
+A152 | 공지 만료 입력 방식 전환 | [data-ann-expiry-mode=hours/absolute] | ANN:836,ANN:1843 | R12 | U | 활성
+A153 | 공지 만료 값 입력 | hours 또는 month/day/hour; 합성 일정 검증 | ANN:851,ANN:1852 | R12 | U | 활성
+A154 | 공지 이미지 선택·여러 장 업로드 | #annImagePick/#annImageFile; 이미지 타입·크기·개수 제한 및 pending draft guard | ANN:1756,ANN:1806 | R12 | U | 활성
+A155 | 공지 이미지 제거 | #annImageRemove/[data-ann-preview-remove-image] | ANN:1834,ANN:3010 | R12 | U | 활성
+A156 | 공지/설문 작성 확대·작게 보기·닫기 | #annComposeExpand/#annComposeExpandClose/[data-expanded-apply]; backdrop/Escape; 동일 compose DOM/session | ANN:1333,ANN:1351,ANN:2197 | R12 | B03 | 활성
+A157 | 작은 설문 builder 열기·닫기·반영·초기화 | #annSurveyBuilderOpen/Close/Apply/Reset; backdrop/Escape | ANN:1039,ANN:1902 | R12 | U | 활성
+A158 | 설문 공개 상태·익명·복수 응답 설정 | #annSurveyStatus/Anonymous/AllowMultiple 및 expanded 대응 | ANN:1923,ANN:2104 | R12 | U | 활성
+A159 | 설문 질문 추가 | #annSurveyAddQuestion/[data-expanded-add-question]; single/multiple/short/long | ANN:14,ANN:1915,ANN:2151 | R12 | U | 활성
+A160 | 설문 질문 문구·유형·필수 변경 | [data-survey-question-text/type/required] | ANN:1934,ANN:1950,ANN:2074 | R12 | U | 활성
+A161 | 설문 선택지 내용·추가·삭제 | [data-survey-option-text/add-option/delete-option]; 최소 2개 유지 | ANN:1943,ANN:1972,ANN:2221 | R12 | U | 활성
+A162 | 설문 질문 복제·삭제·순서 변경 | [data-survey-duplicate-question/delete-question/move=up/down]; 마지막 질문 보호 | ANN:1965,ANN:2243 | R12 | U | 활성
+A163 | 설문 실시간 미리보기 | disabled 답변 radio/checkbox/input/textarea와 disabled 제출; 편집용 새 submit 아님 | ANN:778,ANN:1010 | R12 | U | 읽기전용
+A164 | 공지/설문/영상 등록·수정 완료 | #annPublish/[data-expanded-publish]; publishPromise 공유, newer draft/session 보존, commit 후 refresh 실패 구별 | ANN:2272,ANN:2995 | R12 | B03 | 활성
+A165 | 발행 목록 접기/펼치기·Escape | #annBoardShell summary; 최근 4시간 목록 | H:265,ANN:3092 | R12 | U | 활성
+A166 | 발행 공지/설문/영상 선택 | [data-ann-id] main/expanded list→선택 항목 reply/results dock | ANN:2552,ANN:3044 | R12 | B03 | 활성
+A167 | 공지 첨부 원본 이미지 열기 | #annReplyImage/#annReplyExpandImage href 새 탭 | H:302,ANN:2850 | R12 | U | 활성
+A168 | 답장/설문 결과 확대·닫기 | #annReplyExpand/#annReplyExpandClose; backdrop/Escape/이미지·피드 동기화 | ANN:2869,ANN:2879,ANN:3020 | R12 | U | 활성
+A169 | 발행 항목 수정 시작 | #annReplyEdit/#annReplyExpandEdit/[data-ann-edit]→동일 초안 편집 | ANN:2402,ANN:2440,ANN:3026 | R12 | U | 활성
+A170 | 발행 항목 삭제 | #annReplyDelete/#annReplyExpandDelete/[data-ann-delete]; DELETE와 refresh | ANN:2388,ANN:3033,ANN:3056 | R12 | U | 활성
+A171 | 익명 답장 작성자 우클릭 팝오버 | 관리자 anonymous reply name reveal; 외부 click/Escape/scroll/resize dismiss | ANN:169,ANN:192 | R12 | U | 활성
+A172 | 설문 결과 표·응답 읽기 | renderSurveyResultDock; 공개/익명/유형별 결과 표시 | ANN:2662 | R12 | U | 활성
+A173 | 공지 실시간 목록 자동 갱신 | 10초 /api/announce-status; document.hidden이면 중지, sequence stale suppress | ANN:2886,ANN:3127 | R12 | B03 | 활성
+A174 | 학생앱 계정 팝업 열기/닫기 | #studentAccountsOpen/Close; backdrop/Escape; code clear 및 focus 복귀 | ACC:190,ACC:198 | R15 | B04 | 활성
+A175 | 학생앱 계정 검색·상태 필터 | #studentAccountsSearch/#studentAccountsFilter | ACC:95,ACC:209 | R15 | U | 활성
+A176 | 학생앱 계정 새로고침 | #studentAccountsRefresh | ACC:143,ACC:208 | R15 | U | 활성
+A177 | 학생앱 활성화 코드 발급 | [data-account-action=activation-code]; identity SID 목록 경유 | ACC:122,ACC:160 | R15 | U | 활성
+A178 | 활성화 코드 1회 복사·지우기 | #studentActivationCodeCopy/Dismiss; close도 값 제거; 값 읽기·발급은 이번 조사 미실행 | ACC:79,ACC:207,ACC:213 | R15 | U | 활성
+A179 | 학생앱 계정 초기화 | [data-account-action=reset]; native confirm/취소, 세션 정책 포함; 실행 미허용 | ACC:133,ACC:160 | R15 | U | 활성
+A180 | 학생앱 계정 세션 해제 | [data-account-action=revoke-sessions] | ACC:134 | R15 | U | 활성
+A181 | 학생앱 계정 활성화/비활성화 | [data-account-action=enable/disable]; 비활성화 확인·푸시 연결 정책 | ACC:129,ACC:135 | R15 | U | 활성
+A182 | 집중 기록 open·refresh·close | #studentFocusOpen/#studentFocusAdminRefresh/Close; frozen date/request token/Escape/Tab; OFF 안내와 활성 결과 구분 | FO:129,FO:182 | R15 | B04 | 조건부 결과
+A183 | OCR 보류 open·refresh·close | #studentTestOcrReviewOpen/Refresh/Close; capabilities 지원 시 표시, frozen date, default OFF | OCR:295,OCR:314 | R16 | U | 기본OFF
+A184 | OCR 학생 제출 선택·crop/해설 링크 | pending 목록 button→loadDetail; protected crop/fallback answer link | OCR:95,OCR:204 | R16 | U | 기본OFF
+A185 | OCR 보류 정답/오답 확정·오답→정답 | resolve correct=false/true, correct endpoint; 다른 교정 금지 | OCR:137 | R16 | U | 기본OFF
+A186 | 공유 학생 시험 기록 상세(현재 비활성) | 숨김 .studentTestRecordBtn; compare/close 코드가 있어도 TEST_RECORD_DETAILS_UI_ENABLED=false | TR:19,TR:181 | R03 | U | 비활성
+A187 | 관리자 호환 요일 명단 팝업 | admin.html #yoilModal/#yoilList/닫기; 현재 admin 초기화 그래프에 opener 미발견 | H:593 | R20 | U | 잠재/숨김
+
+/students (38기능군)
+S001 | 전체학생 첫 로드·숙제 비차단 표시 | /students→loadAll students/videos/calendar; homework-books 별도 promise 뒤 기존 행 갱신 | SM:96,SS:30 | R01,R17,R20 | B01 | 활성
+S002 | 관리 화면 내비게이션 | /admin /video-manage /school-cal /tests /file-manage 링크 | SH:80 | R20 | B01 | 활성
+S003 | 전체학생 테마 전환 | #darkToggle와 shell script | SH:88 | R19 | U | 활성
+S004 | 전체학생 표 검색 | #allStudentSearchInput; input/search/compositionend/Escape/native clear | ST:736 | R17 | U | 활성
+S005 | 팝업 없는 Escape 검색 복귀 | 입력 비우기/focus/select/scroll; 통합 팝업 있으면 owner close | SEC:26 | R02 | U | 활성
+S006 | 표 가나다/난이도 정렬 | #stuSort; localStorage, 같은 tr DOM 순서 이동 | SORT:46,SORT:73 | R17 | U | 활성
+S007 | 학교 인라인 시작·저장·취소 | .cell-school 빈값 클릭/더블클릭/Enter/Space; blur/Enter 저장, Escape 취소; 같은 person SID fan-out | ST:976 | R17 | B04 | 활성
+S008 | 학년 인라인 시작·저장·취소 | .cell-grade dblclick, blur/Enter/Escape; person 공유 프로필 | ST:1049 | R17 | U | 활성
+S009 | 학생 레벨 저장 | .levelSelect change; per-person save lock/권위 recovery | ST:809 | R17 | U | 활성
+S010 | 학생 커리큘럼 저장 | .curSelect change; A:Ble 기본 자동 영상 수 연동 | ST:809 | R17 | U | 활성
+S011 | 학생 세부과정 저장 | .subCurrSelect change; 기본 자동 영상 수 연동 | ST:809 | R17 | U | 활성
+S012 | 기출엄선 병행 설정 | .gichulOverlayToggle→capability GET→한 필드 PATCH; 실패 checkbox 롤백, 기존 snapshot 보존 | ST:775 | R09 | U | 활성
+S013 | 요일1~5 편집·저장 | .dayInput change; 대응 visitTime 기본값 및 빈 요일 자습 clear | ST:914 | R17 | U | 활성
+S014 | 요일 자습 여부 우클릭 | .dayInput contextmenu; selfStudyDays 토글, 빈 요일 거부 | ST:838,ST:900 | R17 | U | 활성
+S015 | 등원시간1~5 저장 | .timeInput change/blur/Enter; normalizeTimeInput, per-person lock | ST:803,ST:823,ST:926 | R17 | U | 활성
+S016 | 개별 문서 URL 저장 | .docUrlInput change/blur/Enter; 공유 프로필 반영·다른 draft 보존 | ST:819,ST:856 | R17 | U | 활성
+S017 | 개별 문서 새 탭 | .docOpen; 같은 행 input 값 읽기·빈 값 안내 | ST:845 | R20 | U | 활성
+S018 | 학생 링크·이름 hover/focus | a.stuName 학생 화면 새 탭; 실제 사용 tooltip은 admin/features/hoverTooltip | SM:16,ST:291,HT:1266 | R04 | B02 | 활성
+S019 | 등록 숙제 교재 읽기·갱신 | .linkedHomeworkBooks; 최신 homework-books 응답, 표 검색키 동기화; 옛 subBook 편집 없음 | ST:720,SS:30 | R06,R17 | B01 | 활성
+S020 | 새 학생 입력·추가 | #ns_name/cur/sub/day1~5/grade/level/school/doc→#ns_add; /api/add-student POST 성공 reload, 실패 안내 | ADD:2,ADD:64 | R17,R20 | U | 활성
+S021 | 학생 복제 | .btn-clone-stu; cloneFromSid, identity 필드만 복제, 커리·일정·시간 비우기, loadAll/renderAll 후 검색 유지 | CL:55,CL:132,CL:166 | R17 | U | 활성
+S022 | 학생 삭제 | .btn-del-stu native confirm/취소; canonical DELETE 1회, DOM/state/집계/CSV 동기화 | DEL:38,SM:87 | R17 | U | 활성
+S023 | 통합 운영 팝업 최초·재open | .miniProgBtn; 첫 click lazy import/CSS, busy 표시, 실제 로컬 날짜; cache 실패 retry | ST:1126,SP:141 | R01,R02,R17 | B02 | 활성
+S024 | 전체학생 통합 popup 쓰기 경계 | all-students-readonly; class-log 메모/숙제/영상·시험 배정 불변, assignment write guard | SP:105,SP:169 | R02,R06,R17 | U | 활성
+S025 | 전체학생 조교메모 새 댓글 | 일반/확인일/작성자/날짜/내용 및 등록은 허용; SID mount | AN:22,SP:169 | R13 | U | 활성
+S026 | 전체학생 기존 조교메모 액션 잠금 | pin/edit/delete 버튼 렌더까지 existingReadOnly 유지; 서버 거부도 유지 | AN:298,AN:325,AN:335 | R13,R17 | U | 활성
+S027 | 전체학생 우클릭 진도 제외 저장 | log/video right-click skip만 progress patch; left-click/배정/rearm 금지 | L:3006,V:2296,SP:105 | R02,R06,R09 | U | 활성
+S028 | 전체학생 통합 저장·닫기·모바일 전환 | 상단 저장/닫기/Escape/backdrop; 영상/조교메모/숙제·정보/테스트 탭, popup skin 복구 | SP:63,SP:93,AN:676,V:719 | R02,R19 | B02 | 활성
+S029 | 요일/타임 집계 명단 열기·닫기 | .yoil-cell→#yoilModal; #yoilClose/backdrop/Escape; SID 수업행 기준 집계 | YS:360,YS:375 | R17 | U | 활성
+S030 | 과목·난이도 집계 명단 열기·닫기 | .level-row→동일 #yoilModal | YS:388 | R17 | U | 활성
+S031 | 학교·학년 집계 명단 열기·닫기 | .school-grade-cell→동일 modal, 학교/학년 중복 제거 기준 | YS:403 | R17 | U | 활성
+S032 | 학교·학년 집계 검색 | .school-grade-search; row display filter | YS:416 | R17 | U | 활성
+S033 | 대화명 CSV 대상 모드 | [data-export-target-mode] 전체/학년/과목/커리큘럼 | CSV:149,CSV:364,CSV:449 | R18 | U | 활성
+S034 | 대화명 CSV 대상 상세 필터 | grade / subject / curriculum+subCurriculum+level 선택 | CSV:388,CSV:462 | R18 | U | 활성
+S035 | 대화명 CSV 다운로드 | #chatRosterExportBtn; 선택 mode/filter 기준 고유 학생·메타 CSV, 전체학생 표 검색과 별개 | CSV:425 | R18 | U | 활성
+S036 | 학생 시험 기록 상세 버튼(비활성) | 행 기록 버튼 생성되지만 shared flag false가 숨김; 비교 보기/close latent | ST:379,TR:19 | R03 | U | 비활성
+S037 | 호환 진도 popup(현재 launcher 없음) | progressModal.js imported; .showProg opener는 현재 renderTable에 없음; #progSave/Close, cell click/right-click/backdrop | LEG:26,LEG:71 | R17 | U | 잠재/숨김
+S038 | 구 전체학생 tooltip 대체 모듈(미사용) | all/features/hoverTooltip.js와 ensureProgressForSid는 현재 all/main import graph에 없음; active admin tooltip과 구분 | LH:12,SM:16 | R17 | U | 잠재/미연결
+
+/school-cal (26기능군)
+C001 | 학교 일정 최초 로드·저장 페이지 복원 | load no-store+revision; localStorage 선택과 document active page, common/grade rows | C:883,CP:26 | R11 | B01 | 활성
+C002 | 관리자 화면으로 돌아가기 | /admin link; leave flush 경로 | CH:282,C:875 | R20 | U | 활성
+C003 | 학교 일정 테마 전환 | #darkToggle; shell script | CH:278 | R19 | U | 활성
+C004 | 학교 일정 연도 전환 | #yearSelect; 이전 draft save(switch) 성공 뒤 page metadata enqueue | C:758,C:796 | R11 | B05 | 활성
+C005 | 학교 일정 학기 전환 | #semesterSelect 1/2; 같은 serialized switch 경로 | CH:295,C:758 | R11 | B05 | 활성
+C006 | 학교 일정 중간/기말 전환 | #examSelect; period/math/note 대응 필드와 header 변경 | CH:301,C:758 | R11 | B05 | 활성
+C007 | 학교·과목·교과서 검색 | #calSearch input; syncFromView 먼저→renderBody; school/grade hidden draft 보존 | C:808 | R11 | B05 | 활성
+C008 | 검색 native clear·Escape | search/keydown Escape; draft 수집 뒤 전체 검색 복귀 | C:814,C:820 | R11 | B05 | 활성
+C009 | 학교 행 추가 | #addRow; 새 school focus 후 800ms autosave | C:648,C:802 | R11 | U | 활성
+C010 | 학교 학년 행 펼치기/접기 | .btn-toggle[data-action=toggle-school]; expanded set, 검색 중 matches 표시 | C:702,C:828 | R11 | U | 활성
+C011 | 학교명 편집 | .inp-school; nonblank fallback 의미 유지, autosave | C:409,C:861 | R11 | B05 | 활성
+C012 | 학교 공통 개학일 편집 | .sc-sem; semesterStart | C:413,C:532 | R11 | U | 활성
+C013 | 학교 공통 시험 기간 편집 | .sc-period; 선택 midterm/final 대응 | C:414,C:532 | R11 | U | 활성
+C014 | 학교의 학년·과목 행 추가 | .btn-add-grade[data-action=add-grade]; new grade focus | C:664,C:828 | R11 | U | 활성
+C015 | 학년 행 학년 편집 | .gr-grade | C:439,C:542 | R11 | U | 활성
+C016 | 학년 행 과목/트랙 편집 | .gr-phase | C:440,C:542 | R11 | U | 활성
+C017 | 학년 행 교과서 편집 | .gr-textbook | C:441,C:542 | R11 | U | 활성
+C018 | 학년 행 수학 시험일 편집 | .gr-exam-math; midtermMath/finalMath | C:442,C:542 | R11 | U | 활성
+C019 | 학년 행 시험 관련 정보 편집 | .gr-exam-note; midtermNote/finalNote | C:443,C:542 | R11 | U | 활성
+C020 | 학교 행 삭제 | 학교 행 .btn-del; 마지막에는 빈 school 하나 유지, autosave | C:684,C:853 | R11 | U | 활성
+C021 | 학년 행 삭제 | 학년 행 .btn-del; school ID/grade ID로 제거, autosave | C:693,C:844 | R11 | U | 활성
+C022 | 학교 일정 수동 저장 | #saveBtn→manual; immutable snapshot, no new full-map unguarded path | C:623,C:804 | R11 | B05 | 활성
+C023 | 학교 일정 자동 저장 | text input→800ms debounce; single queue revision chaining; 최신 draft snapshot | C:604,C:861 | R11 | B05 | 활성
+C024 | 학교 일정 셀 Enter/Shift+Enter 이동 | tbody 모든 text input 순서에서 다음/이전 focus | C:867 | R11 | U | 활성
+C025 | 학교 일정 이탈/숨김 flush | beforeunload/pagehide/visibility hidden; dirty snapshot만 flush keepalive | C:641,C:875,CQ:1 | R11 | U | 활성
+C026 | 학교 일정 저장 충돌·실패 피드백 | 409/428 followers block/새 GET 필요, manual/switch native alert; 네트워크 failure retry 및 selector restore | C:85,C:91,C:762,CP:26 | R11 | B05 | 활성
+
+기존 evidence / gate 색인
+아래 R은 검사가 소스에 존재하는 범위이다. 이번 과제에서는 실행하지 않았다.
+2026-10-01 Hub 후속 기록의 full non-smoke 105 unit group PASS/exit0 및 focused PASS는
+그 당시 source/fixture에 대한 보고된 결과다. 새 후보의 before/after 통과나 현재 운영 pass가 아니다.
+
+R01 첫 표시·조회·캐시:
+ scripts/verify_admin_latency_contracts.mjs, verify_today_refresh_flights.mjs,
+ verify_popup_pending_cache.mjs, verify_test_popup_hydration.mjs, verify_today_search_fields.mjs,
+ verify_admin_date_session_storage.mjs.
+ source/실제 module VM: 첫 표 우선·force/date 경계·실패 eviction·완료부터 2.5초 TTL·epoch invalidation·
+ required 시험 4GET ready·Korean field search. HTTP/paint benchmark와 별개.
+R02 팝업 async/close:
+ scripts/verify_admin_popup_async_scope.mjs, verify_log_auto_watch_scope.mjs.
+ 실제 initializer/listener VM: SID/date 고정, unified/save flight, duplicate click,
+ 보강/결석 역순 open·loading Escape·상/하 저장 잠금, 자동 watch 늦은 다른 SID 응답.
+R03 시험 배정:
+ static/js/admin/features/testAssignmentRules.js;
+ scripts/verify_test_assignment_rules.mjs;
+ scripts/verify_refactor_safety.py의 run_admin_test_modal_assignment_source_checks,
+ run_admin_test_modal_persistence_bridge_source_checks,
+ run_admin_test_modal_assignment_behavior_checks.
+ literal/해시/source/실제 modal VM: 현재 과목·recent/default·레벨·순환/explicitBlank·저장 권위 순서.
+ shared/testRecordDetails.js는 현재 UI flag false이므로 그 상세 검사 존재를 활성 화면 pass로 세지 않는다.
+R04 tooltip·시험 전 출석:
+ scripts/verify_hover_tooltip_performance.mjs, verify_exam_attendance.mjs.
+ SID index/frame batching·실제 tooltip driver·count span만 갱신·4endpoint 병렬/failure/invalidation,
+ 리터럴 slot/결석/예약/남은 횟수. 전체 브라우저 툴팁 동작별 latency 없음.
+R05 로그/진도·하원/기록정리:
+ scripts/verify_log_routes.py, verify_progress_routes.py, verify_log_batch_partial_success.py,
+ verify_record_cleanup_test_status.mjs, verify_today_unarchived_done.mjs, verify_request_date_barrier.py.
+ temp Flask/JSON/SQLite와 source/VM: unknown/clear/merge/부분 commit·최신 권위·archive 및 manual progress.
+ 운영 GET smoke를 실행해 확인한 증거로 대체하지 않는다.
+R06 숙제:
+ scripts/student_mobile_app_checks/homework-admin.mjs 및 homework-student.mjs,
+ verify_admin_homework_slot_counts.js, verify_homework_leave_policy.js;
+ verify_student_mobile_app.mjs --only homework.
+ source/VM/별도 temp gate: carryover·책/재우기·read-only·canonical homework와 권위 저장 순서.
+ 행 추가·삭제·순서·모든 slider/기한 입력의 실제 브라우저 전수 시나리오는 발견되지 않았다.
+R07 백지 대기:
+ scripts/verify_admin_white_review_pending.mjs, verify_person_identity_routes.py.
+ exact boolean·SID mutex·두 표시 복사·rollback·실제 leave→done 렌더 및 고정 column 계약.
+R08 출결/보강/결석:
+ scripts/verify_extra_attendance_merge.mjs, verify_admin_weekend_slot_override.js,
+ verify_regular_attendance_days.mjs, verify_absence_recovery_sort.mjs,
+ verify_absence_makeup_matrix.py, verify_schedule_override_routes.py,
+ verify_attendance_flag_storage.py 및 R02/R17.
+ source/pure/VM/temp routes: 병합·slot writer 순서·결석 barrier/recovery·failure no-write;
+ 관리형 브라우저 전체 출결 mutation pass와 별개.
+R09 영상:
+ scripts/verify_refactor_safety.py --only-video-modal-assignment-policy의 source/behavior 및 기본 영상 units;
+ scripts/verify_updates_routes.py, verify_video_watch_rearm.py/.mjs, verify_youtube_video_feature.py/.mjs,
+ verify_video_progress_matrix.py, verify_student_previous_video_review.js,
+ verify_student_material_access_scope.js.
+ snapshot/source·manual white/skip·Kollus rearm token·YouTube no-watch·기출 overlay·review 권위.
+ 별도 video-manage의 3,000행 synthetic render 개선은 이 과제의 videoModal 검색 개선과 구분.
+R10 캘린더/보강:
+ scripts/verify_admin_calendar_consecutive_counts.js, verify_makeup_schedule_links.mjs,
+ verify_makeup_projection_oracle.mjs, verify_makeup_payload_rules.py, verify_absence_makeup_matrix.py.
+ source/pure/VM/temp: slot/set/count·수동/예약/이월 의미. 시트 연결 source/contract도 별도 검사.
+ verify_admin_makeup_calendar_discoverability.mjs는 실제 browser runner이고 app을 시작할 수 있으므로 이번에 미실행.
+ 캘린더 새 후보 CAND01의 직렬 recalc 후속 두 load를 막는 gate가 있다고 확인한 것은 아니다.
+R11 학교 일정:
+ scripts/verify_school_calendar_state.mjs, verify_school_calendar_save_queue.mjs,
+ verify_school_calendar_revision.py 및 demo contract.
+ literal document/row·unknown metadata·revision·실제 temp Flask 두 client race·외부 queue 순서·flush.
+ 전체 school-cal.js의 실제 DOM·IME·focus·모든 행 편집을 실행하는 전수 browser driver와 같지 않다.
+R12 공지:
+ scripts/verify_admin_announcement_async_scope.mjs,
+ scripts/student_mobile_app_checks/board.mjs, notifications.mjs 및 공지 server/image membership gates.
+ 관리자 실제 init/listener VM 16-case: publish/upload/draft/session/busy/역순 list 및 commit 뒤 refresh 실패.
+ 모든 survey 종류/옵션 편집이나 admin anonymous reveal의 실제 browser click pass를 의미하지 않는다.
+R13 조교메모:
+ scripts/verify_assistant_student_notes.py, verify_admin_assistant_notes_demo.mjs.
+ temp/API/source/VM: SID 격리·author/reminder/pin/edit/delete·read-only 서버 거부·export/storage 제외.
+ 실제 thread create/edit/delete/pin의 전체 browser round-trip 증거는 미발견.
+R14 운영 메모·학생 미흡 로그:
+ scripts/verify_admin_operation_notes_demo.mjs, verify_student_mobile_app.mjs 및 Python 대응검사.
+ demo/VM/temp 계약, 숨김/복구·삭제·정리 경로. 현재 admin 실제 두-browser CRUD 전수 기록 없음.
+R15 학생앱 계정·집중:
+ scripts/student_mobile_app_checks/admin-accounts.mjs, focus.mjs,
+ verify_admin_initializer_idempotence.mjs 및 대응 Python/temp gates.
+ 관리자 계정 UI/세션·flag와 initializer DOM/library retry(보고된 51-case).
+ 실제 계정 활성/비활성/초기화/code 복사·활성 focus 결과 브라우저 QA와 별개.
+R16 OCR:
+ scripts/verify_student_test_ocr_admin.mjs, verify_student_test_ocr_frontend.mjs,
+ verify_student_test_ocr_* Python temp/crop gates.
+ default-OFF/capability/protected admin contract, crop·resolve/correct 제약.
+ 실제 OCR provider/worker 및 UI 활성화/운영 데이터 확정은 이번 범위에 없다.
+R17 전체학생·날짜 출결:
+ scripts/verify_roster_auth_attendance_async.mjs (table 실제 source VM 및 날짜 attendance closure),
+ verify_all_student_clone_search_persistence.mjs,
+ verify_legacy_consumer_cleanup.mjs,
+ scripts/verify_refactor_safety.py의 run_all_students_linked_books_and_log_popup_source_checks,
+ run_all_page_progress_lazy_source_checks 및 roster/identity temp tests.
+ field 실패·부분 commit 권위 reload·person fan-out·다른 draft 보호,
+ clone 검색 유지, canonical delete 단일 요청, lazy import/read-only/popup 계약.
+ yoilStats 클릭/검색·sort/add/clone/delete 실제 렌더 브라우저 전수 증거로 세지 않는다.
+R18 내보내기:
+ scripts/verify_export_log_format.mjs, verify_roster_export_logic.js,
+ verify_quick_printer_export.py/.mjs.
+ 순수/source/VM/temp: current course·green-only tests·blue video 제외·14열·타임/reprints default ON·
+ zero-row 억제·CSV BOM/이스케이프/순서. 실제 OS download 파일 확인과 popup focus 전수 기록 없음.
+R19 레이아웃·접근성:
+ scripts/verify_admin_mobile_layout_contract.js, verify_mobile_touch_targets.mjs,
+ verify_admin_css_inventory.mjs, scripts/verify_refactor_safety.py의 run_admin_student_popup_scroll_source_checks를 포함한 기본 suite.
+ source/cascade 계약을 현재 모든 팝업의 screenshot/computed-style pass로 대체하지 않는다.
+R20 route/asset/static:
+ scripts/verify_static_repository_contracts.py, verify_phase16_demo_contract.mjs 및 기본 suite.
+ app-import-free 링크/asset/method 소유권; 기존 보고 145 navigation/270 assets/143 route-method.
+ source 존재와 endpoint 연결에 대한 증거이며 버튼 실제 동작/성능 증거는 아니다.
+
+브라우저 증거 코드
+U   읽은 기록에 해당 기능군의 직접 조작/인접 rendered evidence 미발견.
+B01 SERVER_BROWSER_LATENCY_2026-10-01.txt의 navigation; /admin·/students·/school-cal 포함.
+    /all 8.8ms는 404여서 제외됨. document responseEnd/FCP를 row-ready나 click으로 쓰지 않는다.
+B02 같은 보고의 Chrome 통합 표시/영상/시험/숙제 ready 3회, 정확한 SID·disabled 해제·Escape,
+    IAB+Chrome/2560·1280·390 일부 layout, manual done→none 저장/reload/watch GET 및 두 log GET 200.
+    수동 상태가 어느 모든 버튼/단축키에서 유지되는지, 학원망 실제 Kollus까지 검증한 것은 아니다.
+B03 같은 보고/후속 기록의 main 공지 발행 1건(button lock11.7ms/완료170ms)·목록/대상 선택,
+    desktop compose overflow 수정·두 브라우저 일부 responsive evidence.
+    학생 답장22.1ms/읽음/reload는 별도 학생 표면 evidence; 관리자 survey CRUD pass로 확대하지 않는다.
+B04 같은 보고/후속 기록의 /students 합성 학교 필드 저장·reload·admin 표시,
+    관리자 계정 67그룹 표시, Focus OFF 안내, 정확한 날짜 출결 SID/보강·결석 버튼 준비/닫기.
+    실제 계정 mutation 또는 출결 저장 완료를 주장하지 않는다.
+B05 SERVER_PROJECT_REVIEW_2026-10-01.txt:203~204 및 276의 학교 일정 검색 전 draft 수집,
+    Chrome+IAB의 저장 대기 중 검색 초안 유지.
+    LOGIC_DECISION_LEDGER.md D-06B:112~117의 과거 격리 두-browser 동일 DOM·실제 저장·stale409·console0,
+    D-08의 school-calendar state/queue/temp 및 두-browser extraction evidence도 기존 자료다.
+    과거 evidence를 인증 적용 후 최종 source의 전체 입력 latency/새 운영 backend 검증으로 표시하지 않는다.
+
+보고된 참고 수치(새 측정 아님)
+ Chrome 3회 document responseEnd:
+ /admin 660.9/18.4/13.2ms, /students 632.0/11.2/11.1ms, /school-cal 10.4/7.8/10.0ms.
+ 통합 popup: 표시55.5/31.7/27.1, 영상180.5/109.1/123.2,
+ 시험149.0/107.5/111.6, 숙제129.8/32.7/191.6ms.
+ 동일 persistent synthetic QA(전체학생67, test catalog1600), TTL/cache/CPU 조건 완전 통제 아님.
+ p50/p95, 운영 사용자 개선율, 모든 버튼의 완료 지연, 최종 source rollout으로 해석하지 않는다.
+ generated/server-hub-review-20261001/popups-final.jpg 및 SHA는 기존 문서의 캡처 기록이다.
+ 이번 과제에서는 generated/runtime 이미지나 파일을 열어 재검증하지 않았다.
+
+우선순위 성능 후보: source 증거, 동작 보존, 계측
+모두 아직 미구현·미측정 후보다. 아래 호출 수는 코드 경로 예측이며 전체 HTTP 총합이 아니다.
+P1/P2/P3는 이번 성능 작업 순서다. 데이터 손상/보안 severity 점수로 쓰지 않는다.
+
+CAND01 / P1 / 캘린더 재계산의 직렬 중복 GET (가장 먼저 외부 request count로 재현)
+ 위치: CAL:748~774 preloadExtraWeekend, CAL:784~786 fetchCountsForRange,
+       CAL:2691~2698 recalcCalendarCounts, CAL:2225~2228 refreshMakeupPlanner.
+ 경로: recalcCalendarCounts→fetchCountsForRange→await preloadExtraWeekend(4GET)
+       →then(refreshMakeupPlanner)→await preloadExtraWeekend(같은 4GET).
+ preload promise는 완료 finally에서 null이다. 두 번째 호출이 첫 완료 뒤여서 pending 공유가 적용되지 않는다.
+ URL: /api/extra-attend, /api/weekend-slots, /api/makeup-carryover, /api/absent.
+ 단일 recalc chain에서 각각 2회(4+4) 경로가 있다. EX:576, AR:493, RC:269, T:2296 및 CAL의
+ 보강/선택/시트 mutation 후 호출된다. 추가 admin:refresh/attendance 이벤트 fetch까지 합친 수치는 아니다.
+ 이미 끝난 calendar 초기화/동시 preload single-flight(#11/R01)는 그대로 둔다.
+ 최소 방향: 같은 recalc 실행 안에서 성공한 coherent preload 결과를 counts→planner/hints에 이어 사용;
+ 완료 cache를 글로벌 TTL로 확대하거나 mutation 뒤 새 read를 제거하지 않는다.
+ 보존: SID/date/slot·결석/수동/예약/이월·동시 save 후 최신 권위, failed loader retry, hints/calendar count 일치.
+ 계측: synthetic 출결 저장/보강 변경/recovery 후 한 recalc의 URL별 GET 및 root operation ID를 기록.
+      post-commit 서버 state와 인원/목록이 동일한지 독립 literal oracle, failure와 동시 mutation을 넣는다.
+      첫 네 GET 완료→planner paint 분리; 2→1/URL이 관찰될 때만 개선 수치를 주장.
+ 기존 gate R08/R10/R17+R01. 새 gate는 init뿐 아니라 직렬 recalc chain을 실제 module에서 실행해야 한다.
+
+CAND02 / P1 / 학교 일정 검색의 전체 draft 수집·deep clone·DOM 재생성
+ 위치: C:808~825 input/search/Escape→syncFromView→renderBody,
+       C의 syncFromView(536~602), renderBody(476~513),
+       C:439~444 grade inputs 및 C:534~546 field reads.
+ 매 query마다 모든 schools/grades clone, DOM school/grade rows 조회, grade findIndex,
+ 검색용 shared key 생성/필터 뒤 tbody.innerHTML 전체 교체. 검색 결과에 없는 원본도 보존하려고 clone/merge한다.
+ 텍스트 cell typing 자체는 timer만 예약한다(C:861). 그 경로가 매 글자 전체 render라고 오인하지 않는다.
+ 이미 끝난 검색 전 draft sync/숨김 행 보존(B05)은 정확성 gate이며 삭제해서 속도를 얻으면 안 된다.
+ 최소 방향: 단일 dirty snapshot 수집과 versioned row/search-key index, 조회만 바뀔 때 불필요 clone 재사용;
+ DOM 갱신 범위를 줄이는 안은 source/실제 input IME·focus evidence 이후 채택.
+ 보존: hidden/collapsed grade·다른 시험/학기/연도 값·unknown metadata·nonblank merge·expanded set·draft,
+ serialized revision queue/immutable snapshot/800ms timer/flush; 검색이 저장 범위를 축소하면 실패.
+ 계측: synthetic 학교30/150, 학년·과목 행150/1000, 여러 연도·학기, 초성/영타/AND 및 빠른 input/IME/clear.
+      sync CPU, projection CPU, DOM node 생성/교체, Long Task, 마지막 input→일치하는 표 paint를 분리;
+      pending save와 search/collapse/add/delete 교차 뒤 reload의 literal document를 확인.
+ 기존 R11과 B05를 유지하고 실제 DOM 검색·행 보존 before/after gate를 추가.
+
+CAND03 / P1 / 전체학생 한 필드 저장 때 전역 controls 탐색·연결행 재탐색·집계 DOM 재생성
+ 위치: ST:29~48 syncRosterRow; ST:52~104 saveRosterFields;
+       ST:218 renderCurStats; ST:751 applyAllStudentSearch;
+       YS:60~313 renderYoilStats(요일5field·과목/난이도·학교학년 여러 pass 및 host.innerHTML);
+       CSV:473~489 field change/focusout 뒤 export controls 재구성.
+ 한 필드 성공/실패 finally에서도 전체 input/select를 탐색하고 person 행마다 전체 tr.find,
+ 모든 커리 집계·검색·요일/학교/난이도 패널을 다시 만든다. docUrl 변경에도 요일 통계가 재계산된다.
+ 이미 완료된 person 저장 잠금·failure recovery·다른 draft 보호(#10/R17)를 그대로 둔다.
+ YS:304~309 handler는 새 yoilStatsInner에 한 번 붙인다. 지속 host에 listener가 누적된다는 후보는 반증했다.
+ 최소 방향: per-render SID→row/control index, 실제 변경 field dependency에 따라 집계 갱신,
+ 같은 완료 batch의 DOM 작업 frame 공유. field write나 권위 recovery 자체를 건너뛰지 않는다.
+ 보존: personId fan-out school/grade/doc, unknown fields·부분 commit reload·다른 input draft,
+ name+school dedupe와 수업행 집계의 서로 다른 기준, selfStudy 제외, DOM/state/window/CSV/count 일치.
+ 계측: synthetic 학생67/300/1000 및 same-person 여러 SID; school/day/level/doc 각각 저장·실패/부분 성공.
+      API 성공→정확한 행/집계/검색/CSV visible paint, CPU pass/DOM 교체 수, unrelated focus/draft 유지.
+ 기존 R17/R18 + 실제 /students 모든 field·집계 modal QA. 이름/학교 중복 fixture로 독립 count 검증.
+
+CAND04 / P2 / 영상 검색과 영상·시험 range drag의 전역 DOM 반복
+ 위치: V:1347~1411 buildVideoAssignmentHtml, V:2162~2175 extraVideoSearch input.
+ 검색 글자마다 course 전 목록+selected extras+후보(80개 cap) 및 filter/input까지 chkZone 전체 교체;
+ 과목/세부/추가 검색 open도 같은 rebuild. core course 길이가 크면 후보 cap만으로 비용이 제한되지 않는다.
+ V:2198~2226 video apply range, X:1859~1871 test applyDragRange는 매 mousemove/mouseover에
+ snapshot의 모든 row를 돌며 range 밖 원래 상태도 재적용한다. 같은 row index에서 반복될 수 있다.
+ 별도 video-manage render 인덱스 개선은 완료(#기존 보고)이며 이 code path를 고친 것으로 보지 않는다.
+ 최소 방향: 검색 결과 영역만 갱신·scope/catalog index 재사용, drag는 index 변화분 및 frame 단위 제한.
+ 보존: 입력 focus/caret/Korean IME, assigned/unknown extra·수동 status와 explicitBlank,
+ Ctrl/Cmd+Shift anchor reset·선택/상태 분리·드래그 밖 원래 상태·mouseup final state·touched keys,
+ frozen SID/date·ready lock·save order·Kollus rearm/no YouTube rearm·all-students-readonly.
+ 계측: 영상/시험 catalog1600/3000 + 다양한 실제 보이는 scope 크기(전체 catalog=DOM 행 수로 가정 금지);
+      20자 input/빠른 reversal/drag across100행/동일 row moves; Long Task·DOM replace·프레임·payload literal 비교.
+ 기존 R02/R03/R06/R09 및 두-browser 실제 selection/search/save/reload gate.
+
+CAND05 / P2 / 보강 두 검색창에서 두 목록의 전체 projection·sort·DOM 재구성
+ 위치: CAL:1456~1459 input/search/compositionend 모두 renderMakeupPlanner;
+       CAL:2122~2222 pending+scheduled 양쪽 build/filter/sort/innerHTML,
+       CAL:1531~1540 getPendingMakeups→MP:536 buildPendingMakeups.
+ 한쪽 검색 입력도 미해결/예정 두 데이터를 다시 계산하고 search key를 생성해 양쪽 list를 교체한다.
+ 초기 pending/예약 pure 경계 추출(#20)은 완료다. 여기서는 caller의 재계산 빈도만 새 후보로 둔다.
+ 최소 방향: authoritative preload/운영일 version에 묶인 projected rows+keys; input은 해당 list만 filter.
+ 보존: attendanceCheck/manualAbsence/makeupSelection 모드·copy text·정렬·이월/원결석 key·conflict hints,
+ 최신 결석/extra/weekend/carryover·source bootstrap legacy normalization 차이; mutation invalidation 필수.
+ 계측: 합성 결석/예약100/1000행, 두 창 번갈아 search/IME/clear, selection 중 검색·date switch·save;
+      CPU projection 횟수/교체된 row 수·last input→paint·두 panel 데이터 정합성.
+ 기존 R10 + 실제 calendar DOM. 변경되지 않은 phase는 projection 결과 hash로만 판단하지 않고
+ 합성 literal row/count/copy oracle 및 실제 DOM을 함께 확인.
+
+CAND06 / P2 / 공지 10초 갱신에서 동일 응답에도 목록·피드 전체 교체
+ 위치: ANN:2886~2896 sequence는 late response를 막지만 pending 자체를 공유하지 않음;
+       ANN:3127~3131 visible tab마다 10초 fetch;
+       ANN:2482~2503 list→reply dock, ANN:2645/2721 feeds innerHTML,
+       ANN:2792~2847 expanded feed는 원본 innerHTML 복사 후 rAF scroll restore.
+ 동일 응답도 다시 render. slow>10초 또는 publish/delete 뒤 refresh가 poll과 겹치면 같은 GET이 중첩 가능하다.
+ 완료된 publish/upload busy·session guard·stale list (#06/R12)와 overflow layout(#26/B03)은 유지.
+ 최소 방향: 데이터 identity/revision과 expiry/time labels를 함께 비교해 필요한 부분만 DOM update;
+ 동일 읽기 epoch pending 공유는 mutation 전/후 flight를 반드시 구별.
+ 보존: 실제 신규 답장/읽음/설문 결과·최근4시간 filter·만료 text·선택 항목·anonymous reveal,
+ expanded scroll position·새 compose draft·이미지 upload·commit 성공 뒤 refresh failure feedback.
+ 계측: 합성 공지0/30/300, 답장/설문100/1000; 3poll unchanged→새 reply/expiry/change,
+      publish와 poll 겹침/slow transport/reversed response, hidden tab resume.
+      GET concurrency·DOM replacements·poll main-thread time와 selection/scroll/draft 보존.
+ 기존 R12 + 실제 관리자 reply/survey/compose 두-browser QA. poll 자체를 제거/실시간성 약화하는 안은 아니다.
+
+CAND07 / P2 / 오늘 검색의 매 입력 전체 SID index·검색키 재생성
+ 위치: TO:581~631; input/search/compositionend 각각 applyTodaySearchFilter;
+       TO:608 students 전체 Map, TO:612 모든 today+done 행의 todayStudentSearchKey,
+       TO:621~623 visibility/class/aria write.
+ 최상위 request 공유(#14) 및 학교/과목 검색 의미(#todaySearch/R01)는 이미 완료.
+ /students 표는 ST:row.dataset.searchKey가 이미 존재하므로 같은 개선을 새로 제안하지 않는다.
+ 최소 방향: today render/학생 confirmed change에 맞춘 field별 key/index 재사용,
+ 결과가 같은 row는 visibility/aria DOM write 생략. IME 끝값을 잃는 debounce 금지.
+ 보존: 이름/학교/과목별 초성·영타·field boundary·공백 AND·fallback rows·today/done 집계,
+ deleted/linked profile/date refresh invalidation, Escape focus/scroll.
+ 계측: 합성 today+done50/300/1000행, 각 field·IME/Latin layout·clear, profile/date/save 직후 재검색;
+      key 생성 수와 DOM mutation 수·input→paint를 기록하며 literal matcher와 DOM 모두 대조.
+ 기존 R01/R17 및 실제 표 검색 QA.
+
+CAND08 / P3 / 대량 결석 저장의 SID별 직렬 네트워크 쓰기
+ 위치: AR:449~454 selectedIds마다 await attendance(false), await contact(false);
+       이후 latest absence/revision POST/order reset/두 이벤트/recalc.
+ 선택 N명일 때 이 단계만 2N write round-trip이다. 동시에 날려도 같은 파일 잠금/실패 의미가 바뀔 수 있다.
+ 이 후보는 우선 측정 대상이며 일반 Promise.all 교체나 전체-map overwrite 승인을 뜻하지 않는다.
+ 보존: 두 flag의 실패 경계·unknown merge·absence revision/barrier·자동배정 삭제·알림·부분 성공/재시도,
+ modal date/SID freeze와 두 저장 button lock. 새로운 batch endpoint/atomic 계약은 별도 설계가 필요.
+ 계측: synthetic N=1/10/50에서 feedback/commit/refresh 별 latency와 request count;
+      중간 flag 실패/no-write 가능한 범위와 post-commit 실패를 독립 temp oracle로 구분.
+ 기존 R02/R08/R05 및 Hub 실제 출결 mutation QA. CAND01 등의 조회 중복 감소를 먼저 적용한다.
+
+추가 관찰, 즉시 개선 확정으로 세지 않음
+ - ST:803/823/828(time), ST:819/823/828(doc)는 change/blur/Enter에서 같은 writer를 호출한다.
+   pending lock은 겹친 저장을 막지만, 완료 후 같은 값을 다시 blur하면 no-op PATCH 후보가 남는다.
+   첫 blur와 change가 같은 tick이면 lock 때문에 1회다. '항상 중복 저장'이라고 주장하지 않는다.
+   실패 retry/서버 normalization과 동시 외부 변경을 보존하는 외부 request-count 재현 후 판정.
+ - AS:bootstrap의 /api/updates와 TO:865 최초 real-date boundary GET은 별도 owner다.
+   추가 read의 현재-date 자동 초기화 의미가 있어서 단순 삭제/캐시 reuse 후보로 확정하지 않았다.
+ - TO auto refresh와 calendar initial/preload, tooltip RAF, popup TTL, lazy roster imports,
+   homework-books 비차단 로딩은 이미 개선된 경로다. 이번에 다시 완료 작업으로 발명하지 않는다.
+
+Hub 실행 인계: 미검증 기능과 단계2 gate
+미검증은 소스가 없는 기능/버그 확정이라는 뜻이 아니다. 현재 읽은 보고서의 범위 밖이라는 뜻이다.
+251개 각각 R gate와 UI gap을 위 row에서 조회할 수 있다.
+
+1 /admin의 주요 남은 실제 조작
+ - 날짜 prev/today/next, Simple/Full/dark, rail/navigation, 검색 field/IME/영타/AND/Escape,
+   drag-order·slot/time/wheel·att/contact/selfStudy/hw request/hw check/whiteReviewPending.
+ - 행 결석/하원/연결행 연강·undo/개별 cleanup/일괄 cleanup/숙검하원;
+   미완료 경고와 실제 count/date 일치, 저장 후 ready·reload·정상 auto update.
+ - thread 일반/확인일/author/내용·create/edit/cancel/delete/pin,
+   homework 책/이번/다음/comment/pct/add/remove/order/sleep/canonical 기한/상태,
+   별도 저장/숙검 완료/상단 unified 저장/닫기/pending 변경 차단.
+ - 영상 count/[고] 제외/extra 검색·필터·unknown/drag·Ctrl/Cmd range/arrow/save;
+   시험 각 category·difficulty·term·round·student defaults·drag/right-click/explicitBlank·save.
+ - 보강/결석 상·하 저장, 날짜 출결→대상→slot/확인, recovery,
+   calendar week/today/event 정보, pending/scheduled search·cancel/이월/예약/변경,
+   manual 날짜 지정·취소 및 검증용 시트 연결 경계.
+ - 명단/log/printer 실제 preview·선택/reset/format/reprints/zero/download/close/focus.
+ - operation notes CRUD, 학생 미흡 로그 today/all·개별/전체 삭제.
+ - 공지 영상모드·기간·이미지·7대상/모든 filter/direct·확대 동기화,
+   설문4종·required/status/anonymous/multiple·옵션/q clone/order/delete,
+   edit/delete/reply/result 확대/anonymous reveal·poll 겹침·expiry.
+ - 계정 search/filter/refresh 및 identity별 action/실패/focus, Focus OFF 회복;
+   계정 destructive/native confirm 취소와 server status는 합성/temp로 먼저 증거.
+ - OCR/활성 focus 및 shared 비활성 기록은 별도 flag/QA 배포 gate가 필요한 범위다.
+   scope 조사를 이유로 활성화하거나 운영 계정/code/crop을 조회하지 않는다.
+
+2 /students의 주요 남은 실제 조작
+ - 기존 B04의 학교 한 필드 외, 학년/level/cur/sub/overlay/day1~5/selfStudy/time1~5/doc,
+   같은 person 다중 SID, 성공/실패/부분 commit·다른 draft·reload/state/count/CSV 정합성.
+ - add/clone/delete·search 유지·sort·집계 명단3종/검색·대화명 mode/filter/실제 download.
+ - 최초 lazy import 실패/재시도 및 반복 open의 정확한 실제 today/SID,
+   네 popup mobile 접근과 close/skin restore.
+ - read-only class-log/homework/assignment(left-click) 무쓰기,
+   note list/create 허용·기존 action 잠금·right-click progress만 허용·no rearm,
+   save/reload 뒤 source별 상태. 숨김 shared 기록/legacy .showProg 활성화는 하지 않는다.
+
+3 /school-cal의 주요 남은 실제 조작
+ - B05 draft/search·과거 저장409 두-browser evidence를 유지하면서 최종 source에서
+   연도/학기/mid/final switch와 save failure selector restore, add/toggle/delete,
+   school/common/각 grade field, Enter/Shift+Enter, IME/hidden draft/collapse를 함께 검증.
+ - debounce 중 검색/전환/이탈, queued switch+metadata POST의 immutable snapshot과 revision,
+   두 탭 동시409/428 follower block→reload 후 회복, failure retry/keepalive flush.
+ - school snapshot unknown 필드를 독립 합성 literal과 비교; hidden rows 누락 여부는 visible table만으로
+   판정하지 말고 허용된 격리/temp 응답과 reload를 함께 본다.
+ - 관리자/전체학생 학교·과목·시험 전 출석 tooltip consumer와 chosen active page 동기화.
+
+계측 설계 (Hub가 실행, 이 과제는 제안만 저장)
+ - manager Status 후 지원된8004 snapshot/lifecycle만 사용. backend 변경이면 Start -Restart,
+   frontend면 Refresh 및 실제 reload. managed true/HTTP200/loopback listener1과
+   8003 /api/ping/local·public /app health는 Hub가 gate로 확인한다.
+ - source/build revision, synthetic fixture size·SID/date/권한 mode, browser/version/viewport,
+   CPU 부하·cache·인증5초TTL warm/expired 상태와 반복 조건을 같은 로그에 기록.
+   운영 JSON/SQLite를 크기 조사/seed로 읽지 않는다. 기존 합성67/1600과 synthetic 확대 fixture를 사용한다.
+ - page document responseEnd/FCP, 정확한 roster-ready, popup shell-open,
+   필수 read 완료+disabled 해제+정확한 SID/date ready, click-feedback,
+   backend commit response, final DOM/paint를 각각 분리한다.
+ - warm30회와 명시적으로 구분한 cold/TTL-expired10회 정도로 시작해 p50/p95와 표본 수를 함께 기록.
+   작은 cold 표본의 p95는 참고값이며 운영 SLA가 아니다. 순서를 교차하여 cache/order 편향을 줄인다.
+ - URL/method별 request count·겹친 GET·response byte size, CPU/projection/render,
+   Long Task(50ms 이상)/frame/DOM node 교체·scroll/focus/draft를 외부 관찰한다.
+   Basic header/cookie/token/password/activation code/실SID/full signed URL은 계측 output에 남기지 않는다.
+ - 같은 response-end라도 ready/commit을 대신하지 않는다. VM 숫자는 HTTP·layout·paint와 따로 기록.
+   actual CUA/browser entrypoint와 documented visible/DOM evidence를 쓰며 cap gap만 허용 fallback으로 해결.
+   production admin Chrome 지원/격리 두-browser gate 유지. IAB를 위해 Basic auth를 약화하지 않는다.
+ - 화면별 screenshot QA는 변경 범위만 수행하되 desktop/mobile Korean UTF-8,
+   고정 표 폭/모바일 네 표면/공지 overflow/폼 focus를 대조한다.
+   shared 또는 사용자 사용 여부가 불확실한8004를 이 조사자가 종료하지 않는다.
+
+검증 명령 소유권
+ 이 파일만 작성한 이번 task의 관련 check는 인벤토리 count/ID·source path/line·문서 UTF-8·git status 비교다.
+ app compile/full suite는 source/runtime 생성이 허용되지 않은 조사 범위를 넘어 이번에 실행하지 않았다.
+ Hub가 최소 patch 후 해당 R focused gate와 JS syntax를 실행하고, 최종 full non-smoke
+ python scripts/verify_refactor_safety.py 및 요구 compile/browser gate를 함께 수행한다.
+ focused --only 모드는 full run을 대체하지 않는다.
+ log-affecting 변경은 두 log endpoint와 manual green→white/none·reload/normal auto update의 실제 격리 증거,
+ 영상 변경은 updates/assignment/watch/review와 student playlist, 학생 review는 두 필수 JS gate,
+ school은 R11와 두 tab conflict/두-browser actual DOM gate를 유지한다.
+ live --smoke/--smoke-log-gets, 운영 데이터 backup/migration/restart·QA 데이터 승격은 이번 scope에 없다.
+ 실제 학원망 Kollus/push/OCR callback을 loopback guard 우회로 대신하지 않는다.
+
+불확실성·완료 판정
+ - source count는 읽은 snapshot의 기능군 정의다. runtime feature flag/실데이터/production process version은 조사하지 않았다.
+ - 테스트 파일/source 및 기존 문서 PASS를 현재 실행 성공으로 표시하지 않는다.
+   브라우저 기록의 case·fixture·source revision 범위가 완전히 기계식으로 매핑된 것은 아니다.
+ - 실제 workload·request/CPU/profile 없이 새 후보의 ms·개선율을 산정하지 않는다.
+   concurrency·network/CPU bottleneck·인증 warm/cold가 섞이면 작은 fixture 결과는 달라질 수 있다.
+ - 최종 인증 source나 Hub 후속 UI patch 뒤 row/action reachability가 변하면 그 source에 맞춰 인벤토리를 갱신해야 한다.
+ - 보고서 완료 = 3화면 source 인벤토리, 기존 evidence/gap 분리, candidate 보존 제약·측정안 작성.
+   성능 patch 완료/최종 격리 전수 QA/운영 rollout 완료는 각각 별도이며 이 task에서는 미수행이다.
+
+Git·변경 구분
+ 시작: staged0 / unstaged152 / untracked58. 아래 전체 목록은 이 과제 시작 전에 존재했다.
+ source hash snapshot은 조사 중 다시 읽은 79개 static HTML/JS(관련 shared 포함)이다.
+ 보고서 저장 직전 두 hash 수집 사이의 변경0을 확인했다. source 최초 read 시점 전체에 대한
+ 고정 commit proof 또는 runtime byte/hash 검사라는 뜻은 아니다.
+ 저장 직전 Git: staged0 / unstaged155 / untracked61.
+ 동시 다른 작업 때문에 시작 이후 다음 status 항목이 추가됐다. 내용을 읽거나 수정하지 않았고 이 과제 변경으로 세지 않는다:
+  M core/student_account_repository.py
+  M core/student_app_auth_store.py
+  M scripts/verify_auth_secret_safety.py
+ ?? docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt
+ ?? docs/SERVER_STUDENT_MANAGEMENT_UI_PERFORMANCE_SCOPE_2026-10-01.txt
+ ?? scripts/verify_legacy_auth_policy.py
+ 이 과제가 생성하는 파일은 이 보고서1개뿐. source edits0, 운영/runtime writes0, staging/commit/push0,
+ browser/server/process mutation0. ignored runtime을 fingerprint/read하지 않았으므로 다른 actor의 runtime 무변경을 인증하지 않는다.
+
+시작 staged 목록
+ 없음.
+
+시작 unstaged 목록
+AGENTS.md
+Design.md
+app.py
+core/AGENTS.md
+core/absence_assignment_cleanup.py
+core/absence_transaction.py
+core/admin_basic_auth.py
+core/log_repository.py
+core/material_state.py
+core/paths.py
+core/progress_rules.py
+core/quick_printer_export.py
+core/request_consistency.py
+core/resources/quick_printer_registered_tests.csv
+core/resources/quick_printer_test_mapping.json
+core/student_video_projection.py
+core/test_answer_links.py
+core/test_config_safety.py
+core/video_catalog_correction.py
+core/video_review_rules.py
+core/watch_progress_writer.py
+design-system/academy-operations/MASTER.md
+design-system/academy-operations/pages/admin-demo.md
+docs/ADMIN_CSS_INVENTORY.md
+docs/CODE_FLOW_MAP.md
+docs/LOGIC_DECISION_LEDGER.md
+docs/PROJECT_FUNCTIONS_AND_LOGIC.md
+docs/README.md
+docs/SERVER_RULES_INDEX.md
+docs/isolated-design-server.md
+routes/AGENTS.md
+routes/absence_assignment_cleanup.py
+routes/api_attend.py
+routes/api_auth.py
+routes/api_basic.py
+routes/api_fs.py
+routes/api_kollus.py
+routes/api_logs.py
+routes/api_makeup_carryover.py
+routes/api_progress.py
+routes/api_student_bootstrap.py
+routes/api_students.py
+routes/api_tests.py
+routes/api_videos.py
+routes/api_watch.py
+routes/student_auto_assignment_service.py
+routes/student_bootstrap_projection.py
+scripts/AGENTS.md
+scripts/build_quick_printer_test_mapping.py
+scripts/manage_isolated_design_server.ps1
+scripts/student_mobile_app_checks/admin-accounts.mjs
+scripts/student_mobile_app_checks/focus.mjs
+scripts/student_mobile_app_checks/homework-admin.mjs
+scripts/student_mobile_app_checks/homework-student.mjs
+scripts/student_mobile_app_checks/notifications.mjs
+scripts/student_mobile_app_checks/notifications.py
+scripts/verify_absence_makeup_matrix.py
+scripts/verify_admin_latency_contracts.mjs
+scripts/verify_admin_tests_record_detail_answer_link_ui.js
+scripts/verify_admin_white_review_pending.mjs
+scripts/verify_assistant_student_notes.py
+scripts/verify_exam_attendance.mjs
+scripts/verify_export_log_format.mjs
+scripts/verify_extra_attendance_merge.mjs
+scripts/verify_file_reference_routes.py
+scripts/verify_hover_tooltip_performance.mjs
+scripts/verify_kollus_callback_auth.py
+scripts/verify_legacy_consumer_cleanup.mjs
+scripts/verify_log_routes.py
+scripts/verify_makeup_schedule_links.mjs
+scripts/verify_person_identity_routes.py
+scripts/verify_phase16_demo_contract.mjs
+scripts/verify_progress_routes.py
+scripts/verify_quick_printer_export.mjs
+scripts/verify_quick_printer_export.py
+scripts/verify_record_cleanup_test_status.mjs
+scripts/verify_refactor_safety.py
+scripts/verify_roster_export_logic.js
+scripts/verify_school_calendar_state.mjs
+scripts/verify_student_announcement_state.mjs
+scripts/verify_student_bootstrap_state.mjs
+scripts/verify_student_playback.mjs
+scripts/verify_student_review_playlist.mjs
+scripts/verify_student_test_presentation.mjs
+scripts/verify_student_watch_autosave.mjs
+scripts/verify_test_assignment_rules.mjs
+scripts/verify_test_catalog_editor_state.mjs
+scripts/verify_test_catalog_search_and_sort.mjs
+scripts/verify_test_catalog_state.mjs
+scripts/verify_test_catalog_statistics_state.mjs
+scripts/verify_test_shared_services.py
+scripts/verify_tests_stylesheet_extraction.mjs
+scripts/verify_today_order_store_migration.py
+scripts/verify_today_unarchived_done.mjs
+scripts/verify_video_progress_matrix.py
+static/admin.html
+static/all.html
+static/css/admin.css
+static/css/student.css
+static/file-manage.html
+static/js/AGENTS.md
+static/js/admin/demo/AGENTS.md
+static/js/admin/demo/bootstrap.js
+static/js/admin/demo/data.js
+static/js/admin/demo/fetch.js
+static/js/admin/demo/store.js
+static/js/admin/features/AGENTS.md
+static/js/admin/features/absentRegister.js
+static/js/admin/features/announcements.js
+static/js/admin/features/assistantStudentNotes.js
+static/js/admin/features/calendar.js
+static/js/admin/features/done.js
+static/js/admin/features/escClose.js
+static/js/admin/features/examAttendance.js
+static/js/admin/features/exportLogs.js
+static/js/admin/features/extraModal.js
+static/js/admin/features/homeworkCarryover.js
+static/js/admin/features/logModal.js
+static/js/admin/features/makeupPending.js
+static/js/admin/features/quickPrinterExport.js
+static/js/admin/features/studentAccounts.js
+static/js/admin/features/studentFocus.js
+static/js/admin/features/studentTestOcrReview.js
+static/js/admin/features/testAssignmentRules.js
+static/js/admin/features/testModal.js
+static/js/admin/features/today.js
+static/js/admin/features/today.render.js
+static/js/admin/features/videoModal.js
+static/js/admin/main.js
+static/js/all/AGENTS.md
+static/js/all/features/AGENTS.md
+static/js/all/features/escClose.js
+static/js/all/features/studentRecordPopup.js
+static/js/all/features/table.js
+static/js/all/main.js
+static/js/auth.js
+static/js/file-manage.js
+static/js/school-cal.js
+static/js/shared/schoolCalendar.js
+static/js/student.js
+static/js/student/playback.js
+static/js/student/testPresentation.js
+static/js/student/watchState.js
+static/js/tests.js
+static/js/tests/catalogEditorState.js
+static/js/tests/catalogState.js
+static/js/tests/catalogStatisticsState.js
+static/js/video-manage.js
+static/school-cal.html
+static/student.html
+static/tests.html
+static/video-manage.html
+
+시작 untracked 목록
+core/admin_auth_cache.py
+core/file_material_transaction.py
+core/makeup_payload_rules.py
+core/student_test_projection.py
+core/test_record_projection.py
+core/test_statistics_projection.py
+core/video_sources.py
+core/video_watch_cycles.py
+core/watch_store.py
+docs/SERVER_ADMIN_AUTH_LATENCY_2026-10-01.txt
+docs/SERVER_BROWSER_LATENCY_2026-10-01.txt
+docs/SERVER_FILE_TRANSACTION_FOLLOWUP_2026-10-01.txt
+docs/SERVER_FRONTEND_FETCH_FOLLOWUP_2026-10-01.txt
+docs/SERVER_ISOLATED_MANAGER_FOLLOWUP_2026-10-01.txt
+docs/SERVER_MAKEUP_PROJECTION_FOLLOWUP_2026-10-01.txt
+docs/SERVER_PROJECT_FOLLOWUP_2026-10-01.txt
+docs/SERVER_PROJECT_REVIEW_2026-10-01.txt
+docs/SERVER_TEST_PROJECTION_FOLLOWUP_2026-10-01.txt
+docs/STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.manifest.json
+docs/STUDENT_TEST_FORMULA_EXPANSION_RETURN_2026-09-07.md
+scripts/verify_admin_announcement_async_scope.mjs
+scripts/verify_admin_auth_latency.py
+scripts/verify_admin_initializer_idempotence.mjs
+scripts/verify_admin_popup_async_scope.mjs
+scripts/verify_attendance_flag_storage.py
+scripts/verify_file_manager_state.mjs
+scripts/verify_file_transaction_crash.py
+scripts/verify_file_transaction_ownership.py
+scripts/verify_file_transaction_routes.py
+scripts/verify_isolated_design_server_manager.ps1
+scripts/verify_legacy_auth_storage.py
+scripts/verify_log_auto_watch_scope.mjs
+scripts/verify_log_batch_partial_success.py
+scripts/verify_makeup_payload_rules.py
+scripts/verify_makeup_projection_oracle.mjs
+scripts/verify_popup_pending_cache.mjs
+scripts/verify_request_date_barrier.py
+scripts/verify_roster_auth_attendance_async.mjs
+scripts/verify_runtime_path_initialization.py
+scripts/verify_static_repository_contracts.py
+scripts/verify_student_announcement_async_scope.mjs
+scripts/verify_student_bootstrap_projection_scope.py
+scripts/verify_test_popup_hydration.mjs
+scripts/verify_test_projection_boundaries.py
+scripts/verify_tests_config_metadata.py
+scripts/verify_today_refresh_flights.mjs
+scripts/verify_today_search_fields.mjs
+scripts/verify_video_catalog_render.mjs
+scripts/verify_video_watch_rearm.mjs
+scripts/verify_video_watch_rearm.py
+scripts/verify_watch_storage_safety.py
+scripts/verify_youtube_video_feature.mjs
+scripts/verify_youtube_video_feature.py
+static/css/demo-thread-preview.css
+static/js/admin/demo/threadPreview.js
+static/js/admin/features/scheduleOverrideSave.js
+static/js/admin/features/todaySearch.js
+static/js/shared/videoSources.js
+
+
+
+작성 후 보고서 검증 기록
+ - 기능군251 / unique ID251: 관리자187, 전체학생38, 학교 일정26.
+ - popup 정의26 / 신규 후보8 / browser U204·부분 evidence47.
+ - source reference path 및 one-based line 범위 오류0; 보고서에 명시한 scripts 경로 누락0.
+ - strict UTF-8 decode 성공, U+FFFD 0, 연속 물음표 placeholder 0.
+ - 관련 static HTML/JS79개 hash 재수집: 저장 준비 전후 및 보고서 작성 뒤 변경0.
+ - 보고서 검증 기록 시점 git status --short: staged0 / unstaged155 / untracked62.
+   보고서 준비 시점 대비 추가된 status는 이 보고서 ?? 항목1개뿐이다.
+ - compile/full unit/live smoke/browser/server lifecycle은 실행하지 않았다. 관련 검사 source와
+   기존 PASS 기록 대조 및 위 보고서 전용 read-only 검증만 수행했다.
+
+마지막 status 조회의 동시 문서 작업
+ 위 검증 기록 뒤 같은 workspace의 다른 작업이 다음 untracked 문서2개를 추가했다:
+ docs/SERVER_KOLLUS_ACADEMY_QA_PLAN_2026-10-01.txt
+ docs/SERVER_MAKEUP_NORMALIZATION_CONTRACT_2026-10-01.txt
+ 내용은 읽거나 수정하지 않았다. 마지막 조회의 staged는0이며 이 과제의 새 파일은
+ SERVER_ADMIN_UI_PERFORMANCE_SCOPE_2026-10-01.txt 하나다. 공유 workspace status는 시점별 관찰이며
+ 다른 작업의 이후 Git/runtime 상태까지 이 보고서가 보증하지 않는다.
+
+
+2026-10-01 후속 기록: 최소 후보의 실제 적용과 잔여 제안
+이 추가분은 위 최초 조사와 CAND02 메모리 검증 뒤, Hub의 최신 적용·검증 인계를 받은 시점의 기록이다.
+앞 본문의 '모두 아직 미구현·미측정', 'source 수정 없음', '성능 patch 미수행'은 최초 조사 task에 한정된다.
+당시 inventory 251개와 U204/부분 evidence47은 그 시점의 coverage이며 이번 인계로 전수 browser PASS로 바꾸지 않는다.
+
+증거의 실행 주체와 최신 상태
+ - Hub 최신 인계: CAND01~03 최소 source 적용, focused gate·독립 review·Chrome/IAB 주요 flow,
+   최신 full non-smoke 105그룹 PASS. 이 append task는 해당 suite/브라우저를 재실행하지 않았다.
+ - 인계 출처는 Hub chat 01a0f4ec-c498-74a3-ab13-f6ad24d415d2의 이번 후속 요청이다.
+   docs/SERVER_HUB_EXECUTION_PLAN_2026-10-01.txt:20~36의 source/QA 설명도 대조했다.
+   같은 문서:52의 '최신 source full 실행 중'보다 후속 요청의 '105그룹 통과'가 나중에 받은 상태다.
+ - 이 task가 직접 확인한 것은 아래 current source 경로·조건·SHA와 보고서 append 검증이다.
+   전수 p50/p95, 모든 UI branch의 실제 두-browser pass, 운영 반영 완료는 이 기록의 결론이 아니다.
+
+CAND01~03: 적용 범위와 남은 원제안
+ - CAND01: calendar.js:751~787의 mutation/read generation으로 stale preload를 재시도하고,
+   :2710~2717의 recalc 완료 뒤 renderMakeupPlanner를 직접 호출한다. planner 때문에 생기던 두 번째
+   4GET 제거는 Hub의 실제 Chrome 8→4GET/count 유지 증거다. 관련 독립 review/epoch gate도 Hub가 보고했다.
+   이는 해당 recalc chain의 요청 감소이며 다른 caller/event의 총 GET·전역 latency 완료를 뜻하지 않는다.
+ - CAND02: school-cal.js:484~504에서 학교별/렌더별 Map을 필터와 강조가 공유한다.
+   다음 render에 판정을 남기지 않는다. 전체 draft clone·merge 및 tbody 교체는 현재도 유지한다.
+   메모리 후보 당시 실제 entrypoint/합성 DOM·clock·transport의 관측89사례, state/saveQueue와 문법 PASS.
+   학교30+학년120=150행, 학교150+학년850=1000행에서 '수학' key/판정 호출270→150,1850→1000.
+   Node 처리 중앙값11.757→8.673ms,80.117→60.843ms; 큰 fixture process CPU78→63ms.
+   작은 fixture CPU는 Windows 계측 단위가 거칠다. clone30/120·150/850, tbody 교체1,
+   생성 input/button900·6000은 전후 동일했다. 이 숫자는 메모리 당시 계측이며 브라우저 개선율이 아니다.
+   literal 결과/hidden draft/metadata/revision·동시요청1/IME input 표시·focus·selection 보존을 확인했다.
+   Hub는 actual renderBody 6개 literal highlighting/expanded/no-match/changed-row/caller invariance gate의
+   default 연결과 state/saveQueue/temp revision, Chrome/IAB 추가·과목 수정·초성 강조·저장/재조회 PASS를 보고했다.
+   current school-cal.js LF SHA-256이 메모리 후보 ffcc05ae7e6e7b2b777187bec05ce45e00cb13e450b9bd94179f12414049c361과 일치한다.
+   원제안의 dirty snapshot/index·clone 재사용·부분 DOM 갱신은 미적용 잔여 제안이다.
+ - CAND03: all/features/table.js:100~103은 saved=true이며 변경 field가 docUrl 하나일 때만
+   renderCurStats/renderYoilStats를 생략한다. linked row sync·검색·잠금 복원과 실패/다른 field 집계는 유지한다.
+   Hub의 Chrome/IAB docUrl 저장·재조회·빈 값 복원 및 focused 검증 PASS를 인계받았다.
+   전역 control 탐색(:62~63)과 연결행 sync(:97)는 남는다. SID index·전체 집계 구조의 개선 완료로 세지 않는다.
+   본 task의 docUrl CPU/paint before/after 계측은 없다.
+
+CAND04~08 current source 재대조: 모두 추가 성능 patch/계측 완료로 세지 않음
+ - CAND04 / 잔여 제안:
+   videoModal.js:2162~2175는 검색마다 chkZone 전체 HTML 교체와 input focus/caret 복원을 유지한다.
+   :2198~2224 및 testModal.js:1859~1885는 move마다 dragRows 전체에 원상태/range 상태를 적용한다.
+   별도 video-manage 개선과 같은 경로가 아니다. 최소 계측 후보는 같은 gesture·DOM generation·target state의
+   같은 row index 반복만 생략하는 메모리 안이다. 첫 apply/reversal/reset/mouseup을 유지하고,
+   video :1585~1602의 watch rearm/dirty, test :794~808의 touched/explicitBlank/view 부수효과까지
+   독립 payload와 비교해야 한다. 전체 scope 검색 부분 갱신·frame batching은 더 큰 잔여 제안이다.
+ - CAND05 / 잔여 제안:
+   calendar.js:1474~1477의 두 검색창은 같은 render를 호출하고 :2166~2170에서 pending/scheduled
+   모두 projection/filter/sort, :2187~2241에서 두 목록을 교체한다. CAND01의 GET 감소가 이 CPU/DOM을 없애지 않는다.
+   다음 계측 단위는 두 panel의 build/key/sort/HTML 교체 횟수다. 한쪽 검색만 제한하려면 selection·운영일·mode·
+   최신 mutation·hint/copy 정합성까지 증명해야 하므로 persistent projection cache는 이번 최소안으로 확정하지 않는다.
+ - CAND06 / 잔여 제안:
+   announcements.js:2886~2897은 sequence만 비교하고 매 호출 /api/announce-status를 새로 읽는다.
+   :3127~3131의 visible 10초 poll, :2482~2504의 list/dock 재생성은 남는다.
+   unchanged 응답이나 느린 poll 중첩을 실제로 계측하지 않았다. DOM-only 동일 출력 생략부터 측정할 수 있지만
+   :2534의 timeLeftText/최근4시간·읽음/답장/설문·expanded scroll/anonymous reveal을 독립 literal로 보존해야 한다.
+   pending 공유는 publish/delete 전후 epoch 분리부터 필요한 잔여 설계다.
+ - CAND07 / 우선 최소 계측 후보:
+   today.js:608~623은 nonempty 검색마다 SID Map/key를 만들고 hidden/class/aria 쓰기를 반복한다.
+   :597~605의 빈 검색 복구 guard는 이미 존재하므로 새 개선으로 세지 않는다.
+   먼저 검색 결과가 같은 행의 세 DOM 쓰기만 생략하는 메모리 후보를 50/300/1000행 actual entrypoint에서 비교한다.
+   field/초성/영타/AND/IME/fallback today·done literal·hint·focus를 유지하고 stale aria/class는 복구해야 한다.
+   setter 호출 수와 실제 DOM mutation/paint는 별도 계측한다. field key/SID index의 지속 cache는 별도 잔여 제안이다.
+ - CAND08 / 측정만 가능한 잔여 제안:
+   absentRegister.js:449~454는 선택 SID마다 att/contact를 차례로 await하고 그 뒤 absence revision POST를 한다.
+   N=1/10/50의 flag 요청 수·feedback/commit/refresh 및 중간 실패를 합성 transport로 먼저 관측할 수 있다.
+   2N flag 쓰기는 source 경로 예측이지 이번 HTTP 측정값이 아니다. Promise.all/batch/atomic 변경은 최소안이 아니며
+   실패·부분 성공·barrier·알림 계약을 별도 설계해야 한다. CAND01 후속 조회 감소와 분리한다.
+
+현재 source SHA-256 (보고서 추가 준비 시점, raw bytes)
+ static/js/admin/features/calendar.js d4fe0fa3b15d07f5064f4e40d1cde0a99fd4aa2c17a702365d51262097884b52
+ static/js/school-cal.js 644a32a7a0548402e7b985b091d1834c423722c751de7b56e04e27d07f5748eb
+ static/js/all/features/table.js 9898007e1c4595359585098a80202f2900884fd796f5018bb264a38a55bd6786
+ static/js/admin/features/videoModal.js d466f05a727b16eede5439452c63471bc9bdd62e3d04e44f24134b8e6a8d42ae
+ static/js/admin/features/testModal.js 468e19a24191f1e4f34208ace00ba9222a189e8567b759ae0af8135efa7cd728
+ static/js/admin/features/announcements.js 0ce4b42d6d9d7452d28429574a92b3f281648c11013d3e6fcf53571a562d2eb8
+ static/js/admin/features/today.js bce3110fb167e37d3b7c778d4b1f27f1d8c0b701043f373f7b2d007e7da3e71f
+ static/js/admin/features/absentRegister.js df01ae1a264522f9388f7c3a97a32bd08de36431f6f0f35e859ff46ad32f75f3
+
+이번 추가분 검증·경계
+ - 기존 보고서 bytes 전체를 prefix로 보존하고 끝에만 UTF-8 추가한다. 기존 inventory ID251/원문은 바꾸지 않는다.
+ - 검증은 prefix byte 동일성, strict UTF-8·replacement/placeholder, 위 source 경로/line 범위·SHA,
+   source 보존과 git status --short 비교다. 새 벤치/QA 파일·full suite·app import·runtime GET은 실행하지 않는다.
+ - 시작 Git: staged0/unstaged155/untracked68. 이 task의 허용 파일은 이 보고서 하나다.
+   source/runtime/browser/server/Git write0, 새 chat/subagent0. Hub 동시 작업을 이 task의 변경으로 세지 않는다.
+ - 초기 stdin 보조 session81888 종료 미확인은 그대로 남는다. 이번에 stdin 조작·CIM 대체 조회·ACL 변경·kill을 하지 않는다.

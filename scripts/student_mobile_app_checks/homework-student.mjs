@@ -96,7 +96,7 @@ function fakeElements() {
 
 function loadDomScope(source, options = {}) {
   const start = source.indexOf('function restoreLegacyHomeworkFallback()');
-  const end = source.indexOf('function assignedTestAnswerUrl(', start);
+  const end = source.indexOf('function shouldOpenAssignedTestAnswerInSameTab()', start);
   assert.ok(start >= 0 && end > start, 'canonical homework DOM scope must exist');
   const domSource = source.slice(start, end);
   const elements = options.elements || fakeElements();
@@ -366,7 +366,8 @@ export async function runChecks() {
 
   check('request contract is public-only, cookie-session based, and carries no SID, body, storage, or secret', () => {
     const start = js.indexOf('async function loadCanonicalStudentHomework()');
-    const end = js.indexOf('function assignedTestAnswerUrl(', start);
+    const end = js.indexOf('function shouldOpenAssignedTestAnswerInSameTab()', start);
+    assert.ok(start >= 0 && end > start, 'canonical homework request scope must exist');
     const loadScope = js.slice(start, end);
     assert.match(loadScope, /if\s*\(!STUDENT_APP_PUBLIC_MODE\s*\|\|\s*canonicalHomeworkLoading\)\s*return/);
     assert.match(loadScope, /studentAppRequest\(['"]\/api\/mobile\/student\/homework\?status=open['"],\s*\{\s*cache:\s*['"]no-store['"]\s*\}\)/);
@@ -376,8 +377,9 @@ export async function runChecks() {
   });
 
   check('HTML and CSS extend the panel with public-scoped responsive, dark-token, safe-area, and motion-safe controls', () => {
-    assert.match(html, /student\.css\?v=20260809-homework-r1/);
-    assert.match(html, /student\.js\?v=20260809-homework-r1/);
+    const activeHtml = html.replace(/<!--[\s\S]*?-->/g, '');
+    assert.match(activeHtml, /<link\b[^>]*rel=["']stylesheet["'][^>]*href=["']\/css\/student\.css\?v=20260809-focus-r1(?:[&][^"']*)?["']/i);
+    assert.match(activeHtml, /<script\b[^>]*\bdefer\b[^>]*src=["']\/js\/student\.js\?v=20260907-ilsan-level-r1(?:[&][^"']*)?["']/i);
     assert.match(html, /id=["']studentHomeworkAssignments["'][^>]*aria-label=["']숙제 목록["'][^>]*hidden/i);
     assert.match(html, /id=["']studentHomeworkStatus["'][^>]*role=["']status["'][^>]*aria-live=["']polite["'][^>]*hidden/i);
     assert.match(html, /id=["']studentHomeworkRetry["'][^>]*hidden/i);

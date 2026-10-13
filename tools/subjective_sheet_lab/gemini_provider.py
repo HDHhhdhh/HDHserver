@@ -15,6 +15,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, TypeAlias, assert_never
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0,str(_REPO_ROOT))
+
 from tools.subjective_sheet_lab.gemini_provider_response import ResponseShapeFailure, ResponseText, response_text_result
 from tools.subjective_sheet_lab.ocr_answer_mode_policy import answer_mode_for_question
 from tools.subjective_sheet_lab.phase2e_stable_cache import deidentified_png_bytes
@@ -57,6 +61,9 @@ class ContactImage:
 class RecognizedItem:
     question: int
     recognized: str
+    candidates: tuple[str, ...] = ()
+    uncertainty: str = "unverified"
+    needs_review: bool = True
 
 
 class GeminiProviderError(Exception):
@@ -68,27 +75,24 @@ class GeminiProviderError(Exception):
 
 
 def main() -> int:
+    from tools.subjective_sheet_lab.ocr_provider_session import LAST_SESSION, config_identity
     try:
         config = parse_args()
+        config_identity(config)
+        if config.max_calls == 0:
+            raise GeminiProviderError("live calls require an explicit positive budget", reason="provider_budget_exhausted")
+        if config.out_path.exists():
+            raise GeminiProviderError("output already exists; choose a fresh output file", reason="output_preservation")
         key = read_gemini_key()
         items = recognize_from_config(config, key)
-        write_recognized_json(config.out_path, items)
+        session = LAST_SESSION.get()
+        write_recognized_json(config.out_path, items, identity=session.identity)
     except GeminiProviderError as exc:
-        sys.stderr.write(f"ERROR: {exc.message}\n")
+        sys.stderr.write(f"ERROR: {exc.reason}\n")
         return 2
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            sync_output_from_cache(config)
-            write_error_report(config, exc)
-            sys.stderr.write(f"ERROR: Gemini API quota exhausted. Wrote {error_report_path(config)}\n")
-        else:
-            sys.stderr.write(f"ERROR: Gemini API returned HTTP {exc.code}: {safe_http_error_text(exc)}\n")
-        return 3
-    except urllib.error.URLError as exc:
-        sys.stderr.write(f"ERROR: Gemini API request failed: {exc.reason}\n")
-        return 3
-    except TimeoutError as exc:
-        sys.stderr.write(f"ERROR: Gemini API request timed out: {exc}\n")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        # Session preserves immutable raw/error/partial checkpoints without paths or headers.
+        sys.stderr.write("ERROR: provider transport failed; see this run's diagnostics\n")
         return 3
     return 0
 
@@ -104,6 +108,17 @@ class CliConfig:
     max_calls: int | None
     test_id: str | None = None
     numeric_only: bool = False
+    source_image: Path | None = None
+    round_no: str = "1"
+    form_id: str = "answer_sheet_20_v1"
+    prompt_version: str = "image_candidates_v2"
+    preprocessing_version: str = "crop_contact_v1"
+    identity: dict | None = None
+    max_retries: int = 0
+    backoff_seconds: float = 0.25
+    contact_batch_size: int = 1
+    crop_batch_size: int = 5
+    answer_modes: tuple[str, ...] = ()
 
 
 def parse_args() -> CliConfig:
@@ -115,11 +130,18 @@ def parse_args() -> CliConfig:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--max-calls", type=int)
-    parser.add_argument("--test-id", default=None)
+    parser.add_argument("--max-calls", type=int, default=0)
+    parser.add_argument("--source-image", required=True, type=Path)
+    parser.add_argument("--round", required=True)
+    parser.add_argument("--form-id", default="answer_sheet_20_v1")
+    parser.add_argument("--prompt-version", default="image_candidates_v2")
+    parser.add_argument("--preprocessing-version", default="crop_contact_v1")
+    parser.add_argument("--max-retries", type=int, default=0)
+    parser.add_argument("--backoff-seconds", type=float, default=0.25)
+    parser.add_argument("--test-id", required=True)
     args = parser.parse_args()
-    if args.max_calls is not None and int(args.max_calls) < 1:
-        parser.error("--max-calls must be 1 or greater")
+    if args.max_calls is not None and int(args.max_calls) < 0:
+        parser.error("--max-calls must be nonnegative")
     return CliConfig(
         crop_dir=args.crop_dir,
         contact_dir=args.contact_dir,
@@ -130,6 +152,9 @@ def parse_args() -> CliConfig:
         max_calls=int(args.max_calls) if args.max_calls is not None else None,
         test_id=str(args.test_id) if args.test_id else None,
         numeric_only=False,
+        source_image=args.source_image, round_no=args.round, form_id=args.form_id,
+        prompt_version=args.prompt_version, preprocessing_version=args.preprocessing_version,
+        max_retries=args.max_retries, backoff_seconds=args.backoff_seconds,
     )
 
 
@@ -212,26 +237,31 @@ def question_from_path(path: Path) -> int | None:
     return int(match.group(1))
 
 
-def recognize_from_config(config: CliConfig, api_key: str) -> list[RecognizedItem]:
+def recognize_from_config(config: CliConfig, api_key: str, *, transport=None, sleeper=None) -> list[RecognizedItem]:
+    from tools.subjective_sheet_lab.ocr_provider_session import ProviderSession
+    if config.out_path.exists() and not config.resume:
+        raise GeminiProviderError("existing output is preserved", reason="output_preservation")
+    kwargs = {"transport": transport}
+    if sleeper is not None:
+        kwargs["sleeper"] = sleeper
+    session = ProviderSession(config, **kwargs)
     if config.crop_dir is not None:
-        crops = load_crop_images(config.crop_dir)
-        return recognize_crops(crops, api_key, config.model, config.numeric_only)
-
-    contacts = load_contact_images(config)
-    return recognize_contact_sheets(contacts, api_key, config)
+        return session.recognize(load_crop_images(config.crop_dir), api_key, contacts=False)
+    return session.recognize(load_contact_images(config), api_key, contacts=True)
 
 
-def recognize_crops(crops: list[CropImage], api_key: str, model: str, numeric_only: bool = False) -> list[RecognizedItem]:
-    payload = build_gemini_payload(crops, numeric_only)
-    response = post_gemini(payload, api_key, model)
-    text = extract_response_text(response)
-    return parse_recognized_items(text, crops)
+def recognize_crops(crops: list[CropImage], api_key: str, model: str, numeric_only: bool = False,
+                    *, config: CliConfig | None = None, transport=None) -> list[RecognizedItem]:
+    if config is None:
+        raise GeminiProviderError("crop calls require identity and budget configuration", reason="run_identity_missing")
+    from tools.subjective_sheet_lab.ocr_provider_session import ProviderSession
+    return ProviderSession(config, transport=transport).recognize(crops, api_key, contacts=False)
 
 
 def build_gemini_payload(crops: list[CropImage], numeric_only: bool = False) -> dict[str, JsonValue]:
-    parts: list[JsonValue] = [{"text": prompt_text(crops, numeric_only)}]
+    parts: list[JsonValue] = [{"text": prompt_text(crops, numeric_only) + candidate_prompt()}]
     for crop in crops:
-        parts.append({"text": f"question={crop.question:03d}, filename={crop.path.name}"})
+        parts.append({"text": f"question={crop.question:03d}"})
         parts.append({"inline_data": {"mime_type": crop.mime_type, "data": crop.data_base64}})
     return {
         "contents": [{"role": "user", "parts": parts}],
@@ -308,26 +338,10 @@ def questions_from_contact_path(path: Path) -> tuple[int, ...]:
     return tuple(range(start, end + 1))
 
 
-def recognize_contact_sheets(contacts: list[ContactImage], api_key: str, config: CliConfig) -> list[RecognizedItem]:
-    cached = load_cached_items(config) if config.resume else {}
-    recognized_by_question = dict(cached)
-    if config.resume and recognized_by_question:
-        return items_for_contacts(contacts, recognized_by_question)
-    pending_contacts = contacts_pending_recognition(contacts, recognized_by_question, config.resume)
-    if not pending_contacts:
-        return items_for_contacts(contacts, recognized_by_question)
-    if config.max_calls is not None and config.max_calls < 1:
-        return items_for_contacts(contacts, recognized_by_question)
-
-    payload = build_contact_payload(pending_contacts, config.test_id, config.numeric_only)
-    response = post_gemini(payload, api_key, config.model)
-    text = extract_response_text(response)
-    for item in parse_contact_items(text, pending_contacts):
-        recognized_by_question[item.question] = item.recognized
-    for question in known_contact_questions(contacts):
-        recognized_by_question.setdefault(question, "?")
-    write_contact_cache(config, contacts, recognized_by_question)
-    return items_for_contacts(contacts, recognized_by_question)
+def recognize_contact_sheets(contacts: list[ContactImage], api_key: str, config: CliConfig,
+                             *, transport=None) -> list[RecognizedItem]:
+    from tools.subjective_sheet_lab.ocr_provider_session import ProviderSession
+    return ProviderSession(config, transport=transport).recognize(contacts, api_key, contacts=True)
 
 
 def contacts_pending_recognition(contacts: list[ContactImage], recognized_by_question: dict[int, str], resume: bool) -> list[ContactImage]:
@@ -396,10 +410,10 @@ def load_deidentified_second_pass_crops(crop_dir: Path, questions: tuple[int, ..
 
 
 def build_contact_payload(contacts: list[ContactImage], test_id: str | None = None, numeric_only: bool = False) -> dict[str, JsonValue]:
-    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts, test_id, numeric_only)}]
+    parts: list[JsonValue] = [{"text": contact_prompt_text(contacts, test_id, numeric_only) + candidate_prompt()}]
     for contact in contacts:
         label = question_label(contact.questions)
-        parts.append({"text": f"contact_sheet={contact.path.name}, questions={label}"})
+        parts.append({"text": f"contact_sheet=answer_rows, questions={label}"})
         parts.append({"inline_data": {"mime_type": contact.mime_type, "data": contact.data_base64}})
     return {
         "contents": [{"role": "user", "parts": parts}],
@@ -487,57 +501,17 @@ def question_label(questions: tuple[int, ...]) -> str:
 
 
 def parse_contact_items(text: str, contacts: list[ContactImage]) -> list[RecognizedItem]:
-    payload = parse_json_text(text)
-    items_value = payload.get("items")
-    if not isinstance(items_value, list):
-        raise GeminiProviderError("Gemini JSON did not include items list", reason="provider_malformed_items")
-    recognized_by_question: dict[int, str] = {}
-    for value in items_value:
-        item = parse_item(value)
-        recognized_by_question[item.question] = item.recognized
-    questions = known_contact_questions(contacts)
-    if questions:
-        return [RecognizedItem(question=question, recognized=recognized_by_question[question]) for question in questions if question in recognized_by_question]
-    return [RecognizedItem(question=question, recognized=recognized_by_question[question]) for question in sorted(recognized_by_question)]
+    return strict_recognized_items(text, known_contact_questions(contacts))
 
 
 def load_cached_items(config: CliConfig) -> dict[int, str]:
-    path = contact_cache_path(config)
-    if not path.is_file() and config.out_path.is_file():
-        path = config.out_path
-    if not path.is_file():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    items_value = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items_value, list):
-        return {}
-    cached: dict[int, str] = {}
-    for value in items_value:
-        item = parse_item(value)
-        if item.recognized and item.recognized != "?":
-            cached[item.question] = item.recognized
-        elif item.recognized == "?" and cache_item_status(value) == CACHE_STATUS_UNRESOLVED:
-            cached[item.question] = item.recognized
-    return cached
+    from tools.subjective_sheet_lab.ocr_provider_session import ProviderSession
+    session = ProviderSession(config)
+    return {number:item.recognized for number,item in session.items.items()}
 
 
 def write_contact_cache(config: CliConfig, contacts: list[ContactImage], recognized_by_question: dict[int, str]) -> None:
-    path = contact_cache_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "model": config.model,
-        "timestamp": datetime.now(UTC).isoformat(),
-        "input_files": [str(contact.path) for contact in contacts],
-        "items": [
-            {
-                "question": question,
-                "recognized": completed_recognized_text(recognized),
-                CACHE_STATUS_KEY: completed_cache_status(recognized),
-            }
-            for question, recognized in sorted(recognized_by_question.items())
-        ],
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    raise GeminiProviderError("unbound cache writes are retired; use ProviderSession", reason="cache_identity_missing")
 
 
 def cache_item_status(value: JsonValue) -> str:
@@ -565,9 +539,9 @@ def contact_cache_path(config: CliConfig) -> Path:
 
 def items_for_contacts(contacts: list[ContactImage], recognized_by_question: dict[int, str]) -> list[RecognizedItem]:
     questions = known_contact_questions(contacts)
-    if questions:
-        return [RecognizedItem(question=question, recognized=recognized_by_question.get(question, "?")) for question in questions]
-    return [RecognizedItem(question=question, recognized=recognized_by_question[question]) for question in sorted(recognized_by_question)]
+    if set(recognized_by_question) != set(questions):
+        raise GeminiProviderError("missing/extra recognized questions", reason="provider_question_coverage")
+    return [RecognizedItem(question=n, recognized=recognized_by_question[n]) for n in questions]
 
 
 def post_gemini(payload: dict[str, JsonValue], api_key: str, model: str) -> dict[str, JsonValue]:
@@ -584,7 +558,12 @@ def post_gemini(payload: dict[str, JsonValue], api_key: str, model: str) -> dict
     )
     with urllib.request.urlopen(request, timeout=90) as response:
         decoded = response.read().decode("utf-8")
-    payload_value = json.loads(decoded)
+    from tools.subjective_sheet_lab.ocr_provider_session import capture_raw
+    capture_raw(decoded)
+    try:
+        payload_value = json.loads(decoded)
+    except json.JSONDecodeError as exc:
+        raise GeminiProviderError("invalid HTTP response JSON", reason="provider_invalid_json") from exc
     if not isinstance(payload_value, dict):
         raise GeminiProviderError("Gemini API response was not a JSON object")
     return payload_value
@@ -602,15 +581,7 @@ def extract_response_text(response: dict[str, JsonValue]) -> str:
 
 
 def parse_recognized_items(text: str, crops: list[CropImage]) -> list[RecognizedItem]:
-    payload = parse_json_text(text)
-    items_value = payload.get("items")
-    if not isinstance(items_value, list):
-        raise GeminiProviderError("Gemini JSON did not include items list", reason="provider_malformed_items")
-    recognized_by_question: dict[int, str] = {}
-    for value in items_value:
-        item = parse_item(value)
-        recognized_by_question[item.question] = item.recognized
-    return [RecognizedItem(question=crop.question, recognized=recognized_by_question.get(crop.question, "?")) for crop in crops]
+    return strict_recognized_items(text, tuple(crop.question for crop in crops))
 
 
 def parse_json_text(text: str) -> dict[str, JsonValue]:
@@ -618,7 +589,7 @@ def parse_json_text(text: str) -> dict[str, JsonValue]:
     match = JSON_BLOCK_RE.search(stripped)
     candidate = match.group(1) if match is not None else stripped
     try:
-        decoded = json.loads(candidate)
+        decoded = json.loads(candidate, object_pairs_hook=unique_json_object)
     except json.JSONDecodeError as exc:
         raise GeminiProviderError(f"Gemini text was not valid JSON: {exc}", reason="provider_invalid_json") from exc
     if not isinstance(decoded, dict):
@@ -627,38 +598,54 @@ def parse_json_text(text: str) -> dict[str, JsonValue]:
 
 
 def parse_item(value: JsonValue) -> RecognizedItem:
-    if not isinstance(value, dict):
-        raise GeminiProviderError("Gemini item was not an object", reason="provider_malformed_items")
-    question_value = value.get("question")
-    recognized_value = value.get("recognized")
-    if not isinstance(question_value, int):
-        raise GeminiProviderError("Gemini item question was not an integer", reason="provider_malformed_items")
-    if not isinstance(recognized_value, str):
-        raise GeminiProviderError("Gemini item recognized value was not a string", reason="provider_malformed_items")
-    return RecognizedItem(question=question_value, recognized=recognized_value.strip())
+    allowed = {"question", "recognized", "candidates", "uncertainty", "needs_review"}
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise GeminiProviderError("provider item has forbidden or unknown fields", reason="provider_malformed_items")
+    question = value.get("question")
+    recognized = value.get("recognized")
+    if type(question) is not int or not 1 <= question <= 20:
+        raise GeminiProviderError("question must be an integer in 1..20", reason="provider_question_coverage")
+    if not isinstance(recognized, str) or len(recognized) > 200:
+        raise GeminiProviderError("recognized must be bounded raw text", reason="provider_malformed_items")
+    from tools.subjective_sheet_lab.ocr_payload_leak_policy import path_exposures
+    if path_exposures({"recognized": recognized, "candidates": value.get("candidates", [])}):
+        raise GeminiProviderError("local path in provider output", reason="provider_path_leak")
+    raw_candidates = value.get("candidates", [])
+    if not isinstance(raw_candidates, list) or any(not isinstance(v,str) for v in raw_candidates):
+        raise GeminiProviderError("candidates must be image-based text values", reason="provider_malformed_items")
+    candidates = []
+    for candidate in raw_candidates:
+        clean = candidate.strip()
+        if clean and "?" not in clean and "\n" not in clean and "\r" not in clean and clean not in candidates:
+            candidates.append(clean)
+    uncertainty = value.get("uncertainty", "unverified")
+    needs_review = value.get("needs_review", True)
+    if not isinstance(uncertainty,str) or not isinstance(needs_review,bool):
+        raise GeminiProviderError("uncertainty contract is invalid", reason="provider_malformed_items")
+    return RecognizedItem(question, recognized, tuple(candidates[:5]), uncertainty,
+                          needs_review or not recognized.strip() or "?" in recognized or uncertainty not in {"none","clear"})
 
 
-def write_recognized_json(path: Path, items: list[RecognizedItem]) -> None:
+def write_recognized_json(path: Path, items: list[RecognizedItem], *, identity: dict | None = None) -> None:
+    from tools.subjective_sheet_lab.ocr_run_identity import RECOGNITION_SCHEMA, validate_run_identity
+    from tools.subjective_sheet_lab.ocr_provider_session import LAST_SESSION, _item_json
+    checked = validate_run_identity(identity)
+    if sorted(item.question for item in items) != list(range(1,21)):
+        raise GeminiProviderError("recognized output requires 20 unique questions", reason="provider_question_coverage")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"items": [{"question": item.question, "recognized": item.recognized} for item in items]}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    session = LAST_SESSION.get()
+    payload = {"schema": RECOGNITION_SCHEMA, "identity": checked,
+               "items": [_item_json(item) for item in items],
+               "diagnostics": session.counts() if session is not None else {}}
+    with path.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(payload, ensure_ascii=False, indent=2)+"\n")
 
 
 def sync_output_from_cache(config: CliConfig) -> bool:
-    if config.crop_dir is not None:
-        return False
-    try:
-        cached = load_cached_items(config)
-        questions: list[int] = []
-        for path in contact_image_paths(config):
-            questions.extend(questions_from_contact_path(path))
-    except (GeminiProviderError, json.JSONDecodeError, OSError):
-        return False
-    if not cached or not questions:
-        return False
-    items = [RecognizedItem(question=question, recognized=cached.get(question, "?")) for question in dict.fromkeys(questions)]
-    write_recognized_json(config.out_path, items)
-    return True
+    # Partial checkpoints are immutable and explicitly partial, never final recognized output.
+    from tools.subjective_sheet_lab.ocr_provider_session import LAST_SESSION
+    session = LAST_SESSION.get()
+    return bool(session is not None and session.items)
 
 
 def safe_http_error_text(error: urllib.error.HTTPError) -> str:
@@ -707,6 +694,37 @@ def summarize_quota_message(body: str) -> str:
         return body[:500]
     return message_value.splitlines()[0][:500]
 
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key,value in pairs:
+        if key in result:
+            raise GeminiProviderError("duplicate JSON key", reason="provider_invalid_json")
+        result[key] = value
+    return result
+
+
+def candidate_prompt() -> str:
+    return (" Preserve recognized as the visible transcription. Optional candidates must be at most five distinct "
+            "image-supported interpretations, never guesses or answers obtained by solving. "
+            "Never use an answer key. Include uncertainty (clear, ambiguous, unreadable) and needs_review boolean. "
+            "Do not invent alternatives to fill five slots. Return only items with question, recognized, "
+            "candidates, uncertainty, needs_review.")
+
+def strict_recognized_items(text: str, questions: tuple[int, ...]) -> list[RecognizedItem]:
+    payload = parse_json_text(text)
+    if set(payload) != {"items"} or not isinstance(payload.get("items"), list):
+        raise GeminiProviderError("provider JSON requires only items", reason="provider_malformed_items")
+    seen = {}
+    for raw in payload["items"]:
+        item = parse_item(raw)
+        if item.question in seen:
+            raise GeminiProviderError("duplicate provider question", reason="provider_duplicate_question")
+        seen[item.question] = item
+    if set(seen) != set(questions) or len(seen) != len(questions):
+        raise GeminiProviderError("provider question set is incomplete or contains extras", reason="provider_question_coverage")
+    return [seen[number] for number in questions]
 
 if __name__ == "__main__":
     raise SystemExit(main())

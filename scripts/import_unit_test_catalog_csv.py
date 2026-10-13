@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
-import os
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.storage import file_lock, save_atomic
+from core.test_config_safety import validate_tests_config_answer_modes
+
+
 CONFIG_PATH = ROOT / "tests-config.json"
 CSV_PATH = ROOT / "generated" / "unit_test_catalog.csv"
 
@@ -44,6 +52,14 @@ def _test_ids(tests: object) -> set[str]:
     }
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Replace UNIT tests from a CSV source.")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
@@ -64,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     if config_path == CONFIG_PATH.resolve() and not args.backup_confirmed:
         parser.error("live tests-config.json writes require --backup-confirmed")
 
+    input_sha256 = sha256_file(config_path)
     cfg = json.loads(config_path.read_text(encoding="utf-8-sig"))
     if not isinstance(cfg, dict):
         cfg = {}
@@ -137,10 +154,12 @@ def main(argv: list[str] | None = None) -> int:
             f"(sample: {sample}); use --allow-unit-removal only for an intentional removal"
         )
     unit_cat["tests"] = unit_tests
+    validate_tests_config_answer_modes(cfg)
 
-    tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp_path, config_path)
+    with file_lock(config_path):
+        if sha256_file(config_path) != input_sha256:
+            raise SystemExit("tests-config.json changed during import; rerun preview/import")
+        save_atomic(config_path, cfg)
     print(f"UNIT tests replaced: {len(unit_tests)}")
     return 0
 
