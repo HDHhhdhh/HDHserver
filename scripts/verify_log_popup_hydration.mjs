@@ -70,9 +70,12 @@ const make = (source=proposed) => {
   const finish=(request,data,status=200)=>request.resolve({ok:status>=200&&status<300,status,json:async()=>cloned(data),text:async()=>JSON.stringify(data)});
   const pending=url=>reads.findLast(r=>r.url===url);
   const start=(sid='A',date=DATE,opts={})=>h.window.openRecordPopupForRow(row(sid,date),opts);
-  const finishInitial=(sid='A',date=DATE,history=true,override=null)=>{
+  const finishInitial=(sid='A',date=DATE,history=true,override=null,homework={data:{},status:404})=>{
     finish(pending('/api/progress?sid='+sid),{[date]:{[sid]:{MID:'none',__manualProgressMids:{MID:true},unknown:'진도 보존'}}});
-    finish(pending('/api/admin/student-homework?date='+date+'&sid='+sid),{},404);
+    const canonical=pending('/api/admin/student-homework?date='+date+'&sid='+sid);
+    if(homework.networkError)canonical.reject(new Error('합성 연결 실패'));
+    else if(homework.html)canonical.resolve({ok:false,status:503,json:async()=>{throw new Error('HTML response');}});
+    else finish(canonical,homework.data,homework.status);
     finish(pending('/api/logs?sid='+sid),override?override.data:history?{[date]:{[sid]:{notes:sid+' 권위 메모',homeworkTable:[],unknown:{keep:'한글'}}}}:{error:'injected history500'},override?override.status:history?200:500);
   };
   const ready=()=>vm.runInContext('logModalReady',ctx);
@@ -248,6 +251,85 @@ if(!original.includes('const logHydrationReady = hydrationResults[0]')) {
   const before=f.reads.length;await f.start();
   same(f.reads.length,before,'a successful scoped prefetch remains valid warm authority');
   same(f.ready(),true,'warm prefetch succeeds without changing existing TTL behavior');cases++;
+}
+for(const [status,data,message,extra] of [
+  [401,{ok:false,code:'admin_auth_required'},/관리자 인증/],
+  [403,{ok:false,code:'academy_network_required'},/학원망/],
+  [503,{ok:false,code:'homework_not_initialized'},/저장소.*준비/],
+  [503,{ok:false,code:'homework_unavailable'},/서버에서 숙제 상세/],
+  [503,null,/503/,{html:true}],
+  [200,null,/200/],
+  [200,{ok:false},/200/],
+  [500,{error:'합성 서버 오류'},/합성 서버 오류/],
+  [0,null,/합성 연결 실패/,{networkError:true}],
+]) {
+  const f=make(), opening=f.start();
+  f.finishInitial('A',DATE,true,null,{status,data,...extra});await opening;
+  same([f.ready(),f.ids.get('logSave').disabled,f.ids.get('logCompleteBtn').disabled],[true,true,true],'canonical read failure keeps log authority but blocks both mutation buttons');
+  same(f.inputs.map(x=>x.disabled),[true,true,true,true],'canonical failure cannot unlock cached homework');
+  assert.match(f.warning()?.textContent||'',message);assertions++;
+  await assert.rejects(f.window.saveRecordPopup(),message);assertions++;
+  f.ids.get('logCompleteBtn').listeners.click[0]();await turn();
+  f.ids.get('logSave').disabled=false;f.ids.get('logModal').classList.add('student-work-layout');
+  f.window.closeStudentWorkPopups({detail:{saveAll:true}});await turn();
+  same(f.writes,[],'canonical failure blocks video, test, progress and log writes before unified save starts');
+  same(f.ids.get('logModal').style.display,'flex','failed preflight keeps the original popup open');
+  const retry=f.warning().querySelector('button');assert.ok(retry?.listeners.click?.length===1);assertions++;
+  const previousReads=f.reads.length;retry.listeners.click[0]();await turn();
+  same(f.reads.length-previousReads,3,'canonical retry starts fresh scoped reads instead of reusing cached authority');
+  f.finishInitial('A',DATE,true,null,{status:200,data:{ok:true,assignments:[]}});await turn();
+  same([f.ready(),f.ids.get('logSave').disabled,f.ids.get('logCompleteBtn').disabled],[true,false,false],'successful canonical retry restores save and completion');
+  same(f.warning(),null,'successful canonical retry removes the visible error');cases++;
+}
+{
+  const f=make(), opening=f.start('A',DATE,{accessMode:'all-students-readonly'});
+  f.finishInitial('A',DATE,true,null,{status:503,data:{ok:false,code:'homework_unavailable'}});await opening;
+  f.edit('A');f.ctx.document.querySelectorAll('#logProgress .progress-cell')[0].dataset.state='skip';
+  await f.window.saveRecordPopup();
+  same(f.writes.map(x=>[x.step,x.date,x.sid]),[['progress',DATE,'A']],'all-students mode keeps its allowed progress-only save despite unavailable homework');
+  same(f.inputs.map(x=>x.disabled),[true,true,true,true],'all-students never unlocks homework');cases++;
+}
+{
+  const f=make(), opening=f.start();
+  f.finishInitial('A',DATE,true,null,{status:200,data:{ok:true,assignments:[],pendingOperation:{operationId:'existing-operation'}}});await opening;
+  same([f.ids.get('logSave').disabled,f.ids.get('logCompleteBtn').disabled],[true,true],'a pending server operation blocks new homework saves');
+  same(f.warning().querySelector('button'),null,'conflict has no reload retry that could discard pending state');
+  f.ids.get('logSave').disabled=false;f.ids.get('logModal').classList.add('student-work-layout');
+  f.window.closeStudentWorkPopups({detail:{saveAll:true}});await turn();
+  same(f.writes,[],'pending canonical operation blocks unified save before video writes');cases++;
+}
+{
+  const f=make(), opening=f.start();
+  f.finishInitial('A',DATE,true,null,{status:503,data:{ok:false}});await opening;
+  const oldRetry=f.warning().querySelector('button');
+  const newer=f.start('B',BDATE);f.finishInitial('B',BDATE);await newer;
+  const before=f.reads.length;oldRetry.listeners.click[0]();await turn();
+  same(f.reads.length,before,'retry belonging to an old student cannot re-open that student or issue reads');
+  same(f.ids.get('logNotes').value,'B 권위 메모','old retry keeps the current student intact');cases++;
+}
+for(const failure of ['partial','network']) {
+  const f=make(), opening=f.start();
+  f.finishInitial('A',DATE,true,null,{status:200,data:{ok:true,assignments:[]}});await opening;
+  const bodies=[], before=f.reads.length;
+  f.ctx.fetch=async(url,init)=>{
+    assert.equal(url,'/api/admin/student-homework/commit');
+    assert.equal(init.method,'POST');bodies.push(init.body);
+    const payload=JSON.parse(init.body);
+    if(bodies.length===1) {
+      if(failure==='network')throw new Error('합성 응답 유실');
+      return {ok:false,status:409,json:async()=>({ok:false,code:'partial_failure',retryable:true,operationId:payload.operationId})};
+    }
+    return {ok:true,status:200,json:async()=>({ok:true,entry:payload.logPatch.entry})};
+  };
+  f.edit('A');await assert.rejects(f.window.saveRecordPopup(),/같은 작업/);assertions++;
+  same(vm.runInContext('canonicalHomework.mode',f.ctx),'canonical','retryable commit failure does not become a read error');
+  same(f.warning(),null,'uncertain commit cannot expose a read retry that would reset its pending payload');
+  f.advance(5000);f.ids.get('logNotes').value='뒤늦은 입력은 이전 작업에 섞지 않음';
+  await f.window.saveRecordPopup();
+  same(bodies.length,2,'uncertain commit supports the next explicit save');
+  same(bodies[1],bodies[0],'partial/network retry sends byte-identical payload and operation ID');
+  same(f.reads.length,before,'commit retry does not start a new canonical read');
+  same(vm.runInContext('[canonicalHomework.pendingPayload,canonicalHomework.operationId]',f.ctx),[null,null],'successful retry releases pending operation state');cases++;
 }
 {
   const f=make(), old=f.start('A',DATE), fresh=f.start('B',BDATE);

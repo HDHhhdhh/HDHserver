@@ -308,7 +308,15 @@ async function fetchCanonicalHomeworkForLog(date, sid) {
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok || !data?.ok) {
-    const message = data?.error || data?.message || `숙제 상세 조회 실패 (${res.status})`;
+    const reasons = {
+      admin_auth_required: '관리자 인증을 다시 확인해 주세요.',
+      academy_network_required: '숙제 상세는 허용된 학원망에서만 조회할 수 있습니다.',
+      homework_not_initialized: '서버의 숙제 저장소가 준비되지 않았습니다. 관리자 확인이 필요합니다.',
+      homework_unavailable: '서버에서 숙제 상세를 읽지 못했습니다. 다시 불러와 주세요.',
+    };
+    const reason = reasons[data?.code] || data?.error || data?.message
+      || '서버 응답을 확인하지 못했습니다. 다시 불러와 주세요.';
+    const message = `숙제 상세 조회 실패 (${res.status}): ${reason}`;
     throw new Error(message);
   }
 
@@ -3002,12 +3010,28 @@ export function initLogModal() {
     logNotes.placeholder = '';
 
     renderHwTable(homework.mergedRows, sleepingHomeworkBooks);
+    const homeworkSaveBlocked = !isContextMenuOnlyAccess()
+      && ['loading', 'error', 'conflict'].includes(canonicalHomework.mode);
+    if (logSave) logSave.disabled = homeworkSaveBlocked;
+    if (logComplete) logComplete.disabled = homeworkSaveBlocked;
     if (canonicalHomework.mode === 'error' || canonicalHomework.mode === 'conflict') {
       const warning = document.createElement('p');
       warning.className = 'hwCanonicalError';
       warning.setAttribute('role', 'alert');
       warning.textContent = canonicalHomework.error
         || '숙제 상세를 불러오지 못해 저장을 잠시 사용할 수 없습니다. 닫은 뒤 다시 시도해 주세요.';
+      if (canonicalHomework.mode === 'error') {
+        const retry = document.createElement('button');
+        retry.id = 'logLoadRetry';
+        retry.type = 'button';
+        retry.textContent = '다시 불러오기';
+        retry.addEventListener('click', () => {
+          if (!isCurrentOpen()) return;
+          invalidateLogModalHydrationCaches(today, sid);
+          void openLogModalForRow(tr, opts);
+        });
+        warning.append(retry);
+      }
       $('hwWrap')?.prepend(warning);
     }
     applyReadOnlyRecordAccess();
@@ -3243,18 +3267,24 @@ export function initLogModal() {
   window.isStudentPopupSavePending = () => Boolean(logRecordActionPromise || saveAllStudentPopupPromise);
   logModal.addEventListener('admin:assistant-notes-close', close);
 
-  async function saveBase(doneFlag, options = {}) {
+  function assertRecordSaveReady() {
     if (!logModalReady) throw new Error('기록 팝업을 다시 불러온 뒤 저장해 주세요.');
-    const today = editingLogDate || getAdminDate();
-    const sid = String(editingLogSid);
-    const homeworkCheckedAt = options.homeworkChecked === true ? nowHHMM() : '';
-
     if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'error') {
       throw new Error(canonicalHomework.error || '숙제 상세를 불러오지 못했습니다. 닫은 뒤 다시 시도해 주세요.');
     }
     if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'conflict') {
       throw new Error(canonicalHomework.error || '다른 화면에서 숙제가 변경되었습니다. 닫은 뒤 다시 열어 주세요.');
     }
+    if (!isContextMenuOnlyAccess() && canonicalHomework.mode === 'loading') {
+      throw new Error('숙제 상세를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.');
+    }
+  }
+
+  async function saveBase(doneFlag, options = {}) {
+    assertRecordSaveReady();
+    const today = editingLogDate || getAdminDate();
+    const sid = String(editingLogSid);
+    const homeworkCheckedAt = options.homeworkChecked === true ? nowHHMM() : '';
 
     const prevLog = (state.logs?.[today] || {})[sid] || {};
     const prevDone =
@@ -3479,13 +3509,14 @@ export function initLogModal() {
       ]);
       let allUnlock = null;
       try {
-        if (!logModalReady) throw new Error('기록 팝업을 다시 불러온 뒤 저장해 주세요.');
+        assertRecordSaveReady();
         await waitForStudentPopupSaveReady('#logSave', '숙제');
         assertSaveTarget();
         if (unified) {
           await waitForStudentPopupSaveReady('#mSave', '영상 배정');
           await waitForStudentPopupSaveReady('#testSave', '테스트 배정');
           assertSaveTarget();
+          assertRecordSaveReady();
           allUnlock = lockStudentPopupControls([
             '#assistantStudentNotes [data-note-save-close]',
             '#assistantStudentNotes [data-note-close]',
