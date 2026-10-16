@@ -353,7 +353,18 @@ export async function runChecks() {
     assert.match(openFlow, /if \(historyLoaded\) return true;[\s\S]*hydrateTodayLogFromServer\(today, sid, isCurrentOpen\)/);
     assert.match(openFlow, /fetchCanonicalHomeworkForLogCached\(today, sid\)/);
     assert.doesNotMatch(openFlow, /Promise\.allSettled\(\[[\s\S]*hydrateTodayLogFromServer\(today, sid, isCurrentOpen\),[\s\S]*hydrateLogHistoryForSid\(sid, isCurrentOpen\),[\s\S]*hydrateProgressHistoryForSid\(sid, isCurrentOpen\)/);
-    assert.equal((sources.logModal.match(/\['loading', 'error', 'conflict'\]\.includes\(canonicalHomework\.mode\)/g) || []).length, 3);
+    const blockedStates = /\['loading', 'error', 'conflict'\]\.includes\(canonicalHomework\.mode\)/;
+    for (const [startMarker, endMarker] of [
+      ['function syncHomeworkSleepingControls()', 'function renderHwTable'],
+      ['function syncHomeworkRemovalControls()', 'function setHomeworkRemoveSelection'],
+      ['const applyReadOnlyRecordAccess = () =>', 'const resetLogModalScroll ='],
+    ]) {
+      const start = sources.logModal.indexOf(startMarker);
+      const end = sources.logModal.indexOf(endMarker, start);
+      assert.ok(start >= 0 && end > start, 'homework edit-lock owner remains available');
+      assert.match(sources.logModal.slice(start, end), blockedStates);
+    }
+    assert.match(openFlow, /const homeworkSaveBlocked = !isContextMenuOnlyAccess\(\)[\s\S]*logSave\.disabled = homeworkSaveBlocked/);
 
     assert.match(sources.logModal, /function prefetchLogModalDataForRow\(row\)/);
     assert.match(sources.logModal, /addEventListener\('pointerover'[\s\S]*prefetchForButton/);
