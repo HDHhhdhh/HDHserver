@@ -87,6 +87,12 @@ TRUST_PROXY_HEADERS=1
 
 PowerShell의 `[Environment]::SetEnvironmentVariable(name, value, 'Machine')`을 관리자 세션에서 사용하거나 기존 작업 등록 시스템에 같은 이름을 넣는다. 관리자 비밀번호는 평문 환경변수로 저장하지 않고 `werkzeug.security.generate_password_hash()` 결과만 `ACADEMY_ADMIN_PASSWORD_HASH`에 넣는다. private key의 **내용**은 environment에 넣지 않는다. 값 변경 후 `Academy Server Waitress`를 재시작해야 새 프로세스가 읽는다. runner는 Task Scheduler의 오래된 환경 block을 피하려고 위 machine 값만 명시적으로 다시 읽는다. `run_waitress_server.ps1`가 exact venv Waitress와 port 8003을 사용하며 다른 listener를 추가하지 않는다. Waitress는 loopback proxy의 `X-Forwarded-Proto`만 신뢰하고 다른 forwarded client/host header는 지운다. 실제 client authority는 app의 단일 `CF-Connecting-IP` 검증에 남겨 둔다. `STUDENT_APP_PUBLIC_ENABLED`는 앱 호스트 공개를, `STUDENT_APP_LEGACY_REDIRECT_ENABLED`는 기존 사이트 루트의 앱 전환을 각각 제어한다. 두 번째 값은 사용자 최종 승인 전까지 반드시 `0`으로 유지한다.
 
+### 서버 내부 운영 모드 재조회
+
+학생앱 설정과 별도로 [set_server_mode_environment.ps1](../scripts/set_server_mode_environment.ps1)이 관리자 가드·로그 저장·revision·mirror 관련 모드를 재조회한다. 정확한 허용 목록은 helper에 둔다. 각 값은 Machine 우선, 비어 있으면 User를 사용한다. 양쪽이 모두 비면 상속된 Process 값을 지워 코드 기본값을 사용한다. 모든 읽기가 성공한 뒤 Process에 반영하며, 읽기 오류가 나면 Waitress 실행 전에 중단한다. 이 helper는 영구 환경변수를 쓰거나 값을 출력하지 않는다.
+
+일반 runner 실행은 자동으로 재조회한다. 기존 `-DevelopmentIsolation` 실행은 Process 설정을 유지한다. 현재 운영 작업도 이 옵션을 사용하므로, 새 운영 모드 적용 시 검토한 예약 작업 인자에 **`-ReloadServerModes`를 추가해야 한다**. helper 코드 배포만으로 현재 운영 모드가 변경됐다고 판단하지 않는다. 기존 학생앱·인증·시크릿의 설정 우선순위는 유지한다. 예약 작업 인자 변경과 재시작은 승인된 운영 반영 때 수행한다.
+
 ## 5. Push delivery task 등록
 
 다음은 production 승인 뒤 관리자 PowerShell에서 한 번 실행하는 등록 템플릿이다. runner 자체의 named mutex와 Task Scheduler의 `IgnoreNew`가 중첩 실행을 함께 막는다.

@@ -142,6 +142,14 @@ OCR 제외 범위에서 importer가 없는 models.py와 core/logs_sqlite.py를 �
 
 GET 초기화 호환 예외, dual 기본과 gated SQLite 모드, 신규 관리자 읽기·폴링 소유자를 scoped guidance와 flow map에 반영한다. 원본 계획은 수정하지 않는다. 운영 관찰이 필요한 호환 스위치는 제거하지 않는다. runtime 자료와 직접 제공 가능한 static 파일은 삭제하지 않았다. 독립 검토에서 P7 추가 finding은 없었다.
 
+## 2026-10-16 재개: 실행 설정 전달 보완
+
+두 checkout은 clean 상태에서 재개했다. 운영 소스는 ffbff9a, 구현 브랜치는 9eb3fb0이었다. 관리형 8004는 꺼져 있었으며, 동일 지원 manager 시작 명령은 자동 승인 검토가 다시 정책상 차단했다. 실행 전 거부였고 다른 실행 경로로 우회하지 않았다. 운영 ping·공개 app은 HTTP 200이었다. 새 backend의 실제 화면 검증은 여전히 대기다.
+
+독립 검토에서 신규 모드가 예약 작업의 오래된 Process 환경에 남을 수 있음을 확인했다. runner에 선택적인 ReloadServerModes를 추가하고, 별도 helper에서 명시적인 모드만 Machine→User→미설정 순서로 읽는다. 기존 DevelopmentIsolation 호출은 유지하고 명시적인 재조회만 허용한다. 현재 운영 작업도 DevelopmentIsolation을 사용하므로 운영 반영 시 인자 보완이 필요하다. 상세 설정 소유권과 실행 조건은 [운영 runbook](student-mobile-app-deploy.md#서버-내부-운영-모드-재조회)에 둔다.
+
+실제 helper의 설정 해석 42개, 실제 runner AST의 호출 조건 6개, 설정 읽기·helper 실패 시 후속 실행 차단을 검증했다. Windows PowerShell 5.1을 거치는 기존 배포 fixture는 120개 단언을 통과했다. Registry 쓰기와 전체 운영 runner 실행은 하지 않았다. runner는 기존 250줄 제한 안의 249줄이다. 전체 기본 하네스는 exit 0, 109개 그룹 통과, 실패 0이며 원문은 로컬 audit의 runner-env-final-full.log에 보존한다. 독립 코드 검토에서도 추가 finding은 없었다. 운영 코드·예약 작업·영구 환경변수·데이터는 이번 재개에서 바꾸지 않았다.
+
 ## 단계 상태
 
 | 단계 | 구현 | 합성 검증 | 운영 적용·관찰 |

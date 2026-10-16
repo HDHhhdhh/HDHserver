@@ -20,6 +20,8 @@ ROOT: Final = Path(__file__).resolve().parents[2]
 VERIFY = ROOT / "scripts" / "verify_student_app_deployment.ps1"
 RUNNER = ROOT / "scripts" / "run_student_push_worker.ps1"
 WAITRESS_RUNNER = ROOT / "scripts" / "run_waitress_server.ps1"
+MODE_ENV = ROOT / "scripts" / "set_server_mode_environment.ps1"
+MODE_VERIFIER = ROOT / "scripts" / "verify_server_mode_environment.ps1"
 DOC = ROOT / "docs" / "student-mobile-app-deploy.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "refactor-safety.yml"
 POWERSHELL = "powershell.exe"
@@ -212,6 +214,9 @@ def _static_contract(state: list[int]) -> None:
     _check(state, 'ValidateSet("app.5a-math.com", "dev-app.5a-math.com")' in verify_source, "deployment verifier omits exact dev/prod hosts")
     _check(state, '$originPort = if ($PublicHost -eq "dev-app.5a-math.com") { 8004 } else { 8003 }' in verify_source, "deployment verifier omits dev/prod port split")
     _check(state, "GetEnvironmentVariable($name, \"Machine\")" in waitress_source, "Waitress runner does not refresh machine environment")
+    _check(state, '"set_server_mode_environment.ps1"' in waitress_source
+           and "ReloadServerModes" in waitress_source and MODE_ENV.is_file() and MODE_VERIFIER.is_file(),
+           "Waitress mode reload helper or explicit isolation override is missing")
     _check(state, 'Remove-Item -LiteralPath "Env:$name"' in waitress_source, "Waitress runner leaves deleted machine variables inherited")
     _check(state, "STUDENT_APP_LEGACY_HOST" in waitress_source and "STUDENT_APP_LEGACY_REDIRECT_ENABLED" in waitress_source, "Waitress runner omitted legacy rollout gates")
     for flag in (
@@ -288,6 +293,11 @@ def run_checks() -> dict[str, object]:
     _check(state, overlap.returncode == 3 and "worker_overlap" in overlap.stdout, "worker overlap was not rejected")
     with tempfile.TemporaryDirectory(prefix="student-app-deploy-") as directory:
         root = Path(directory)
+        modes = _run("-File", str(MODE_VERIFIER), "-FixtureRoot", str(root))
+        mode_payload = _parse_result(modes)
+        _check(state, modes.returncode == 0 and mode_payload == {
+            "modeCases": 42, "guardCases": 6, "failClosed": True,
+        }, "server mode environment resolution or runner wiring failed")
         _backup_contract(state, root)
         paths = _fixture(root)
         happy = _run(*_verify_args(paths))

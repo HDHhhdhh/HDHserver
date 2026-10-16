@@ -13,11 +13,13 @@ param(
     [string]$VapidSubjectOverride = "",
     [string]$VapidPrivateKeyPathOverride = "",
     [string]$RuntimeRootOverride = "",
-    [switch]$DevelopmentIsolation
+    [switch]$DevelopmentIsolation,
+    [switch]$ReloadServerModes
 )
 
 $ErrorActionPreference = "Stop"
 $serverRoot = Split-Path -Parent $PSScriptRoot
+if (-not $DevelopmentIsolation -or $ReloadServerModes) { & (Join-Path $PSScriptRoot "set_server_mode_environment.ps1") }
 
 $studentAppMachineEnv = @(
     "STUDENT_APP_PUBLIC_ENABLED", "STUDENT_APP_PUBLIC_HOST",
