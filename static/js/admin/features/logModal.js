@@ -3461,6 +3461,12 @@ export function initLogModal() {
       const saveSequence = logOpenSeq;
       const saveSid = String(editingLogSid);
       const saveDate = editingLogDate;
+      const saveOperationId = createHomeworkOperationId();
+      let saveStage = 'preflight';
+      const reportSave = type => document.dispatchEvent(new CustomEvent('admin:save-operation', {
+        detail: { id: saveOperationId, sid: saveSid, date: saveDate, stage: saveStage, type, at: Date.now() },
+      }));
+      reportSave('start');
       const assertSaveTarget = () => {
         if (saveSequence !== logOpenSeq || saveSid !== String(editingLogSid) || saveDate !== editingLogDate) {
           throw new Error('저장 중 대상이 바뀌었습니다. 원래 학생의 팝업을 다시 열어 확인해 주세요.');
@@ -3495,22 +3501,31 @@ export function initLogModal() {
             '#testSave',
           ]);
           if (typeof window.saveVideoAssignmentPopup === 'function') {
+            saveStage = 'video'; reportSave('running');
             await window.saveVideoAssignmentPopup({ showPopup: false, refresh: false, skipUnchanged: true });
+            reportSave('complete');
           }
         }
         assertSaveTarget();
+        saveStage = 'record'; reportSave('running');
         const recordResult = await saveRecordPopupForCurrent();
+        reportSave('complete');
         assertSaveTarget();
         if (!isContextMenuOnlyAccess()) {
+          saveStage = 'carryover'; reportSave('running');
           await reapplyCarriedTestAssignmentForCurrent({ commitScope: recordResult?.carryoverCommitScope });
+          reportSave('complete');
         }
         assertSaveTarget();
         // The log save can merge an absence carryover captured when the popup opened.
         // Persist the current test UI last so an explicit removal remains authoritative.
         if (unified && typeof window.saveTestAssignmentPopup === 'function') {
+          saveStage = 'test'; reportSave('running');
           await window.saveTestAssignmentPopup({ showPopup: false, refresh: false });
+          reportSave('complete');
         }
         assertSaveTarget();
+        reportSave('success');
         close(null, { saveCompleted: true });
         if (typeof window.showStudentPopupSaveResult === 'function') {
           window.showStudentPopupSaveResult('저장 완료');
@@ -3520,7 +3535,8 @@ export function initLogModal() {
         document.dispatchEvent(new CustomEvent('admin:refresh'));
       } catch (error) {
         console.error('[logModal] save all student popup changes failed:', error);
-        alert(error?.message || '모든 팝업 변경사항 저장에 실패했습니다. 팝업을 닫지 않았습니다.');
+        reportSave('failed');
+        alert(`${error?.message || '모든 팝업 변경사항 저장에 실패했습니다. 팝업을 닫지 않았습니다.'}\n작업 ID: ${saveOperationId}\n완료된 단계는 저장된 상태일 수 있습니다. 운영 도구의 저장 이력에서 단계를 확인하세요.`);
       } finally {
         allUnlock?.();
         closeUnlock();

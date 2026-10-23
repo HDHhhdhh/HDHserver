@@ -1,0 +1,47 @@
+body.admin #operationsToolkit {
+  --ops-bg: #fff; --ops-ink: #172b45; --ops-muted: #526277; --ops-line: #dce4ed; --ops-soft: #f3f6fa;
+  box-sizing:border-box; width: min(1080px, calc(100vw - 32px)); max-width:calc(100vw - 16px); max-height: calc(100dvh - 40px); padding: 24px;
+  border: 1px solid var(--ops-line); border-radius: 18px; color: var(--ops-ink); background: var(--ops-bg);
+  box-shadow: 0 24px 90px #0f172a40; font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+}
+body.admin.dark #operationsToolkit { --ops-bg:#152033; --ops-ink:#e2eaf5; --ops-muted:#b5c3d5; --ops-line:#3a4c65; --ops-soft:#202e44; color-scheme:dark; }
+body.admin #operationsToolkit::backdrop { background:#0f172a80; }
+body.admin #operationsToolkit [hidden] { display:none !important; }
+body.admin #operationsToolkit .ops-toolkit-head, body.admin #operationsToolkit .ops-stats-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+body.admin #operationsToolkit h2 { margin:3px 0 18px; font-size:24px; }
+body.admin #operationsToolkit .ops-toolkit-head p { margin:0; color:var(--ops-muted); font-size:12px; }
+body.admin #operationsToolkit .ops-toolkit-tabs { display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--ops-line); padding-bottom:12px; }
+body.admin #operationsToolkit .ops-toolkit-tabs button, body.admin #operationsToolkit .ops-open-student { border:1px solid var(--ops-line); border-radius:8px; padding:8px 12px; background:var(--ops-soft); color:var(--ops-ink); cursor:pointer; }
+body.admin #operationsToolkit .ops-toolkit-tabs [aria-pressed="true"] { background:#1d4ed8; border-color:#1d4ed8; color:white; }
+body.admin #operationsToolkit button:focus-visible, body.admin #operationsToolkit input:focus-visible, body.admin #operationsToolkit select:focus-visible { outline:3px solid #60a5fa; outline-offset:2px; }
+body.admin #operationsToolkit #opsToolkitNotice { min-height:20px; color:var(--ops-muted); font-size:13px; margin:14px 0; }
+body.admin #operationsToolkit .ops-work-controls { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:14px; }
+body.admin #operationsToolkit .ops-work-controls label { display:grid; gap:5px; font-size:13px; }
+body.admin #operationsToolkit .ops-work-controls label:first-child { flex:1; min-width:180px; }
+body.admin #operationsToolkit input, body.admin #operationsToolkit select { border:1px solid var(--ops-line); border-radius:8px; padding:9px; color:var(--ops-ink); background:var(--ops-bg); min-height:40px; }
+body.admin #operationsToolkit #opsWorkCount { padding-bottom:10px; white-space:nowrap; font-size:14px; }
+body.admin #operationsToolkit #opsWeeklyChart { width:100%; height:300px; }
+body.admin #operationsToolkit .ops-explanation { color:var(--ops-muted); font-size:13px; line-height:1.7; }
+body.admin #operationsToolkit .ops-stats-table-wrap { overflow:auto; }
+body.admin #operationsToolkit .ops-stats-table { width:100%; border-collapse:collapse; font-size:13px; }
+body.admin #operationsToolkit .ops-stats-table th, body.admin #operationsToolkit .ops-stats-table td { padding:9px 12px; border-bottom:1px solid var(--ops-line); text-align:left; white-space:nowrap; }
+body.admin #operationsToolkit .ops-stats-table caption { text-align:left; padding:8px 0; font-weight:700; }
+body.admin #operationsToolkit .ops-save-item { border:1px solid var(--ops-line); border-left:4px solid #2563eb; border-radius:8px; padding:14px; margin:12px 0; overflow-wrap:anywhere; }
+body.admin #operationsToolkit .ops-save-item[data-status="failed"], body.admin #operationsToolkit .ops-save-item[data-status="interrupted"] { border-left-color:#d97706; }
+body.admin #operationsToolkit .ops-save-item p { margin:8px 0; font-size:14px; }
+body.admin #operationsToolkit .ops-save-item small { color:var(--ops-muted); }
+body.admin #operationsToolkit .tabulator { background:var(--ops-bg); border-color:var(--ops-line); color:var(--ops-ink); font-size:13px; }
+body.admin #operationsToolkit .tabulator-header, body.admin #operationsToolkit .tabulator-col, body.admin #operationsToolkit .tabulator-footer { background:var(--ops-soft); color:var(--ops-ink); border-color:var(--ops-line); }
+body.admin #operationsToolkit .tabulator-row { background:var(--ops-bg); color:var(--ops-ink); }
+body.admin #operationsToolkit .tabulator-row.tabulator-row-even { background:var(--ops-soft); }
+body.admin #operationsToolkit .tabulator-cell { border-color:var(--ops-line); display:inline-flex; align-items:center; }
+body.admin #operationsToolkit .tabulator-page { color:var(--ops-ink); border-color:var(--ops-line); }
+body.admin #operationsToolkit .tabulator-placeholder .tabulator-placeholder-contents { color:var(--ops-muted); font-size:15px; }
+@media (max-width:640px) {
+  body.admin #operationsToolkit { width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:14px; border-radius:12px; }
+  body.admin #operationsToolkit .ops-toolkit-tabs { gap:5px; }
+  body.admin #operationsToolkit .ops-toolkit-tabs button { flex:1; padding:9px 5px; font-size:13px; white-space:nowrap; }
+  body.admin #operationsToolkit .ops-work-controls { gap:8px; }
+  body.admin #operationsToolkit #opsWeeklyChart { height:260px; }
+  body.admin #operationsToolkit .ops-stats-heading { align-items:flex-start; }
+}

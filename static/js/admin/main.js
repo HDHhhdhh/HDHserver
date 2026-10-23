@@ -7,6 +7,7 @@ import { initAdminDateBar } from './core/adminDate.js';
 
 async function loadCriticalAdminFeatures() {
   return Promise.all([
+    import('./features/saveOperations.js').then(module => module.initSaveOperations),
     import('./features/hoverTooltip.js?v=20260906-exam-pending-color1').then(module => module.initHoverTooltip),
     import('./features/assistantStudentNotes.js?v=20260821-note-body-row2').then(module => module.initAssistantStudentNotes),
     import('./features/videoModal.js?v=20260912-watch-rearm1&youtube=20260913&hubSave=20261001&uiPerf=20261002&dragScroll=20261007').then(module => module.initVideoModal),
@@ -50,6 +51,7 @@ window.state = state;
 // 기능은 모두 그대로 초기화하되 F5 직후의 연결 대기열에서 오늘 명단을 우선한다.
 async function initDeferredAdminFeatures() {
   const jobs = [
+    ['operations toolkit', () => import('./features/operationsToolkit.js').then(module => module.initOperationsToolkit())],
     ['calendar', () => import('./features/calendar.js?v=20260929-retired-extra1&uiPerf=20261002&adminSpeed=20261003&examTextbook=20261012b').then(module => module.initCalendar())],
     ['admin operation notes', () => import('./features/adminOperationNotes.js').then(module => module.initAdminOperationNotes())],
     ['student logs', () => import('./features/studentLogs.js?v=20260816-student-log-restore2').then(module => module.initStudentLogs())],

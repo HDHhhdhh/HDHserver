@@ -6,12 +6,14 @@ const source = fs.readFileSync('static/js/admin/main.js', 'utf8')
   .replace(/^import\s[^\n]+\n/gm, '')
   .replace(/\bimport\(/g, 'importFeature(');
 const initialOrder = [
+  'initSaveOperations',
   'initHoverTooltip', 'initAssistantStudentNotes', 'initVideoModal', 'initLogModal',
   'initExtraModal', 'initAbsentRegister', 'initExport', 'initQuickPrinterExport',
   'initClearAll', 'initAbsentRecovery', 'initTimeGraph', 'initAdminDateBar',
   'initAdminUiEnhance', 'initStudentTestRecordDetails',
 ];
 const exportsByFile = {
+  saveOperations: 'initSaveOperations',
   hoverTooltip: 'initHoverTooltip', assistantStudentNotes: 'initAssistantStudentNotes',
   videoModal: 'initVideoModal', logModal: 'initLogModal', extraModal: 'initExtraModal',
   absentRegister: 'initAbsentRegister', exportLogs: 'initExport',
@@ -61,7 +63,7 @@ async function run(fail = '') {
   const completion = vm.runInContext(`(async () => {${source}\n})()`, context);
   const outcome = completion.then(() => true, () => false);
   assert.deepEqual(calls.slice(0, 4), ['theme', 'view', 'escape', 'data-start']);
-  assert.equal(pending.length, 13, 'all required imports start while data is pending');
+  assert.equal(pending.length, 14, 'all required imports start while data is pending');
   assert.ok(!calls.includes('first-table'));
   // Finish imports out of order; the literal previous initialization order must remain intact.
   pending.reverse().forEach(resolve => resolve());
@@ -85,6 +87,7 @@ async function run(fail = '') {
 await run();
 await run('videoModal');
 await run('logModal');
+await run('saveOperations');
 await run('data');
 const shell = fs.readFileSync('static/admin.html', 'utf8');
 assert.ok(shell.indexOf('admin/demo/bootstrap.js') < shell.indexOf('admin/main.js'));
