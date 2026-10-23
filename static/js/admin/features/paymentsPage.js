@@ -129,6 +129,14 @@ async function loadEvidence() {
   }
 }
 function visibleSessions() { return detail.account.sessions.filter((r) => !r.voided && r.date.startsWith($('historyMonth').value)); }
+function selectDay(date) {
+  if (!date || !detail) return;
+  selectedDay = date;
+  if ($('historyMonth').value !== date.slice(0,7)) {
+    $('historyMonth').value = date.slice(0,7);
+    void loadEvidence();
+  } else renderDay();
+}
 function renderCalendar() {
   if (!detail) return;
   const sessions = visibleSessions();
@@ -141,8 +149,8 @@ function renderCalendar() {
     if (!calendar) {
       calendar = new window.FullCalendar.Calendar($('calendar'), { initialView:'dayGridMonth', locale:'ko', headerToolbar:false,
         height:'auto', fixedWeekCount:false, dayMaxEvents:3,
-        dateClick:({ dateStr }) => { selectedDay = dateStr; renderDay(); },
-        eventClick:({ event }) => { selectedDay = event.startStr.slice(0,10); renderDay(); } });
+        dateClick:({ dateStr }) => selectDay(dateStr),
+        eventClick:({ event }) => selectDay(event.startStr.slice(0,10)) });
       calendar.render();
     }
     calendar.gotoDate(`${$('historyMonth').value}-01`);
@@ -177,6 +185,19 @@ function packagesOptions() { return [...detail.account.packages].reverse().map((
 function componentOptions(packageId, action) {
   const p = detail.account.packages.find((row) => row.id === packageId);
   return [...(action === 'payment' ? [['all','전체 미수금 일괄 수납']] : [['','강좌를 선택하세요']]), ...(p?.lines || []).map((line,i) => [i, `${line.label} · 남은 ${detail.lineBalances[p.id][i].remainingUnits}/${line.units}회`])];
+}
+function refreshDialogOptions() {
+  const f = $('editForm').elements;
+  const packageField = f.namedItem('packageId');
+  if (!packageField) return;
+  const labels = new Map(packagesOptions());
+  for (const option of packageField.options) {
+    if (labels.has(option.value)) option.textContent = labels.get(option.value);
+  }
+  const componentLabels = new Map(componentOptions(packageField.value, dialogAction).map(([id, label]) => [String(id), label]));
+  for (const option of f.namedItem('lineIndex').options) {
+    if (componentLabels.has(option.value)) option.textContent = componentLabels.get(option.value);
+  }
 }
 function linesFields(lines) {
   return `<div class="wide"><div class="line-fields"><span>구성</span><span>회차</span><span>회당 단가(원)</span></div>${[...lines, ...Array(Math.max(0,2-lines.length)).fill({ label:'추가', units:0, unitPrice:0 })].map((r, i) => `<div class="line-fields"><input aria-label="${i+1}번째 구성 이름" name="lineLabel${i}" value="${escape(r.label)}" maxlength="40"><input aria-label="${i+1}번째 회차" name="lineUnits${i}" type="number" min="0" max="200" step="1" value="${r.units}"><input aria-label="${i+1}번째 회당 단가" name="linePrice${i}" type="number" min="0" max="1000000000" step="1" value="${r.unitPrice}"></div>`).join('')}<p class="form-help">추가 회차가 없으면 0으로 두세요. 기존 수강권의 금액은 바뀌지 않습니다.</p></div>`;
@@ -307,10 +328,9 @@ $('accountFilter').addEventListener('change', renderStudents);
 $('studentList').addEventListener('click', (event) => { const row = event.target.closest('[data-sid]'); if (row) void selectStudent(row.dataset.sid); });
 $('reloadPage').addEventListener('click', () => { if (!client.pending && !client.saving) void loadOverview(); });
 $('historyMonth').addEventListener('change', () => { if ($('historyMonth').value && detail) { selectedDay = `${$('historyMonth').value}-01`; void loadEvidence(); } });
-$('historyDate').addEventListener('change', () => { if (!$('historyDate').value || !detail) return; selectedDay = $('historyDate').value;
-  if ($('historyMonth').value !== selectedDay.slice(0,7)) { $('historyMonth').value = selectedDay.slice(0,7); void loadEvidence(); } else renderDay(); });
+$('historyDate').addEventListener('change', () => selectDay($('historyDate').value));
 for (const action of ['configure','package','payment','refund','session']) $(`${action}Open`).addEventListener('click', () => openDialog(action));
-$('calendarFallback').addEventListener('click', (event) => { const day = event.target.closest('[data-day]'); if (day) { selectedDay = day.dataset.day; renderDay(); } });
+$('calendarFallback').addEventListener('click', (event) => { const day = event.target.closest('[data-day]'); if (day) selectDay(day.dataset.day); });
 $('accountContent').addEventListener('click', (event) => {
   const edit = event.target.closest('[data-edit-session]');
   if (edit) openDialog('session', detail.account.sessions.find((r) => r.id === edit.dataset.editSession));
@@ -337,7 +357,9 @@ $('dialogCancel').addEventListener('click', closeDialog);
 $('editDialog').addEventListener('cancel', (event) => { if (client.pending || client.saving) event.preventDefault(); });
 $('dialogReload').addEventListener('click', async () => {
   try { const fresh = await client.readAccount(selectedSid); if (!fresh) return; detail = fresh; dialogRevision = fresh.revision; conflict = false; $('dialogReload').hidden = true;
-    renderAccount(); notice('dialogError', '최신 내역을 불러왔습니다. 입력한 내용과 비교한 뒤 다시 저장하세요.'); lockForm(false);
+    Object.assign(studentRecord(), fresh.summary, { revision:fresh.revision }); renderOverview();
+    renderAccount(); refreshDialogOptions(); updateFormPreview();
+    notice('dialogError', '최신 내역을 불러왔습니다. 입력한 내용과 비교한 뒤 다시 저장하세요.'); lockForm(false);
   } catch (error) { notice('dialogError', paymentMessage(error)); }
 });
 window.addEventListener('beforeunload', (event) => { if (client.pending || client.saving) { event.preventDefault(); event.returnValue = ''; } });

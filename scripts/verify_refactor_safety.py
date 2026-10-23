@@ -1229,6 +1229,7 @@ def run_stability_auth_boundary_checks() -> None:
 
 def run_payment_management_checks() -> None:
     for command in ([sys.executable, "scripts/verify_payments.py"], ["node", "scripts/verify_payment_client.mjs"],
+                    ["node", "scripts/verify_payment_page.mjs"],
                     ["node", "--check", "static/js/admin/features/paymentsPage.js"]):
         proc = _run_captured(command)
         if proc.stdout:
