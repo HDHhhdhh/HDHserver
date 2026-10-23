@@ -34,7 +34,7 @@ def main():
                 target.write_bytes(data)
                 manifest.append({"file": target.relative_to(ROOT).as_posix(), "sha256": hashlib.sha256(data).hexdigest(), "source": url, "integrity": "sha512-" + integrity})
         print(f"Verified {name}@{version}")
-    (ROOT / "admin-toolkit-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (ROOT / "admin-toolkit-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":
