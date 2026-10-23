@@ -1,0 +1,5 @@
+body.admin .announcement-compose .ts-wrapper { width:100%; }
+body.admin .announcement-compose .ts-control, body.admin .announcement-compose .ts-dropdown { font-family:'Malgun Gothic',sans-serif; font-size:14px; }
+body.admin.dark .announcement-compose .ts-control, body.admin.dark .announcement-compose .ts-dropdown { background:#202e44; color:#e2eaf5; border-color:#526277; }
+body.admin.dark .announcement-compose .ts-control input { color:#e2eaf5; }
+body.admin.dark .announcement-compose .ts-dropdown .active { background:#334868; color:#fff; }

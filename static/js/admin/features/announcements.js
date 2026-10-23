@@ -443,6 +443,8 @@ function syncVideoCatalog(selected = '') {
     select.append(option);
   });
   select.disabled = rows.length === 0;
+  void import('./searchableSelect.js').then(module => module.enhanceVideoSelect(select))
+    .catch(error => console.warn('[announcement] video search unavailable:', error.message));
 }
 
 function surveyStatusLabel(status) {
@@ -2339,7 +2341,10 @@ async function publishAnnouncement() {
       syncEditStateUi();
       $('annTitle').value = '';
       $('annContent').value = '';
-      if ($('annVideoMid')) $('annVideoMid').value = '';
+      if ($('annVideoMid')) {
+        $('annVideoMid').value = '';
+        $('annVideoMid').tomselect?.clear(true);
+      }
       setSelectedImages([]);
       resetExpiryDefaults();
       $('annTargetMenu')?.setAttribute('hidden', '');
