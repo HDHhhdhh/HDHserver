@@ -86,6 +86,7 @@ def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
         "/api/tests-records", "/api/tests-stats", "/api/today", "/api/watch", "/api/watch-status",
         "/api/tests/quick-printer-export", "/api/tests/quick-printer-export/preview",
         "/api/arrive-time/missing-leave-summary",
+        "/api/payments/evidence",
     }
     prefixes = ("/api/admin/student-homework", "/api/logs", "/api/mobile/student/homework",
                 "/api/progress", "/api/updates", "/api/student-test-ocr")
@@ -94,7 +95,7 @@ def absence_barrier_mode(path: str, method: str, query=None) -> str | None:
     # Compatibility GET initialization and bootstrap need an exclusive lease.
     shared = {"/api/absent", "/api/homework-books", "/api/tests-records", "/api/tests-stats",
               "/api/admin/bootstrap", "/api/admin/revisions",
-              "/api/arrive-time/missing-leave-summary", "/api/makeup-carryover"}
+              "/api/arrive-time/missing-leave-summary", "/api/makeup-carryover", "/api/payments/evidence"}
     read_only_updates = path == "/api/updates" and not updates_get_initializes(query)
     if method in {"GET", "HEAD"} and (path in shared or read_only_updates
                                      or path.startswith(("/api/logs", "/api/progress"))):

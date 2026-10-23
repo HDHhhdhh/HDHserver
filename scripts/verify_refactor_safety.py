@@ -1227,6 +1227,17 @@ def run_stability_auth_boundary_checks() -> None:
         _assert_unit(proc.returncode == 0, "stability authentication/error boundary failed")
 
 
+def run_payment_management_checks() -> None:
+    for command in ([sys.executable, "scripts/verify_payments.py"], ["node", "scripts/verify_payment_client.mjs"],
+                    ["node", "--check", "static/js/admin/features/paymentsPage.js"]):
+        proc = _run_captured(command)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+        _assert_unit(proc.returncode == 0, "payment management regression failed")
+
+
 def run_stability_storage_boundary_checks() -> None:
     for script in ("verify_json_store_safety.py", "verify_json_store_transport.py", "verify_json_store_owners.py", "verify_async_mirror.py", "verify_log_reconcile.py", "verify_log_sqlite_mode.py", "verify_admin_bootstrap_contract.py", "verify_admin_api_body_validation.py", "verify_schedule_store_safety.py"):
         proc = _run_captured([sys.executable, "scripts/" + script])
@@ -11397,6 +11408,7 @@ ok(doneSlotLabel.dataset.orig === '토1 토2', 'done slot label dataset.orig upd
 
 def run_unit_checks() -> bool:
     checks = [
+        run_payment_management_checks,
         run_stability_auth_boundary_checks,
         run_stability_storage_boundary_checks,
         run_smoke_sqlite_observation_unit_checks,

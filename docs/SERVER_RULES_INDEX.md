@@ -48,6 +48,8 @@
 
 ## 문서 역할
 
+결제·회차 관리의 신규 계약은 [`RULE-PAYMENT-001`](PROJECT_FUNCTIONS_AND_LOGIC.md#22-결제회차-관리)에서 관리한다. `core/payment_rules.py`, `core/payment_repository.py`, `routes/api_payments.py`, `/payments`가 구현 경계다. 사용자 결정 D-21의 실제 출석 차감과 강좌별 1/n 환불을 따른다. 실제 8004 브라우저 검증·운영 초기화 및 배포는 별도 확인 대상으로 남는다.
+
 - [기능·로직 기준서](PROJECT_FUNCTIONS_AND_LOGIC.md): 현재 의미·원본·우선순위·상태 전이
 - [코드·데이터 흐름 지도](CODE_FLOW_MAP.md): 화면·API·순수 규칙·저장소 연결
 - [로직 결정 원장](LOGIC_DECISION_LEDGER.md): 사용자 결정·충돌 판정·미완료 상태

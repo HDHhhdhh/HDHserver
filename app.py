@@ -98,6 +98,7 @@ from routes.api_kollus import bp_api_kollus
 from routes.api_auth import bp_api_auth, validate_auth_startup
 from routes.api_todaymeta import bp_api_todaymeta
 from routes.api_makeup_carryover import bp_api_makeup_carryover
+from routes.api_payments import bp_api_payments
 from routes.api_student_app_auth import bp_api_student_app_auth
 from routes.api_student_accounts import bp_api_student_accounts
 from routes.api_student_push import bp_api_student_push
@@ -388,6 +389,7 @@ def create_app() -> Flask:
     app.register_blueprint(bp_api_auth)
     app.register_blueprint(bp_api_todaymeta)
     app.register_blueprint(bp_api_makeup_carryover)
+    app.register_blueprint(bp_api_payments)
     app.register_blueprint(bp_api_assistant_notes)
     app.register_blueprint(bp_api_admin_operation_notes)
     app.register_blueprint(bp_api_student_logs)

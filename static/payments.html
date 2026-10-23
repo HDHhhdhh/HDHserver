@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>결제 관리 · 학원 운영</title>
+  <link rel="stylesheet" href="/css/payments.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
+  <script type="module" src="/js/admin/features/paymentsPage.js"></script>
+</head>
+<body class="payments-page">
+  <a class="skip-link" href="#accountPanel">선택 학생으로 이동</a>
+  <header class="page-header">
+    <div><a class="back-link" href="/admin">← 관리자 운영판</a><h1>결제 관리</h1><p>출석한 수업을 세고, 수납 내역을 한곳에서 확인하세요.</p></div>
+    <button id="reloadPage" type="button">새로고침</button>
+  </header>
+  <div id="pageMessage" role="status" aria-live="polite" class="notice" hidden></div>
+  <section id="overviewStats" class="stats" aria-label="전체 결제 현황"></section>
+  <main class="workspace">
+    <aside class="student-pane" aria-label="학생 선택">
+      <div class="pane-heading"><h2>학생·과목</h2><span id="studentCount"></span></div>
+      <label for="studentSearch">이름·학교·과목 검색</label>
+      <input id="studentSearch" type="search" placeholder="학생 찾기" autocomplete="off">
+      <label for="accountFilter" class="sr-only">학생 표시 조건</label>
+      <select id="accountFilter"><option value="all">전체 학생</option><option value="due">미수금 있음</option><option value="low">남은 회차 2회 이하</option><option value="unset">설정 필요</option></select>
+      <div id="studentList" class="student-list" aria-label="학생 목록"></div>
+    </aside>
+    <section id="accountPanel" class="account-pane" tabindex="-1" aria-label="선택 학생 결제 기록">
+      <div id="emptySelection" class="empty-state"><span class="empty-mark" aria-hidden="true">₩</span><h2>학생을 선택해 주세요</h2><p>수강료, 남은 회차, 출결 이력을 함께 볼 수 있습니다.</p></div>
+      <div id="accountContent" hidden>
+        <header class="account-header"><div><p id="studentCourse" class="eyebrow"></p><h2 id="studentName"></h2><p id="studentMeta" class="muted"></p></div><div class="actions"><button id="configureOpen" type="button">요금 설정</button><button id="paymentOpen" class="primary" type="button">수납 기록</button></div></header>
+        <div id="accountMessage" role="status" class="notice" hidden></div>
+        <section id="accountStats" class="stats account-stats" aria-label="학생 결제 현황"></section>
+        <section class="surface calendar-surface" aria-labelledby="calendarTitle">
+          <header class="section-heading"><div><h3 id="calendarTitle">수업 달력</h3><p class="muted">결석·예약은 0회. 실제 출석한 수업만 차감합니다.</p></div><div class="actions"><label for="historyMonth" class="sr-only">조회 월</label><input id="historyMonth" type="month"><button id="sessionOpen" type="button">수업 기록</button></div></header>
+          <div class="legend"><span class="badge attended">출석</span><span class="badge absent">결석</span><span class="badge makeup">보강</span><span class="badge evidence">운영판 기록 · 확인 전</span></div>
+          <div class="calendar-layout"><div><div id="calendar"></div><div id="calendarFallback" class="calendar-fallback" hidden></div><p id="evidenceMessage" class="muted" role="status"></p></div><section class="day-panel" aria-label="날짜별 수업 내역"><label for="historyDate">날짜 선택</label><input id="historyDate" type="date"><h4 id="dayTitle">날짜를 선택하세요</h4><div id="dayEvents"></div></section></div>
+        </section>
+        <section class="surface" aria-labelledby="packageTitle"><header class="section-heading"><div><h3 id="packageTitle">수강권</h3><p class="muted">등록 당시 회차와 단가를 보관합니다.</p></div><button id="packageOpen" type="button">수강권 추가</button></header><div id="packageList" class="package-list"></div></section>
+        <section class="surface" aria-labelledby="receiptTitle"><header class="section-heading"><h3 id="receiptTitle">수납·환불 내역</h3><button id="refundOpen" type="button">취소·환불 기록</button></header><div id="receiptList" class="record-list"></div></section>
+        <details class="surface"><summary>변경 이력 <span class="muted">최근 100건</span></summary><div id="auditList" class="record-list"></div></details>
+      </div>
+    </section>
+  </main>
+  <dialog id="editDialog" aria-labelledby="dialogTitle">
+    <form id="editForm"><header class="section-heading"><div><p id="dialogStudent" class="eyebrow"></p><h2 id="dialogTitle"></h2></div><button id="dialogClose" type="button" aria-label="창 닫기">닫기</button></header>
+      <div id="dialogFields" class="form-fields"></div>
+      <p id="dialogError" class="notice" role="alert" hidden></p>
+      <footer class="dialog-footer"><button id="dialogReload" type="button" hidden>최신 기록 불러오기</button><button id="dialogCancel" type="button">취소</button><button id="dialogSave" class="primary" type="submit">저장</button></footer>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,104 @@
+body.payments-page {
+  --bg:#f3f6fa; --surface:#fff; --ink:#172c48; --muted:#52647a; --line:#dce4ef;
+  --accent:#245ac5; --tint:#edf3ff; --danger:#a52632; --success:#176441;
+  margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+  font-variant-numeric:tabular-nums;
+}
+.payments-page * {box-sizing:border-box}
+.payments-page [hidden] {display:none!important}
+.payments-page h1,.payments-page h2,.payments-page h3,.payments-page h4,.payments-page p {margin:0}
+.payments-page h1 {font-size:30px;letter-spacing:-1px;margin-top:10px}
+.payments-page h2 {font-size:24px;letter-spacing:-.5px}
+.payments-page h3 {font-size:18px}
+.payments-page h4 {font-size:16px}
+.payments-page a {color:var(--accent)}
+.payments-page button,.payments-page input,.payments-page select,.payments-page textarea {font:inherit;color:inherit}
+.payments-page button,.payments-page input,.payments-page select,.payments-page textarea {border:1px solid var(--line);border-radius:8px;background:var(--surface);min-height:42px;padding:9px 12px}
+.payments-page button {cursor:pointer;font-weight:600;touch-action:manipulation;transition:background .12s}
+.payments-page button:hover {background:var(--tint)}
+.payments-page button:disabled {opacity:.55;cursor:default}
+.payments-page .primary {background:var(--accent);border-color:var(--accent);color:#fff}
+.payments-page .primary:hover {background:#194aa8}
+.payments-page :focus-visible {outline:3px solid #6d95eb;outline-offset:3px}
+.payments-page .page-header {padding:28px 36px 24px;display:flex;justify-content:space-between;align-items:center;gap:20px}
+.payments-page .page-header p,.payments-page .muted {color:var(--muted)}
+.payments-page .back-link {text-decoration:none;font-size:13px;font-weight:600}
+.payments-page .stats {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:0 36px 24px}
+.payments-page .stat {background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 22px}
+.payments-page .stat span {display:block;color:var(--muted);font-size:13px}
+.payments-page .stat strong {font-size:27px;letter-spacing:-.6px}
+.payments-page .stat small {display:block;color:var(--muted);margin-top:3px}
+.payments-page .workspace {display:grid;grid-template-columns:292px minmax(0,1fr);gap:24px;margin:0 36px 40px;align-items:start}
+.payments-page .student-pane {background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;position:sticky;top:16px}
+.payments-page .pane-heading {display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.payments-page .pane-heading h2 {font-size:18px}
+.payments-page .student-pane label {font-size:12px;color:var(--muted)}
+.payments-page .student-pane input,.payments-page .student-pane select {width:100%;margin:6px 0}
+.payments-page .student-list {margin-top:12px;max-height:calc(100dvh - 310px);overflow:auto;min-height:120px}
+.payments-page .student-card {width:100%;text-align:left;border:1px solid transparent;border-radius:9px;margin-bottom:6px;padding:12px;display:grid;gap:3px}
+.payments-page .student-card[aria-current="true"] {background:var(--tint);border-color:#a8c0ed}
+.payments-page .student-card small {font-weight:400;color:var(--muted);overflow-wrap:anywhere}
+.payments-page .student-card .card-foot {display:flex;justify-content:space-between;font-size:12px;font-weight:500;gap:8px}
+.payments-page .amount-due {color:var(--danger)}
+.payments-page .account-pane {min-width:0}
+.payments-page .account-header {display:flex;align-items:center;justify-content:space-between;gap:16px;margin:4px 0 20px}
+.payments-page .eyebrow {color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.5px;margin-bottom:3px}
+.payments-page .actions {display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.payments-page .account-stats {margin:0 0 20px;gap:12px}
+.payments-page .account-stats .stat {padding:16px}
+.payments-page .account-stats .stat strong {font-size:24px}
+.payments-page .surface {background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:20px}
+.payments-page .section-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.payments-page .section-heading p {font-size:12px;margin-top:3px}
+.payments-page .legend {display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.payments-page .badge {display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:3px 8px;border-radius:5px;background:var(--tint);color:var(--accent)}
+.payments-page .attended {background:#e6f4ec;color:#176441}
+.payments-page .absent {background:#ffedf0;color:#9b3040}
+.payments-page .makeup {background:#edeafb;color:#53419b}
+.payments-page .evidence {background:#f0f2f5;color:#536173}
+.payments-page .calendar-layout {display:grid;grid-template-columns:minmax(0,1fr) 248px;gap:22px}
+.payments-page .day-panel {border-left:1px solid var(--line);padding-left:20px}
+.payments-page .day-panel h4 {margin-bottom:14px}
+.payments-page .day-record {padding:12px 0;border-bottom:1px solid var(--line);display:grid;gap:6px}
+.payments-page .day-record p {font-size:13px;overflow-wrap:anywhere}
+.payments-page .day-record button {min-height:32px;padding:4px 9px;font-size:12px;justify-self:start}
+.payments-page #calendar {min-height:350px;font-size:12px;--fc-border-color:var(--line);--fc-today-bg-color:var(--tint)}
+.payments-page .fc .fc-daygrid-day-number {color:var(--ink)}
+.payments-page .fc .fc-col-header-cell-cushion {color:var(--muted);font-weight:500}
+.payments-page .fc .fc-daygrid-event {cursor:pointer;border:0;padding:1px 3px}
+.payments-page .fc .fc-daygrid-day {cursor:pointer}
+.payments-page .calendar-fallback {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.payments-page .calendar-fallback button {min-height:65px;font-size:12px;padding:5px}
+.payments-page .calendar-fallback button small {display:block;color:var(--muted);font-size:10px}
+.payments-page .package-list {display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.payments-page .package-card {padding:18px;border:1px solid var(--line);border-radius:10px}
+.payments-page .package-card strong {font-size:20px}
+.payments-page .package-card p {font-size:13px;margin-top:5px}
+.payments-page progress {width:100%;height:8px;accent-color:var(--accent);margin:12px 0 6px}
+.payments-page .record-row {display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px}
+.payments-page .record-row:last-child {border-bottom:0}
+.payments-page .record-row p {overflow-wrap:anywhere}
+.payments-page .record-row button {padding:4px 8px;min-height:32px;font-size:12px}
+.payments-page details summary {cursor:pointer;font-weight:600}
+.payments-page details summary span {font-size:12px;font-weight:400;margin-left:8px}
+.payments-page .empty-state {text-align:center;padding:90px 24px;background:var(--surface);border:1px dashed var(--line);border-radius:12px;color:var(--muted)}
+.payments-page .empty-state h2 {font-size:20px;color:var(--ink);margin:16px 0 6px}
+.payments-page .empty-mark {display:inline-grid;place-items:center;width:56px;height:56px;background:var(--tint);color:var(--accent);border-radius:16px;font-size:25px}
+.payments-page .notice {padding:12px 16px;border:1px solid #c7d7f3;background:var(--tint);border-radius:8px;font-size:13px;margin-bottom:16px;white-space:pre-line}
+.payments-page #pageMessage {margin:0 36px 20px}
+.payments-page dialog {color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:16px;width:min(600px,calc(100vw - 24px));max-height:calc(100dvh - 32px);padding:24px;box-shadow:0 20px 80px #0f203650}
+.payments-page dialog::backdrop {background:#12243d66}
+.payments-page .form-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.payments-page .form-fields label {display:grid;gap:6px;font-size:13px;font-weight:600}
+.payments-page .form-fields input,.payments-page .form-fields select,.payments-page .form-fields textarea {width:100%;min-width:0;font-weight:400}
+.payments-page .form-fields .wide {grid-column:1/-1}
+.payments-page .line-fields {display:grid;grid-template-columns:1fr 72px 110px;gap:8px;margin-bottom:8px}
+.payments-page .form-help {font-size:12px;color:var(--muted);font-weight:400}
+.payments-page .form-total {padding:14px;background:var(--tint);border-radius:8px;font-weight:700}
+.payments-page .dialog-footer {display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+.payments-page #dialogError {margin-top:18px;margin-bottom:0}
+.payments-page .sr-only,.payments-page .skip-link:not(:focus) {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:1150px) {.payments-page .workspace {grid-template-columns:240px minmax(0,1fr)}.payments-page .calendar-layout {grid-template-columns:1fr}.payments-page .day-panel {border-left:0;border-top:1px solid var(--line);padding:16px 0 0}.payments-page .account-stats {grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px) {.payments-page .page-header {padding:20px}.payments-page .stats {margin:0 20px 20px;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.payments-page .workspace {margin:0 20px 24px;grid-template-columns:1fr;gap:16px}.payments-page .student-pane {position:static}.payments-page .student-list {max-height:220px}.payments-page .account-stats {margin:0 0 16px}.payments-page .stat {padding:14px}.payments-page .stat strong {font-size:23px}.payments-page .account-header,.payments-page .section-heading {align-items:flex-start;flex-wrap:wrap}.payments-page .surface {padding:16px}.payments-page .form-fields {grid-template-columns:1fr}.payments-page input,.payments-page select,.payments-page textarea {font-size:16px}.payments-page #pageMessage {margin:0 20px 16px}}
+@media(prefers-color-scheme:dark) {body.payments-page {--bg:#101822;--surface:#192432;--ink:#e8eef6;--muted:#a9b7c9;--line:#334355;--accent:#96b9ff;--tint:#253a58;--danger:#ffb1b9;--success:#8ed6af}.payments-page .primary {background:#315fae;border-color:#315fae;color:#fff}.payments-page .student-card[aria-current="true"] {border-color:#57739d}.payments-page .notice {border-color:#476285}.payments-page .attended {background:#214735;color:#a4e3be}.payments-page .absent {background:#542b33;color:#ffb6c0}.payments-page .makeup {background:#3b315b;color:#d6c6ff}.payments-page .evidence {background:#303e4f;color:#c6d0dc}}
+@media(prefers-reduced-motion:reduce) {.payments-page button {transition:none}}

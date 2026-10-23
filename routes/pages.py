@@ -25,6 +25,8 @@ _ADMIN_PAGE_PATHS = frozenset({
     "/students",
     "/tests",
     "/tests.html",
+    "/payments",
+    "/payments.html",
     "/video-manage",
     "/video-manage.html",
 })
@@ -34,6 +36,7 @@ _ADMIN_STATIC_FILES = (
     "file-manage.html",
     "school-cal.html",
     "tests.html",
+    "payments.html",
     "video-manage.html",
 )
 
@@ -186,3 +189,10 @@ def tests_page():
 @bp_pages.get("/file-manage")
 def page_file_manage():
     return current_app.send_static_file("file-manage.html")
+
+
+@bp_pages.get("/payments")
+def page_payments():
+    response = current_app.send_static_file("payments.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
