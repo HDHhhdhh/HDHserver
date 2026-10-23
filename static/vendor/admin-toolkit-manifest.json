@@ -1,0 +1,56 @@
+[
+  {
+    "file": "tom-select/2.6.2/tom-select.complete.min.js",
+    "sha256": "8f9d7d3420e938c2c9817818b56df43ea46feae5bf1f5a2e828863c034df0e37",
+    "source": "https://registry.npmjs.org/tom-select/-/tom-select-2.6.2.tgz",
+    "integrity": "sha512-eiXIkk82XzzUTOVQDFpy+ZGejuqdTvMukyUyeZBQaKnqW42UoTiTZnrod/eX0rkqJEc4rZY9DZ3zdjV07i29wQ=="
+  },
+  {
+    "file": "tom-select/2.6.2/tom-select.default.min.css",
+    "sha256": "f1d39d120d83e42f08a4f0fbc33f99e92333079e05fecfecd3c22da37b8427c8",
+    "source": "https://registry.npmjs.org/tom-select/-/tom-select-2.6.2.tgz",
+    "integrity": "sha512-eiXIkk82XzzUTOVQDFpy+ZGejuqdTvMukyUyeZBQaKnqW42UoTiTZnrod/eX0rkqJEc4rZY9DZ3zdjV07i29wQ=="
+  },
+  {
+    "file": "tom-select/2.6.2/LICENSE",
+    "sha256": "f15dc64ea1f373c8af0ee7c020064360497addf335c9c2bcf27c3a6f56a6f0bd",
+    "source": "https://registry.npmjs.org/tom-select/-/tom-select-2.6.2.tgz",
+    "integrity": "sha512-eiXIkk82XzzUTOVQDFpy+ZGejuqdTvMukyUyeZBQaKnqW42UoTiTZnrod/eX0rkqJEc4rZY9DZ3zdjV07i29wQ=="
+  },
+  {
+    "file": "tabulator-tables/6.7.1/tabulator.min.js",
+    "sha256": "4e218e8d309e9b704089e7808f5484f5257ea645ba4e4808c0ae13969500d55c",
+    "source": "https://registry.npmjs.org/tabulator-tables/-/tabulator-tables-6.7.1.tgz",
+    "integrity": "sha512-6CMy17XdemQaIdg1BOqD5K6nzF2xoD47eRNiBYJBK+QrLWji7sgukyPjKXYrjRdWLwbGENdUsiAYJrNS3XeUfw=="
+  },
+  {
+    "file": "tabulator-tables/6.7.1/tabulator.min.css",
+    "sha256": "ff598d8e961398e09a8e52ab21740e5ed952c84feebbdacec8f8a362dd3f73db",
+    "source": "https://registry.npmjs.org/tabulator-tables/-/tabulator-tables-6.7.1.tgz",
+    "integrity": "sha512-6CMy17XdemQaIdg1BOqD5K6nzF2xoD47eRNiBYJBK+QrLWji7sgukyPjKXYrjRdWLwbGENdUsiAYJrNS3XeUfw=="
+  },
+  {
+    "file": "tabulator-tables/6.7.1/LICENSE",
+    "sha256": "191a2ee554684e1064c897b432f0e1bc6dfa714ca045d3f6ea2cf692cbd398b7",
+    "source": "https://registry.npmjs.org/tabulator-tables/-/tabulator-tables-6.7.1.tgz",
+    "integrity": "sha512-6CMy17XdemQaIdg1BOqD5K6nzF2xoD47eRNiBYJBK+QrLWji7sgukyPjKXYrjRdWLwbGENdUsiAYJrNS3XeUfw=="
+  },
+  {
+    "file": "echarts/6.1.0/echarts.min.js",
+    "sha256": "b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0",
+    "source": "https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz",
+    "integrity": "sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA=="
+  },
+  {
+    "file": "echarts/6.1.0/LICENSE",
+    "sha256": "634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a",
+    "source": "https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz",
+    "integrity": "sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA=="
+  },
+  {
+    "file": "echarts/6.1.0/NOTICE",
+    "sha256": "d491d358344f842685c1b1585970999db65fe30ecf7ef3867af8814f4016c016",
+    "source": "https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz",
+    "integrity": "sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA=="
+  }
+]
