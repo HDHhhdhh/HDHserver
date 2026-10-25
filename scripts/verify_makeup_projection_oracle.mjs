@@ -15,11 +15,23 @@ function same(actual, expected, label) {
   checks += 1;
 }
 // The additive daily-mode projection has its own behavior checks; freeze the existing helpers.
-const preExtractionSource = source.replace(/^export function scheduledMakeupSlotsByDate\([\s\S]*?^\}\n\n/m, '')
+const preExtractionSource = source
+  .replace(/export function makeupHistoryForItem\([\s\S]*?(?=export function nextLocalDateKey)/, '')
+  .replace('out.map(item => withMakeupHistory(item, carryover)).sort', 'out.sort')
+  .replace("operatingDate = '', absentByDate = {}, absentSlotsByDate = {}, ...input", "operatingDate = '', ...input")
+  .replace(/  const projection = rebookingProjection\(input\.carryover[\s\S]*? : item\);\n/, '  const scheduledRows = buildScheduledMakeupRows(input);\n')
+  .replace('row.needsAbsenceReview || ', '')
+  .replace('absentSlotsByDate = {}, makeupSlotsByDate = {}', 'absentSlotsByDate = {}')
+  .replace('[...regularSlotsForStudent(stu, date), ...(makeupSlotsByDate?.[date]?.[sid] || [])]', 'regularSlotsForStudent(stu, date)')
+  .replace(', makeupSlotsByDate: rebooking.slotsByDate', '')
+  .replace('  const rebooking = rebookingProjection(carryover, students, absentByDate, absentSlotsByDate);\n', '')
+  .replace("    if (item.source !== 'manual' && rebooking.linked.has(`${item.absenceDate}|${item.sid}|${item.slot}`)) return;\n", '')
+  .replace('return [...pending, ...rebooking.pending].map(item => withMakeupHistory(item, carryover));', 'return pending;')
+  .replace(/^export function scheduledMakeupSlotsByDate\([\s\S]*?^\}\n\n/m, '')
   .replace('    const seenDetails = new Set();',
   "    const duplicateCounts = new Map();\n    entries.forEach(item => {\n      const course = courseForExport(item.course);\n      const key = `${item.absenceDate || ''}|${course}`;\n      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);\n    });\n\n" + '    const seenDetails = new Set();');
 same(hash(preExtractionSource), '984e1624c21158a9ac2f317aaf2210419f8c4253de7fac51e1a5e07734c1c4ba',
-  'existing projection baseline permits only the retired counter and additive daily-mode helper');
+  'frozen legacy projection excludes only the explicit history/rebooking and daily-mode additions');
 const sandbox = { console };
 vm.runInNewContext(source.replace(/\bexport function /g, 'function ') +
   '\nglobalThis.rules = { buildPendingMakeups, countPendingMakeupsBySid, makeupOriginalAbsenceId,' +

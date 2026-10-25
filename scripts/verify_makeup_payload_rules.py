@@ -89,6 +89,13 @@ def load_rules(before: bool, baseline_source: Path | None = None) -> dict[str, A
                         removed += len(body) - len(kept)
                         parent.body = kept
                 same(removed, 1, "only approved null-preservation branch excluded from frozen legacy body")
+                if original.name == "_normalize_payload":
+                    result = original.body[-1].value
+                    same(len(result.keys), 3, "history is the only added payload field")
+                    same(result.keys[-1], None, "optional history uses a dict expansion")
+                    same("scheduleHistory" in ast.unparse(result.values[-1]), True, "history expansion")
+                    result.keys.pop()
+                    result.values.pop()
             actual = hashlib.sha256(ast.dump(original, include_attributes=False).encode("utf-8")).hexdigest()
             same(actual, BEFORE_HASHES[original.name], f"pre-extraction body {original.name}")
             functions.append(node)

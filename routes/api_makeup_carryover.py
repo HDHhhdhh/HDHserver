@@ -7,6 +7,7 @@ from typing import Any
 from flask import Blueprint, abort, jsonify, request
 
 from core.absent import load_absent
+from core.makeup_history import append_makeup_history
 from core.makeup_payload_rules import (
     normalize_makeup_date as _norm_date,
     normalize_makeup_sid as _norm_sid,
@@ -98,6 +99,7 @@ def _makeup_response(
     response.status_code = status
     revision = _makeup_revision(payload if revision_payload is None else revision_payload)
     response.headers["X-Makeup-Carryover-Revision"] = revision
+    response.headers["X-Makeup-History-Version"] = "1"
     response.headers["ETag"] = f'"{revision}"'
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -171,6 +173,9 @@ def api_makeup_carryover_post():
                 requested = normalized["by_absence"].get(date, {}).get(sid)
                 if row.get("state") == "self-study" and requested and requested.get("state") == "open":
                     requested["state"] = "self-study"
+        normalized = append_makeup_history(
+            previous, normalized, recorded_at=dt.datetime.now(KST).isoformat(), absent=load(ABS_PATH),
+        )
         save_atomic(MAKEUP_CARRYOVER_PATH, normalized)
     enqueue_current_schedule_changes(_makeup_student_ids(previous) | _makeup_student_ids(normalized))
     return _makeup_response(normalized)

@@ -23,6 +23,7 @@ globalThis.__exports = {
   formatMakeupDate,
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
+  formatMakeupPlannerLabel,
 };`, sandbox, { filename });
 
 const {
@@ -34,6 +35,7 @@ const {
   formatMakeupDate,
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
+  formatMakeupPlannerLabel,
 } = sandbox.__exports;
 
 const students = [{
@@ -62,7 +64,7 @@ assert.match(calendarSource, /addEventListener\('copy', handleMakeupListCopy\)/)
 assert.match(calendarSource, /clipboardData\.setData\('text\/plain', text\)/);
 assert.match(calendarSource, /const scheduledTimeLabel = slotGroupLabel\(parseSlotNumbers\(item\.scheduledMakeup\?\.makeupTimes\)\)/);
 assert.match(calendarSource, /const scheduledLabel = \[scheduledDate, scheduledTimeLabel\]\.filter\(Boolean\)\.join\(' · '\)/);
-assert.match(calendarSource, /보강 예정: \$\{escapeHtml\(scheduledLabel\)\}/);
+assert.match(calendarSource, /'보강 예정'\}: \$\{escapeHtml\(scheduledLabel\)\}/);
 assert.match(calendarSource, /function selectedStudentExistingMakeupLabels\(dateStr\)/);
 assert.match(calendarSource, /getScheduledMakeups\(\)\.forEach\(row =>/);
 assert.match(calendarSource, /row\.originalAbsenceId === selectedOriginalAbsenceId/);
@@ -274,16 +276,18 @@ const scrollElements = Object.fromEntries([
   'makeupStatusList', 'makeupStatusSearch', 'makeupStatusHint', 'attendanceCheckToggle',
 ].map(id => [id, { innerHTML: '', textContent: '', value: '' }]));
 const renderSource = calendarSource.slice(
-  calendarSource.search(/  function renderMakeupPlanner\([^)]*\) \{/),
+  calendarSource.indexOf('  function renderMakeupHistory(item) {'),
   calendarSource.indexOf('  async function refreshMakeupPlanner() {'),
 );
 const renderSandbox = {
+  state: {},
   $: id => scrollElements[id], ensureMakeupPlanner() {}, updateMakeupFocusUI() {},
   sortPlannerItems: rows => rows, studentSearchKey: (student, fields) => [student.name, ...fields].join(' '),
   matchesSearchKey: (key, query) => key.includes(query.trim()), applySearchPlaceholder() {},
   getPendingMakeups: () => [], getScheduledMakeupStatusRows: activeScrollRows,
   attendanceCheckMode: false, manualAbsenceSelection: null, makeupSelection: null,
   makeupItemKey: makeupOriginalAbsenceId, formatMakeupDate, formatMakeupCopyText,
+  formatMakeupPlannerLabel,
   escapeHtml: value => String(value), escapeAttr: value => String(value),
   parseSlotNumbers: slots => slots, slotGroupLabel: slots => `${slots.join(',')}타임`,
 };

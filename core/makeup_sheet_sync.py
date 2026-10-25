@@ -357,6 +357,8 @@ def _normalize_carryover(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "by_absence": copy.deepcopy(source.get("by_absence")) if isinstance(source.get("by_absence"), dict) else {},
         "manual": copy.deepcopy(source.get("manual")) if isinstance(source.get("manual"), dict) else {},
+        **({"scheduleHistory": copy.deepcopy(source["scheduleHistory"])}
+           if isinstance(source.get("scheduleHistory"), dict) else {}),
     }
 
 

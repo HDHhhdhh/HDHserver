@@ -1164,6 +1164,7 @@ print("updates GET-only base route checks passed")
         (["node", "scripts/verify_makeup_schedule_links.mjs"], "makeup schedule roster-link contract failed"),
         (["node", "scripts/verify_makeup_self_study.mjs"], "makeup self-study override contract failed"),
         (["node", "scripts/verify_makeup_projection_oracle.mjs"], "makeup pure projection oracle failed"),
+        ([sys.executable, "-X", "utf8", "scripts/verify_makeup_history.py"], "makeup history persistence and browser projection failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
         (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
         (["node", "scripts/verify_today_unarchived_done.mjs"], "all-date unarchived done projection failed"),
@@ -10853,7 +10854,7 @@ def run_admin_weekend_slot_behavior_checks() -> None:
     _assert_unit(
         "patchExtraAttendDates" in calendar_source
         and "postJson('/api/extra-attend'" not in calendar_source
-        and "postMakeupCarryoverSnapshot(next, revision)" in calendar_source
+        and "postMakeupCarryoverSnapshot(next, revision, historyVersion)" in calendar_source
         and "X-Makeup-Carryover-Revision" in calendar_source,
         "calendar uses date-scoped extra-attend patches and revision-guarded makeup writes",
     )

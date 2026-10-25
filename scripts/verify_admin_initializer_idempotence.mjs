@@ -83,7 +83,7 @@ function fixture(spec, bodyOverrides = {}) {
   if (spec.file === 'calendar') {
     expose('shared/schoolCalendar.js', 'flattenSchoolCalendarRows,getActiveSchoolCalendarYear,normalizeSchoolCalendarSubject');
     ctx.normalizeExamSubject = ctx.normalizeSchoolCalendarSubject;
-    expose('admin/features/makeupPending.js', 'buildPendingMakeups,buildActiveScheduledMakeupRows,buildScheduledMakeupRows,formatMakeupDate,formatMakeupCopyText,makeupOriginalAbsenceId');
+    expose('admin/features/makeupPending.js', 'buildPendingMakeups,buildActiveScheduledMakeupRows,buildScheduledMakeupRows,formatMakeupDate,formatMakeupCopyText,makeupOriginalAbsenceId,formatMakeupPlannerLabel');
   }
   f.library = { Calendar: class {
     constructor() { f.constructors++; this.view = { activeStart: new Date('2026-09-21'), activeEnd: new Date('2026-10-26') }; }

@@ -67,7 +67,7 @@ export function buildExamAttendance({ students, attendanceDays, referenceDate, e
   const pending = buildPendingMakeups({
     students, absentByDate, absentSlotsByDate, extra, weekendSlots, carryover,
     manualMakeups: carryover.manual || {},
-  }).filter(row => ids.has(String(row.sid)) && row.absenceDate < end).length;
+  }).filter(row => ids.has(String(row.sid)) && (row.missedMakeupDate || row.absenceDate) < end).length;
   return { total: regular + makeupSlots.size, regular, makeup: makeupSlots.size, pending };
 }
 

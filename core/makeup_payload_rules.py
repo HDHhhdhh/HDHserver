@@ -188,6 +188,8 @@ def normalize_makeup_payload(raw: Any) -> Dict[str, Any]:
     return {
         "by_absence": out,
         "manual": normalize_manual_makeups(source.get("manual")),
+        **({"scheduleHistory": json.loads(json.dumps(source["scheduleHistory"]))}
+           if isinstance(source.get("scheduleHistory"), dict) else {}),
     }
 
 

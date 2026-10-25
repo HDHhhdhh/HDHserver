@@ -52,7 +52,7 @@ window.state = state;
 async function initDeferredAdminFeatures() {
   const jobs = [
     ['operations toolkit', () => import('./features/operationsToolkit.js').then(module => module.initOperationsToolkit())],
-    ['calendar', () => import('./features/calendar.js?v=20260929-retired-extra1&uiPerf=20261002&adminSpeed=20261003&examTextbook=20261012b').then(module => module.initCalendar())],
+    ['calendar', () => import('./features/calendar.js?v=20260929-retired-extra1&uiPerf=20261002&adminSpeed=20261003&examTextbook=20261012b&makeupHistory=20261025').then(module => module.initCalendar())],
     ['admin operation notes', () => import('./features/adminOperationNotes.js').then(module => module.initAdminOperationNotes())],
     ['student logs', () => import('./features/studentLogs.js?v=20260816-student-log-restore2').then(module => module.initStudentLogs())],
     ['student accounts', () => import('./features/studentAccounts.js').then(module => module.initStudentAccounts())],

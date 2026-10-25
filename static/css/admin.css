@@ -1447,10 +1447,14 @@ body.admin .makeup-panel-stack .makeup-planner {
 
 body.admin .makeup-label > span:first-child {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+
+body.admin .makeup-history { flex-basis: 100%; font-size: 13px; font-weight: 500; line-height: 1.6; }
+body.admin .makeup-history summary { cursor: pointer; width: fit-content; min-height: 32px; align-content: center; }
+body.admin .makeup-history ol { margin: 4px 0; padding-left: 22px; }
+body.admin .makeup-history li { overflow-wrap: anywhere; }
 
 body.admin .makeup-scheduled-badge {
   display: inline-flex;

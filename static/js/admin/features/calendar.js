@@ -19,7 +19,8 @@ import {
   formatMakeupDate,
   formatMakeupCopyText,
   makeupOriginalAbsenceId,
-} from './makeupPending.js';
+  formatMakeupPlannerLabel,
+} from './makeupPending.js?history=20261025';
 import { saveScheduleOverridesFailClosed } from './scheduleOverrideSave.js?v=20260927-orphan-extra1';
 import { legacyExtraAttendanceIds } from './extraAttendanceMerge.js?v=20260821-safe-merge1';
 
@@ -879,7 +880,7 @@ export function initCalendar() {
   function normalizeCarryoverPayload(data) {
     const byAbsence = data?.by_absence && typeof data.by_absence === 'object' ? data.by_absence : {};
     const manual = data?.manual && typeof data.manual === 'object' ? data.manual : {};
-    return { by_absence: byAbsence, manual };
+    return { by_absence: byAbsence, manual, ...(data?.scheduleHistory ? { scheduleHistory: data.scheduleHistory } : {}) };
   }
 
   function clonePlainMap(value) {
@@ -903,10 +904,15 @@ export function initCalendar() {
     await ensureOk(response, '보강 이월 불러오기');
     const payload = normalizeCarryoverPayload(await response.json());
     const revision = String(response.headers.get('X-Makeup-Carryover-Revision') || '').trim();
-    return { payload, revision };
+    const historyVersion = String(response.headers.get('X-Makeup-History-Version') || '').trim();
+    state.makeupHistorySupported = historyVersion === '1';
+    return { payload, revision, historyVersion };
   }
 
-  async function postMakeupCarryoverSnapshot(payload, revision) {
+  async function postMakeupCarryoverSnapshot(payload, revision, historyVersion) {
+    if (historyVersion !== '1') {
+      throw new Error('보강 이력 저장 기능을 적용하려면 서버 재시작이 필요합니다. 저장하지 않았습니다.');
+    }
     const response = await sendJson('/api/makeup-carryover', payload, {
       headers: revision ? { 'If-Match': revision } : {},
     });
@@ -949,11 +955,12 @@ export function initCalendar() {
       students: state.students || [],
       carryover: normalizeCarryoverPayload(carryover || {}),
       operatingDate: getAdminDate(),
+      absentByDate: state.absentByDate || {},
+      absentSlotsByDate: state.absentSlotsByDate || {},
     });
   }
 
   function getScheduledMakeupForItem(item, carryover = CARRYOVER) {
-    if (item?.scheduledMakeup?.status === 'scheduled') return item.scheduledMakeup;
     const originalAbsenceId = item?.originalAbsenceId || makeupOriginalAbsenceId(item);
     if (!originalAbsenceId) return null;
     return getScheduledMakeups(carryover)
@@ -1307,7 +1314,7 @@ export function initCalendar() {
     if (btn) btn.disabled = true;
     try {
       await preloadExtraWeekend();
-      const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+      const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
       const next = normalizeCarryoverPayload(latest);
       const now = new Date().toISOString();
       const stu = (state.students || []).find(item => String(item?.id || '') === sid) || {};
@@ -1329,7 +1336,7 @@ export function initCalendar() {
         };
       });
 
-      const data = await postMakeupCarryoverSnapshot(next, revision);
+      const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
       CARRYOVER = normalizeCarryoverPayload(data || next);
       cancelManualAbsenceSelection();
       await refreshMakeupPlanner();
@@ -1516,7 +1523,7 @@ export function initCalendar() {
       if (btn.dataset.makeupAction === 'remove') {
         removePendingMakeup(item).catch(err => {
           console.error(err);
-          alert('결석 취소 실패');
+          alert(err?.message || '결석 취소 실패');
         });
         return;
       }
@@ -1524,7 +1531,7 @@ export function initCalendar() {
       if (btn.dataset.makeupAction === 'carryover') {
         carryoverPendingMakeup(item).catch(err => {
           console.error(err);
-          alert('이월 실패');
+          alert(err?.message || '이월 실패');
         });
         return;
       }
@@ -1541,7 +1548,7 @@ export function initCalendar() {
       const item = getScheduledMakeupStatusRows().find(row => makeupItemKey(row) === (btn.dataset.key || ''));
       if (!item) return;
       if (btn.dataset.makeupAction === 'carryover-scheduled') {
-        carryoverScheduledMakeup(item).catch(err => { console.error(err); alert('이월 실패'); });
+        carryoverScheduledMakeup(item).catch(err => { console.error(err); alert(err?.message || '이월 실패'); });
         return;
       }
       attendanceCheckMode = false;
@@ -1632,7 +1639,7 @@ export function initCalendar() {
     if (!sid || !absenceDate) return;
 
     if (item.source === 'manual') {
-      const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+      const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
       const next = normalizeCarryoverPayload(latest);
       const rows = next.manual?.[absenceDate] || {};
       const manualKey = String(item.manualKey || '').trim();
@@ -1645,7 +1652,7 @@ export function initCalendar() {
       if (Object.keys(rows).length) next.manual[absenceDate] = rows;
       else delete next.manual[absenceDate];
 
-      const data = await postMakeupCarryoverSnapshot(next, revision);
+      const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
       CARRYOVER = normalizeCarryoverPayload(data || next);
       if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
         setMakeupSelection(null);
@@ -1706,11 +1713,12 @@ export function initCalendar() {
 
   async function carryoverPendingMakeup(item) {
     if (!item) return;
+    if (item.rebooking) return carryoverScheduledMakeup(item);
     const sid = String(item.sid || '').trim();
     const absenceDate = String(item.absenceDate || '').trim();
     if (!sid || !absenceDate) return;
 
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     if (item.source === 'manual') {
       const manualKey = String(item.manualKey || '').trim();
@@ -1739,7 +1747,7 @@ export function initCalendar() {
       };
     }
 
-    const data = await postMakeupCarryoverSnapshot(next, revision);
+    const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
 
     CARRYOVER = normalizeCarryoverPayload(data || next);
     if (makeupSelection && makeupItemKey(makeupSelection) === makeupItemKey(item)) {
@@ -1887,11 +1895,11 @@ export function initCalendar() {
       throw new Error('Invalid makeup schedule');
     }
 
-    const { payload: latest, revision } = snapshot || await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision, historyVersion } = snapshot || await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const now = new Date().toISOString();
     const originalAbsenceId = item.originalAbsenceId || makeupOriginalAbsenceId(item);
-    const previousSchedule = getScheduledMakeupForItem(item, next) || item.scheduledMakeup || {};
+    const previousSchedule = getScheduledMakeupForItem(item, next) || {};
     const schedule = {
       originalAbsenceId,
       studentId: sid,
@@ -1937,7 +1945,7 @@ export function initCalendar() {
       };
     }
 
-    const data = await postMakeupCarryoverSnapshot(next, revision);
+    const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
     CARRYOVER = normalizeCarryoverPayload(data || next);
     return CARRYOVER;
   }
@@ -1945,7 +1953,7 @@ export function initCalendar() {
   async function carryoverScheduledMakeup(item) {
     if (!item) return;
     await preloadExtraWeekend();
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const previousSchedule = getScheduledMakeupForItem(item, next);
     if (!previousSchedule) return;
@@ -1980,7 +1988,7 @@ export function initCalendar() {
       };
     }
 
-    const data = await postMakeupCarryoverSnapshot(next, revision);
+    const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
     const nextCarryover = normalizeCarryoverPayload(data || next);
     const nextExtra = clonePlainMap(EXTRA);
     const nextWeekend = clonePlainMap(WEEKEND);
@@ -2011,7 +2019,7 @@ export function initCalendar() {
     })).filter(item => item.sid);
     if (!date || !rowsToOpen.length) return;
 
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const dateRows = { ...(next.by_absence[date] || {}) };
     const updatedAt = new Date().toISOString();
@@ -2038,7 +2046,7 @@ export function initCalendar() {
       return;
     }
     next.by_absence[date] = dateRows;
-    const data = await postMakeupCarryoverSnapshot(next, revision);
+    const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
     CARRYOVER = normalizeCarryoverPayload(data || next);
   }
 
@@ -2046,7 +2054,7 @@ export function initCalendar() {
     const targets = new Set((sids || []).map(sid => String(sid || '').trim()).filter(Boolean));
     if (!targets.size) return;
 
-    const { payload: latest, revision } = await fetchMakeupCarryoverSnapshot();
+    const { payload: latest, revision, historyVersion } = await fetchMakeupCarryoverSnapshot();
     const next = normalizeCarryoverPayload(latest);
     const consumed = new Set();
     let changed = false;
@@ -2076,8 +2084,23 @@ export function initCalendar() {
     }
 
     if (!changed) return;
-    const data = await postMakeupCarryoverSnapshot(next, revision);
+    const data = await postMakeupCarryoverSnapshot(next, revision, historyVersion);
     CARRYOVER = normalizeCarryoverPayload(data || next);
+  }
+
+  function renderMakeupHistory(item) {
+    const events = item.scheduleHistory || [];
+    if (!events.length) return '';
+    const labels = { scheduled: '최초 예약', rescheduled: '변경', cancelled: '취소·이월', completed: '완료' };
+    const rows = events.map(event => {
+      const slots = slotGroupLabel(parseSlotNumbers(event.makeupTimes));
+      const recorded = event.recordedAt ? ` · 기록 ${formatMakeupDate(event.recordedAt)}` : '';
+      const missed = event.missedSlots?.length ? ' · 보강 결석' : '';
+      return `<li>${escapeHtml(`${formatMakeupDate(event.makeupDate)} ${slots} · ${event.legacy ? '기존 예약' : labels[event.action] || event.action}${missed}${recorded}`)}</li>`;
+    }).join('');
+    const baseline = events.some(event => event.legacy) ? '<div>기존 예약 이전의 변경은 집계되지 않습니다.</div>' : '';
+    const absentSlot = item.slot ? ` · 원결석 ${item.slot}타임` : '';
+    return `<details class="makeup-history"><summary>이력${escapeHtml(absentSlot)}</summary><ol>${rows}</ol>${baseline}</details>`;
   }
 
   function renderMakeupPlanner(event) {
@@ -2122,6 +2145,7 @@ export function initCalendar() {
         hint.textContent = queryText.trim()
           ? `${visible.length}/${pending.length}${suffix}`
           : `${pending.length}건${suffix}`;
+        if (state.makeupHistorySupported === false) hint.textContent += ' · 이력 저장 적용 대기: 서버 재시작 필요';
       }
 
       if (attendanceCheckMode) {
@@ -2140,22 +2164,20 @@ export function initCalendar() {
         const activeKey = makeupSelection ? makeupItemKey(makeupSelection) : '';
         list.innerHTML = visible.map(item => {
         const key = makeupItemKey(item);
-        const sourceLabel = item.source === 'manual' ? '추가 결석' : '결석';
-        const slotLabel = item.dateOnly
-          ? ` - ${sourceLabel}`
-          : item.slot ? ` - ${sourceLabel} ${item.slot}타임` : '';
-        const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)}${slotLabel}`;
+        const label = formatMakeupPlannerLabel(item);
         const active = key === activeKey ? ' is-active' : '';
         const removeText = item.source === 'manual' ? '삭제' : '결석 취소';
         const copyText = formatMakeupCopyText(item);
         const secondaryActions = `
-            <button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>
+            ${item.rebooking ? '' : `<button type="button" class="makeup-remove-btn" data-makeup-action="remove" data-key="${escapeAttr(key)}">${removeText}</button>`}
             <button type="button" class="makeup-carryover-btn" data-makeup-action="carryover" data-key="${escapeAttr(key)}">이월</button>
           `;
         return `
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}">
           <div class="makeup-label">
             <span>${escapeHtml(label)}</span>
+            ${item.rebooking ? `<span class="makeup-scheduled-badge">${escapeHtml(formatMakeupDate(item.missedMakeupDate))} 보강 결석 · 다시 잡기</span>` : ''}
+            ${renderMakeupHistory(item)}
           </div>
           <div class="makeup-actions">
             <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
@@ -2174,13 +2196,12 @@ export function initCalendar() {
       } else {
         statusList.innerHTML = statusVisible.map(item => {
           const key = makeupItemKey(item);
-          const slotLabel = item.dateOnly ? '결석' : `${item.slot || 1}타임 결석`;
-          const label = `${item.name || '-'} - ${item.school || '-'} - ${item.course || '-'} - ${formatMakeupDate(item.absenceDate)} - ${slotLabel}`;
+          const label = formatMakeupPlannerLabel(item);
           const copyText = formatMakeupCopyText(item);
           const scheduledDate = formatMakeupDate(item.scheduledMakeup?.makeupDate);
           const scheduledTimeLabel = slotGroupLabel(parseSlotNumbers(item.scheduledMakeup?.makeupTimes));
           const scheduledLabel = [scheduledDate, scheduledTimeLabel].filter(Boolean).join(' · ');
-          return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">보강 예정: ${escapeHtml(scheduledLabel)}</span></div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
+          return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">${item.needsAbsenceReview ? '예약 중복 · 결석 연결 확인' : '보강 예정'}: ${escapeHtml(scheduledLabel)}</span>${renderMakeupHistory(item)}</div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
         }).join('');
       }
       const statusHint = $('makeupStatusHint');
@@ -2247,7 +2268,7 @@ export function initCalendar() {
       const slot = parseInt(btn.dataset.slot, 10);
       scheduleSelectedMakeup(dateStr, slot).catch(err => {
         console.error(err);
-        alert('보강 저장 실패');
+        alert(err?.message || '보강 저장 실패');
       });
     });
   }

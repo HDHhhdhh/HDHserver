@@ -7,6 +7,76 @@ function normDate(value) {
   return DATE_RE.test(s) ? s : '';
 }
 
+export function makeupHistoryForItem(item, carryover = {}) {
+  const key = makeupOriginalAbsenceId(item);
+  const events = carryover?.scheduleHistory?.[key];
+  if (Array.isArray(events) && events.length) return events;
+  const schedule = item?.scheduledMakeup;
+  return schedule ? [{ ...schedule, action: 'scheduled', recordedAt: '', legacy: true }] : [];
+}
+
+export function makeupChangeCount(item) {
+  return (item?.scheduleHistory || []).filter(event => event.action === 'rescheduled').length;
+}
+
+export function formatMakeupPlannerLabel(item) {
+  const student = item?.student || {};
+  const name = baseNameForExport(student, item?.name || item?.sid) || '-';
+  const schoolGrade = `${schoolForExport(student)}${gradeNumberForExport(student)}`;
+  const course = courseForExport(item?.course).replace(/^미적분/, '미적');
+  return `${name}${schoolGrade ? `(${schoolGrade})` : ''} | ${course || '-'} | ${formatMakeupDate(item?.absenceDate)} 결석 | 변경 ${makeupChangeCount(item)}회`;
+}
+
+function withMakeupHistory(item, carryover) {
+  const events = makeupHistoryForItem(item, carryover);
+  return events.length ? { ...item, scheduleHistory: events } : item;
+}
+
+function missedScheduleSlots(item, absentByDate, absentSlotsByDate) {
+  const date = item.scheduledMakeup?.makeupDate;
+  const slots = parseSlotNumbers(absentSlotsByDate?.[date]?.[item.sid]);
+  const wholeDay = (absentByDate?.[date] || []).map(String).includes(item.sid);
+  return parseSlotNumbers(item.scheduledMakeup?.makeupTimes).filter(slot => wholeDay || slots.includes(slot));
+}
+
+function rebookingProjection(carryover, students, absentByDate, absentSlotsByDate) {
+  const scheduled = buildScheduledMakeupRows({ carryover, students });
+  const claims = new Map();
+  const slotsByDate = {};
+  const addSlot = (date, sid, slot) => {
+    const day = slotsByDate[date] ||= {};
+    day[sid] = [...new Set([...(day[sid] || []), slot])];
+  };
+  const key = (date, sid, slot) => `${date}|${sid}|${slot}`;
+  for (const item of scheduled) {
+    for (const slot of parseSlotNumbers(item.scheduledMakeup.makeupTimes)) {
+      const id = key(item.scheduledMakeup.makeupDate, item.sid, slot);
+      claims.set(id, (claims.get(id) || 0) + 1);
+      addSlot(item.scheduledMakeup.makeupDate, item.sid, slot);
+    }
+  }
+  const linked = new Set();
+  for (const events of Object.values(carryover?.scheduleHistory || {})) {
+    if (!Array.isArray(events)) continue;
+    for (const event of events) {
+      for (const slot of parseSlotNumbers(event.missedSlots)) {
+        linked.add(key(event.makeupDate, event.studentId, slot));
+        addSlot(event.makeupDate, event.studentId, slot);
+      }
+    }
+  }
+  const pending = [];
+  for (const item of scheduled) {
+    const date = item.scheduledMakeup.makeupDate;
+    const missed = missedScheduleSlots(item, absentByDate, absentSlotsByDate)
+      .filter(slot => claims.get(key(date, item.sid, slot)) === 1);
+    if (!missed.length || date === item.absenceDate) continue;
+    missed.forEach(slot => linked.add(key(date, item.sid, slot)));
+    pending.push({ ...item, rebooking: true, missedMakeupDate: date });
+  }
+  return { pending, linked, slotsByDate, scheduled };
+}
+
 export function nextLocalDateKey(offsetDays = 1) {
   const d = new Date();
   d.setDate(d.getDate() + Number(offsetDays || 0));
@@ -297,7 +367,7 @@ function pushDemand(out, seen, item) {
   out.push({ ...item, sid, absenceDate, slot, dateOnly });
 }
 
-function buildAbsenceDemandRows({ studentsBySid, absentByDate = {}, absentSlotsByDate = {} }) {
+function buildAbsenceDemandRows({ studentsBySid, absentByDate = {}, absentSlotsByDate = {}, makeupSlotsByDate = {} }) {
   const out = [];
   const seen = new Set();
   const add = (date, sid, slots) => {
@@ -324,7 +394,7 @@ function buildAbsenceDemandRows({ studentsBySid, absentByDate = {}, absentSlotsB
         if (!sid) return;
         const stu = studentsBySid.get(sid) || { id: sid, name: sid };
         const slots = parseSlotNumbers(absentSlotsByDate?.[date]?.[sid]);
-        add(date, sid, slots.length ? slots : regularSlotsForStudent(stu, date));
+        add(date, sid, slots.length ? slots : [...regularSlotsForStudent(stu, date), ...(makeupSlotsByDate?.[date]?.[sid] || [])]);
       });
     }
   }
@@ -477,7 +547,7 @@ export function buildScheduledMakeupRows({ students = [], carryover = {} } = {})
     });
   });
 
-  return out.sort((a, b) =>
+  return out.map(item => withMakeupHistory(item, carryover)).sort((a, b) =>
     String(a.scheduledMakeup?.makeupDate || '').localeCompare(String(b.scheduledMakeup?.makeupDate || '')) ||
     String(a.absenceDate || '').localeCompare(String(b.absenceDate || '')) ||
     String(a.name || '').localeCompare(String(b.name || ''), 'ko', { numeric: true }) ||
@@ -509,11 +579,14 @@ export function scheduledMakeupSlotsByDate({ students = [], carryover = {} } = {
   return result;
 }
 
-export function buildActiveScheduledMakeupRows({ operatingDate = '', ...input } = {}) {
+export function buildActiveScheduledMakeupRows({ operatingDate = '', absentByDate = {}, absentSlotsByDate = {}, ...input } = {}) {
   const referenceDate = normDate(operatingDate);
-  const scheduledRows = buildScheduledMakeupRows(input);
+  const projection = rebookingProjection(input.carryover || {}, input.students || [], absentByDate, absentSlotsByDate);
+  const pendingIds = new Set(projection.pending.map(makeupOriginalAbsenceId));
+  const scheduledRows = projection.scheduled.filter(item => !pendingIds.has(makeupOriginalAbsenceId(item)))
+    .map(item => missedScheduleSlots(item, absentByDate, absentSlotsByDate).length ? { ...item, needsAbsenceReview: true } : item);
   if (!referenceDate) return scheduledRows;
-  return scheduledRows.filter(row => normDate(row.scheduledMakeup?.makeupDate) >= referenceDate);
+  return scheduledRows.filter(row => row.needsAbsenceReview || normDate(row.scheduledMakeup?.makeupDate) >= referenceDate);
 }
 
 export function buildScheduledMakeupCalendarSummary(rows) {
@@ -558,8 +631,9 @@ export function buildPendingMakeups({
 } = {}) {
   const studentsBySid = new Map((students || []).map(stu => [String(stu?.id), stu]));
   const minDate = normDate(minAbsenceDate);
+  const rebooking = rebookingProjection(carryover, students, absentByDate, absentSlotsByDate);
   const demandRows = [
-    ...buildAbsenceDemandRows({ studentsBySid, absentByDate, absentSlotsByDate }),
+    ...buildAbsenceDemandRows({ studentsBySid, absentByDate, absentSlotsByDate, makeupSlotsByDate: rebooking.slotsByDate }),
     ...buildManualDemandRows({ studentsBySid, manualMakeups }),
   ].sort((a, b) =>
     String(a.absenceDate).localeCompare(String(b.absenceDate)) ||
@@ -573,6 +647,7 @@ export function buildPendingMakeups({
 
   demandRows.forEach(item => {
     if (minDate && item.absenceDate < minDate) return;
+    if (item.source !== 'manual' && rebooking.linked.has(`${item.absenceDate}|${item.sid}|${item.slot}`)) return;
     if (item.source === 'manual') {
       pending.push(item);
       return;
@@ -593,7 +668,7 @@ export function buildPendingMakeups({
     pending.push(item);
   });
 
-  return pending;
+  return [...pending, ...rebooking.pending].map(item => withMakeupHistory(item, carryover));
 }
 
 export function buildCarryForwardPendingMakeups(input = {}) {
