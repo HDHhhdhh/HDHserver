@@ -92,6 +92,8 @@ def _require_quiescent(root: Path) -> None:
         if base.exists():
             candidates.extend(path for path in base.rglob("*") if path.is_file()
                               and not any(part in DEFAULT_SKIP_DIRS for part in path.relative_to(root).parts)
+                              # Dependency manifests remain in the archive, not the active-lock gate.
+                              and not (path.name == "yarn.lock" and "node_modules" in path.relative_to(root).parts)
                               and (path.name.endswith(".lock") or path.name == "pending.json"))
     if candidates:
         raise RuntimeError("Backup refused: an active/stale lock or pending transaction needs review first.")

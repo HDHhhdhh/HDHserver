@@ -26,6 +26,9 @@ def backup_checks():
         root.mkdir()
         logs = root / "logs.json"
         logs.write_text('{"한글": "보존"}', "utf-8")
+        dependency_lock = root / "instance/uptime-kuma/app/node_modules/combined-stream/yarn.lock"
+        dependency_lock.parent.mkdir(parents=True)
+        dependency_lock.write_text("# yarn lockfile v1\n", "utf-8")
         db = root / "app.sqlite"
         with closing(sqlite3.connect(db)) as con:
             con.execute("CREATE TABLE proof (value TEXT)")
@@ -39,6 +42,7 @@ def backup_checks():
                 restored = Path(tmp) / "restored.sqlite"
                 restored.write_bytes(zf.read("app.sqlite"))
                 assert zf.read("logs.json") == logs.read_bytes()
+                assert zf.read(dependency_lock.relative_to(root).as_posix()) == dependency_lock.read_bytes()
                 for item in manifest["files"]:
                     assert hashlib.sha256(zf.read(item["path"])).hexdigest() == item["sha256"]
             with closing(sqlite3.connect(restored)) as con:
@@ -58,6 +62,14 @@ def backup_checks():
                     assert "changed during backup" in str(error)
             assert list(out.glob("*.zip")) == [archive]
             assert not list(out.glob("*.partial"))
+            active_dependency_lock = dependency_lock.with_name("runtime.lock")
+            active_dependency_lock.write_text("held", "utf-8")
+            try:
+                backup.make_backup(out)
+                raise AssertionError("runtime lock inside dependency tree was accepted")
+            except RuntimeError as error:
+                assert "lock" in str(error)
+            active_dependency_lock.unlink()
             (root / "logs.json.lock").write_text("held", "utf-8")
             try:
                 backup.make_backup(out)
