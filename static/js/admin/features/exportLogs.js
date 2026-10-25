@@ -57,6 +57,7 @@ function resetRosterHistoryCache() {
     logsRef: state.logs || null,
     testRelevantDatesByTarget: new Map(),
     videoStatusesByTargetSid: new Map(),
+    videoCycleTokensByTargetSid: new Map(),
     previousAssignedByKey: new Map(),
   };
 }
@@ -463,6 +464,7 @@ function rosterVideoStatusesBeforeDate(dateStr, sid) {
   }
 
   const statuses = {};
+  const cycleTokens = {};
   Object.keys(state.progress || {})
     .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) < target)
     .sort()
@@ -471,14 +473,31 @@ function rosterVideoStatusesBeforeDate(dateStr, sid) {
       if (!entry || typeof entry !== 'object') return;
       Object.entries(entry).forEach(([mid, status]) => {
         if (String(mid).startsWith('__') || mid === 'tests') return;
-        statuses[String(mid)] = normalizeRosterVideoStatus(status);
+        const key = String(mid);
+        // Later default/watch states do not erase a completed lesson.
+        if (statuses[key] !== 'done') statuses[key] = normalizeRosterVideoStatus(status);
+      });
+      Object.entries(entry.__videoWatchCycles || {}).forEach(([mid, cycle]) => {
+        const token = normStr(cycle?.token);
+        if (token) cycleTokens[String(mid)] = token;
       });
     });
 
   cache.videoStatusesByTargetSid.set(cacheKey, statuses);
+  cache.videoCycleTokensByTargetSid.set(cacheKey, cycleTokens);
   return statuses;
 }
 
+function rosterVideoReopenedOnDate(dateStr, mid, entry, previousToken) {
+  const status = normalizeRosterVideoStatus(entry[mid]);
+  if (['none', 'interrupted', 'assigned', 'skip'].includes(status) && entry.__manualProgressMids?.[mid] === true) return true;
+  const cycle = entry.__videoWatchCycles?.[mid];
+  const token = normStr(cycle?.token);
+  const startedAt = Number(cycle?.startedAt);
+  const dayStart = Date.parse(`${dateStr}T00:00:00+09:00`);
+  return Boolean(token && token !== previousToken && Number.isFinite(startedAt)
+    && startedAt >= dayStart && startedAt < dayStart + 86400000);
+}
 
 
 function rosterLogEntryHasTestMetadata(entry) {
@@ -551,12 +570,14 @@ function videoMapForRoster() {
 function rosterVideoText(dateStr, sid, videoMap) {
   const seen = new Set();
   const statuses = rosterVideoStatusesBeforeDate(dateStr, sid);
+  const cycleKey = `${String(dateStr || '')}${ROSTER_HISTORY_CACHE_SEP}${String(sid ?? '').trim()}`;
+  const cycleTokens = ensureRosterHistoryCache().videoCycleTokensByTargetSid.get(cycleKey) || {};
   const targetEntry = lookupSidEntry(state.progress?.[dateStr], sid);
   const videos = rosterAssignedVideoMids(dateStr, sid)
     .filter(mid => {
       if (statuses[mid] !== 'done') return true;
       if (!targetEntry || !Object.prototype.hasOwnProperty.call(targetEntry, mid)) return false;
-      return normalizeRosterVideoStatus(targetEntry[mid]) !== 'done';
+      return rosterVideoReopenedOnDate(dateStr, mid, targetEntry, cycleTokens[mid]);
     })
     .map(mid => videoMap.get(mid))
     .filter(Boolean)

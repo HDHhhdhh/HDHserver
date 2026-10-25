@@ -14,7 +14,7 @@ async function loadCriticalAdminFeatures() {
     import('./features/logModal.js?v=20260914-homework-open-stable1&whiteRetest=20260928&hubSave=20261001&testSaveReady=20261002&uiPerf=20261002&dragScroll=20261007').then(module => module.initLogModal),
     import('./features/extraModal.js?v=20260929-retired-extra1&hubSave=20261001&adminSpeed=20261003').then(module => module.initExtraModal),
     import('./features/absentRegister.js?hubSave=20261001').then(module => module.initAbsentRegister),
-    import('./features/exportLogs.js?v=20260907-ilsan-level-r1&quickPrinter=1&latency=1').then(module => module.initExport),
+    import('./features/exportLogs.js?v=20260907-ilsan-level-r1&quickPrinter=1&latency=1&rosterVideos=20261024').then(module => module.initExport),
     import('./features/quickPrinterExport.js?v=20260920-reprint-default1').then(module => module.initQuickPrinterExport),
     import('./features/done.js?v=20260912-done-white-review1&youtube=20260913').then(module => module.initClearAll),
     import('./features/absentRecovery.js').then(module => module.initAbsentRecovery),

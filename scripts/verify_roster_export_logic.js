@@ -478,7 +478,7 @@ assertEqual(
     logs: {},
     progress: {
       '2026-06-02': { s1: { v41: 'done', v42: 'done' } },
-      '2026-06-03': { s1: { v42: 'none', v43: { status: 'done' }, v44: 'interrupted' } },
+      '2026-06-03': { s1: { v42: 'none', v43: { status: 'done' }, v44: 'interrupted', __manualProgressMids: { v42: true } } },
     },
     videos: [
       { mid: 'v41', chapter: 41, title: 'video 41' },
@@ -493,6 +493,42 @@ assertEqual(
   }, '2026-06-03'),
   '42차시, 43차시, 44차시',
 );
+
+{
+  const date = '2026-06-03';
+  const dayStart = Date.parse(`${date}T00:00:00+09:00`);
+  const state = {
+    logs: {},
+    progress: {
+      '2026-06-01': { s1: { v1: 'done', v2: { status: 'done' }, v3: 'done', v4: 'done', v5: 'done',
+        v6: 'done', v7: 'done', v8: 'done', v9: 'done', v10: 'done',
+        __videoWatchCycles: { v7: { token: 'continued', startedAt: dayStart - 86400000 },
+          v8: { token: 'old', startedAt: dayStart - 86400000 } } } },
+      '2026-06-02': { s1: { v1: 'none', v2: 'interrupted',
+        __autoWatchProgressMids: { v2: 'interrupted' } } },
+      [date]: { s1: { v3: 'none', v4: 'interrupted', v5: 'none', v6: 'interrupted', v7: 'interrupted',
+        v8: 'done', v9: 'done', v10: 'none', v11: 'done', v12: 'none',
+        __manualProgressMids: { v5: true, v6: true },
+        __autoWatchProgressMids: { v4: 'interrupted' },
+        __videoWatchCycles: {
+          v7: { token: 'continued', startedAt: dayStart + 1000 },
+          v8: { token: 'new', startedAt: dayStart + 1000 },
+          v9: { token: 'first-observed-late', startedAt: dayStart - 1000 },
+          v10: { token: 'new-at-midnight', startedAt: dayStart },
+        } } },
+      '2026-06-04': { s1: { v12: 'done' } },
+    },
+    videos: Array.from({ length: 12 }, (_, i) => ({ mid: `v${i + 1}`, chapter: i + 1 })),
+    updates: { [date]: { s1: { source: 'manual', videos: Array.from({ length: 12 }, (_, i) => `v${i + 1}`) } } },
+  };
+  const before = JSON.stringify(state);
+  assertEqual(
+    'roster excludes historical completion noise and keeps proven same-day reopens and new lessons',
+    videoTextFor(state, date),
+    '5차시, 6차시, 8차시, 10차시, 11차시, 12차시',
+  );
+  assertEqual('roster completion projection never rewrites its source records', JSON.stringify(state), before);
+}
 
 const combinedVideoAndTestText = taskTextFor({
   logs: {
