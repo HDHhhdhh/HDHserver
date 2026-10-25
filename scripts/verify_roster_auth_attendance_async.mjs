@@ -279,6 +279,48 @@ async function rosterChecks() {
   }
 }
 
+async function addStudentChecks() {
+  const ids = new Map(['newStuMount', 'ns_add', 'ns_name', 'ns_cur', 'ns_sub', 'ns_firstAttendanceDate',
+    'ns_day1', 'ns_day2', 'ns_day3', 'ns_day4', 'ns_day5', 'ns_grade', 'ns_level', 'ns_school', 'ns_doc']
+    .map(id => [id, element(id)]));
+  let valid = true, reloads = 0, pending;
+  const writes = [], alerts = [];
+  const firstDate = ids.get('ns_firstAttendanceDate');
+  firstDate.reportValidity = () => valid;
+  const context = vm.createContext({
+    document: { getElementById: id => ids.get(id) || null },
+    location: { reload: () => { reloads++; } },
+    alert: message => alerts.push(message),
+    fetch: async (url, options) => {
+      writes.push({ url, method: options.method, body: JSON.parse(options.body) });
+      return pending ? pending.promise : response({ id: 'new-student' });
+    },
+  });
+  vm.runInContext(read('static/js/all/features/addStudent.js').replace(/\bexport\s+/g, ''), context);
+  context.mountNewStudentBar();
+  const markup = ids.get('newStuMount').innerHTML;
+  assert.match(markup, /for="ns_firstAttendanceDate"/);
+  assert.match(markup, /id="ns_firstAttendanceDate" type="date" required/);
+  const initial = markup.match(/min="(\d{4}-\d{2}-\d{2})" value="(\d{4}-\d{2}-\d{2})"/);
+  assert.ok(initial); assert.equal(initial[1], initial[2], 'calendar defaults to its earliest allowed date');
+  firstDate.value = '2099-01-05';
+  ids.get('ns_name').value = '첫등원검증'; ids.get('ns_day1').value = '월1';
+  const click = ids.get('ns_add').listeners.click[0];
+  valid = false; await click(); assert.equal(writes.length, 0, 'invalid native calendar value cannot submit');
+  valid = true; pending = gate();
+  const saving = click(); await tick(); await click();
+  assert.equal(writes.length, 1, 'a pending add cannot create duplicate students');
+  assert.equal(writes[0].url, '/api/add-student'); assert.equal(writes[0].method, 'POST');
+  assert.equal(writes[0].body.firstAttendanceDate, '2099-01-05');
+  assert.equal(writes[0].body.day1, '월1', 'first attendance leaves weekly schedule independent');
+  pending.resolve(response({ error: '첫 등원일 오류' }, 400)); await saving;
+  assert.equal(reloads, 0); assert.equal(firstDate.value, '2099-01-05');
+  assert.equal(ids.get('ns_add').disabled, false); assert.match(alerts[0], /첫 등원일 오류/);
+  pending = null; await click(); assert.equal(reloads, 1, 'successful add refreshes the authoritative roster');
+  assert.equal(writes.length, 2);
+}
+
+if (!only || only === 'add') await addStudentChecks();
 if (!only || only === 'auth') await authChecks();
 if (!only || only === 'attendance') await attendanceChecks();
 if (!only || only === 'roster') await rosterChecks();

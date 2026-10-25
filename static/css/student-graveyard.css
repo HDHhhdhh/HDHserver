@@ -1,0 +1,70 @@
+body.all-page #openGraveyard {
+  color: var(--btn-fg); background: var(--btn-bg); border: 1px solid var(--btn-border);
+  border-radius: 10px; padding: .4rem .75rem; cursor: pointer; font: inherit;
+}
+body.all-page .graveyard {
+  --gy-bg: #fff; --gy-fg: #182538; --gy-muted: #526174; --gy-line: #dbe2eb;
+  --gy-soft: #f3f6fa; --gy-accent: #234fab; --gy-error: #a52a2a;
+  color: var(--gy-fg); background: var(--gy-bg); border: 1px solid var(--gy-line);
+  border-radius: 16px; width: min(1140px, calc(100vw - 32px)); max-width: none;
+  height: min(820px, calc(100dvh - 40px)); max-height: none; box-sizing: border-box;
+  padding: 0; font: 15px/1.55 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+body.all-page.dark .graveyard {
+  --gy-bg: #152033; --gy-fg: #edf2fb; --gy-muted: #b5c3d5; --gy-line: #42516a;
+  --gy-soft: #202e44; --gy-accent: #a8c5ff; --gy-error: #ffb3b3;
+}
+body.all-page .graveyard::backdrop { background: rgb(8 16 32 / .62); }
+body.all-page .graveyard[open] { display: flex; flex-direction: column; }
+body.all-page .graveyard :is(button, input) { font: inherit; color: inherit; }
+body.all-page .graveyard button {
+  /* The shared all-page theme applies !important to every button. */
+  background: var(--gy-soft) !important; color: var(--gy-fg) !important;
+  border: 1px solid var(--gy-line) !important; border-radius: 8px !important;
+  box-shadow: none !important; line-height: 1.5 !important;
+  padding: 8px 12px; height: auto; min-height: 44px; cursor: pointer; white-space: normal;
+}
+body.all-page .graveyard button:disabled { opacity: .55; cursor: wait; }
+body.all-page .graveyard :is(button, input, summary):focus-visible,
+body.all-page #openGraveyard:focus-visible { outline: 3px solid #6599fa; outline-offset: 3px; }
+body.all-page .graveyard :is(h2, h3, p) { margin: 0; }
+body.all-page .graveyard h2 { font-size: 23px; }
+body.all-page .graveyard h3 { font-size: 18px; }
+body.all-page .graveyard-header { display: flex; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--gy-line); }
+body.all-page .graveyard-header > div { flex: 1; }
+body.all-page .graveyard-muted { color: var(--gy-muted); font-size: 13px; }
+body.all-page .graveyard-toolbar { padding: 16px 24px; display: flex; gap: 12px; align-items: end; }
+body.all-page .graveyard-toolbar label { flex: 1; display: grid; gap: 4px; }
+body.all-page .graveyard input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--gy-line); background: var(--gy-bg); border-radius: 8px; padding: 9px 12px; }
+body.all-page .graveyard-message { padding: 0 24px 12px; color: var(--gy-muted); }
+body.all-page .graveyard-message[data-error="true"] { color: var(--gy-error); }
+body.all-page .graveyard-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); flex: 1; min-height: 0; border-top: 1px solid var(--gy-line); }
+body.all-page .graveyard-list { overflow-y: auto; padding: 12px; border-right: 1px solid var(--gy-line); }
+body.all-page .graveyard-list button { display: grid !important; grid-template-columns: minmax(0, 1fr); align-items: start !important; justify-content: stretch !important; width: 100%; text-align: left; gap: 4px; padding: 12px; margin-bottom: 8px; background: var(--gy-bg) !important; overflow-wrap: anywhere; }
+body.all-page .graveyard-list button[aria-pressed="true"] { border-color: var(--gy-accent) !important; background: var(--gy-soft) !important; box-shadow: inset 3px 0 var(--gy-accent) !important; }
+body.all-page .graveyard-detail { min-width: 0; overflow-y: auto; padding: 22px; overflow-wrap: anywhere; }
+body.all-page .graveyard .graveyard-detail > * + * { margin-top: 14px; }
+body.all-page .graveyard-info { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+body.all-page .graveyard-info dt { color: var(--gy-muted); }
+body.all-page .graveyard-info dd { margin: 0; white-space: pre-wrap; }
+body.all-page .graveyard-notice { background: var(--gy-soft); border: 1px solid var(--gy-line); border-radius: 8px; padding: 12px; }
+body.all-page .graveyard .graveyard-restore { color: var(--gy-bg) !important; background: var(--gy-accent) !important; border-color: var(--gy-accent) !important; font-weight: 700; }
+body.all-page .graveyard-history { display: grid; gap: 10px; }
+body.all-page .graveyard-record { border: 1px solid var(--gy-line); border-radius: 8px; padding: 12px; }
+body.all-page .graveyard-record summary { cursor: pointer; font-weight: 700; }
+body.all-page .graveyard-record section { margin-top: 12px; }
+body.all-page .graveyard-record p { white-space: pre-wrap; }
+body.all-page .graveyard-record ul { padding-left: 20px; margin: 4px 0; }
+body.all-page .graveyard-empty { padding: 12px; color: var(--gy-muted); }
+@media (max-width: 700px) {
+  body.all-page .topbar { flex-wrap: wrap; padding: 12px !important; }
+  body.all-page .topbar nav { order: 3; width: 100%; flex-wrap: wrap; }
+  body.all-page .graveyard { width: calc(100vw - 16px); height: calc(100dvh - 16px); }
+  body.all-page .graveyard-header { padding: 14px; }
+  body.all-page .graveyard-toolbar { padding: 12px 14px; }
+  body.all-page .graveyard-toolbar input { font-size: 16px; }
+  body.all-page .graveyard-message { padding-left: 14px; padding-right: 14px; }
+  body.all-page .graveyard-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(100px, 30%) minmax(0, 1fr); }
+  body.all-page .graveyard-list { border-right: 0; border-bottom: 1px solid var(--gy-line); }
+  body.all-page .graveyard-detail { padding: 16px; }
+}

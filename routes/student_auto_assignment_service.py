@@ -6,10 +6,12 @@ from typing import Any
 
 from core import log_rules
 from core.video_sources import GICHUL_OVERLAY_FIELD
+from core.student_schedule_projection import scheduled_makeup_slots_by_student
 from core.student_schedule_rules import (
     effective_auto_video_assign_count,
     log_entry_for_date,
     student_absent_on_date,
+    student_has_started_on_date,
     student_is_self_study_on_date,
 )
 from core.student_video_assignment_rules import (
@@ -62,6 +64,7 @@ class StudentAutoAssignmentServiceDependencies:
     today_iso: Callable[[], str]
     student_is_registered: Callable[..., bool]
     on_auto_pick: Callable[[str, list[str]], None]
+    makeup_path: Any = None
 
 
 def student_is_today_auto_target(
@@ -73,13 +76,16 @@ def student_is_today_auto_target(
     extra=None,
     absent=None,
     logs=None,
+    makeup_slots=None,
 ) -> bool:
+    if not student_has_started_on_date(student, date_key):
+        return False
     if student_absent_on_date(absent, date_key, sid):
         return False
     entry = log_entry_for_date(logs, date_key, sid)
     if isinstance(entry, dict) and log_rules.truthy(entry.get("done")):
         return False
-    if student_is_self_study_on_date(logs, date_key, sid, student):
+    if student_is_self_study_on_date(logs, date_key, sid, student, makeup_slots=makeup_slots):
         return True
     return dependencies.student_is_registered(
         student,
@@ -101,6 +107,7 @@ def ensure_today_auto_assign(
     extra=None,
     absent=None,
     weekend_slots=None,
+    makeup=None,
 ):
     today = date_key or dependencies.today_iso()
 
@@ -142,6 +149,10 @@ def ensure_today_auto_assign(
         except Exception:
             weekend_slots = {}
 
+    if makeup is None and dependencies.makeup_path is not None:
+        makeup = dependencies.load(dependencies.makeup_path)
+    makeup_slots_by_sid = scheduled_makeup_slots_by_student(makeup, date_key=today)
+
     for student in students or []:
         if not isinstance(student, dict):
             continue
@@ -168,6 +179,7 @@ def ensure_today_auto_assign(
             extra=extra,
             absent=absent,
             logs=logs,
+            makeup_slots=makeup_slots_by_sid.get(sid),
         )
         if not is_auto_target:
             scoped_assignment, scope_changed = append_auto_assignment_videos(
@@ -198,6 +210,7 @@ def ensure_today_auto_assign(
             today,
             sid,
             student,
+            makeup_slots=makeup_slots_by_sid.get(sid),
         )
         completion_videos = student_completion_videos(student, videos)
         if self_study:
@@ -420,7 +433,9 @@ def _reconcile_self_study_assignment_under_barrier(
         raise StudentAssignmentNotFoundError(sid)
 
     logs = dependencies.get_log_repository().read_logs(date, sid)
-    if not student_is_self_study_on_date(logs, date, sid, student):
+    makeup = dependencies.load(dependencies.makeup_path) if dependencies.makeup_path is not None else {}
+    makeup_slots = scheduled_makeup_slots_by_student(makeup, date_key=date).get(sid)
+    if not student_is_self_study_on_date(logs, date, sid, student, makeup_slots=makeup_slots):
         return {"ok": False, "error": "student is not self-study"}, 409
 
     absences = dependencies.load_absent()
@@ -480,6 +495,7 @@ def _reconcile_self_study_assignment_under_barrier(
             date_key=date,
             watch=watch,
             logs=logs,
+            makeup=makeup,
         )
         if has_requested_videos:
             day = fixed.setdefault(date, {})

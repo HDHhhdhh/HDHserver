@@ -12,6 +12,7 @@ import { todayStudentSearchKey } from './todaySearch.js?v=20260929-school-initia
 import {
   countPendingMakeupsBySid,
   scheduledMakeupStudentIdsForDate,
+  scheduledMakeupSlotsByDate,
 } from './makeupPending.js';
 import {
   doneEntriesFromUnarchivedSummary,
@@ -36,6 +37,7 @@ import {
   applySavedOrder,
   getSavedOrder,
   hasWeekday,
+  studentHasStartedOnDate,
   yoilOf,
   plannedMinutesFor,
   isAttended,
@@ -658,6 +660,7 @@ async function loadMakeupCarryoverMap(options = {}) {
     console.warn('[today] makeup carryover load failed:', err);
     _makeupCarryover = _makeupCarryover || {};
   }
+  state.scheduledMakeupSlotsByDate = scheduledMakeupSlotsByDate({ students: state.students, carryover: _makeupCarryover });
   return _makeupCarryover;
 }
 
@@ -831,7 +834,7 @@ async function loadExtraAttendMap() {
 function computeTodayList(dateKey, extraMap = state.extra || {}) {
   const dateStr = dateKey || getAdminDate();
   const wchr = yoilOf(dateStr);
-  const studs = state.students || [];
+  const studs = (state.students || []).filter(student => studentHasStartedOnDate(student, dateStr));
   const absentByDate = state.absentByDate || {};
 
   const regular = studs.filter(s => hasWeekday(s, wchr));

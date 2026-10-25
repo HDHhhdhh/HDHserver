@@ -16,11 +16,11 @@ const A = '2026-10-01', B = '2026-10-02';
 const feature = name => fs.readFileSync(path.join(fs.existsSync(path.join(sourceDir, name)) ? sourceDir : path.join(repoRoot, 'static/js/admin/features'), name), 'utf8').replace(/\r\n/g,'\n');
 const strip = source => source.replace(/^import\s[\s\S]*?;\n/gm,'')
   .replace(/^export\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];\n/gm,'').replace(/\bexport\s+/g,'');
-function harness(candidate, hold=''){
+function harness(candidate, hold='', fixtures={}){
   let selected=A, real=A, version=1, holding=hold;
   const reads=[], renders=[], events=new Map(), intervals=[], bound=[];
   const state={students:[],videos:[],logs:{},progress:{},updates:{},absentByDate:{},absentSlotsByDate:{},extra:{}};
-  const students=n=>[{id:'S1',name:'가연'+n,day1:'목1',day2:'금1'},{id:'S2',name:'다현'+n,day1:'목1',day2:'금1'}];
+  const students=n=>fixtures.students||[{id:'S1',name:'가연'+n,day1:'목1',day2:'금1'},{id:'S2',name:'다현'+n,day1:'목1',day2:'금1'}];
   const dayProgress={
     S1:{M1:'none',M2:'skip',__manualProgressMids:{M1:true,M2:true},unknown:'보존'},
     S2:{M1:'interrupted',__manualProgressMids:{M1:true}},
@@ -28,13 +28,14 @@ function harness(candidate, hold=''){
   const payload=(url,n)=>{
     const u=new URL(url,'http://fixture.invalid'), d=u.searchParams.get('date')||A;
     if(u.pathname==='/api/students')return students(n);
+    if(u.pathname==='/api/extra-attend')return fixtures.extra||{};
     if(u.pathname==='/api/absent')return {by_date:{},by_student:{},by_slot:{}};
     if(u.pathname==='/api/updates')return {[real]:{S1:{videos:['M1'],source:'auto'}}};
     if(u.pathname==='/api/logs/unarchived-summary'||u.pathname==='/api/arrive-time/missing-leave-summary')return {rowsAvailable:true,rows:[],total:0,byDate:[]};
     if(u.pathname==='/api/logs')return {[d]:{S1:{notes:'한글 메모',done:false},S2:{done:false}}};
     if(u.pathname==='/api/progress'){
       const sid=u.searchParams.get('sid');
-      return {[d]:sid?{[sid]:clone(dayProgress[sid])}:clone(dayProgress)};
+      return {[d]:sid?{[sid]:clone(dayProgress[sid]||{})}:clone(dayProgress)};
     }
     if(u.pathname==='/api/today_order')return {[A]:['S2','S1'],[B]:['S2','S1']};
     if(u.pathname==='/api/attendance')return {S1:1};
@@ -72,13 +73,14 @@ function harness(candidate, hold=''){
     api:{get:async(url,init)=>(await fetch(url,init)).json()},
     normalizeSearch:value=>String(value||'').trim(),searchKeyForText:String,
     todayStudentSearchKey:()=>'',matchesSearchKey:()=>true,applySearchPlaceholder(){},
-    countPendingMakeupsBySid:()=>({}),scheduledMakeupStudentIdsForDate:()=>[],
+    countPendingMakeupsBySid:()=>({}),scheduledMakeupStudentIdsForDate:({date})=>fixtures.makeup?.[date]||[],
+    scheduledMakeupSlotsByDate:()=>fixtures.makeupSlots||{},
     bindTodayTableEvents:fn=>bound.push(fn),renderDone(){},
     renderToday:(list,date)=>renders.push({date,rows:list.map(s=>({id:s.id,name:s.name,progress:clone(state.progress[date]?.[s.id]||{}),
       attended:context.isAttended(date,s.id),contact:context.isContacted(date,s.id)}))}),
   });
   const stateMethods=['loadWeekendSlots','ensureAttendLoaded','ensureContactLoaded','ensureArriveLoaded','collectUnarchivedLogsByDate',
-    'loadOrderMap','applySavedOrder','getSavedOrder','hasWeekday','yoilOf','plannedMinutesFor','isAttended','isContacted','isSelfStudy','isHwChecked',
+    'loadOrderMap','applySavedOrder','getSavedOrder','hasWeekday','studentHasStartedOnDate','yoilOf','plannedMinutesFor','isAttended','isContacted','isSelfStudy','isHwChecked',
     'isHwCheckRequested','hwCheckRequestedAt','truthy','labelFor','withStudentLookup'];
   const exported=vm.runInContext('(function(){'+strip(feature('today.state.js'))+'\nreturn {'+stateMethods.join(',')+'};})()',context);
   Object.assign(context,exported);
@@ -97,6 +99,33 @@ function harness(candidate, hold=''){
 async function drain(){for(let i=0;i<4;i++)await turn();}
 async function run(candidate){
   const observed={};
+  {
+    const fixtures={
+      students:[
+        {id:'S1',name:'신규학생',day1:'목1',day2:'금1',registeredOn:A,firstAttendanceDate:B},
+        {id:'S2',name:'기존학생',day1:'목1',day2:'금1'},
+        {id:'extra',name:'추가등원학생',registeredOn:A,firstAttendanceDate:B},
+        {id:'makeup',name:'복제보강학생',registeredOn:B},
+      ],
+      extra:{[A]:['extra','S1'],[B]:['extra','S1']},
+      makeup:{[A]:['makeup'],[B]:['makeup']},
+    };
+    const before=JSON.stringify(fixtures), h=harness(candidate,'',fixtures);
+    const rows=()=>Array.from(h.renders.at(-1).rows,row=>row.id).sort();
+    await h.load({force:true,forceDatePayloads:true}); await drain();
+    assert.deepEqual(rows(),['S2'],'registration excludes regular, extra and makeup rows before their own registration day');
+    h.setDate(B); await h.load({force:true,forceDatePayloads:true}); await drain();
+    assert.deepEqual(rows(),['S1','S2','extra','makeup'],'registration day includes all eligible paths exactly once');
+    h.setDate('2026-10-09'); await h.load({force:true,forceDatePayloads:true}); await drain();
+    assert.deepEqual(rows(),['S1','S2'],'later regular class days retain newly registered students');
+    h.setDate(A); await h.load({force:true,forceDatePayloads:true}); await drain();
+    h.dispatch('admin:refresh',{force:true}); await drain();
+    assert.deepEqual(rows(),['S2'],'returning to history and refreshing cannot reintroduce newly registered students');
+    const reloaded=harness(candidate,'',fixtures); await reloaded.load({force:true}); await drain();
+    assert.deepEqual(Array.from(reloaded.renders.at(-1).rows,row=>row.id),['S2'],'fresh page load preserves the historical exclusion');
+    assert.equal(JSON.stringify(fixtures),before,'roster filtering never changes registration or historical source data');
+    observed.registration={before:['S2'],on:['S1','S2','extra','makeup'],after:['S1','S2'],reload:['S2']};
+  }
   {
     const h=harness(candidate,'all'), options={force:true,forceDatePayloads:true,reason:'auto'};
     const pending=[h.load(options),h.load(options),h.load(options)];

@@ -12,6 +12,7 @@ from core.date_rules import is_iso_date_key
 
 from core.paths import STU_PATH, EXTRA_PATH, ATTENDANCE_PATH, CONTACT_PATH, PRG_PATH, UPD_PATH, ABS_PATH
 from core.student_schedule_projection import scheduled_makeup_student_ids
+from core.student_schedule_rules import student_has_started_on_date
 from core.student_notification_hooks import enqueue_current_schedule_changes
 from core.storage import load, save_atomic, file_lock
 from core.absent import load_absent, normalize_absent, save_absent, DATE_RE
@@ -172,7 +173,10 @@ def _load_scheduled_makeup_ids(date_key: str) -> set[str]:
 def _attendance_roster_for_date(target: dt.date) -> List[dict]:
     date_key = target.isoformat()
     weekday = "월화수목금토일"[target.weekday()]
-    students_arr: List[dict] = load(STU_PATH)
+    students_arr: List[dict] = [
+        student for student in load(STU_PATH)
+        if student_has_started_on_date(student, date_key)
+    ]
 
     regular = [
         student for student in students_arr

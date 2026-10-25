@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from core import student_auto_assignment_rules as auto_assignment_rules  # noqa: E402
 from core import student_schedule_rules as schedule_rules  # noqa: E402
+from core.student_schedule_projection import effective_attendance_student_ids, project_student_schedule, scheduled_makeup_slots_by_student  # noqa: E402
 from core import student_video_assignment_rules as assignment_rules  # noqa: E402
 from core import student_video_projection as video_projection  # noqa: E402
 
@@ -49,6 +50,21 @@ def main() -> int:
         "day2": "토2",
     }
     schedule_before = deepcopy(scheduled_student)
+    upcoming = {**scheduled_student, "registeredOn": DATE, "firstAttendanceDate": "2026-06-13"}
+    upcoming_before = deepcopy(upcoming)
+    assert not schedule_rules.student_has_schedule_on_date(upcoming, DATE)
+    assert schedule_rules.student_has_schedule_on_date(upcoming, "2026-06-13")
+    assert schedule_rules.student_slots_for_date(upcoming, SID, DATE, {DATE: {SID: [1, 2]}}) == []
+    assert not schedule_rules.student_has_scheduled_self_study_on_date({**upcoming, "selfStudyDays": ["day1"]}, DATE)
+    assert effective_attendance_student_ids([upcoming], date_key=DATE, extra={DATE: [SID]},
+        makeup={"schedules": [{"studentId": SID, "makeupDate": DATE, "status": "scheduled", "makeupTimes": [1]}]}) == set()
+    assert effective_attendance_student_ids([upcoming], date_key="2026-06-13") == {SID}
+    assert [row["date"] for row in project_student_schedule(upcoming, sid=SID,
+        start_date=DATE, end_date="2026-06-13", extra={DATE: [SID]})] == ["2026-06-13"]
+    assert schedule_rules.student_has_started_on_date({"registeredOn": "2026-06-13", "firstAttendanceDate": DATE}, DATE) is False
+    for legacy in ({}, {"firstAttendanceDate": "2026-02-30"}, {"registeredOn": "bad-date"}):
+        assert schedule_rules.student_has_started_on_date(legacy, DATE)
+    assert upcoming == upcoming_before
     assert auto_assignment_rules.MAX_AUTO_VIDEO_ASSIGN_COUNT == 6
     assert auto_assignment_rules.coerce_auto_video_assign_count(10) == 6
     assert auto_assignment_rules.coerce_auto_video_assign_count(0) == 1
@@ -110,6 +126,27 @@ def main() -> int:
         "curriculum": "ALG",
         "subCurriculum": "BASE",
     }
+    makeup = {"by_absence": {"2026-05-30": {
+        SID: {"scheduledMakeup": {"studentId": SID, "makeupDate": DATE, "makeupTimes": [1], "status": "scheduled"}},
+        f"{SID}|2": {"scheduledMakeup": {"studentId": SID, "makeupDate": DATE, "makeupTimes": [2], "status": "cancelled"}},
+        "other": {"scheduledMakeup": {"studentId": "other", "makeupDate": DATE, "makeupTimes": [2], "status": "scheduled"}},
+        "deleted": {"scheduledMakeup": None, "scheduled_makeup": {"student_id": SID, "makeup_date": DATE, "makeup_times": [2]}},
+    }}, "manual": {"2026-05-29": {"extra": {"sid": SID, "scheduledMakeup": {
+        "studentId": SID, "makeupDate": DATE, "makeupTimes": [3], "status": "completed",
+    }}}}}
+    makeup_before = deepcopy(makeup)
+    assert scheduled_makeup_slots_by_student(makeup, date_key=DATE) == {SID: [1], "other": [2]}
+    assert scheduled_makeup_slots_by_student(makeup, date_key="2026-06-07") == {}
+    assert scheduled_makeup_slots_by_student(makeup, date_key="invalid") == {}
+    assert not schedule_rules.student_is_self_study_on_date({}, DATE, SID, scheduled_self_study, makeup_slots=[1])
+    assert schedule_rules.student_is_self_study_on_date({}, DATE, SID, scheduled_self_study, makeup_slots=[2])
+    assert schedule_rules.student_is_self_study_on_date(
+        {DATE: {SID: {"selfStudy": True}}}, DATE, SID, scheduled_self_study, makeup_slots=[1],
+    )
+    assert not schedule_rules.student_is_self_study_on_date(
+        {DATE: {SID: {"selfStudy": False}}}, DATE, SID, scheduled_self_study, makeup_slots=[2],
+    )
+    assert makeup == makeup_before and scheduled_self_study["selfStudyDays"] == ["day1"]
     videos = [
         {
             "mid": "m2",

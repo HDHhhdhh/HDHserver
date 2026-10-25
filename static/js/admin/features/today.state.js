@@ -73,6 +73,17 @@ export function hasWeekday(stu, wchr) {
   return dayValues(stu).some(v => String(v).startsWith(wchr));
 }
 
+export function studentHasStartedOnDate(student, dateStr) {
+  return ['registeredOn', 'firstAttendanceDate'].every(field => {
+    const start = student?.[field];
+    // Unknown legacy dates must not remove students from their historical roster.
+    if (typeof start !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(start) || start.startsWith('0000')) return true;
+    const parsed = new Date(`${start}T00:00:00Z`);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== start) return true;
+    return start <= dateStr;
+  });
+}
+
 export function truthy(v) {
   return v === true || v === 'true' || v === 1 || v === '1';
 }
@@ -210,7 +221,7 @@ export function isSelfStudy(dateKey, sid) {
   if (e && Object.prototype.hasOwnProperty.call(e, 'selfStudy')) {
     return truthy(e.selfStudy);
   }
-  return isSelfStudyScheduledForDate(getStudent(sid), dateKey);
+  return isSelfStudyScheduledForDate(getStudent(sid), dateKey, state.scheduledMakeupSlotsByDate?.[dateKey]?.[String(sid)]);
 }
 export function hwCheckRequestedAt(dateKey, sid) {
   const e = state.logs?.[dateKey]?.[String(sid)];

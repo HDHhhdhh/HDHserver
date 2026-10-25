@@ -9,6 +9,7 @@ from core.progress_rules import advance_test_assignment_change_order
 from core.progress_store import load_progress_strict, save_progress_strict
 from core.storage import file_lock, load, save_atomic
 from core.student_schedule_rules import student_is_self_study_on_date
+from core.student_schedule_projection import scheduled_makeup_slots_by_student
 
 
 ASSIGNMENT_LOG_CLEAR_FIELDS = (
@@ -45,11 +46,16 @@ def self_study_makeup_exemptions(
     if not isinstance(rows_by_date, dict):
         raise ValueError("makeup by_absence must be an object")
     changed = False
+    makeup_slots_by_date = {
+        date: scheduled_makeup_slots_by_student(carryover, date_key=date)
+        for date in {date for date, _sid in pairs}
+    }
     for date_key, sid in sorted(pairs):
         student = _sid_lookup(students_by_sid, sid) or {}
         entry = log_entries.get((date_key, sid), {})
         self_study = student_is_self_study_on_date(
             {date_key: {sid: entry}}, date_key, sid, student,
+            makeup_slots=makeup_slots_by_date[date_key].get(sid),
         )
         day = rows_by_date.get(date_key, {})
         if not isinstance(day, dict):

@@ -39,13 +39,17 @@ document.addEventListener('click', async (e)=>{
   const btn=e.target.closest('.btn-del-stu'); if(!btn) return;
   const tr=btn.closest('tr'); const { sid, name }=parseRowInfo(tr);
   if (!sid) { alert('학생 ID를 찾을 수 없습니다.'); return; }
-  if (!confirm(`정말 "${name||sid}" 학생을 삭제할까요?\n(되돌릴 수 없습니다)`)) return;
+  if (btn.disabled) return;
+  if (!confirm(`"${name||sid}"의 이 과목을 전체 학생 명단에서 삭제할까요?\n수업·진도 등 운영 기록은 보존됩니다.`)) return;
+  btn.disabled = true;
   try{
     const res = await fetch(`/api/students/${encodeURIComponent(sid)}`, { method:'DELETE' });
     if (!res.ok) throw new Error(`서버 응답 ${res.status}`);
     if (Array.isArray(window.students)) window.students = window.students.filter(s=>String(s.id)!==String(sid));
     tr.remove();
     document.dispatchEvent(new CustomEvent('all:student-deleted', { detail: { sid, name } }));
-    (window.toast ? toast('삭제 완료') : alert('삭제 완료'));
+    const message = res.headers?.get?.('X-Student-Graveyard') === '1' ? '무덤으로 이동했습니다.' : '삭제 완료';
+    (window.toast ? toast(message) : alert(message));
   }catch(err){ console.error(err); alert('삭제 실패: '+err.message); }
+  finally { btn.disabled = false; }
 });

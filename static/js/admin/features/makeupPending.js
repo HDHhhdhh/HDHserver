@@ -496,6 +496,19 @@ export function scheduledMakeupStudentIdsForDate({ students = [], carryover = {}
   ));
 }
 
+export function scheduledMakeupSlotsByDate({ students = [], carryover = {} } = {}) {
+  const result = {};
+  for (const row of buildScheduledMakeupRows({ students, carryover })) {
+    if (row.scheduledMakeup?.derivedFromPrecreditNote) continue;
+    const date = normDate(row.scheduledMakeup?.makeupDate);
+    const sid = String(row.sid || '').trim();
+    if (!date || !sid) continue;
+    const day = result[date] ||= {};
+    day[sid] = [...new Set([...(day[sid] || []), ...parseSlotNumbers(row.scheduledMakeup?.makeupTimes)])];
+  }
+  return result;
+}
+
 export function buildActiveScheduledMakeupRows({ operatingDate = '', ...input } = {}) {
   const referenceDate = normDate(operatingDate);
   const scheduledRows = buildScheduledMakeupRows(input);

@@ -1162,6 +1162,7 @@ print("updates GET-only base route checks passed")
     commands = [
         (["node", "scripts/verify_absence_recovery_sort.mjs"], "absence recovery convergence contract failed"),
         (["node", "scripts/verify_makeup_schedule_links.mjs"], "makeup schedule roster-link contract failed"),
+        (["node", "scripts/verify_makeup_self_study.mjs"], "makeup self-study override contract failed"),
         (["node", "scripts/verify_makeup_projection_oracle.mjs"], "makeup pure projection oracle failed"),
         (["node", "scripts/verify_phase16_demo_contract.mjs"], "Phase16 demo isolation contract failed"),
         (["node", "scripts/verify_admin_assistant_notes_demo.mjs"], "assistant student notes demo contract failed"),
@@ -1200,6 +1201,8 @@ def run_person_identity_checks() -> None:
     commands = (
         ([sys.executable, "scripts/verify_person_identity.py"], "person identity rule/store contract failed"),
         ([sys.executable, "scripts/verify_person_identity_routes.py"], "person identity route contract failed"),
+        ([sys.executable, "scripts/verify_student_graveyard.py"], "student graveyard contract failed"),
+        (["node", "scripts/verify_student_graveyard.mjs"], "student graveyard UI contract failed"),
         (["node", "scripts/verify_admin_white_review_pending.mjs"], "admin white-review pending contract failed"),
     )
     for cmd, failure_message in commands:
@@ -4113,7 +4116,7 @@ def run_self_study_video_assignment_source_checks() -> None:
     _assert_unit(
         "if student_absent_on_date(absent, date_key, sid):"
         in auto_assignment_service_py
-        and "if student_is_self_study_on_date(logs, date_key, sid, student):"
+        and "if student_is_self_study_on_date(logs, date_key, sid, student, makeup_slots=makeup_slots):"
         in auto_assignment_service_py,
         "self-study auto reconciliation must allow explicit self-study while keeping absence first",
     )
@@ -4160,7 +4163,7 @@ def run_self_study_video_assignment_source_checks() -> None:
         "roster export must remove self-study students",
     )
     _assert_unit(
-        "isSelfStudyScheduledForDate(stu, today)" in video_modal_js,
+        "isSelfStudyScheduledForDate(stu, today, state.scheduledMakeupSlotsByDate?.[today]?.[sid])" in video_modal_js,
         "video modal must not create new automatic progress for scheduled self-study",
     )
 
@@ -6031,7 +6034,7 @@ def run_student_previous_video_review_bootstrap_unit_checks() -> None:
             return {route_state["date"]: {route_state["sid"]: deepcopy(route_state["log_entry"])}}
 
     route_namespace["_student_is_registered_on_date"] = lambda *_args, **_kwargs: bool(route_state["registered"])
-    route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student: bool(route_state["log_entry"].get("selfStudy"))
+    route_namespace["_student_is_self_study_on_date"] = lambda _logs, _date, _sid, _student, **_kwargs: bool(route_state["log_entry"].get("selfStudy"))
     route_namespace["_load_updates_with_auto_assign"] = lambda **_kwargs: deepcopy(route_state["updates"])
     route_namespace["_active_student_alias_sid"] = lambda *_args: None
 

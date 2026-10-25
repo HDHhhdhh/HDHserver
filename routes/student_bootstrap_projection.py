@@ -7,6 +7,7 @@ from core import log_rules
 from core.ghost_student import GHOST_STUDENT_ID, is_ghost_student_sid
 from core.network_access import ACADEMY_ACCESS_MESSAGE
 from core.student_video_projection import history_for_sid
+from core.student_schedule_projection import scheduled_makeup_slots_by_student
 from core.update_assignment_rules import (
     SELF_STUDY_VIDEO_ASSIGN_SOURCE,
     is_manual_video_assignment,
@@ -58,6 +59,7 @@ class StudentBootstrapProjectionDependencies:
     academy_restricted_tests: Callable[[list[dict], bool], list[dict]]
     today_iso: Callable[[], str]
     dashboard_course_block_message: str
+    makeup_path: Any = None
 
 
 def build_ghost_student_bootstrap_payload(date: str) -> dict:
@@ -175,11 +177,14 @@ def build_student_bootstrap_payload(
         if isinstance(log_entry, dict) and log_entry
         else {date: {}}
     )
+    makeup = dependencies.load(dependencies.makeup_path) if dependencies.makeup_path is not None else {}
+    makeup_slots = scheduled_makeup_slots_by_student(makeup, date_key=date).get(sid)
     self_study_day = dependencies.student_is_self_study(
         logs,
         date,
         sid,
         student,
+        makeup_slots=makeup_slots,
     )
     archived = isinstance(log_entry, dict) and log_rules.truthy(
         log_entry.get("archived")

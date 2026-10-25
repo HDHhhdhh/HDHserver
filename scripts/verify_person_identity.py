@@ -341,7 +341,7 @@ def verify_source_contracts() -> None:
     clone_js = (ROOT / "static" / "js" / "all" / "features" / "cloneButtons.js").read_text(
         encoding="utf-8"
     )
-    check('field in {"id", "personId"}' in api_students, "immutable route fields")
+    check('field in {"id", "personId"' in api_students, "immutable route fields")
     check("create_student_with_identity(" in api_students, "identity-backed add route")
     check("retire_student_identity(" in api_students, "identity-backed delete route")
     check("identity_mode = same_person(base, base)" in api_auth, "legacy auth prefers personId")

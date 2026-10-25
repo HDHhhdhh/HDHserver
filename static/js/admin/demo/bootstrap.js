@@ -5,7 +5,8 @@ import {
   resetDemoStore,
   saveDemoStore,
 } from './store.js';
-import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1';
+import { createDemoFetch, mergeProgressPatch } from './fetch.js?v=20260912-watch-rearm1&graveyard=20261024';
+import { applyDemoGraveyardRequest } from './graveyardContract.js';
 import {
   applyAssistantStudentNotesRequest,
   isAssistantStudentNotesPath,
@@ -238,6 +239,11 @@ async function handleDemoApiRequest(request, input, init, demo) {
 
   const homeworkBody = method === 'GET' ? {} : await readJsonBody(input, init);
   const homeworkStore = loadDemoStore();
+  const graveyard = applyDemoGraveyardRequest({ method, path, body: homeworkBody, store: homeworkStore });
+  if (graveyard) {
+    if (graveyard.changed) saveDemoStore(homeworkStore);
+    return demoJson(graveyard.payload, { status: graveyard.status, handler: 'bootstrap-fallback', headers: { 'X-Student-Graveyard': '1' } });
+  }
   const homeworkResult = applyDemoHomeworkRequest({
     method,
     path,

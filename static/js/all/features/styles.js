@@ -56,6 +56,22 @@ body.dark .ns-input:focus {
   border-color:var(--accent-dark);
   box-shadow:0 0 0 3px rgba(96,165,250,.35);
 }
+.ns-date {
+  display:grid;
+  gap:3px;
+  min-width:0;
+  font-size:12px;
+  font-weight:700;
+}
+.ns-date > .ns-input {
+  width:100%;
+  min-width:0;
+  height:39px;
+  padding:0 12px;
+  border-radius:12px;
+  font-size:16px;
+  line-height:normal;
+}
 
 /* 추가 버튼 */
 .ns-btn {

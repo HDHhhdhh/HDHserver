@@ -7,6 +7,8 @@ from datetime import date, datetime, time, timedelta, timezone
 import re
 from typing import Final
 
+from core.student_schedule_rules import student_has_started_on_date
+
 
 KST: Final = timezone(timedelta(hours=9), "KST")
 MAX_RANGE_DAYS: Final = 62
@@ -155,6 +157,23 @@ def scheduled_makeup_student_ids(makeup: object, *, date_key: str) -> set[str]:
     return student_ids
 
 
+def scheduled_makeup_slots_by_student(makeup: object, *, date_key: str) -> dict[str, list[int]]:
+    target = _date(date_key)
+    if target is None:
+        return {}
+    result: dict[str, set[int]] = {}
+    for raw, fallback_sid in _iter_makeup_rows(makeup):
+        sid = _text(raw.get("studentId") or raw.get("student_id")) or fallback_sid
+        makeup_date = _text(raw.get("makeupDate") or raw.get("makeup_date")).split("T", 1)[0]
+        status = _text(raw.get("status") or "scheduled").lower()
+        if status not in STATUSES:
+            status = "scheduled"
+        if sid and _date(makeup_date) == target and status == "scheduled":
+            slots = _slots(raw.get("makeupTimes") or raw.get("makeup_times") or raw.get("slots") or raw.get("slot")) or [1]
+            result.setdefault(sid, set()).update(slots)
+    return {sid: sorted(slots) for sid, slots in result.items()}
+
+
 def effective_attendance_student_ids(
     students: object,
     *,
@@ -175,7 +194,7 @@ def effective_attendance_student_ids(
         if not isinstance(student, Mapping):
             continue
         sid = _text(student.get("id"))
-        if not sid:
+        if not sid or not student_has_started_on_date(student, date_key):
             continue
         is_absent, _ = _absence(absence, date_key, sid)
         regular_slots, _ = _regular_plan(student, target)
@@ -233,6 +252,8 @@ def project_student_schedule(student: object, *, sid: str, start_date: str, end_
     for offset in range((end - start).days + 1):
         target = start + timedelta(days=offset)
         date_key = target.isoformat()
+        if not student_has_started_on_date(student_map, date_key):
+            continue
         regular_slots, paired_times = _regular_plan(student_map, target)
         override_slots = _weekend_slots(weekend, date_key, target_sid)
         is_absent, absent_slots = _absence(absence, date_key, target_sid)
@@ -297,5 +318,6 @@ __all__ = [
     "effective_attendance_student_ids",
     "project_student_schedule",
     "scheduled_makeup_student_ids",
+    "scheduled_makeup_slots_by_student",
     "select_next_schedule",
 ]

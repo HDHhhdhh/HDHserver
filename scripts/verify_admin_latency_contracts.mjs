@@ -188,6 +188,7 @@ async function verifyCalendarRecalculation() {
     const ymd = date => date.toISOString().slice(0, 10);
     const yoil = () => '금';
     const hasWeekday = () => true;
+    const studentHasStartedOnDate = () => true;
     const getCountSlots = () => [1];
     const getMakeupSlots = (date, sid) => WEEKEND?.[date]?.[sid] || [1];
     const parseSlotNumbers = value => value;

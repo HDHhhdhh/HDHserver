@@ -6,7 +6,7 @@ import { dedupKeyForStudent, renderHomeworkBooks, renderTable } from './features
 import './features/progressModal.js';
 import './features/styles.js';
 import { hookAllSort } from './features/sortHelpers.js';
-import { hookDeleteButtons } from './features/deleteButtons.js';
+import { hookDeleteButtons } from './features/deleteButtons.js?v=20261024-graveyard';
 import { hookCloneButtons } from './features/cloneButtons.js';
 import './features/escClose.js?v=20260929-search-visibility1';
 import { mountNewStudentBar } from './features/addStudent.js';
@@ -14,6 +14,33 @@ import { mountChatRosterExport } from './features/chatRosterExport.js';
 import { decorateStudentTestRecordButtons, initStudentTestRecordDetails } from '../shared/testRecordDetails.js';
 import { state as adminTooltipState } from '../admin/core/state.js';
 import { initHoverTooltip as initAdminHoverTooltip } from '../admin/features/hoverTooltip.js?v=20260906-exam-pending-color1';
+import { getJSONChecked } from './core/api.js';
+
+document.getElementById('openGraveyard')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const { openGraveyard } = await import('./features/graveyard.js?v=20261024');
+    await openGraveyard({ onRestored: async (student) => {
+      // Reflect the confirmed restoration even if the following roster reload fails.
+      if (student) {
+        state.students = [...state.students.filter(row => String(row.id) !== String(student.id)), student];
+        window.students = state.students;
+        renderAll();
+      }
+      const students = await getJSONChecked('/api/students');
+      if (!Array.isArray(students)) throw new Error('명단 응답을 확인할 수 없습니다.');
+      state.students = students;
+      window.students = students;
+      renderAll();
+    } });
+  } catch (error) {
+    console.error(error);
+    alert('무덤을 열지 못했습니다. 새로고침 후 다시 시도하세요.');
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function syncAdminTooltipState() {
   adminTooltipState.students = state.students;
@@ -65,6 +92,7 @@ document.addEventListener('all:student-deleted', (event) => {
   document.dispatchEvent(new CustomEvent('all:rendered'));
   updateAllCount();
   renderYoilStats();
+  mountChatRosterExport();
 });
 
 (async function init() {

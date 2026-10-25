@@ -6,6 +6,7 @@ import { applyStudentLogsRequest } from './studentLogsContract.js';
 import { patchDemoTestConfig } from './testConfigContract.js?v=20260827-test-patch1';
 import { applyDemoQuickPrinterRequest } from './quickPrinterContract.js?v=20260830-carryover-history1';
 import { effectiveDemoRosterStudentIds } from './attendanceRosterContract.js?v=20260830-missing-leave-roster1';
+import { applyDemoGraveyardRequest } from './graveyardContract.js';
 
 const DEFAULT_DEMO_NOW = '2026-06-17T00:00:00+09:00';
 const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
@@ -470,7 +471,7 @@ function setStudentField(store, body) {
 }
 
 function nextDemoStudentId(store) {
-  const used = new Set((store.students || []).map(row => String(row?.id || '')));
+  const used = new Set([...(store.students || []), ...(store.graveyard || []).map(row => row.student)].map(row => String(row?.id || '')));
   for (let index = 1; index < 10000; index += 1) {
     const id = `demo-s${String(index).padStart(3, '0')}`;
     if (!used.has(id)) return id;
@@ -499,44 +500,6 @@ function addStudent(store, body) {
   store.students = Array.isArray(store.students) ? store.students : [];
   store.students.push(student);
   return { id, student: clone(student) };
-}
-
-function removeSidFromDateSidMap(store, key, sid) {
-  const source = store[key];
-  if (!source || typeof source !== 'object') return;
-  Object.keys(source).forEach(date => {
-    if (source[date] && typeof source[date] === 'object' && !Array.isArray(source[date])) {
-      delete source[date][sid];
-      if (!Object.keys(source[date]).length) delete source[date];
-    }
-  });
-}
-
-function removeSidFromDateArrayMap(store, key, sid) {
-  const source = store[key];
-  if (!source || typeof source !== 'object') return;
-  Object.keys(source).forEach(date => {
-    if (Array.isArray(source[date])) {
-      source[date] = source[date].filter(item => String(item) !== sid);
-      if (!source[date].length) delete source[date];
-    }
-  });
-}
-
-function deleteStudent(store, sid) {
-  const key = String(sid || '').trim();
-  if (!key) return { error: 'missing sid' };
-  store.students = Array.isArray(store.students) ? store.students : [];
-  const before = store.students.length;
-  store.students = store.students.filter(row => String(row?.id) !== key);
-  ['updates', 'logs', 'progress', 'attendance', 'contact', 'arriveTime', 'weekendSlots'].forEach(mapKey => {
-    removeSidFromDateSidMap(store, mapKey, key);
-  });
-  removeSidFromDateArrayMap(store, 'extraAttend', key);
-  if (store.matAssign && typeof store.matAssign === 'object') delete store.matAssign[key];
-  if (store.absent?.by_student) delete store.absent.by_student[key];
-  if (store.absent?.by_date) removeSidFromDateArrayMap(store.absent, 'by_date', key);
-  return { deleted: before !== store.students.length, id: key };
 }
 
 function sanitizeVideoRow(row, index = 0) {
@@ -1087,6 +1050,8 @@ async function handleGet(root, ctx, store) {
       ok: true, date, serverNow: nowIso(), classes: [],
     }));
   }
+  const graveyard = applyDemoGraveyardRequest({ method: 'GET', path, store });
+  if (graveyard) return responseJson(root, graveyard.payload, graveyard.status);
   if (path === '/api/students') return responseJson(root, clone(store.students || []));
   if (path === '/api/videos') return responseJson(root, clone(store.videos || []));
   if (path === '/api/materials') return responseJson(root, clone(store.materials || {}));
@@ -1159,6 +1124,11 @@ async function handleWrite(root, ctx, store) {
     }
   }
 
+  const graveyard = applyDemoGraveyardRequest({ method, path, body, store });
+  if (graveyard) {
+    if (graveyard.changed) saveDemoStore(store);
+    return responseJson(root, graveyard.payload, graveyard.status, { 'X-Student-Graveyard': '1' });
+  }
   const quickPrinterResult = applyDemoQuickPrinterRequest({
     method,
     path,
@@ -1247,14 +1217,6 @@ async function handleWrite(root, ctx, store) {
     const result = addStudent(store, body);
     saveDemoStore(store);
     return ok(root, { ok: true, id: result.id, student: result.student });
-  }
-
-  if (method === 'DELETE' && path.startsWith('/api/students/')) {
-    const sid = decodeURIComponent(path.slice('/api/students/'.length));
-    const result = deleteStudent(store, sid);
-    if (result.error) return badRequest(root, result.error);
-    saveDemoStore(store);
-    return ok(root, { ok: true, ...result });
   }
 
   if (method === 'POST' && path === '/api/videos') {

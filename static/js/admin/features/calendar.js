@@ -3,7 +3,7 @@
 import { $, toast } from '../core/utils.js';
 import { state } from '../core/state.js';
 import { getAdminDate } from '../core/adminDate.js';
-import { saveWeekendSlotsPatch } from './today.state.js';
+import { saveWeekendSlotsPatch, studentHasStartedOnDate } from './today.state.js';
 import { renderTimeGraphForDate } from './timeGraph.js';
 import {
   flattenSchoolCalendarRows,
@@ -814,11 +814,13 @@ export function initCalendar() {
       const slotSets = Object.fromEntries(MAKEUP_SLOTS.map(slot => [slot, new Set()]));
 
       (state.students || []).forEach(stu => {
-        if (!hasWeekday(stu, wchr)) return;
+        if (!studentHasStartedOnDate(stu, dateStr) || !hasWeekday(stu, wchr)) return;
         addSlotCounts(slotSets, stu.id, getCountSlots(stu, dateStr), [1]);
       });
 
       (EXTRA[dateStr] || []).map(String).forEach(sid => {
+        const student = (state.students || []).find(stu => String(stu.id) === sid);
+        if (student && !studentHasStartedOnDate(student, dateStr)) return;
         addSlotCounts(slotSets, sid, getMakeupSlots(dateStr, sid), [1]);
       });
 

@@ -4,6 +4,7 @@ import datetime as dt
 import re
 
 from core import log_rules
+from core.date_rules import parse_iso_date_key
 from core.student_auto_assignment_rules import student_auto_video_assign_count
 from core.update_assignment_rules import sid_lookup
 
@@ -11,7 +12,20 @@ from core.update_assignment_rules import sid_lookup
 SELF_STUDY_DAY_FIELDS = ("day1", "day2", "day3", "day4", "day5")
 
 
+def student_has_started_on_date(student, date_key: str) -> bool:
+    target = parse_iso_date_key(date_key)
+    if target is None:
+        return False
+    for field in ("registeredOn", "firstAttendanceDate"):
+        start = parse_iso_date_key((student or {}).get(field))
+        if start is not None and target < start:
+            return False
+    return True
+
+
 def student_has_schedule_on_date(student: dict, date_key: str) -> bool:
+    if not student_has_started_on_date(student, date_key):
+        return False
     try:
         target = dt.date.fromisoformat(date_key)
     except ValueError:
@@ -54,6 +68,8 @@ def student_slots_for_date(
     absent=None,
 ) -> list[int]:
     """Return date-specific class slots after slot absences are removed."""
+    if not student_has_started_on_date(student, date_key):
+        return []
     weekend = weekend_slots if isinstance(weekend_slots, dict) else {}
     day_override = weekend.get(str(date_key or ""))
     slots: list[int] = []
@@ -121,7 +137,11 @@ def effective_auto_video_assign_count(
 def student_has_scheduled_self_study_on_date(
     student: dict,
     date_key: str,
+    *,
+    makeup_slots=None,
 ) -> bool:
+    if not student_has_started_on_date(student, date_key):
+        return False
     try:
         target = dt.date.fromisoformat(date_key)
     except ValueError:
@@ -145,11 +165,15 @@ def student_has_scheduled_self_study_on_date(
         }
 
     weekday = "월화수목금토일"[target.weekday()]
-    return any(
-        field in scheduled_fields
+    matching_fields = [
+        field for field in SELF_STUDY_DAY_FIELDS if field in scheduled_fields
         and str(student.get(field) or "").strip().startswith(weekday)
-        for field in SELF_STUDY_DAY_FIELDS
-    )
+    ]
+    reserved_slots = set(normalize_schedule_slots(makeup_slots))
+    for field in matching_fields:
+        if reserved_slots.intersection(normalize_schedule_slots(student.get(field))):
+            return False
+    return bool(matching_fields)
 
 
 def student_is_self_study_on_date(
@@ -157,6 +181,8 @@ def student_is_self_study_on_date(
     date_key: str,
     sid: str,
     student: dict,
+    *,
+    makeup_slots=None,
 ) -> bool:
     day_logs = logs.get(date_key) if isinstance(logs, dict) else None
     entry = sid_lookup(
@@ -165,7 +191,7 @@ def student_is_self_study_on_date(
     )
     if isinstance(entry, dict) and "selfStudy" in entry:
         return log_rules.truthy(entry.get("selfStudy"))
-    return student_has_scheduled_self_study_on_date(student, date_key)
+    return student_has_scheduled_self_study_on_date(student, date_key, makeup_slots=makeup_slots)
 
 
 def log_entry_for_date(logs, date_key: str, sid: str):
@@ -197,6 +223,7 @@ __all__ = (
     "normalize_schedule_slots",
     "student_absent_on_date",
     "student_has_schedule_on_date",
+    "student_has_started_on_date",
     "student_has_scheduled_self_study_on_date",
     "student_is_self_study_on_date",
     "student_slots_for_date",

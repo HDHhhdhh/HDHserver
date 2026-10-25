@@ -1,5 +1,7 @@
 // 한 줄 신규 학생 바(가로 스크롤 + 통일 스타일)
 export function mountNewStudentBar() {
+  const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+  const initialDate = today();
   // 마운트 지점 없으면 헤더 아래 자동 생성
   let host = document.getElementById('newStuMount');
   if (!host) {
@@ -12,6 +14,13 @@ export function mountNewStudentBar() {
   host.innerHTML = `
   <div class="ns-wrap">
     <input class="ns-input" id="ns_name" placeholder="이름">
+
+    <label class="ns-date" for="ns_firstAttendanceDate">
+      <span>첫 등원일</span>
+      <input class="ns-input" id="ns_firstAttendanceDate" type="date" required
+             min="${initialDate}" value="${initialDate}"
+             title="선택한 날짜부터 요일 설정에 따라 오늘 학생 명단에 표시합니다.">
+    </label>
 
     <select class="ns-input" id="ns_cur">
       <option value="공수1">공수1</option>
@@ -61,9 +70,15 @@ export function mountNewStudentBar() {
     <button class="ns-btn" id="ns_add">추가</button>
   </div>`;
 
-  document.getElementById('ns_add')?.addEventListener('click', async () => {
+  const addButton = document.getElementById('ns_add');
+  addButton?.addEventListener('click', async () => {
+    if (addButton.disabled) return;
+    const firstAttendanceInput = document.getElementById('ns_firstAttendanceDate');
+    firstAttendanceInput.min = today();
+    if (!firstAttendanceInput.reportValidity()) return;
     const body = {
       name: val('ns_name'),
+      firstAttendanceDate: val('ns_firstAttendanceDate'),
       curriculum: val('ns_cur'),
       subCurriculum: val('ns_sub'),
       day1: val('ns_day1'), day2: val('ns_day2'), day3: val('ns_day3'),
@@ -77,16 +92,22 @@ export function mountNewStudentBar() {
       docUrl: val('ns_doc')
     };
 
+    addButton.disabled = true;
     try {
       const r = await fetch('/api/add-student', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      if (!r.ok) throw new Error(r.status);
+      if (!r.ok) {
+        const error = await r.json().catch(() => null);
+        throw new Error(error?.error || r.status);
+      }
       location.reload();
     } catch (e) {
       alert('추가 실패: ' + e.message);
+    } finally {
+      addButton.disabled = false;
     }
   });
 

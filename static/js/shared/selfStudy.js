@@ -76,10 +76,15 @@ export function dayFieldMatchesDate(student, field, dateStr) {
   return value.startsWith(weekday);
 }
 
-export function isSelfStudyScheduledForDate(student, dateStr) {
+export function isSelfStudyScheduledForDate(student, dateStr, makeupSlots = []) {
   if (!student || typeof student !== 'object') return false;
-  return DAY_FIELDS.some((field) => (
+  const matchingFields = DAY_FIELDS.filter((field) => (
     dayFieldMatchesDate(student, field, dateStr)
     && isSelfStudyDayField(student, field)
   ));
+  const reserved = new Set((Array.isArray(makeupSlots) ? makeupSlots : []).map(Number));
+  const covered = matchingFields.some(field => (
+    (String(student[field] || '').match(/(?<!\d)[1-6](?!\d)/g) || []).some(slot => reserved.has(Number(slot)))
+  ));
+  return matchingFields.length > 0 && !covered;
 }

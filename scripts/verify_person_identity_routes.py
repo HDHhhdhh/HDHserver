@@ -138,6 +138,7 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
     persons_path = root / "persons.json"
     journal_path = root / "instance" / "person_identity_transactions" / "pending.json"
     directory, students = literal_identity_fixture()
+    students[0]["registeredOn"] = "2026-08-01"
     write_json(students_path, students)
     write_json(persons_path, directory)
 
@@ -162,6 +163,14 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
     check(roster_response.status_code == 200, "student collection GET")
     check(roster_response.get_json() == students, "student collection literal oracle")
 
+    before_invalid_date = byte_fingerprints(students_path, persons_path, journal_path)
+    for invalid in ("2026-08-25", "2027-02-29", "2026-02-30", "20260827", "2026-08-27T00:00:00Z", "", None, False):
+        rejected = client.post("/api/add-student", json={"name": "날짜검증", "firstAttendanceDate": invalid})
+        check(rejected.status_code == 400, f"invalid first attendance rejected: {invalid!r}")
+        check(byte_fingerprints(students_path, persons_path, journal_path) == before_invalid_date,
+              "invalid first attendance never writes identity stores or journal")
+    check(not notifications, "invalid first attendance never sends schedule notifications")
+
     clone_response = client.post(
         f"/api/add-student?cloneFromSid={quote('소망101', safe='')}",
         json={
@@ -171,6 +180,7 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
             "docUrl": "https://example.invalid/s",
             "curriculum": "미적분1",
             "subCurriculum": "APEX",
+            "registeredOn": "2026-08-01",
         },
     )
     check(clone_response.status_code == 200, "identity clone route")
@@ -178,6 +188,10 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
     check(clone_payload["personId"] == source_person_id, "clone response personId")
     check(clone_payload["id"] == "소망303", "clone response SID")
     check(notifications[-1] == ("소망303",), "clone notification SID")
+    clone_row = next(row for row in client.get("/api/students").get_json() if row["id"] == "소망303")
+    check(clone_row["registeredOn"] == "2026-08-26", "clone starts on its own server registration day")
+    check(clone_row["firstAttendanceDate"] == "2026-08-26", "clone without a first date starts today")
+    check(read_json(students_path)[:2] == students, "adding a clone preserves existing registration metadata")
 
     before_rejected_clone = byte_fingerprints(students_path, persons_path)
     conflicting_source = client.post(
@@ -210,6 +224,8 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
             "docUrl": "https://example.invalid/new",
             "curriculum": "대수",
             "subCurriculum": "A:Ble",
+            "registeredOn": "2099-01-01",
+            "firstAttendanceDate": "2028-02-29",
         },
     )
     check(add_response.status_code == 200, "identity normal add route")
@@ -218,6 +234,8 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
         row for row in read_json(students_path) if row["id"] == add_response.get_json()["id"]
     )
     check(added_row["autoVideoAssignCount"] == 1, "A:Ble add literal default count")
+    check(added_row["registeredOn"] == "2026-08-26", "normal add overrides a client registration date")
+    check(added_row["firstAttendanceDate"] == "2028-02-29", "chosen future leap day persists separately from registration")
     check(notifications[-1] == (added_row["id"],), "normal add notification SID")
 
     update_response = client.post(
@@ -231,6 +249,11 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
         {row.get("externalMarker") for row in linked if row["id"] in {"소망101", "소망202"}}
         == {"keep-1", "keep-2"},
         "profile propagation preserves unrelated student fields",
+    )
+    check(
+        {row["id"]: row.get("registeredOn") for row in linked}
+        == {"소망101": "2026-08-01", "소망202": None, "소망303": "2026-08-26"},
+        "shared profile updates preserve each SID's own registration date and missing legacy dates",
     )
     stored_directory = read_json(persons_path)
     check(stored_directory["externalRootMarker"] == "keep-root", "root directory field preserved")
@@ -396,6 +419,18 @@ def verify_identity_routes(api_students, api_auth, root: pathlib.Path) -> None:
         byte_fingerprints(students_path, persons_path) == before_immutable,
         "immutable field rejection leaves both stores byte-identical",
     )
+    for value in ("2020-01-01", "2099-01-01", "", None):
+        response = client.post(
+            "/api/update",
+            json={"id": "소망303", "field": "registeredOn", "value": value},
+        )
+        check(response.status_code == 400, "registration date cannot be rewritten or cleared")
+        check(byte_fingerprints(students_path, persons_path) == before_immutable,
+              "rejected registration edit preserves both identity stores")
+    response = client.post("/api/update", json={"id": "소망303", "field": "firstAttendanceDate", "value": "2020-01-01"})
+    check(response.status_code == 400, "first attendance cannot silently rewrite historical membership")
+    check(byte_fingerprints(students_path, persons_path) == before_immutable,
+          "rejected first-attendance rewrite preserves both identity stores")
 
     delete_response = client.delete("/api/students/소망303")
     check(delete_response.status_code == 204, "person-aware delete route")
@@ -454,6 +489,7 @@ def verify_legacy_fallback(api_students, root: pathlib.Path) -> None:
     api_students.PERSON_IDENTITY_JOURNAL_PATH = journal_path
     api_students.enqueue_current_schedule_changes = lambda _sids: None
     api_students.random.randint = lambda _low, _high: 505
+    api_students._today_kst_iso = lambda: "2026-08-27"
 
     app = make_app(api_students)
     response = app.test_client().post(
@@ -463,8 +499,18 @@ def verify_legacy_fallback(api_students, root: pathlib.Path) -> None:
     check(response.status_code == 200, "legacy add remains available before migration")
     stored = read_json(students_path)
     check(stored[0]["id"] == "레거시505", "legacy SID shape")
+    check(stored[0]["registeredOn"] == "2026-08-27", "legacy add stores the server registration day")
+    check(stored[0]["firstAttendanceDate"] == "2026-08-27", "omitted first attendance defaults to today in legacy mode")
     check("personId" not in stored[0], "legacy mode does not partially initialize identity")
     check(not persons_path.exists(), "legacy mode does not create persons.json")
+    before_registration_edit = byte_fingerprints(students_path, persons_path)
+    response = app.test_client().post(
+        "/api/update",
+        json={"id": "레거시505", "field": "registeredOn", "value": "2020-01-01"},
+    )
+    check(response.status_code == 400, "legacy registration date is immutable")
+    check(byte_fingerprints(students_path, persons_path) == before_registration_edit,
+          "legacy registration rejection never writes stores")
 
     legacy_white_review = app.test_client().post(
         "/api/update",

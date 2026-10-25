@@ -424,7 +424,7 @@ def add_student_to_identity_state(
     persons = next_directory["persons"]
     row = copy.deepcopy(dict(student))
     sid = normalized_text(row.get("id"))
-    if not sid or any(normalized_text(item.get("id")) == sid for item in next_students):
+    if not sid or sid in validate_directory(next_directory):
         raise PersonIdentityConflictError("student SID is missing or already exists")
 
     requested = normalized_text(person_id)
@@ -547,6 +547,7 @@ def retire_student_from_identity_state(
     link["status"] = "retired"
     link["retiredAt"] = now
     link["lastKnownCourse"] = course_snapshot(removed)
+    link["studentSnapshot"] = copy.deepcopy(removed)
     record["updatedAt"] = now
     if not any(
         normalized_text(item.get("status")) == "active"

@@ -24,6 +24,7 @@ from core.person_identity import (
     normalized_text,
     retire_student_from_identity_state,
     update_person_profile_in_state,
+    validate_directory,
     validate_identity_state,
 )
 from core.storage import file_lock, save_atomic
@@ -402,7 +403,7 @@ def create_student_with_identity(
     next_suffix = suffix_factory or (lambda: secrets.randbelow(1000))
 
     def mutation(directory: dict, students: list) -> tuple[dict, list, dict]:
-        existing_sids = [normalized_text(row.get("id")) for row in students if isinstance(row, dict)]
+        existing_sids = list(validate_directory(directory))
         sid = allocate_unique_sid(sid_prefix, existing_sids, suffix_factory=next_suffix)
         draft = copy.deepcopy(student)
         draft.pop("id", None)

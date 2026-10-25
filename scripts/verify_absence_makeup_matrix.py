@@ -554,6 +554,25 @@ def run_self_study_absence_cases(matrix: Matrix) -> None:
                     "cold route GET and older-client open write preserve the persisted self-study exemption",
                 )
 
+    for makeup_slot, exempt in ((1, False), (2, True)):
+        with tempfile.TemporaryDirectory(prefix="verify-self-study-makeup-") as raw:
+            fixture = build_fixture(Path(raw))
+            carryover = read_json(fixture["paths"]["carryover"])
+            carryover["by_absence"].setdefault(OTHER_DATE, {})[SID] = {"scheduledMakeup": {
+                "studentId": SID, "makeupDate": DATE, "makeupTimes": [makeup_slot], "status": "scheduled",
+            }}
+            write_json(fixture["paths"]["carryover"], carryover)
+            student = {"id": SID, "day1": "월1", "selfStudyDays": ["day1"]}
+            with patched_attendance_route(fixture, students=[student]) as (client, _notifications, _postcommit):
+                response = post_current_absence(client, fixture["absent_after"])
+            saved = fixture_snapshot(fixture)
+            marker = saved["carryover"]["by_absence"].get(DATE, {}).get(SID, {})
+            matrix.check(
+                f"S-makeup-slot-{makeup_slot}",
+                response.status_code == 200 and (marker.get("state") == "self-study") == exempt,
+                "an overlapping makeup is a class absence; another slot keeps the self-study exemption",
+            )
+
     for phase in ("updates", "progress", "logs", "absent", "carryover", "before_commit"):
         with tempfile.TemporaryDirectory(prefix=f"verify-self-study-rollback-{phase}-") as raw:
             fixture = build_fixture(Path(raw))

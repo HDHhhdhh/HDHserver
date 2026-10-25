@@ -14,11 +14,12 @@ function same(actual, expected, label) {
   assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected, label);
   checks += 1;
 }
-// Reinsert only the retired counter to retain the independent frozen baseline.
-const preExtractionSource = source.replace('    const seenDetails = new Set();',
+// The additive daily-mode projection has its own behavior checks; freeze the existing helpers.
+const preExtractionSource = source.replace(/^export function scheduledMakeupSlotsByDate\([\s\S]*?^\}\n\n/m, '')
+  .replace('    const seenDetails = new Set();',
   "    const duplicateCounts = new Map();\n    entries.forEach(item => {\n      const course = courseForExport(item.course);\n      const key = `${item.absenceDate || ''}|${course}`;\n      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);\n    });\n\n" + '    const seenDetails = new Set();');
 same(hash(preExtractionSource), '984e1624c21158a9ac2f317aaf2210419f8c4253de7fac51e1a5e07734c1c4ba',
-  'pre-extraction baseline permits only the unused export counter removal');
+  'existing projection baseline permits only the retired counter and additive daily-mode helper');
 const sandbox = { console };
 vm.runInNewContext(source.replace(/\bexport function /g, 'function ') +
   '\nglobalThis.rules = { buildPendingMakeups, countPendingMakeupsBySid, makeupOriginalAbsenceId,' +

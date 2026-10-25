@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from routes import api_student_bootstrap  # noqa: E402
+from core.student_schedule_rules import student_is_self_study_on_date  # noqa: E402
 from routes.student_bootstrap_projection import (  # noqa: E402
     StudentBootstrapProjectionDependencies,
 )
@@ -254,7 +256,7 @@ def main() -> int:
                 student_is_registered=lambda *_args, **_kwargs: bool(
                     policy["registered"]
                 ),
-                student_is_self_study=lambda logs, date, sid, _student: bool(
+                student_is_self_study=lambda logs, date, sid, _student, **_kwargs: bool(
                     ((logs.get(date) or {}).get(sid) or {}).get("selfStudy")
                 ),
                 student_absent=lambda absent, date, sid: sid
@@ -648,6 +650,23 @@ def main() -> int:
             assert blocked["homeworkBooks"] == []
             assert blocked["blockMessage"] == "수업일이 아닙니다."
             _assert_all_unchanged(before, "course-blocked bootstrap")
+
+            makeup_path = root / "makeup.json"
+            makeup_student = {**fixtures["students"][0], "day1": "일1", "selfStudyDays": {"day1": True}}
+            _write_json(paths["students"], [makeup_student])
+            policy["registered"] = True
+            api_student_bootstrap.configure_student_bootstrap_projection(app, replace(
+                dependencies, makeup_path=makeup_path, student_is_self_study=student_is_self_study_on_date,
+            ))
+            for status, slots, expected in (("scheduled", [1], False), ("cancelled", [1], True),
+                                           ("completed", [1], True), ("scheduled", [2], True)):
+                _write_json(makeup_path, {"by_absence": {"2026-05-24": {SID: {"scheduledMakeup": {
+                    "studentId": SID, "makeupDate": HISTORICAL_DATE, "makeupTimes": slots, "status": status,
+                }}}}})
+                snapshots = {path: _fingerprint(path) for path in [*paths.values(), makeup_path]}
+                response = client.get(f"/api/student/bootstrap?sid={SID}&date={HISTORICAL_DATE}")
+                assert response.status_code == 200 and response.get_json()["selfStudy"] is expected
+                _assert_all_unchanged(snapshots, "makeup self-study bootstrap")
 
             print(
                 "student bootstrap route checks passed: "

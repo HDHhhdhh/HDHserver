@@ -8,6 +8,7 @@ from urllib.parse import unquote
 
 from flask import Blueprint, abort, current_app, jsonify, request
 
+from core.date_rules import is_iso_date_key
 from core.paths import BASE, STU_PATH
 
 try:
@@ -35,8 +36,10 @@ from core.person_identity_store import (
     mutate_identity_state,
     retire_student_identity,
     update_person_profile_field,
+    utc_now_isoz,
 )
-from core.storage import file_lock, load, save_atomic
+from core.storage import file_lock, load, nocache_resp, save_atomic
+from core.student_graveyard import retired_student_rows, restore_student_in_identity_state
 from core.student_auto_assignment_rules import (
     AUTO_VIDEO_ASSIGN_FIELD,
     apply_able_auto_video_assign_default,
@@ -57,6 +60,8 @@ _PERSON_PROFILE_FIELD_ALIASES = {
     "middleSchool": "school",
 }
 WHITE_REVIEW_PENDING_FIELD = "whiteReviewPending"
+REGISTERED_ON_FIELD = "registeredOn"
+FIRST_ATTENDANCE_DATE_FIELD = "firstAttendanceDate"
 
 
 def configure_student_identity_assignment_hooks(
@@ -155,6 +160,15 @@ def api_add_student():
     data.pop("id", None)
     data.pop("personId", None)
     data.pop("cloneFromSid", None)
+    # A cloned SID starts on its own registration day, not the source SID's day.
+    data[REGISTERED_ON_FIELD] = _today_kst_iso()
+    first_attendance = data.get(FIRST_ATTENDANCE_DATE_FIELD, data[REGISTERED_ON_FIELD])
+    if not is_iso_date_key(first_attendance):
+        return jsonify({"ok": False, "error": "첫 등원일을 올바른 날짜로 선택해 주세요."}), 400
+    first_attendance = first_attendance.strip()
+    if first_attendance < data[REGISTERED_ON_FIELD]:
+        return jsonify({"ok": False, "error": "첫 등원일은 오늘 또는 이후 날짜로 선택해 주세요."}), 400
+    data[FIRST_ATTENDANCE_DATE_FIELD] = first_attendance
     raw_name = str(data.get("name", "user"))
     name_slug = re.sub(r"[^0-9A-Za-z가-힣]", "", raw_name)
     apply_able_auto_video_assign_default(data)
@@ -216,6 +230,47 @@ def api_add_student():
     return jsonify({"id": data["id"]})
 
 
+@bp_api_students.get("/api/students/graveyard")
+def api_student_graveyard():
+    if not _person_identity_configured():
+        return nocache_resp({"ok": True, "configured": False, "revision": None, "students": []})
+    if _person_identity_writes_degraded():
+        return _person_identity_error("person identity recovery is required", 503)
+    try:
+        with identity_state_lock(PERSONS_PATH, STU_PATH, PERSON_IDENTITY_JOURNAL_PATH):
+            if PERSON_IDENTITY_JOURNAL_PATH.exists():
+                return _person_identity_error("person identity recovery is required", 503)
+            directory, students = load_identity_state_strict(PERSONS_PATH, STU_PATH)
+            rows = retired_student_rows(directory, students)
+        return nocache_resp({"ok": True, "configured": True, "revision": directory["revision"], "students": rows})
+    except (PersonIdentityUnavailableError, PersonIdentityValidationError, OSError, TimeoutError) as exc:
+        return _person_identity_error(str(exc), 503)
+
+
+@bp_api_students.post("/api/students/<string:sid>/restore")
+def api_restore_student(sid: str):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or type(body.get("revision")) is not int or body["revision"] < 1:
+        return jsonify({"ok": False, "error": "무덤 목록의 revision이 필요합니다."}), 400
+    if not _person_identity_configured() or _person_identity_writes_degraded():
+        return _person_identity_error("person identity is unavailable", 503)
+    try:
+        restored = mutate_identity_state(
+            PERSONS_PATH, STU_PATH, PERSON_IDENTITY_JOURNAL_PATH,
+            lambda directory, students: restore_student_in_identity_state(
+                directory, students, sid, expected_revision=body["revision"], now=utc_now_isoz(),
+            ),
+        )
+    except PersonIdentityNotFoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except (PersonIdentityConflictError, TimeoutError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    except (PersonIdentityUnavailableError, PersonIdentityValidationError, OSError) as exc:
+        return _person_identity_error(str(exc), 503)
+    # Restoration reconnects the same SID; operational history and assignments stay intact.
+    return nocache_resp({"ok": True, "student": restored})
+
+
 @bp_api_students.delete("/api/students/<string:sid>")
 def api_delete_student(sid: str):
     if _person_identity_configured():
@@ -240,7 +295,7 @@ def api_delete_student(sid: str):
             return _person_identity_error(str(exc), 503)
         except TimeoutError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 409
-        return "", 204
+        return "", 204, {"X-Student-Graveyard": "1"}
 
     with file_lock(STU_PATH):
         students: list[dict] = load(STU_PATH)
@@ -263,7 +318,7 @@ def api_update_student_field():
         abort(400)
 
     field = str(field)
-    if field in {"id", "personId"}:
+    if field in {"id", "personId", REGISTERED_ON_FIELD, FIRST_ATTENDANCE_DATE_FIELD}:
         return jsonify({"ok": False, "error": f"field is immutable: {field}"}), 400
     if field in {WHITE_REVIEW_PENDING_FIELD, GICHUL_OVERLAY_FIELD} and type(value) is not bool:
         return jsonify(

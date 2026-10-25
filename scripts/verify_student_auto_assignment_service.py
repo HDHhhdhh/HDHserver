@@ -743,6 +743,53 @@ def run_self_study_reconcile(runtime: FixtureRuntime) -> None:
     assert not any(event[0] in {"lock_enter", "save"} for event in runtime.events)
 
 
+def run_makeup_overrides_scheduled_self_study(runtime: FixtureRuntime) -> None:
+    runtime.paths["makeup"] = runtime.root / "makeup.json"
+    dependencies = replace(runtime.dependencies(), makeup_path=runtime.paths["makeup"])
+
+    def seed(*, status="scheduled", slots=None, updates=None):
+        runtime.seed(updates if updates is not None else {DATE: {}})
+        runtime.logs = {DATE: {}}
+        students = runtime.load(runtime.paths["students"])
+        students[0]["selfStudyDays"] = {"day1": True}
+        write_literal(runtime.paths["students"], students)
+        write_literal(runtime.paths["makeup"], {"by_absence": {"2026-05-30": {
+            SID: {"scheduledMakeup": {"studentId": SID, "makeupDate": DATE,
+                "makeupTimes": [1] if slots is None else slots, "status": status}},
+        }}})
+
+    seed()
+    before = {name: fingerprint(path) for name, path in runtime.paths.items() if name != "updates"}
+    assert load_updates_with_auto_assign(dependencies) == {
+        DATE: {SID: {"videos": ["m1", "m2"], "source": "auto"}},
+    }, "a makeup class must receive new class videos rather than self-study review"
+    assert {name: fingerprint(runtime.paths[name]) for name in before} == before
+    before_updates = fingerprint(runtime.paths["updates"])
+    payload, status = reconcile_self_study_assignment(
+        dependencies, date=DATE, sid=SID, has_requested_videos=False,
+        requested_videos=[], append_requested_videos=False,
+    )
+    assert status == 409 and payload == {"ok": False, "error": "student is not self-study"}
+    assert fingerprint(runtime.paths["updates"]) == before_updates
+
+    # Returning to recurring self-study keeps the pre-existing review reconciliation.
+    for status in ("cancelled", "completed"):
+        seed(status=status, updates={DATE: {SID: {"videos": ["m1", "m2"], "source": "auto"}}})
+        assert load_updates_with_auto_assign(dependencies) == {DATE: {}}
+
+    for options in ({"status": "cancelled"}, {"status": "completed"}, {"slots": [2]}):
+        seed(**options)
+        assert load_updates_with_auto_assign(dependencies) == {DATE: {}}, (
+            "inactive or non-overlapping makeup cannot assign new class videos"
+        )
+
+    protected = {"videos": ["m1"], "source": "selfStudy", "unknown": {"keep": True}}
+    seed(updates={DATE: {SID: protected}})
+    before_updates = fingerprint(runtime.paths["updates"])
+    assert load_updates_with_auto_assign(dependencies) == {DATE: {SID: protected}}
+    assert fingerprint(runtime.paths["updates"]) == before_updates, "saved self-study snapshots must remain intact"
+
+
 def main() -> int:
     source = (
         ROOT / "routes/student_auto_assignment_service.py"
@@ -807,6 +854,18 @@ def main() -> int:
         prefix="student-auto-assignment-service-"
     ) as temp_dir:
         runtime = FixtureRuntime(Path(temp_dir))
+        for self_study in (False, True):
+            runtime.seed({DATE: {}})
+            students = runtime.load(runtime.paths["students"])
+            students[0].update({"registeredOn": "2026-06-05", "firstAttendanceDate": "2026-06-07"})
+            write_literal(runtime.paths["students"], students)
+            write_literal(runtime.paths["extra"], {DATE: [SID]})
+            runtime.logs = {DATE: {SID: {"selfStudy": self_study}}}
+            before = {name: fingerprint(path) for name, path in runtime.paths.items()}
+            load_updates_with_auto_assign(runtime.dependencies())
+            assert {name: fingerprint(path) for name, path in runtime.paths.items()} == before
+            assert runtime.save_count == 0, "before first attendance, regular/extra/self-study cannot create an automatic assignment"
+        runtime.logs = {DATE: {}}
         run_today_creation_and_idempotency(runtime)
         run_non_today_storage_only(runtime)
         run_failed_save_invariance(runtime)
@@ -817,6 +876,7 @@ def main() -> int:
         run_future_history_is_ignored(runtime)
         run_future_auto_cleanup(runtime)
         run_self_study_reconcile(runtime)
+        run_makeup_overrides_scheduled_self_study(runtime)
 
     print(
         "student auto-assignment service passed: literal temp-store result, "

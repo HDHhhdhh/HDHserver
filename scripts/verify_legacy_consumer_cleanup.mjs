@@ -39,7 +39,14 @@ const [adminMain, demoFetch, deleteSource, authSource] = await Promise.all([
 assert.doesNotMatch(adminMain, /initMaterials|features\/materials\.js|initAssignModal|features\/assignModal\.js/);
 assert.doesNotMatch(demoFetch, /materialUploadResponse|\/api\/material-upload|\/api\/delete-student/);
 assert.doesNotMatch(demoFetch, /method === 'POST' && path === '\/api\/materials'/);
-assert.match(demoFetch, /method === 'DELETE' && path\.startsWith\('\/api\/students\/'\)/);
+assert.match(demoFetch, /applyDemoGraveyardRequest\(\{ method, path, body, store \}\)/);
+const { applyDemoGraveyardRequest } = await import('../static/js/admin/demo/graveyardContract.js');
+const demoDeleteStore = { students: [{ id: 'demo-legacy-check', name: '합성학생' }], logs: { old: 'preserve' } };
+assert.equal(applyDemoGraveyardRequest({ method: 'DELETE', path: '/api/students/demo-legacy-check', store: demoDeleteStore }).status, 200);
+assert.deepEqual(demoDeleteStore.students, []);
+assert.equal(demoDeleteStore.graveyard[0].student.id, 'demo-legacy-check');
+assert.deepEqual(demoDeleteStore.logs, { old: 'preserve' });
+assert.equal(applyDemoGraveyardRequest({ method: 'POST', path: '/api/delete-student', store: demoDeleteStore }), null);
 assert.doesNotMatch(deleteSource, /\/api\/delete-student/);
 assert.match(
   deleteSource,

@@ -421,6 +421,7 @@ def _student_auto_assignment_service_dependencies(
         today_iso=_today_kst_iso,
         student_is_registered=_student_is_registered_on_date,
         on_auto_pick=_report_auto_assignment_pick,
+        makeup_path=BASE / "makeup_carryover.json",
     )
 
 
@@ -654,6 +655,7 @@ def create_student_bootstrap_projection_dependencies(
         videos_path=VID_PATH,
         updates_path=UPD_PATH,
         watch_path=WATCH_PATH,
+        makeup_path=BASE / "makeup_carryover.json",
         load=load,
         load_absent=load_absent,
         load_progress=_load_progress_strict,

@@ -1999,7 +1999,7 @@ function isTodayStudent(stu, dateKey = getAdminDate()) {
   if (Object.prototype.hasOwnProperty.call(logEntry, 'selfStudy')) {
     return !(logEntry.selfStudy === true || logEntry.selfStudy === 'true' || logEntry.selfStudy === 1 || logEntry.selfStudy === '1');
   }
-  if (isSelfStudyScheduledForDate(stu, today)) return false;
+  if (isSelfStudyScheduledForDate(stu, today, state.scheduledMakeupSlotsByDate?.[today]?.[sid])) return false;
 
   // 정규 등원 or 보강이면 포함
   const regular = hasWeekday(stu, wchr);
