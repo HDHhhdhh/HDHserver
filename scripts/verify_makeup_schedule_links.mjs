@@ -309,6 +309,64 @@ assert.equal(JSON.stringify(manyCarryover), untouchedReservations, 'display filt
 assert.match(calendarSource, /id="makeupStatusList"[^>]*tabindex="0"[^>]*aria-label="보강 예정 목록"/);
 assert.match(adminCssSource, /#makeupStatusList\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable;/);
 
+// History stays outside both rows; opening it must not enter scheduling or save anything.
+const historyItem = { ...buildScheduledMakeupRows({ students, carryover })[0],
+  scheduleHistory: [
+    { action: 'scheduled', makeupDate: '2026-10-04', makeupTimes: [2], missedSlots: [2] },
+    { action: 'rescheduled', makeupDate: '2026-10-11', makeupTimes: [2] },
+  ],
+};
+renderSandbox.getPendingMakeups = () => [historyItem];
+renderSandbox.getScheduledMakeupStatusRows = () => [historyItem];
+vm.runInNewContext('renderMakeupPlanner();', renderSandbox);
+for (const id of ['makeupPlannerList', 'makeupStatusList']) {
+  const html = scrollElements[id].innerHTML;
+  assert.match(html, /class="makeup-history-btn"[^>]*data-makeup-action="history"[^>]*>이력<\/button>/);
+  assert.ok(html.indexOf('data-makeup-action="history"') < html.indexOf('data-makeup-action="pick"'));
+  assert.doesNotMatch(html, /<details|<ol>|최초 예약|10\/11/);
+}
+const historyElements = {};
+const closeButton = { addEventListener(type, handler) { this[type] = handler; } };
+let dialogCount = 0;
+const historySandbox = {
+  ...renderSandbox,
+  $: id => historyElements[id],
+  document: {
+    createElement(tag) {
+      assert.equal(tag, 'dialog');
+      dialogCount++;
+      return {
+        open: false, setAttribute() {}, querySelector: () => closeButton,
+        addEventListener(type, handler) { this[type] = handler; },
+        showModal() { this.open = true; }, close() { this.open = false; },
+      };
+    },
+    body: { append(dialog) { historyElements[dialog.id] = dialog; } },
+  },
+};
+for (const id of ['makeupHistorySummary', 'makeupHistoryContent', 'makeupPlannerList', 'makeupStatusList']) {
+  historyElements[id] = { addEventListener(type, handler) { this[type] = handler; } };
+}
+vm.runInNewContext(`${calendarFunction('renderMakeupHistory')}\n${calendarFunction('openMakeupHistory')}\n${calendarSource.slice(
+  calendarSource.indexOf("    $('makeupPlannerList')?.addEventListener('click'"),
+  calendarSource.indexOf('\n  }\n\n  function getPendingMakeups'),
+)}`, historySandbox);
+for (const id of ['makeupPlannerList', 'makeupStatusList']) {
+  historyElements[id].click({ target: { closest: () => ({ dataset: { makeupAction: 'history', key: makeupOriginalAbsenceId(historyItem) } }) } });
+  assert.equal(historyElements.makeupHistoryDialog.open, true);
+  assert.match(historyElements.makeupHistoryContent.innerHTML, /10\/4.*최초 예약.*보강 결석/);
+  assert.match(historyElements.makeupHistoryContent.innerHTML, /10\/11.*변경/);
+  assert.match(historyElements.makeupHistorySummary.textContent, /원결석 2타임/);
+  let stopped = false;
+  historyElements.makeupHistoryDialog.keydown({ key: 'Escape', stopPropagation() { stopped = true; } });
+  assert.equal(stopped, true, 'Escape must not cancel the underlying calendar selection');
+  closeButton.click();
+  assert.equal(historyElements.makeupHistoryDialog.open, false);
+}
+historySandbox.openMakeupHistory({ ...historyItem, scheduleHistory: [] });
+assert.match(historyElements.makeupHistoryContent.innerHTML, /예약 이력이 없습니다/);
+assert.equal(dialogCount, 1, 'reuse the history dialog without duplicate listeners');
+
 const pendingRows = buildPendingMakeups({
   students,
   absentByDate: { '2026-07-03': ['stu-1'] },

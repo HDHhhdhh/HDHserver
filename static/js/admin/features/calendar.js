@@ -1520,6 +1520,11 @@ export function initCalendar() {
       const item = getPendingMakeups().find(row => makeupItemKey(row) === key);
       if (!item) return;
 
+      if (btn.dataset.makeupAction === 'history') {
+        openMakeupHistory(item);
+        return;
+      }
+
       if (btn.dataset.makeupAction === 'remove') {
         removePendingMakeup(item).catch(err => {
           console.error(err);
@@ -1547,6 +1552,10 @@ export function initCalendar() {
       if (!btn) return;
       const item = getScheduledMakeupStatusRows().find(row => makeupItemKey(row) === (btn.dataset.key || ''));
       if (!item) return;
+      if (btn.dataset.makeupAction === 'history') {
+        openMakeupHistory(item);
+        return;
+      }
       if (btn.dataset.makeupAction === 'carryover-scheduled') {
         carryoverScheduledMakeup(item).catch(err => { console.error(err); alert(err?.message || '이월 실패'); });
         return;
@@ -2090,7 +2099,7 @@ export function initCalendar() {
 
   function renderMakeupHistory(item) {
     const events = item.scheduleHistory || [];
-    if (!events.length) return '';
+    if (!events.length) return '<p>예약 이력이 없습니다.</p>';
     const labels = { scheduled: '최초 예약', rescheduled: '변경', cancelled: '취소·이월', completed: '완료' };
     const rows = events.map(event => {
       const slots = slotGroupLabel(parseSlotNumbers(event.makeupTimes));
@@ -2099,8 +2108,34 @@ export function initCalendar() {
       return `<li>${escapeHtml(`${formatMakeupDate(event.makeupDate)} ${slots} · ${event.legacy ? '기존 예약' : labels[event.action] || event.action}${missed}${recorded}`)}</li>`;
     }).join('');
     const baseline = events.some(event => event.legacy) ? '<div>기존 예약 이전의 변경은 집계되지 않습니다.</div>' : '';
+    return `<ol>${rows}</ol>${baseline}`;
+  }
+
+  function openMakeupHistory(item) {
+    let dialog = $('makeupHistoryDialog');
+    if (!dialog) {
+      dialog = document.createElement('dialog');
+      dialog.id = 'makeupHistoryDialog';
+      dialog.className = 'makeup-history-dialog';
+      dialog.setAttribute('aria-labelledby', 'makeupHistoryTitle');
+      dialog.innerHTML = `
+        <header class="makeup-history-head">
+          <h3 id="makeupHistoryTitle">보강 이력</h3>
+          <button type="button" class="makeup-history-btn" autofocus>닫기</button>
+        </header>
+        <p id="makeupHistorySummary"></p>
+        <div id="makeupHistoryContent"></div>
+      `;
+      dialog.querySelector('button').addEventListener('click', () => dialog.close());
+      dialog.addEventListener('keydown', event => {
+        if (event.key === 'Escape') event.stopPropagation();
+      });
+      document.body.append(dialog);
+    }
     const absentSlot = item.slot ? ` · 원결석 ${item.slot}타임` : '';
-    return `<details class="makeup-history"><summary>이력${escapeHtml(absentSlot)}</summary><ol>${rows}</ol>${baseline}</details>`;
+    $('makeupHistorySummary').textContent = `${formatMakeupPlannerLabel(item)}${absentSlot}`;
+    $('makeupHistoryContent').innerHTML = renderMakeupHistory(item);
+    if (!dialog.open) dialog.showModal();
   }
 
   function renderMakeupPlanner(event) {
@@ -2175,11 +2210,11 @@ export function initCalendar() {
         return `
         <div class="makeup-row${active}" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}">
           <div class="makeup-label">
-            <span>${escapeHtml(label)}</span>
+            <span title="${escapeAttr(label)}">${escapeHtml(label)}</span>
             ${item.rebooking ? `<span class="makeup-scheduled-badge">${escapeHtml(formatMakeupDate(item.missedMakeupDate))} 보강 결석 · 다시 잡기</span>` : ''}
-            ${renderMakeupHistory(item)}
           </div>
           <div class="makeup-actions">
+            <button type="button" class="makeup-history-btn" data-makeup-action="history" data-key="${escapeAttr(key)}" aria-haspopup="dialog">이력</button>
             <button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강</button>
             ${secondaryActions}
           </div>
@@ -2201,7 +2236,7 @@ export function initCalendar() {
           const scheduledDate = formatMakeupDate(item.scheduledMakeup?.makeupDate);
           const scheduledTimeLabel = slotGroupLabel(parseSlotNumbers(item.scheduledMakeup?.makeupTimes));
           const scheduledLabel = [scheduledDate, scheduledTimeLabel].filter(Boolean).join(' · ');
-          return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span>${escapeHtml(label)}</span><span class="makeup-scheduled-badge">${item.needsAbsenceReview ? '예약 중복 · 결석 연결 확인' : '보강 예정'}: ${escapeHtml(scheduledLabel)}</span>${renderMakeupHistory(item)}</div><div class="makeup-actions"><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
+          return `<div class="makeup-row" data-key="${escapeAttr(key)}" data-copy-text="${escapeAttr(copyText)}"><div class="makeup-label"><span title="${escapeAttr(label)}">${escapeHtml(label)}</span><span class="makeup-scheduled-badge">${item.needsAbsenceReview ? '예약 중복 · 결석 연결 확인' : '보강 예정'}: ${escapeHtml(scheduledLabel)}</span></div><div class="makeup-actions"><button type="button" class="makeup-history-btn" data-makeup-action="history" data-key="${escapeAttr(key)}" aria-haspopup="dialog">이력</button><button type="button" class="makeup-pick-btn" data-makeup-action="pick" data-key="${escapeAttr(key)}">보강 변경</button><button type="button" class="makeup-carryover-btn" data-makeup-action="carryover-scheduled" data-key="${escapeAttr(key)}">이월</button></div></div>`;
         }).join('');
       }
       const statusHint = $('makeupStatusHint');
