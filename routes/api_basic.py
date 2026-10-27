@@ -9,6 +9,7 @@ import threading
 import time
 import json
 from copy import deepcopy
+from functools import wraps
 from urllib.parse import parse_qs, urlparse
 from typing import List, Optional, Tuple, Dict, Any
 
@@ -54,7 +55,7 @@ from core.student_notification_hooks import (
     runtime_repository,
     student_schedule_changed_sids,
 )
-from core.storage import InterProcessFileLock, load, save_atomic, nocache_resp
+from core.storage import InterProcessFileLock, file_lock, load, save_atomic, nocache_resp
 from core.absent import load_absent, save_absent, DATE_RE
 
 bp_api_basic = Blueprint("api_basic", __name__)
@@ -2434,11 +2435,29 @@ def _progress_for_sids(data: dict, sids: list[str], date: str = "") -> dict:
 # ─────────────────────────────────────────────
 # 기본 API
 # ─────────────────────────────────────────────
+def _student_roster_locked(handler):
+    @wraps(handler)
+    def locked(*args, **kwargs):
+        with file_lock(STU_PATH):
+            return handler(*args, **kwargs)
+    return locked
+
+
+def _student_roster_revision(students):
+    return hashlib.sha256(json.dumps(students, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 @bp_api_basic.route("/api/students", methods=["GET", "POST"])
+@_student_roster_locked
 def api_students():
     if request.method == "GET":
-        return jsonify(load(STU_PATH))
+        students = load(STU_PATH)
+        response = jsonify(students)
+        response.headers["X-Students-Revision"] = _student_roster_revision(students)
+        return response
     previous = load(STU_PATH)
+    if request.headers.get("X-Students-Revision") != _student_roster_revision(previous):
+        return jsonify({"ok": False, "error": "Roster changed; reload before saving."}), 409
     incoming = request.get_json(force=True)
     save_atomic(STU_PATH, incoming)
     affected = student_schedule_changed_sids(previous, incoming)
@@ -2954,6 +2973,7 @@ def api_school_calendar():
 
 
 @bp_api_basic.post("/api/add-student")
+@_student_roster_locked
 def api_add_student():
     students: List[dict] = load(STU_PATH)
     data = request.get_json(force=True) or {}
@@ -3160,6 +3180,14 @@ def api_logs_patch():
 
     result = get_log_repository().patch_entry(date, sid, entry, base)
 
+    if result.sqlite_base_conflict:
+        return jsonify({
+            "ok": False,
+            "retryable": False,
+            "error": "Log entry changed; reload before saving.",
+            "entry": result.sqlite_conflict_entry,
+        }), 409
+
     if result.json_conflict_entry is not None:
         return jsonify({
             "ok": False,
@@ -3169,22 +3197,6 @@ def api_logs_patch():
         }), 409
 
     if not result.sqlite_ok:
-        # SQLite 기준 충돌이어도 legacy JSON 저장이 확인된 경우에만 호환 성공으로 응답한다.
-        if result.sqlite_base_conflict:
-            if not result.json_ok:
-                return jsonify({
-                    "ok": False,
-                    "sqlite": False,
-                    "json": False,
-                    "error": "sqlite out-of-sync and legacy logs.json save failed",
-                }), 409
-            return jsonify({
-                "ok": True,
-                "sqlite": False,
-                "json": result.json_ok,
-                "entry": result.merged,
-                "warning": "sqlite out-of-sync",
-            })
         return jsonify({"ok": False, "sqlite": False, "error": str(result.sqlite_error) if result.sqlite_error else "sqlite failed"}), 409
 
     if not result.json_ok:
@@ -3203,6 +3215,7 @@ def api_logs_patch():
 # 기타
 # ─────────────────────────────────────────────
 @bp_api_basic.delete("/api/students/<string:sid>")
+@_student_roster_locked
 def api_delete_student(sid: str):
     students: List[dict] = load(STU_PATH)
     for i, s in enumerate(students):
@@ -3214,6 +3227,7 @@ def api_delete_student(sid: str):
 
 
 @bp_api_basic.post("/api/update")
+@_student_roster_locked
 def api_update_student_field():
     body = request.get_json(force=True) or {}
     sid = body.get("id")
