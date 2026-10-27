@@ -205,28 +205,36 @@ def api_fs_delete():
 
     deleted, errors = [], []
     rel_set = set()
+    deleted_dirs = set()
 
     for rel in items:
         try:
             abs_p = _safe_join(rel)
             _reject_root_path(abs_p)
-            if abs_p.is_dir():
+            normalized = _rel_from_abs(abs_p)
+            is_dir = abs_p.is_dir()
+            if is_dir:
                 shutil.rmtree(abs_p)
             elif abs_p.exists():
                 abs_p.unlink()
             deleted.append(rel)
-            rel_set.add(rel.replace("\\", "/"))
+            rel_set.add(normalized)
+            if is_dir:
+                deleted_dirs.add(normalized)
         except Exception as e:
             errors.append({"path": rel, "error": str(e)})
 
     if rel_set:
+        def removed(path):
+            return path in rel_set or any(path.startswith(directory + "/") for directory in deleted_dirs)
+
         mats, assigns = _load_mats_and_assigns()
 
         ids_to_remove = []
         for mid, meta in list(mats.items()):
             url = (meta or {}).get("url")
             rel = _rel_from_url(url)
-            if rel and rel in rel_set:
+            if rel and removed(rel):
                 ids_to_remove.append(str(mid))
 
         for mid in ids_to_remove:
@@ -240,15 +248,20 @@ def api_fs_delete():
                 sval = str(v)
                 if sval in ids_to_remove:
                     continue
-                rel = _rel_from_url(sval) or sval.lstrip("/").replace("\\", "/")
-                if rel in rel_set:
+                # DIR assignments inside the deleted tree are removed too.
+                token = sval[4:] if sval.startswith("DIR:") else sval
+                rel = _rel_from_url(token) or token.lstrip("/").replace("\\", "/")
+                if removed(rel.rstrip("/")):
                     continue
                 new_arr.append(v)
             assigns[sid] = new_arr
 
-        _save_mats_and_assigns(mats, assigns)
+        try:
+            _save_mats_and_assigns(mats, assigns)
+        except Exception as e:
+            errors.append({"path": None, "error": str(e), "phase": "metadata"})
 
-    return jsonify({"ok": True, "deleted": deleted, "errors": errors})
+    return jsonify({"ok": not errors, "deleted": deleted, "errors": errors})
 
 @bp_api_fs.post("/api/fs/move")
 def api_fs_move():

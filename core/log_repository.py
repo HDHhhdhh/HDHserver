@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict
 
 from core.log_rules import is_empty_value, truthy as default_truthy
 from core.paths import LOGS_PATH
-from core.storage import load, save_atomic
+from core.storage import file_lock, load, save_atomic
 
 DATE_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -436,6 +436,11 @@ class LogRepository:
             save_atomic(self.logs_path, current)
 
     def patch_entry(self, date: str, sid: str, entry: dict, base: dict) -> LogPatchResult:
+        lock = self.lock_factory() if self.lock_factory else file_lock(self.logs_path)
+        with lock:
+            return self._patch_entry_locked(date, sid, entry, base)
+
+    def _patch_entry_locked(self, date: str, sid: str, entry: dict, base: dict) -> LogPatchResult:
         entry = self.repair_entry(entry, sid)
         base = self.repair_entry(base, sid)
         merged: dict = {}
@@ -457,6 +462,10 @@ class LogRepository:
                 con.execute("ROLLBACK;")
                 sqlite_base_conflict = True
                 sqlite_conflict_entry = cur
+                return LogPatchResult(
+                    merged={}, sqlite_ok=False, sqlite_base_conflict=True,
+                    sqlite_conflict_entry=cur,
+                )
             else:
                 merged = self.merge_entry(cur, entry)
                 self._sqlite_upsert_entry(con, date, sid, merged)
@@ -478,9 +487,7 @@ class LogRepository:
                 pass
 
         try:
-            lock = self.lock_factory() if self.lock_factory else None
-            context = lock if lock is not None else _NullContext()
-            with context:
+            with _NullContext():
                 current = self.read_json_map()
                 day = current.setdefault(date, {})
                 if not isinstance(day, dict):
@@ -492,7 +499,7 @@ class LogRepository:
                     cur_json = {}
                 cur_json = self.repair_entry(cur_json, sid)
 
-                if self.entry_conflicts(cur_json, base):
+                if not sqlite_ok and self.entry_conflicts(cur_json, base):
                     return LogPatchResult(
                         merged=merged,
                         sqlite_ok=sqlite_ok,

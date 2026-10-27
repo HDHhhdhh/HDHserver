@@ -35,7 +35,7 @@ class StudentAuthService:
 
     def _available(self, sids: Sequence[str]) -> tuple[str, ...]:
         allowed = tuple(sids)
-        if self.dependencies.config.canary_sids and not any(sid in self.dependencies.config.canary_sids for sid in allowed):
+        if self.dependencies.config.canary_sids and not all(sid in self.dependencies.config.canary_sids for sid in allowed):
             raise StudentAuthFailure("unavailable", 404)
         return allowed
 

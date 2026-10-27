@@ -81,7 +81,10 @@ def _admin_auth_required() -> Response:
 
 @bp_pages.before_app_request
 def _gate_admin_pages() -> Response | None:
-    if _admin_route_key(request.path) not in _ADMIN_PAGE_PATHS and not _is_admin_static_alias():
+    # Public APIs have already passed the host/session/SID policy before this hook.
+    public_api = getattr(g, "student_app_public_request", False) is True
+    admin_api = _admin_route_key(request.path).startswith("/api/") and not public_api
+    if not admin_api and _admin_route_key(request.path) not in _ADMIN_PAGE_PATHS and not _is_admin_static_alias():
         return None
     if not admin_network_allowed(request):
         abort(403)
