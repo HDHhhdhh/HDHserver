@@ -458,6 +458,10 @@ class LogRepository:
             self._ensure_schema(con)
             con.execute("BEGIN IMMEDIATE;")
             cur = self.repair_entry(self._sqlite_get_entry(con, date, sid), sid)
+            if con.execute("SELECT 1 FROM logs WHERE date=? AND sid=?", (date, sid)).fetchone() is None:
+                # read_entry exposes JSON fallback when SQL has no row; use
+                # that same base for the first revision-checked write.
+                cur = self._json_entry(date, sid)
             if self.entry_conflicts(cur, base):
                 con.execute("ROLLBACK;")
                 sqlite_base_conflict = True
@@ -549,6 +553,49 @@ class LogRepository:
             json_ok=json_ok,
             json_error=json_err,
         )
+
+    def submission_records(self, date: str, sid: str) -> list:
+        """Strict history read: storage failure must not authorize regrading."""
+        data, status = self._read_json_map_with_status()
+        if status not in {"available", "missing"}:
+            raise ValueError("log compatibility store unavailable")
+        rows = list(((data.get(date) or {}).get(sid) or {}).get("tests") or [])
+        con = self._connect()
+        try:
+            self._ensure_schema(con)
+            rows.extend(self._sqlite_get_entry(con, date, sid).get("tests") or [])
+        finally:
+            con.close()
+        return rows
+
+    def reconcile_submission(self, date: str, sid: str, record: dict, append_fn: MergeFn) -> None:
+        """Strict, repeatable writes; each sink merges its own current entry.
+
+        Unlike append_record, returning proves BOTH primary stores committed.
+        The durable submission journal owns recovery after a partial commit.
+        """
+        from core.student_app_v2.locks import recovery_lock
+        with recovery_lock(self.logs_path):
+            current, status = self._read_json_map_with_status()
+            if status not in {"available", "missing"}:
+                raise ValueError("log compatibility store unavailable")
+            day = current.setdefault(date, {})
+            con = self._connect()
+            try:
+                con.execute("PRAGMA synchronous=FULL")
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE")
+                # A JSON-only deployment may not yet have a SQLite log row.
+                # Seed missing top-level fields, never erase homework metadata
+                # just because the first journaled test creates that SQL row.
+                sql_entry = {**self.repair_entry(day.get(sid, {}), sid),
+                             **self._sqlite_get_entry(con, date, sid)}
+                self._sqlite_upsert_entry(con, date, sid, append_fn(sql_entry, record))
+                con.execute("COMMIT")
+            finally:
+                con.close()
+            day[sid] = append_fn(day.get(sid, {}), record)
+            save_atomic(self.logs_path, current)
 
     def append_record(self, date: str, sid: str, record: dict, append_fn: MergeFn) -> bool:
         logs_saved = False

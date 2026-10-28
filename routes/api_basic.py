@@ -2742,13 +2742,13 @@ def api_updates_self_study():
 
 
 @bp_api_basic.get("/api/student/bootstrap")
-def api_student_bootstrap():
+def api_student_bootstrap(*, student_sid=None, date_key=None):
     caller_sid = str(request.args.get("sid") or "").strip()
     session_sid = _public_session_sid()
     if _is_public_student_request() and session_sid is None:
         return jsonify({"ok": False, "code": "unauthenticated"}), 401
-    sid = session_sid if session_sid is not None else caller_sid
-    date = str(request.args.get("date") or _today_kst_iso()).strip()
+    sid = student_sid if student_sid is not None else session_sid if session_sid is not None else caller_sid
+    date = str(date_key or request.args.get("date") or _today_kst_iso()).strip()
     if not sid:
         return jsonify({"ok": False, "error": "missing sid"}), 400
     try:
