@@ -21,6 +21,7 @@ from core.student_public_surface import SessionIdentity, install_student_public_
 MODULES = (
     "routes.api_basic", "routes.api_watch", "routes.api_kollus", "routes.api_tests",
     "routes.api_announcements", "routes.api_fs", "routes.pages", "core.paths",
+    "core.log_repository",
 )
 DATE = "2026-08-08"
 
@@ -69,16 +70,14 @@ def _isolated_routes(root: Path):
             def __enter__(self): return self
             def __exit__(self, *_args): return False
 
-        class Logs:
-            def append_record(self, *_args): return True
-
         basic._InterProcessFileLock = Lock
         basic._progress_lock = nullcontext
         basic._load_progress_strict = lambda path=paths.PRG_PATH: json.loads(Path(path).read_text("utf-8"))
         basic._save_progress_strict = lambda data, path=paths.PRG_PATH: _write(Path(path), data)
         basic._notification_progress_snapshot = lambda _progress, _sid: None
         basic._notification_progress_commit = lambda _before, _after, _sid: 0
-        basic.get_log_repository = lambda: Logs()
+        from core.log_repository import LogRepository
+        basic.get_log_repository = lambda: LogRepository(logs_path=paths.LOGS_PATH, db_path=str(root / "app.sqlite"))
         # Membership is now required. This boundary-only fixture deliberately
         # has one assigned video; the v2 suite exercises real bootstrap rules.
         basic.api_student_bootstrap = lambda **_kwargs: jsonify({
@@ -95,6 +94,7 @@ def _isolated_routes(root: Path):
                 sys.modules[name] = module
         for package, attr, name in (
             (core_package, "paths", "core.paths"), (routes_package, "api_basic", "routes.api_basic"),
+            (core_package, "log_repository", "core.log_repository"),
             (routes_package, "api_watch", "routes.api_watch"), (routes_package, "api_kollus", "routes.api_kollus"),
             (routes_package, "api_tests", "routes.api_tests"), (routes_package, "api_fs", "routes.api_fs"),
             (routes_package, "api_announcements", "routes.api_announcements"),

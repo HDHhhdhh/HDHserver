@@ -9,15 +9,16 @@ from pathlib import Path
 import re
 from urllib.parse import quote, urlparse
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from core.student_app_v2 import content, homework, projections, submissions
 from core.student_app_v2.contracts import (
-    ApiError, authority, date_key, network, now, require_academy,
+    ApiError, authority, date_key, error_payload, network, now, require_academy,
 )
 from core.student_app_v2.ledger import Ledger
 
 bp_api_student_app_v2 = Blueprint("student_app_v2", __name__)
+bp_api_student_submissions_admin = Blueprint("student_submissions_admin", __name__)
 V2_ROUTES = frozenset({
     ("/api/mobile/student/today", "GET"),
     ("/api/mobile/student/assignments", "GET"),
@@ -33,11 +34,13 @@ V2_ROUTES = frozenset({
 
 
 @bp_api_student_app_v2.errorhandler(ApiError)
+@bp_api_student_submissions_admin.errorhandler(ApiError)
 def api_error(exc):
-    return jsonify(ok=False, code=exc.code), exc.status
+    return jsonify(error_payload(exc)), exc.status
 
 
 @bp_api_student_app_v2.errorhandler(Exception)
+@bp_api_student_submissions_admin.errorhandler(Exception)
 def unavailable(exc):
     from core.student_homework_repository import HomeworkConflictError, HomeworkNotInitializedError
     if isinstance(exc, HomeworkConflictError):
@@ -48,6 +51,7 @@ def unavailable(exc):
 
 
 @bp_api_student_app_v2.after_request
+@bp_api_student_submissions_admin.after_request
 def no_store(response):
     response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
                              "Referrer-Policy": "no-referrer"})
@@ -68,6 +72,43 @@ def _page() -> int:
     if not re.fullmatch(r"[1-9][0-9]{0,3}", value):
         raise ApiError("invalid_page")
     return int(value)
+
+
+@bp_api_student_submissions_admin.before_request
+def operator_boundary():
+    from core.admin_basic_auth import ADMIN_AUTH_CHALLENGE, admin_network_allowed, verify_admin_authorization
+    from core.student_app_config import load_student_app_config
+    from core.student_public_proxy import public_host_matches
+    from routes.api_student_homework import _same_origin
+    adapter = current_app.extensions.get("student_public_surface")
+    config = adapter.config if adapter is not None else load_student_app_config()
+    if public_host_matches(request.environ, config.public_host, config.trusted_proxy_networks):
+        raise ApiError("not_found", 404)
+    if not admin_network_allowed(request):
+        raise ApiError("academy_network_required", 403)
+    if not verify_admin_authorization(request.headers.get("Authorization")):
+        response = jsonify(ok=False, code="admin_auth_required")
+        response.status_code = 401
+        response.headers["WWW-Authenticate"] = ADMIN_AUTH_CHALLENGE
+        return response
+    if request.method == "POST" and not _same_origin():
+        raise ApiError("origin_required", 403)
+    g.student_submission_operator = request.authorization.username
+
+
+@bp_api_student_submissions_admin.get("/api/admin/student-test-submissions")
+def inspect_submission():
+    from core.student_app_v2.resets import inspect
+    if set(request.args) != {"assignmentId"}:
+        raise ApiError("invalid_payload")
+    return jsonify(inspect(request.args["assignmentId"]))
+
+
+@bp_api_student_submissions_admin.post("/api/admin/student-test-submissions/reset")
+def reset_submission():
+    from core.student_app_v2.resets import reset
+    body = _body({"operationId", "assignmentId", "expectedClientSubmissionId", "reason"})
+    return jsonify(reset(body, g.student_submission_operator))
 
 
 @bp_api_student_app_v2.get("/api/mobile/network/status")
@@ -125,6 +166,8 @@ def test(assignment_id):
     require_academy()
     assignment = projections.resolve_test(assignment_id, sid, allow_stored=False)
     definition, saved = assignment["definition"], Ledger().get(assignment_id)
+    if saved and saved["state"] == "resetting":
+        raise ApiError("submission_reset_pending", 503)
     count = definition.get("problems")
     if type(count) is not int or not 1 <= count <= 999:
         raise ApiError("test_unavailable", 503)
@@ -166,8 +209,7 @@ def result(assignment_id):
     projections.parse_assignment(assignment_id, sid)
     ledger = Ledger()
     if ledger.get(assignment_id):
-        value = submissions.replay(ledger, assignment_id)
-        assignment = ledger.get(assignment_id)["payload"]["assignment"]
+        value, assignment = submissions.replay(ledger, assignment_id)
     else:
         assignment = projections.resolve_test(assignment_id, sid)
         value = projections.historical_result(assignment)
@@ -182,13 +224,15 @@ def result(assignment_id):
 def solution(assignment_id):
     sid = authority()
     require_academy()
-    assignment = projections.resolve_test(assignment_id, sid, allow_stored=False)
-    if not projections.solution_available(assignment, Ledger().get(assignment_id)):
-        raise ApiError("solution_locked", 403)
-    ticket = request.args.get("ticket")
-    if ticket or not content.can_proxy():
-        return content.solution_redirect(assignment, sid, ticket)
-    return content.document(assignment, "solution", _page())
+    ledger = Ledger()
+    with ledger.lock():
+        assignment = projections.resolve_test(assignment_id, sid, allow_stored=False)
+        if not projections.solution_available(assignment, ledger.get(assignment_id)):
+            raise ApiError("solution_locked", 403)
+        ticket = request.args.get("ticket")
+        if ticket or not content.can_proxy():
+            return content.solution_redirect(assignment, sid, ticket)
+        return content.document(assignment, "solution", _page())
 
 
 @bp_api_student_app_v2.post("/api/mobile/student/homework/<assignment_id>/complete")

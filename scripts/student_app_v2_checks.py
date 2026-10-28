@@ -24,15 +24,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def isolated_suite(*, baseline: bool = False, checks: bool = False, manual: bool = False, refactor: bool = False) -> int:
+def isolated_suite(*, baseline: bool = False, checks: bool = False, manual: bool = False,
+                   refactor: bool = False, reset: bool = False, revision: str = "HEAD") -> int:
     """Run the existing dispatcher only in an owned disposable code copy."""
     with tempfile.TemporaryDirectory(prefix="student-v2-suite-") as raw:
         target = Path(raw)
         archive = subprocess.run(
-            ["git", "archive", "HEAD"], cwd=ROOT, check=True, capture_output=True,
+            ["git", "archive", revision], cwd=ROOT, check=True, capture_output=True,
         ).stdout
         with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
             bundle.extractall(target, filter="data")
+        if reset and baseline:
+            # Only the reproducer is new; the product and original fixture
+            # remain the immutable failed candidate.
+            relative = "scripts/student_app_v2_reset_checks.py"
+            (target / relative).write_bytes((ROOT / relative).read_bytes())
         if not baseline:
             tracked = subprocess.run(
                 ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -55,12 +61,13 @@ def isolated_suite(*, baseline: bool = False, checks: bool = False, manual: bool
         # paths.py initialization is setup, not a verification mutation.
         subprocess.run([sys.executable, "-c", "import core.paths"], cwd=target,
                        env=env, check=True)
-        if not checks and not manual:
+        if not checks and not manual and not reset:
             # The unchanged Windows deployment fixture executes this exact
             # repository-relative interpreter, even in DryRun fixture mode.
             import venv
             venv.EnvBuilder(system_site_packages=True, with_pip=False).create(target / "venv")
-        command = ([sys.executable, "scripts/verify_refactor_safety.py"] if refactor else
+        command = ([sys.executable, "scripts/student_app_v2_reset_checks.py", "--baseline" if baseline else "--worker"]
+                   if reset else [sys.executable, "scripts/verify_refactor_safety.py"] if refactor else
                    [sys.executable, "scripts/student_app_v2_checks.py", "--manual-worker" if manual else "--worker"]
                    if checks or manual else
                    [sys.executable, "scripts/verify_student_mobile_app.py", "--only", "all"])
@@ -74,7 +81,7 @@ def isolated_suite(*, baseline: bool = False, checks: bool = False, manual: bool
         if evidence:
             destination = Path(evidence)
             destination.mkdir(parents=True, exist_ok=True)
-            label = "refactor-baseline" if refactor and baseline else "refactor" if refactor else "baseline" if baseline else "manual" if manual else "v2" if checks else "existing"
+            label = ("reset-baseline" if baseline else "reset") if reset else "refactor-baseline" if refactor and baseline else "refactor" if refactor else "baseline" if baseline else "manual" if manual else "v2" if checks else "existing"
             (destination / f"{label}.log").write_text(result.stdout + "\n" + result.stderr, "utf-8")
         print(json.dumps({"suiteExit": result.returncode, "baseline": baseline,
                           "isolated": True, "temporaryStateRemovedOnExit": True}))
@@ -173,6 +180,7 @@ def fixture():
         pdf.save(directory / "problem")
     with fitz.open() as pdf:
         pdf.new_page().insert_text((40, 50), "Synthetic solution")
+        pdf.new_page().insert_text((40, 50), "Synthetic solution page two")
         pdf.save(directory / "solution")
     dump(ROOT / "fixture-release.json", {
         "versionCode": 1, "versionName": "1.0.1", "minSupportedVersionCode": 1,
@@ -255,10 +263,23 @@ def worker():
     check(metadata.status_code == 200 and metadata.json["problem"]["pages"] == 2, f"real PDF page count {metadata.json}")
     image = request(client, test_path(date, 1) + "/problem?page=2")
     check(image.status_code == 200 and image.data.startswith(b"\x89PNG"), "second PDF page renders actual PNG")
+    check(image.headers.get("X-Document-Page-Count") == "2", "problem byte response carries total PDF page count")
     check(request(client, test_path(date, 1) + "/problem?page=3").status_code == 400, "out-of-range page")
     check(request(client, test_path(date, 1), academy=False).status_code == 403, "outside test metadata blocked")
     check(request(client, test_path(date, 1) + "/solution").json["code"] == "solution_locked", "pre-submit locked solution")
     check(request(client, test_path(date, 2) + "/solution").data.startswith(b"\x89PNG"), "teacher-open solution bytes")
+    solution_page = request(client, test_path(date, 2) + "/solution?page=2")
+    check(solution_page.status_code == 200 and solution_page.data.startswith(b"\x89PNG")
+          and solution_page.headers.get("X-Document-Page-Count") == "2", "solution viewer can discover and request every PDF page")
+    solution_file = ROOT / "fixture-content" / "solution"
+    original_solution = solution_file.read_bytes()
+    try:
+        solution_file.write_bytes(image.data)
+        single_page = request(client, test_path(date, 2) + "/solution")
+        check(single_page.status_code == 200 and single_page.data == image.data
+              and single_page.headers.get("X-Document-Page-Count") == "1", "PNG source has page count one without a body change")
+    finally:
+        solution_file.write_bytes(original_solution)
     check(request(client, test_path(date, 1).replace(SID, "foreign")).status_code == 404, "foreign assignment hidden")
     malformed = answer_body()
     malformed["answers"][0]["value"] = "12\n2. injected"
@@ -457,7 +478,9 @@ def crash_worker():
     api_tests._grade_answers = counted_grade
     import core.log_repository as logs
     stage = scenario["stage"]
-    if stage in {"graded", "reserved"}:
+    if stage == "unpersisted":
+        Ledger.graded = lambda *_args, **_kwargs: os._exit(71)
+    elif stage in {"graded", "reserved"}:
         method = "graded" if stage == "graded" else "reserve"
         original = getattr(Ledger, method)
         def interrupted(*args, **kwargs):
@@ -537,6 +560,8 @@ def manual_worker():
         text = re.sub(r"(?im)^Set-Cookie:.*$", "Set-Cookie: <redacted>", text)
         print(text)
         if data.startswith(b"\x89PNG"):
+            check(b"x-document-page-count: 2" in [line.lower().strip() for line in header.split(b"\r\n")],
+                  "real document byte response exposes the two-page fixture count")
             print(f"PNG bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}")
             payload = None
         else:
@@ -568,7 +593,7 @@ def manual_worker():
         check(curl(path + "/submit", method="POST", body=body)[1] == first[1], "real exact replay")
         check(curl(path + "/submit", method="POST", body=answer_body())[0] == 409, "real second ID rejected")
         check(curl(path + "/result", academy=False)[0] == 200, "real outside result")
-        check(curl(path + "/solution")[0] == 200, "real unlocked solution")
+        check(curl(path + "/solution?page=2")[0] == 200, "real unlocked solution second page")
         homework_path = "/api/mobile/student/homework/" + private["homework"][0]["id"] + "/complete"
         homework_body = {"clientRequestId": str(uuid.uuid4())}
         completed = curl(homework_path, method="POST", body=homework_body, academy=False)
@@ -604,9 +629,13 @@ def main() -> int:
     parser.add_argument("--manual", action="store_true")
     parser.add_argument("--evidence")
     parser.add_argument("--refactor", action="store_true")
+    parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--revision", default="HEAD")
     args = parser.parse_args()
     if args.evidence:
         os.environ["T24_EVIDENCE_DIR"] = args.evidence
+    if args.reset:
+        return isolated_suite(reset=True, baseline=args.baseline, revision=args.revision)
     if args.refactor:
         return isolated_suite(refactor=True, baseline=args.baseline)
     if args.baseline or args.existing:

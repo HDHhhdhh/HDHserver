@@ -114,14 +114,24 @@ def historical_result(assignment: dict) -> dict | None:
     records = list((data.get(date) or {}).get(sid) or [])
     records.extend(api_basic.get_log_repository().submission_records(date, sid))
     for row in records:
-        if (isinstance(row, dict) and str(row.get("testId") or "") == assignment["testId"]
-                and str(row.get("round") or 1) == str(assignment["round"])):
+        if record_matches(row, assignment):
             wrong = [n for n in row.get("wrong", []) if type(n) is int and n > 0]
             return {"submittedAt": row.get("createdAt"), "score": row.get("score"), "pct": row.get("pct"),
                     "wrong": wrong, "wrongDetails": [{"questionNo": n} for n in wrong],
                     "solutionAvailable": True}
     return None
 
+
+def record_matches(row, assignment: dict) -> bool:
+    if not isinstance(row, dict) or str(row.get("round") or 1) != str(assignment["round"]):
+        return False
+    if row.get("testId"):
+        return str(row["testId"]) == assignment["testId"]
+    # Older score-only records had no testId. A catalog-resolved name is still
+    # the same assignment, not an escape hatch around its durable identity.
+    from routes.api_tests import _canon_test_name
+    name = _canon_test_name(assignment["definition"].get("name"))
+    return bool(name) and _canon_test_name(row.get("name")) == name
 
 def item_projection(assignment: dict) -> dict:
     saved = Ledger().get(assignment["assignmentId"])

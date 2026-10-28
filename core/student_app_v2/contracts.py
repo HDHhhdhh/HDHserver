@@ -18,6 +18,15 @@ class ApiError(Exception):
         super().__init__(code)
 
 
+def error_payload(exc: ApiError) -> dict:
+    payload = {"ok": False, "code": exc.code}
+    if exc.code == "submission_reset":
+        payload["newClientSubmissionIdRequired"] = True
+    elif exc.code == "submission_indeterminate":
+        payload["operatorActionRequired"] = True
+    return payload
+
+
 def now() -> dt.datetime:
     return dt.datetime.now(KST)
 

@@ -568,6 +568,49 @@ class LogRepository:
             con.close()
         return rows
 
+    def submission_reset_snapshot(self, date: str, sid: str, matches) -> dict:
+        from core.student_app_v2.locks import recovery_lock
+        with recovery_lock(self.logs_path):
+            data, status = self._read_json_map_with_status()
+            if status not in {"available", "missing"}:
+                raise ValueError("log compatibility store unavailable")
+            json_rows = ((data.get(date) or {}).get(sid) or {}).get("tests") or []
+            con = self._connect()
+            try:
+                self._ensure_schema(con)
+                sql_rows = self._sqlite_get_entry(con, date, sid).get("tests") or []
+            finally:
+                con.close()
+            return {"sqlite": [row for row in sql_rows if matches(row)],
+                    "logsJson": [row for row in json_rows if matches(row)]}
+
+    def reset_submission(self, date: str, sid: str, matches) -> None:
+        """Remove only one archived assignment's outcomes from each log sink."""
+        from core.student_app_v2.locks import recovery_lock
+        with recovery_lock(self.logs_path):
+            data, status = self._read_json_map_with_status()
+            if status not in {"available", "missing"}:
+                raise ValueError("log compatibility store unavailable")
+            con = self._connect()
+            try:
+                con.execute("PRAGMA synchronous=FULL")
+                self._ensure_schema(con)
+                con.execute("BEGIN IMMEDIATE")
+                entry = self._sqlite_get_entry(con, date, sid)
+                rows = entry.get("tests") or []
+                remaining = [row for row in rows if not matches(row)]
+                if remaining != rows:
+                    self._sqlite_upsert_entry(con, date, sid, {**entry, "tests": remaining})
+                con.execute("COMMIT")
+            finally:
+                con.close()
+            entry = (data.get(date) or {}).get(sid) or {}
+            rows = entry.get("tests") or []
+            remaining = [row for row in rows if not matches(row)]
+            if remaining != rows:
+                data[date][sid] = {**entry, "tests": remaining}
+                save_atomic(self.logs_path, data)
+
     def reconcile_submission(self, date: str, sid: str, record: dict, append_fn: MergeFn) -> None:
         """Strict, repeatable writes; each sink merges its own current entry.
 

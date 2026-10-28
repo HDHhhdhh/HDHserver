@@ -1336,18 +1336,22 @@ def submit_test():
     cfg = _load_tests_cfg()
     tdef = _find_test_def_by_id(cfg, test_id) if test_id else None
 
-    if current_app.config.get("STUDENT_APP_PUBLIC_ENABLED") or _is_public_student_request():
-        if tdef is None and name and answers_text is not None:
-            matches = [t for cat in cfg.get("categories", {}).values()
-                       for t in cat.get("tests", []) if isinstance(t, dict) and t.get("name") == name]
-            tdef = matches[0] if len(matches) == 1 else None
-        if tdef is not None:
-            from core.student_app_v2.contracts import ApiError
-            from core.student_app_v2.submissions import legacy_submit
-            try:
-                return jsonify(legacy_submit(data, tdef))
-            except ApiError as exc:
-                return jsonify({"ok": False, "code": exc.code, "error": exc.code}), exc.status
+    if tdef is None and name:
+        matches = [t for cat in cfg.get("categories", {}).values()
+                   if isinstance(cat, dict) for t in cat.get("tests", [])
+                   if isinstance(t, dict) and _canon_test_name(t.get("name")) == _canon_test_name(name)]
+        if len(matches) > 1:
+            return jsonify({"ok": False, "code": "ambiguous_test", "error": "ambiguous_test"}), 409
+        tdef = matches[0] if len(matches) == 1 else None
+    if tdef is not None:
+        from core.student_app_v2.contracts import ApiError, error_payload
+        from core.student_app_v2.submissions import legacy_submit
+        try:
+            return jsonify(legacy_submit(data, tdef))
+        except ApiError as exc:
+            return jsonify({**error_payload(exc), "error": exc.code}), exc.status
+    if _is_public_student_request():
+        return jsonify({"ok": False, "code": "test_not_found", "error": "test_not_found"}), 400
 
     if tdef and not name:
         name = str(tdef.get("name") or "").strip()

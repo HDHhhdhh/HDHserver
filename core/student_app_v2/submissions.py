@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from core.storage import load, save_atomic, utc_now_isoz
 from .contracts import ApiError, answers_text, now, request_id
 from .ledger import Ledger, canonical
@@ -18,8 +19,9 @@ def append_once(entry: dict, record: dict) -> dict:
     return result
 
 
-def _reconcile(ledger: Ledger, saved: dict) -> dict:
+def _reconcile(ledger: Ledger, saved: dict, *, legacy=False) -> dict:
     from routes import api_basic, api_tests
+    ledger.assert_current(saved["identity"], saved["client_id"], saved["generation"])
     if not saved.get("payload"):
         # No invocation can prove whether a killed process finished grading.
         raise ApiError("submission_indeterminate", 503)
@@ -35,7 +37,7 @@ def _reconcile(ledger: Ledger, saved: dict) -> dict:
             day = data.setdefault(date, {})
             rows = day.setdefault(sid, [])
             if not any(isinstance(row, dict) and row.get("submissionId") == record["submissionId"] for row in rows):
-                rows.append({**record, "submittedAnswers": payload["answers"]})
+                rows.append({**record, **({"submittedAnswers": payload["answers"]} if payload["answers"] is not None else {})})
                 save_atomic(api_tests.TESTS_PATH, data)
         progress_result = payload["progress"]
         if progress_result["attempted"] and saved["state"] != "complete":
@@ -67,7 +69,11 @@ def _reconcile(ledger: Ledger, saved: dict) -> dict:
             "assignmentProgress": progress_result,
         }
         if saved["state"] != "complete":
-            ledger.complete(saved["identity"], response)
+            ledger.complete(saved["identity"], response, client_id=saved["client_id"], generation=saved["generation"])
+        if legacy:
+            return {**{key: response[key] for key in (
+                "ok", "score", "wrong", "pct", "assignmentCompleted", "assignmentProgress")},
+                "wrongDetails": payload["legacyWrongDetails"]}
         return response
     except ApiError:
         raise
@@ -76,12 +82,15 @@ def _reconcile(ledger: Ledger, saved: dict) -> dict:
         raise ApiError("submission_pending", 503) from None
 
 
-def replay(ledger: Ledger, identifier: str) -> dict:
+def replay(ledger: Ledger, identifier: str) -> tuple[dict, dict]:
+    generation = ledger.generation(identifier)
     with ledger.lock():
+        if ledger.generation(identifier) != generation:
+            raise ApiError("not_submitted", 404)
         saved = ledger.get(identifier)
         if saved is None:
             raise ApiError("not_submitted", 404)
-        return _reconcile(ledger, saved)
+        return _reconcile(ledger, saved), saved["payload"]["assignment"]
 
 
 def submit(assignment: dict, body: dict, *, legacy=False) -> dict:
@@ -90,28 +99,33 @@ def submit(assignment: dict, body: dict, *, legacy=False) -> dict:
     identifier = assignment["assignmentId"]
     client_id = body.get("clientSubmissionId")
     if legacy and client_id is None:
-        client_id = "legacy-" + hashlib.sha256(canonical(body).encode()).hexdigest()
+        client_id = "legacy-" + hashlib.sha256(canonical({"assignmentId": identifier, "body": body}).encode()).hexdigest()
     else:
         client_id = request_id(client_id)
+    generation = ledger.generation(identifier)
     with ledger.lock():
+        if ledger.generation(identifier) != generation:
+            raise ApiError("submission_reset", 409)
         saved = ledger.get(identifier)
+        if saved and saved["state"] == "resetting":
+            raise ApiError("submission_reset_pending", 503)
+        if ledger.was_reset(assignment["sid"], client_id):
+            raise ApiError("submission_reset", 409)
         if saved:
             if saved["client_id"] != client_id:
                 raise ApiError("already_submitted", 409)
-            return _reconcile(ledger, saved)
+            return _reconcile(ledger, saved, legacy=legacy)
         if historical_result(assignment) is not None:
             raise ApiError("already_submitted", 409)
         definition = assignment["definition"]
         count = definition.get("problems")
         if type(count) is not int or not 1 <= count <= 999:
             raise ApiError("test_unavailable", 503)
-        key = api_tests._get_answer_key_for_round(definition, count, assignment["round"])
-        if not key:
-            raise ApiError("test_unavailable", 503)
         if body.get("round") != assignment["round"] or type(body.get("round")) is not int:
             raise ApiError("invalid_round")
         text = body.get("answersText") if legacy else answers_text(body, count)
-        if not isinstance(text, str) or len(text) > 512000:
+        reported = legacy and text is None
+        if not reported and (not isinstance(text, str) or len(text) > 512000):
             raise ApiError("invalid_answers")
         memo = body.get("memo", "")
         if not isinstance(memo, str) or len(memo) > 2000:
@@ -119,20 +133,37 @@ def submit(assignment: dict, body: dict, *, legacy=False) -> dict:
         acknowledge = body.get("acknowledgeOffsetWarning", False)
         if type(acknowledge) is not bool:
             raise ApiError("invalid_payload")
-        answers = api_tests._parse_answer_spec(text, count)
-        # Offset detection needs only the direct-match count, not a grading
-        # invocation. Rejected previews therefore do not consume the UUID.
-        direct = sum(bool(k) and a.strip() == k.strip() for a, k in zip(answers, key))
-        if api_tests._detect_shifted_answer_mapping(answers, key, direct) and not acknowledge:
-            raise ApiError("possible_answer_offset", 409)
-        ledger.reserve(identifier, assignment["sid"], client_id)
-        correct, total, wrong, pct = api_tests._grade_answers(answers, key)
+        answers, key = None, None
+        if reported:
+            score_match = re.fullmatch(r"(\d{1,3})/(\d{1,3})", str(body.get("score") or "").strip())
+            wrong = body.get("wrong", [])
+            if (not score_match or not isinstance(wrong, list)
+                    or any(type(n) is not int or not 1 <= n <= count for n in wrong)
+                    or len(set(wrong)) != len(wrong)):
+                raise ApiError("invalid_score")
+            correct, total = map(int, score_match.groups())
+            if total != count or correct != total - len(wrong):
+                raise ApiError("invalid_score")
+            pct = round(correct / total * 100, 2)
+        else:
+            key = api_tests._get_answer_key_for_round(definition, count, assignment["round"])
+            if not key:
+                raise ApiError("test_unavailable", 503)
+            answers = api_tests._parse_answer_spec(text, count)
+            # Offset previews do not consume a grading reservation.
+            direct = sum(bool(k) and a.strip() == k.strip() for a, k in zip(answers, key))
+            if api_tests._detect_shifted_answer_mapping(answers, key, direct) and not acknowledge:
+                raise ApiError("possible_answer_offset", 409)
+        ledger.reserve(identifier, assignment["sid"], client_id, generation=generation)
+        if not reported:
+            correct, total, wrong, pct = api_tests._grade_answers(answers, key)
         timestamp = utc_now_isoz()
         meta = api_tests._resolve_test_meta(
             str(definition.get("name") or assignment["title"]), assignment["testId"],
             api_tests._build_test_catalog(api_tests._load_tests_cfg()))
         record = {
             "submissionId": client_id, "assignmentId": identifier,
+            "gradingSource": "legacy_reported" if reported else "server",
             "testId": assignment["testId"], "round": assignment["round"],
             "name": str(definition.get("name") or assignment["title"]),
             "score": f"{correct}/{total}", "wrong": wrong, "memo": memo,
@@ -152,10 +183,10 @@ def submit(assignment: dict, body: dict, *, legacy=False) -> dict:
         payload = {
             "assignment": assignment, "record": record, "answers": answers,
             "result": result, "progress": api_tests._submit_progress_status_policy(body),
-            "legacyWrongDetails": api_tests._wrong_answer_details(answers, key, wrong),
+            "legacyWrongDetails": [] if reported else api_tests._wrong_answer_details(answers, key, wrong),
         }
-        ledger.graded(identifier, payload)
-        return _reconcile(ledger, ledger.get(identifier))
+        ledger.graded(identifier, payload, client_id=client_id, generation=generation)
+        return _reconcile(ledger, ledger.get(identifier), legacy=legacy)
 
 
 def legacy_submit(body: dict, definition: dict):
@@ -178,9 +209,4 @@ def legacy_submit(body: dict, definition: dict):
                   "testId": str(definition["id"]), "round": round_no,
                   "title": str(definition.get("name") or ""), "metadata": metadata,
                   "definition": definition, "blocked": False}
-    result = submit(assignment, {**body, "round": round_no}, legacy=True)
-    saved = Ledger().get(identifier)
-    result = {key: result[key] for key in (
-        "ok", "score", "wrong", "wrongDetails", "pct", "assignmentCompleted", "assignmentProgress")}
-    result["wrongDetails"] = saved["payload"]["legacyWrongDetails"]
-    return result
+    return submit(assignment, {**body, "round": round_no}, legacy=True)

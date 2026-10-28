@@ -91,7 +91,7 @@ def document(assignment: dict, kind: str, page: int | None = None):
             return 1
         if page != 1:
             raise ApiError("invalid_page")
-        return Response(data, mimetype="image/png")
+        return Response(data, mimetype="image/png", headers={"X-Document-Page-Count": "1"})
     try:
         import fitz
         with fitz.open(stream=data, filetype="pdf") as pdf:
@@ -100,7 +100,7 @@ def document(assignment: dict, kind: str, page: int | None = None):
             if not 1 <= page <= len(pdf):
                 raise ApiError("invalid_page")
             image = pdf[page - 1].get_pixmap(dpi=120).tobytes("png")
-            return Response(image, mimetype="image/png")
+            return Response(image, mimetype="image/png", headers={"X-Document-Page-Count": str(len(pdf))})
     except ApiError:
         raise
     except Exception:
