@@ -8,6 +8,8 @@ from typing import Final, TypeAlias
 
 from .student_app_config import PUBLIC_SENSITIVE_STATIC_PATHS
 from .student_public_surface_paths import parse_student_page_sid, safe_announcement_file
+import re
+from urllib.parse import unquote
 
 
 RouteMethod: TypeAlias = tuple[str, str]
@@ -141,8 +143,20 @@ def classify_public_path(
     if safe_announcement_file(path, raw_uri):
         return SurfaceDecision(True, "file", True) if normalized_method in {"GET", "HEAD"} else SurfaceDecision(False, "deny")
     route = (path, normalized_method)
+    if route not in registered_api and raw_uri is not None:
+        # Only explicitly registered parameter rules participate. Never grant
+        # authority to a mobile prefix or normalize encoded separators twice.
+        raw_path = raw_uri.split("?", 1)[0]
+        if unquote(raw_path) == path and "%" not in path and "\\" not in path:
+            for template, verb in registered_api:
+                if verb != normalized_method or "<assignment_id>" not in template:
+                    continue
+                pattern = re.escape(template).replace(re.escape("<assignment_id>"), r"[^/\\%\x00-\x20?#]{1,512}")
+                if re.fullmatch(pattern, path) and all(part not in {".", ".."} for part in path.split("/")):
+                    route = (template, verb)
+                    break
     if route in registered_api:
-        requires_session = path not in {"/api/mobile/auth/login", "/api/mobile/push/public-key"}
+        requires_session = path not in {"/api/mobile/auth/login", "/api/mobile/push/public-key", "/api/mobile/app/release"}
         return SurfaceDecision(True, "api", requires_session, True)
     return SurfaceDecision(False, "deny")
 

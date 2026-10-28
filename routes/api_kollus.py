@@ -42,8 +42,8 @@ def get_real_client_ip() -> str:
 
 def _academy_request_allowed() -> bool:
     if getattr(g, "student_app_public_request", False) is True:
-        resolved = getattr(g, "student_app_client_ip", None)
-        return isinstance(resolved, str) and ip_allowed(resolved)
+        from core.student_app_v2.contracts import network
+        return network()["academy"]
     return academy_network_allowed()
 
 
@@ -224,6 +224,9 @@ def api_get_url():
         return jsonify({"ok": False, "error": "unknown mid"}), 404
     if sid and not _known_sid(sid):
         return jsonify({"ok": False, "error": "unknown sid"}), 404
+    from core.student_app_v2.projections import video_assigned
+    if not sid or not video_assigned(sid, mid):
+        return jsonify({"ok": False, "code": "not_assigned", "error": "not_assigned"}), 403
     client_ip = get_real_client_ip()
     return kollus_signed_url(mid, client_ip, sid=sid)
 

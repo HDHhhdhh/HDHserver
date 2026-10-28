@@ -42,6 +42,7 @@ from routes.api_student_focus import bp_api_student_focus, bp_api_student_focus_
 from routes.api_assistant_notes import bp_api_assistant_notes
 from routes.api_admin_operation_notes import bp_api_admin_operation_notes
 from routes.api_non_student_ocr import bp_api_non_student_ocr
+from routes.api_student_app_v2 import bp_api_student_app_v2, bp_api_student_submissions_admin, V2_ROUTES
 
 
 def create_app() -> Flask:
@@ -53,7 +54,9 @@ def create_app() -> Flask:
         config=student_app_config,
         auth_blueprint=bp_api_student_app_auth,
     )
+    app.register_blueprint(bp_api_student_submissions_admin)
     if student_app_config.public_enabled:
+        register_student_app_domain(app, bp_api_student_app_v2, V2_ROUTES)
         register_student_app_domain(app, bp_api_student_push, PUSH_ROUTE_METHODS)
         register_student_app_domain(app, bp_api_student_board, BOARD_ROUTE_METHODS)
         if student_app_config.homework_enabled:

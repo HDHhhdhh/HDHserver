@@ -254,6 +254,9 @@ def create_public_blueprint(provider: _Provider) -> Blueprint:
                     result["items"].append(item)
                 result["items"] = result["items"][:50]
             _add_notification_event_ids(result["items"])
+            from core.student_app_v2.homework import completed_by
+            for item in result["items"]:
+                item["completedBy"] = completed_by(deps.repository, sid, item["id"]) if not item.get("legacy") else None
             return _reply({"ok": True, **result})
         except Exception as exc:  # noqa: BROAD_EXCEPT_OK - storage details stay private
             return _exception_reply(exc)

@@ -4405,12 +4405,13 @@ def run_student_bootstrap_unit_checks() -> None:
 
 def run_submit_test_assignment_completion_unit_checks() -> None:
     from flask import Flask
-    from types import SimpleNamespace
+    from core.log_repository import LogRepository
+    from core.student_app_v2 import submissions
     import routes.api_basic as api_basic
     import routes.api_tests as api_tests
 
     sid = "submit-status-sid"
-    date = api_tests.dt.date.today().isoformat()
+    date = "2026-06-03"
     test_id = "unit-submit-status"
     test_name = "제출 상태 테스트"
     assigned_label = f"단원평가 / 공수1 / Lv.3 / 1회차 / {test_name}"
@@ -4442,16 +4443,8 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
         },
     }
 
-    class FakeLogRepository:
-        def append_record(self, _date, _sid, _record, _merger):
-            return True
-
-        def read_entry(self, _date, _sid):
-            return SimpleNamespace(entry=log_entry)
-
-        def read_json_map(self):
-            return {date: {sid: log_entry}}
-
+    original_submission_clock = submissions.now
+    original_journal_path = os.environ.get("STUDENT_APP_V2_DB_PATH")
     original_tests_path = api_tests.TESTS_PATH
     original_tests_cfg_path = api_tests.TESTS_CFG_PATH
     original_progress_path = getattr(api_tests, "PRG_PATH", None)
@@ -4487,6 +4480,8 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
         tests_cfg_path = tmp_dir / "tests-config.json"
         progress_path = tmp_dir / "progress.json"
         updates_path = tmp_dir / "updates.json"
+        logs_path = tmp_dir / "logs.json"
+        logs_path.write_text(json.dumps({date: {sid: log_entry}}, ensure_ascii=False), "utf-8")
         tests_path.write_text("{}", "utf-8")
         tests_cfg_path.write_text(json.dumps(tests_config, ensure_ascii=False), "utf-8")
         updates_path.write_text("{}", "utf-8")
@@ -4530,11 +4525,13 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
         api_basic._load_progress_strict = lambda *_args, **_kwargs: json.loads(progress_path.read_text("utf-8"))
         api_basic.load = fake_load
         api_basic.load_absent = lambda: {"by_date": {}, "by_student": {}}
-        api_basic.get_log_repository = lambda: FakeLogRepository()
+        api_basic.get_log_repository = lambda: LogRepository(logs_path=logs_path, db_path=str(tmp_dir / "app.sqlite"))
         api_basic.academy_network_allowed = lambda: True
         api_basic._student_is_registered_on_date = lambda *_args, **_kwargs: True
         api_basic._load_tests_config_for_answer_links = lambda: tests_config
         api_basic._load_test_answer_link_map = lambda: {}
+        submissions.now = lambda: api_tests.dt.datetime.fromisoformat(f"{date}T12:00:00+09:00")
+        os.environ["STUDENT_APP_V2_DB_PATH"] = str(tmp_dir / "journal.sqlite")
 
         try:
             app = Flask("verify-submit-test-assignment-completion")
@@ -4555,6 +4552,9 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
             payload = response.get_json() or {}
             _assert_unit(response.status_code == 200, "submit-test fixture route must return 200")
             _assert_unit(payload.get("ok") is True, "submit-test fixture route must return ok:true")
+            records = json.loads(tests_path.read_text("utf-8"))[date][sid]
+            _assert_unit(len(records) == 1 and records[0].get("submissionId"),
+                         "legacy submit must persist its durable identity with real compatibility records")
 
             progress_after = json.loads(progress_path.read_text("utf-8"))
             tests_after = progress_after[date][sid]["tests"]
@@ -4580,6 +4580,11 @@ def run_submit_test_assignment_completion_unit_checks() -> None:
                 "unrelated assigned tests must remain visible in bootstrap",
             )
         finally:
+            submissions.now = original_submission_clock
+            if original_journal_path is None:
+                os.environ.pop("STUDENT_APP_V2_DB_PATH", None)
+            else:
+                os.environ["STUDENT_APP_V2_DB_PATH"] = original_journal_path
             api_tests.TESTS_PATH = original_tests_path
             api_tests.TESTS_CFG_PATH = original_tests_cfg_path
             if original_progress_path is None:

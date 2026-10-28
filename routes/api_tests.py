@@ -94,8 +94,8 @@ def _is_public_student_request() -> bool:
 
 def _academy_request_allowed() -> bool:
     if _is_public_student_request():
-        client_ip = getattr(g, "student_app_client_ip", None)
-        return isinstance(client_ip, str) and ip_allowed(client_ip)
+        from core.student_app_v2.contracts import network
+        return network()["academy"]
     return academy_network_allowed()
 
 
@@ -1335,6 +1335,23 @@ def submit_test():
 
     cfg = _load_tests_cfg()
     tdef = _find_test_def_by_id(cfg, test_id) if test_id else None
+
+    if tdef is None and name:
+        matches = [t for cat in cfg.get("categories", {}).values()
+                   if isinstance(cat, dict) for t in cat.get("tests", [])
+                   if isinstance(t, dict) and _canon_test_name(t.get("name")) == _canon_test_name(name)]
+        if len(matches) > 1:
+            return jsonify({"ok": False, "code": "ambiguous_test", "error": "ambiguous_test"}), 409
+        tdef = matches[0] if len(matches) == 1 else None
+    if tdef is not None:
+        from core.student_app_v2.contracts import ApiError, error_payload
+        from core.student_app_v2.submissions import legacy_submit
+        try:
+            return jsonify(legacy_submit(data, tdef))
+        except ApiError as exc:
+            return jsonify({**error_payload(exc), "error": exc.code}), exc.status
+    if _is_public_student_request():
+        return jsonify({"ok": False, "code": "test_not_found", "error": "test_not_found"}), 400
 
     if tdef and not name:
         name = str(tdef.get("name") or "").strip()

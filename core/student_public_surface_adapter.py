@@ -118,7 +118,7 @@ class StudentPublicSurface:
     @staticmethod
     def _handler_registered(path: str, method: str) -> bool:
         """Require a declared API pair to have a concrete Flask handler."""
-        return any(rule.rule == path and method in rule.methods for rule in current_app.url_map.iter_rules())
+        return request.url_rule is not None and method in request.url_rule.methods
 
     def _session(self, decision: SurfaceDecision) -> SessionIdentity | None:
         token = request.cookies.get(self.config.session_cookie_name)
@@ -222,7 +222,7 @@ class StudentPublicSurface:
             response.headers.update({"Cache-Control": "public, max-age=0, must-revalidate", "X-Content-Type-Options": "nosniff"})
         elif path in PUBLIC_SENSITIVE_STATIC_PATHS:
             response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
-        elif (path, request.method.upper()) in self.registered_api or path.startswith("/files/announcements/"):
+        elif (path, request.method.upper()) in self.registered_api or path.startswith(("/files/announcements/", "/api/mobile/")):
             response.headers["Cache-Control"] = "no-store"
         return response
 

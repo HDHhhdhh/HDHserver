@@ -11,7 +11,7 @@ import sys
 import tempfile
 import types
 
-from flask import Flask, g, request
+from flask import Flask, g, request, jsonify
 
 from core.progress_rules import PROGRESS_MANUAL_META_KEY
 from core.student_app_config import load_student_app_config
@@ -21,6 +21,7 @@ from core.student_public_surface import SessionIdentity, install_student_public_
 MODULES = (
     "routes.api_basic", "routes.api_watch", "routes.api_kollus", "routes.api_tests",
     "routes.api_announcements", "routes.api_fs", "routes.pages", "core.paths",
+    "core.log_repository",
 )
 DATE = "2026-08-08"
 
@@ -69,16 +70,19 @@ def _isolated_routes(root: Path):
             def __enter__(self): return self
             def __exit__(self, *_args): return False
 
-        class Logs:
-            def append_record(self, *_args): return True
-
         basic._InterProcessFileLock = Lock
         basic._progress_lock = nullcontext
         basic._load_progress_strict = lambda path=paths.PRG_PATH: json.loads(Path(path).read_text("utf-8"))
         basic._save_progress_strict = lambda data, path=paths.PRG_PATH: _write(Path(path), data)
         basic._notification_progress_snapshot = lambda _progress, _sid: None
         basic._notification_progress_commit = lambda _before, _after, _sid: 0
-        basic.get_log_repository = lambda: Logs()
+        from core.log_repository import LogRepository
+        basic.get_log_repository = lambda: LogRepository(logs_path=paths.LOGS_PATH, db_path=str(root / "app.sqlite"))
+        # Membership is now required. This boundary-only fixture deliberately
+        # has one assigned video; the v2 suite exercises real bootstrap rules.
+        basic.api_student_bootstrap = lambda **_kwargs: jsonify({
+            "videos": [{"mid": "mid-1234"}], "reviewVideos": [], "courseBlocked": False,
+        })
         sys.modules["routes.api_basic"] = basic
         setattr(routes_package, "api_basic", basic)
         yield watch, kollus, tests, fs, pages, paths
@@ -90,6 +94,7 @@ def _isolated_routes(root: Path):
                 sys.modules[name] = module
         for package, attr, name in (
             (core_package, "paths", "core.paths"), (routes_package, "api_basic", "routes.api_basic"),
+            (core_package, "log_repository", "core.log_repository"),
             (routes_package, "api_watch", "routes.api_watch"), (routes_package, "api_kollus", "routes.api_kollus"),
             (routes_package, "api_tests", "routes.api_tests"), (routes_package, "api_fs", "routes.api_fs"),
             (routes_package, "api_announcements", "routes.api_announcements"),
@@ -166,6 +171,8 @@ def _app(root: Path, modules):
     for blueprint in (pages.bp_pages, watch.bp_api_watch, kollus.bp_api_kollus, tests.bp_api_tests, fs.bp_api_fs):
         app.register_blueprint(blueprint)
     app.config.update(TESTING=True)
+    from scripts.student_mobile_app_checks.admin_auth_contract import test_authorizer
+    app.config["ACADEMY_ADMIN_AUTHORIZER"] = test_authorizer
     return app, config
 
 
@@ -283,9 +290,12 @@ def _run_matrix(state: list[int], root: Path, modules) -> None:
     local_file = client.get("/files/answers/secret.pdf", base_url="http://127.0.0.1")
     _check(state, local_file.status_code == 200, "local file route changed")
     local_file.close()
-    _check(state, client.get("/api/tests-config", base_url="http://127.0.0.1", environ_overrides={"REMOTE_ADDR": "192.168.1.20"}).get_json() == original_config, "local academy catalog changed")
-    _check(state, client.post("/api/submit-test", json=submit, base_url="http://127.0.0.1").status_code == 200, "local legacy test submission changed")
-    _check(state, client.post("/api/ocr-test-sheet-review", json={}, base_url="http://127.0.0.1").status_code != 404, "local legacy OCR route was removed")
+    from scripts.student_mobile_app_checks.admin_auth_contract import TEST_AUTHORIZATION
+    admin = {"Authorization": TEST_AUTHORIZATION}
+    _check(state, client.get("/api/tests-config", base_url="http://127.0.0.1").status_code == 401, "local catalog lost admin authentication")
+    _check(state, client.get("/api/tests-config", base_url="http://127.0.0.1", headers=admin, environ_overrides={"REMOTE_ADDR": "192.168.1.20"}).get_json() == original_config, "local academy catalog changed")
+    _check(state, client.post("/api/submit-test", json=submit, base_url="http://127.0.0.1", headers=admin).status_code == 200, "local legacy test submission changed")
+    _check(state, client.post("/api/ocr-test-sheet-review", json={}, base_url="http://127.0.0.1", headers=admin).status_code != 404, "local legacy OCR route was removed")
 
 
 def run_checks() -> dict[str, object]:
