@@ -123,6 +123,7 @@ def today():
     date = date_key(request.args.get("date", now().date().isoformat()))
     snapshot, items = projections.day_items(sid, date)
     return jsonify(ok=True, date=date, serverTime=now().isoformat(), network=network(),
+                   profile=projections.profile(sid),
                    items=items, homeworkSummary=projections.homework_summary(sid, date),
                    notice=projections.notice(sid),
                    courseBlocked={"message": snapshot.get("blockMessage", "")} if snapshot.get("courseBlocked") else None)
