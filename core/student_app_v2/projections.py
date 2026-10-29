@@ -27,6 +27,16 @@ def bootstrap(sid: str, date: str) -> dict:
     return response.get_json()
 
 
+def profile(sid: str) -> dict:
+    from routes import api_basic
+    students = api_basic.load(api_basic.STU_PATH) or []
+    student = next((row for row in students
+                    if isinstance(row, dict) and str(row.get("id")) == sid), {})
+    name = student.get("name")
+    return {"studentName": name.strip() if isinstance(name, str) and name.strip() else None,
+            "academyName": "5A"}
+
+
 def test_definition(item: dict) -> dict:
     from routes import api_basic, api_tests
     cfg = api_tests._load_tests_cfg()

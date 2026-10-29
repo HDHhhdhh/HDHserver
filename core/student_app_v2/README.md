@@ -6,6 +6,14 @@ Register through the existing public surface with
 `https://dev-app.5a-math.com`. Listener ports 8004/8003 are tunnel origins,
 not public URL ports. Existing cookie, CSRF, SID and proxy checks apply.
 
+API-01 (`GET /api/mobile/student/today`) includes metadata-only
+`profile: {studentName: string|null, academyName: "5A"}`. The name comes
+only from the authenticated active SID's current roster row. Missing,
+non-string or blank names are null. `5A` is the display brand. This metadata
+remains available outside the academy and for a blocked course, under the
+same exact-host, session, SID and no-store rules. It contains no contact
+details or content authority. Native clients do not call legacy bootstrap.
+
 ## Configuration
 
 - `STUDENT_APP_V2_DB_PATH`: submission journal, solution ticket receipts and

@@ -238,14 +238,55 @@ def worker():
     check(initial_completion.status_code == 200, f"first write to JSON-only log keeps revision semantics: {initial_completion.json}")
     today = request(client, "/api/mobile/student/today")
     check(today.status_code == 200, f"today returns metadata: {today.status_code} {today.json}")
+    check(today.json["profile"] == {"studentName": "T24Synthetic", "academyName": "5A"},
+          "profile uses authenticated roster name and approved display brand")
+    check(today.headers.get("Cache-Control") == "no-store", "profile response is not publicly cached")
+    check(request(client, "/api/mobile/student/today?sid=forged-profile").status_code == 403,
+          "profile rejects forged SID")
+    students = load(api_basic.STU_PATH)
+    try:
+        for invalid_name in (None, "", " \t ", 123, [], {}):
+            dump(api_basic.STU_PATH, [{**students[0], "name": invalid_name}])
+            check(request(client, "/api/mobile/student/today").json["profile"]["studentName"] is None,
+                  f"unusable roster name stays null: {invalid_name!r}")
+        dump(api_basic.STU_PATH, [{**students[0], "name": "CurrentRosterName"}])
+        check(request(client, "/api/mobile/student/today").json["profile"]["studentName"] == "CurrentRosterName",
+              "profile uses current roster rather than stale login identity")
+        from core.paths import ABS_PATH
+        absences = load(ABS_PATH)
+        try:
+            dump(ABS_PATH, {"by_date": {date: [SID]}, "by_student": {}})
+            real_blocked = request(client, "/api/mobile/student/today", academy=False)
+            check(real_blocked.status_code == 200 and real_blocked.json["courseBlocked"] is not None
+                  and real_blocked.json["profile"]["studentName"] == "CurrentRosterName",
+                  "real course-blocked outside roster metadata remains available")
+        finally:
+            dump(ABS_PATH, absences)
+        with patch("core.student_app_v2.projections.bootstrap",
+                   return_value={"student": {"id": "forged", "name": "ForgedSnapshot"}, "courseBlocked": True}):
+            blocked = request(client, "/api/mobile/student/today", academy=False)
+            check(blocked.status_code == 200 and blocked.json["courseBlocked"] is not None
+                  and blocked.json["profile"] == {"studentName": "CurrentRosterName", "academyName": "5A"},
+                  "outside course-blocked profile ignores bootstrap identity")
+    finally:
+        dump(api_basic.STU_PATH, students)
+    from core.student_app_v2 import projections
+    with patch.object(api_basic, "load", return_value=[]):
+        check(projections.profile(SID) == {"studentName": None, "academyName": "5A"},
+              "missing roster row cannot fabricate identity")
+    with patch.object(api_basic, "load", return_value=[{"id": SID}, {"id": "other", "name": "Other"}]):
+        check(projections.profile(SID)["studentName"] is None, "missing name cannot use other roster identity")
     check(len(today.json["items"]) == 18, "today includes real scheduled video and seventeen tests")
-    forbidden = {"url", "fileId", "mid", "answerKeys", "answers", "sourceFiles", "solutionFileId"}
+    forbidden = {"url", "fileId", "mid", "answerKeys", "answers", "sourceFiles", "solutionFileId",
+                 "phone", "email", "contact", "studentId", "sid"}
     def scan(value):
         if isinstance(value, dict):
             return bool(forbidden.intersection(value)) or any(scan(child) for child in value.values())
         return isinstance(value, list) and any(scan(child) for child in value)
     check(not scan(today.json), "list whitelist contains no content authority")
     outside = request(client, "/api/mobile/student/today", academy=False)
+    check(outside.json["profile"] == today.json["profile"] and not scan(outside.json)
+          and not scan(blocked.json), "outside and course-blocked profiles contain no protected or contact fields")
     check(len(outside.json["items"]) == 18 and all(item["lockedReason"] == "outside_academy" for item in outside.json["items"]),
           "outside network retains full sanitized list")
     check(request(client, "/api/mobile/student/assignments?from=bad").status_code == 400, "invalid date")
