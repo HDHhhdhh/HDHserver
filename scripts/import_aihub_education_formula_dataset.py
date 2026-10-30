@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Final
 
 from scripts.import_aihub_education_choice_dataset import (
+    annotation_image,
     build_image_index,
     crop_box,
     resolve_image,
@@ -125,6 +126,7 @@ def convert(
     writer_counts: Counter = Counter()
     kinds: Counter = Counter()
     skipped: Counter = Counter()
+    coordinate_frames: Counter = Counter()
     selected_writers: set[str] = set()
     records: list[dict] = []
     for label_path in label_files:
@@ -156,6 +158,12 @@ def convert(
         boxes = normalized_formula_boxes(payload, maximum_label_length=maximum_label_length)
         random.Random(f"{seed}:{label_path.relative_to(labels_root).as_posix()}").shuffle(boxes)
         with Image.open(source) as opened:
+            try:
+                image, frame, _orientation = annotation_image(opened, payload)
+            except ValueError:
+                skipped["imageGeometryMismatch"] += 1
+                continue
+            coordinate_frames[frame] += 1
             for position, box in enumerate(boxes):
                 if limit > 0 and len(records) >= limit:
                     break
@@ -164,8 +172,8 @@ def convert(
                     continue
                 bounds = crop_box(
                     box,
-                    width=opened.width,
-                    height=opened.height,
+                    width=image.width,
+                    height=image.height,
                     padding_ratio=max(0.0, padding_ratio),
                 )
                 if bounds is None or min(bounds[2] - bounds[0], bounds[3] - bounds[1]) < max(1, minimum_side):
@@ -176,7 +184,7 @@ def convert(
                 ).hexdigest()
                 filename = f"{source_token[:28]}.png"
                 target = image_output / filename
-                crop = ImageOps.autocontrast(ImageOps.grayscale(opened.crop(bounds))).convert("RGB")
+                crop = ImageOps.autocontrast(ImageOps.grayscale(image.crop(bounds))).convert("RGB")
                 crop.save(target, format="PNG", optimize=True)
                 equation = box["equation"]
                 records.append(
@@ -209,6 +217,8 @@ def convert(
         "selectedWriters": len(selected_writers),
         "formulaKinds": dict(sorted(kinds.items())),
         "skipped": dict(sorted(skipped.items())),
+        "cropGeometryVersion": "annotation-frame-exif-v2",
+        "imageCoordinateFrames": dict(sorted(coordinate_frames.items())),
         "answerKeyFieldsUsed": 0,
     }
     (output_root / "manifest.json").write_text(

@@ -116,6 +116,31 @@ def crop_box(box: dict, *, width: int, height: int, padding_ratio: float) -> tup
     return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
 
 
+def annotation_image(image, payload: object):
+    """Use the annotation coordinate frame, not the raw EXIF-rotated pixels."""
+    from PIL import ImageOps
+
+    metadata = payload.get("Images", {}) if isinstance(payload, dict) else {}
+    width, height = metadata.get("width"), metadata.get("height")
+    expected = None
+    if width is not None or height is not None:
+        try:
+            expected = (int(width), int(height))
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("invalid annotation dimensions") from error
+        if min(expected) <= 0:
+            raise ValueError("invalid annotation dimensions")
+    orientation = image.getexif().get(274, 1)
+    if orientation not in range(1, 9):
+        raise ValueError("invalid EXIF orientation")
+    upright_size = tuple(reversed(image.size)) if orientation in (5, 6, 7, 8) else image.size
+    if expected is not None and expected != upright_size:
+        if expected == image.size and image.size != upright_size:
+            return image.copy(), "raw_annotation_frame", orientation
+        raise ValueError("image and annotation dimensions disagree")
+    return ImageOps.exif_transpose(image), "exif_upright" if orientation != 1 else "unchanged", orientation
+
+
 def ink_square(image, bounds):
     from PIL import Image, ImageOps
 
@@ -152,6 +177,8 @@ def convert(
     output_root = output_root.resolve()
     if not labels_root.is_dir() or not images_root.is_dir():
         raise ValueError("AI Hub label and image roots must exist")
+    if output_root.exists() and any(output_root.iterdir()):
+        raise ValueError("AI Hub choice output must be empty")
     for label in (*CHOICE_LABELS, REJECT_LABEL):
         (output_root / label).mkdir(parents=True, exist_ok=True)
     image_index = build_image_index(images_root)
@@ -159,6 +186,7 @@ def convert(
     writer_counts: Counter = Counter()
     selected_writers = {label: set() for label in (*CHOICE_LABELS, REJECT_LABEL)}
     skipped: Counter = Counter()
+    coordinate_frames: Counter = Counter()
     label_files = sorted(labels_root.rglob("*.json"))
     random.Random(seed).shuffle(label_files)
     for label_path in label_files:
@@ -183,7 +211,13 @@ def convert(
         writer = str(images_metadata.get("make_id") or "").strip() if isinstance(images_metadata, dict) else ""
         if not writer:
             writer = f"missing:{label_path.relative_to(labels_root).as_posix()}"
-        with Image.open(source) as image:
+        with Image.open(source) as opened:
+            try:
+                image, frame, _orientation = annotation_image(opened, payload)
+            except ValueError:
+                skipped["imageGeometryMismatch"] += 1
+                continue
+            coordinate_frames[frame] += 1
             for position, box in enumerate(boxes):
                 label = box["label"]
                 if not selected(counts, label, choice_limit=choice_limit, reject_limit=reject_limit):
@@ -222,6 +256,8 @@ def convert(
         "counts": {label: counts[label] for label in (*CHOICE_LABELS, REJECT_LABEL)},
         "selectedWriters": {label: len(selected_writers[label]) for label in (*CHOICE_LABELS, REJECT_LABEL)},
         "skipped": dict(sorted(skipped.items())),
+        "cropGeometryVersion": "annotation-frame-exif-v2",
+        "imageCoordinateFrames": dict(sorted(coordinate_frames.items())),
         "answerKeyFieldsUsed": 0,
     }
     (output_root / "manifest.json").write_text(

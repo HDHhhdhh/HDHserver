@@ -1,0 +1,24 @@
+{
+  "schema": "codex_visible_dialogue_snapshot_v1",
+  "threadId": "019ffb79-5698-7560-ae91-6b6915e74019",
+  "sourceBytesAtSnapshot": 159409289,
+  "sourceSnapshotSha256": "db8b5d78cf5adafb08bdcb8679c26bf5194e56a9644bae4432d0eafd9f8f8740",
+  "firstMessageAt": "2026-08-13T14:14:24.853Z",
+  "lastMessageAt": "2026-10-30T09:31:39.335Z",
+  "messageCount": 937,
+  "counts": {
+    "systemDeveloperExcluded": 60,
+    "injectedContextExcluded": 29,
+    "secretRedactions": 0,
+    "user": 112,
+    "assistant": 825,
+    "nonTextMessageExcluded": 1
+  },
+  "dialogueBytes": 609187,
+  "dialogueSha256": "afadd7f85f01a87804edd93a1e4e76d28f640825134f60605f02822503ebb5a9",
+  "scope": "visible user/assistant text only, snapshot before Git push",
+  "reasoningAndToolTrafficIncluded": false,
+  "historicalClaimsNotRevalidated": true,
+  "imageAndFileAttachmentsIncluded": false,
+  "sourceUnmodified": true
+}
